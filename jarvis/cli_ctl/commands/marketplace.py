@@ -47,6 +47,7 @@ def _fail(exc: ApiError) -> typer.Exit:
 _SECTIONS: tuple[tuple[str, str], ...] = (
     ("skills", "skill"),
     ("plugins", "plugin"),
+    ("agents", "agent"),
 )
 
 
@@ -89,10 +90,15 @@ _BLURBS = {
         "A connector to an outside service. Installing it only puts it on your "
         "list — it stays powerless until you connect your account."
     ),
+    "agent": (
+        "A ready-made teammate: its job, its instructions and its look. It joins "
+        "your agents on YOUR model and asks before it acts."
+    ),
 }
 _LANDS_IN = {
     "skill": "your skills",
     "plugin": "your plugin list",
+    "agent": "your agents",
 }
 
 
@@ -133,6 +139,14 @@ def _report_installed(payload: dict[str, Any]) -> int:
     if payload.get("location"):
         _field("File", str(payload["location"]))
 
+    if kind == "agent" and payload.get("ready"):
+        _field("Status", "on your team — it runs on your own model")
+        if payload.get("renamed_from"):
+            _field("Name", f"{title} (you already had a {payload['renamed_from']!r})")
+        _field("Talk to it", "open the app → Agents")
+        render.line()
+        return 0
+
     if payload.get("ready"):
         _field(
             "Status",
@@ -167,6 +181,10 @@ def _report_already_there(kind: str, item_id: str, client: Any) -> int:
     render.line(f"[green]Already installed:[/green] [bold]{item_id}[/bold]")
     render.line()
     _field("Kind", kind)
+    if kind == "agent":
+        _field("Status", "already on your team — open the app → Agents")
+        render.line()
+        return 0
     if kind == "skill":
         try:
             detail = client.request("GET", f"/api/skills/{item_id}")
@@ -207,7 +225,7 @@ def install(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Install a marketplace entry by name — skill or plugin — and report it.
+    """Install a marketplace entry by name — skill, plugin or agent — and report it.
 
     At a terminal this shows what the entry is and asks once before installing,
     then states plainly whether the thing is usable now or still needs a step.

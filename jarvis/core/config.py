@@ -4189,6 +4189,12 @@ class MarketplaceConfig(BaseModel):
     # retired, so a stock install offers no Publish button instead of firing
     # a request at a host that answers nothing.
     publish_endpoint: str = ""
+    # The registry repository the in-app Publish flow files submissions to
+    # when no endpoint is configured: an issue opened as the signed-in user,
+    # which the registry's intake workflow validates and publishes
+    # (docs/marketplace/agent-templates.md). This is the default path — it
+    # needs no server. Empty string hides Publish.
+    publish_registry_repo: str = "PersonalJarvis/marketplace"
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"

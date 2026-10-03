@@ -50,6 +50,7 @@ from .memory import resolve_society_vault
 from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
+from .share_tool import ShareTemplateTool
 
 log = logging.getLogger(__name__)
 
@@ -374,6 +375,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ConversationRecallTool.name: cast(Tool, ConversationRecallTool(rt, agent_id)),
             RoutineListTool.name: cast(Tool, RoutineListTool(rt, agent_id)),
             RoutineInvokeTool.name: cast(Tool, RoutineInvokeTool(rt, agent_id)),
+            ShareTemplateTool.name: cast(Tool, ShareTemplateTool(rt, agent_id)),
             ProposeChangeTool.name: cast(
                 Tool,
                 ProposeChangeTool(

@@ -721,6 +721,8 @@ export function useWebSocket(): void {
             void queryClient.invalidateQueries({ queryKey: ["skills"] });
           } else if (p.kind === "plugin") {
             void queryClient.invalidateQueries({ queryKey: ["marketplace-plugins"] });
+          } else if (p.kind === "agent") {
+            void queryClient.invalidateQueries({ queryKey: ["society", "roster"] });
           }
         }
 

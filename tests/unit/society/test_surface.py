@@ -113,6 +113,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_share_template",
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -134,6 +135,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_share_template",
         *FOLDER,
     }
     assert set(picked[: len(own_names)]) == own_names

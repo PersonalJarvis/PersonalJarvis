@@ -2557,7 +2557,7 @@ class MarketplaceItemInstalled(Event):
     usable right now (a skill that validated), False when it
     still needs the user (a plugin waiting to be connected).
     """
-    kind: str = ""  # "skill" | "plugin"
+    kind: str = ""  # "skill" | "plugin" | "agent"
     item_id: str = ""
     title: str = ""
     ready: bool = False

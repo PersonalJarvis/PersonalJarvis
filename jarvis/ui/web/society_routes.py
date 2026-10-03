@@ -1634,6 +1634,185 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------- templates
+#
+# Share an agent as a template, and install one somebody else shared
+# (docs/marketplace/agent-templates.md). The template is always BUILT here from
+# the roster row plus the person's public-version edits — the view never sends
+# a template of its own to publish, so what leaves the machine is exactly what
+# the scrubber in jarvis/society/agent_template.py let through.
+
+
+class ShareDraftBody(BaseModel):
+    """Edits to the public version. ``None`` keeps a field; ``reset`` drops all."""
+
+    summary: str | None = Field(default=None, max_length=500)
+    instructions: str | None = Field(default=None, max_length=20_000)
+    title: str | None = Field(default=None, max_length=120)
+    categories: list[str] | None = Field(default=None, max_length=10)
+    listing_name: str | None = Field(default=None, max_length=64)
+    version: str | None = Field(default=None, max_length=32)
+    reset: bool = False
+
+
+class InstallTemplateBody(BaseModel):
+    template: dict[str, Any]
+
+
+async def _share_draft(rt: SocietyRuntime, agent_id: str) -> tuple[AgentRecord, Any]:
+    from jarvis.society.agent_template import TemplateError, build_draft, load_overlay
+
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return agent, build_draft(agent, load_overlay(rt.data_dir, agent.agent_id))
+    except TemplateError as exc:
+        raise HTTPException(409, {"reason": "not_shareable", "detail": str(exc)}) from exc
+
+
+def _draft_payload(draft: Any) -> dict[str, Any]:
+    from jarvis.society.agent_template import validate_template
+
+    payload: dict[str, Any] = draft.to_dict()
+    payload["errors"] = validate_template(draft.template, draft.listing)
+    return payload
+
+
+@router.get("/agents/{agent_id}/template", openapi_extra={"x-jarvis-readonly": True})
+async def get_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's shareable template: what would be published, and what was cut."""
+    rt = await _runtime(request)
+    _, draft = await _share_draft(rt, agent_id)
+    return _draft_payload(draft)
+
+
+@router.put("/agents/{agent_id}/template")
+async def save_share_template(
+    agent_id: str, body: ShareDraftBody, request: Request
+) -> dict[str, Any]:
+    """Save edits to the public version (never touches the agent itself)."""
+    from jarvis.society.agent_template import load_overlay, save_overlay
+
+    rt = await _runtime(request)
+    agent, _ = await _share_draft(rt, agent_id)
+    if body.reset:
+        # Back to the agent's own text; what was published stays on record.
+        current = load_overlay(rt.data_dir, agent.agent_id)
+        changes: dict[str, Any] = {k: None for k in current if k != "published"}
+    else:
+        changes = body.model_dump(exclude_none=True, exclude={"reset"})
+        # A person editing the text takes it over from the agent's polish.
+        if changes:
+            changes["polished_by"] = None
+    save_overlay(rt.data_dir, agent.agent_id, changes)
+    _, draft = await _share_draft(rt, agent.agent_id)
+    return _draft_payload(draft)
+
+
+# Dangerous: publishes the agent's design publicly under the user's GitHub name.
+@router.post("/agents/{agent_id}/template/publish", openapi_extra={"x-jarvis-dangerous": True})
+async def publish_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """Publish the current draft to the community marketplace as the signed-in user."""
+    from jarvis.marketplace.install_standard import install_block
+    from jarvis.marketplace.publish import SubmitError, submit, validate_draft
+    from jarvis.society.agent_template import save_overlay, submission
+
+    rt = await _runtime(request)
+    agent, draft = await _share_draft(rt, agent_id)
+    normalized, errors = validate_draft(submission(draft.template, draft.listing))
+    if normalized is None:
+        first = errors[0]
+        raise HTTPException(
+            422, {"error": first["error"], "field": first["field"], "errors": errors}
+        )
+    try:
+        result = await submit(normalized)
+    except SubmitError as exc:
+        raise HTTPException(exc.status, {"error": exc.error, "field": exc.field}) from exc
+    published = {
+        "name": normalized["name"],
+        "version": normalized["version"],
+        "url": result.get("issue_url") or result.get("pr_url"),
+    }
+    # The next share starts from the next version; the summary/text edits stay.
+    save_overlay(rt.data_dir, agent.agent_id, {"published": published, "version": None})
+    return {
+        "ok": True,
+        **published,
+        "install": install_block(normalized["name"], "agent"),
+        **result,
+    }
+
+
+async def _free_agent_name(rt: SocietyRuntime, wanted: str) -> str:
+    """``wanted``, or ``wanted 2``, ``wanted 3`` … — the first name not taken.
+
+    The roster ADOPTS an existing name instead of minting a second agent, so
+    installing "Inbox Butler" twice would silently hand back the first one.
+    """
+    base = wanted.strip()[:37].rstrip() or "Agent"
+    candidate = wanted.strip()[:40]
+    for number in range(2, 100):
+        if await rt.roster.resolve(candidate) is None:
+            return candidate
+        candidate = f"{base} {number}"
+    raise HTTPException(409, {"reason": "name_taken", "detail": "pick another name"})
+
+
+async def install_template(template: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Create a NEW agent from a template on this install's own model.
+
+    Shared by the import route below and the marketplace's install-by-name.
+    The agent asks before it acts where its runner can (``approval_mode=ask``):
+    its instructions were written by somebody else, so the person sees its
+    first moves before trusting it with more.
+    """
+    from jarvis.society.agent_template import TemplateError, create_fields
+
+    try:
+        fields = create_fields(template)
+    except TemplateError as exc:
+        raise HTTPException(422, {"reason": "invalid_template", "detail": str(exc)}) from exc
+    rt = await _runtime(request)
+    wanted = fields.pop("name")
+    name = await _free_agent_name(rt, wanted)
+    scope = template.get("knowledge_scope", "shared")
+    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
+    try:
+        created = await create_agent(body, request)
+    except HTTPException as exc:
+        if exc.status_code != 422:
+            raise
+        # This runner cannot hold an approval prompt: the app's default applies.
+        body = CreateAgentBody(name=name, **fields)
+        created = await create_agent(body, request)
+    agent_row = created["agent"]
+    if scope == "own" and agent_row.get("knowledge_scope") != "own":
+        try:
+            updated = await rt.roster.update(agent_row["agent_id"], {"knowledge_scope": "own"})
+        except RosterError as exc:
+            raise _typed_error(exc) from exc
+        agent_row = updated.to_dict()
+    return {
+        "agent": agent_row,
+        "created": bool(created.get("created")),
+        "renamed_from": wanted if name != wanted else None,
+        "readback": created.get("readback", {}),
+    }
+
+
+@router.post("/templates/install")
+async def install_template_route(body: InstallTemplateBody, request: Request) -> dict[str, Any]:
+    """Create a new agent from an agent template (an exported file, pasted JSON)."""
+    template = body.template
+    # Accept a whole marketplace submission as well as the bare template: a
+    # person importing what somebody posted will paste either.
+    if template.get("kind") == "agent" and isinstance(template.get("agent"), dict):
+        template = template["agent"]
+    return await install_template(template, request)
+
+
 # ----------------------------------------------------------------- controls
 
 

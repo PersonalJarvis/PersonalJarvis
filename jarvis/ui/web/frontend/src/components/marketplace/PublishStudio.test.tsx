@@ -130,7 +130,7 @@ describe("PublishStudio", () => {
     fireEvent.click(screen.getByTestId("studio-publish"));
     const done = await screen.findByTestId("studio-published");
     expect(done.textContent).toContain("three-point-check");
-    expect(done.textContent).toContain("View the pull request");
+    expect(done.textContent).toContain("View the submission");
   });
 
   it("puts a field error where the field is", async () => {

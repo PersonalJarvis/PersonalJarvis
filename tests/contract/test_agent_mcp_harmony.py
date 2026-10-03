@@ -48,6 +48,20 @@ COVERED: Final[dict[str, str]] = {
 
 #: REST route -> why an MCP client does not get it. Each line is a decision.
 WITHHELD: Final[dict[str, str]] = {
+    "GET /api/society/agents/{agent_id}/template": (
+        "the share draft is read in the owner's Share sheet; a remote client has "
+        "ecosystem_export for the design of the whole team"
+    ),
+    "PUT /api/society/agents/{agent_id}/template": (
+        "editing the public version of an agent is the owner's decision at their keyboard"
+    ),
+    "POST /api/society/agents/{agent_id}/template/publish": (
+        "publishing goes out under the owner's GitHub name — never from a remote client"
+    ),
+    "POST /api/society/templates/install": (
+        "installing a stranger's template is a consent decision made in the app, "
+        "where the instructions are on screen first"
+    ),
     "PATCH /api/society/agents/{agent_id}": (
         "editing a roster row (model, ceiling, focus) is configuration the owner "
         "does at their own keyboard, not something a remote client should change"

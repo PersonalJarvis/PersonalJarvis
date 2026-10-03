@@ -6,7 +6,7 @@ Endpoints:
     GET    /api/marketplace/publish/signin/poll/{id}  — poll until approved
     DELETE /api/marketplace/publish/identity          — sign out (drop token)
     POST   /api/marketplace/publish/validate          — field-level pre-check
-    POST   /api/marketplace/publish/submit            — publish (opens the bot PR)
+    POST   /api/marketplace/publish/submit            — publish (files the intake issue)
     GET    /api/marketplace/publish/status            — is name@version live in the feed
 
 The heavy lifting lives in ``jarvis/marketplace/publish.py``; this layer only
@@ -63,10 +63,10 @@ async def _complete_signin(handler: Any, session: Any) -> dict[str, Any]:
 @router.get("/identity", openapi_extra={"x-jarvis-readonly": True})
 async def publish_identity(response: Response) -> dict[str, Any]:
     """Signed-in state, plus whether publishing is enabled at all."""
-    from jarvis.marketplace.publish import current_identity, publish_endpoint
+    from jarvis.marketplace.publish import current_identity, publishing_enabled
 
     response.headers["Cache-Control"] = "no-store"
-    enabled = bool(publish_endpoint())
+    enabled = publishing_enabled()
     if not enabled:
         return {"enabled": False, "signed_in": False}
     try:
@@ -88,9 +88,9 @@ async def publish_identity(response: Response) -> dict[str, Any]:
 @router.post("/signin/start")
 async def signin_start() -> dict[str, Any]:
     """Begin the device flow: returns the user code to type at GitHub."""
-    from jarvis.marketplace.publish import make_device_handler, publish_endpoint
+    from jarvis.marketplace.publish import make_device_handler, publishing_enabled
 
-    if not publish_endpoint():
+    if not publishing_enabled():
         raise HTTPException(status_code=503, detail="publishing is disabled in this deployment")
     _sweep_finished_flows()
     handler = make_device_handler()
@@ -180,6 +180,9 @@ class SubmissionDraft(BaseModel):
     # (publishing-plan.md §3). Kept loose on purpose — `validate_draft`
     # delegates to the installer's own rules, which are the authority.
     skills: list[dict[str, Any]] | None = None
+    # An agent template rides as one object (kind="agent"); the rules live in
+    # jarvis/society/agent_template.py, which validate_draft delegates to.
+    agent: dict[str, Any] | None = None
 
 
 @router.post("/validate", openapi_extra={"x-jarvis-readonly": True})
@@ -197,7 +200,8 @@ async def validate(body: SubmissionDraft) -> dict[str, Any]:
 # the view's explicit Publish click.
 @router.post("/submit", openapi_extra={"x-jarvis-dangerous": True})
 async def submit(body: SubmissionDraft) -> dict[str, Any]:
-    """Validate, then POST to the storefront endpoint as the signed-in user."""
+    """Validate, then file the submission as the signed-in user (intake issue,
+    or a configured endpoint)."""
     from jarvis.marketplace.publish import SubmitError, validate_draft
     from jarvis.marketplace.publish import submit as do_submit
 
@@ -220,7 +224,7 @@ async def submit(body: SubmissionDraft) -> dict[str, Any]:
     # is live — the view only shows it after the registry confirms that.
     from jarvis.marketplace.install_standard import install_block
 
-    kind: Literal["plugin", "skill"] = "skill" if normalized["kind"] == "skill" else "plugin"
+    kind: Literal["plugin", "skill", "agent"] = normalized["kind"]
     return {
         "ok": True,
         "name": normalized["name"],

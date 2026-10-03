@@ -3,9 +3,13 @@
 **Status:** live since 2026-08-12 ·
 **Decisions:** [public-marketplace-analysis.md](public-marketplace-analysis.md) ·
 **Packaging:** [agent-plugins-standard.md](agent-plugins-standard.md) ·
-**Skills for other agents:** [portable-skills.md](portable-skills.md)
+**Skills for other agents:** [portable-skills.md](portable-skills.md) ·
+**Agents:** [agent-templates.md](agent-templates.md)
 
-Anyone can publish plugins and skills for Personal Jarvis; every submission
+Anyone can publish plugins, skills and agent templates for Personal Jarvis.
+Besides a pull request, a submission can arrive as an issue — that is how
+the app publishes after GitHub sign-in (see agent-templates.md, "Publishing
+without a server"). Every submission
 that passes automated checks is listed automatically — an open registry in
 the ClawHub spirit, with **zero maintainer infrastructure**: GitHub pull
 requests are the upload API, Actions is the validation pipeline, and Pages
