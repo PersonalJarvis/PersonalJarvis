@@ -16,7 +16,10 @@ import {
   catalogBaseFor,
   fitsBody,
   keepablePartsFor,
+  isPublicCatalogLicense,
   partAssetsFor,
+  publicCatalogBases,
+  publicCatalogParts,
   partsForSlot,
   slotsWithParts,
   stylesWithBases,
@@ -31,6 +34,36 @@ import {
 const NOT_PICKABLE = new Set(["custom", "spirit"]);
 
 const pickableStyles = Object.keys(CATALOG.styles).filter((s) => !NOT_PICKABLE.has(s));
+
+describe("the public avatar catalog fails closed on licensing", () => {
+  it("allows only the explicitly reviewed built-in licenses", () => {
+    expect(isPublicCatalogLicense("first-party")).toBe(true);
+    expect(isPublicCatalogLicense("CC0-1.0")).toBe(true);
+    expect(isPublicCatalogLicense("CC-BY-4.0")).toBe(false);
+    expect(isPublicCatalogLicense("commercial-use-claimed")).toBe(false);
+    expect(isPublicCatalogLicense("")).toBe(false);
+  });
+
+  it("exposes only provenance-backed bases and never the lead-only spirit", () => {
+    const bases = publicCatalogBases();
+    expect(bases.length).toBeGreaterThan(0);
+    for (const base of bases) {
+      expect(base.source.trim(), base.id).not.toBe("");
+      expect(isPublicCatalogLicense(base.license), base.id).toBe(true);
+      expect(base.styles, base.id).not.toContain("spirit");
+    }
+    expect(bases.some((base) => base.base === "gigi")).toBe(false);
+  });
+
+  it("subjects wearable inventory to the same provenance and license gate", () => {
+    const parts = publicCatalogParts();
+    expect(parts.length).toBeGreaterThan(0);
+    for (const part of parts) {
+      expect(part.source.trim(), part.id).not.toBe("");
+      expect(isPublicCatalogLicense(part.license), part.id).toBe(true);
+    }
+  });
+});
 
 describe("the catalog covers every style the creator shows", () => {
   it.each(pickableStyles)("%s has at least one base", (style) => {
