@@ -11,10 +11,21 @@ from pathlib import Path
 
 
 def emit(phase: str, **values: object) -> None:
-    print(json.dumps({"phase": phase, **values}), flush=True)
+    try:
+        print(json.dumps({"phase": phase, **values}), flush=True)
+    except OSError:
+        # Parent exited: finishing the local file and closing the UI still matter.
+        pass
 
 
-def run(output: Path) -> int:
+def run(output: Path, language: str = "en") -> int:
+    import importlib
+
+    # Load native DLLs on the sidecar main thread before Qt's event loop.
+    # Importing NumPy on the encoder thread can stall Windows DLL loading
+    # while the GUI thread is inside a screen grab. The main app stays lazy.
+    for module in ("av", "numpy"):
+        importlib.import_module(module)
     # Keep all Qt imports inside the desktop sidecar (headless/base boot is safe).
     from PySide6.QtCore import QObject, QRect, Qt, QTimer, Signal
     from PySide6.QtGui import QImage, QPainter, QPen
@@ -28,11 +39,13 @@ def run(output: Path) -> int:
     )
 
     from jarvis.appshot.picker.renderer import Picker
+    from jarvis.appshot.recording_labels import LABELS
     from jarvis.appshot.video_encoder import FPS, VideoEncoder
     from jarvis.platform.probes import is_wayland
 
     app = QApplication(["Personal Jarvis — Screen recording"])
     app.setQuitOnLastWindowClosed(False)
+    labels = LABELS.get(language, LABELS["en"])
 
     class ParentPipe(QObject):
         stop = Signal()
@@ -109,8 +122,8 @@ def run(output: Path) -> int:
                 panel = QWidget(window)
                 panel.setAutoFillBackground(True)
                 layout = QHBoxLayout(panel)
-                layout.addWidget(QLabel("Drag an area to record · Esc cancels"))
-                button = QPushButton("Record entire screen")
+                layout.addWidget(QLabel(labels["select"]))
+                button = QPushButton(labels["full"])
                 button.clicked.connect(
                     lambda _checked=False, w=window: self.finish(w, (0, 0, 1, 1))
                 )
@@ -123,6 +136,8 @@ def run(output: Path) -> int:
             if self._done:
                 return
             self._done = True
+            for timer in self.findChildren(QTimer):
+                timer.stop()
             for win in self._windows:
                 win.hide()
             app.processEvents()
@@ -134,12 +149,12 @@ def run(output: Path) -> int:
     class Session(QWidget):
         def __init__(self) -> None:
             super().__init__()
-            self.setWindowTitle("AppShots — Screen recording")
+            self.setWindowTitle(labels["title"])
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
             self.layout_box = QVBoxLayout(self)
-            self.label = QLabel("Choose a screen in the system sharing dialog.")
+            self.label = QLabel(labels["portal"])
             self.layout_box.addWidget(self.label)
-            self.stop_button = QPushButton("Cancel")
+            self.stop_button = QPushButton(labels["cancel"])
             self.stop_button.clicked.connect(self.stop)
             self.layout_box.addWidget(self.stop_button)
             self.encoder = None
@@ -148,6 +163,7 @@ def run(output: Path) -> int:
             self.started = None
             self.reported = False
             self.finishing = False
+            self.completed = False
             self.error = ""
             self.last_image = None
             self.preview = None
@@ -157,6 +173,7 @@ def run(output: Path) -> int:
             self.picker = None
             self.last_frame = 0.0
             self.dimensions = None
+            self.permission_checked = 0.0
             self.timer = QTimer(self)
             self.timer.timeout.connect(self.tick)
             self.timer.start(round(1000 / FPS))
@@ -174,6 +191,9 @@ def run(output: Path) -> int:
                 self.capture_session.setScreenCapture(self.capture)
                 self.capture_session.setVideoSink(self.sink)
                 self.sink.videoFrameChanged.connect(self.portal_frame)
+                self.capture.activeChanged.connect(
+                    lambda active: None if active or self.finishing else self.stop()
+                )
                 self.capture.errorOccurred.connect(
                     lambda _code, _text: self.fail(
                         "Screen sharing was denied or unavailable. "
@@ -195,12 +215,10 @@ def run(output: Path) -> int:
                 return
             self.last_image = image
             if self.preview is None and self.frac is None:
-                self.label.setText(
-                    "Drag an area in the preview, or record the entire shared screen."
-                )
+                self.label.setText(labels["preview"])
                 self.preview = Preview(image, self)
                 self.layout_box.insertWidget(1, self.preview)
-                full = QPushButton("Record entire screen")
+                full = QPushButton(labels["full"])
                 full.clicked.connect(lambda: self.select(None, (0, 0, 1, 1)))
                 self.layout_box.insertWidget(2, full)
                 self.full_button = full
@@ -214,8 +232,8 @@ def run(output: Path) -> int:
             if self.preview is not None:
                 self.preview.hide()
                 self.full_button.hide()
-            self.label.setText("Starting recording…")
-            self.stop_button.setText("Stop and save")
+            self.label.setText(labels["starting"])
+            self.stop_button.setText(labels["stop"])
             self.resize(290, 90)
             self.show()
             # Let the selection overlays disappear before capturing pixels.
@@ -250,6 +268,13 @@ def run(output: Path) -> int:
                 self.fail(self.encoder.error)
                 return
             elapsed = time.monotonic() - self.started
+            if sys.platform == "darwin" and elapsed - self.permission_checked >= 1.0:
+                from jarvis.platform import screen_access
+
+                self.permission_checked = elapsed
+                if not screen_access.state_allows_capture(screen_access.screen_recording_state()):
+                    self.fail("Screen recording permission was revoked. The recording stopped.")
+                    return
             if not self.reported and elapsed > 15:
                 self.fail(
                     "The recorder did not receive usable frames. Check screen recording permission."
@@ -294,11 +319,10 @@ def run(output: Path) -> int:
                 return
             self.finishing = True
             if self.picker:
-                for window in self.picker._windows:
-                    window.hide()
+                self.picker.finish(None, None)
             if self.capture:
                 self.capture.stop()
-            self.label.setText("Saving recording…")
+            self.label.setText(labels["saving"])
             self.stop_button.setEnabled(False)
             if self.encoder:
                 self.encoder.stop(max(0, time.monotonic() - self.started))
@@ -311,6 +335,9 @@ def run(output: Path) -> int:
             self.finish()
 
         def finish(self) -> None:
+            if self.completed:
+                return
+            self.completed = True
             self.timer.stop()
             error = self.error or (self.encoder.error if self.encoder else "")
             if error:
@@ -327,6 +354,9 @@ def run(output: Path) -> int:
             app.quit()
 
         def closeEvent(self, event) -> None:  # noqa: N802
+            if self.completed:
+                event.accept()
+                return
             event.ignore()
             self.stop()
 
@@ -334,8 +364,15 @@ def run(output: Path) -> int:
     pipe = ParentPipe()
     pipe.stop.connect(session.stop)
     threading.Thread(target=pipe.read, name="appshot-recording-parent", daemon=True).start()
+
     def begin() -> None:
         try:
+            if sys.platform == "darwin":
+                from jarvis.platform import screen_access
+
+                if not screen_access.state_allows_capture(screen_access.screen_recording_state()):
+                    session.fail("Allow Screen Recording for the app before recording this screen.")
+                    return
             if not app.screens():
                 session.fail("No screen is available for recording.")
                 return
@@ -353,11 +390,12 @@ def run(output: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--language", choices=("en", "de", "es"), default="en")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
-        return run(args.output)
+        return run(args.output, args.language)
     except Exception:
         import logging
 

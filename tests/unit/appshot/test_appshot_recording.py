@@ -182,19 +182,14 @@ def test_headless_and_wayland_missing_multimedia_are_honest(monkeypatch):
 
 
 def test_macos_screen_permission_is_checked_without_requesting(monkeypatch):
-    from jarvis.platform import permissions, probes
+    from jarvis.platform import probes, screen_access
+    from jarvis.platform.permissions import PermissionState
 
     monkeypatch.setattr(probes, "display_present", lambda: True)
     monkeypatch.setattr(probes, "is_wayland", lambda: False)
     monkeypatch.setattr(recording.sys, "platform", "darwin")
     monkeypatch.setattr(recording.importlib.util, "find_spec", lambda _name: object())
-    monkeypatch.setattr(
-        permissions,
-        "get_system_permission_port",
-        lambda: SimpleNamespace(
-            runtime_access_granted=lambda permission: False,
-        ),
-    )
+    monkeypatch.setattr(screen_access, "screen_recording_state", lambda: PermissionState.DENIED)
     result = recording.capability()
     assert result["permission_required"]
     assert not result["available"]

@@ -167,5 +167,8 @@ export function appshotRecordingUrl(id: string): string {
 }
 
 export function requestRecordingPermission(): Promise<unknown> {
-  return request("/api/permissions/screen_recording/request?dry_run=false", { method: "POST" });
+  return request("/api/permissions/screen_recording/request?dry_run=false", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ feature: "appshot" }),
+  });
 }

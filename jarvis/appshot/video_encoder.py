@@ -56,7 +56,7 @@ class VideoEncoder:
             while not self.stopping.is_set() or not self.frames.empty():
                 try:
                     image, elapsed = self.frames.get(timeout=0.1)
-                except queue.Empty:
+                except queue.Empty:  # Normal idle tick: recheck stop without blocking shutdown.
                     continue
                 if stream is None:
                     width, height = image.width(), image.height()

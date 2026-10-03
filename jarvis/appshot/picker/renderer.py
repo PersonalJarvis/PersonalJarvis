@@ -416,7 +416,7 @@ class _SelectWindow(QWidget):
 class Picker(QObject):
     """Owns the per-screen windows and reports exactly one result."""
 
-    def __init__(self, app: QApplication, hint: str) -> None:
+    def __init__(self, app: QApplication, hint: str = "") -> None:
         super().__init__()
         self._app = app
         self.hint = hint

@@ -1,5 +1,31 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## AppShot screen recordings (2026-10-03, T2)
+
+AppShots has one configurable recording shortcut (`Ctrl+Shift+9` by default).
+It opens the area selector; its full-screen button chooses the whole monitor.
+The same shortcut stops and saves. A visible native control also stops the
+recording. Videos contain no audio, stay in the local app data directory, and
+are available for playback/download on the AppShots page. They are not sent
+to the assistant or processed through screenshot text redaction.
+
+| Platform | Capture and permissions | Verification |
+|---|---|---|
+| Windows | Qt screen capture and the existing per-monitor selector; no additional OS grant. PyAV encodes locally in an isolated process. | Live area and 4K full-screen MP4 creation, recording status, clean stop and Escape cancellation verified. |
+| macOS | The existing just-in-time Screen Recording permission service gates the user gesture. The sidecar rechecks capture permission before opening the selector. Missing permission has an in-app request action. | Denied-state contract tests pass; a real macOS permission prompt and capture remain unverified. |
+| Linux/X11 | Qt captures the selected display using the existing selector. | Headless refusal and lifecycle tests pass; a real X11 desktop remains unverified. |
+| Linux/Wayland | Qt Multimedia requests the ScreenCast portal/PipeWire source. The user selects an area in that approved source's preview, or records the entire source. Global shortcuts retain the existing Wayland limitation; the AppShots button works without them. | Missing-dependency tests pass; real compositor/portal approval, denial and capture remain unverified. |
+
+Qt Multimedia is a Linux desktop extra; base/headless imports do not load Qt,
+PyAV or a capture device. Linux ARM64 and Windows ARM64 without the necessary
+desktop/encoder wheels report recording unavailable. Finalized MP4 files alone
+are downloadable. A parent-pipe close stops capture; finalization has a bounded
+timeout. The real Chrome light/dark UI check remains unverified when the
+visible browser connection is unavailable; component tests and a production
+build do not replace that check.
+
+The Wayland permission flow follows [Qt's Screen Capture limitations](https://doc.qt.io/qt-6/qscreencapture.html#screen-capture-limitations).
+
 ## Native macOS window controls (2026-10-03, T2)
 
 Main, reopened main, and detached windows retain Cocoa's native title bar on

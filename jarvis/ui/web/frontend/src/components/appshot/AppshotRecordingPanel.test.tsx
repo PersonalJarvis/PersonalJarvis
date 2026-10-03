@@ -46,7 +46,10 @@ describe("AppShot recording controls", () => {
     expect(fetcher.mock.calls).toHaveLength(1);
     fireEvent.click(allow);
     await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
-      "/api/permissions/screen_recording/request?dry_run=false", { method: "POST" },
+      "/api/permissions/screen_recording/request?dry_run=false", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ feature: "appshot" }),
+      },
     ));
   });
 

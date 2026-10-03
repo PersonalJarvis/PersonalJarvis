@@ -60,11 +60,9 @@ def capability() -> dict[str, Any]:
     elif is_wayland() and importlib.util.find_spec("PySide6.QtMultimedia") is None:
         detail = "Wayland recording requires Qt Multimedia, PipeWire and a ScreenCast portal."
     elif sys.platform == "darwin":
-        from jarvis.platform.permissions import PermissionId, get_system_permission_port
+        from jarvis.platform import screen_access
 
-        permission = not get_system_permission_port().runtime_access_granted(
-            PermissionId.SCREEN_RECORDING
-        )
+        permission = not screen_access.state_allows_capture(screen_access.screen_recording_state())
         if permission:
             detail = "Allow Screen Recording for Personal Jarvis in macOS System Settings."
     return {"available": not detail, "detail": detail, "permission_required": permission}
@@ -96,6 +94,16 @@ class RecordingService:
             config = await asyncio.to_thread(load_config)
             if not config.screen_context.enabled:
                 raise ValueError("Enable AppShots before starting a screen recording.")
+            if sys.platform == "darwin":
+                from jarvis.platform.screen_access import (
+                    ScreenCaptureRefused,
+                    require_screen_recording_async,
+                )
+
+                try:
+                    await require_screen_recording_async("appshot")
+                except ScreenCaptureRefused as exc:
+                    raise ValueError(exc.user_detail) from exc
             ready = await asyncio.to_thread(capability)
             if not ready["available"]:
                 raise ValueError(ready["detail"])
@@ -112,6 +120,8 @@ class RecordingService:
                     "jarvis.appshot.recording_worker",
                     "--output",
                     str(folder / f"{recording_id}.mp4"),
+                    "--language",
+                    str(getattr(config.ui, "language", "en")),
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
