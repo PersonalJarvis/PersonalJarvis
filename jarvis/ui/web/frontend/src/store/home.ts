@@ -47,6 +47,8 @@ interface HomeStore {
    */
   liveReply: string;
   liveSessionId: string | null;
+  /** History row captured when this call starts; navigation cannot reassign it. */
+  liveConversationId: string | null;
   ingest: (name: string, payload: unknown, tsMs: number) => void;
   /**
    * Replace the lane with a stored conversation (a reopened voice session);
@@ -127,6 +129,7 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   transcript: [],
   liveReply: "",
   liveSessionId: null,
+  liveConversationId: null,
   ingest: (name, payload, tsMs) => {
     if (name === "VoiceTranscriptUpdated") {
       const sessionId = (payload as { session_id?: string } | null)?.session_id;
@@ -174,7 +177,15 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
     if (name === "VoiceSessionStarted") {
       // A call already started elsewhere must not be ended on card re-entry.
-      set({ freshVoicePending: false, liveSessionId: (payload as { session_id?: string })?.session_id || null });
+      const sessionId = (payload as { session_id?: string })?.session_id || null;
+      const events = useEventStore.getState();
+      const continued = get().continuedVoiceId;
+      set({
+        freshVoicePending: false,
+        liveSessionId: sessionId,
+        liveConversationId: continued && events.activeKind === "voice" && events.activeThreadId === continued
+          ? continued : sessionId,
+      });
     }
     const before = get().transcript;
     const after = reduceTranscript(before, name, payload, tsMs);
@@ -184,5 +195,5 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
   },
   seedTranscript: (lines) => set({ transcript: lines, liveReply: "", freshVoicePending: false }),
-  resetTranscript: () => set({ transcript: [], liveReply: "", liveSessionId: null }),
+  resetTranscript: () => set({ transcript: [], liveReply: "", liveSessionId: null, liveConversationId: null }),
 }));
