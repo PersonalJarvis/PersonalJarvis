@@ -837,6 +837,149 @@ async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path
         svc.store.close()
 
 
+async def test_failed_live_room_turn_records_cost_before_failure(tmp_path: Path):
+    import asyncio
+
+    from jarvis.society.events import RoomState
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis",
+            members=["scout", "archivist"],
+            topic="Try one provider.",
+            live=True,
+        )
+
+        await svc.finish(
+            "society:scout",
+            "",
+            status="error",
+            turn_id="turn-1",
+            cost_usd=0.29,
+        )
+        for _ in range(200):
+            failed = await rt.rooms.get(room.room_id)
+            if failed is not None and failed.state is RoomState.FAILED:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("failed room turn did not terminalize")
+
+        events = await rt.store.events_for_trace(room.trace_id)
+        says = [event for event in events if event.msg_type is MsgType.SAY]
+        assert len(says) == 1
+        assert says[0].payload["silent"] is True
+        assert says[0].cost_usd == pytest.approx(0.29)
+        assert events[-1].msg_type is MsgType.ROOM_SETTLE
+        assert events[-1].payload["failed"] is True
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
+async def test_kill_switch_recovers_cancelled_room_cost_without_watcher_queue(tmp_path: Path):
+    from jarvis.society.events import RoomState
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis",
+            members=["scout", "archivist"],
+            topic="Stop this discussion.",
+            live=True,
+        )
+        assert (await rt.rooms.get(room.room_id)).inflight_turn_id == "turn-1"
+
+        # Simulate a detached subscriber: the durable terminal exists, but the
+        # room watcher cannot consume it before the kill switch reconciliation.
+        svc.queues["society:scout"].clear()
+        await svc.finish(
+            "society:scout",
+            "",
+            status="cancelled",
+            turn_id="turn-1",
+            cost_usd=0.31,
+        )
+
+        result = await rt.engage_kill_switch()
+        settled = await rt.rooms.get(room.room_id)
+        assert result["engaged"] is True
+        assert settled is not None
+        assert settled.state is RoomState.SETTLED
+        assert settled.settle_reason == "kill_switch"
+
+        events = await rt.store.events_for_trace(room.trace_id)
+        says = [event for event in events if event.msg_type is MsgType.SAY]
+        assert len(says) == 1
+        assert says[0].payload["silent"] is True
+        assert says[0].cost_usd == pytest.approx(0.31)
+        assert events[-1].msg_type is MsgType.ROOM_SETTLE
+        assert events[-1].payload.get("failed") is not True
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
+async def test_manual_room_settle_cancels_owned_turn_and_recovers_cost(tmp_path: Path):
+    from jarvis.society.events import RoomState
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis",
+            members=["scout", "archivist"],
+            topic="Stop manually.",
+            live=True,
+        )
+        assert rt.scheduler.running == {f"room:{room.room_id}:turn-1": "scout"}
+
+        svc.queues["society:scout"].clear()
+        await svc.finish(
+            "society:scout",
+            "",
+            status="cancelled",
+            turn_id="turn-1",
+            cost_usd=0.17,
+        )
+        settled = await rt.settle_room(room.room_id, reason="user", by="user")
+
+        assert settled.state is RoomState.SETTLED
+        assert settled.settle_reason == "user"
+        assert svc.cancelled_turns == ["turn-1"]
+        assert rt.scheduler.running == {}
+        events = await rt.store.events_for_trace(room.trace_id)
+        says = [event for event in events if event.msg_type is MsgType.SAY]
+        assert len(says) == 1
+        assert says[0].payload["silent"] is True
+        assert says[0].cost_usd == pytest.approx(0.17)
+        assert events[-1].msg_type is MsgType.ROOM_SETTLE
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
 async def test_live_room_completion_reenters_voice_announcement_path(tmp_path: Path):
     import asyncio
 

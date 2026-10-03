@@ -304,6 +304,41 @@ async def test_silent_claim_records_cost_without_consuming_message_cap(rooms):
     assert says[0].cost_usd == pytest.approx(0.19)
 
 
+async def test_failed_claim_commits_cost_and_terminal_once(rooms):
+    service, store = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+    await service.claim_turn(room.room_id, "claim-failed")
+    await service.bind_turn(room.room_id, "claim-failed", "turn-failed")
+
+    failed = await service.fail_claim(
+        room.room_id,
+        "claim-failed",
+        reason="provider_error",
+        cost_usd=0.23,
+    )
+
+    assert failed.state is RoomState.FAILED
+    assert failed.settle_reason == "provider_error"
+    events = await store.events_for_trace(room.trace_id)
+    assert [event.msg_type for event in events] == [
+        MsgType.ROOM_OPEN,
+        MsgType.SAY,
+        MsgType.ROOM_SETTLE,
+    ]
+    assert events[1].payload["silent"] is True
+    assert events[1].cost_usd == pytest.approx(0.23)
+    assert events[2].payload["failed"] is True
+
+    repeated = await service.fail_claim(
+        room.room_id,
+        "claim-failed",
+        reason="different",
+        cost_usd=0.99,
+    )
+    assert repeated.settle_reason == "provider_error"
+    assert len(await store.events_for_trace(room.trace_id)) == 3
+
+
 async def test_release_claim_requires_exact_owner_and_preserves_turn(rooms):
     service, store = rooms
     room = await service.open(opened_by="jarvis", members=["a", "b"])

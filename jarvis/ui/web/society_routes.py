@@ -995,7 +995,7 @@ async def room_say(room_id: str, body: RoomSayBody, request: Request) -> dict[st
 async def room_settle(room_id: str, request: Request) -> dict[str, Any]:
     rt = await _runtime(request)
     try:
-        room = await rt.rooms.settle(room_id, reason="user", by="user")
+        room = await rt.settle_room(room_id, reason="user", by="user")
     except RoomError as exc:
         raise _typed_error(exc) from exc
     return {"room": room.to_dict()}

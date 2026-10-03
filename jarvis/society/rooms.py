@@ -309,6 +309,43 @@ class Rooms:
             claim_id=claim_id,
         )
 
+    async def settle_claim(
+        self,
+        room_id: str,
+        claim_id: str,
+        *,
+        reason: str,
+        by: str = "scheduler",
+        cost_usd: float = 0.0,
+    ) -> Room:
+        async with self._turn_lock(room_id):
+            return await self._terminalize_claim(
+                room_id,
+                claim_id,
+                reason=reason,
+                by=by,
+                failed=False,
+                cost_usd=cost_usd,
+            )
+
+    async def fail_claim(
+        self,
+        room_id: str,
+        claim_id: str,
+        *,
+        reason: str,
+        cost_usd: float = 0.0,
+    ) -> Room:
+        async with self._turn_lock(room_id):
+            return await self._terminalize_claim(
+                room_id,
+                claim_id,
+                reason=reason,
+                by="scheduler",
+                failed=True,
+                cost_usd=cost_usd,
+            )
+
     async def say(self, room_id: str, member: str, text: str, *, cost_usd: float = 0.0) -> Room:
         return await self._take_turn(
             room_id,
@@ -365,6 +402,44 @@ class Rooms:
                 FailureReason.BLOCKED_BY_POLICY,
                 f"room {room_id!r} changed concurrently; retry",
             )
+
+    async def _terminalize_claim(
+        self,
+        room_id: str,
+        claim_id: str,
+        *,
+        reason: str,
+        by: str,
+        failed: bool,
+        cost_usd: float,
+    ) -> Room:
+        cost_usd = max(0.0, float(cost_usd))
+        for _ in range(2):
+            room = await self.get(room_id)
+            if room is None:
+                raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+            if room.state in (RoomState.SETTLED, RoomState.FAILED):
+                return room
+            self._require_claim(room, claim_id)
+            member = room.inflight_member
+            expected_updated_ms = room.updated_ms
+            events: list[SocietyEnvelope] = []
+            if cost_usd > 0:
+                events.append(self._turn_event(room, member, "", cost_usd=cost_usd))
+            events.append(self._terminal_event(room, reason=reason, by=by, failed=failed))
+            if await self._persist(
+                room,
+                expected_updated_ms=expected_updated_ms,
+                events=events,
+            ):
+                return room
+        latest = await self.get(room_id)
+        if latest is not None and latest.state in (RoomState.SETTLED, RoomState.FAILED):
+            return latest
+        raise RoomError(
+            FailureReason.BLOCKED_BY_POLICY,
+            f"room {room_id!r} changed concurrently; retry",
+        )
 
     async def settle(self, room_id: str, *, reason: str, by: str = "scheduler") -> Room:
         async with self._turn_lock(room_id):
@@ -457,19 +532,7 @@ class Rooms:
     ) -> list[SocietyEnvelope]:
         events: list[SocietyEnvelope] = []
         if text or cost_usd > 0:
-            payload = {"room_id": room.room_id, "round": room.round, "text": text}
-            if not text:
-                payload["silent"] = True
-            events.append(
-                SocietyEnvelope(
-                    msg_type=MsgType.SAY,
-                    from_agent=member,
-                    to_agent=None,
-                    trace_id=room.trace_id,
-                    cost_usd=cost_usd,
-                    payload=payload,
-                )
-            )
+            events.append(self._turn_event(room, member, text, cost_usd=cost_usd))
         if text:
             room.message_count += 1
             room.spoke_this_round = True
@@ -478,6 +541,30 @@ class Rooms:
         if terminal is not None:
             events.append(terminal)
         return events
+
+    @staticmethod
+    def _turn_event(
+        room: Room,
+        member: str,
+        text: str,
+        *,
+        cost_usd: float,
+    ) -> SocietyEnvelope:
+        payload: dict[str, Any] = {
+            "room_id": room.room_id,
+            "round": room.round,
+            "text": text,
+        }
+        if not text:
+            payload["silent"] = True
+        return SocietyEnvelope(
+            msg_type=MsgType.SAY,
+            from_agent=member,
+            to_agent=None,
+            trace_id=room.trace_id,
+            cost_usd=cost_usd,
+            payload=payload,
+        )
 
     def _advance(self, room: Room) -> SocietyEnvelope | None:
         if room.message_count >= MAX_MESSAGES:

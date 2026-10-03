@@ -1175,16 +1175,29 @@ class SocietyRuntime:
             elif event.get("kind") == "error":
                 error = str(payload.get("message") or error)
         payload = terminal.get("payload") or {}
+        raw_cost = payload.get("cost_usd")
+        cost_usd = max(0.0, float(raw_cost)) if isinstance(raw_cost, (int, float)) else 0.0
         status = str(payload.get("status") or "done")
         if status not in ("ok", "done", "completed"):
             error = str(payload.get("error") or error or status)
             try:
-                await self.rooms.fail(room_id, reason=error[:500] or "turn_failed")
+                if await self.store.kill_switch():
+                    await self.rooms.settle_claim(
+                        room_id,
+                        claim_id,
+                        reason="kill_switch",
+                        cost_usd=cost_usd,
+                    )
+                else:
+                    await self.rooms.fail_claim(
+                        room_id,
+                        claim_id,
+                        reason=error[:500] or "turn_failed",
+                        cost_usd=cost_usd,
+                    )
             except RoomError:
                 log.debug("society room %s was terminal before failed turn landed", room_id)
             return
-        raw_cost = payload.get("cost_usd")
-        cost_usd = max(0.0, float(raw_cost)) if isinstance(raw_cost, (int, float)) else 0.0
         try:
             room = await self.rooms.complete_claim(
                 room_id,
@@ -1478,6 +1491,75 @@ class SocietyRuntime:
                     "society kill switch: chat %s did not stop", session_id, exc_info=result
                 )
 
+    @staticmethod
+    def _terminal_cost(terminal: dict[str, Any] | None) -> float:
+        payload = (terminal or {}).get("payload") or {}
+        raw_cost = payload.get("cost_usd")
+        return max(0.0, float(raw_cost)) if isinstance(raw_cost, (int, float)) else 0.0
+
+    async def settle_room(
+        self,
+        room_id: str,
+        *,
+        reason: str,
+        by: str = "user",
+    ) -> Room:
+        """Cancel the exact owned room turn, recover its terminal cost, then settle."""
+        room = await self.rooms.get(room_id)
+        if room is None:
+            raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+        if room.state in (RoomState.SETTLED, RoomState.FAILED):
+            return room
+        service = self.chat_service()
+        terminal: dict[str, Any] | None = None
+        if (
+            service is not None
+            and room.inflight_claim_id
+            and room.inflight_turn_id
+            and room.inflight_member
+        ):
+            session_id = f"society:{room.inflight_member}"
+            cancel = getattr(service, "cancel", None)
+            if callable(cancel):
+                kwargs = (
+                    {"expected_turn_id": room.inflight_turn_id}
+                    if _accepts_keyword(cancel, "expected_turn_id")
+                    else {}
+                )
+                try:
+                    await cancel(session_id, **kwargs)
+                except Exception:  # noqa: BLE001 — terminal state remains recoverable below
+                    log.warning(
+                        "society room %s turn could not be cancelled before settle",
+                        room_id,
+                        exc_info=True,
+                    )
+            terminal_reader = getattr(getattr(service, "store", None), "turn_terminal", None)
+            if callable(terminal_reader):
+                terminal = await asyncio.to_thread(
+                    terminal_reader,
+                    session_id,
+                    room.inflight_turn_id,
+                )
+            self.scheduler.note_run_ended(
+                f"room:{room.room_id}:{room.inflight_turn_id}"
+            )
+            return await self.rooms.settle_claim(
+                room.room_id,
+                room.inflight_claim_id,
+                reason=reason,
+                by=by,
+                cost_usd=self._terminal_cost(terminal),
+            )
+        return await self.rooms.settle(room.room_id, reason=reason, by=by)
+
+    async def _settle_room_for_kill_switch(self, room: Room) -> Room:
+        return await self.settle_room(
+            room.room_id,
+            reason="kill_switch",
+            by="scheduler",
+        )
+
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
@@ -1485,7 +1567,7 @@ class SocietyRuntime:
         await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):
-            await self.rooms.settle(room.room_id, reason="kill_switch")
+            await self._settle_room_for_kill_switch(room)
             settled += 1
         manager = self._get_manager()
         killed = 0
