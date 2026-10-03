@@ -522,9 +522,11 @@ export interface ToyFigureProps {
   seatHeight?: number;
   /** Something held in the right hand (e.g. a dog treat); the arm then stays raised forward. */
   holding?: ReactNode;
+  /** Worn on the upper back (e.g. the level wings); rides the torso through every hop and lean. */
+  back?: ReactNode;
 }
 
-export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding }: ToyFigureProps) {
+export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding, back }: ToyFigureProps) {
   const holds = useRef(false);
   holds.current = !!holding;
   const scale = heightM / TOY_HEIGHT;
@@ -620,6 +622,7 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
           <mesh geometry={GEO.lowSphere} material={matte(look.skin)} position={[0, TOY.neckY - 0.01, 0]} scale={[0.07, 0.04, 0.07]} />
           <Arm side={1} look={look} shoulder={lShoulder} elbow={lElbow} />
           <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} holding={holding} />
+          {back && <group position={[0, 0.2, -TOY.torso.d / 2 - 0.01]}>{back}</group>}
           <group ref={head} position={[0, TOY.neckY, 0]}>
             <mesh geometry={GEO.sphere} material={matte(look.skin)} position={[0, HD.y, 0]} scale={[HD.rx, HD.ry, HD.rz]} castShadow />
             <Face look={look} />

@@ -73,5 +73,5 @@ export const EFFECT_COLOURS: Record<Exclude<RewardId, `frame_${string}`>, readon
   gadget_drone: ["#e2e8f0", "#38bdf8"],
   gadget_halo: ["#ffe28a"],
   gadget_crown: ["#ffcf40", "#e11d48"],
-  gadget_wings: ["#bfe9ff", "#ffffff"],
+  gadget_wings: ["#fbf8ef", "#f6dfa4"],
 };

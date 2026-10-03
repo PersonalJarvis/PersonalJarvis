@@ -5,12 +5,12 @@
  *
  * Auras: a warm glow, a turning rune circle, a crackling storm ring and the
  * prismatic legend circle with rising motes. Gadgets: a hovering drone, a
- * halo, a crown and a pair of light wings.
+ * halo and a crown. The wings are worn on the figure's back (AngelWings).
  */
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
-  AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, Shape, ShapeGeometry,
+  AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide,
   type Group, type LineSegments, type Mesh, type MeshBasicMaterial, type Points,
 } from "three";
 import { EFFECT_COLOURS, type RewardId } from "../levelCatalog";
@@ -173,10 +173,7 @@ function Motes({ radius, paused }: { radius: number; paused: boolean }) {
 
 // ------------------------------------------------------------------ gadgets
 
-/**
- * `top` is the height of the wearer's head top above the floor; `heading`
- * (from the source) turns the wings onto its back.
- */
+/** `top` is the height of the wearer's head top above the floor. */
 export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }: {
   kind: GadgetKind; source: FlairSource; top: number; scale?: number; paused: boolean; reduced: boolean;
 }) {
@@ -184,9 +181,7 @@ export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }
   const extra = useRef<Group>(null);
   const blink = useRef<Mesh>(null);
   const group = useFollow(source, paused, (g, at, t) => {
-    const lift = at.y !== undefined && kind !== "gadget_wings" ? at.y : top;
-    g.position.set(at.x, kind === "gadget_wings" ? top * 0.55 : lift, at.z);
-    if (kind === "gadget_wings") g.rotation.y = at.heading ?? 0;
+    g.position.set(at.x, at.y ?? top, at.z);
     const calm = reduced ? 0 : 1;
     if (kind === "gadget_halo" && spinner.current) {
       spinner.current.position.y = 0.14 * scale + 0.025 * Math.sin(t * 2.2) * calm;
@@ -200,13 +195,6 @@ export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }
         extra.current.children.forEach((rotor, i) => { if (i < 4) rotor.rotation.y = t * 40 * calm; });
       }
       if (blink.current) (blink.current.material as MeshBasicMaterial).opacity = Math.sin(t * 6) > 0.2 ? 1 : 0.2;
-    }
-    if (kind === "gadget_wings" && extra.current) {
-      // Each wing swings its tip backwards (+θ about y sends +x towards −z) and forwards again.
-      const sweep = WING_REST + (reduced ? 0 : 0.22 + 0.22 * Math.sin(t * 3.2));
-      const [left, right] = extra.current.children;
-      if (left) left.rotation.y = sweep;
-      if (right) right.rotation.y = -sweep;
     }
   });
   const [main, accent] = EFFECT_COLOURS[kind];
@@ -265,38 +253,6 @@ export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }
           </group>
         </group>
       )}
-      {kind === "gadget_wings" && <Wings refGroup={extra} colour={main} scale={scale} />}
-    </group>
-  );
-}
-
-/** The wings' resting sweep behind the back, radians. */
-const WING_REST = 0.35;
-
-function Wings({ refGroup, colour, scale }: { refGroup: RefObject<Group>; colour: string; scale: number }) {
-  const geometry = useMemo(() => {
-    // One feathered wing, drawn outward along +x from the shoulder.
-    const s = new Shape();
-    s.moveTo(0, 0);
-    s.bezierCurveTo(0.18, 0.2, 0.42, 0.26, 0.6, 0.18);
-    s.lineTo(0.5, 0.08);
-    s.lineTo(0.56, 0.0);
-    s.lineTo(0.42, -0.04);
-    s.lineTo(0.46, -0.13);
-    s.lineTo(0.3, -0.12);
-    s.bezierCurveTo(0.18, -0.12, 0.06, -0.06, 0, 0);
-    return new ShapeGeometry(s, 12);
-  }, []);
-  useEffect(() => () => geometry.dispose(), [geometry]);
-  return (
-    <group ref={refGroup} position={[0, 0, -0.13 * scale]} scale={scale}>
-      {[1, -1].map((side) => (
-        <group key={side} rotation={[0, side * WING_REST, 0]}>
-          <mesh geometry={geometry} scale={[side, 1, 1]}>
-            <meshBasicMaterial color={colour} transparent opacity={0.55} blending={AdditiveBlending} depthWrite={false} side={DoubleSide} />
-          </mesh>
-        </group>
-      ))}
     </group>
   );
 }

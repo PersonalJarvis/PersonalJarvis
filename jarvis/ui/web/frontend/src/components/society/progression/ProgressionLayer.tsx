@@ -50,7 +50,8 @@ function Flair({ loadout, source, topSource, top, scale, paused, reduced }: {
     <>
       {loadout.aura && <CosmeticAura kind={loadout.aura as AuraKind} source={source} scale={scale} paused={paused} reduced={reduced} />}
       {loadout.trail && !reduced && <CosmeticTrail kind={loadout.trail as TrailKind} source={source} scale={scale} paused={paused} />}
-      {loadout.gadget && <CosmeticGadget kind={loadout.gadget as GadgetKind} source={topSource ?? source} top={top} scale={scale}
+      {/* The wings are worn on the figure itself (AngelWings in ToyFigure's back slot), not floated beside it. */}
+      {loadout.gadget && loadout.gadget !== "gadget_wings" && <CosmeticGadget kind={loadout.gadget as GadgetKind} source={topSource ?? source} top={top} scale={scale}
         paused={paused} reduced={reduced} />}
     </>
   );
