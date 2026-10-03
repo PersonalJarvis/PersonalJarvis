@@ -187,10 +187,23 @@ async def _with_markup(shot: Appshot, markup: Any) -> Appshot:
 
     try:
         image = await asyncio.to_thread(apply_to_bytes, shot.image, shot.mime, markup)
+        width, height = await asyncio.to_thread(_image_size, image)
     except Exception:  # noqa: BLE001 - the plain appshot is still worth sending
         log.warning("appshot: markings could not be applied; sent unmarked", exc_info=True)
         return shot
-    return replace(shot, image=image, note=f"{shot.note}\n\n{EDIT_NOTE}")
+    # A background frame makes the picture larger than the area.
+    return replace(
+        shot, image=image, width=width, height=height, note=f"{shot.note}\n\n{EDIT_NOTE}"
+    )
+
+
+def _image_size(image: bytes) -> tuple[int, int]:
+    import io  # noqa: PLC0415
+
+    from PIL import Image  # noqa: PLC0415
+
+    with Image.open(io.BytesIO(image)) as picture:
+        return picture.size
 
 
 async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:

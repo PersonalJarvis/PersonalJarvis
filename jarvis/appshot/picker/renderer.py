@@ -91,6 +91,20 @@ _HANDLE_CURSORS = {
     "e": Qt.CursorShape.SizeHorCursor,
     "w": Qt.CursorShape.SizeHorCursor,
 }
+#: Cursor per marking grip kind (:func:`markup_model.grip_cursor`).
+_GRIP_CURSORS = {
+    "fdiag": Qt.CursorShape.SizeFDiagCursor,
+    "bdiag": Qt.CursorShape.SizeBDiagCursor,
+    "hor": Qt.CursorShape.SizeHorCursor,
+    "grab": Qt.CursorShape.OpenHandCursor,
+}
+#: Arrow keys nudge the selected marking.
+_NUDGE = {
+    Qt.Key.Key_Left: (-1.0, 0.0),
+    Qt.Key.Key_Right: (1.0, 0.0),
+    Qt.Key.Key_Up: (0.0, -1.0),
+    Qt.Key.Key_Down: (0.0, 1.0),
+}
 #: Keyboard shortcuts for the toolbar's actions (with Ctrl / Cmd).
 _ACTION_KEYS = {
     Qt.Key.Key_C: wire.ACTION_COPY,
@@ -171,14 +185,24 @@ class _MarkupState:
         self.tool = mm.ARROW
         self.color = mm.PALETTE[0]
         self.width_index = mm.DEFAULT_WIDTH_INDEX
+        self.arrow_style = mm.ARROW_STYLES[0]
+        self.text_style = mm.TEXT_STYLES[0]
+        self.redact_mode = mm.REDACT_MODES[0]
+        #: The background frame (preset, padding, radius, shadow), or ``None``.
+        self.background: dict | None = None
         #: The marking being dragged out right now.
         self.drawing: mm.Shape | None = None
-        #: The text marking being typed (not yet in ``shapes``).
+        #: The text being typed (not in ``shapes`` while open); where an edited
+        #: text came from, and how it was, so Esc can put it back.
         self.typing: mm.Shape | None = None
-        #: Index into ``shapes`` the move tool holds.
-        self.picked: int | None = None
-        #: ``("resize", handle)`` / ``("move", None)`` while a drag runs.
+        self.typing_index: int | None = None
+        self.typing_original: mm.Shape | None = None
+        #: Index into ``shapes`` of the selected marking (grips shown).
+        self.selected: int | None = None
+        #: ``("area", handle)`` / ``("grip", grip)`` / ``("move", None)``.
         self.drag: tuple[str, str | None] | None = None
+        #: The selected marking as it was when a grip drag began.
+        self.original: mm.Shape | None = None
         self.last: QPointF | None = None
         self.moved = False
 
@@ -190,6 +214,11 @@ class _MarkupState:
         sel = self.sel
         assert sel is not None
         return (sel.x(), sel.y(), sel.width(), sel.height())
+
+    def selected_shape(self) -> mm.Shape | None:
+        if self.selected is None or not 0 <= self.selected < len(self.shapes):
+            return None
+        return self.shapes[self.selected]
 
 
 class _SelectWindow(QWidget):
@@ -482,10 +511,12 @@ class _SelectWindow(QWidget):
             bar.color_chosen.connect(self._set_color)
             bar.width_cycled.connect(lambda: self._step_width(1, wrap=True))
             bar.action.connect(self._toolbar_action)
+            bar.option_chosen.connect(self._set_option)
             self._toolbar = bar
         self._toolbar.set_tool(m.tool)
         self._toolbar.set_color(m.color)
         self._toolbar.set_width(m.width)
+        self._sync_options()
         self._sync_history()
         self._place_toolbar()
         self._toolbar.show()
@@ -518,23 +549,59 @@ class _SelectWindow(QWidget):
             h = self._markup.history
             self._toolbar.set_history(h.can_undo, h.can_redo)
 
+    def _sync_options(self) -> None:
+        """The option row for the current tool (or the selected marking's kind)."""
+        bar = self._toolbar
+        if bar is None:
+            return
+        m = self._markup
+        kind = m.tool
+        selected = m.selected_shape()
+        if kind == mm.MOVE and selected is not None:
+            kind = selected.kind
+        if kind == mm.ARROW:
+            style = selected.style if selected is not None and selected.kind == mm.ARROW else ""
+            options = [(s, f"arrow_{s}") for s in mm.ARROW_STYLES]
+            bar.set_options(options, style or m.arrow_style, "arrow")
+        elif kind == mm.TEXT:
+            style = selected.style if selected is not None and selected.kind == mm.TEXT else ""
+            options = [(s, f"text_{s}") for s in mm.TEXT_STYLES]
+            bar.set_options(options, style or m.text_style, "text")
+        elif kind == mm.REDACT:
+            mode = selected.mode if selected is not None and selected.kind == mm.REDACT else ""
+            options = [(s, f"redact_{s}") for s in mm.REDACT_MODES]
+            bar.set_options(options, mode or m.redact_mode, "redact")
+        elif kind == mm.BACKGROUND:
+            options = [("off", "background_off")]
+            options += [(preset, "preset") for preset, _stops in mm.BACKGROUND_PRESETS]
+            chosen = m.background["preset"] if m.background else "off"
+            bar.set_options(options, chosen, "background")
+        else:
+            bar.set_options([], "")
+        self._place_toolbar()
+
     def _commit(self) -> None:
         self._markup.history.push(self._markup.shapes)
         self._sync_history()
 
     def _set_tool(self, kind: str) -> None:
         self._commit_typing()
-        self._markup.tool = kind
-        self._markup.picked = None
+        m = self._markup
+        m.tool = kind
+        if mm.grab_scope(kind) != "any":
+            m.selected = None
+        if kind == mm.BACKGROUND and m.background is None:
+            m.background = dict(mm.DEFAULT_BACKGROUND)
         if self._toolbar is not None:
             self._toolbar.set_tool(kind)
+        self._sync_options()
         self._update_cursor(None)
         self.update()
 
     def _set_color(self, colour: str) -> None:
         m = self._markup
         m.color = colour
-        target = m.typing or (m.shapes[m.picked] if m.picked is not None else None)
+        target = m.typing or m.selected_shape()
         if target is not None:
             target.color = colour
             if target is not m.typing:
@@ -543,18 +610,53 @@ class _SelectWindow(QWidget):
             self._toolbar.set_color(colour)
         self.update()
 
-    def _step_width(self, step: int, *, wrap: bool = False) -> None:
+    def _step_width(self, step: int, *, wrap: bool = False, to: int | None = None) -> None:
         m = self._markup
         count = len(mm.WIDTHS)
-        index = m.width_index + step
-        m.width_index = index % count if wrap else max(0, min(count - 1, index))
-        target = m.typing or (m.shapes[m.picked] if m.picked is not None else None)
+        if to is not None:
+            m.width_index = max(0, min(count - 1, to))
+        else:
+            index = m.width_index + step
+            m.width_index = index % count if wrap else max(0, min(count - 1, index))
+        target = m.typing or m.selected_shape()
         if target is not None:
             target.width = m.width
+            if target.kind == mm.TEXT:
+                target.size = mm.text_size(m.width)
+            elif target.kind == mm.COUNTER:
+                target.size = mm.counter_size(m.width)
             if target is not m.typing:
                 self._commit()
         if self._toolbar is not None:
             self._toolbar.set_width(m.width)
+        self.update()
+
+    def _set_option(self, group: str, value: str) -> None:
+        m = self._markup
+        selected = m.selected_shape()
+        changed = False
+        if group == "arrow":
+            m.arrow_style = value
+            if selected is not None and selected.kind == mm.ARROW:
+                selected.style, changed = value, True
+        elif group == "text":
+            m.text_style = value
+            target = m.typing or (selected if selected and selected.kind == mm.TEXT else None)
+            if target is not None:
+                target.style = value
+                changed = target is not m.typing
+        elif group == "redact":
+            m.redact_mode = value
+            if selected is not None and selected.kind == mm.REDACT:
+                selected.mode, changed = value, True
+        elif group == "background":
+            if value == "off":
+                m.background = None
+            else:
+                m.background = {**(m.background or mm.DEFAULT_BACKGROUND), "preset": value}
+        if changed:
+            self._commit()
+        self._sync_options()
         self.update()
 
     def _toolbar_action(self, name: str) -> None:
@@ -570,11 +672,13 @@ class _SelectWindow(QWidget):
     def _undo(self, *, redo: bool) -> None:
         m = self._markup
         m.typing = None
+        m.typing_index = None
         state = m.history.redo() if redo else m.history.undo()
         if state is not None:
             m.shapes = state
-            m.picked = None
+            m.selected = None
         self._sync_history()
+        self._sync_options()
         self.update()
 
     def _deliver(self, action: str) -> None:
@@ -590,24 +694,80 @@ class _SelectWindow(QWidget):
             sel.width() / self.width(),
             sel.height() / self.height(),
         )
-        markup = None
-        if m.shapes:
+        markup: dict | None = None
+        if m.shapes or m.background:
             markup = {
-                "overlay": annotate.render_overlay(m.shapes, sel, self._scale()),
+                "overlay": annotate.render_overlay(m.shapes, sel, self._scale())
+                if m.shapes
+                else "",
                 "hides": mm.hide_fractions(m.shapes, m.box()),
             }
+            if m.background:
+                markup["background"] = dict(m.background)
         self._owner.finish(self, frac, action=action, markup=markup)
 
-    def _commit_typing(self) -> None:
+    def _start_typing(self, at: mm.Point, *, index: int | None = None) -> None:
+        """Open the text box: a new one at ``at``, or the text at ``index``."""
         m = self._markup
-        shape = m.typing
+        if index is not None:
+            m.typing = m.shapes.pop(index)
+            m.typing_index = index
+            m.typing_original = m.typing.copy()
+        else:
+            size = mm.text_size(m.width)
+            m.typing = mm.Shape(
+                mm.TEXT,
+                color=m.color,
+                width=m.width,
+                size=size,
+                style=m.text_style,
+                points=[(at[0], at[1] - size * 0.62)],
+            )
+            m.typing_index = None
+        m.selected = None
+        self._sync_options()
+        self.update()
+
+    def _commit_typing(self, *, cancel: bool = False) -> None:
+        m = self._markup
+        shape, index = m.typing, m.typing_index
         if shape is None:
             return
-        m.typing = None
+        m.typing, m.typing_index = None, None
+        original, m.typing_original = m.typing_original, None
+        if cancel:
+            if index is not None and original is not None:
+                # Esc on an edited text keeps it as it was.
+                m.shapes.insert(min(index, len(m.shapes)), original)
+            self.update()
+            return
+        shape.text = shape.text.rstrip()
         if mm.is_meaningful(shape):
-            m.shapes.append(shape)
+            if index is not None:
+                m.shapes.insert(min(index, len(m.shapes)), shape)
+            else:
+                m.shapes.append(shape)
             self._commit()
+        elif index is not None:
+            self._commit()  # emptied: the text is gone
         self.update()
+
+    def _text_at(self, point: mm.Point) -> int | None:
+        index = mm.shape_at(self._markup.shapes, point, annotate.qt_measure, areas=False)
+        if index is not None and self._markup.shapes[index].kind == mm.TEXT:
+            return index
+        return None
+
+    def _grabbable(self, point: mm.Point) -> int | None:
+        """The marking a press at ``point`` would move with the current tool."""
+        m = self._markup
+        scope = mm.grab_scope(m.tool)
+        if scope == "none":
+            return None
+        index = mm.shape_at(m.shapes, point, annotate.qt_measure, areas=m.tool == mm.MOVE)
+        if index is None or (m.tool == mm.TEXT and m.shapes[index].kind == mm.TEXT):
+            return None
+        return index if scope == "any" or index == m.selected else None
 
     def _markup_key(self, event) -> None:  # noqa: C901 - one key table
         m = self._markup
@@ -618,8 +778,9 @@ class _SelectWindow(QWidget):
             self._typing_key(event, key, mods, ctrl)
             return
         if key == Qt.Key.Key_Escape:
-            if m.picked is not None:
-                m.picked = None
+            if m.selected is not None:
+                m.selected = None
+                self._sync_options()
                 self.update()
             else:
                 self._owner.finish(None, None)
@@ -631,15 +792,20 @@ class _SelectWindow(QWidget):
             self._undo(redo=True)
         elif ctrl and key in _ACTION_KEYS:
             self._deliver(_ACTION_KEYS[key])
-        elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and m.picked is not None:
-            del m.shapes[m.picked]
-            m.picked = None
+        elif key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace) and m.selected is not None:
+            del m.shapes[m.selected]
+            m.selected = None
+            self._commit()
+            self._sync_options()
+            self.update()
+        elif key in _NUDGE and m.selected is not None:
+            dx, dy = _NUDGE[key]
+            step = 10.0 if mods & Qt.KeyboardModifier.ShiftModifier else 1.0
+            m.shapes[m.selected] = mm.translated(m.shapes[m.selected], dx * step, dy * step)
             self._commit()
             self.update()
-        elif not ctrl and Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
-            index = int(key) - int(Qt.Key.Key_1)
-            if index < len(mm.PALETTE):
-                self._set_color(mm.PALETTE[index])
+        elif not ctrl and Qt.Key.Key_1 <= key <= Qt.Key.Key_5:
+            self._step_width(0, to=int(key) - int(Qt.Key.Key_1))
         elif not ctrl and event.text():
             letter = event.text().upper()
             for kind, shortcut in mm.TOOL_KEYS.items():
@@ -651,12 +817,14 @@ class _SelectWindow(QWidget):
         shape = self._markup.typing
         assert shape is not None
         if key == Qt.Key.Key_Escape:
-            self._markup.typing = None
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._commit_typing(cancel=True)
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if mods & Qt.KeyboardModifier.ShiftModifier:
                 shape.text += "\n"
             else:
                 self._commit_typing()
+                return
         elif key == Qt.Key.Key_Backspace:
             shape.text = shape.text[:-1]
         elif ctrl and key == Qt.Key.Key_V:
@@ -673,7 +841,7 @@ class _SelectWindow(QWidget):
             if m.drawing is not None:
                 m.drawing = None
             elif m.typing is not None:
-                m.typing = None
+                self._commit_typing(cancel=True)
             elif not m.shapes:
                 self._end_markup()
                 return
@@ -682,15 +850,32 @@ class _SelectWindow(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         self._commit_typing()
+        selected = m.selected_shape()
+        if selected is not None and mm.grab_scope(m.tool) != "none":
+            grip = mm.grip_at(selected, point, mm.HANDLE_GRAB_PX + 1, annotate.qt_measure)
+            if grip is not None:
+                m.drag, m.original, m.moved = ("grip", grip), selected.copy(), False
+                return
         handle = mm.handle_at(m.box(), point)
         if handle is not None:
-            m.drag = ("resize", handle)
+            m.drag = ("area", handle)
             return
+        grabbed = self._grabbable(point)
+        if grabbed is not None:
+            m.selected = grabbed
+            m.drag, m.last, m.moved = ("move", None), p, False
+            self._sync_options()
+            self.update()
+            return
+        if m.selected is not None:
+            m.selected = None
+            self._sync_options()
         inside = m.sel is not None and m.sel.contains(p)
-        if m.tool == mm.MOVE:
-            m.picked = mm.shape_at(m.shapes, point)
-            if m.picked is not None:
-                m.drag, m.last, m.moved = ("move", None), p, False
+        if m.tool in (mm.MOVE, mm.BACKGROUND):
+            if not inside and not m.shapes:
+                self._end_markup()
+                self.mousePressEvent(event)
+                return
             self.update()
             return
         if not inside:
@@ -699,20 +884,17 @@ class _SelectWindow(QWidget):
                 self._end_markup()
                 self.mousePressEvent(event)
             return
-        m.picked = None
         if m.tool == mm.TEXT:
-            m.typing = mm.Shape(
-                mm.TEXT,
-                color=m.color,
-                width=m.width,
-                points=[(point[0], point[1] - mm.text_size(m.width) / 2.0)],
-            )
-        elif m.tool == mm.COUNTER:
+            index = self._text_at(point)
+            self._start_typing(point, index=index)
+            return
+        if m.tool == mm.COUNTER:
             m.shapes.append(
                 mm.Shape(
                     mm.COUNTER,
                     color=m.color,
                     width=m.width,
+                    size=mm.counter_size(m.width),
                     points=[point],
                     number=mm.next_counter(m.shapes),
                 )
@@ -721,22 +903,37 @@ class _SelectWindow(QWidget):
         elif m.tool in mm.STROKE_KINDS:
             m.drawing = mm.Shape(m.tool, color=m.color, width=m.width, points=[point])
         else:
-            m.drawing = mm.Shape(m.tool, color=m.color, width=m.width, points=[point, point])
+            m.drawing = mm.Shape(
+                m.tool,
+                color=m.color,
+                width=m.width,
+                points=[point, point],
+                style=m.arrow_style if m.tool == mm.ARROW else "",
+                mode=m.redact_mode if m.tool == mm.REDACT else "",
+            )
         self._update_markup_area()
 
     def _markup_move(self, event) -> None:
         m = self._markup
         p = event.position()
         point = (p.x(), p.y())
-        if m.drag is not None and m.drag[0] == "resize":
-            sel = mm.resize(m.box(), m.drag[1] or "se", point, (self.width(), self.height()))
+        drag = m.drag
+        if drag is not None and drag[0] == "area":
+            sel = mm.resize(m.box(), drag[1] or "se", point, (self.width(), self.height()))
             m.sel = QRectF(*sel)
             self._place_toolbar()
             self.update()
             return
-        if m.drag is not None and m.drag[0] == "move" and m.picked is not None and m.last:
+        if drag is not None and drag[0] == "grip" and m.selected is not None and m.original:
+            m.shapes[m.selected] = mm.reshape(
+                m.original, drag[1] or "se", point, annotate.qt_measure
+            )
+            m.moved = True
+            self._update_markup_area()
+            return
+        if drag is not None and drag[0] == "move" and m.selected is not None and m.last:
             delta = p - m.last
-            m.shapes[m.picked] = mm.translated(m.shapes[m.picked], delta.x(), delta.y())
+            m.shapes[m.selected] = mm.translated(m.shapes[m.selected], delta.x(), delta.y())
             m.last, m.moved = p, True
             self._update_markup_area()
             return
@@ -760,13 +957,30 @@ class _SelectWindow(QWidget):
             return
         m = self._markup
         drag, m.drag = m.drag, None
-        if drag is not None and drag[0] == "move" and m.moved:
+        m.original = None
+        if drag is not None and drag[0] in ("move", "grip") and m.moved:
             self._commit()
         shape, m.drawing = m.drawing, None
         if shape is not None and mm.is_meaningful(shape):
             m.shapes.append(shape)
             self._commit()
+            # A fresh shape is selected at once, so its grips are right there;
+            # ink is not, or its box would catch the next stroke beside it.
+            if mm.grab_scope(m.tool) != "none":
+                m.selected = len(m.shapes) - 1
+                self._sync_options()
         self._update_markup_area()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        """Double-click a text with the select or text tool to change it."""
+        m = self._markup
+        if m.sel is None or m.typing is not None or m.tool not in (mm.MOVE, mm.TEXT):
+            return
+        p = event.position()
+        index = self._text_at((p.x(), p.y()))
+        if index is not None:
+            m.drag = None
+            self._start_typing((p.x(), p.y()), index=index)
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         if self._markup.sel is None:
@@ -778,17 +992,22 @@ class _SelectWindow(QWidget):
     def _update_cursor(self, point: mm.Point | None) -> None:
         m = self._markup
         if point is not None:
+            selected = m.selected_shape()
+            if selected is not None and mm.grab_scope(m.tool) != "none":
+                grip = mm.grip_at(selected, point, mm.HANDLE_GRAB_PX + 1, annotate.qt_measure)
+                if grip is not None:
+                    self.setCursor(_GRIP_CURSORS[mm.grip_cursor(grip)])
+                    return
             handle = mm.handle_at(m.box(), point)
             if handle is not None:
                 self.setCursor(_HANDLE_CURSORS[handle])
                 return
-            if m.tool == mm.MOVE:
-                over = mm.shape_at(m.shapes, point) is not None
-                self.setCursor(Qt.CursorShape.SizeAllCursor if over else Qt.CursorShape.ArrowCursor)
+            if self._grabbable(point) is not None:
+                self.setCursor(Qt.CursorShape.SizeAllCursor)
                 return
         if m.tool == mm.TEXT:
             self.setCursor(Qt.CursorShape.IBeamCursor)
-        elif m.tool == mm.MOVE:
+        elif m.tool in (mm.MOVE, mm.BACKGROUND):
             self.setCursor(Qt.CursorShape.ArrowCursor)
         else:
             self.setCursor(self._cross)
@@ -813,16 +1032,23 @@ class _SelectWindow(QWidget):
             # Live overlay: a fully clear pixel lets clicks fall through to the
             # window below, so the area keeps an invisible film to draw on.
             painter.fillRect(sel, QColor(0, 0, 0, 1))
-        live =[*m.shapes, *(s for s in (m.drawing, m.typing) if s is not None)]
+        if m.background:
+            annotate.paint_background_frame(painter, sel, m.background)
+        live = [*m.shapes, *(s for s in (m.drawing,) if s is not None)]
         painter.save()
         painter.setClipRect(sel, Qt.ClipOperation.IntersectClip)
-        for shape in (s for s in live if s.kind in mm.HIDE_KINDS):
+        for shape in (s for s in live if s.kind == mm.REDACT):
             annotate.paint_shape(painter, shape, hide_source=self._patches)
-        for shape in (s for s in live if s.kind not in mm.HIDE_KINDS):
-            annotate.paint_shape(painter, shape, caret=shape is m.typing)
+        for shape in (s for s in live if s.kind != mm.REDACT):
+            annotate.paint_shape(painter, shape)
+        annotate.paint_spotlights(painter, live, sel)
         painter.restore()
-        if m.picked is not None and m.picked < len(m.shapes):
-            annotate.paint_picked(painter, m.shapes[m.picked])
+        if m.typing is not None:
+            labels = annotate.labels_for(self._owner.language)
+            annotate.paint_typing(painter, m.typing, labels["placeholder"], caret=True)
+        selected = m.selected_shape()
+        if selected is not None:
+            annotate.paint_picked(painter, selected)
         annotate.paint_selection_frame(painter, sel)
         self._paint_size(painter, sel)
 

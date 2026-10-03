@@ -71,8 +71,8 @@ def test_a_rectangle_is_picked_on_its_outline_not_its_empty_inside() -> None:
 
 
 def test_the_top_most_marking_wins_and_moving_keeps_the_original() -> None:
-    lower = mm.Shape(mm.BLUR, points=[(0, 0), (100, 100)])
-    upper = mm.Shape(mm.COUNTER, points=[(50, 50)], number=1)
+    lower = mm.Shape(mm.REDACT, mode="blur", points=[(0, 0), (100, 100)])
+    upper = mm.Shape(mm.COUNTER, points=[(50, 50)], number=1, size=12)
     assert mm.shape_at([lower, upper], (50, 50)) == 1
     moved = mm.translated(upper, 10, -5)
     assert moved.points == [(60, 45)] and upper.points == [(50, 50)]
@@ -128,16 +128,78 @@ def test_the_toolbar_docks_below_then_above_then_inside_and_stays_on_screen() ->
 def test_hide_patches_leave_as_fractions_of_the_area_clipped_to_it() -> None:
     sel = (100.0, 100.0, 200.0, 100.0)
     shapes = [
-        mm.Shape(mm.BLUR, points=[(150, 120), (250, 170)]),
-        mm.Shape(mm.PIXELATE, points=[(50, 50), (150, 150)]),
+        mm.Shape(mm.REDACT, mode="blur", points=[(150, 120), (250, 170)]),
+        mm.Shape(mm.REDACT, mode="pixelate", points=[(50, 50), (150, 150)]),
         mm.Shape(mm.RECT, points=[(150, 120), (250, 170)]),
-        mm.Shape(mm.BLUR, points=[(0, 0), (20, 20)]),
+        mm.Shape(mm.REDACT, mode="blur", points=[(0, 0), (20, 20)]),
     ]
     hides = mm.hide_fractions(shapes, sel)
     assert hides == [
         {"kind": "blur", "rect": [0.25, 0.2, 0.5, 0.5]},
         {"kind": "pixelate", "rect": [0.0, 0.0, 0.25, 0.5]},
     ]
+
+
+def _measure(text: str, size: float) -> float:
+    return len(text) * size * 0.5
+
+
+def test_text_has_a_grip_on_every_corner_and_scales_from_the_opposite_one() -> None:
+    text = mm.Shape(mm.TEXT, text="Hallo", size=20, points=[(100, 100)])
+    box = mm.bounds(text, _measure)
+    assert box == (100, 100, 50, 25)
+    assert [name for name, _ in mm.grips(text, _measure)] == ["nw", "ne", "sw", "se"]
+    # Drag the bottom-right corner down to twice the height: twice the size,
+    # top-left stays put.
+    bigger = mm.reshape(text, "se", (160, 150), _measure)
+    assert bigger.size == 40 and bigger.points == [(100, 100)]
+    # Drag the top-left corner: the bottom-right corner stays put.
+    smaller = mm.reshape(text, "nw", (0, 112.5), _measure)
+    assert smaller.size == 10
+    x, y, w, h = mm.bounds(smaller, _measure)
+    assert (x + w, y + h) == (150, 125)
+
+
+def test_grips_follow_the_full_editor_rules() -> None:
+    arrow = mm.Shape(mm.ARROW, points=[(0, 0), (50, 50)])
+    assert mm.reshape(arrow, "to", (80, 10)).points == [(0, 0), (80, 10)]
+    box = mm.Shape(mm.RECT, points=[(10, 10), (50, 50)])
+    assert mm.reshape(box, "nw", (0, 0)).points == [(50, 50), (0, 0)]
+    counter = mm.Shape(mm.COUNTER, points=[(0, 0)], size=12)
+    assert [name for name, _ in mm.grips(counter)] == ["size"]
+    assert mm.reshape(counter, "size", (30, 40)).size == 50
+    assert mm.grab_scope(mm.MOVE) == "any"
+    assert mm.grab_scope(mm.RECT) == "selected"
+    assert mm.grab_scope(mm.PEN) == "none"
+
+
+def test_areas_are_only_picked_when_nothing_on_them_is_hit() -> None:
+    spot = mm.Shape(mm.SPOTLIGHT, points=[(0, 0), (200, 200)])
+    line = mm.Shape(mm.LINE, points=[(0, 100), (200, 100)])
+    assert mm.shape_at([line, spot], (100, 100)) == 0
+    assert mm.shape_at([line, spot], (100, 30)) == 1
+    assert mm.shape_at([line, spot], (100, 30), areas=False) is None
+
+
+def test_the_picker_offers_the_full_editors_tools_keys_and_presets() -> None:
+    """Both editors must stay one tool set: same keys, colours and frames."""
+    import re
+    from pathlib import Path
+
+    model = (
+        Path(__file__).resolve().parents[3] / "jarvis/ui/web/frontend/src/lib/appshotEditorModel.ts"
+    ).read_text(encoding="utf-8")
+    keys = dict(re.findall(r'\{ tool: "(\w+)", key: "(\w)" \}', model))
+    keys.pop("crop")  # the picker's area handles are its crop
+    assert {tool: key.upper() for tool, key in keys.items()} == mm.TOOL_KEYS
+    presets = re.findall(r'\{ id: "(\w+)", stops: \[([^\]]+)\] \}', model)
+    parsed = tuple((pid, tuple(re.findall(r'"(#[0-9a-f]{6})"', stops))) for pid, stops in presets)
+    assert parsed == mm.BACKGROUND_PRESETS
+    colours = re.search(r"export const COLORS = \[([^\]]+)\]", model)
+    assert colours is not None
+    assert tuple(c.upper() for c in re.findall(r'"(#[0-9a-fA-F]{6})"', colours.group(1))) == (
+        mm.PALETTE
+    )
 
 
 # ---------------------------------------------------------------- the wire
@@ -246,6 +308,20 @@ def test_blur_and_pixelate_hide_what_was_under_them() -> None:
         row = [image.getpixel((x, 50))[0] for x in range(20, 80)]
     # The 1-px stripes are gone: a flat grey instead of 0/255 alternating.
     assert max(row) - min(row) < 60
+
+
+def test_a_background_frame_surrounds_the_picture() -> None:
+    markup = parse_markup(
+        {"background": {"preset": "ink", "padding": 0.1, "radius": 0, "shadow": False}}
+    )
+    assert markup is not None and markup.frame is not None
+    marked = apply_to_bytes(_jpeg((200, 100), (255, 255, 255)), "image/jpeg", markup)
+    with Image.open(io.BytesIO(marked)) as image:
+        assert image.size == (240, 140)
+        corner = image.getpixel((3, 3))
+        middle = image.getpixel((120, 70))
+    assert max(corner) < 40 and min(middle) > 220
+    assert parse_markup({"background": {"preset": "not-a-preset"}}) is None
 
 
 def test_the_thumbnail_gets_the_markings_too() -> None:

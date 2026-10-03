@@ -1,9 +1,12 @@
 """The picker's markings as plain data — no Qt, so the rules are testable anywhere.
 
-After an area is chosen the picker stays open and the user
-marks it up in place: boxes, circles, arrows, lines, pen and highlighter
-strokes, text, numbered steps, and blur or pixelate patches. Every marking is
-a :class:`Shape` in the overlay window's logical pixels; the Qt side
+After an area is chosen the picker stays open and the user marks it up in
+place with the same tools as the full appshot editor
+(``frontend/src/lib/appshotEditorModel.ts``): select and move, rectangle,
+filled rectangle, ellipse, line, arrow (three looks), text (three looks),
+pixelate/blur, spotlight, numbered steps, pen, highlighter and a background
+frame — with the same one-letter keys. Every marking is a :class:`Shape` in
+the overlay window's logical pixels; the Qt side
 (:mod:`jarvis.appshot.picker.annotate`) only paints them and turns mouse and
 keys into calls here.
 
@@ -14,13 +17,17 @@ the whole list cheaply and these rules run on a headless CI box.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 Point = tuple[float, float]
 #: ``(left, top, width, height)``.
 Box = tuple[float, float, float, float]
+#: Width of ``text`` drawn at ``size`` px — the Qt side passes a real one.
+Measure = Callable[[str, float], float]
 
 RECT = "rect"
+FILLED = "filled"
 ELLIPSE = "ellipse"
 ARROW = "arrow"
 LINE = "line"
@@ -28,37 +35,44 @@ PEN = "pen"
 HIGHLIGHT = "highlight"
 TEXT = "text"
 COUNTER = "counter"
-BLUR = "blur"
-PIXELATE = "pixelate"
-#: Not a marking: picks, moves and deletes existing ones.
+SPOTLIGHT = "spotlight"
+REDACT = "redact"
+#: Not markings: the select tool, and the background frame switch.
 MOVE = "move"
+BACKGROUND = "background"
 
 #: Drawn by dragging a box.
-BOX_KINDS = frozenset({RECT, ELLIPSE, BLUR, PIXELATE})
+BOX_KINDS = frozenset({RECT, FILLED, ELLIPSE, SPOTLIGHT, REDACT})
 #: Drawn by dragging from a start to an end point.
 SEGMENT_KINDS = frozenset({ARROW, LINE})
 #: Drawn by dragging a free path.
 STROKE_KINDS = frozenset({PEN, HIGHLIGHT})
-#: Hide what is under them. They are applied to the real capture first, under
-#: every other marking, so the picker paints them first as well.
-HIDE_KINDS = frozenset({BLUR, PIXELATE})
+#: Cover what lies in them: picked by a click inside only when nothing drawn
+#: on top is hit, and only by the select tool.
+AREA_KINDS = frozenset({SPOTLIGHT, REDACT})
 
-#: Tool order in the toolbar, with the key that selects each one.
+#: Tool → key, in the full editor's toolbar order; the same keys as there.
 TOOL_KEYS: dict[str, str] = {
     MOVE: "V",
     RECT: "R",
+    FILLED: "F",
     ELLIPSE: "E",
-    ARROW: "A",
     LINE: "L",
-    PEN: "P",
-    HIGHLIGHT: "H",
+    ARROW: "A",
     TEXT: "T",
-    COUNTER: "N",
-    BLUR: "B",
-    PIXELATE: "X",
+    REDACT: "P",
+    SPOTLIGHT: "H",
+    COUNTER: "C",
+    PEN: "D",
+    HIGHLIGHT: "M",
+    BACKGROUND: "B",
 }
 
-#: Marking colours; red is the default.
+ARROW_STYLES = ("tapered", "classic", "double")
+TEXT_STYLES = ("plain", "label", "outline")
+REDACT_MODES = ("pixelate", "blur")
+
+#: Marking colours — the full editor's presets.
 PALETTE: tuple[str, ...] = (
     "#FF3B30",
     "#FF9500",
@@ -67,19 +81,35 @@ PALETTE: tuple[str, ...] = (
     "#0A84FF",
     "#AF52DE",
     "#FFFFFF",
-    "#111111",
+    "#1C1C1E",
 )
-#: Stroke widths the mouse wheel and the width button step through (logical px).
+#: Stroke widths (logical px): keys 1-5, the mouse wheel, the width button.
 WIDTHS: tuple[float, ...] = (2.0, 3.0, 4.0, 6.0, 9.0)
 DEFAULT_WIDTH_INDEX = 1
 
+#: Background frames: the full editor's presets (id, colour stops), kept in
+#: step by a parity test.
+BACKGROUND_PRESETS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("dawn", ("#ff9a8b", "#ff6a88", "#ff99ac")),
+    ("lagoon", ("#43cea2", "#185a9d")),
+    ("dusk", ("#7f7fd5", "#86a8e7", "#91eae4")),
+    ("ember", ("#f7971e", "#ffd200")),
+    ("orchid", ("#c471f5", "#fa71cd")),
+    ("slate", ("#434343", "#1c1c1e")),
+    ("paper", ("#f5f5f7",)),
+    ("ink", ("#111113",)),
+)
+DEFAULT_BACKGROUND = {"preset": "dusk", "padding": 0.08, "radius": 12, "shadow": True}
+
 #: A drag shorter than this (logical px) draws nothing, except where a click
 #: is the whole gesture (text, counter).
-MIN_DRAG_PX = 3.0
-#: Grab distance for the selection's resize handles.
+MIN_DRAG_PX = 4.0
+#: Grab distance for the selection's resize handles and a marking's grips.
 HANDLE_GRAB_PX = 8.0
 #: The selection never shrinks below this while it is resized.
 MIN_SELECTION_PX = 8.0
+#: The smallest text and counter a grip can shrink them to (px).
+MIN_TEXT_PX = 8.0
 
 
 @dataclass(slots=True)
@@ -87,7 +117,9 @@ class Shape:
     """One marking. What ``points`` holds depends on ``kind``:
 
     box kinds and segments: ``[start, end]``; strokes: the whole path; text:
-    ``[anchor]`` (top-left of the first line); counter: ``[centre]``.
+    ``[top-left]``; counter: ``[centre]``. ``size`` is the text height or the
+    counter's radius; ``style`` the arrow or text look; ``mode`` pixelate or
+    blur for a redaction.
     """
 
     kind: str
@@ -96,9 +128,45 @@ class Shape:
     points: list[Point] = field(default_factory=list)
     text: str = ""
     number: int = 0
+    size: float = 0.0
+    style: str = ""
+    mode: str = ""
 
     def copy(self) -> Shape:
         return replace(self, points=list(self.points))
+
+
+def rough_measure(text: str, size: float) -> float:
+    return len(text) * size * 0.55
+
+
+# --------------------------------------------------------------------------
+# Sizes
+# --------------------------------------------------------------------------
+
+
+def text_size(width: float) -> float:
+    """Text height for a stroke width (the width step scales new text too)."""
+    return max(14.0, round(width * 5.0))
+
+
+def counter_size(width: float) -> float:
+    """Counter badge radius for a stroke width."""
+    return max(12.0, round(width * 3.0))
+
+
+def grab_scope(tool: str) -> str:
+    """What a press with ``tool`` may take hold of instead of drawing.
+
+    ``any``: the select tool picks up every marking; ``selected``: a shape
+    tool reshapes or moves only the marking it has selected (the one it just
+    drew); ``none``: pen, highlighter and counter always draw.
+    """
+    if tool == MOVE:
+        return "any"
+    if tool in (PEN, HIGHLIGHT, COUNTER, BACKGROUND):
+        return "none"
+    return "selected"
 
 
 # --------------------------------------------------------------------------
@@ -129,33 +197,27 @@ def constrain(kind: str, start: Point, end: Point) -> Point:
     return end
 
 
-def counter_radius(width: float) -> float:
-    return 9.0 + width * 1.6
+def label_pad(shape: Shape) -> float:
+    return shape.size * 0.4 if shape.kind == TEXT and shape.style == "label" else 0.0
 
 
-def text_size(width: float) -> float:
-    """Text height in logical px for a stroke width — the width step scales text too."""
-    return 12.0 + width * 2.5
+def text_lines(shape: Shape) -> list[str]:
+    return shape.text.split("\n") or [""]
 
 
-def text_box(shape: Shape, char_w: float = 0.6) -> Box:
-    """A text marking's rough bounds (the Qt side measures exactly when painting)."""
-    size = text_size(shape.width)
-    lines = shape.text.split("\n") or [""]
-    width = max(len(line) for line in lines) * size * char_w
-    height = len(lines) * size * 1.25
-    x, y = shape.points[0]
-    return (x, y, max(width, size * 0.5), height)
-
-
-def bounds(shape: Shape) -> Box:
+def bounds(shape: Shape, measure: Measure = rough_measure) -> Box:
     """The area a marking covers, before its stroke width."""
     if not shape.points:
         return (0.0, 0.0, 0.0, 0.0)
     if shape.kind == TEXT:
-        return text_box(shape)
+        lines = text_lines(shape)
+        width = max(measure(line, shape.size) for line in lines)
+        width = max(width, shape.size * 0.5)
+        pad = label_pad(shape)
+        x, y = shape.points[0]
+        return (x - pad, y - pad, width + pad * 2, len(lines) * shape.size * 1.25 + pad * 2)
     if shape.kind == COUNTER:
-        r = counter_radius(shape.width)
+        r = shape.size
         x, y = shape.points[0]
         return (x - r, y - r, 2 * r, 2 * r)
     xs = [p[0] for p in shape.points]
@@ -174,38 +236,58 @@ def _distance_to_segment(p: Point, a: Point, b: Point) -> float:
     return math.hypot(p[0] - (ax + t * dx), p[1] - (ay + t * dy))
 
 
-def hit(shape: Shape, p: Point, tolerance: float = 6.0) -> bool:
-    """Whether a click at ``p`` lands on ``shape`` (outlines, not empty insides)."""
-    tol = tolerance + shape.width / 2.0
-    if shape.kind in (TEXT, COUNTER, BLUR, PIXELATE):
-        x, y, w, h = bounds(shape)
-        return x - tol <= p[0] <= x + w + tol and y - tol <= p[1] <= y + h + tol
+def _inside(p: Point, box: Box, slop: float) -> bool:
+    x, y, w, h = box
+    return x - slop <= p[0] <= x + w + slop and y - slop <= p[1] <= y + h + slop
+
+
+def hit(shape: Shape, p: Point, slop: float = 6.0, measure: Measure = rough_measure) -> bool:
+    """Whether a click at ``p`` lands on ``shape``.
+
+    Lines and strokes count near their path, outlines near their edge, filled
+    boxes, text, counters and areas anywhere on them.
+    """
+    if not shape.points:
+        return False
     if shape.kind in SEGMENT_KINDS or shape.kind in STROKE_KINDS:
+        reach = slop + (shape.width * 2.0 if shape.kind == HIGHLIGHT else shape.width)
         pts = shape.points
         if len(pts) == 1:
-            return math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) <= tol
-        return any(_distance_to_segment(p, a, b) <= tol for a, b in zip(pts, pts[1:], strict=False))
-    x, y, w, h = normalized(shape.points[0], shape.points[-1])
+            return math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) <= reach
+        pairs = zip(pts, pts[1:], strict=False)
+        return any(_distance_to_segment(p, a, b) <= reach for a, b in pairs)
     if shape.kind == RECT:
-        inside_outer = x - tol <= p[0] <= x + w + tol and y - tol <= p[1] <= y + h + tol
-        inside_inner = x + tol < p[0] < x + w - tol and y + tol < p[1] < y + h - tol
-        return inside_outer and not inside_inner
+        reach = slop + shape.width
+        x, y, w, h = normalized(shape.points[0], shape.points[-1])
+        inner = (x + reach, y + reach, w - reach * 2, h - reach * 2)
+        return _inside(p, (x, y, w, h), reach) and not (
+            inner[2] > 0 and inner[3] > 0 and _inside(p, inner, 0)
+        )
     if shape.kind == ELLIPSE:
-        rx, ry = w / 2.0, h / 2.0
-        if rx <= 0 or ry <= 0:
-            return False
-        cx, cy = x + rx, y + ry
-        # Normalised radial distance; 1.0 is the outline.
-        d = math.hypot((p[0] - cx) / rx, (p[1] - cy) / ry)
-        return abs(d - 1.0) * min(rx, ry) <= tol
-    return False
+        x, y, w, h = normalized(shape.points[0], shape.points[-1])
+        rx, ry = max(1.0, w / 2.0), max(1.0, h / 2.0)
+        d = math.hypot((p[0] - (x + rx)) / rx, (p[1] - (y + ry)) / ry)
+        return abs(d - 1.0) * min(rx, ry) <= slop + shape.width
+    return _inside(p, bounds(shape, measure), slop)
 
 
-def shape_at(shapes: list[Shape], p: Point) -> int | None:
-    """Index of the top-most marking under ``p``."""
-    for index in range(len(shapes) - 1, -1, -1):
-        if hit(shapes[index], p):
-            return index
+def shape_at(
+    shapes: list[Shape],
+    p: Point,
+    measure: Measure = rough_measure,
+    *,
+    areas: bool = True,
+    slop: float = 6.0,
+) -> int | None:
+    """Index of the top-most marking under ``p``; areas only when nothing else hits."""
+    passes = (False, True) if areas else (False,)
+    for want_area in passes:
+        for index in range(len(shapes) - 1, -1, -1):
+            shape = shapes[index]
+            if (shape.kind in AREA_KINDS) != want_area:
+                continue
+            if hit(shape, p, slop, measure):
+                return index
     return None
 
 
@@ -221,10 +303,10 @@ def is_meaningful(shape: Shape) -> bool:
         return bool(shape.text.strip())
     if shape.kind == COUNTER:
         return bool(shape.points)
+    if shape.kind in STROKE_KINDS:
+        return bool(shape.points)
     if len(shape.points) < 2:
         return False
-    if shape.kind in STROKE_KINDS:
-        return True
     x, y, w, h = normalized(shape.points[0], shape.points[-1])
     if shape.kind in SEGMENT_KINDS:
         return math.hypot(w, h) >= MIN_DRAG_PX
@@ -234,6 +316,106 @@ def is_meaningful(shape: Shape) -> bool:
 def next_counter(shapes: list[Shape]) -> int:
     """The number the next step marker shows: one past the highest so far."""
     return max((s.number for s in shapes if s.kind == COUNTER), default=0) + 1
+
+
+# --------------------------------------------------------------------------
+# Grips: reshaping a marking in place (the full editor's rules)
+# --------------------------------------------------------------------------
+
+_CORNERS = ("nw", "ne", "sw", "se")
+_OPPOSITE = {"nw": "se", "ne": "sw", "sw": "ne", "se": "nw"}
+
+
+def _corner(box: Box, name: str) -> Point:
+    x, y, w, h = box
+    return (x if name in ("nw", "sw") else x + w, y if name in ("nw", "ne") else y + h)
+
+
+def grips(shape: Shape, measure: Measure = rough_measure) -> list[tuple[str, Point]]:
+    """The grips a selected marking shows.
+
+    Lines and arrows one at each end; boxes, strokes and text one at each
+    corner (text scales with them); a counter one on its rim.
+    """
+    if not shape.points:
+        return []
+    if shape.kind in SEGMENT_KINDS:
+        return [("from", shape.points[0]), ("to", shape.points[-1])]
+    if shape.kind == COUNTER:
+        x, y = shape.points[0]
+        return [("size", (x + shape.size, y))]
+    box = bounds(shape, measure)
+    return [(name, _corner(box, name)) for name in _CORNERS]
+
+
+def grip_at(
+    shape: Shape, p: Point, radius: float = HANDLE_GRAB_PX, measure: Measure = rough_measure
+) -> str | None:
+    """The grip under ``p`` (within ``radius``), nearest first."""
+    best, best_distance = None, radius
+    for name, (gx, gy) in grips(shape, measure):
+        distance = math.hypot(gx - p[0], gy - p[1])
+        if distance <= best_distance:
+            best, best_distance = name, distance
+    return best
+
+
+def reshape(original: Shape, grip: str, p: Point, measure: Measure = rough_measure) -> Shape:
+    """``original`` with ``grip`` dragged to ``p``.
+
+    Always computed from the marking as it was when the drag began, so a long
+    drag never drifts. An arrow's end follows the pointer; a box keeps the
+    opposite corner fixed; a stroke scales from it; text grows or shrinks
+    from the opposite corner, font size and all; a counter grows with its rim.
+    """
+    shape = original.copy()
+    if shape.kind in SEGMENT_KINDS:
+        if grip == "from":
+            shape.points[0] = p
+        elif grip == "to":
+            shape.points[-1] = p
+        return shape
+    if shape.kind == COUNTER:
+        x, y = shape.points[0]
+        shape.size = max(MIN_TEXT_PX, math.hypot(p[0] - x, p[1] - y))
+        return shape
+    if grip not in _OPPOSITE:
+        return shape
+    box = bounds(original, measure)
+    anchor = _corner(box, _OPPOSITE[grip])
+    if shape.kind == TEXT:
+        factor = max(0.1, abs(p[1] - anchor[1]) / max(1.0, box[3]))
+        shape.size = max(MIN_TEXT_PX, round(original.size * factor))
+        grown = bounds(replace(shape, points=[(0.0, 0.0)]), measure)
+        pad = label_pad(shape)
+        # Keep the opposite corner where it was.
+        left = anchor[0] if grip in ("ne", "se") else anchor[0] - grown[2]
+        top = anchor[1] if grip in ("sw", "se") else anchor[1] - grown[3]
+        shape.points = [(left + pad, top + pad)]
+        return shape
+    if shape.kind in STROKE_KINDS:
+        corner = _corner(box, grip)
+        span_x, span_y = corner[0] - anchor[0], corner[1] - anchor[1]
+        sx = 1.0 if abs(span_x) < 1e-6 else (p[0] - anchor[0]) / span_x
+        sy = 1.0 if abs(span_y) < 1e-6 else (p[1] - anchor[1]) / span_y
+        shape.points = [
+            (anchor[0] + (x - anchor[0]) * sx, anchor[1] + (y - anchor[1]) * sy)
+            for x, y in original.points
+        ]
+        return shape
+    shape.points = [anchor, p]
+    return shape
+
+
+def grip_cursor(grip: str) -> str:
+    """``fdiag`` / ``bdiag`` / ``hor`` / ``grab`` — mapped to Qt cursors by the caller."""
+    if grip in ("nw", "se"):
+        return "fdiag"
+    if grip in ("ne", "sw"):
+        return "bdiag"
+    if grip == "size":
+        return "hor"
+    return "grab"
 
 
 # --------------------------------------------------------------------------
@@ -316,20 +498,26 @@ def clip_to(box: Box, sel: Box) -> Box | None:
 
 
 def hide_fractions(shapes: list[Shape], sel: Box) -> list[dict[str, object]]:
-    """Blur/pixelate patches as fractions of the selection, for the main process."""
+    """Pixelate/blur patches as fractions of the selection, for the main process."""
     out: list[dict[str, object]] = []
     sx, sy, sw, sh = sel
     if sw <= 0 or sh <= 0:
         return out
     for shape in shapes:
-        if shape.kind not in HIDE_KINDS or len(shape.points) < 2:
+        if shape.kind != REDACT or len(shape.points) < 2:
             continue
         clipped = clip_to(normalized(shape.points[0], shape.points[-1]), sel)
         if clipped is None:
             continue
         x, y, w, h = clipped
-        out.append({"kind": shape.kind, "rect": [(x - sx) / sw, (y - sy) / sh, w / sw, h / sh]})
+        kind = shape.mode if shape.mode in REDACT_MODES else "pixelate"
+        out.append({"kind": kind, "rect": [(x - sx) / sw, (y - sy) / sh, w / sw, h / sh]})
     return out
+
+
+def frame_padding(sel: Box, padding: float) -> float:
+    """The background frame's margin around an area (the full editor's rule)."""
+    return round(max(sel[2], sel[3]) * max(0.0, min(0.25, padding)))
 
 
 # --------------------------------------------------------------------------
@@ -375,23 +563,30 @@ class History:
 
 
 __all__ = [
+    "AREA_KINDS",
     "ARROW",
-    "BLUR",
+    "ARROW_STYLES",
+    "BACKGROUND",
+    "BACKGROUND_PRESETS",
     "BOX_KINDS",
     "COUNTER",
+    "DEFAULT_BACKGROUND",
     "ELLIPSE",
+    "FILLED",
     "HANDLES",
-    "HIDE_KINDS",
     "HIGHLIGHT",
     "LINE",
     "MOVE",
     "PALETTE",
     "PEN",
-    "PIXELATE",
     "RECT",
+    "REDACT",
+    "REDACT_MODES",
     "SEGMENT_KINDS",
+    "SPOTLIGHT",
     "STROKE_KINDS",
     "TEXT",
+    "TEXT_STYLES",
     "TOOL_KEYS",
     "WIDTHS",
     "History",
@@ -399,7 +594,12 @@ __all__ = [
     "bounds",
     "clip_to",
     "constrain",
-    "counter_radius",
+    "counter_size",
+    "frame_padding",
+    "grab_scope",
+    "grip_at",
+    "grip_cursor",
+    "grips",
     "handle_at",
     "handle_points",
     "hide_fractions",
@@ -407,7 +607,9 @@ __all__ = [
     "is_meaningful",
     "next_counter",
     "normalized",
+    "reshape",
     "resize",
+    "rough_measure",
     "shape_at",
     "text_size",
     "toolbar_origin",
