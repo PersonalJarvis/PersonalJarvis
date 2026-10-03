@@ -1,8 +1,9 @@
 /**
  * Client for `/api/appshot` — the front window as conversation context.
  *
- * Pixels only ever come from the two image endpoints, which the backend serves
- * with `Cache-Control: no-store`; nothing here keeps a copy.
+ * Held pixels come from the two image endpoints, which the backend serves with
+ * `Cache-Control: no-store`; nothing here keeps a copy. The gallery's pictures
+ * come from `/api/appshot/library`, versioned by their edit time.
  */
 
 export type AppshotTarget = "auto" | "message" | "voice";
@@ -25,6 +26,8 @@ export interface AppshotSettings {
   effect: boolean;
   /** Seconds the corner card rests; 0 = until the user closes it. */
   card_seconds: number;
+  /** Keep every appshot and edit in the gallery. Absent on an older backend. */
+  library?: boolean;
   sound_effects_master: boolean;
   shortcut: AppshotShortcutStatus;
   region_shortcut: AppshotShortcutStatus;
@@ -50,7 +53,10 @@ export interface AppshotMeta {
 }
 
 export type AppshotSettingsPatch = Partial<
-  Pick<AppshotSettings, "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect" | "card_seconds">
+  Pick<
+    AppshotSettings,
+    "enabled" | "hotkey" | "region_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
+  >
 >;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -165,3 +171,77 @@ export async function openAppshotEditorWindow(id: string): Promise<boolean> {
 
 /** How long the corner card may rest, in seconds; 0 = until closed. */
 export const CARD_SECONDS_CHOICES = [3, 6, 10, 30, 60, 300, 0] as const;
+
+// -- library: the gallery of every kept appshot and edit ----------------------
+
+export type AppshotLibraryVariant = "original" | "edited";
+
+export interface AppshotLibraryItem {
+  id: string;
+  variant: AppshotLibraryVariant;
+  /** Where the picture lies on the machine running the backend. */
+  path: string;
+  mime: string;
+  width: number;
+  height: number;
+  label: string;
+  app_name: string;
+  trigger: string;
+  taken_at: number;
+  /** When the edit was saved; 0 for an original. */
+  edited_at: number;
+  /** An original that also has an edited version. */
+  has_edit: boolean;
+}
+
+export function fetchAppshotLibrary(): Promise<{ items: AppshotLibraryItem[]; max_entries: number }> {
+  return request("/api/appshot/library");
+}
+
+/** The picture's URL; `thumb` asks for the gallery's small JPEG. */
+export function appshotLibraryImageUrl(item: AppshotLibraryItem, thumb = false): string {
+  const params = new URLSearchParams({
+    variant: item.variant,
+    v: String(item.edited_at || item.taken_at),
+  });
+  if (thumb) params.set("thumb", "1");
+  return `/api/appshot/library/${encodeURIComponent(item.id)}/image?${params.toString()}`;
+}
+
+/** A file name for a dragged-out picture: `appshot-20261003-114747(-edited).png`. */
+export function appshotLibraryFileName(item: AppshotLibraryItem): string {
+  const fromPath = item.path.split(/[\\/]/).pop() ?? "";
+  const extension = fromPath.includes(".") ? fromPath.split(".").pop() : "png";
+  const stamp = new Date(item.taken_at * 1000)
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..*$/, "")
+    .replace("T", "-");
+  return `appshot-${stamp}${item.variant === "edited" ? "-edited" : ""}.${extension}`;
+}
+
+/**
+ * Hold a kept picture again and open the editor on it. `window: false` means
+ * the page has to show its own editor on `id`.
+ */
+export function openAppshotLibraryItem(
+  item: AppshotLibraryItem,
+): Promise<{ id: string; window: boolean }> {
+  return request(`/api/appshot/library/${encodeURIComponent(item.id)}/open`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ variant: item.variant }),
+  });
+}
+
+/** An edited tile deletes only the edit; an original deletes the whole appshot. */
+export function deleteAppshotLibraryItem(item: AppshotLibraryItem): Promise<{ ok: boolean }> {
+  return request(
+    `/api/appshot/library/${encodeURIComponent(item.id)}?variant=${encodeURIComponent(item.variant)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function clearAppshotLibrary(): Promise<{ ok: boolean; removed: number }> {
+  return request("/api/appshot/library", { method: "DELETE" });
+}

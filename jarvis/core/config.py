@@ -2719,6 +2719,11 @@ class AppshotConfig(BaseModel):
     #: until the user closes it.
     card_seconds: int = Field(default=6, ge=0, le=600)
 
+    #: Keep every appshot (and its saved edit) in the gallery on the Appshots
+    #: page, under ``<data dir>/appshots/`` (read by ``jarvis.appshot.service``
+    #: and ``jarvis.appshot.library``). Off: nothing new is written there.
+    library: bool = True
+
 
 class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.

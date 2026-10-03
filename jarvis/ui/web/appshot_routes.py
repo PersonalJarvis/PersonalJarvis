@@ -16,11 +16,17 @@ Endpoints (mounted by the WebServer in ``_build_app()``):
     GET    /api/appshot/pending          → the appshot waiting for the next message.
     POST   /api/appshot/pending/claim    → hand that one to the chat composer.
     DELETE /api/appshot                  → forget every held appshot now.
+    GET    /api/appshot/library          → every kept appshot and edit (the gallery).
+    GET    /api/appshot/library/{id}/image → one kept picture (``thumb=1``: small).
+    POST   /api/appshot/library/{id}/open  → open a kept picture in the editor.
+    DELETE /api/appshot/library/{id}     → delete an edit, or the whole appshot.
+    DELETE /api/appshot/library          → delete the whole gallery.
 
 Under the CLI-first contract every action here is also a
-``jarvis api appshot <op>`` command. Pixels stay in memory
-(``jarvis.appshot.store``); the only image written to disk is the one a
-user drags out of the editor (``/drag-file``, see ``jarvis.appshot.dragfile``).
+``jarvis api appshot <op>`` command. Held pictures stay in memory
+(``jarvis.appshot.store``); the gallery's history lives in
+``jarvis.appshot.library`` while ``[appshot].library`` is on, and the editor's
+drag-out writes one temporary file (``/drag-file``, ``jarvis.appshot.dragfile``).
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ class SettingsPatch(BaseModel):
     sound: bool | None = None
     effect: bool | None = None
     card_seconds: int | None = Field(default=None, ge=0, le=600)
+    library: bool | None = None
 
 
 class TakeRequest(BaseModel):
@@ -109,6 +116,7 @@ def _settings_payload() -> dict[str, Any]:
         "sound": bool(block.sound),
         "effect": bool(block.effect),
         "card_seconds": int(getattr(block, "card_seconds", 6)),
+        "library": bool(getattr(block, "library", True)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
         "region_shortcut": _status("region"),
@@ -214,9 +222,14 @@ async def latest_image(id: str = "") -> Response:  # noqa: A002
     from jarvis.appshot.store import get_store  # noqa: PLC0415
 
     store = get_store()
-    shot = (await asyncio.to_thread(store.get, id) if id else None) or await asyncio.to_thread(
-        store.latest
-    )
+    shot = await asyncio.to_thread(store.get, id) if id else None
+    if shot is None and id and await asyncio.to_thread(_library_has, id):
+        # A gallery picture whose hold expired while its editor stayed open.
+        shot = await asyncio.to_thread(_hold_from_library, id, "edited") or await asyncio.to_thread(
+            _hold_from_library, id, "original"
+        )
+    if shot is None:
+        shot = await asyncio.to_thread(store.latest)
     if shot is None:
         raise HTTPException(status_code=404, detail="No appshot is being kept right now.")
     return Response(content=shot.image, media_type=shot.mime, headers=_NO_STORE)
@@ -242,10 +255,14 @@ async def replace_latest_image(request: Request, id: str) -> dict[str, Any]:  # 
     if size is None:
         raise HTTPException(status_code=400, detail="The edited picture is not a PNG.")
     shot = await asyncio.to_thread(get_store().replace_image, id, body, "image/png", *size)
+    if shot is None and await asyncio.to_thread(_hold_from_library, id, "original"):
+        # Edited from the gallery after its hold expired: hold it again, then edit.
+        shot = await asyncio.to_thread(get_store().replace_image, id, body, "image/png", *size)
     if shot is None:
         raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
-    from jarvis.appshot.service import deliver_edit  # noqa: PLC0415
+    from jarvis.appshot.service import deliver_edit, keep_edit_in_library  # noqa: PLC0415
 
+    await keep_edit_in_library(shot)
     delivered_to = await deliver_edit(shot)
     return {"ok": True, "appshot": {**shot.meta(), "delivered_to": delivered_to}}
 
@@ -380,3 +397,109 @@ async def forget_all() -> dict[str, Any]:
 
     await asyncio.to_thread(get_store().clear)
     return {"ok": True}
+
+
+# -- library (the gallery on the Appshots page) -------------------------------
+
+LibraryVariant = Literal["original", "edited"]
+
+_LIBRARY_CACHE = {"Cache-Control": "private, max-age=86400"}
+
+#: How long a gallery picture opened in the editor stays held, at least.
+_LIBRARY_HOLD_S = 900.0
+
+
+def _hold_from_library(shot_id: str, variant: str) -> Any | None:
+    """Put a kept picture back into the store so the editor can work on it."""
+    from jarvis.appshot import library  # noqa: PLC0415
+    from jarvis.appshot.store import get_store  # noqa: PLC0415
+    from jarvis.core.config import load_config  # noqa: PLC0415
+
+    shot = library.load_shot(shot_id, "edited" if variant == "edited" else "original")
+    if shot is None:
+        return None
+    keep_s = max(float(load_config().screen_context.deck_preview_s), _LIBRARY_HOLD_S)
+    get_store().remember(shot, keep_s=keep_s)
+    return shot
+
+
+def _library_has(shot_id: str) -> bool:
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    return library.valid_id(shot_id) and (library.library_root() / shot_id).is_dir()
+
+
+def _library_id(shot_id: str) -> str:
+    from jarvis.appshot.library import valid_id  # noqa: PLC0415
+
+    if not valid_id(shot_id):
+        raise HTTPException(status_code=404, detail="No such appshot.")
+    return shot_id
+
+
+@router.get("/library")
+async def library_list() -> dict[str, Any]:
+    """Every kept appshot and edit, newest first — no pixels."""
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    items = await asyncio.to_thread(library.list_items)
+    return {
+        "items": [item.to_json() for item in items],
+        "max_entries": library.MAX_ENTRIES,
+    }
+
+
+@router.get("/library/{shot_id}/image")
+async def library_image(
+    shot_id: str, variant: LibraryVariant = "original", thumb: bool = False
+) -> Response:
+    """One kept picture; ``thumb=1`` sends the gallery's small JPEG."""
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    item = await asyncio.to_thread(library.get_item, _library_id(shot_id), variant)
+    if item is None:
+        raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    if thumb:
+        data, mime = await asyncio.to_thread(library.thumbnail, item)
+    else:
+        data, mime = await asyncio.to_thread(item.path.read_bytes), item.mime
+    # The page versions the URL by its edit time, so a cached copy is never stale.
+    return Response(content=data, media_type=mime, headers=_LIBRARY_CACHE)
+
+
+class LibraryOpenRequest(BaseModel):
+    variant: LibraryVariant = "original"
+
+
+@router.post("/library/{shot_id}/open")
+async def library_open(shot_id: str, body: LibraryOpenRequest | None = None) -> dict[str, Any]:
+    """Hold a kept picture again and open the editor on it.
+
+    ``window: false`` = the page opens its own editor on ``id``.
+    """
+    variant = (body or LibraryOpenRequest()).variant
+    shot = await asyncio.to_thread(_hold_from_library, _library_id(shot_id), variant)
+    if shot is None:
+        raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
+
+    return {"id": shot.id, "window": await open_editor_window(shot.id)}
+
+
+@router.delete("/library/{shot_id}", openapi_extra={"x-jarvis-dangerous": True})
+async def library_delete(shot_id: str, variant: LibraryVariant = "original") -> dict[str, Any]:
+    """Delete an edit only, or — for the original — the whole appshot."""
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    removed = await asyncio.to_thread(library.delete, _library_id(shot_id), variant)
+    if not removed:
+        raise HTTPException(status_code=404, detail="That appshot is no longer kept.")
+    return {"ok": True}
+
+
+@router.delete("/library", openapi_extra={"x-jarvis-dangerous": True})
+async def library_clear() -> dict[str, Any]:
+    """Delete every kept appshot and edit."""
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    return {"ok": True, "removed": await asyncio.to_thread(library.clear)}

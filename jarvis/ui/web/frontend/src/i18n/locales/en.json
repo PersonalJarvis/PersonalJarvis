@@ -6013,7 +6013,7 @@
     "title": "Appshots",
     "subtitle": "Show {name} the window you are working in.",
     "hero_title": "Take an appshot to show {name} your front window",
-    "hero_body": "An appshot captures the window in front, picture and on-screen text, and hands it to the conversation. Your privacy rules still apply, and nothing is saved to disk.",
+    "hero_body": "An appshot captures the window in front, picture and on-screen text, and hands it to the conversation. Your privacy rules still apply. Only the history below stays on this computer, and you can delete it anytime.",
     "enabled_label": "Allow appshots",
     "enabled_hint": "Also covers questions like \"what do you see?\". Off means {name} never looks at your screen.",
     "shortcut_label": "Keyboard shortcut",

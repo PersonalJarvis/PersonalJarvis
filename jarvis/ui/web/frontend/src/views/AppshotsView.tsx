@@ -22,6 +22,7 @@ import {
 } from "@/lib/appshotApi";
 import { gestureFamily } from "@/lib/appshotChord";
 import { cn } from "@/lib/utils";
+import { AppshotLibrary } from "@/views/AppshotLibrary";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
@@ -32,9 +33,10 @@ import { useEventStore } from "@/store/events";
  * One page for the whole feature: the master switch (it is also the switch
  * for every other screen look, `[screen_context].enabled`), the two global
  * shortcuts (front window, and a dragged-out area), where a shortcut appshot
- * goes, the sound and the flash, try-it buttons, and the last appshot so the
- * user sees exactly what was handed over.
- * That picture lives in backend memory for `deck_preview_s` and is fetched
+ * goes, the sound and the flash, try-it buttons, the last appshot so the
+ * user sees exactly what was handed over, and the gallery of every appshot
+ * and edit kept so far (`AppshotLibrary`).
+ * The last picture lives in backend memory for `deck_preview_s` and is fetched
  * with `no-store`; this view keeps no copy.
  */
 
@@ -545,6 +547,21 @@ export function AppshotsView() {
                     />
                   }
                 />
+                {typeof settings.library === "boolean" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.library_label") : ""}
+                    hint={editorReady ? t("appshot_editor.library_hint") : ""}
+                    control={
+                      <Switch
+                        checked={settings.library}
+                        disabled={saving}
+                        aria-label={editorReady ? t("appshot_editor.library_label") : ""}
+                        data-testid="appshots-library"
+                        onCheckedChange={(library) => void save({ library })}
+                      />
+                    }
+                  />
+                )}
                 <Row
                   label={t("appshots.try_label")}
                   hint={
@@ -608,6 +625,11 @@ export function AppshotsView() {
             )}
           </div>
         </div>
+
+        <AppshotLibrary
+          enabled={settings?.library}
+          refreshKey={`${lastAppshotEvent}:${revision}`}
+        />
 
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>

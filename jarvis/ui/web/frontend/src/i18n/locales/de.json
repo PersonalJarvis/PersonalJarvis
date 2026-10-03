@@ -5980,7 +5980,7 @@
     "title": "Appshots",
     "subtitle": "Zeig {name} das Fenster, in dem du gerade arbeitest.",
     "hero_title": "Mach einen Appshot, um {name} dein vorderstes Fenster zu zeigen",
-    "hero_body": "Ein Appshot nimmt das Fenster im Vordergrund auf, Bild und sichtbaren Text, und gibt es ins Gespräch. Deine Datenschutz-Regeln gelten weiter, und nichts wird auf der Festplatte gespeichert.",
+    "hero_body": "Ein Appshot nimmt das Fenster im Vordergrund auf, Bild und sichtbaren Text, und gibt es ins Gespräch. Deine Datenschutz-Regeln gelten weiter. Nur der Verlauf unten bleibt auf diesem Computer, und du kannst ihn jederzeit löschen.",
     "enabled_label": "Appshots erlauben",
     "enabled_hint": "Gilt auch für Fragen wie \"Was siehst du?\". Aus heißt: {name} schaut nie auf deinen Bildschirm.",
     "shortcut_label": "Tastenkürzel",

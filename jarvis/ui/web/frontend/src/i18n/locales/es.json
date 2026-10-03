@@ -5980,7 +5980,7 @@
     "title": "Appshots",
     "subtitle": "Muestra a {name} la ventana en la que trabajas.",
     "hero_title": "Haz un appshot para mostrar a {name} tu ventana principal",
-    "hero_body": "Un appshot captura la ventana en primer plano, imagen y texto visible, y la pasa a la conversación. Tus reglas de privacidad siguen aplicándose y no se guarda nada en el disco.",
+    "hero_body": "Un appshot captura la ventana en primer plano, imagen y texto visible, y la pasa a la conversación. Tus reglas de privacidad siguen aplicándose. Solo el historial de abajo se queda en este equipo y puedes borrarlo cuando quieras.",
     "enabled_label": "Permitir appshots",
     "enabled_hint": "También cubre preguntas como \"¿qué ves?\". Desactivado significa que {name} nunca mira tu pantalla.",
     "shortcut_label": "Atajo de teclado",

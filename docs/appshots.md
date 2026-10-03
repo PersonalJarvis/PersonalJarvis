@@ -208,6 +208,32 @@ parts were hidden on purpose:
 The editor says which one happened. Copy, Save and Drag never send anything
 to the assistant; they are the screenshot-tool half.
 
+## The gallery
+
+Below the settings, **Your appshots** shows every appshot taken with the
+shortcuts, the page's buttons or the assistant's `take_appshot` tool, and every
+edit saved in the editor, newest first. An edit sits right before its original
+and wears an **Edited** badge; the **Edited** filter shows only those. A look
+a conversation turn took on its own is never kept.
+
+- **Click** a picture to open it in the editor again. Saving there keeps the
+  new edit beside the original and hands it to the assistant like any edit.
+- **Drag** a picture into a chat composer or a terminal pane to attach it.
+  The drag carries the picture's real path the way a row from the workspace
+  explorer does, so both drop targets take it unchanged. In a browser the
+  drag also carries a `DownloadURL`, so it can be dropped onto the desktop.
+  Inside the desktop shell the grip on a tile starts a native file drag that
+  reaches any other app (mail, Explorer/Finder, a browser upload).
+- **Delete** on an edited tile removes only that edit; on an original it
+  removes the appshot and its edit. **Delete all** asks once more first.
+
+The pictures live in `<data dir>/appshots/<id>/` (`original.<ext>`,
+`edited.png`, `meta.json`, small thumbnails made on first view). Only the
+finished, privacy-filtered appshot is written — never the raw frame or the
+on-screen text. The library keeps the newest 500 appshots and removes the
+oldest first. **Keep appshot history** (`[appshot].library`) turns it off;
+what is already kept stays until it is deleted.
+
 ## Where a shortcut appshot goes
 
 | Destination | Running voice call | No voice call |
@@ -229,8 +255,10 @@ to the assistant; they are the screenshot-tool half.
 
 Appshots capture through the Screen Context engine
 ([screen-context.md](screen-context.md)), so everything there applies
-unchanged: the app denylist, redaction of password fields and sensitive
-patterns, and no image ever written to disk. For an area, a denylisted window
+unchanged: the app denylist and redaction of password fields and sensitive
+patterns. The capture itself writes nothing to disk; the one deliberate copy
+is the gallery's history (see [The gallery](#the-gallery)), which can be
+switched off and deleted. For an area, a denylisted window
 that overlaps the rectangle refuses the capture; one elsewhere on the screen
 does not. The one difference: an appshot
 shows no gold border before the shutter — the flash over the captured window
@@ -264,6 +292,7 @@ original any-order behaviour.
 | `sound` | `true` | Shutter sound; also needs `[ui].sound_effects` |
 | `effect` | `true` | Flash and corner thumbnail |
 | `card_seconds` | `6` | How long the corner card rests, 0–600 seconds; `0` = until closed |
+| `library` | `true` | Keep every appshot and saved edit in the gallery (`<data dir>/appshots/`, newest 500) |
 
 ## Operating systems
 
@@ -281,7 +310,7 @@ instance) arms the shortcuts.
 ## Code
 
 `jarvis/appshot/` — `service.py` (take and deliver), `store.py` (pending and
-last appshot, memory only), `gesture.py` (both-Alt watcher), `hotkey.py`
+last appshot, memory only), `library.py` (the gallery's history on disk), `gesture.py` (both-Alt watcher), `hotkey.py`
 (both shortcuts' lifecycle), `region.py` (area selection and its coordinate
 mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
 `delivery.py` (voice calls). The corner card lives in the indicator sidecar
@@ -293,4 +322,5 @@ mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
 the native clipboard in `jarvis/platform/clipboard_image.py`.
 The live model's `take_appshot` tool is `jarvis/plugins/tool/appshot.py`; the
 REST surface is `jarvis/ui/web/appshot_routes.py`; the page is
-`frontend/src/views/AppshotsView.tsx`.
+`frontend/src/views/AppshotsView.tsx`, its gallery
+`frontend/src/views/AppshotLibrary.tsx`.

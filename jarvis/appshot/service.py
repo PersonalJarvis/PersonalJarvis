@@ -26,7 +26,7 @@ Trigger = Literal["hotkey", "voice", "tool", "button"]
 Scope = Literal["window", "region"]
 
 #: Trusted framing in front of the untrusted screen evidence block.
-_APPSHOT_PREAMBLE = (
+APPSHOT_PREAMBLE = (
     "APPSHOT: the user deliberately captured their front window to give you "
     "context. Use it for their request. If they only asked you to take an "
     "appshot, confirm it in one short sentence and ask what they want to know."
@@ -70,7 +70,7 @@ def shot_from_context(context: Any, *, trigger: str) -> Appshot:
         height=int(context.size[1]),
         label=label,
         app_name=str(getattr(target.window, "app_name", "") or ""),
-        note=f"{_APPSHOT_PREAMBLE}\n{model_note(context)}",
+        note=f"{APPSHOT_PREAMBLE}\n{model_note(context)}",
         ui_text=context.ui_text,
         trigger=trigger,
         taken_at=time.time(),
@@ -138,6 +138,7 @@ async def take_appshot(
 
     store = get_store()
     store.remember(shot, keep_s=float(config.screen_context.deck_preview_s))
+    await _keep_in_library(shot, config)
     await _attach_to_card(shot, config)
     delivered_to = "turn"
     if deliver:
@@ -198,6 +199,25 @@ async def record_turn_capture(context: Any, *, bus: Any | None, trigger: Trigger
         await _publish(bus, shot, "turn")
     except Exception:  # noqa: BLE001 - the turn already has its picture
         log.warning("appshot: could not record the turn's capture", exc_info=True)
+
+
+async def _keep_in_library(shot: Appshot, config: Any) -> None:
+    """Write the appshot into the gallery's history when ``[appshot].library`` is on."""
+    if not bool(getattr(config.appshot, "library", False)):
+        return
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    await asyncio.to_thread(library.save, shot)
+
+
+async def keep_edit_in_library(shot: Appshot) -> None:
+    """Keep a saved edit beside its original, when the library is on."""
+    config = await asyncio.to_thread(_load_config)
+    if not bool(getattr(config.appshot, "library", False)):
+        return
+    from jarvis.appshot import library  # noqa: PLC0415
+
+    await asyncio.to_thread(library.save_edit, shot)
 
 
 async def _attach_to_card(shot: Appshot, config: Any) -> None:
@@ -292,10 +312,12 @@ def take_pending_for_turn() -> Appshot | None:
 
 
 __all__ = [
+    "APPSHOT_PREAMBLE",
     "EDIT_NOTE",
     "AppshotResult",
     "Scope",
     "deliver_edit",
+    "keep_edit_in_library",
     "record_turn_capture",
     "shot_from_context",
     "take_appshot",
