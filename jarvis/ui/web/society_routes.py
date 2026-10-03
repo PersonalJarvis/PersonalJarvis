@@ -195,6 +195,10 @@ class ChatGroupBody(BaseModel):
     members: list[str] = Field(min_length=2, max_length=50)
 
 
+class MeetingMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8_000)
+
+
 class AssignBody(BaseModel):
     task: str = Field(min_length=1, max_length=20_000)
     from_agent: str = "user"
@@ -518,7 +522,7 @@ async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[s
         raise HTTPException(422, "group members must be unique")
     for member_id in members:
         agent = await rt.roster.get(member_id)
-        if agent is None or agent.tier == "lead" or agent.state == "archived":
+        if agent is None or agent.state == "archived":
             raise HTTPException(422, f"agent {member_id} is unavailable for a group")
     return members
 
@@ -528,6 +532,39 @@ async def list_chat_groups(request: Request) -> dict[str, Any]:
     """List persistent Society group chats and their members."""
     rt = await _runtime(request)
     return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.get("/chat-groups/{group_id}/meeting")
+async def get_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Read the shared meeting transcript without starting an agent turn."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting", openapi_extra={"x-jarvis-dangerous": True})
+async def send_group_meeting(
+    group_id: str, body: MeetingMessageBody, request: Request,
+) -> dict[str, Any]:
+    """Ask each group member for one contribution in the shared meeting."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.start(group_id, body.text)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting/stop", openapi_extra={"x-jarvis-dangerous": True})
+async def stop_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Stop the group's meeting without interrupting unrelated agent work."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.stop(group_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
 
 
 @router.post("/chat-groups")
@@ -550,7 +587,10 @@ async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
     members = await _valid_group_members(rt, body.members)
-    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+    async with rt.meetings.group_mutation():
+        if rt.meetings.is_running(group_id):
+            raise HTTPException(409, "Stop the meeting before changing its members.")
+        return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
 
 
 @router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
@@ -559,7 +599,12 @@ async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
     rt = await _runtime(request)
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
-    await rt.store.delete_chat_group(group_id)
+    async with rt.meetings.group_mutation():
+        try:
+            await rt.meetings.stop(group_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        await rt.store.delete_chat_group(group_id)
     return {"deleted": True}
 
 

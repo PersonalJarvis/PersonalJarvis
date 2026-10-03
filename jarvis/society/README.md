@@ -2,8 +2,9 @@
 
 The substrate of the agent society (`docs/agent-society/MASTERPLAN.md` §3,
 `docs/agent-society/agent-definition.md`). M1 (substrate) and the M2 backend
-(canonical chats, approvals, routines) are built; the world (M3), rooms going
-live under the scheduler and the voice router tool (M4) are not.
+(canonical chats, approvals, routines) are built. User-started shared meetings
+run one bounded round through the existing agent chats; reading a transcript
+or reopening the app never resumes paid discussion.
 
 | Module | Role |
 |---|---|
@@ -15,6 +16,7 @@ live under the scheduler and the voice router tool (M4) are not.
 | `capabilities.py` | ONE catalog over plugins, CLIs, MCP servers, active skills and core tools; dispatch and app-control tools are never granted |
 | `focus.py` | deterministic focus + approval-rule derivation from title/description — no model call |
 | `rooms.py` | bounded discussions: 2–6 members, ≤3 rounds, ≤10 messages, silence allowed, restart-safe |
+| `meetings.py` | shared group transcript, one serial round per user message, read-only contributions, owned-turn cancellation; two to six agents, including Jarvis |
 | `scheduler.py` | the only path from an ASSIGN to work: kill switch, tier wall, depth ≤ 2, target, budgets, caps; refusals are VETO envelopes |
 | `bridge.py` | mission envelopes → board (attributed to the owning agent, else the lead) |
 | `approvals.py` | the unattended ask-queue: require > always-allow > tier vs ceiling; expiry parks, never drops |
