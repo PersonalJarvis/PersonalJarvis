@@ -53,8 +53,9 @@ export type ArrowStyle = "tapered" | "classic" | "double";
 export const ARROW_STYLES: readonly ArrowStyle[] = ["tapered", "classic", "double"];
 
 type Shape =
-  | { kind: "arrow"; from: Point; to: Point; color: string; width: number; style?: ArrowStyle }
-  | { kind: "line"; from: Point; to: Point; color: string; width: number }
+  /** ``via``: the control point of a curved arrow or line (a quadratic curve); none = straight. */
+  | { kind: "arrow"; from: Point; to: Point; color: string; width: number; style?: ArrowStyle; via?: Point }
+  | { kind: "line"; from: Point; to: Point; color: string; width: number; via?: Point }
   | { kind: "rect" | "filled" | "ellipse"; rect: Rect; color: string; width: number }
   | { kind: "pen" | "highlight"; points: Point[]; color: string; width: number }
   | { kind: "text"; at: Point; text: string; color: string; size: number; style: TextStyle }
@@ -90,17 +91,45 @@ export const TOOL_KEYS: readonly { tool: Tool; key: string }[] = [
 /**
  * What a press with ``tool`` may take hold of instead of drawing:
  *
- * - ``any``: the select tool picks up every annotation;
- * - ``selected``: a shape tool reshapes or moves only the annotation it has
- *   selected (the one it just drew); a press anywhere else draws a new one;
- * - ``none``: pen, highlighter and counter always draw, so writing over
- *   earlier ink or placing badges side by side never drags anything along.
+ * - ``any``: the select tool picks up every annotation, areas included;
+ * - ``shapes``: every other drawing tool picks up any annotation under the
+ *   pointer (not spotlights or redactions — they cover what is drawn in
+ *   them), so anything drawn can be moved and reshaped again at once;
+ * - ``grips``: pen and highlighter only take the selected annotation's
+ *   grips, so writing over earlier ink never drags it along;
+ * - ``none``: crop and background, which work on the whole picture.
  */
-export function grabScope(tool: Tool): "any" | "selected" | "none" {
+export function grabScope(tool: Tool): "any" | "shapes" | "grips" | "none" {
   if (tool === "move") return "any";
-  if (tool === "pen" || tool === "highlight" || tool === "counter") return "none";
-  return "selected";
+  if (tool === "pen" || tool === "highlight") return "grips";
+  if (tool === "crop" || tool === "background") return "none";
+  return "shapes";
 }
+
+/** The point at ``t`` on the quadratic curve ``a`` – ``via`` – ``b``. */
+export function curveAt(a: Point, via: Point, b: Point, t: number): Point {
+  const u = 1 - t;
+  return {
+    x: u * u * a.x + 2 * u * t * via.x + t * t * b.x,
+    y: u * u * a.y + 2 * u * t * via.y + t * t * b.y,
+  };
+}
+
+/** An arrow's or line's path: its two ends, or the sampled curve. */
+export function segmentPath(op: { from: Point; to: Point; via?: Point }, steps = 32): Point[] {
+  if (!op.via) return [op.from, op.to];
+  const via = op.via;
+  return Array.from({ length: steps + 1 }, (_, i) => curveAt(op.from, via, op.to, i / steps));
+}
+
+/** Where the bend grip sits: the middle of the line or of the curve. */
+export function segmentMiddle(op: { from: Point; to: Point; via?: Point }): Point {
+  if (!op.via) return { x: (op.from.x + op.to.x) / 2, y: (op.from.y + op.to.y) / 2 };
+  return curveAt(op.from, op.via, op.to, 0.5);
+}
+
+/** A bend grip dropped this close to the straight line straightens it again. */
+const STRAIGHT_SNAP = 4;
 
 export function toolForKey(key: string): Tool | null {
   const lower = key.toLowerCase();
@@ -220,8 +249,13 @@ function textLines(text: string): string[] {
 export function bounds(op: Draft, measure: MeasureText = roughMeasure): Rect {
   switch (op.kind) {
     case "arrow":
-    case "line":
-      return rectFrom(op.from, op.to);
+    case "line": {
+      if (!op.via) return rectFrom(op.from, op.to);
+      const path = segmentPath(op);
+      const xs = path.map((p) => p.x);
+      const ys = path.map((p) => p.y);
+      return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    }
     case "pen":
     case "highlight": {
       const xs = op.points.map((p) => p.x);
@@ -261,8 +295,13 @@ function hits(op: Op, p: Point, slop: number, measure?: MeasureText): boolean {
     case "crop":
       return false;
     case "arrow":
-    case "line":
-      return distanceToSegment(p, op.from, op.to) <= slop + op.width;
+    case "line": {
+      const path = segmentPath(op);
+      for (let j = 1; j < path.length; j += 1) {
+        if (distanceToSegment(p, path[j - 1], path[j]) <= slop + op.width) return true;
+      }
+      return false;
+    }
     case "pen":
     case "highlight": {
       const reach = slop + (op.kind === "highlight" ? op.width * 2 : op.width);
@@ -322,7 +361,12 @@ export function translate<T extends Draft>(op: T, dx: number, dy: number): T {
   switch (op.kind) {
     case "arrow":
     case "line":
-      return { ...op, from: shiftPoint(op.from, dx, dy), to: shiftPoint(op.to, dx, dy) };
+      return {
+        ...op,
+        from: shiftPoint(op.from, dx, dy),
+        to: shiftPoint(op.to, dx, dy),
+        ...(op.via ? { via: shiftPoint(op.via, dx, dy) } : {}),
+      };
     case "pen":
     case "highlight":
       return { ...op, points: op.points.map((p) => shiftPoint(p, dx, dy)) };
@@ -338,10 +382,10 @@ export function translate<T extends Draft>(op: T, dx: number, dy: number): T {
 
 /**
  * A grip on a selected annotation. Lines and arrows have one at each end
- * (``from``, ``to``); boxes, strokes and text one at each corner (text
+ * (``from``, ``to``) and one in the middle that bends them (``mid``); boxes, strokes and text one at each corner (text
  * scales its size with them); a counter one on its rim (``size``).
  */
-export type HandleId = "from" | "to" | "nw" | "ne" | "sw" | "se" | "size";
+export type HandleId = "from" | "to" | "mid" | "nw" | "ne" | "sw" | "se" | "size";
 
 export interface Handle {
   id: HandleId;
@@ -369,6 +413,7 @@ export function handles(op: Draft, measure?: MeasureText): Handle[] {
     case "line":
       return [
         { id: "from", at: op.from },
+        { id: "mid", at: segmentMiddle(op) },
         { id: "to", at: op.to },
       ];
     case "crop":
@@ -411,6 +456,15 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
     case "line":
       if (handle === "from") return { ...op, from: p } as T;
       if (handle === "to") return { ...op, to: p } as T;
+      if (handle === "mid") {
+        // The curve's middle lands on the pointer; near the straight line it straightens.
+        const middle = { x: (op.from.x + op.to.x) / 2, y: (op.from.y + op.to.y) / 2 };
+        if (Math.hypot(p.x - middle.x, p.y - middle.y) < STRAIGHT_SNAP) {
+          const { via: _via, ...straight } = op;
+          return straight as T;
+        }
+        return { ...op, via: { x: 2 * p.x - middle.x, y: 2 * p.y - middle.y } } as T;
+      }
       return original;
     case "crop":
       return original;
@@ -418,7 +472,7 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
       return { ...op, size: Math.max(8, Math.hypot(p.x - op.at.x, p.y - op.at.y)) } as T;
     case "text": {
       // Any corner scales the text; the opposite corner stays where it was.
-      if (handle === "from" || handle === "to" || handle === "size") return original;
+      if (handle === "from" || handle === "to" || handle === "mid" || handle === "size") return original;
       const box = bounds(op, measure);
       const anchor = corner(box, OPPOSITE[handle]);
       const factor = Math.max(0.1, Math.abs(p.y - anchor.y) / Math.max(1, box.h));
@@ -431,7 +485,7 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
     }
     case "pen":
     case "highlight": {
-      if (handle === "from" || handle === "to" || handle === "size") return original;
+      if (handle === "from" || handle === "to" || handle === "mid" || handle === "size") return original;
       const box = bounds(op);
       const anchor = corner(box, OPPOSITE[handle]);
       const grip = corner(box, handle);
@@ -443,7 +497,7 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
       } as T;
     }
     default: {
-      if (handle === "from" || handle === "to" || handle === "size") return original;
+      if (handle === "from" || handle === "to" || handle === "mid" || handle === "size") return original;
       return { ...op, rect: rectFrom(corner(op.rect, OPPOSITE[handle]), p) } as T;
     }
   }
@@ -601,7 +655,8 @@ export function contrastOn(hex: string): string {
  * scales with the stroke width; a short arrow keeps its head in proportion.
  * Empty for an arrow too short to draw.
  */
-export function taperedArrowOutline(from: Point, to: Point, width: number): Point[] {
+export function taperedArrowOutline(from: Point, to: Point, width: number, via?: Point): Point[] {
+  if (via) return curvedArrowOutline(from, to, width, via);
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const length = Math.hypot(dx, dy);
@@ -630,8 +685,48 @@ export function taperedArrowOutline(from: Point, to: Point, width: number): Poin
   ];
 }
 
-function taperedArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number) {
-  const outline = taperedArrowOutline(from, to, width);
+/** The tapered arrow along a curve: the same profile, following the bend. */
+function curvedArrowOutline(from: Point, to: Point, width: number, via: Point): Point[] {
+  const path = segmentPath({ from, to, via }, 48);
+  const lengths = [0];
+  for (let i = 1; i < path.length; i += 1) {
+    lengths.push(lengths[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y));
+  }
+  const length = lengths[lengths.length - 1];
+  if (length < 2) return [];
+  const head = Math.min(Math.max(12, width * 4.6 + 6), length * 0.62);
+  const barb = head * 0.56;
+  const neckAt = length - head * 0.7;
+  const tail = Math.max(0.6, width * 0.14);
+  const neck = Math.max(1.4, width * 0.78);
+  const left: Point[] = [];
+  const right: Point[] = [];
+  for (let i = 0; i < path.length && lengths[i] <= neckAt; i += 1) {
+    const a = path[Math.max(0, i - 1)];
+    const b = path[Math.min(path.length - 1, i + 1)];
+    const span = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const nx = -(b.y - a.y) / span;
+    const ny = (b.x - a.x) / span;
+    const half = tail + (neck - tail) * (lengths[i] / Math.max(1, neckAt));
+    left.push({ x: path[i].x + nx * half, y: path[i].y + ny * half });
+    right.push({ x: path[i].x - nx * half, y: path[i].y - ny * half });
+  }
+  // The head points along the curve's last stretch.
+  const span = Math.hypot(to.x - via.x, to.y - via.y) || 1;
+  const ux = (to.x - via.x) / span;
+  const uy = (to.y - via.y) / span;
+  const base = { x: to.x - ux * head, y: to.y - uy * head };
+  return [
+    ...left,
+    { x: base.x - uy * barb, y: base.y + ux * barb },
+    to,
+    { x: base.x + uy * barb, y: base.y - ux * barb },
+    ...right.reverse(),
+  ];
+}
+
+function taperedArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number, via?: Point) {
+  const outline = taperedArrowOutline(from, to, width, via);
   if (outline.length === 0) return;
   ctx.beginPath();
   ctx.moveTo(outline[0].x, outline[0].y);
@@ -647,6 +742,25 @@ function taperedArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, wid
   ctx.lineWidth = Math.max(1, width * 0.22);
   ctx.lineJoin = "round";
   ctx.stroke();
+}
+
+/** A classic arrow along a curve: the curve, and a head at each end ``heads`` asks for. */
+function curvedArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number, via: Point, double: boolean) {
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.quadraticCurveTo(via.x, via.y, to.x, to.y);
+  ctx.stroke();
+  const head = Math.max(10, width * 4);
+  const tips: [Point, Point][] = double ? [[to, via], [from, via]] : [[to, via]];
+  for (const [tip, toward] of tips) {
+    const angle = Math.atan2(tip.y - toward.y, tip.x - toward.x);
+    ctx.beginPath();
+    ctx.moveTo(tip.x, tip.y);
+    ctx.lineTo(tip.x - Math.cos(angle - 0.45) * head, tip.y - Math.sin(angle - 0.45) * head);
+    ctx.lineTo(tip.x - Math.cos(angle + 0.45) * head, tip.y - Math.sin(angle + 0.45) * head);
+    ctx.closePath();
+    ctx.fill();
+  }
 }
 
 function arrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, width: number) {
@@ -796,14 +910,16 @@ export function paintShape(ctx: CanvasRenderingContext2D, base: CanvasImageSourc
       ctx.strokeStyle = op.color;
       ctx.fillStyle = op.color;
       ctx.lineWidth = op.width;
-      if (op.style === "classic") {
+      if (op.via && (op.style === "classic" || op.style === "double")) {
+        curvedArrow(ctx, op.from, op.to, op.width, op.via, op.style === "double");
+      } else if (op.style === "classic") {
         arrow(ctx, op.from, op.to, op.width);
       } else if (op.style === "double") {
         arrow(ctx, op.from, op.to, op.width);
         arrow(ctx, op.to, op.from, op.width);
       } else {
         // Tapered is the default, also for arrows drawn before styles existed.
-        taperedArrow(ctx, op.from, op.to, op.width);
+        taperedArrow(ctx, op.from, op.to, op.width, op.via);
       }
       break;
     case "line":
@@ -811,7 +927,8 @@ export function paintShape(ctx: CanvasRenderingContext2D, base: CanvasImageSourc
       ctx.lineWidth = op.width;
       ctx.beginPath();
       ctx.moveTo(op.from.x, op.from.y);
-      ctx.lineTo(op.to.x, op.to.y);
+      if (op.via) ctx.quadraticCurveTo(op.via.x, op.via.y, op.to.x, op.to.y);
+      else ctx.lineTo(op.to.x, op.to.y);
       ctx.stroke();
       break;
     case "rect":

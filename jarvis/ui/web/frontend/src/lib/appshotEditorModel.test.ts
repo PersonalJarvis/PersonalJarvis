@@ -31,6 +31,7 @@ import {
   undo,
   viewport,
   withId,
+  type Draft,
   type Op,
 } from "@/lib/appshotEditorModel";
 
@@ -256,15 +257,16 @@ describe("grips", () => {
   const arrow = withId({ kind: "arrow", from: { x: 10, y: 10 }, to: { x: 110, y: 60 }, color: "#f00", width: 4 });
   const box = withId({ kind: "rect", rect: { x: 100, y: 100, w: 80, h: 40 }, color: "#f00", width: 4 });
 
-  it("puts a grip at each end of an arrow and each corner of a box", () => {
-    expect(handles(arrow).map((h) => h.id)).toEqual(["from", "to"]);
+  it("puts a grip at each end and the middle of an arrow and each corner of a box", () => {
+    expect(handles(arrow).map((h) => h.id)).toEqual(["from", "mid", "to"]);
     expect(handles(box).map((h) => h.id)).toEqual(["nw", "ne", "sw", "se"]);
     expect(handles(withId({ kind: "crop", rect: { x: 0, y: 0, w: 5, h: 5 } }))).toEqual([]);
   });
 
   it("finds the grip under the pointer", () => {
     expect(handleAt(arrow, { x: 112, y: 58 }, 6)).toBe("to");
-    expect(handleAt(arrow, { x: 60, y: 35 }, 6)).toBeNull();
+    expect(handleAt(arrow, { x: 60, y: 35 }, 6)).toBe("mid");
+    expect(handleAt(arrow, { x: 85, y: 35 }, 6)).toBeNull();
     expect(handleAt(box, { x: 181, y: 141 }, 6)).toBe("se");
   });
 
@@ -286,6 +288,14 @@ describe("grips", () => {
     expect(reshape(pen, "se", { x: 20, y: 20 }).points[1]).toEqual({ x: 20, y: 20 });
     const text = withId({ kind: "text", at: { x: 0, y: 0 }, text: "Hi", color: "#fff", size: 20, style: "plain" as const });
     expect(reshape(text, "se", { x: 0, y: 50 }, () => 20).size).toBe(40);
+    // The middle grip bends an arrow; dropped on the straight line it straightens.
+    const straight: Extract<Draft, { kind: "arrow" }> = withId({ kind: "arrow", from: { x: 0, y: 0 }, to: { x: 100, y: 0 }, color: "#f00", width: 3 });
+    expect(handles(straight).map((h) => h.id)).toEqual(["from", "mid", "to"]);
+    const bent = reshape(straight, "mid", { x: 50, y: 40 });
+    expect(bent.via).toEqual({ x: 50, y: 80 });
+    expect(bounds(bent).h).toBe(40);
+    expect(reshape(bent, "mid", { x: 51, y: 1 }).via).toBeUndefined();
+    expect(taperedArrowOutline(bent.from, bent.to, 3, bent.via).length).toBeGreaterThan(7);
     // Text has a grip on every corner; the opposite corner stays put.
     expect(handles(text, () => 20).map((h) => h.id)).toEqual(["nw", "ne", "sw", "se"]);
     const shrunk = reshape(text, "nw", { x: 0, y: 12.5 }, (_line, size) => size);
@@ -308,15 +318,16 @@ describe("grabScope", () => {
     expect(grabScope("move")).toBe("any");
   });
 
-  it("keeps pen, highlighter and counter drawing over what is already there", () => {
-    expect(grabScope("pen")).toBe("none");
-    expect(grabScope("highlight")).toBe("none");
-    expect(grabScope("counter")).toBe("none");
+  it("keeps pen and highlighter drawing over what is already there", () => {
+    expect(grabScope("pen")).toBe("grips");
+    expect(grabScope("highlight")).toBe("grips");
   });
 
-  it("lets a shape tool reshape only the shape it just drew", () => {
-    for (const tool of ["arrow", "line", "rect", "filled", "ellipse", "text", "redact", "spotlight"] as const) {
-      expect(grabScope(tool)).toBe("selected");
+  it("lets every other drawing tool take any drawn annotation again", () => {
+    for (const tool of ["arrow", "line", "rect", "filled", "ellipse", "text", "redact", "spotlight", "counter"] as const) {
+      expect(grabScope(tool)).toBe("shapes");
     }
+    expect(grabScope("crop")).toBe("none");
+    expect(grabScope("background")).toBe("none");
   });
 });

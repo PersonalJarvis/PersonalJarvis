@@ -493,7 +493,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
           : ops.filter((op) => op.id !== id),
       );
     } else if (text.trim()) {
-      push({ kind: "text", at: current.at, text, color, size: textSize(width), style: textStyle });
+      setSelectedId(push({ kind: "text", at: current.at, text, color, size: textSize(width), style: textStyle }));
     }
   }, [apply, color, ops, push, setTyping, textStyle, width]);
 
@@ -507,10 +507,10 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   /** The annotation a press at ``p`` would move with the current tool, if any. */
   const grabbable = (p: Point) => {
     const scope = grabScope(tool);
-    if (scope === "none") return null;
-    const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
+    if (scope === "none" || scope === "grips") return null;
+    const hit = hitTest(ops, p, 6 / scale, measure, { areas: scope === "any" });
     if (!hit || (tool === "text" && hit.kind === "text")) return null;
-    return scope === "any" || hit.id === selectedId ? hit : null;
+    return hit;
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -518,9 +518,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     const p = toImage(event);
     if (tool === "background") return;
     if (tool !== "crop") {
-      // The select tool takes hold of any annotation; a shape tool only of
-      // the one it has selected (a grip reshapes it, the body moves it); pen,
-      // highlighter and counter never do — a press with them always draws.
+      // A grip of the selected annotation reshapes it; any drawn annotation
+      // under the pointer is taken and moved (the select tool also takes
+      // spotlights and redactions); pen and highlighter only take grips.
       const scope = grabScope(tool);
       if (scope !== "none" && selected && selectedLive) {
         const grip = handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure);
@@ -553,9 +553,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       return;
     }
     if (tool === "counter") {
-      // Not selected afterwards: the next click right beside it places the
-      // next number instead of dragging this one.
-      push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) });
+      // Selected like every fresh annotation; a click beside it still places
+      // the next number, a press on it moves it.
+      setSelectedId(push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) }));
       return;
     }
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -646,9 +646,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!isMeaningful(shape)) return;
     const id = push(shape);
     if (shape.kind === "crop") setTool("move");
-    // A fresh shape is selected at once, so its grips are right there; ink
-    // is not, or its box would catch the next stroke written beside it.
-    else if (grabScope(tool) !== "none") setSelectedId(id);
+    // Every fresh annotation is selected at once, so its grips are right
+    // there (the previous one loses them) and it can be moved again.
+    else setSelectedId(id);
   };
 
   const onDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
