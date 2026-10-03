@@ -13,6 +13,7 @@ continues instead of orphaning it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, Final
@@ -115,6 +116,13 @@ class Room:
 class Rooms:
     def __init__(self, store: SocietyStore) -> None:
         self._store = store
+        # Room turns are state transitions over one durable row. Serialize each
+        # room independently so two simultaneous replies cannot both observe
+        # the same next_speaker and consume the same turn.
+        self._turn_locks: dict[str, asyncio.Lock] = {}
+
+    def _turn_lock(self, room_id: str) -> asyncio.Lock:
+        return self._turn_locks.setdefault(room_id, asyncio.Lock())
 
     async def open(
         self, *, opened_by: str, members: list[str], topic: str = "", room_id: str | None = None
@@ -186,32 +194,34 @@ class Rooms:
     async def say(self, room_id: str, member: str, text: str, *, cost_usd: float = 0.0) -> Room:
         """``member`` speaks. Refused when it is not their turn or the room
         is not running; settles the room when a cap is reached."""
-        room = await self._require_running(room_id)
-        self._require_turn(room, member)
         text = (text or "").strip()[:_MAX_TEXT]
         if not text:
             return await self.pass_turn(room_id, member)
-        await self._store.append_and_publish(
-            SocietyEnvelope(
-                msg_type=MsgType.SAY,
-                from_agent=member,
-                to_agent=None,
-                trace_id=room.trace_id,
-                cost_usd=cost_usd,
-                payload={"room_id": room.room_id, "round": room.round, "text": text},
+        async with self._turn_lock(room_id):
+            room = await self._require_running(room_id)
+            self._require_turn(room, member)
+            await self._store.append_and_publish(
+                SocietyEnvelope(
+                    msg_type=MsgType.SAY,
+                    from_agent=member,
+                    to_agent=None,
+                    trace_id=room.trace_id,
+                    cost_usd=cost_usd,
+                    payload={"room_id": room.room_id, "round": room.round, "text": text},
+                )
             )
-        )
-        room.message_count += 1
-        room.spoke_this_round = True
-        room.turned.append(member)
-        return await self._advance(room)
+            room.message_count += 1
+            room.spoke_this_round = True
+            room.turned.append(member)
+            return await self._advance(room)
 
     async def pass_turn(self, room_id: str, member: str) -> Room:
         """``member`` stays silent this round (silence is allowed)."""
-        room = await self._require_running(room_id)
-        self._require_turn(room, member)
-        room.turned.append(member)
-        return await self._advance(room)
+        async with self._turn_lock(room_id):
+            room = await self._require_running(room_id)
+            self._require_turn(room, member)
+            room.turned.append(member)
+            return await self._advance(room)
 
     async def settle(self, room_id: str, *, reason: str, by: str = "scheduler") -> Room:
         room = await self.get(room_id)
