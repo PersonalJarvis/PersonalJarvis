@@ -797,6 +797,65 @@ def window_needs_restore(title: str) -> bool:
         return True
 
 
+#: ``WINDOWPLACEMENT.flags``: a minimized window that comes back maximized.
+_WPF_RESTORETOMAXIMIZED = 0x0002
+
+
+def _placement_restores_maximized(hwnd: int, user32: Any) -> bool:
+    """Was this (minimized) window maximized before it was minimized?
+
+    ``GetWindowPlacement`` keeps that in ``WPF_RESTORETOMAXIMIZED``. Unknown
+    counts as "no", the old restore-to-normal behaviour.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Placement(ctypes.Structure):
+            _fields_ = [
+                ("length", wintypes.UINT),
+                ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT),
+                ("ptMinPosition", wintypes.POINT),
+                ("ptMaxPosition", wintypes.POINT),
+                ("rcNormalPosition", wintypes.RECT),
+            ]
+
+        placement = _Placement()
+        placement.length = ctypes.sizeof(_Placement)
+        if not user32.GetWindowPlacement(hwnd, ctypes.byref(placement)):
+            return False
+        return bool(placement.flags & _WPF_RESTORETOMAXIMIZED)
+    except Exception:  # noqa: BLE001 - unknown placement: restore as before
+        return False
+
+
+def window_restores_maximized(title: str) -> bool:
+    """Whether the minimized window titled ``title`` was maximized before.
+
+    pywebview's ``restore()`` sets the normal size, so a maximized window that
+    was minimized came back small; such a window is restored by Win32
+    ``SW_RESTORE`` alone (``_bring_window_to_front_by_title``), which returns
+    it maximized. ``False`` off Windows and whenever it cannot be told.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd or not user32.IsIconic(hwnd):
+            return False
+        return _placement_restores_maximized(hwnd, user32)
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return False
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -893,11 +952,16 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         # Order matters: SHOW/RESTORE first, then move if needed, then
         # Foreground+Active for keyboard focus. A window that is already on
         # screen keeps its state: SHOWNORMAL/RESTORE would un-maximize it.
-        if was_minimized or offscreen_minimized or not user32.IsWindowVisible(hwnd):
+        # A window minimized while maximized comes back maximized: SW_RESTORE
+        # alone does that, SW_SHOWNORMAL and the move below would shrink it.
+        to_maximized = was_minimized and _placement_restores_maximized(hwnd, user32)
+        if to_maximized:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        elif was_minimized or offscreen_minimized or not user32.IsWindowVisible(hwnd):
             user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
             user32.ShowWindow(hwnd, 5)  # SW_SHOW
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        if was_minimized or offscreen_minimized:
+        if (was_minimized or offscreen_minimized) and not to_maximized:
             width = max(900, min(1600, rect.right - rect.left))
             height = max(600, min(1000, rect.bottom - rect.top))
             if width > 5000 or height > 5000:
@@ -4952,8 +5016,9 @@ class DesktopApp:
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
         needs_restore = window_needs_restore(WINDOW_TITLE)
+        to_maximized = window_restores_maximized(WINDOW_TITLE)
         self._window.show()
-        if needs_restore:
+        if needs_restore and not to_maximized:
             self._window.restore()
         self._window_visible = True
         focused = _bring_window_to_front_by_title(WINDOW_TITLE)
@@ -6260,8 +6325,11 @@ class DesktopApp:
             # pywebview's restore() un-maximizes a visible window too; only a
             # minimized or hidden one needs it.
             needs_restore = window_needs_restore(WINDOW_TITLE)
+            # A window minimized while maximized is restored by Win32 below,
+            # which brings it back maximized; pywebview's restore would not.
+            to_maximized = window_restores_maximized(WINDOW_TITLE)
             self._window.show()
-            if needs_restore:
+            if needs_restore and not to_maximized:
                 self._window.restore()
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)

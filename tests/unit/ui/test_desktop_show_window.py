@@ -121,6 +121,7 @@ async def test_focus_window_now_completes_the_visibility_dance(
     # A minimized window: the dance restores it. (The real probe would read
     # whatever Jarvis window happens to be open on the test machine.)
     monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: True)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_restores_maximized", lambda _title: False)
 
     import asyncio
 
@@ -146,6 +147,7 @@ def test_focus_window_now_keeps_a_maximized_window_maximized(
     app._restore_overlay_for_visible_window = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
     monkeypatch.setattr("jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda _t: True)
     monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_restores_maximized", lambda _title: False)
 
     assert app._focus_window_now() == {"ok": True, "focused": True}  # noqa: SLF001
     assert [name for name, _ in window.calls] == ["show"]
@@ -154,6 +156,47 @@ def test_focus_window_now_keeps_a_maximized_window_maximized(
     app._reload_window_if_stale = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
     app._safe_window_show()  # noqa: SLF001  # the appshot card / overlay path
     assert [name for name, _ in window.calls] == ["show"]
+
+
+def test_a_window_minimized_while_maximized_comes_back_maximized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-10-03 (video): Edit on the appshot card brought the minimized
+    app back small. pywebview's restore() sets the normal size; Win32
+    SW_RESTORE alone returns a window to the maximized state it left."""
+    app = DesktopApp.__new__(DesktopApp)
+    window = _RecordingWindow()
+    app._window = window  # noqa: SLF001
+    app._restore_overlay_for_visible_window = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    app._reload_window_if_stale = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    monkeypatch.setattr("jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda _t: True)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: True)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_restores_maximized", lambda _title: True)
+
+    assert app._focus_window_now() == {"ok": True, "focused": True}  # noqa: SLF001
+    app._safe_window_show()  # noqa: SLF001
+    assert "restore" not in [name for name, _ in window.calls]
+
+
+class _PlacementUser32:
+    """Answers GetWindowPlacement with the given flags."""
+
+    def __init__(self, flags: int, ok: bool = True) -> None:
+        self.flags = flags
+        self.ok = ok
+
+    def GetWindowPlacement(self, _hwnd: int, placement: object) -> bool:  # noqa: N802
+        placement._obj.flags = self.flags  # type: ignore[attr-defined]
+        return self.ok
+
+
+def test_placement_tells_a_window_that_returns_maximized() -> None:
+    from jarvis.ui.desktop_app import _placement_restores_maximized
+
+    assert _placement_restores_maximized(1, _PlacementUser32(0x0002)) is True
+    assert _placement_restores_maximized(1, _PlacementUser32(0x0000)) is False
+    assert _placement_restores_maximized(1, _PlacementUser32(0x0002, ok=False)) is False
+    assert _placement_restores_maximized(1, object()) is False
 
 
 def test_focus_window_now_without_window_reports_no_window() -> None:
