@@ -61,6 +61,9 @@ STEP_GAP_S = 0.08
 #: The border and the Escape binding stay up this long after the last input
 #: step, so a multi-call task reads as one continuous control period.
 IDLE_RELEASE_S = 12.0
+#: While the agent pointer is on screen, a click first moves the pointer and
+#: waits this long, so the user sees it arrive before the button goes down.
+POINTER_ARRIVAL_S = 0.26
 
 _POINTER = frozenset({"click", "double_click", "right_click", "middle_click", "move", "drag"})
 _KEYBOARD = frozenset({"type", "key"})
@@ -846,6 +849,30 @@ def _input_failure(exc: Exception) -> str:
     return text[:300]
 
 
+def _visible_pointer() -> Any:
+    """The indicator controller while the agent pointer is on screen, else ``None``."""
+    try:
+        from jarvis.cu.indicator.controller import get_indicator_controller  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — no indicator on this host
+        return None
+    controller = get_indicator_controller()
+    return controller if getattr(controller, "pointer_visible", False) else None
+
+
+def _announce_press(actuator: Any, sx: int, sy: int) -> None:
+    """Let the agent pointer glide to the target and dip before the click."""
+    import time  # noqa: PLC0415
+
+    from jarvis.cu.actuate import verified_move  # noqa: PLC0415
+
+    controller = _visible_pointer()
+    if controller is None:
+        return
+    if verified_move(actuator, sx, sy).ok:
+        time.sleep(POINTER_ARRIVAL_S)
+    controller.pointer_press()
+
+
 def _act(actuator: Any, step: Step, frame: Any, foreground: Callable[[], Foreground]) -> str:
     """Run one input step synchronously; return an error detail or ``""``."""
     from jarvis.cu.actuate import verified_click, verified_drag, verified_move  # noqa: PLC0415
@@ -861,6 +888,7 @@ def _act(actuator: Any, step: Step, frame: Any, foreground: Callable[[], Foregro
 
         if step.action in {"click", "double_click", "right_click", "middle_click"}:
             button = {"right_click": "right", "middle_click": "middle"}.get(step.action, "left")
+            _announce_press(actuator, sx, sy)
             landing = verified_click(
                 actuator,
                 sx,

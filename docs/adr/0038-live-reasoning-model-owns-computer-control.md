@@ -57,7 +57,7 @@ computer; no second model is called for it.
    A blocker returns `blocked: <code>` and a plain sentence; the instructions
    tell the model to explain it and not retry in a loop.
 4. **Control signals stay.** The first input step publishes `CUControlStarted`
-   (yellow border, Escape armed) and registers a cancel token, so Escape, the
+   (control border and agent pointer, Escape armed) and registers a cancel token, so Escape, the
    voice hang-up and the emergency stop stop it. `CUControlEnded` follows 12 s
    after the last input. Input is serialized with the mission harness desktop
    lock; while a mission runs the tool answers `blocked: busy`.

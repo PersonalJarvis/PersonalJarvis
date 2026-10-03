@@ -29,8 +29,26 @@ frame or a changed front window presses nothing. Before any capture or input
 | Linux | Wayland session; no display | `wayland` / `headless` |
 | All | `[computer_use].enabled`; a running mission holds the desktop | `disabled` / `busy` |
 
-The yellow border and Escape work as for missions. Text chat, scheduled tasks
+The control border and Escape work as for missions. Text chat, scheduled tasks
 and the CLI still use the mission engine described below.
+
+## What the user sees while Jarvis has the mouse (2026-10-03)
+
+While Jarvis operates the screen, a thin blue line with a narrow glow runs
+along every monitor edge, and an "Esc to cancel" pill sits top-center. The
+pointer turns into the agent pointer: a slim blue arrowhead with a white rim
+and a soft halo (`jarvis/cu/indicator/agent_pointer.py`). It glides to each
+target on a gently bowed path, leans into its motion, and dips with a ring
+on every click; a click waits about a quarter second so the user sees the
+pointer arrive. The motion model is `jarvis/cu/indicator/pointer_motion.py`.
+
+On Windows the system pointer is hidden during control (`SetSystemCursor`)
+and the user's own cursor scheme is reloaded when control ends
+(`SPI_SETCURSORS`). A marker file records the swap, so the main app restores
+the pointer at boot and after reaping a sidecar that died mid-control. macOS
+and Linux cannot hide another app's pointer; there the agent pointer is drawn
+on top of the system pointer. Screen looks without control show the border
+only, never the agent pointer.
 
 ## Engine v2 (default since 2026-07-02)
 

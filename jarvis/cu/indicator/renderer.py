@@ -6,12 +6,14 @@ never import it (boot-path discipline, AP-26); the ``__main__`` entry
 guards the import and exits with ``protocol.EXIT_NO_GUI`` when the GUI
 stack is unavailable.
 
-Visual contract (maintainer-approved 2026-07-15):
+Visual contract (2026-10-03, drawn by ``agent_pointer.py``):
 
-- A soft gold glow along every edge of EVERY monitor, breathing on a
-  ~2.4 s sine loop, 300 ms fade in/out.
+- A thin blue line with a narrow inner glow along every edge of EVERY
+  monitor, breathing on a ~3.2 s sine loop, 300 ms fade in/out.
 - An "Esc to cancel" pill top-center on the primary monitor (text arrives
   pre-localized from the controller; omitted when Escape isn't armable).
+- While a show carries ``pointer``: the agent pointer follows the cursor,
+  and on Windows the system pointer is hidden until the hide.
 - Frameless, always-on-top, fully click-through, never activates, and on
   Windows excluded from screen capture (see ``win32.py``).
 """
@@ -49,7 +51,6 @@ from PySide6.QtGui import (
     QFontMetricsF,
     QGuiApplication,
     QImage,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -59,23 +60,21 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QWidget
 
 from jarvis.cu.indicator import protocol
+from jarvis.cu.indicator.agent_pointer import (
+    AgentPointerWindow,
+    paint_border,
+    paint_hint_pill,
+)
 from jarvis.cu.indicator.win32 import (
     exclude_from_capture,
     harden_clickable_window,
     harden_window,
+    hide_system_cursor,
+    restore_system_cursor,
 )
 
-# Jarvis gold — matches ui/orb BUBBLE_BORDER_HEX (#FFE500) at the crisp
-# edge, falling off through the softer [ui].bar_accent gold (#e7c46e).
-_EDGE_RGB = (255, 229, 0)
-_SOFT_RGB = (231, 196, 110)
-
-_GLOW_MIN_PX = 32
-_GLOW_MAX_PX = 110
-_EDGE_LINE_PX = 3
-
-_PULSE_PERIOD_MS = 2400
-_PULSE_FLOOR = 0.62  # breathing dims to 62 %, never fully out
+_PULSE_PERIOD_MS = 3200
+_PULSE_FLOOR = 0.78  # breathing dims to 78 %, calm and never out
 _FADE_MS = 300
 
 
@@ -135,66 +134,11 @@ class _GlowWindow(QWidget):
         h = self.height()
         if w <= 0 or h <= 0:
             return
-        glow = max(_GLOW_MIN_PX, min(_GLOW_MAX_PX, int(min(w, h) * 0.06)))
-
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-
-        edge = QColor(*_EDGE_RGB, 205)
-        soft = QColor(*_SOFT_RGB, 135)
-        clear = QColor(*_SOFT_RGB, 0)
-
-        def _edge_gradient(x1: float, y1: float, x2: float, y2: float):
-            grad = QLinearGradient(x1, y1, x2, y2)
-            grad.setColorAt(0.0, edge)
-            grad.setColorAt(0.35, soft)
-            grad.setColorAt(1.0, clear)
-            return grad
-
-        painter.fillRect(0, 0, w, glow, _edge_gradient(0, 0, 0, glow))
-        painter.fillRect(0, h - glow, w, glow, _edge_gradient(0, h, 0, h - glow))
-        painter.fillRect(0, 0, glow, h, _edge_gradient(0, 0, glow, 0))
-        painter.fillRect(w - glow, 0, glow, h, _edge_gradient(w, 0, w - glow, 0))
-
-        # Crisp definition line at the very edge.
-        pen = QPen(QColor(*_EDGE_RGB, 235))
-        pen.setWidth(_EDGE_LINE_PX)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        inset = _EDGE_LINE_PX // 2
-        painter.drawRect(inset, inset, w - _EDGE_LINE_PX, h - _EDGE_LINE_PX)
-
+        paint_border(painter, w, h)
         if self._with_pill and self._hint:
-            self._paint_pill(painter, w)
+            paint_hint_pill(painter, w, self._hint)
         painter.end()
-
-    def _paint_pill(self, painter: QPainter, w: int) -> None:
-        font = QFont()
-        font.setPointSizeF(10.5)
-        font.setWeight(QFont.Weight.Medium)
-        painter.setFont(font)
-        metrics = QFontMetricsF(font)
-        pad_x, pad_y = 16.0, 7.0
-        text_w = metrics.horizontalAdvance(self._hint)
-        pill_w = text_w + 2 * pad_x
-        pill_h = metrics.height() + 2 * pad_y
-        x = (w - pill_w) / 2.0
-        y = 18.0
-        radius = pill_h / 2.0
-
-        painter.setPen(QPen(QColor(*_SOFT_RGB, 200), 1.0))
-        painter.setBrush(QColor(18, 18, 18, 175))
-        painter.drawRoundedRect(int(x), int(y), int(pill_w), int(pill_h), radius, radius)
-        painter.setPen(QColor(255, 240, 200, 235))
-        painter.drawText(
-            int(x),
-            int(y),
-            int(pill_w),
-            int(pill_h),
-            Qt.AlignmentFlag.AlignCenter,
-            self._hint,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -1195,6 +1139,9 @@ class Renderer(QObject):
         self._card_labels: dict[str, str] = {}
         self._hint = ""
         self._active = False  # "show" was requested and not yet "hide"
+        #: The agent pointer (created on first use) and the system pointer swap.
+        self._pointer: AgentPointerWindow | None = None
+        self._cursor_hidden = False
         self._blanked = False  # capture guard currently hiding the border
         self._commands: deque[dict] = deque()
         self._processing_commands = False
@@ -1244,6 +1191,10 @@ class Renderer(QObject):
                 cmd = payload["cmd"]
                 if cmd == protocol.CMD_SHOW:
                     self._show(str(payload.get("hint", "")))
+                    self._set_pointer(bool(payload.get("pointer")))
+                elif cmd == protocol.CMD_POINTER_PRESS:
+                    if self._pointer is not None:
+                        self._pointer.press()
                 elif cmd == protocol.CMD_HIDE:
                     self._hide()
                 elif cmd == protocol.CMD_BLANK:
@@ -1290,7 +1241,27 @@ class Renderer(QObject):
 
     def _hide(self) -> None:
         self._active = False
+        self._set_pointer(False)
         self._fade_to(0.0)
+
+    def _set_pointer(self, wanted: bool) -> None:
+        """Become (or stop being) the pointer while Jarvis operates the screen."""
+        if wanted:
+            if self._pointer is None:
+                self._pointer = AgentPointerWindow()
+            self._pointer.start()
+            if not self._cursor_hidden:
+                self._cursor_hidden = hide_system_cursor()
+            return
+        if self._pointer is not None:
+            self._pointer.stop()
+        if self._cursor_hidden:
+            restore_system_cursor()
+            self._cursor_hidden = False
+
+    def shutdown(self) -> None:
+        """The user's pointer always comes back, whatever ended the sidecar."""
+        self._set_pointer(False)
 
     def _snap(self, payload: dict) -> None:
         thumb = QImage()
@@ -1529,6 +1500,8 @@ class Renderer(QObject):
         self._blanked = True
         for win in self._windows:
             win.hide()
+        if self._pointer is not None:
+            self._pointer.set_blanked(True)
 
     def _unblank(self) -> None:
         for card in self._cards:
@@ -1539,6 +1512,8 @@ class Renderer(QObject):
         self._blanked = False
         for win in self._windows:
             win.show()
+        if self._pointer is not None:
+            self._pointer.set_blanked(False)
 
     # -- screens -----------------------------------------------------------
     def _ensure_windows(self) -> None:
@@ -1634,6 +1609,8 @@ def run() -> int:
     # All windows are frequently hidden (blank/hide) — that must never
     # terminate the sidecar; only stdin EOF or "quit" does.
     app.setQuitOnLastWindowClosed(False)
+    # A sidecar that died while it held the pointer left the swap on record.
+    restore_system_cursor(only_if_marked=True)
 
     renderer = Renderer(app)
     QGuiApplication.instance().screenAdded.connect(renderer.on_screens_changed)
@@ -1653,7 +1630,10 @@ def run() -> int:
             )
         )
 
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        renderer.shutdown()
 
 
 __all__ = ["Renderer", "run"]

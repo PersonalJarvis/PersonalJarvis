@@ -3,7 +3,9 @@ process) and the renderer sidecar.
 
 One JSON object per line on the sidecar's stdin::
 
-    {"cmd": "show", "hint": "Esc to cancel"}   # fade the border in
+    {"cmd": "show", "hint": "Esc to cancel",   # fade the border in; with
+     "pointer": true}                          # pointer, Jarvis has the mouse
+    {"cmd": "pointer_press"}                   # the agent pointer clicks
     {"cmd": "hide"}                            # fade the border out
     {"cmd": "blank"}                           # hide INSTANTLY (capture guard)
     {"cmd": "unblank"}                         # restore after a frame grab
@@ -56,6 +58,8 @@ CMD_SNAP_IMAGE = "snap_image"
 CMD_CARD = "card"
 #: A short status line on the card ("Copied", "Saved to Downloads").
 CMD_CARD_STATUS = "card_status"
+#: Jarvis is about to press a mouse button: the agent pointer dips and rings.
+CMD_POINTER_PRESS = "pointer_press"
 
 ALL_COMMANDS = frozenset(
     {
@@ -68,6 +72,7 @@ ALL_COMMANDS = frozenset(
         CMD_SNAP_IMAGE,
         CMD_CARD,
         CMD_CARD_STATUS,
+        CMD_POINTER_PRESS,
     }
 )
 
@@ -146,6 +151,7 @@ __all__ = [
     "CMD_CARD",
     "CMD_CARD_STATUS",
     "CMD_HIDE",
+    "CMD_POINTER_PRESS",
     "CMD_QUIT",
     "CMD_SHOW",
     "CMD_SNAP",

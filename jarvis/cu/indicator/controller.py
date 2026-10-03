@@ -37,6 +37,7 @@ from typing import Any
 from uuid import UUID
 
 from jarvis.cu.indicator import capture_guard, protocol, self_input
+from jarvis.cu.indicator.win32 import restore_system_cursor
 
 log = logging.getLogger(__name__)
 
@@ -174,7 +175,9 @@ class CUIndicatorController:
                     if self._active and self._esc_task is not None
                     else ""
                 )
-                visible = await self._show_border(hint=hint, required=True)
+                visible = await self._show_border(
+                    hint=hint, required=True, pointer=bool(self._active)
+                )
         except Exception:  # noqa: BLE001 - acknowledge failure honestly
             log.warning(
                 "[screen-context-indicator] failed to show capture border",
@@ -198,9 +201,9 @@ class CUIndicatorController:
             if esc_armed
             else ""
         )
-        await self._show_border(hint=hint, required=False)
+        await self._show_border(hint=hint, required=False, pointer=True)
 
-    async def _show_border(self, *, hint: str, required: bool) -> bool:
+    async def _show_border(self, *, hint: str, required: bool, pointer: bool = False) -> bool:
         """Ensure the shared sidecar is visibly showing and return its ACK."""
         if not required and not _screen_indicator_enabled():
             log.debug("[cu-indicator] disabled via [computer_use].screen_indicator")
@@ -222,6 +225,9 @@ class CUIndicatorController:
             protocol.CMD_SHOW,
             _SHOW_ACK_TIMEOUT_S,
             hint=hint,
+            # The agent pointer belongs to control of the mouse, never to a
+            # one-shot screen look.
+            pointer=pointer,
         )
 
     async def _deactivate(self) -> None:
@@ -617,6 +623,19 @@ class CUIndicatorController:
             except queue.Empty:  # timeout is the caller-visible false result
                 return False
 
+    @property
+    def pointer_visible(self) -> bool:
+        """True while the agent pointer is on screen (control is held)."""
+        return bool(self._active) and self._proc is not None
+
+    def pointer_press(self) -> None:
+        """Jarvis is about to click: the agent pointer dips and rings.
+
+        Fire-and-forget from any thread; nothing happens without control.
+        """
+        if self._active and self._proc is not None:
+            self._send(protocol.CMD_POINTER_PRESS)
+
     def _reap(self, proc: subprocess.Popen[str]) -> None:
         try:
             proc.wait(timeout=_QUIT_GRACE_S)
@@ -626,6 +645,8 @@ class CUIndicatorController:
                 proc.wait(timeout=1.0)
             except Exception:  # noqa: BLE001
                 log.debug("[cu-indicator] sidecar reap failed", exc_info=True)
+        # A killed sidecar cannot give the user's pointer back itself.
+        restore_system_cursor(only_if_marked=True)
         # Deterministic handle accounting on long-running installs — do not
         # leave the pipe FDs to GC timing.
         for pipe in (proc.stdin, proc.stdout):
@@ -747,6 +768,12 @@ def wire_cu_indicator(bus: Any) -> CUIndicatorController | None:
     global _controller
     if bus is None:
         return None
+    # The last run may have ended while the sidecar held the pointer (one
+    # file check; the cursor is only touched when a swap is on record).
+    try:
+        restore_system_cursor(only_if_marked=True)
+    except Exception:  # noqa: BLE001 — the indicator must never break boot
+        log.warning("[cu-indicator] pointer restore at boot failed", exc_info=True)
     if _controller is not None and _controller._bus is bus:
         return _controller
     try:

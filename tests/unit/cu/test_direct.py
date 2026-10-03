@@ -433,3 +433,27 @@ def test_control_rules_forbid_a_second_agent_and_name_the_safety_stops():
     assert "no separate computer-use agent" in rules
     for stop in ("payments", "passwords", "untrusted", "Escape"):
         assert stop in rules
+
+
+@pytest.mark.asyncio
+async def test_a_click_lets_the_visible_agent_pointer_arrive_and_dip_first(monkeypatch):
+    order: list[str] = []
+
+    class Indicator:
+        pointer_visible = True
+
+        def pointer_press(self):
+            order.append("press")
+
+    class Recording(FakeActuator):
+        def click_at_cursor(self, **kwargs):
+            order.append("click")
+            super().click_at_cursor(**kwargs)
+
+    monkeypatch.setattr(direct, "POINTER_ARRIVAL_S", 0.0)
+    monkeypatch.setattr(direct, "_visible_pointer", lambda: Indicator())
+    computer, actuator, _, _ = _computer(actuator=Recording())
+    shot = await _shoot(computer)
+    result = await _click(computer, shot)
+    assert result["success"] is True
+    assert order == ["press", "click"]
