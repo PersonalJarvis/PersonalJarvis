@@ -391,8 +391,9 @@ def readiness(
             return Blocker(
                 "permission_required",
                 "macOS has not granted Personal Jarvis these permissions: "
-                f"{labels}. Open Personal Jarvis Settings > Permissions, or System Settings "
-                "> Privacy & Security, allow Personal Jarvis there, then try again.",
+                f"{labels}. The user can answer the macOS permission prompt or use System "
+                "Settings > Privacy & Security, then try again. Never answer a system "
+                "permission dialog for the user.",
                 tuple(label for label, _ in missing),
             )
         if need_typing and probes.secure_input() is True:
