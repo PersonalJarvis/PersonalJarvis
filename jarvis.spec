@@ -140,6 +140,12 @@ for entry in _package_root.rglob("*"):
     rel = entry.relative_to(PROJECT_ROOT).parent
     datas.append((str(entry), str(rel)))
 
+# The Conductor jobs engine reads its SQL schema and seed jobs beside its own
+# modules; analysis finds the modules, not these files.
+for entry in (PROJECT_ROOT / "conductor").rglob("*"):
+    if entry.is_file() and entry.suffix.lower() in {".sql", ".yaml"}:
+        datas.append((str(entry), str(entry.relative_to(PROJECT_ROOT).parent)))
+
 # Configuration profiles live beside the checkout root, and jarvis.core.config
 # resolves them relative to it.
 profiles_dir = PROJECT_ROOT / "profiles"

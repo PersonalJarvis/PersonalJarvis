@@ -823,7 +823,11 @@ call-contact = "jarvis.plugins.tool.call_contact:CallContactTool"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["jarvis*"]
+# ``conductor`` is the scheduled-jobs engine behind /api/conductor/* and the
+# ``jarvis conductor`` commands. Left out, it imported only when the app ran
+# with the checkout as its working directory (run.bat), so the console script,
+# autostart and every wheel install served no Conductor API at all.
+include = ["jarvis*", "conductor*"]
 exclude = ["*.__pycache__", "*.__pycache__.*"]
 
 [tool.setuptools.exclude-package-data]
@@ -831,6 +835,8 @@ exclude = ["*.__pycache__", "*.__pycache__.*"]
 "*" = ["*.pyc", "*.pyo", "**/__pycache__/*"]
 
 [tool.setuptools.package-data]
+# Read via Path(__file__) by conductor.core.store / conductor.core.seed.
+conductor = ["core/schema.sql", "seed/*.yaml"]
 jarvis = [
     "ui/web/dist/**/*",
     "ui/web/dist/*",
