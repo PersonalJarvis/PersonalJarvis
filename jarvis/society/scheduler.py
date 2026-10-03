@@ -45,7 +45,14 @@ from .store import SocietyStore, day_start_ms
 
 log = logging.getLogger(__name__)
 
-__all__ = ["DispatchHook", "DeliverHook", "RoomTurnHook", "SocietyScheduler", "validate_result"]
+__all__ = [
+    "CurateHook",
+    "DispatchHook",
+    "DeliverHook",
+    "RoomTurnHook",
+    "SocietyScheduler",
+    "validate_result",
+]
 
 #: ``dispatch(target, assign_envelope) -> run_id`` — starts real work under
 #: the target's identity and returns the mission/run id it started.
@@ -53,6 +60,9 @@ DispatchHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[str]]
 #: ``deliver(target, envelope)`` — wakes the target's canonical chat.
 DeliverHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[None]]
 RoomTurnHook = Callable[[AgentRecord, Room, str], Awaitable[str]]
+# Curating a RESULT stages knowledge behind the existing human review gate.
+# This callback never dispatches work and is not a second orchestrator.
+CurateHook = Callable[[SocietyEnvelope], Awaitable[None]]
 
 MAX_DEPTH: Final[int] = 2
 DEFAULT_TRACE_MESSAGE_CAP: Final[int] = 24
@@ -88,6 +98,7 @@ class SocietyScheduler:
         deliver: DeliverHook | None = None,
         rooms: Rooms | None = None,
         room_turn: RoomTurnHook | None = None,
+        curate: CurateHook | None = None,
         budget_tracker: Any | None = None,
         budget_tracker_getter: Callable[[], Any | None] | None = None,
         trace_message_cap: int = DEFAULT_TRACE_MESSAGE_CAP,
@@ -98,6 +109,7 @@ class SocietyScheduler:
         self._deliver = deliver
         self._rooms = rooms
         self._room_turn = room_turn
+        self._curate = curate
         self._budget = budget_tracker
         self._budget_getter = budget_tracker_getter
         self._trace_cap = trace_message_cap
@@ -374,6 +386,15 @@ class SocietyScheduler:
                 if agent == env.from_agent:
                     self._running.pop(rid, None)
                     break
+        if self._curate is not None:
+            try:
+                await self._curate(env)
+            except Exception:  # noqa: BLE001 — curation cannot invalidate a durable RESULT
+                log.warning(
+                    "society scheduler: curator failed for RESULT %s",
+                    env.event_id,
+                    exc_info=True,
+                )
         next_owner = env.payload.get("next_owner")
         if isinstance(next_owner, str) and next_owner and self._deliver is not None:
             target = await self._resolve_target(env.model_copy(update={"to_agent": next_owner}))

@@ -36,6 +36,7 @@ from .capabilities import CapabilityKind, CapabilityRow, build_catalog
 from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
+from .curator import Curator
 from .delivery import DeliveryBusy, IncomingMessage, incoming_context
 from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
 from .focus import derive_approval_rules, derive_focus
@@ -174,6 +175,7 @@ class SocietyRuntime:
             deliver=deliver,
             rooms=self.rooms,
             room_turn=self._dispatch_room_turn,
+            curate=self._curate_result,
             budget_tracker_getter=self._get_budget,
         )
         self.bridge = MissionBridge(
@@ -187,6 +189,7 @@ class SocietyRuntime:
         self._publish_event = event_publish
         #: The society's one memory service; every touch moves the figure to the Memory House.
         self.memory = SocietyMemory(self, on_activity=self.checkpoints.note_memory_activity)
+        self.curator = Curator(self)
         self.conversations = ConversationArchive(
             self._data_dir / "society-conversations.db", defer_open=True
         )
@@ -272,6 +275,10 @@ class SocietyRuntime:
         # HTTP, microphone controls or the first response from the desktop.
         await asyncio.to_thread(self.conversations.open)
         self._require_open_owner()
+        try:
+            await self.curator.recover()
+        except Exception:  # noqa: BLE001 — curation recovery must not block the society
+            log.warning("society: curator recovery failed", exc_info=True)
         self.scheduler._budget = self._get_budget()  # noqa: SLF001 — the runtime owns its scheduler
         self.scheduler.attach()
         self._delivery_unsubscribe = self.store.bus.subscribe_all(self._delivery_failed)
@@ -732,6 +739,9 @@ class SocietyRuntime:
         focus = derive_focus(title, description, self.catalog())
         return focus, derive_approval_rules(description, focus)
 
+    async def _curate_result(self, env: SocietyEnvelope) -> None:
+        await self.curator.on_result(env)
+
     # ------------------------------------------------------------ dispatch
 
     def owner_of(self, mission_id: str) -> str | None:
@@ -1174,6 +1184,7 @@ class SocietyRuntime:
                         "done": summary[:2000],
                         "output": [f"chat:{session_id}"],
                         "evidence": [],
+                        "origin": "web" if used_browser else "agent",
                         "open": [] if status == "done" else [error[:500] or "turn failed"],
                         "next_owner": None,
                         "text": summary[:500],

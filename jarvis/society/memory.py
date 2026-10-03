@@ -335,6 +335,7 @@ class SocietyMemory:
         trace: str = "",
         root: Path | None = None,
         proposed_shared: bool = False,
+        source_event: str | None = None,
     ) -> tuple[str, int]:
         """A dated page under the agent's folder. Returns (vault-relative path, staging row id)."""
         text = str(text or "").strip()[:_MAX_TEXT]
@@ -360,7 +361,12 @@ class SocietyMemory:
         atomic_write(path, page)
         rel = path.relative_to(vault).as_posix()
         row_id = await self._stage(
-            agent, rel, self._origin(origin), trace, f"{title}: {text[:220]}"
+            agent,
+            rel,
+            self._origin(origin),
+            trace,
+            f"{title}: {text[:220]}",
+            source_event=source_event,
         )
         await self._touch(
             agent,
@@ -385,10 +391,18 @@ class SocietyMemory:
         origin: str = "agent",
         trace: str = "",
         root: Path | None = None,
+        source_event: str | None = None,
     ) -> dict[str, Any]:
         """The note lands in the agent's folder; promotion waits for the person."""
         rel, row_id = await self.note(
-            agent, title, text, origin=origin, trace=trace, root=root, proposed_shared=True
+            agent,
+            title,
+            text,
+            origin=origin,
+            trace=trace,
+            root=root,
+            proposed_shared=True,
+            source_event=source_event,
         )
         item = await self._runtime.approvals.enqueue(
             agent_id=agent.agent_id,
@@ -615,7 +629,14 @@ class SocietyMemory:
         raise MemoryRefused(f"knowledge row {knowledge_id} not found")
 
     async def _stage(
-        self, agent: AgentRecord, rel: str, origin: str, trace: str, summary: str
+        self,
+        agent: AgentRecord,
+        rel: str,
+        origin: str,
+        trace: str,
+        summary: str,
+        *,
+        source_event: str | None = None,
     ) -> int:
         try:
             return int(
@@ -624,7 +645,7 @@ class SocietyMemory:
                         "agent_id": agent.agent_id,
                         "wiki_path": rel,
                         "origin": origin,
-                        "source_event": None,
+                        "source_event": source_event,
                         "trace_id": trace or None,
                         "reviewed": 0,
                         "summary": summary,

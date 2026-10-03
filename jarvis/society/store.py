@@ -831,6 +831,17 @@ class SocietyStore:
         await cur.close()
         return [dict(r) for r in rows]
 
+    async def knowledge_for_source_event(self, event_id: str) -> dict[str, Any] | None:
+        """Return the staged knowledge derived from one board event, if any."""
+        self.conn.row_factory = aiosqlite.Row
+        cur = await self.conn.execute(
+            "SELECT * FROM knowledge WHERE source_event = ? ORDER BY id ASC LIMIT 1",
+            (event_id,),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+        return dict(row) if row is not None else None
+
     async def mark_knowledge_reviewed(self, knowledge_id: int) -> bool:
         cur = await self.conn.execute(
             "UPDATE knowledge SET reviewed = 1 WHERE id = ?", (int(knowledge_id),)
