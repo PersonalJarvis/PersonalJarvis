@@ -23,7 +23,10 @@ const GESTURES: ReadonlyArray<[string, string, string]> = [
 ];
 
 /** Every key that was down during the gesture → the shortcut it means. */
-export function chordFromCodes(codes: Iterable<string>): ChordResult {
+export function chordFromCodes(
+  codes: Iterable<string>,
+  characterTokens: ReadonlyMap<string, string> = new Map(),
+): ChordResult {
   const set = new Set(codes);
   set.delete("Escape");
   if (set.size === 0) return { problem: "empty" };
@@ -34,7 +37,7 @@ export function chordFromCodes(codes: Iterable<string>): ChordResult {
   }
   const tokens = new Set<string>();
   for (const code of set) {
-    const token = codeToModifierToken(code) ?? codeToKeyToken(code);
+    const token = codeToModifierToken(code) ?? characterTokens.get(code) ?? codeToKeyToken(code);
     if (token) tokens.add(token);
   }
   if (![...tokens].some((token) => !isModifierToken(token))) return { problem: "modifier_only" };

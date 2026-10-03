@@ -26,6 +26,14 @@ build do not replace that check.
 
 The Wayland permission flow follows [Qt's Screen Capture limitations](https://doc.qt.io/qt-6/qscreencapture.html#screen-capture-limitations).
 
+Windows AppShot combinations use the existing pynput event-listener lifecycle
+instead of the shared held-chord poller: a brief key tap can begin and end
+between its 50 ms samples. Five immediate native press/release pairs were
+received once each, and the hook stopped cleanly. Recording a letter binding
+on Windows/X11 now uses the typed letter, preserving QWERTZ Y/Z identities;
+macOS retains the physical-key contract of its Quartz backend. Tests also
+cover modifier release order, key repeat and cancellation during re-registration.
+
 ## Native macOS window controls (2026-10-03, T2)
 
 Main, reopened main, and detached windows retain Cocoa's native title bar on

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -111,6 +112,7 @@ class AppshotShortcut:
         self._watchers: list[Any] = []
         self._trigger_task: asyncio.Task[None] | None = None
         self._busy = False
+        self._recording_busy = False
         not_started = ShortcutStatus(hotkey="", armed=False, detail="Not started yet.")
         self._statuses: dict[str, ShortcutStatus] = dict.fromkeys(SCOPE_KEYS, not_started)
         self._subscribed = False
@@ -238,6 +240,9 @@ class AppshotShortcut:
         return ShortcutStatus(hotkey=hotkey, armed=True)
 
     async def _run_combos(self, combos: dict[str, str]) -> None:
+        if sys.platform == "win32":
+            await self._run_key_events(combos)
+            return
         from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
         scopes = {_BINDINGS[scope]: scope for scope in combos}
@@ -253,6 +258,44 @@ class AppshotShortcut:
         except Exception:  # noqa: BLE001 - voice and chat keep working without it
             log.warning("appshot: shortcut listener stopped", exc_info=True)
 
+    async def _run_key_events(self, combos: dict[str, str]) -> None:
+        from jarvis.appshot.key_events import AppshotKeyEvents
+        from jarvis.trigger.backends.global_hotkeys import _normalize_combo
+
+        listener = AppshotKeyEvents()
+        rows = [
+            [_normalize_combo(combo), None, lambda scope=scope: self._fire_threadsafe(scope)]
+            for scope, combo in combos.items()
+        ]
+        try:
+            listener.register(rows)
+            starting = asyncio.create_task(asyncio.to_thread(listener.start))
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                # Finish acquiring the listener before teardown, even if a
+                # setting changes while its native hook is being created.
+                await starting
+                raise
+            if not listener.ready:
+                for scope, combo in combos.items():
+                    self._statuses[scope] = ShortcutStatus(
+                        combo, False, "The keyboard event listener could not start."
+                    )
+                return
+            await asyncio.Future()  # Cancellation owns the listener's complete lifecycle.
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("appshot: keyboard event listener failed")
+            for scope, combo in combos.items():
+                self._statuses[scope] = ShortcutStatus(
+                    combo, False, "The keyboard event listener stopped."
+                )
+        finally:
+            await asyncio.to_thread(listener.stop)
+            listener.unregister()
+
     def _fire_threadsafe(self, scope: str) -> None:
         loop = self._loop
         if loop is None or loop.is_closed():
@@ -261,11 +304,12 @@ class AppshotShortcut:
             loop.call_soon_threadsafe(self._fire, scope)
 
     def _fire(self, scope: str = "window") -> None:
-        if self._busy:
+        busy_field = "_recording_busy" if scope == "recording" else "_busy"
+        if getattr(self, busy_field):
             return
-        self._busy = True
+        setattr(self, busy_field, True)
         task = asyncio.get_running_loop().create_task(self._take(scope), name="appshot-take")
-        task.add_done_callback(lambda _t: setattr(self, "_busy", False))
+        task.add_done_callback(lambda _t: setattr(self, busy_field, False))
 
     async def _take(self, scope: str) -> None:
         if scope == "recording":

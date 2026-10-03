@@ -334,7 +334,8 @@ desktop = [
     # host kernel headers, breaking the advertised [full] install on a stock
     # headless image. ptyprocess is the POSIX terminal backend; Windows keeps
     # pywinpty above.
-    "pynput>=1.7; sys_platform == 'darwin'",
+    # Windows AppShot shortcuts use key events so brief taps are never polled away.
+    "pynput>=1.7; sys_platform == 'darwin' or sys_platform == 'win32'",
     "ptyprocess>=0.7; sys_platform != 'win32'",
     # Screen capture (mss) + desktop input automation (pyautogui) — all-platform
     # desktop deps that need a display (useless on a headless VPS). Both are

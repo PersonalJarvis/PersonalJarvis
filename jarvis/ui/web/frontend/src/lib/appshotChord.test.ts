@@ -22,6 +22,15 @@ describe("chordFromCodes", () => {
     expect(chordFromCodes(["Escape"])).toEqual({ problem: "empty" });
   });
 
+  it("uses the typed letter on QWERTZ while preserving modifier sides", () => {
+    expect(chordFromCodes(["ControlLeft", "KeyY"], new Map([["KeyY", "z"]])))
+      .toEqual({ combo: "ctrl+z" });
+    expect(chordFromCodes(["KeyZ"], new Map([["KeyZ", "y"]])))
+      .toEqual({ combo: "y" });
+    expect(chordFromCodes(["ShiftLeft", "ShiftRight"], new Map()))
+      .toEqual({ combo: "shift+shift" });
+  });
+
   it("names the family of a gesture and nothing else", () => {
     expect(gestureFamily("shift+shift")).toBe("shift");
     expect(gestureFamily("ctrl+shift+s")).toBeNull();

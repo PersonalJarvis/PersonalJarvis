@@ -65,6 +65,7 @@ export function AppshotShortcutField({
     if (!recording) return;
     const pressed = new Set<string>();
     const seen = new Set<string>();
+    const characters = new Map<string, string>();
 
     const stop = () => setRecording(false);
     const onKeyDown = (event: KeyboardEvent) => {
@@ -77,6 +78,12 @@ export function AppshotShortcutField({
       }
       pressed.add(event.code);
       seen.add(event.code);
+      // Windows/X11 match the logical letter (VK/key symbol), not its US
+      // position. On QWERTZ, physical KeyY is the letter Z. macOS's backend
+      // deliberately uses physical keycodes, so keep its existing mapping.
+      if (!isMac && /^Key[A-Z]$/.test(event.code) && /^[a-z]$/i.test(event.key)) {
+        characters.set(event.code, event.key.toLowerCase());
+      }
     };
     const onKeyUp = (event: KeyboardEvent) => {
       event.preventDefault();
@@ -84,7 +91,7 @@ export function AppshotShortcutField({
       pressed.delete(event.code);
       if (pressed.size > 0 || seen.size === 0) return;
       stop();
-      const result = chordFromCodes(seen);
+      const result = chordFromCodes(seen, characters);
       if ("combo" in result) {
         setProblem("");
         if (result.combo !== value) void commit(result.combo);
@@ -101,7 +108,7 @@ export function AppshotShortcutField({
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", stop);
     };
-  }, [recording, value, commit, t]);
+  }, [recording, value, commit, t, isMac]);
 
   const keys = value ? formatAppshotHotkey(value, isMac).split(" + ") : [];
   const busy = disabled || saving;

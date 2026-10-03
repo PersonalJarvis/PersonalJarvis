@@ -38,8 +38,9 @@ def run(output: Path, language: str = "en") -> int:
         QWidget,
     )
 
-    from jarvis.appshot.picker.renderer import Picker
+    from jarvis.appshot.picker.renderer import Picker, _SelectWindow
     from jarvis.appshot.recording_labels import LABELS
+    from jarvis.appshot.region import selection_fractions
     from jarvis.appshot.video_encoder import FPS, VideoEncoder
     from jarvis.platform.probes import is_wayland
 
@@ -115,7 +116,27 @@ def run(output: Path, language: str = "en") -> int:
             self.start = None
             self.update()
 
+    class RecordingSelectWindow(_SelectWindow):
+        """Finish a video selection immediately, without screenshot annotation tools."""
+
+        def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+            if event.button() != Qt.MouseButton.LeftButton or self._start is None:
+                return
+            end = event.position()
+            frac = selection_fractions(
+                self._start.x(), self._start.y(), end.x(), end.y(), self.width(), self.height()
+            )
+            self._start = None
+            self._end = None
+            if frac is not None:
+                self._owner.finish(self, frac)
+            else:
+                self.update()
+
     class RecordingPicker(Picker):
+        def make_window(self, screen, frozen):
+            return RecordingSelectWindow(screen, frozen, self)
+
         def start(self) -> None:
             super().start()
             for window in self._windows:
