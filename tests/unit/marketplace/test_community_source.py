@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -73,6 +75,26 @@ def _seed_cache_with_etag(
 
 def _raw_cache(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
+
+
+async def test_cache_io_does_not_block_other_requests(
+    cache_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_cache(cache_path, _index_payload(), time.time())
+    released = threading.Event()
+    original = community_source._read_cache_raw
+
+    def slow_disk_read() -> Any:
+        assert released.wait(timeout=2), "Cache read blocked the event loop"
+        return original()
+
+    async def another_request() -> None:
+        await asyncio.sleep(0.01)
+        released.set()
+
+    monkeypatch.setattr(community_source, "_read_cache_raw", slow_disk_read)
+    result, _ = await asyncio.gather(community_source.get_index(), another_request())
+    assert result[1] == "fresh"
 
 
 async def test_fetch_validates_and_caches(cache_path: Path) -> None:

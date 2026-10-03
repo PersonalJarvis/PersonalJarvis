@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -24,7 +24,6 @@ import {
   PublisherChip,
   usePublishIdentity,
 } from "@/components/marketplace/PublishIdentity";
-import { PublishStudio } from "@/components/marketplace/PublishStudio";
 import { fill, useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -58,6 +57,10 @@ import {
 
 /** The public storefront — the same catalogue, on the web. */
 const MARKETPLACE_WEB_URL = "https://github.com/PersonalJarvis/marketplace";
+
+const PublishStudio = lazy(() =>
+  import("@/components/marketplace/PublishStudio").then((module) => ({ default: module.PublishStudio })),
+);
 
 type Kind = "plugin" | "skill";
 type KindFilter = "all" | Kind | "mine";
@@ -448,7 +451,11 @@ export function MarketplaceView() {
 
       {landing && <LandingToast result={landing} onClose={() => setLanding(null)} t={t} />}
 
-      {studioOpen && <PublishStudio onClose={() => setStudioOpen(false)} />}
+      {studioOpen && (
+        <Suspense fallback={<p role="status" className="text-sm text-muted-foreground">{t("common.loading")}</p>}>
+          <PublishStudio onClose={() => setStudioOpen(false)} />
+        </Suspense>
+      )}
       {signInOpen && <GithubSignInDialog onClose={() => setSignInOpen(false)} />}
     </div>
   );

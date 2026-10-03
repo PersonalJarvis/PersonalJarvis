@@ -1134,7 +1134,7 @@ async def community_browse(response: Response) -> dict[str, Any]:
 
     response.headers["Cache-Control"] = "no-store"
     index, status = await community_source.get_index()
-    return _community_payload(index, status)
+    return await asyncio.to_thread(_community_payload, index, status)
 
 
 @router.post("/community/refresh")
@@ -1144,7 +1144,7 @@ async def community_refresh(response: Response) -> dict[str, Any]:
 
     response.headers["Cache-Control"] = "no-store"
     index, status = await community_source.get_index(force=True)
-    return _community_payload(index, status)
+    return await asyncio.to_thread(_community_payload, index, status)
 
 
 # ----------------------------------------------------------------------

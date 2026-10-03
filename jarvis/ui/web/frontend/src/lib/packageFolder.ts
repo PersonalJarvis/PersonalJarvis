@@ -49,6 +49,10 @@ export const MAX_SKILL_MD_BYTES = 64 * 1024;
 
 /** Files worth reading at all — everything else in the folder is ignored. */
 const INTERESTING = /(^|\/)(plugin\.json|mcp\.json|SKILL\.md|usage-card\.md)$/;
+const IGNORED_DIRECTORIES = new Set([".git", "node_modules", ".venv", "__pycache__"]);
+const MAX_PACKAGE_FILES = 400;
+const MAX_VISITED_ENTRIES = 10_000;
+const MAX_DIRECTORY_DEPTH = 32;
 
 function readText(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -112,10 +116,20 @@ export async function collectDroppedFiles(items: DataTransferItemList): Promise<
     if (entry) roots.push(entry);
   }
   const found: NamedFile[] = [];
+  let visited = 0;
 
-  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
-    if (found.length > 400) return; // runaway folder guard
+  async function walk(entry: FileSystemEntry, prefix: string, depth = 0): Promise<void> {
+    if (++visited > MAX_VISITED_ENTRIES || depth > MAX_DIRECTORY_DEPTH) {
+      throw new Error("This folder is too large or too deeply nested. Select the package folder itself.");
+    }
     if (entry.isFile) {
+      // Check names before opening files: dependency trees and unrelated assets
+      // must not spend the package limit or hide a manifest encountered later.
+      const standaloneMarkdown = roots.length === 1 && !prefix && /\.md$/i.test(entry.name);
+      if (!INTERESTING.test(entry.name) && !standaloneMarkdown) return;
+      if (found.length >= MAX_PACKAGE_FILES) {
+        throw new Error("Too many package files. Select one plugin or skill folder at a time.");
+      }
       const file = await new Promise<File>((resolve, reject) =>
         (entry as FileSystemFileEntry).file(resolve, reject),
       );
@@ -123,6 +137,7 @@ export async function collectDroppedFiles(items: DataTransferItemList): Promise<
       return;
     }
     if (entry.isDirectory) {
+      if (IGNORED_DIRECTORIES.has(entry.name.toLowerCase())) return;
       const dirReader = (entry as FileSystemDirectoryEntry).createReader();
       // readEntries returns results in batches; loop until empty.
       for (;;) {
@@ -130,7 +145,7 @@ export async function collectDroppedFiles(items: DataTransferItemList): Promise<
           dirReader.readEntries(resolve, reject),
         );
         if (batch.length === 0) break;
-        for (const child of batch) await walk(child, prefix + entry.name + "/");
+        for (const child of batch) await walk(child, prefix + entry.name + "/", depth + 1);
       }
     }
   }
@@ -141,10 +156,18 @@ export async function collectDroppedFiles(items: DataTransferItemList): Promise<
 
 /** Collect files from an `<input webkitdirectory>` selection. */
 export function collectPickedFiles(list: FileList): NamedFile[] {
-  return Array.from(list).map((file) => ({
+  const files = Array.from(list).map((file) => ({
     path: (file.webkitRelativePath || file.name).replace(/\\/g, "/"),
     file,
   }));
+  const selected = files.filter(({ path }) => {
+    if (path.split("/").slice(0, -1).some((part) => IGNORED_DIRECTORIES.has(part.toLowerCase()))) return false;
+    return INTERESTING.test(path) || (files.length === 1 && /\.md$/i.test(path));
+  });
+  if (selected.length > MAX_PACKAGE_FILES) {
+    throw new Error("Too many package files. Select one plugin or skill folder at a time.");
+  }
+  return selected;
 }
 
 /**

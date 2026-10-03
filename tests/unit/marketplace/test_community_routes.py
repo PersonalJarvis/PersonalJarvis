@@ -7,7 +7,9 @@ the Plugins view exercises, minus the browser.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -125,6 +127,40 @@ async def test_browse_lists_converted_plugins_and_skills(community_env: Path) ->
     skill = data["skills"][0]
     assert skill["name"] == "three-point-check"
     assert skill["installed"] is False
+
+
+@pytest.mark.parametrize("refresh", [False, True])
+async def test_catalog_io_keeps_the_event_loop_responsive(
+    community_env: Path, monkeypatch: pytest.MonkeyPatch, refresh: bool,
+) -> None:
+    from jarvis.ui.web import marketplace_routes
+
+    released = threading.Event()
+    original_payload = marketplace_routes._community_payload
+
+    async def index(**kwargs: Any) -> tuple[Any, str]:
+        return community_source.cached_index(), "fresh"
+
+    def slow_disk_payload(*args: Any) -> dict[str, Any]:
+        # Simulate catalog or filesystem latency. The event loop must be able
+        # to serve another task while a catalogue request waits for disk.
+        assert released.wait(timeout=2), "Marketplace catalog blocked the event loop"
+        return original_payload(*args)
+
+    monkeypatch.setattr(community_source, "get_index", index)
+    monkeypatch.setattr(marketplace_routes, "_community_payload", slow_disk_payload)
+
+    async def heartbeat() -> None:
+        await asyncio.sleep(0.01)
+        released.set()
+
+    async with _client() as client:
+        request = client.post("/api/marketplace/community/refresh") if refresh else client.get(
+            "/api/marketplace/community"
+        )
+        response, _ = await asyncio.gather(request, heartbeat())
+    assert response.status_code == 200
+    assert response.json()["plugins"][0]["name"] == "todo-fox"
 
 
 @pytest.mark.asyncio

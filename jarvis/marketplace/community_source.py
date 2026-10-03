@@ -265,7 +265,9 @@ async def get_index(
         return None, "disabled"
 
     async with _fetch_lock:
-        raw_hit = _read_cache_raw()
+        # Disk access and parsing a large cached feed must not pause unrelated
+        # API requests or voice/WebSocket work on the shared event loop.
+        raw_hit = await asyncio.to_thread(_read_cache_raw)
         hit = (raw_hit[0], raw_hit[1]) if raw_hit else None
         etag = raw_hit[2] if raw_hit else None
         if hit and not force and (time.time() - hit[0]) < _CACHE_TTL_SECONDS:
