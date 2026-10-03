@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RecentChats, compactChatTitle } from "@/components/home/RecentChats";
@@ -48,8 +48,11 @@ describe("RecentChats", () => {
       activeThreadId: null,
       messages: [],
       activeSection: "board",
+      activeKind: "text",
+      voiceState: "idle",
     });
-    useHomeStore.setState({ surface: "voice", transcript: [] });
+    useHomeStore.setState({ surface: "voice", transcript: [], liveReply: "", liveSessionId: null,
+      continuedVoiceId: null, voiceSelectionPending: false, voiceSwitchStopping: false });
     useAgentChatStore.setState({
       sessions: [
         {
@@ -104,6 +107,81 @@ describe("RecentChats", () => {
       ["user", "hello"],
       ["assistant", "Hi there."],
     ]);
+  });
+
+  it.each(["listening", "thinking", "speaking", "paused", "connecting"] as const)(
+    "returns to the current %s call without ending it or replacing its live transcript", async (voiceState) => {
+      const transcript = [{ id: "live-line", who: "user" as const, text: "Current question", ts: 3_000 }];
+      useEventStore.setState({ voiceState, activeSection: "board" });
+      useHomeStore.setState({ liveSessionId: "v1", transcript, liveReply: "Reply in progress", surface: "chat" });
+      render(<RecentChats />);
+      fireEvent.click(screen.getByTitle("Spoken thread"));
+      await flush();
+      expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/hangup") || String(url).endsWith("/resume"))).toBe(false);
+      expect(useEventStore.getState().voiceState).toBe(voiceState);
+      expect(useEventStore.getState().activeSection).toBe("chats");
+      expect(useEventStore.getState().activeThreadId).toBe("v1");
+      expect(useHomeStore.getState().surface).toBe("voice");
+      expect(useHomeStore.getState().transcript).toBe(transcript);
+      expect(useHomeStore.getState().liveReply).toBe("Reply in progress");
+      expect(useHomeStore.getState().voiceSelectionPending).toBe(false);
+      expect(useAgentChatStore.getState().newChat).not.toHaveBeenCalled();
+    },
+  );
+
+  it("recognizes a running call recorded into a continued voice chat", async () => {
+    useEventStore.setState({ voiceState: "speaking" });
+    useHomeStore.setState({ liveSessionId: "current-call", continuedVoiceId: "v1", liveReply: "Still speaking" });
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await flush();
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/hangup") || String(url).endsWith("/resume"))).toBe(false);
+    expect(useHomeStore.getState().liveSessionId).toBe("current-call");
+    expect(useHomeStore.getState().continuedVoiceId).toBe("v1");
+    expect(useHomeStore.getState().liveReply).toBe("Still speaking");
+  });
+
+  it("still loads an ended call when its last session id remains in the store", async () => {
+    useHomeStore.setState({ liveSessionId: "v1", continuedVoiceId: "v1" });
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await flush();
+    expect(fetch).toHaveBeenCalledWith("/api/chats/voice/v1/resume", { method: "POST" });
+    expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual(["hello", "Hi there."]);
+  });
+
+  it("does not mistake another archive for the running call when selecting its row", async () => {
+    useEventStore.setState({ voiceState: "listening" });
+    useHomeStore.setState({ liveSessionId: "other-call", continuedVoiceId: "other-archive" });
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/voice/hangup", { method: "POST", cache: "no-store" }));
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith("/resume"))).toBe(false);
+    await act(async () => {
+      useHomeStore.getState().ingest("VoiceSessionEnded", { session_id: "other-call", hangup_reason: "client_stop" }, 3);
+      useEventStore.getState().setVoice("idle");
+    });
+    await waitFor(() => expect(useHomeStore.getState().transcript.map((line) => line.text)).toEqual(["hello", "Hi there."]));
+  });
+
+  it("keeps the live transcript when an older archive read finishes after returning to the call", async () => {
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementation(async (url) => String(url).endsWith("/resume")
+      ? new Promise<Response>((resolve) => { finish = resolve; })
+      : new Response(JSON.stringify(CONVERSATIONS), { status: 200 }));
+    render(<RecentChats />);
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await waitFor(() => expect(finish).toBeTypeOf("function"));
+    const transcript = [{ id: "live", who: "user" as const, text: "New live words", ts: 3 }];
+    act(() => {
+      useHomeStore.setState({ liveSessionId: "v1", transcript });
+      useEventStore.setState({ voiceState: "listening", activeSection: "board" });
+    });
+    fireEvent.click(screen.getByTitle("Spoken thread"));
+    await act(async () => { finish(new Response(JSON.stringify(DETAIL), { status: 200 })); });
+    expect(useHomeStore.getState().transcript).toBe(transcript);
+    expect(useEventStore.getState().activeThreadId).toBe("v1");
+    expect(useHomeStore.getState().voiceSelectionPending).toBe(false);
   });
 
   it("marks voice and typed chats apart and names a topicless voice chat by its kind", async () => {
