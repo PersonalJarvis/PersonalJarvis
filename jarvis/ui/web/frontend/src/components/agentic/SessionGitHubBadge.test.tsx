@@ -19,7 +19,7 @@ function status(extra: Partial<SessionGitHubStatus> = {}): SessionGitHubStatus {
   };
 }
 
-describe("session GitHub branch link", () => {
+describe("session GitHub link", () => {
   it.each([null, status({ published: false }), status({ owned: false }),
     status({ owned: undefined as unknown as boolean })])("hides unconfirmed session branches", (value) => {
     const { container } = render(<GitHubStatusBadge status={value} appearance="dark" />);
@@ -38,14 +38,41 @@ describe("session GitHub branch link", () => {
     expect(screen.queryByText(/Running|#7/)).toBeNull();
   });
 
-  it("opens the actual branch through the desktop browser bridge", () => {
+  it.each(["draft", "open", "queued", "merged", "closed"] as const)("opens the %s pull request through the desktop browser bridge", (state) => {
     const drag = vi.fn();
-    render(<div onPointerDown={drag}><GitHubStatusBadge status={status()} appearance="dark" /></div>);
-    const link = screen.getByRole("link", { name: /Open GitHub branch/ });
-    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/tree/feature%2Ftest");
+    render(<div onPointerDown={drag} onClick={drag}><GitHubStatusBadge status={status({ state })} appearance="dark" /></div>);
+    const link = screen.getByRole("link", { name: /Open GitHub pull request #7/ });
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/pull/7");
+    expect(link.title).toContain("Open pull request #7");
     fireEvent.pointerDown(link);
     fireEvent.click(link);
     expect(drag).not.toHaveBeenCalled();
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/owner/repo/pull/7");
+  });
+
+  it("opens the published branch when it has no pull request", () => {
+    render(<GitHubStatusBadge status={status({ state: "branch", number: null,
+      url: "https://github.com/owner/repo/tree/feature%2Ftest" })} appearance="dark" />);
+    const link = screen.getByRole("link", { name: /Open GitHub branch/ });
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/tree/feature%2Ftest");
+    fireEvent.click(link);
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/owner/repo/tree/feature%2Ftest");
+  });
+
+  it("opens the upstream pull request for a fork's branch", () => {
+    render(<GitHubStatusBadge status={status({ repo: "contributor/fork",
+      url: "https://github.com/upstream/project/pull/7" })} appearance="dark" />);
+    fireEvent.click(screen.getByRole("link", { name: /Open GitHub pull request #7/ }));
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/upstream/project/pull/7");
+  });
+
+  it.each(["https://github.com/", "https://github.com/owner/repo",
+    "https://github.com.evil.invalid/owner/repo/pull/7", "https://github.com@evil.invalid/owner/repo/pull/7",
+    "javascript:alert(1)", "https://github.com/owner/repo/pull/0"])("falls back to the branch for invalid PR URL %s", (url) => {
+    render(<GitHubStatusBadge status={status({ url })} appearance="dark" />);
+    const link = screen.getByRole("link", { name: /Open GitHub branch/ });
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/tree/feature%2Ftest");
+    fireEvent.click(link);
     expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith("https://github.com/owner/repo/tree/feature%2Ftest");
   });
 
@@ -64,12 +91,12 @@ describe("session GitHub branch link", () => {
     expect(link.textContent).toBe("");
   });
 
-  it("keeps the branch link when refresh fails without claiming a fresh merge", () => {
-    render(<GitHubStatusBadge status={status({ state: "merged", available: false })} appearance="dark" />);
+  it.each([{ available: false }, { fetched_at: 1 }])("keeps the known PR link when status is unavailable: %j", (extra) => {
+    render(<GitHubStatusBadge status={status({ state: "merged", ...extra })} appearance="dark" />);
     const link = screen.getByRole("link");
     expect(link.title).toContain("GitHub status unavailable");
     expect(link.title).not.toContain("merged");
-    expect(link.getAttribute("href")).toContain("/tree/feature%2Ftest");
+    expect(link.getAttribute("href")).toBe("https://github.com/owner/repo/pull/7");
   });
 
   it("rejects invalid repository link metadata", () => {

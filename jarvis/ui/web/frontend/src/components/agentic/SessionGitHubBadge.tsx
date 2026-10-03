@@ -18,7 +18,10 @@ export function GitHubStatusBadge({ status, appearance }: {
 }) {
   if (!status?.owned || !status.published) return null;
   if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/.test(status.repo) || !status.branch) return null;
-  const url = `https://github.com/${status.repo}/tree/${encodeURIComponent(status.branch)}`;
+  // The PR may belong to an upstream repository when this branch is a fork.
+  const pullRequest = /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+\/pull\/([1-9]\d*)$/.exec(status.url);
+  const url = pullRequest ? status.url : `https://github.com/${status.repo}/tree/${encodeURIComponent(status.branch)}`;
+  const destination = pullRequest ? `pull request #${pullRequest[1]}` : "branch";
   const unavailable = !status.available || Date.now() / 1000 - status.fetched_at > 60;
   const [icon, label] = unavailable
     ? ["git-branch" as const, "GitHub status unavailable"]
@@ -26,7 +29,7 @@ export function GitHubStatusBadge({ status, appearance }: {
   const identity = `${status.repo} · ${status.branch}`;
   return <a data-header-control="true" data-testid="session-github-status"
     href={url} target="_blank" rel="noopener noreferrer"
-    aria-label={`Open GitHub branch: ${identity}`} title={`${identity}\n${label}`}
+    aria-label={`Open GitHub ${destination}: ${identity}`} title={`${identity}\n${label}\nOpen ${destination}`}
     className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-75 transition-opacity hover:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current"
     style={{ color: PANE_BRAND[appearance].inkMuted }}
     onPointerDown={(event) => event.stopPropagation()}
