@@ -22,6 +22,12 @@ import signal
 import sys
 from typing import TYPE_CHECKING, NoReturn
 
+if sys.argv[1:] == ["--clipboard-read"]:
+    # Private read helper, including windowed/frozen builds. Never boot the app.
+    from jarvis.platform.clipboard_reader import main as _clipboard_read_main
+
+    raise SystemExit(_clipboard_read_main())
+
 # A frozen GUI executable cannot be relaunched with ``python -m`` and has no
 # reliable stdout.  Dispatch this private, file-backed sidecar mode before the
 # normal desktop imports so Settings can safely enumerate newly hot-plugged

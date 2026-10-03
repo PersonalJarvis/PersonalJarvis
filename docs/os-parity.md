@@ -149,6 +149,23 @@ Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/
 [Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
 [Cursor MCP](https://docs.cursor.com/en/cli/mcp).
 
+||||||| parent of 1e445fa61 (fix(dictation): bound Windows clipboard reads before paste)
+## Windows clipboard read deadline (2026-10-02, T2)
+
+Windows clipboard reads now run in a disposable helper with a one-second
+communication timeout. This prevents a stalled delayed-rendering owner from
+holding dictation before the paste for Windows' 30-second render timeout.
+Timeout kills and reaps the reader before returning `None`, releasing its
+clipboard lock. Dictation then skips restoring unreadable previous content
+and keeps the new transcript available. Text travels only through a pipe.
+The private helper supports source and windowed/frozen entry points.
+
+Linux and macOS retain their existing clipboard commands and five-second
+timeouts; headless hosts still return unavailable without starting a helper.
+Tests cover helper termination, Unicode, empty/unavailable data, concurrent
+reads, private dispatch and the Windows windowed stdout pipe. A packaged
+installer and a live third-party stalled clipboard owner remain unverified.
+
 ## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under

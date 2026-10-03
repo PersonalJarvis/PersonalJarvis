@@ -123,6 +123,15 @@ def _read_linux() -> str | None:
 
 
 def _read_windows() -> str | None:
+    # GetClipboardData can wait 30 seconds for another application's delayed
+    # renderer. A timed-out thread still owns the clipboard lock, blocking the
+    # dictation write that follows. Isolate the read so timeout releases it.
+    from jarvis.platform.clipboard_reader import read_with_deadline
+
+    return read_with_deadline()
+
+
+def _read_windows_native() -> str | None:
     """Read Unicode text with the Win32 clipboard API.
 
     The clipboard is a shared, singly-owned resource: brief retries handle
