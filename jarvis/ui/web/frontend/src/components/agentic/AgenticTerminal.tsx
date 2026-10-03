@@ -156,6 +156,7 @@ import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { usePaneContextMenu } from "./usePaneContextMenu";
+import { SessionGitHubBadge } from "./SessionGitHubBadge";
 import { useT } from "@/i18n";
 
 /**
@@ -2669,6 +2670,7 @@ export function AgenticTerminal({
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
   const headerProps = {
+    githubStatusEnabled: active,
     contextMenuRequest: paneMenu.request,
     sendRightClicks: paneMenu.sendRightClicks,
     onToggleSendRightClicks: paneMenu.toggleSendRightClicks,
@@ -2781,6 +2783,7 @@ export function AgenticTerminal({
       : minimal ? <WorkspaceTerminalHeader {...headerProps} variant="tile" focused={focused && markFocus} />
       : headerMode === "none" ? null : <PaneHeader
         workspaceId={workspaceId}
+        githubStatusEnabled={active}
         status={visibleStatus}
         statusDetail={statusDetail}
         onArrangeStart={onArrangeStart}
@@ -2956,6 +2959,7 @@ export function AgenticTerminal({
 
 function PaneHeader({
   workspaceId,
+  githubStatusEnabled,
   name,
   displayName,
   recap,
@@ -2983,6 +2987,7 @@ function PaneHeader({
   onOpenChat,
 }: {
   workspaceId?: string;
+  githubStatusEnabled: boolean;
   name: string;
   displayName: string;
   recap?: string;
@@ -3492,6 +3497,7 @@ function PaneHeader({
         )}
       </div>
 
+      <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       {/* Pane actions appear where the eye already is: on the pane under the
           pointer, on the focused pane, and while one of their menus is open.
           Five buttons on every header of a twelve-pane wall were sixty
