@@ -505,7 +505,10 @@ class LiveVoiceSession:
             self._thinking = False
             self.playback_active = False
             epoch = await self._clear_playback(wait_for_provider=True)
-            await self._emit_indicator({"type": "tts_cancel", "epoch": epoch})
+            await self._emit_indicator({
+                "type": "tts_cancel",
+                **({"epoch": epoch} if self._output_transport() == "timed_pcm" else {}),
+            })
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
@@ -661,7 +664,10 @@ class LiveVoiceSession:
         epoch = self._playback_epoch
         self._awaiting_output_clear = wait_for_provider
         self._discard_audio_before = self._last_output_audio_end
-        await self._send_json({"type": "audio_clear", "epoch": epoch})
+        await self._send_json({
+            "type": "audio_clear",
+            **({"epoch": epoch} if self._output_transport() == "timed_pcm" else {}),
+        })
         return epoch
 
     async def _speech_timing(self, caption: Any, delta: str, start: object, end: object) -> None:
