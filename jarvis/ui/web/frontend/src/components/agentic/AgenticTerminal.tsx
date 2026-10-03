@@ -145,6 +145,7 @@ import {
 } from "./terminalScrollSurface";
 import { installMouseSelection } from "./terminalMouseSelection";
 import { installPromptSelectionBridge } from "./terminalPromptSelection";
+import { installBrowseExit } from "./terminalBrowseExit";
 import {
   openPaneSocket,
   type PaneSocket,
@@ -1088,6 +1089,7 @@ export function AgenticTerminal({
     // mouse tracking on, which every coding agent negotiates at start-up.
     const disposeMouseSelection = installMouseSelection(container, term, isMac);
     const disposePromptSelection = installPromptSelectionBridge(term, keys.add, isMac);
+    const disposeBrowseExit = installBrowseExit(container, term);
     // The desktop IDE reserves its platform copy chord for copying. In
     // particular, an unselected Ctrl+C on Windows/Linux must not reach Codex
     // as `^C`, where it cancels the current turn or exits the pane.
@@ -2306,6 +2308,7 @@ export function AgenticTerminal({
       disposeFontSync();
       disposeMouseSelection();
       disposePromptSelection();
+      disposeBrowseExit();
       disposeCopyBridge();
       disposePasteBridge();
       disposeNewlineBridge();
