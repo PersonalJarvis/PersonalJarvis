@@ -158,9 +158,11 @@ def _qrect(box: mm.Box) -> QRectF:
 
 
 def _text_font(shape: mm.Shape) -> QFont:
+    # The editor's text face: Inter, else the system UI font, semibold.
     font = QFont()
+    font.setFamilies(["Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", "Noto Sans"])
     font.setPixelSize(max(8, round(mm.text_size(shape.width))))
-    font.setWeight(QFont.Weight.Bold)
+    font.setWeight(QFont.Weight.DemiBold)
     font.setStyleHint(QFont.StyleHint.SansSerif)
     return font
 
@@ -292,15 +294,12 @@ def _paint_text(painter: QPainter, shape: mm.Shape, *, caret: bool) -> None:
     font = _text_font(shape)
     metrics = QFontMetricsF(font)
     x, y = shape.points[0]
-    path = QPainterPath()
     lines = shape.text.split("\n")
+    # Plain text in the chosen colour — no outline, no halo.
+    painter.setFont(font)
+    painter.setPen(_qcolor(shape.color))
     for i, line in enumerate(lines):
-        path.addText(QPointF(x, y + metrics.ascent() + i * metrics.lineSpacing()), font, line)
-    halo = QColor(17, 17, 17, 220) if _is_light(shape.color) else QColor(255, 255, 255, 235)
-    outline = QPen(halo, max(2.0, font.pixelSize() / 7.0))
-    outline.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.strokePath(path, outline)
-    painter.fillPath(path, _qcolor(shape.color))
+        painter.drawText(QPointF(x, y + metrics.ascent() + i * metrics.lineSpacing()), line)
     if caret:
         last = lines[-1] if lines else ""
         cx = x + metrics.horizontalAdvance(last) + 1.5
