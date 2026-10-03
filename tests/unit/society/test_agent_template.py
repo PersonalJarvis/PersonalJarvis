@@ -127,6 +127,11 @@ def test_scrub_removes_personal_details(text: str, kind: str, gone: str) -> None
     assert gone not in findings[0].hint
 
 
+def test_scrub_keeps_the_sentence_around_a_path() -> None:
+    clean, _ = scrub_text("Keep copies in C:\\Users\\max\\notes. Then stop.", "instructions")
+    assert clean == "Keep copies in [folder]. Then stop."
+
+
 def test_scrub_keeps_ordinary_text_and_example_addresses() -> None:
     text = "Reply within 2 days, version 1.2.3.4, write to someone@example.com."
     clean, findings = scrub_text(text, "summary")

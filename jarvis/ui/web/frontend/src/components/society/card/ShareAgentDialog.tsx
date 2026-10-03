@@ -423,7 +423,9 @@ function TemplateCode({ fileName, json, saving }: { fileName: string; json: stri
           {t("society.share.export")}
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* Wrapped, not scrolled sideways: the instructions are one long JSON
+          string, and reading them is the point of showing the template. */}
+      <div className="min-h-0 flex-1 overflow-auto [&_pre]:!whitespace-pre-wrap [&_pre]:[overflow-wrap:anywhere]">
         <Suspense fallback={<pre className="m-0 px-3 py-2 text-xs text-foreground/90"><code>{json}</code></pre>}>
           <CodeBlock language="json" code={json} chrome={false} />
         </Suspense>

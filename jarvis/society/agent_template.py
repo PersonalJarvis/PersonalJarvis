@@ -156,9 +156,17 @@ _URL_SECRET_RE: Final[re.Pattern[str]] = re.compile(
 _EMAIL_RE: Final[re.Pattern[str]] = re.compile(
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
 )
-# Home folders: they name the machine and, nearly always, the person.
+# Home folders: they name the machine and, nearly always, the person. A path
+# ends before trailing sentence punctuation ("… copies in /home/x/notes.").
+_PATH_TAIL: Final[str] = r"[^\s\"'`)]*[^\s\"'`).,;:!?]"
 _HOME_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?i)(?:\b[A-Za-z]:[\\/]+Users[\\/]+[^\s\"'`)]+|/Users/[^\s\"'`)]+|/home/[^\s\"'`)]+)"
+    r"(?i)(?:\b[A-Za-z]:[\\/]+Users[\\/]+"
+    + _PATH_TAIL
+    + r"|/Users/"
+    + _PATH_TAIL
+    + r"|/home/"
+    + _PATH_TAIL
+    + r")"
 )
 # International numbers only (a leading +): bare digit runs are dates, ids and
 # version numbers far more often than phone numbers.
