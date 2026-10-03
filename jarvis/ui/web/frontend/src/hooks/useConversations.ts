@@ -70,14 +70,32 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     return () => window.clearInterval(id);
   }, [poll, refresh]);
 
+  /** Return to the running call without resuming an archive over its live state. */
+  const reopenLiveConversation = useCallback((id: string): boolean => {
+    const home = useHomeStore.getState();
+    const voiceState = useEventStore.getState().voiceState;
+    if (
+      !home.liveSessionId
+      || home.voiceSwitchStopping
+      || !["listening", "thinking", "speaking", "paused", "connecting"].includes(voiceState)
+      || (id !== home.liveSessionId && id !== home.liveConversationId)
+    ) return false;
+    // A previous archive read must not overwrite the call after this click.
+    ++selectionGeneration;
+    setActiveConversation("voice", id);
+    useHomeStore.setState({ voiceSelectionPending: false, freshVoicePending: false });
+    return true;
+  }, [setActiveConversation]);
+
   /**
    * Make a conversation the active one and resume it on the backend (the
    * brain is seeded with it, so the next typed OR spoken turn continues it).
    * Resolves to the stored messages — empty when the backend had none or
-   * could not be reached — so a caller can show them elsewhere too.
+   * could not be reached — so a caller can show them elsewhere too. A superseded
+   * selection returns null so callers leave the newer transcript alone.
    */
   const openConversation = useCallback(
-    async (kind: ConversationKind, id: string): Promise<ChatMessage[]> => {
+    async (kind: ConversationKind, id: string): Promise<ChatMessage[] | null> => {
       const generation = ++selectionGeneration;
       useHomeStore.setState({ voiceSelectionPending: kind === "voice", freshVoicePending: false });
       setActiveConversation(kind, id);
@@ -94,7 +112,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
           }
         }
         const selected = useEventStore.getState();
-        if (generation !== selectionGeneration || selected.activeKind !== kind || selected.activeThreadId !== id) return [];
+        if (generation !== selectionGeneration || selected.activeKind !== kind || selected.activeThreadId !== id) return null;
         const detail = await resumeConversation(kind, id);
         messages = detailToMessages(detail);
         traces = detailToTraces(detail);
@@ -108,7 +126,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
       // The stored traces replace the previous conversation's, so a reply
       // in the new thread never wears the steps of an old one.
       const active = useEventStore.getState();
-      if (generation !== selectionGeneration || active.activeKind !== kind || active.activeThreadId !== id) return [];
+      if (generation !== selectionGeneration || active.activeKind !== kind || active.activeThreadId !== id) return null;
       seedThinkingTraces(traces);
       setMessages(messages);
       return messages;
@@ -157,6 +175,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     activeThreadId,
     activeKind,
     refresh,
+    reopenLiveConversation,
     openConversation,
     newChat,
     newVoiceRun,
