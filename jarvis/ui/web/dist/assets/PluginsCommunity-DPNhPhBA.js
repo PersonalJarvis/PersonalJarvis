@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PluginsCommunity-DPNhPhBA.js
 import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a2 as H,f as J,W as z,ad as $,a0 as b,ao as L,ac as W,S as Z,L as k,aa as _,a1 as q,G as X}from"./index-Cbrqs4bB.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/PluginsCommunity-D82wYPwG.js
+import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a2 as H,f as J,W as z,ad as $,a0 as b,ao as L,ac as W,S as Z,L as k,aa as _,a1 as q,G as X}from"./index-NnEnsunp.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+========
+import{p as M,r as u,al as V,j as e,c as v,ab as U,ai as G,a2 as H,f as J,W as z,ad as $,a0 as b,ao as L,ac as W,S as Z,L as k,aa as _,a1 as q,G as X}from"./index-D0bznGCO.js";import{P as R}from"./branding-DGZ3DZY3.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/PluginsCommunity-XC22izNR.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

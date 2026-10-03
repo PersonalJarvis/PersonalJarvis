@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/minimize-2-4tacYKbO.js
 import{p as e}from"./index-Cbrqs4bB.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/minimize-2-CQMarOBZ.js
+import{p as e}from"./index-NnEnsunp.js";/**
+========
+import{p as e}from"./index-D0bznGCO.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/minimize-2-C8WKp9qL.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

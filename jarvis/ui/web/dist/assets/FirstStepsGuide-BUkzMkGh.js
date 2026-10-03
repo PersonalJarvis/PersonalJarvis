@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/FirstStepsGuide-BUkzMkGh.js
 import{p as R,f as m,ca as z,u as H,v as q,V as K,r as p,ej as h,ek as L,el as T,g,ah as E,j as e,c as b,ab as V,h as W,X,em as B}from"./index-Cbrqs4bB.js";import{a as v}from"./controls-5FQoV5NM.js";import{G as J,m as Y,E as Z,P as tt,Q as A}from"./GuidePet-tmJq8zPN.js";import"./MascotGigi-Cd6KjVtn.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/FirstStepsGuide-Y8Yx36II.js
+import{p as R,f as m,ca as z,u as H,v as q,V as K,r as p,ej as h,ek as L,el as T,g,ah as E,j as e,c as b,ab as V,h as W,X,em as B}from"./index-NnEnsunp.js";import{a as v}from"./controls-CGRzeFS0.js";import{G as J,m as Y,E as Z,P as tt,Q as A}from"./GuidePet-BQEqIRyh.js";import"./MascotGigi-nFEtobBL.js";/**
+========
+import{p as R,f as m,ca as z,u as H,v as q,V as K,r as p,ej as h,ek as L,el as T,g,ah as E,j as e,c as b,ab as V,h as W,X,em as B}from"./index-D0bznGCO.js";import{a as v}from"./controls-D-lK01dY.js";import{G as J,m as Y,E as Z,P as tt,Q as A}from"./GuidePet-CX-0M9WG.js";import"./MascotGigi-CcJljOFc.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/FirstStepsGuide-vItaTjsK.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

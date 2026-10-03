@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/language-select-CkZyDNB9.js
 import{p as v,u as S,i as x,r as y,j as E}from"./index-Cbrqs4bB.js";import{C as M}from"./combobox-Do4DfPKv.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/language-select-B5LPyah7.js
+import{p as v,u as S,i as x,r as y,j as E}from"./index-NnEnsunp.js";import{C as M}from"./combobox-CdKMtTER.js";/**
+========
+import{p as v,u as S,i as x,r as y,j as E}from"./index-D0bznGCO.js";import{C as M}from"./combobox-B3gmZVXP.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/language-select-CiBNkLNh.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

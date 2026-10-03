@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/PairConversation-DSyDBw7_.js
 import{p as M,r as n,j as e,u as R,cy as A,X as q,c as k,cz as B}from"./index-Cbrqs4bB.js";import{C as D}from"./WorkTrace-BnTS2WCI.js";import{L as H}from"./lock-BMsoUCww.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/PairConversation-_CUyDZ-f.js
+import{p as M,r as n,j as e,u as R,cy as A,X as q,c as k,cz as B}from"./index-NnEnsunp.js";import{C as D}from"./WorkTrace-LAMT3T20.js";import{L as H}from"./lock-BO8P6YXa.js";/**
+========
+import{p as M,r as n,j as e,u as R,cy as A,X as q,c as k,cz as B}from"./index-D0bznGCO.js";import{C as D}from"./WorkTrace-Bq9hyo12.js";import{L as H}from"./lock-DuPHrBGg.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/PairConversation-BSggVklO.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

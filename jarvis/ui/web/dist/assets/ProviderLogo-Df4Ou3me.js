@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-Df4Ou3me.js
 import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Z as E}from"./index-Cbrqs4bB.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/ProviderLogo-DvI8VMY9.js
+import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Z as E}from"./index-NnEnsunp.js";/**
+========
+import{_ as u,a as f,b as m,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as H,v as O,w as S}from"./xai-ELXAGfWY.js";import{p as $,j as i,c as n,Z as E}from"./index-D0bznGCO.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/ProviderLogo-Dx3D2YOR.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

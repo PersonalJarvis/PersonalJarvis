@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/pluginLogos-BHK6PuS3.js
 import{p as i,j as c}from"./index-Cbrqs4bB.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/pluginLogos-KCdFOhqj.js
+import{p as i,j as c}from"./index-NnEnsunp.js";/**
+========
+import{p as i,j as c}from"./index-D0bznGCO.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/pluginLogos-DYTQoJjc.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

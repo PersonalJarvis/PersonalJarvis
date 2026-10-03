@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/paneFileDrag-BuVKsMfN.js
 import{p as A,r as p,j as c,b1 as N,c as m,as as F}from"./index-Cbrqs4bB.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/paneFileDrag-CGOnLwb2.js
+import{p as A,r as p,j as c,b1 as N,c as m,as as F}from"./index-NnEnsunp.js";/**
+========
+import{p as A,r as p,j as c,b1 as N,c as m,as as F}from"./index-D0bznGCO.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/paneFileDrag-Doc7nHeG.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

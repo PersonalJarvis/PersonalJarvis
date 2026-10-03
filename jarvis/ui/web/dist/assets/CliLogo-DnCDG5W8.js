@@ -1,4 +1,10 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/CliLogo-DnCDG5W8.js
 import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-C3Q-kF2q.js";import{p as _,j as a,c as o,aQ as A}from"./index-Cbrqs4bB.js";import{T as n}from"./terminal-CXcLWNnV.js";import{C as E}from"./credit-card-CoZvRxHs.js";import{D as I}from"./database-CbE51_E7.js";/**
+|||||||| parent of f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/CliLogo-e_GRZpeS.js
+import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-C3Q-kF2q.js";import{p as _,j as a,c as o,aQ as A}from"./index-NnEnsunp.js";import{T as n}from"./terminal-Dh74Xl5i.js";import{C as E}from"./credit-card-CnsFQF9P.js";import{D as I}from"./database-Cfq4xnbw.js";/**
+========
+import{c as v,C as k,_ as p,a as m,b,d as h,e as y,f as u,g as f,h as x,i as j,j as M,k as w,l as C,m as z,n as L,o as R,p as B,q as G,r as V,s as D,t as N,u as O}from"./cliVendors-C3Q-kF2q.js";import{p as _,j as a,c as o,aQ as A}from"./index-D0bznGCO.js";import{T as n}from"./terminal-QMvSsjSa.js";import{C as E}from"./credit-card-BC56J7Wo.js";import{D as I}from"./database-zJ17JNfZ.js";/**
+>>>>>>>> f4d6bee1f (chore(ui): rebuild the bundle for agent sharing):jarvis/ui/web/dist/assets/CliLogo-Bjsw2JjN.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
