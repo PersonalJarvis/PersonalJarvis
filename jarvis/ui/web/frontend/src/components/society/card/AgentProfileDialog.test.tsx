@@ -7,6 +7,7 @@ import { RosterRail } from "../roster/RosterRail";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, useLocaleChunk: () => true }));
 vi.mock("../AgentSwatch", () => ({ AgentSwatch: () => <span /> }));
+vi.mock("./AgentAvatarEditor", () => ({ AgentAvatarEditor: () => <div data-testid="avatar-editor" /> }));
 
 const agent = { ...SAMPLE_ROSTER[1], agentId: "research", name: "Research", title: "Researcher", description: "Check primary sources.", tier: "specialist" as const };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -69,6 +70,21 @@ it("shows automatically learned instructions and review status separately from u
   expect(screen.getByText("society.profile_card.review_done")).toBeTruthy();
   expect((screen.getByLabelText("society.profile_card.instructions") as HTMLTextAreaElement).value).toBe(agent.description);
 });
+
+it("opens avatar editing for specialists but keeps the lead figure reserved", async () => {
+  setup();
+  fireEvent.mouseDown(screen.getByRole("tab", { name: "society.companion.character" }), {
+    button: 0,
+    ctrlKey: false,
+  });
+  expect(screen.getByTestId("avatar-editor")).toBeTruthy();
+  cleanup();
+
+  setup({ lead: true });
+  await screen.findByDisplayValue("Shared rule");
+  expect(screen.queryByRole("tab", { name: "society.companion.character" })).toBeNull();
+});
+
 
 it("loads memory on demand, opens another file and filters filenames", async () => {
   const { fetcher } = setup({ fetcher: async (url) => json({ content: String(url).includes("notes.md") ? "Dated note" : "Durable memory" }) });
