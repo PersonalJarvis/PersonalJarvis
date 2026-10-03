@@ -590,7 +590,7 @@ Line length 100. Target `py311`.
 - ADR-0010 — Output-Filter Pattern-Based / Window-Focus Watcher MsgWait *(duplicate number)*
 - ADR-0011 — Router Pure Dispatcher (amended for Welle 4: SUB_TOOLS deleted)
 - ADR-0012 — Awareness Recall Router-Tier
-- ADR-0013 — Knowledge Wiki Architecture (Karpathy-style structured vault)
+- ADR-0013 — Knowledge Wiki Architecture (compiled, structured vault)
 - ADR-0014 — Flash-Brain Suppress-If-Fast / Memory-Trigger Contract *(duplicate number)*
 - ADR-0015 — Obsidian Setup Wizard (B9)
 

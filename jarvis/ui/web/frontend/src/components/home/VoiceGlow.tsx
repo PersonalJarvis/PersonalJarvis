@@ -8,8 +8,8 @@ import { createGlowRenderer } from "@/components/home/voiceGlowRenderer";
 import { createVoiceFollower } from "@/components/home/voiceFollower";
 
 /**
- * The light behind voice mode's composer — the Claude app's voice glow, in
- * this theme's one signal hue.
+ * The light behind voice mode's composer — a voice glow in this theme's one
+ * signal hue.
  *
  * An aurora rises from the bottom edge: a soft haze with a flowing crest,
  * curtains of light drifting up through it, and a bright core along the

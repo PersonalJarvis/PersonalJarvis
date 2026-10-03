@@ -1,7 +1,7 @@
 # Wake-word reliability deep-dive (2026-06-30)
 
-Goal: a custom wake word must trigger **first try, instantly**, like "Hey Google"
-on a Pixel — on Windows, Linux and macOS. Reported symptom: a clear, loud
+Goal: a custom wake word must trigger **first try, instantly** — on Windows,
+Linux and macOS. Reported symptom: a clear, loud
 "Hey Nova" needed 2-3 repetitions before anything happened.
 
 ## Root cause — from the live logs, not a guess
@@ -24,7 +24,7 @@ on a Pixel — on Windows, Linux and macOS. Reported symptom: a clear, loud
   weiter"/"Wetter. Its fun.") and occasionally hangs past the 8 s timeout. <!-- i18n-allow -->
 
 The deeper truth: **wake detection via full speech-to-text is the wrong
-architecture.** "Hey Google"/Alexa/Siri never transcribe to wake — they run a
+architecture.** Reliable wake detection does not transcribe to wake — it runs a
 tiny, always-on neural keyword-spotting model trained for the phrase. Weeks of
 tuning the base/cpu transcription path (forensic comments 2026-06-22 … 06-29) did
 not make it reliable, which is the signal to change the approach, not tune again.
@@ -68,7 +68,7 @@ not make it reliable, which is the signal to change the approach, not tune again
 
 1097 speech/audio/wake/stt unit tests pass, no regression.
 
-## Endgame — the definitive cross-platform "Hey Google" fix (next stage)
+## Endgame — the definitive cross-platform instant-wake fix (next stage)
 
 The GPU fix makes this excellent on a CUDA box, but a laptop/VPS on CPU still
 leans on transcription. The real answer for **any word, any OS, instant, on CPU**

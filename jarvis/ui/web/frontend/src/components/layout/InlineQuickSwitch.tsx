@@ -1,6 +1,6 @@
 /**
  * The sidebar search field, live: type into it and the results drop down
- * right under it — no window in the middle of the screen. The Spotlight
+ * right under it — no window in the middle of the screen. The centre
  * window stays the chord's job (Ctrl+Space); both show the same
  * `QuickSwitchList`.
  *

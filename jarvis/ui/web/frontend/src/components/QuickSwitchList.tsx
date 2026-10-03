@@ -1,7 +1,7 @@
 /**
  * The quick switcher's results — sections, chats, terminals, workspaces and
  * Settings groups — as one cmdk list, shared by its two shells: the centred
- * Spotlight window (`QuickSwitcher`, the chord) and the sidebar search field
+ * switcher window (`QuickSwitcher`, the chord) and the sidebar search field
  * (`InlineQuickSwitch`), which drops the same list down under itself.
  *
  * Must render inside a cmdk `<Command shouldFilter={false}>` whose input feeds
@@ -81,7 +81,7 @@ const GROUP = cn(
 /** How many live results each group may show, so the sections stay in view. */
 const LIMIT = { chats: 6, terminals: 6, workspaces: 4 } as const;
 
-/** Row sizes: the Spotlight window is roomier than the sidebar dropdown. */
+/** Row sizes: the centre window is roomier than the sidebar dropdown. */
 const SIZE = {
   large: { row: "h-11 text-base", tile: "h-7 w-7", detail: "text-sm" },
   compact: { row: "h-9 text-sm", tile: "h-6 w-6", detail: "text-xs" },
@@ -246,7 +246,7 @@ export function QuickSwitchList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
-  // Nothing typed: no list at all — the field stands alone, like Spotlight.
+  // Nothing typed: no list at all — the field stands alone.
   if (!typed) return null;
 
   const go = (item: QuickSwitchEntry) => {

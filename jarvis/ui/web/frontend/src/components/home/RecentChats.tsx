@@ -44,7 +44,7 @@ export function RecentChats() {
     return () => window.clearInterval(id);
   }, [loadSessions]);
 
-  // Every chat is listed, the way the Claude app's column lists them: the
+  // Every chat is listed: the
   // sidebar scrolls instead of hiding the history behind "Show all"
   // (maintainer, 2026-10-01). The archive dialog stays for searching it.
   const shown = recentRows;
@@ -142,8 +142,7 @@ function ChatRowItem({
         )}
       >
         {/* One small mark says which kind of chat this is — a ring for typed,
-            sound bars for voice — in one box and one muted tone, the way the
-            Claude app tells its chat and code sessions apart. A chat with no
+            sound bars for voice — in one box and one muted tone. A chat with no
             topic says what it was ("Voice chat · 09:42"), in a quieter tone. */}
         <ChatKindMark kind={row.kind} active={active} />
         <span

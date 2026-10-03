@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Migrate the legacy flat-file workspace to the Karpathy-style wiki layout.
+"""Migrate the legacy flat-file workspace to the structured wiki layout.
 
 Reads the old layout:
 

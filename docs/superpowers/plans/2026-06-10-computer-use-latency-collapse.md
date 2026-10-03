@@ -727,4 +727,4 @@ Deviations from the plan as written:
 
 ## Why no fundamental redesign
 
-The screenshot→think→act loop is exactly what Claude (Computer Use) and OpenAI Operator run; the per-step think on `gemini-3.5-flash` (1.3–1.7 s) is already competitive. The 3 minutes were plumbing: blocking TTS on the bus (~50 %), a missing deterministic fast-path for the most common goal shape, and redundant LLM round-trips (pre-click refine, done-judge, thrash steps). Fixing the plumbing gets us to the ~2 s/step class without abandoning a proven architecture — and every fix is OS-neutral.
+The screenshot→think→act loop is the established computer-use architecture; the per-step think on `gemini-3.5-flash` (1.3–1.7 s) is already competitive. The 3 minutes were plumbing: blocking TTS on the bus (~50 %), a missing deterministic fast-path for the most common goal shape, and redundant LLM round-trips (pre-click refine, done-judge, thrash steps). Fixing the plumbing gets us to the ~2 s/step class without abandoning a proven architecture — and every fix is OS-neutral.

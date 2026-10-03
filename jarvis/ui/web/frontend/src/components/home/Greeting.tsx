@@ -32,8 +32,8 @@ export function Greeting({
       )}
       data-testid="home-greeting"
     >
-      {/* The user's pet above, the line under it in regular weight — the
-          Codex app's opening, quieter than a bold headline beside a logo.
+      {/* The user's pet above, the line under it in regular weight —
+          quieter than a bold headline beside a logo.
           The pet follows the voice: it listens, thinks and talks along. */}
       <PetMark size={48} reactive className="mb-3" />
       <h1 className="text-2xl font-normal tracking-tight text-foreground [text-wrap:balance]">

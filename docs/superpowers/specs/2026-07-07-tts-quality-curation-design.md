@@ -55,7 +55,7 @@ first-class in every ranking and test.
 - **Config:** one shared `[tts]` block (`TTSConfig`, `jarvis/core/config.py`),
   `extra="allow"` for per-provider sub-tables; `streaming=True` default.
 
-### Competitive landscape (mid-2026, researched 2026-07-07)
+### Provider landscape (mid-2026, researched 2026-07-07)
 
 The field moved: the incumbents (ElevenLabs, OpenAI) are no longer the quality
 apex. Independent blind-preference arenas are led by Inworld, MiniMax, xAI Grok,

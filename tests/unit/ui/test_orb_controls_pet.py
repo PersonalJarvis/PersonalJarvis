@@ -298,7 +298,7 @@ def test_concurrent_toggles_never_lose_the_remembered_volume(pipeline: _Pipeline
     assert pipeline._volume == pytest.approx(0.7)
 
 
-# --- the Codex-like look: filled discs, a glossy orb, proportions --------------------
+# --- the strip's look: filled discs, a glossy orb, proportions --------------------
 
 
 def test_the_pen_and_the_pill_are_filled_without_a_ring() -> None:

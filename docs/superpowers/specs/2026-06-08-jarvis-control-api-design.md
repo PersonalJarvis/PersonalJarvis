@@ -79,7 +79,7 @@ A single FastAPI dependency `require_control_key(request)` on the `/api/control/
 
 ## 5. API key lifecycle
 
-- **Generation:** `"jctl_" + secrets.token_urlsafe(32)` (256-bit, greppable prefix à la `ghp_`).
+- **Generation:** `"jctl_" + secrets.token_urlsafe(32)` (256-bit, with a greppable prefix).
 - **Storage (cross-platform, mandatory headless fallback):** primary `cfg.set_secret("jarvis_control_api_key", key)` (Credential Manager / Keychain / Secret Service under `KEYRING_SERVICE="personal-jarvis"`). **Check the return value** — `set_secret` silently returns False on headless Linux. Fallback: `data/.control_api_key`, `0600` on POSIX / per-user NTFS ACL on Windows. Read order: keyring → file → `JARVIS_CONTROL_API_KEY` env. Never assume keyring persisted. Never in `jarvis.toml` / `config-soll.json` / committed `.env` (AP-12). <!-- i18n-allow: literal filename identifier -->
 - **Bootstrap:** generate-once **before** the FastAPI app is created. Idempotent — reuse an existing key, never silently regenerate (would lock out cached agents). Wizard shows "stored ✓" (mirrors `jarvis_admin_hmac`, `wizard.py:187-194`). Headless boot prints once to stdout.
 - **Copy/display:** `GET /api/control/api-key` → full key to the same-origin panel; `robustCopy()` (`clipboard.ts:24`, WebView2-safe). Logs/lists show only `jctl_…last4`.

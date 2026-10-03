@@ -1,9 +1,9 @@
 """The background review: one small model call that proposes notebook changes.
 
-The shape follows the reference design this loop was modelled on (a bounded
-USER/MEMORY pair, a review that runs after the conversation and never blocks
-it, declarative entries, an explicit list of what not to keep) and the
-evidence rules of the Society agents' review: every change quotes the user.
+The shape: a bounded USER/MEMORY pair, a review that runs after the
+conversation and never blocks it, declarative entries, an explicit list of
+what not to keep, and the evidence rules of the Society agents' review: every
+change quotes the user.
 
 Cost is kept low on purpose: the reviewer sees only the user turns the
 deterministic signal filter picked (each with the assistant line just before

@@ -23,8 +23,7 @@ from collections.abc import Sequence
 
 from jarvis.skills.registry import SkillRegistry
 
-# Per-entry cap on the rendered description+when_to_use text (mirrors the
-# 1536-char listing cap in Claude Code's skill listing, AD-S2).
+# Per-entry cap on the rendered description+when_to_use text (AD-S2).
 _PER_ENTRY_CHAR_CAP = 1536
 
 # How many folded skill NAMES the overflow tail enumerates. The tail exists so
@@ -89,7 +88,7 @@ def render_available_skills_section(
             (run-skill resolves by exact name), so the prompt stays bounded
             without making any skill uncallable.
         total_char_budget: Overall character budget for the bullet block
-            (AD-S2 L1, mirrors Claude Code's listing budget). When exceeded,
+            (AD-S2 L1). When exceeded,
             builtins are evicted before user skills, least-recently-modified
             first within each group.
     """
@@ -283,7 +282,7 @@ def render_realtime_skills_directive(
 
     1. name + description + ``when_to_use`` — the matching rule, so the model
        can recognise a paraphrase the author's trigger regex never predicted.
-       This is the tier that makes recognition work like Claude Code's;
+       This is the tier that lets the model match a request by meaning;
     2. name + short description — the topic, without the matching rule;
     3. names only.
 

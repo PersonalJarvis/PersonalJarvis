@@ -611,8 +611,8 @@ label,
     --ring: 212 92% 45%;
 
     /* --- Status. Colour has jobs again (v3.1, 2026-09-01) ------------------
-       The all-neutral product read as dead. Cursor's Anysphere theme is the
-       model: neutral greys carrying one desaturated signal hue and a small
+       The all-neutral product read as dead. The palette is now
+       neutral greys carrying one desaturated signal hue and a small
        semantic set — green life, rose fault, amber degraded, cyan info —
        plus coloured diffs and a coloured run graph. Same meanings in both
        themes; the lightness is tuned per ground. */
@@ -739,8 +739,7 @@ label,
        tile, a composer, a menu. A surface wider than ~720px never rises above
        --sidebar, whatever class it carries.
 
-       NEUTRAL, COOL BLACK (v4, 2026-09-02). Re-measured against Cursor and
-       Grok: a pure-neutral ladder from a 4 % room, with every step one notch
+       NEUTRAL, COOL BLACK (v4, 2026-09-02). A pure-neutral ladder from a 4 % room, with every step one notch
        lighter than the one under it, hairlines that read on every surface
        they enclose, and ink at 98 / 72 / 63 / 45 %. Elevation is the surface
        colour, never a shadow. One restrained accent (blue) marks links,
@@ -785,8 +784,8 @@ label,
 
     /* --- Rims. A rim is LIGHTER than the fill it encloses ------------------
        On near-black a dark border around a dark fill reads as a wireframe
-       with nothing inside it. Cursor's rims cover 0.2 % of its window — a
-       composer outline and a few dividers, not an edge around every card. */
+       with nothing inside it. Rims stay rare — a composer outline and a
+       few dividers, not an edge around every card. */
     --surface-raised: 0 0% 15%; /* #262626 — pressed/selected rows, code blocks */
     --border: 0 0% 15%; /* #262626 — a hairline visible on room, rail AND card */
     --border-strong: 0 0% 22%; /* #383838 — input borders, focused card, float rim */
@@ -861,7 +860,7 @@ label,
     --jarvis-grid: 0 0% 15%;
 
     /* --- Info. The fourth semantic hue --------------------------------------
-       Cursor's badge / untracked / find-match cyan (#88C0D0). It says "note
+       A badge / untracked / find-match hue. It says "note
        this" without saying "something is wrong": counts, new items, hints. */
     --info: 212 100% 62%; /* = --accent: one signal hue carries counts and hints too */
     --info-foreground: 0 0% 100%;
@@ -2867,8 +2866,8 @@ body {
   }
 
   /* Removed lines keep their ink readable: the rose ground is faint and the
-     rose ink carries the meaning. Cursor draws exactly this pair
-     (diffEditor.removedTextBackground #B80049 at 13-20 %, gutter #E34671). */
+     rose ink carries the meaning (ground #B80049 at 13-20 %, gutter
+     #E34671). */
   .diff-line-del {
     background-color: hsl(var(--diff-del-bg) / 0.2);
     color: hsl(var(--diff-del));

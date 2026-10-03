@@ -10,7 +10,7 @@ When a voice/chat turn force-spawns a background Jarvis-Agent mission (`spawn_wo
 / Jarvis-Agents), the user hears exactly one tailored opening line and then **silence**.
 The only follow-up is a single hard-coded German phrase `"Bin noch dran."` emitted
 once at 90 s; otherwise nothing until the result. To a voice-first user talking to
-Jarvis like a voice assistant ("Hey Google" style), that long silence reads as a
+Jarvis like a voice assistant, that long silence reads as a
 crash, and the opening line does not make clear that the task is a *substantial*
 one that legitimately takes time.
 

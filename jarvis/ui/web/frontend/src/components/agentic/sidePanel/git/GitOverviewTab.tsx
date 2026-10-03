@@ -82,7 +82,7 @@ const PR_ICON: Record<PullRequestState, (props: SVGProps<SVGSVGElement>) => Reac
   closed: (props) => <GitPullRequestClosed {...props} />,
 };
 
-// CI gets shapes GitHub uses for checks — a circle that is dashed, spinning,
+// CI gets its own shapes for checks — a circle that is dashed, spinning,
 // ticked or crossed — so a green tick can never be read as the purple merge.
 const CI_TONE: Record<CiState, string> = {
   none: "text-muted-foreground/60",

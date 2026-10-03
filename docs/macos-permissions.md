@@ -84,7 +84,7 @@ Separation, element by element. "Required" means an OS or signing fact forces so
 | Usage-description strings are mandatory for the microphone and Apple events and fatal when missing. | [A] Apple Info.plist key pages; BUG-058 class. | One table of strings, a capability check before any native request. |
 | Under the hardened runtime, microphone and Apple-event access need the `audio-input` and `apple-events` entitlements or the prompt never appears. | [A] entitlement documentation; [D] DTS thread 741303; [C] CowAgent#3181. | Entitlements in `packaging/macos/entitlements.plist`. Never run on a notarized build yet (unverified). |
 | TCC state changes outside the process (Settings toggle, `tccutil`, revocation) and there is no change notification for most services. | [A] status calls return a plain Bool for Accessibility and Screen Recording [A signatures]. | Live, uncached state reads; a silent episode watcher. |
-| macOS does not ask again after a decision (per-permission wording in 3.6). | [A for iOS/UIKit, applied to macOS by inference [I]] UIKit "Requesting access to protected resources": "If the person denies permission, the access attempt that initiates the prompt, and any further attempts, fail" (wording not re-verified against the live page). | A stable "denied" state, one click to the right pane, an own-bundle `tccutil reset` as explicit recovery. |
+| macOS does not ask again after a decision (per-permission wording in 3.2). | [A for iOS/UIKit, applied to macOS by inference [I]] UIKit "Requesting access to protected resources": "If the person denies permission, the access attempt that initiates the prompt, and any further attempts, fail" (wording not re-verified against the live page). | A stable "denied" state, one click to the right pane, an own-bundle `tccutil reset` as explicit recovery. |
 | Silent failures: Screen Recording without the grant returns the desktop wallpaper, not an error; a denied microphone yields zeros; synthetic input without trust is dropped. | [A] "audio recordings contain only silence"; [C] driveshot#54, Slack screen-share reports; audit H1. | A pixel sanity check at the capture site and a digital-silence guard on the microphone. |
 | `tccutil reset` is scoped to a bundle id; the wrong id wipes another app. | [A] Apple Files and Folders pages; [commit `38aa4fc08`]. | Reset only from the installed app, only its own id. |
 | An Automation consent cannot be queried for a closed target (`procNotFound`, -600). | [A] `AppleEvents.h`: "The target ... must refer to an already running application." | Ask only while a player runs; never launch one to ask. |
@@ -160,67 +160,9 @@ need to detect silent failures) that was never weighed, and a small set of real 
 got conflated with it. None of the real constraints requires a banner, a wizard, a readiness gate
 or refusing to let the OS show its own dialog.
 
-## 3. How other apps do it, and what Apple says
+## 3. What Apple says, and how macOS behaves
 
-### 3.1 Evidence quality (read first)
-
-- Vendor domains (OpenAI help centre and developer pages, Raycast manual, Zoom, Slack,
-  1Password, Loom, CleanShot, Alfred, Wispr Flow, Superwhisper) were **not reachable** from the
-  research environment. Most vendor statements below come from **search-result summaries of the
-  official page**, university or IT how-to pages that mirror the vendor knowledge base, and
-  third-party reviews. They are weaker than a direct read.
-- Pages read directly: the Claude desktop and computer-use documentation, one Claude support
-  article, and GitHub issues of public repositories (these quote real dialog text and bundle ids
-  but are user reports, not vendor statements).
-- Nothing was observed on a Mac. A "no wall found" statement means "none documented", never
-  "none exists".
-- Source types: **direct** (page read), **summary** (search summary of the official page),
-  **how-to** (third-party or institutional write-up), **issue** (GitHub issue).
-
-### 3.2 Comparison table
-
-| App | When it asks | Explanation before / after | On denial | Route to System Settings | Confidence, source type |
-|---|---|---|---|---|---|
-| **ChatGPT desktop** | At first use of a feature: Work with Apps (Accessibility), Record and voice (Microphone, Screen & System Audio Recording), Computer Use after an explicit opt-in. No launch wall found. | Help-centre prose plus the OS dialog; an own pre-prompt card was not verified. Computer Use adds app-level approvals independent of TCC ("allow once / Always allow"). | Feature unavailable; Computer Use reports "permissions are still pending" when the grant sits on the wrong client (a helper is a separate TCC client, openai/codex#46776). | Text path to the Privacy & Security pane; a deep link is unverified. | Partly documented. Summary of vendor help pages plus issues (read). |
-| **Claude desktop** | Computer use is off by default; the user flips a Settings toggle and must grant two permissions "before the toggle takes effect". Quick Entry shows an in-app opt-in card at first launch of the updated app (an app-level consent card, not a TCC prompt). | Docs table with one line per permission and a status badge per permission in Settings. | Toggle stays inert until both are granted; if off, Claude says in chat it could do the task if enabled. | "Click the badge to open the relevant System Settings pane" (documented). Restart after a grant: not stated for Desktop. | Documented for computer use (direct). Partly documented for the timing of the OS dialogs and for Quick Entry denial. |
-| **Claude Code** (terminal) | Nothing up front. Computer use is a built-in server, off by default; "the first time Claude tries to use your computer" a prompt appears. Protected folders prompt on first touch (plain OS template). | Inline card in the session with links to the panes and a **Try again** button. | Try again, no nagging. Folder denial surfaces as an unexplained error (issues). | Links in the prompt. "macOS may require you to restart Claude Code after granting Screen Recording." | Documented for the flow (direct). Attribution is mixed: the docs name the terminal app; issues show the Claude binary as its own client (a version path in Automation dialogs, per-update re-prompts). |
-| **Raycast** | Per feature at first use (summary of the manual); feature setup views for Screen Awareness and Dictation. Whether Accessibility is also asked in first-run onboarding is **conflicting** across third-party sources. | Setup view per feature and an inline "Grant Permission" card. | Feature degrades; Screen Recording is optional for Screen Awareness. | Button opens the pane; a changelog entry fixes "would not open System Settings when requesting access for a denied permission" (summary). Auto-restart and resume is asserted by one summary only. | Partly documented. Summary of the manual and changelog; third-party how-tos. |
-| **Zoom** | Camera and microphone at first use; Screen Recording at the first share; Accessibility only when someone requests remote control. No permission onboarding documented. | OS dialog with the usage string; for Accessibility "Open System Preferences" on the dialog, which as far as can be told is the standard macOS dialog, not an own one. | Feature dead; all how-tos tell the user to fix it manually in Privacy & Security. | Button for Accessibility; OS asks to restart Zoom after Screen Recording. | Partly documented. How-tos mirroring the vendor KB. |
-| **Slack** | First huddle (microphone), first video or share (camera, Screen Recording). | OS dialog (inferred). | **Silent degrade**: sharing shows the wallpaper and menu bar. A cautionary example. | Help text, quit and reopen; `tccutil reset ScreenCapture <bundle id>` as a last resort (third party). | Partly documented / inferred. Third-party sources. |
-| **1Password** | Screen Recording at the first QR or setup-code scan; Accessibility only for the opt-in Universal Autofill and shortcuts. The vault works with no permission at all. | OS dialog; the help page is named after the dialog text ("1Password would like to record this screen"). | QR scan unavailable until granted and restarted; core product unaffected. | "Open System Settings" on the dialog, then "Quit & Reopen". | Partly documented. Summary of vendor pages. |
-| **Loom** | The install article says users "will be prompted" when installing the desktop app; microphone and camera when selected (inferred). Exact order not documented. | Unknown. | Manual toggles; `tccutil reset` commands documented as a fix for stuck state (a known pain point). | Help-article steps; no in-app deep link confirmed. | Partly documented. Summary of help articles. |
-| **CleanShot X** | Screen Recording and Accessibility during setup (a screenshot tool whose whole purpose needs Screen Recording, so up front equals first use); microphone when a recording uses it. | Short onboarding; wording unknown. | Capture does not work; the app appears in the Screen Recording list only after a capture attempt. | Quit and reopen needed (third party). | Inferred / partly documented. Third-party reviews. |
-
-### 3.3 Closest comparators (voice, hotkey, insert text)
-
-| App | Finding | Confidence |
-|---|---|---|
-| **Wispr Flow** | First-launch setup with two cards (Accessibility, Microphone), each with an own priming sentence and an Allow button, then Continue and a microphone test; resumable. Input Monitoring only if the user binds Caps Lock alone; screen capture not needed for dictation; re-checks permissions when brought to the foreground (community guide); warns that a missing Accessibility grant is a silent failure. | Documented (summary of vendor docs); runtime recovery behaviour from a community guide. |
-| **Superwhisper** | First-launch wizard for Microphone and Accessibility; a changelog note says a re-prompt after completed onboarding was fixed. | Partly documented. |
-| **Alfred** | Hybrid: a first-launch checklist plus a permanent "Request Permissions..." button in Preferences; Contacts and Automation are asked by macOS only when needed. | Partly documented. |
-| **Codex desktop** | Opt-in toggles (Computer Use, Chronicle) then the OS prompts, then per-app approvals; helper identities are separate TCC clients (issues #46776, #18507); a prompt for a feature the user never enabled is perceived as a bug (#37378, "access data from other apps" about daily with Computer Use off). | Partly documented; issues read. |
-
-### 3.4 What the comparison supports, and what it does not
-
-- Documented only for the Claude products (direct read): the OS dialog hangs off a feature
-  toggle or first use, with a feature-local explanation and a link to the right pane. For the
-  other apps the evidence is summary, how-to or inference. Wispr Flow, Superwhisper, Alfred,
-  CleanShot X and (inferred) Loom run short first-launch permission flows, which is a setup
-  wizard of the kind Jarvis removes. No source found documents a persistent app-wide banner or a
-  "set up everything" wizard, but absence of documentation is not absence of the feature.
-  This comparison is therefore not evidence for the "no wizard" decision; that decision rests on
-  the Apple HIG quotes (3.5).
-- Not supported: "no app asks at launch". Claude desktop shows a first-launch opt-in card;
-  Wispr Flow, Superwhisper, CleanShot X and Alfred have short first-launch flows scoped to what
-  the product cannot work without; Raycast onboarding is uncertain. State it as "none documented
-  as a persistent wall".
-- Two-layer consent for agent features (an app-level toggle, then per-app approvals, then the
-  OS dialog) appears in the Claude and Codex products. Jarvis already has its own risk tiers
-  for tool use; this change adds no new app-level approval layer.
-- Helper-identity pitfall (issues only): when a helper does the capture, the grant must be on the
-  helper. Ask from, and check, the process that will call the API (4.7, attribution).
-
-### 3.5 Apple reference points
+### 3.1 Apple reference points
 
 HIG, "Privacy" [A] (the page covers all Apple platforms; the quoted wording was not re-verified against the live page for this review):
 
@@ -234,7 +176,7 @@ UIKit "Requesting access to protected resources" [A for iOS/iPadOS; applied to m
 
 What Apple does **not** say (do not over-claim): the HIG has no sentence "do not nag after a denial". That rule is derived from the API behaviour (the system remembers the choice) and from the nagging reports for the Accessibility prompt call [C]. Apple's own `kAXTrustedCheckOptionPrompt` documentation suggests warning "on application startup"; the HIG governs product behaviour and says to avoid launch-time requests.
 
-### 3.6 Per-permission API distinctions
+### 3.2 Per-permission API distinctions
 
 "Request class" is how macOS asks. DIALOG: an OS dialog with an answer button. PROMPT-ONCE: a
 request shows at most one dialog that, as far as is known, only offers "Open System Settings"
@@ -260,7 +202,7 @@ Deep links: `x-apple.systempreferences:com.apple.preference.security?Privacy_<Se
 are an unsupported implementation detail [D]. They have been observed to land on the wrong pane
 when System Settings is already running (BUG-083, macOS 15.7).
 
-### 3.7 macOS version changes that matter
+### 3.3 macOS version changes that matter
 
 | Version | Change | Evidence |
 |---|---|---|
@@ -275,7 +217,7 @@ when System Settings is already running (BUG-083, macOS 15.7).
 Design consequence: "Screen Recording was granted but capture now fails or an alert appears" is a
 normal runtime state, not an error. Pane names are static text (no OS sniffing).
 
-### 3.8 Attribution (responsible code) and frozen apps
+### 3.4 Attribution (responsible code) and frozen apps
 
 [D] Apple DTS: the exact algorithm "is not documented, has changed in the past, and may well
 change in the future". Documented cases: run from Terminal, the responsible code is Terminal;
@@ -316,11 +258,11 @@ detailed statement.
 
 | # | Principle |
 |---|---|
-| P1 | **Just in time.** Ask when a feature that needs the permission is first used or switched on by the user, never at launch, never in a banner, never as a wizard (HIG, 3.5). |
+| P1 | **Just in time.** Ask when a feature that needs the permission is first used or switched on by the user, never at launch, never in a banner, never as a wizard (HIG, 3.1). |
 | P2 | **The feature may ask; it must never act on anything but a live GRANTED.** No path refuses because our own preflight says "not granted" before the OS was asked, and none acts on a permission the OS has not granted. `EnsureResult.granted` is true only for GRANTED and NOT_REQUIRED; PENDING, NEEDS_SETTINGS, DENIED and UNAVAILABLE never proceed; a native request's return value is never evidence of success. Silent-failure traps are checked at the source. |
 | P3 | **Let the OS ask where it asks by itself; call the explicit prompt API where it does not.** Never ask by "touching" an API that fails silently. Never create an event tap to provoke a prompt (BUG-058 class): the ask is `CGRequestListenEventAccess` / `IOHIDRequestAccess`, and the tap is created only after the preflight is true. |
 | P4 | **Denied is a stable state, not an error to retry.** Degrade the one feature, say why where the user is, offer one click to the right pane, stop. No repeated prompting, no polling banner. `tccutil reset` stays an explicit, user-run reset (`jarvis permissions reset`). |
-| P5 | **Grants are detected by silent probing owned by the backend** (an episode watcher), applied in process; a restart is only a hint, because the evidence conflicts (3.6). |
+| P5 | **Grants are detected by silent probing owned by the backend** (an episode watcher), applied in process; a restart is only a hint, because the evidence conflicts (3.2). |
 | P6 | **Identity decides who may reset and whether we may auto-ask, not whether we may act.** We act on whatever grant exists. Native requests are made only when running as an installed app bundle, or after an explicit confirmation that names the grantee (`outside_installed_app`). Reset only from the installed app's own bundle id. |
 | P7 | **Opt-in features own their permission.** A feature the user has not switched on never touches its permission (wake word, mute music, computer use, global shortcuts). |
 | P8 | **Honest degradation, always.** Every refusal carries a stable reason and a full English sentence (logs, support, agents); the app shows ONE toast with at most one action, in its own localized copy, only for a user-started use that failed. |
@@ -444,7 +386,7 @@ through its live reads, and the command tells the person to quit and reopen the 
 
 ### 4.5 The permission table: trigger, request, denial, route back, after a grant
 
-Class: DIALOG, PROMPT-ONCE, NATIVE (3.6). EVENT_POSTING is an alias of ACCESSIBILITY for asking.
+Class: DIALOG, PROMPT-ONCE, NATIVE (3.2). EVENT_POSTING is an alias of ACCESSIBILITY for asking.
 
 | Permission | Request kind | Trigger (a user gesture) | How we ask | If not granted | Route back | After a grant |
 |---|---|---|---|---|---|---|
@@ -966,7 +908,7 @@ real `tccutil` accepts each service name and really removes the entry is unverif
 | A14 | An `osascript` child is attributed to the app for Automation (the ducking sender); unverified. Apple documents `-1743` only as an error code; its behaviour after a grant on a real Mac is unverified. A `-1743` after a GRANTED read is reported as one background `needs_settings` episode naming the player (`report_failed_use`, 4.4) and ends only when a later send lands (`report_use_ok`). |
 | A15 | `tccutil reset` for the system-wide services (`ScreenCapture`, `Accessibility`, `ListenEvent`, `PostEvent`) may need elevated rights or may toggle rather than delete [D thread 788454]; `jarvis permissions reset` for them is unverified (the route additionally verifies the state after a reset; the local command only reports the exit status of `tccutil`). |
 | A16 | Keeping `NSScreenCaptureUsageDescription` is harmless; whether macOS uses it is unverified in both directions. |
-| A17 | Screen Recording consent re-confirmation on macOS 15 and later is a recurring normal state, not an error (3.7). |
+| A17 | Screen Recording consent re-confirmation on macOS 15 and later is a recurring normal state, not an error (3.3). |
 | A18 | The toast (4.10) is the whole permission UI. It is web-styled, shown only in the owner window while it is visible, and its look in the real web view is unverified. The ~20 s lifetime, the 10 s re-announce window and the dedupe rule are our own choices. |
 | A19 | `CGRequestListenEventAccess` called from the save of a shortcut shows macOS's Input Monitoring alert (community-observed for the PROMPT-ONCE class, unverified); the save is chosen because a background listener has no "on use" moment. |
 | A20 | macOS shows the German or Spanish `InfoPlist.strings` text in its permission dialogs on a system in that language, and accepts a UTF-8 `.strings` file there; unverified. English is the fallback for every other language (`CFBundleDevelopmentRegion`). |

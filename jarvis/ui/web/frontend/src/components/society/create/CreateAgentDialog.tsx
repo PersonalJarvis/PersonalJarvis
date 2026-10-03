@@ -3,8 +3,7 @@
  * character on the right — live, turnable, from above and below — with the
  * look editor under it (MASTERPLAN §4.2, agent-definition §6: no wizard).
  *
- * Left, top to bottom (maintainer, 2026-09-02, modelled on Grok Bot's "New
- * Bot" sheet): name, title, description; "Runs on" — ONLY the seats that are
+ * Left, top to bottom (maintainer, 2026-09-02): name, title, description; "Runs on" — ONLY the seats that are
  * connected on this machine, subscriptions first (a CLI on a plan bills the
  * plan, not per token), then saved API keys, then local models, with the
  * login to use when a CLI has more than one, the model (a keyed row's live

@@ -175,8 +175,8 @@ def has_container() -> bool:
     """Whether an agent-society container backend could run here.
 
     Deliberately ``False`` for now: the society runs agents' shells locally by
-    decision (Hermes' default backend is local, OpenClaw's sandbox is off by
-    default). When a Docker/Podman backend lands, this probe is where its
+    decision: a local shell with path containment and the risk tiers is
+    enough for the agents' own workspaces. When a Docker/Podman backend lands, this probe is where its
     availability is answered - never a hardcoded platform check.
     """
     return False

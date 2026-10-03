@@ -1230,8 +1230,7 @@ dozen labels) and had Python render the page. That kept a picture cheap and
 deterministic, but it is also why every result looked like the same five
 cards, and why the section that showed them was a run graph with the page
 hidden in a 288 px inspector frame. The maintainer's decision (2026-08-23):
-an artifact is a whole page the model writes — the way Claude artifacts work
-— and writing one well takes the strongest model the install has and longer
+an artifact is a whole page the model writes, and writing one well takes the strongest model the install has and longer
 than a voice turn can hold. So the page is written by a mission worker, not
 by the router brain.
 

@@ -1,7 +1,7 @@
 # Chats Conversation Manager — Design
 
 **Date:** 2026-05-30
-**Status:** Approved (scope confirmed by maintainer: unified text+voice history, two-pane ChatGPT-style layout)
+**Status:** Approved (scope confirmed by maintainer: unified text+voice history, two-pane layout: conversation list beside the open chat)
 **Author:** Claude Code session
 
 ## Goal

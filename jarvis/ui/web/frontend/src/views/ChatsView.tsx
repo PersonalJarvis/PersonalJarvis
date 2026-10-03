@@ -243,8 +243,8 @@ function ConversationList({
       className="flex h-full shrink-0 flex-col bg-sidebar"
     >
       {/* No rule under the header. The rail is already a different fill from
-          the room, and a list that reads on its own needs no chrome around it —
-          Grok Bot's conversation list contains zero dividers. */}
+          the room, and a list that reads on its own needs no chrome around
+          it. */}
       <div className="flex items-center justify-between gap-row px-3 py-3">
         <span className="text-title font-semibold text-foreground-strong">
           {t("chats_view.history")}
@@ -483,7 +483,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 }
 
 /**
- * Empty state — Claude-style: calm, centered, no suggestion cards. A quiet
+ * Empty state — calm, centered, no suggestion cards. A quiet
  * mascot, a centered greeting and a one-line subtitle. The composer below is
  * the focus (it carries the new mic / dictation button). Deliberately minimal —
  * the user explicitly asked to drop the canned prompt cards.

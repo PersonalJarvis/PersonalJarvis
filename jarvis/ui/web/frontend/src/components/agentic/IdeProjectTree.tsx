@@ -634,7 +634,7 @@ export function IdeProjectTree() {
               void moveWorkspace(workspace.id, neighbour.id, event.key === "ArrowUp");
             }}
             className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-[34px] pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : workspace.status === "open" ? "text-foreground/80" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
-            {/* Text aligns under the project name, the way Codex indents threads under a folder. */}
+            {/* Text aligns under the project name, indented under its folder. */}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
             {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
               : workspace.terminals > 0 && <SessionCount count={workspace.terminals} hover="group/space" />}

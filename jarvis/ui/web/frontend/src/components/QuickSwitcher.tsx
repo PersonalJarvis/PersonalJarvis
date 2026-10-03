@@ -1,8 +1,8 @@
 /**
- * The quick switcher's Spotlight window — Ctrl+Space anywhere, type where you
+ * The quick switcher's centre window — Ctrl+Space anywhere, type where you
  * want to go, Enter.
  *
- * Modelled on the Mac's Spotlight bar: one large field floating high on the
+ * One large field floating high on the
  * screen over a frosted panel, results directly underneath with the first one
  * already selected, the app still visible behind it (no dimming scrim). The
  * results themselves are `QuickSwitchList`, the same list the sidebar search
@@ -48,7 +48,7 @@ export function QuickSwitcher({
       }}
     >
       <Dialog.Portal>
-        {/* Spotlight never dims the desktop: the overlay only catches the
+        {/* The switcher never dims the app: the overlay only catches the
             click that closes it. */}
         <Dialog.Overlay className="fixed inset-0 z-[80]" />
         <Dialog.Content

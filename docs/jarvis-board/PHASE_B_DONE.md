@@ -89,7 +89,7 @@ anti-cliché gate is **a pipeline verification**, not a brain-quality
 verification. A real Claude-Opus call with the prompt verified in
 `tests/board/test_profile.py::test_power_user_prompt_contains_tools`
 would deliver qualitatively similar results
-(Carmack style, data-based). The scripted bios above are deliberately
+(terse, data-based). The scripted bios above are deliberately
 written exactly the way we want Opus to produce them —
 which is also why the `SCRIPTED_*` constants serve as a style reference in the test file.
 

@@ -54,8 +54,7 @@ import type { ITheme } from "@xterm/xterm";
  */
 
 /**
- * WCAG AA for body text, and the same default VS Code ships for its
- * integrated terminal. High enough that dark-theme truecolor becomes readable
+ * WCAG AA for body text. High enough that dark-theme truecolor becomes readable
  * on a light pane, low enough that a CLI's deliberate dim/bright hierarchy
  * survives.
  */
@@ -72,7 +71,7 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
   cursorAccent: "#fcfbf8",
   selectionBackground: "#dedcd4",
   selectionForeground: "#18181c",
-  // Cursor Light's terminal slots: the same semantic tones the app's light
+  // Light terminal slots: the same semantic tones the app's light
   // tokens use (life #007041, fault #BE1744, degraded #A46700, link #0064B0).
   black: "#3a3a3a",
   red: "#be1744",
@@ -109,7 +108,7 @@ export const DARK_TERMINAL_THEME: ITheme = {
   cursorAccent: "#12141a",
   selectionBackground: "#3a4252",
   selectionForeground: "#ffffff",
-  // Cursor Dark Anysphere's terminal slots — the desaturated set the app's
+  // Desaturated terminal slots — the set the app's
   // dark tokens are built from (life #3FA266, fault #E34671, signal #81A1C1,
   // info #88C0D0). Brights are one step lighter, never neon.
   black: "#2b2b2b",

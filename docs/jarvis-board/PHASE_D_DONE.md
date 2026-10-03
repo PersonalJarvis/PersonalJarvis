@@ -277,8 +277,8 @@ $ npm run build
 
 ## 6. Open items for Phase E (Public Aggregator)
 
-Phase D is federation between 2-20 friends. Phase E is Strava-style
-public segments. Phase D creates the DB models that Phase E
+Phase D is federation between 2-20 friends. Phase E is public
+leaderboard segments. Phase D creates the DB models that Phase E
 reuses (`ActivityItem.visibility=public` is exactly the hook
 that Phase E pulls on).
 

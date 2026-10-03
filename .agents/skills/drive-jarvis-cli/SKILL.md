@@ -11,9 +11,8 @@ description: >-
 
 # Drive Jarvis from the CLI
 
-Jarvis exposes its entire WebUI action surface as a command-line tool, the same
-way `gcloud` / `aws` exposes a cloud platform. You drive a **running** Jarvis over
-HTTP — no need to be inside the app.
+Jarvis exposes its entire WebUI action surface as a command-line tool. You drive
+a **running** Jarvis over HTTP — no need to be inside the app.
 
 ## Setup (one time)
 

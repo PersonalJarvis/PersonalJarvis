@@ -3,8 +3,7 @@
  *
  * MASTERPLAN §2.7/§2.8 — idle agents wander client-side, no LLM, no sync
  * between windows. The behaviour is re-implemented from the published
- * description of ambient pet AI (GameAIPro ch. 36 as cited by Hermes' roam
- * model; no code taken): most decision beats REST, and dwell times are
+ * description of ambient pet AI (Game AI Pro, ch. 36; no code taken): most decision beats REST, and dwell times are
  * exponentially distributed so nothing ticks like a metronome.
  */
 

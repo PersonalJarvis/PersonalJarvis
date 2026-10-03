@@ -6,9 +6,7 @@
 
 ## Goal
 
-Let a user share their Personal Jarvis usage as a polished image, in the spirit
-of Strava / Duolingo / GitHub-Wrapped recap cards (the user supplied a private
-community-card reference). From the Board, a **Share** button opens a dialog showing a
+Let a user share their Personal Jarvis usage as a polished recap image. From the Board, a **Share** button opens a dialog showing a
 1080×1080 stats card with three actions: **Copy Image**, **Save as PNG**, and
 **Share on X**.
 
@@ -127,7 +125,7 @@ background (never transparent — bad for social).
 
 ## Out of scope (YAGNI)
 
-Server-side OG image, multi-slide "Wrapped", story/landscape presets (square only,
+Server-side OG image, multi-slide recaps, story/landscape presets (square only,
 per decision), server persistence of the handle, analytics.
 
 ## Testing

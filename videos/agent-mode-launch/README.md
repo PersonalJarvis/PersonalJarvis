@@ -5,8 +5,7 @@ An 85-second, 1920×1080 HyperFrames film. Revision 2 replaces the rejected slow
 ## Deliverables
 
 - `renders/Personal-Jarvis-Agent-Mode-60fps.mp4`: revised delivery master.
-- `MOTION-REBUILD.md`: dense reference-motion analysis, root cause of the old stutter and revision acceptance criteria.
-- `REFERENCE-ANALYSIS.md`: wider analysis of the two references; its first-cut implementation notes are explicitly superseded.
+- `MOTION-REBUILD.md`: motion treatment, root cause of the old stutter and revision acceptance criteria.
 - `STORYBOARD-V2.md`: eight visual phases and their motion treatments.
 - `YOUTUBE-DESCRIPTION.txt`: upload copy and music credit.
 - `VERIFICATION-V2.json`: export and motion evidence.

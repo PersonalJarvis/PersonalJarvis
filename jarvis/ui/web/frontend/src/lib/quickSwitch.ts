@@ -1,6 +1,6 @@
 /**
- * The quick switcher's destinations and ranking — the Spotlight-style "type a
- * section's name, press Enter, be there" launcher.
+ * The quick switcher's destinations and ranking — the "type a section's
+ * name, press Enter, be there" launcher.
  *
  * Pure on purpose: what the switcher lists and in which order is the whole
  * feature, and keeping it out of the component makes it testable without
@@ -242,7 +242,7 @@ function initialsMatch(term: string, needle: string): boolean {
  * How well one term matches the query: 0 means not at all.
  *
  * Exact beats prefix beats word-start beats initials beats substring — the
- * order Spotlight uses, which is what makes the first row the right one often
+ * order that makes the first row the right one often
  * enough that Enter without looking works.
  */
 export function scoreTerm(term: string, needle: string): number {

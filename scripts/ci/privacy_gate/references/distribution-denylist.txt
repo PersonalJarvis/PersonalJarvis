@@ -8,7 +8,7 @@
 # Lines starting with `#` and blank lines are ignored.
 #
 # Decision record: the maintainer chose (2026-05-31) to keep withholding all
-# internal dev docs (an openclaw-style clean public repo) and the encrypted
+# internal dev docs (a clean public repo) and the encrypted
 # release-signing keys (forks generate their own). Confirmed in the skill plan.
 #
 # WHY a denylist and not the file diff: the working↔dist diff conflates two
@@ -17,13 +17,12 @@
 # features (e.g. jarvis/state/*, jarvis/plugins/tts/fallback_tts.py). So those
 # are intentionally ABSENT from this list and ship normally.
 
-# --- .claude/ contributor toolchain: SHIP it (like the openclaw repo), minus the
+# --- .claude/ contributor toolchain: SHIP it, minus the
 #     maintainer's own release skill (2026-06-27, revised) ----------------------
 # REVISED: .claude/ is Claude-Code CONTRIBUTOR tooling — subagent definitions,
 # slash-commands, dev skills — exactly what a fork needs to keep developing with
-# the same AI workflow. The reference project openclaw/openclaw (380k+ stars)
-# ships .agents/ + AGENTS.md + CLAUDE.md publicly; this is a professionalism
-# signal, not clutter. NOTHING in the runtime jarvis/ package loads it, so it is
+# the same AI workflow. Shipping it publicly is a professionalism signal, not
+# clutter. NOTHING in the runtime jarvis/ package loads it, so it is
 # product-safe. (The single personal path in phase6-adr-update/SKILL.md is
 # depersonalized by the PII scrub, not withheld.)
 #
@@ -123,8 +122,7 @@ docs/diagnostics/**
 # --- Contributor doctrine now SHIPS (2026-06-27, revised) -------------------
 # AGENTS.md + CLOUD.md are the binding contributor doctrine and ship; the old
 # CLAUDE.md twin was retired on 2026-09-30 (AGENTS.md is the only rulebook).
-# the openclaw repo ships its doctrine publicly too; matching that is the
-# professional move. Both are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
+# Shipping the doctrine publicly is the professional move. Both are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
 # withheld below — that is the internal bug log, not contributor doctrine.)
 
 # --- BUGS.md now SHIPS (2026-06-27): the recurring-bug "journey" log is strong

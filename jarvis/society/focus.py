@@ -7,7 +7,7 @@ labels, one-liners and MCP server names are matched too, so a freshly
 connected MCP server is reachable by its own name without a table edit.
 
 ``derive_approval_rules`` reads the same text for an approval boundary
-("only after approval", "nur nach Freigabe") and turns it into Grok-style
+("only after approval", "nur nach Freigabe") and turns it into
 require-approval patterns on the focus tools' sending verbs.
 """
 

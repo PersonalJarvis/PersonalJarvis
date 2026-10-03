@@ -25,9 +25,8 @@ struggles with raw code dumps or jargon-heavy reports.
 
 ### 1.2 What we are building right now
 
-A **personal knowledge wiki** that Jarvis maintains himself. Inspired by
-Andrej Karpathy's "LLM Wiki" pattern (April 2026, gist `442a6bf`). The
-core insight: instead of an LLM rediscovering knowledge from raw chunks
+A **personal knowledge wiki** that Jarvis maintains himself. The core
+insight: instead of an LLM rediscovering knowledge from raw chunks
 on every query (the "pure RAG" anti-pattern), the LLM compiles knowledge
 once into a structured markdown wiki — entity pages, concept pages,
 project pages, all cross-linked — and maintains it continuously. Ten to

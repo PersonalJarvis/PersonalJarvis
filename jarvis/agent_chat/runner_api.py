@@ -108,8 +108,8 @@ def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
     )
     return (
         f"You are {assistant_name}, an expert software engineer and general assistant "
-        "working as an interactive coding agent in the person's own environment — the "
-        "same job Claude Code does in a terminal, here inside a chat window.\n\n"
+        "working as an interactive coding agent in the person's own environment, "
+        "inside a chat window.\n\n"
         f"Working directory: {cwd}\n"
         f"Operating system: {platform.system()} {platform.release()}\n"
         f"Shell for RunCommand: {shell_label()}\n"

@@ -5,8 +5,7 @@ exposes the same action surface as the desktop WebUI, so anything you can click 
 the UI you can also do from a terminal — and, more importantly, so can an external
 coding agent (Claude Code, Codex) or a script.
 
-This is the same relationship `gcloud` / `aws` / `az` have with their cloud
-platforms: a single CLI that surfaces the full capability plane of a service. You
+It is a single CLI that surfaces the full capability plane of the service. You
 point it at a running Jarvis and drive it.
 
 > Full command list: [`jarvis-cli-reference.md`](jarvis-cli-reference.md)

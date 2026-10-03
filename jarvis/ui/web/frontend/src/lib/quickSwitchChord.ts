@@ -16,7 +16,7 @@
  * The switcher only ever sees keys the operating system lets through to the
  * window. On a Mac, ⌘+Space is Spotlight and ⌃+Space switches the input source,
  * so neither would ever arrive — the switcher would simply look broken. ⌥+Space
- * is what Mac launchers (Alfred, Raycast) settled on for the same reason. Every
+ * is not reserved by the system, so it gets through. Every
  * other system gets Ctrl+Space. The keys an OS is known to swallow are refused
  * outright when someone records them (`quickSwitchComboProblem`), with a reason.
  */

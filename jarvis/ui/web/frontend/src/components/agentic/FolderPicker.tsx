@@ -32,8 +32,8 @@
  *
  * ## Laid out like a file window
  *
- * Every route answers the same question, so they share one shape — the one
- * people know from Explorer and Finder — instead of seven bordered regions:
+ * Every route answers the same question, so they share one shape — a familiar
+ * file window — instead of seven bordered regions:
  *
  * * a toolbar: search, the system window, a new folder;
  * * one panel: an address bar over the folder list. The bar shows where you

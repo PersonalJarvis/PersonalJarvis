@@ -773,7 +773,7 @@ function ArtifactToolbar({
  * A PAGE is framed from `/page` — served with scripts allowed and every
  * network path shut — inside `sandbox="allow-scripts"` WITHOUT
  * `allow-same-origin`: its JavaScript runs in an opaque origin that cannot
- * reach the app's cookies, storage or API (the Claude-artifact model). Raster
+ * reach the app's cookies, storage or API. Raster
  * and vector go through `<img>`, which executes nothing. A PDF renders in the
  * browser's own viewer inside an empty sandbox.
  */

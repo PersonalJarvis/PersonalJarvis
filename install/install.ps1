@@ -50,8 +50,8 @@ $Chk = [char]0x2713   # check mark
 $Crs = [char]0x2717   # cross mark
 
 # Connected-journey glyphs (maintainer request 2026-07-16, visuals only):
-# every line hangs off one continuous dim vertical gutter, phases are gold
-# diamonds — the clack-style wizard grammar, recolored to the brand gold.
+# every line hangs off one continuous dim vertical gutter, and phases are
+# diamonds in the brand gold.
 # Twins: the phase/ok/note/err helpers in install.sh and installer.py.
 $Dia = [char]0x25C6   # black diamond - phase marker
 $Gut = "$Dim$([char]0x2502)$Rst"   # dim gutter bar

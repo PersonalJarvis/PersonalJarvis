@@ -122,7 +122,8 @@ Bildschirmfoto *
 Screen Shot *
 # Screenshot-tool captures named "<foreground-process>_<random>" — e.g.
 # pythonw_AbCd123456.png. The name records which window was in front when the shot
-# was taken, NOT which tool wrote the file: ShareX itself saves to its own folder.
+# was taken, NOT which tool wrote the file: the screenshot tool itself saves to its
+# own folder.
 # These land in the tree because a capture handed to a coding agent is copied into
 # the working directory under its original name, so they appear in subdirectories
 # too and the root-only "/*.png" rules above miss them.

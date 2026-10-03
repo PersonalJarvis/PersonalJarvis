@@ -80,7 +80,7 @@ export interface AgentStats {
   lastActiveMs: number | null;
 }
 
-/** Grok-style rules under the ceiling (agent-definition §3.4); require wins. */
+/** Approval rules under the ceiling (agent-definition §3.4); require wins. */
 export interface ApprovalRules {
   requireApproval: string[];
   alwaysAllow: string[];

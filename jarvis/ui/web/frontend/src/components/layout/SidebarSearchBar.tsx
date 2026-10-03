@@ -1,7 +1,7 @@
 /**
  * The search field at the top of the sidebar, in the spot the assistant's
  * name row used to take. You type straight into it and the results drop down
- * under it (`InlineQuickSwitch`); the Spotlight window in the middle of the
+ * under it (`InlineQuickSwitch`); the switcher window in the middle of the
  * screen is the chord's, not this field's.
  *
  * The live field is a lazy chunk (its result list carries every locale), so

@@ -1,11 +1,9 @@
 # CI/CD pipeline
 
 How a change travels from a coding agent's branch to a user's machine. The
-design borrows the strongest ideas of the
-[Hermes Agent pipeline](https://github.com/NousResearch/hermes-agent/tree/main/.github/workflows)
-and adapts them to this repository: several coding agents working in
-parallel, a Python + TypeScript desktop app, three operating systems, and
-signed installers.
+design fits this repository: several coding agents working in parallel, a
+Python + TypeScript desktop app, three operating systems, and signed
+installers.
 
 ```
 agent branch ──► pull request ──► CI (lanes) ──► CI gate ──► merge train ──► main
@@ -99,7 +97,7 @@ minutes:
    comment listing the files. `git rerere` replays recorded resolutions.
 3. The first green, conflict-free pull request is squash-merged, one per
    tick. Main's full post-merge test run is the backstop for changes that
-   pass alone and break together — GitHub's non-strict model, as in Hermes.
+   pass alone and break together — GitHub's non-strict model.
 
 Opt out with `no-auto-merge`, `do-not-merge`, `wip` or `needs-human`.
 `priority` moves a pull request to the front. Forks and Dependabot never ride
@@ -153,9 +151,9 @@ A release happens **only** when the maintainer asks for one.
   `releases/latest`, so a release reaches managed installs and installer
   users only after main's CI proved it.
 
-## 4. Adapted from Hermes, and what was left out
+## 4. Design choices, and what was left out
 
-| Hermes idea | Here |
+| Choice | Here |
 | --- | --- |
 | Orchestrator + change classifier, fail-open lanes | `detect` + `classify_changes.py` |
 | One aggregate required check (`all-checks-pass`) | `CI gate` |

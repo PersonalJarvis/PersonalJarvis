@@ -17,8 +17,8 @@ const HomeAgentChat = lazy(() => import("@/components/home/HomeAgentChat"));
  * The front page: ONE chat with the assistant (2026-10-01).
  *
  * Nothing but the conversation — no header row, no side card. An empty chat
- * is a short greeting over the composer in the middle of the page, the way
- * the Claude app opens; the composer itself carries every control,
+ * is a short greeting over the composer in the middle of the page; the
+ * composer itself carries every control,
  * including the round voice-mode button. Voice mode is a state of this
  * chat, not another page: it swaps the typed composer for the voice
  * composer under the spoken transcript (components/home/VoiceStage), whose

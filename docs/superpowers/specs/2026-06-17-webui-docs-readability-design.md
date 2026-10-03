@@ -1,5 +1,5 @@
 ---
-title: "Design: webui docs readability pass (Claude-Code-style jargon glossing)"
+title: "Design: webui docs readability pass (gentle jargon glossing)"
 slug: webui-docs-readability-design
 diataxis: explanation
 status: draft
@@ -15,8 +15,8 @@ The 12 user-facing docs in the **separate** `personal-jarvis-webui` repo
 (`src/content/docs/`) are well-written but assume a developer reader. They use
 unexplained jargon (`meta-orchestrator`, `harness`, `Supervisor-Agent`,
 `Mission`, `Critic`, `git worktree`, `MCP`, `event bus`) and presuppose tooling
-knowledge (`venv`, `npx`, "a PR", "headless"). The maintainer wants them to read
-like the Claude Code docs: explanatory for developers, yet followable by a
+knowledge (`venv`, `npx`, "a PR", "headless"). The maintainer wants them to be
+explanatory for developers, yet followable by a
 normal person — not dumbed down, not Stanford-PhD-level.
 
 ## Goal

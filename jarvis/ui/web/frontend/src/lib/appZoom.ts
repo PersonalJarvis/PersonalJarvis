@@ -37,7 +37,7 @@ export const APP_ZOOM_INTENTS: readonly AppZoomIntent[] = ["in", "out", "reset"]
 
 export type AppZoomBindings = Record<AppZoomIntent, string>;
 
-/** Chrome's own zoom ladder, so every step lands on a familiar number. */
+/** The zoom ladder: every step lands on a familiar number. */
 export const APP_ZOOM_LEVELS: readonly number[] = [
   0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3,
 ];

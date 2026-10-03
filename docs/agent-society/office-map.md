@@ -25,11 +25,11 @@ a name pill show the run state. It is a projection of the roster only: the map
 never moves an agent, starts work or invents activity (world-behaviour-manual
 §1 still holds).
 
-## 2. Style guide (derived from the maintainer's reference screenshots)
+## 2. Style guide
 
 | Aspect | Rule |
 |---|---|
-| Genre | Stylised "toy office" diorama: chunky low-poly 3D, not anime, not pixel art, not realistic. Close to casual social-game and avatar-app styling. |
+| Genre | Stylised "toy office" diorama: chunky low-poly 3D, not anime, not pixel art, not realistic. |
 | Characters | Chibi proportions (big head, short body), dot eyes, flat matte colours, no textures. Seated at desks; the stored figure recipe is kept, agents without one get a stable chibi look. |
 | Furniture | A contemporary workplace built from rounded primitives: light-oak bench desks on black steel T-legs with a white pedestal and a felt privacy screen, slim monitors on arms, ergonomic chairs with a mesh back on a five-star base, open oak-and-steel shelving, low modular sofas on slim legs, tall charcoal planters with full crowns. Department back walls are fluted acoustic felt with a charcoal name plate in white type and oak ledges with small plants. |
 | Materials | Mostly matte; black steel and chrome arms carry a little metalness. Light microcement floor, a rounded felt rug per department whose colour also dyes that department's felt screens and seat fabric (`DEPARTMENT_ZONES`). Rooms: slate felt (team), terrazzo (wardrobe), pale stone (reception), light oak (break room). Glass walls and the outer balustrade have slim black frames. |
@@ -104,7 +104,7 @@ target runs WebGL.
 ## 5a. Figures, pets and live monitors (2026-09-28, round 2)
 
 - **Toy figures** (`ToyFigure.tsx`, `toyFigureModel.ts`): every agent and the
-  person are procedural toy characters in the reference style — big round
+  person are procedural toy characters in the §2 style — big round
   head, dot eyes, smile, T-shirt, trousers, chunky sneakers, eight hair/hat
   styles. Colours come from the stored figure recipe; hair from a stable hash
   (the person picks it in the wardrobe). Poses are pure and tested: the hips

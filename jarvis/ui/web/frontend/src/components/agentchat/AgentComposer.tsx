@@ -85,7 +85,7 @@ import { cn } from "@/lib/utils";
  * the next turn runs on it); with no session open it seeds the next one.
  *
  * The front page (`jarvis` surface) draws the same controls the quiet way
- * (2026-10-01, judged against the Claude app's composer): the text on top,
+ * (since 2026-10-01): the text on top,
  * and one row under it — a round "+" and the permission glyph on the left;
  * on the right ONE brain pick (provider and model in one list), the effort
  * as a muted word, dictation, and one round button that is voice mode while
@@ -644,7 +644,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             }
             disabled={!connected || busy}
           />
-          {/* The stance in words, like the Codex app: a person should read
+          {/* The stance in words: a person should read
               "Full access" before sending, not decode a glyph. A stance that
               asks for nothing wears the warning hue. */}
           {provider && permissionModes.length > 0 && (

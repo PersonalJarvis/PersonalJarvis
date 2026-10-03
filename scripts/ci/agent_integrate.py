@@ -457,7 +457,7 @@ def dispatch_ci(ref: str) -> None:
 def decide(mergeable: str, state: str, behind: bool) -> str:
     """The train's action for one pull request.
 
-    Mirrors GitHub's non-strict model (and Hermes Agent's): a branch is NOT
+    Mirrors GitHub's non-strict model: a branch is NOT
     brought up to date just because main moved — with several agents pushing
     to main, that re-ran every PR's CI on every push and nothing ever landed.
     A branch is updated only when it CONFLICTS with main (or its last CI failed

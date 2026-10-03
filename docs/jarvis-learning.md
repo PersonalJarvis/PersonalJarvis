@@ -183,15 +183,14 @@ the loop adds no new destination. `enabled = false` switches it off.
 - Compaction: nothing while a notebook is below 80 percent full; then at most
   one small call per notebook every 12 hours.
 
-## Design reference
+## Design choices
 
-The loop follows the design of Nous Research's Hermes Agent: a bounded
-USER/MEMORY pair, a review that runs after the reply instead of during it,
-declarative entries instead of imperatives, and an explicit list of what not
-to keep. Jarvis adds the evidence rule of its Society agents (every change
-quotes the user), a ledger for every change, voice-first triggers (call end,
-quiet period, explicit requests) and a single snapshot shared by both voice
-engines. No upstream code was copied.
+The loop rests on a bounded USER/MEMORY pair, a review that runs after the
+reply instead of during it, declarative entries instead of imperatives, and an
+explicit list of what not to keep. It also applies the evidence rule of the
+Society agents (every change quotes the user), keeps a ledger for every
+change, uses voice-first triggers (call end, quiet period, explicit requests)
+and shares a single snapshot between both voice engines.
 
 ## Verification
 

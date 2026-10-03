@@ -103,7 +103,7 @@ All sections can be invoked by voice via the `NavigateSidebar(section=...)` even
 
 | # | Icon | Section | Content |
 |---|------|---------|--------|
-| 1 | 💬 | **Chats** | Conversation list (like Claude Desktop), searchable. Voice and text turns mixed. Each chat has a title (auto-generated), date, pin option. Main view: message list + ChatInput at the bottom. First view on app start. |
+| 1 | 💬 | **Chats** | Conversation list, searchable. Voice and text turns mixed. Each chat has a title (auto-generated), date, pin option. Main view: message list + ChatInput at the bottom. First view on app start. |
 | 2 | 👥 | **Agents** | Live tiles of the currently active Jarvis-Agents. Per agent: role (Planner/Coder/Researcher), status (running/waiting/done/error), streaming output (last lines), kill/pause button. Count of active agents as a badge on the sidebar entry. |
 | 3 | 🧩 | **Skills** | Plugin registry from `importlib.metadata` entry-points. Grouped by `jarvis.wakeword` / `.stt` / `.tts` / `.brain` / `.harness` / `.tool`. Per plugin: name, version, active toggle, config button. Default tier (`safe`/`monitor`/`ask`/`block`) visible. |
 | 4 | 🔌 | **MCPs** | MCP server list (configured via `jarvis.toml`). Per server: name, status (connected/disconnected/error), start/stop/restart, discovered tools list, health-check button. |
@@ -286,6 +286,6 @@ The frontend code stays portable: pure React + shadcn + TanStack Query, backend 
 - [ ] Tray icon opens the main window
 - [ ] At least one section (Skills) is fully functional end-to-end (lists plugins, enable/disable acts on the event bus)
 - [ ] Toast notifications for autopilot actions
-- [ ] Theme visually consistent with the design references (Dribbble/Pinterest)
+- [ ] Theme visually consistent across all sections
 
 For detailed implementation steps, see the implementation plan (next step).

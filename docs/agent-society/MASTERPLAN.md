@@ -37,9 +37,9 @@ pause (`agent-definition.md` §3.5). **M3
 world** is the maintainer's parallel track. Open in M4: rooms live under the scheduler, the
 curator.
 
-The research behind every claim here lives in [`research/`](research/):
-[Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,
-codebase reuse map), [Branch B — societies, memory, cost, safety](research/branch-b-society-memory-cost.md)
+The research behind every claim here lives in [`research/`](research/): Branch A — product &
+UI (3D stack, codebase reuse map; its conclusions are folded into §3–§4 here),
+[Branch B — societies, memory, cost, safety](research/branch-b-society-memory-cost.md)
 (DeepMind/Hutter paper, the reported OpenAI/Hugging Face incident, frameworks, knowledge store,
 cost model), and the [gap check](research/gap-check.md) that found the contradictions §2 resolves.
 
@@ -51,15 +51,15 @@ Replace the current "Jarvis Agents" board with a real agent society: the user cr
 customizes named, persistent agents (model/provider per agent — any connected provider incl. local
 models — tools, plugins, permissions, avatar, a "model card" profile). Agents work autonomously in
 the background, message each other, and form a small hierarchy with Jarvis as the voice-steered
-lead. The signature surface is a **3D retro pixel world** (bird's-eye/isometric, Minecraft-like
-voxel figures) where the society visibly lives and works: desks for missions, a meeting table for
+lead. The signature surface is a **3D retro pixel world** (bird's-eye/isometric, blocky
+low-poly figures) where the society visibly lives and works: desks for missions, a meeting table for
 group discussions, an archive for the shared knowledge store, a gate for routines and outbound
 actions. All agents share one knowledge store. The system accumulates skills and memory over time
 (artifact self-improvement, never uncontrolled). It must be cheap to run on consumer token budgets,
 and it must be **harmless by construction — it never attacks, spams, or harms anyone or anything.**
 
-Competitive frame (verified 2026-09-01): Hermes Bot Mode and Grok Bot both ship "named bots +
-canonical chat + routines". Nobody ships the world. The flat list is their face; visible life is ours.
+Named agents, one canonical chat each and routines are the floor; the world is the face. The
+flat list is a secondary view; visible life is the product.
 
 ## 2. Decision memo — the nine contradictions, resolved
 
@@ -72,8 +72,8 @@ binding; changing one means editing this section first.
    `text`. Chat surfaces render payload text; the world and the scheduler act on the type. Never
    free-form chat as the coordination mechanism (the incident's lesson: agents converge on terse
    codes anyway — we ship the enum on day one).
-2. **Group discussions exist, but as bounded typed rooms.** Hermes' constitutional caps are adopted
-   verbatim — 2–6 members, ≤3 serial rounds, ≤10 messages, silence allowed — implemented as a typed
+2. **Group discussions exist, but as bounded typed rooms.** Rooms are hard-capped — 2–6
+   members, ≤3 serial rounds, ≤10 messages, silence allowed — implemented as a typed
    event sequence (`ROOM_OPEN → SAY* → ROOM_SETTLE`) driven by a deterministic policy, not an open
    LLM loop. This is the meeting-table moment in the world and the token-budget mechanism.
 3. **An agent at runtime is a durable roster row, never a resident process.** Identity = a row in
@@ -95,7 +95,7 @@ binding; changing one means editing this section first.
    (`/api/sub-agents/tree` + `/api/missions` + `/api/outputs`) feeds the adapter, not the view.
 7. **Position: backend owns the semantic place, client owns the pixels.** The roster persists only
    a checkpoint name (`desk | meeting | archive | gate | idle`). Continuous wandering/walking is
-   client-side (Hermes roam constants: rest-biased beats, exponential dwell) and deliberately not
+   client-side (rest-biased beats, exponential dwell) and deliberately not
    synced between windows — two open windows agree on checkpoints, not on footsteps. Cosmetic, by
    design, documented.
 8. **Idle is strictly LLM-free.** No polling, no "look alive" calls, no scheduled housekeeping
@@ -226,15 +226,15 @@ effort default; tools & plugins (per-agent allowlist *under* the global tiers); 
 memory scope; routines with next-fire times; lifetime stats (runs, cost, last active). Actions:
 Chat, Assign task, Edit, Change avatar (preset parts + palettes / texture upload / AI-generate),
 Pause. Creation = **three fields (name, role, description) + an Advanced disclosure**; the agent
-introduces itself as its first chat message (Hermes' lesson: no wizard). One rig + one per-agent
+introduces itself as its first chat message (no wizard). One rig + one per-agent
 texture/part set drives world walker AND card figure; a rendered face crop feeds chat avatars.
 
 ### 4.3 World branding (maintainer directive, 2026-09-01)
 
 The world gets its **own, complete branding — it is a game inside the app, not another app
 surface.** Direction: bright, beautiful, high-quality video-game art — warm light, saturated
-friendly colors, real game feel. Explicitly NOT in scope for the world: the Cursor-derived design
-doc (`PersonalJarvisDesignDesign.md.md` — cream/grey editorial canvas, Cursor Orange; that
+friendly colors, real game feel. Explicitly NOT in scope for the world: the editorial design
+doc (`PersonalJarvisDesignDesign.md.md` — cream/grey editorial canvas, orange accent; that
 document never styles the world), and NOT the app's Ink & Paper monochrome. The surrounding app
 chrome (sidebar, drawers, ledger) stays Ink & Paper; the world
 viewport and everything rendered inside it (tiles, light, sky mood, in-world labels, speech
@@ -252,8 +252,8 @@ A dedicated art-direction pass
 
 ### 4.4 Communication surfaces
 
-Per-agent canonical chat (persistent `agent_chat` session; routine results labeled inline — Grok's
-"Aktualisiert: Routine" pattern; approval cards). Society feed: inter-agent messages grouped by
+Per-agent canonical chat (persistent `agent_chat` session; routine results labeled inline as an
+update line in the same thread; approval cards). Society feed: inter-agent messages grouped by
 thread/room, every message attributed ("Scout → Archivist"); clicking a world bubble opens the same
 thread. Per-agent routines are namespaced `[agent:<name>]` entries in the existing Automations
 scheduler and appear in BOTH the Automations view and the model card (finish-it-everywhere rule).
@@ -288,7 +288,7 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
 3. **Anti-harm blacklist class** seeded in the risk tiers: mass outbound messaging, credential
    probing, repeated actions against non-consenting external endpoints — blocked by pattern, not
    by prompt. Voice/chat never accept secrets (AP-2); secrets only via `get_secret`; per-agent
-   credentials are keyring-scoped (NEVER Hermes-style per-profile `.env` files — AP-12).
+   credentials are keyring-scoped (NEVER per-agent `.env` files — AP-12).
 4. **No spawn tools in any agent tool set**; dispatch is the scheduler's privilege (§2.5).
 5. Loop caps, iteration counters, spend meters, stall watchdogs (AP-19), `WorkerKilled`, and the
    society master kill switch.
@@ -316,26 +316,24 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
 - **Parity (AP-4):** `tier`, `state`, `msg_type` cross Python↔SQL↔Pydantic↔TS↔UI → five-layer
   pattern + parity tests. `test_routing.py` gains the new router tool. World rendering gets a
   headless-Chrome measurement check (recipe exists in project memory).
-- **App-closed semantics:** local-first inverts Grok's promise — a closed app freezes the society.
+- **App-closed semantics:** local-first means a closed app freezes the society.
   Honest UX copy + missed-routine catch-up policy (run-once-on-next-boot per routine, opt-in).
 - **Accessibility:** `prefers-reduced-motion` → static world or Ledger; keyboard/screen-reader path
   = Ledger + model cards (declared equivalent); no strobe/flash effects.
 - **Notifications:** finished/blocked agents surface via the existing Jarvis bar + badge counts +
   voice announcements; an expired approval re-asks on next focus (§2.9).
-- **Own implementation, no Hermes code (maintainer decision 2026-09-01, supersedes the earlier
-  "port Hermes" idea):** Hermes Bot Mode and Grok Bot are REFERENCES for behavior and product
-  shape only. No Hermes source is copied or adapted, no Hermes UI (JSX/CSS/components) is
-  transcribed, no `third_party/hermes-agent` attribution tree is needed because nothing is taken.
-  Rules and constants we adopted as ideas (bounded rooms 2–6 / ≤3 rounds / ≤10 messages, the
-  one-canonical-chat invariant, three-field creation, avatar-as-status) are re-implemented from
-  their described behavior in our own code. skinview3d MIT (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
+- **Own implementation (maintainer decision 2026-09-01):** the society — backend and UI — is
+  built in-house. Its rules (bounded rooms 2–6 / ≤3 rounds / ≤10 messages, the
+  one-canonical-chat invariant, three-field creation, avatar-as-status) live in our own code;
+  any third-party code carries its notice in `THIRD_PARTY_NOTICES.txt`. skinview3d MIT
+  (dropped anyway, see below). Asset/skin uploads follow the existing report-then-delist
   precedent; the character pipeline is first-party in meshes, textures and runtime, on a CC0
   skeleton with CC0 clips (KayKit Character Pack: Adventurers, recorded with sha256 and license
   in `scripts/figures/sources/` and `src/assets/society/figures/SOURCES.md` — decision 2026-09-02;
-  the earlier skinview3d/Minecraft-skin route was dropped with the avatar decision); no
+  the earlier skinview3d skin route was dropped with the avatar decision); no
   third-party game trademarks in product copy — "pixel retro" language only.
   World visual identity: see §4.3 — the world carries its own bright game branding and is exempt
-  from both Ink & Paper and the Cursor-derived design doc.
+  from both Ink & Paper and the editorial design doc.
 
 ## 8. Milestones (~1 month, sequential waves)
 
@@ -362,7 +360,7 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   redirected, history visible in Ledger), first-run seed (a starter coordinator + one specialist),
   cost-ledger unification, German gate, boot budget, accessibility pass, full guard suite.
 - **M6 — Stretch.** Skill-learning approval flow UI, event triggers ("when a PR merges"),
-  per-agent screens ("Bildschirm von X") via `agent_screen` leases, marketplace skin catalog
+  per-agent screens via `agent_screen` leases, marketplace skin catalog
   (licensing terms first), Gigi as a true 3D lead figure.
 
 ## 9. Target folder structure
@@ -395,16 +393,15 @@ Decided 2026-09-01:
 
 1. **Name:** the section keeps the name **Jarvis Agents** (codename `society` stays internal).
 2. **World V1 scope:** an **open island** (not a single room) — M3 sized accordingly.
-3. **Avatar style:** **low-poly figures with pixel-art textures** (not Minecraft-skin voxels) —
+3. **Avatar style:** **low-poly figures with pixel-art textures** (not voxel skins) —
    one shared base rig, swappable parts, texture/palette variants (§4.2).
 4. **World branding:** its own bright video-game identity (§4.3).
 5. **Section layout:** sidebar | world stage | fixed agents rail; thin top strip (content open)
    (§4.1).
 6. **Model card:** near-full-screen overlay above the world, three columns Specs | 3D | Chat;
-   the chat is the ordinary agent chat (Claude Code / Codex-style timeline); one open chat at a
+   the chat is the ordinary agent chat (the coding panes' timeline); one open chat at a
    time (§4.2).
-7. **No Hermes code or UI is copied.** Hermes and Grok Bot are orientation only; the whole
-   society — backend and UI — is built in-house (§7).
+7. **Own implementation.** The whole society — backend and UI — is built in-house (§7).
 8. **Build start:** frontend card work may proceed on clearly-labeled sample data while M1 lands
    (`components/society/data.ts` is the single swap point).
 10. **World layout & art direction (2026-09-01/02):** colourful pixel island, solarpunk village in
@@ -418,7 +415,7 @@ Decided 2026-09-01:
    a "Gmail agent" is `grant_mode=all` + `focus=[plugin:gmail]` derived from its description;
    the **Obsidian wiki is the society's shared memory** (namespaced `society/<agent>/` writes,
    reviewed promotion to `society/shared/`) — the `knowledge` table of §3.1 becomes the
-   staging/provenance layer, not the truth. Grok Bot re-analyzed there as the product floor.
+   staging/provenance layer, not the truth.
 
 Still open:
 

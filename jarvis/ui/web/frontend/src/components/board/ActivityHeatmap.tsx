@@ -29,7 +29,7 @@ interface Slot {
 }
 
 /**
- * GitHub-style contribution grid: columns = weeks (oldest left, current week
+ * Contribution grid: columns = weeks (oldest left, current week
  * right), rows = weekdays (Mon..Sun). Replaces the old boustrophedon "snake"
  * that was split into two scrolling halves. Bounded to ``weeks`` columns so it
  * fits a one-pager without horizontal scroll.
