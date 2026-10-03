@@ -71,7 +71,11 @@ long is `[appshot].card_seconds` (Settings → Appshots → *Corner card*: 3, 6,
 - **Done** or **Close** in the editor window slides the picture back into
   the corner — the edited one after Done — so it stays at hand.
 - **Drag** the card into any app that accepts files or images (chat, mail,
-  Explorer/Finder) to drop the picture there.
+  Explorer/Finder) to drop the picture there. As in CleanShot X, a smaller
+  rounded copy lifts off and stays where you grabbed it, and a green "+"
+  beside the pointer shows that the text field or window under it takes the
+  picture (macOS shows its own green badge). Dropped nowhere, or cancelled
+  with Esc, the card stays; after a drop it slides away.
 - **Right-click** dismisses it.
 
 Only the finished, privacy-filtered appshot can leave by drag — the card's

@@ -402,6 +402,105 @@ class _SnapWindow(QWidget):
         painter.end()
 
 
+#: The lifted picture under the pointer while the card is dragged: smaller
+#: than the card so the drop target stays visible (CleanShot X's drag).
+_DRAG_PREVIEW_W = 220.0
+_DRAG_PREVIEW_H = 165.0
+_DRAG_PREVIEW_RADIUS = 10.0
+_DRAG_PREVIEW_PAD = 12.0  # transparent margin that holds the shadow
+_DRAG_PREVIEW_OPACITY = 0.94
+#: The "+" badge beside the pointer over a target that takes the picture.
+_DRAG_BADGE_GREEN = QColor(52, 199, 89)
+
+
+def _drag_preview(thumb: QImage, card: QRectF, grab: QPointF, dpr: float) -> tuple[QPixmap, QPoint]:
+    """The lifted card for a drag, and the hotspot that keeps the grab point.
+
+    Rounded, ringed and shadowed like the resting card, scaled down, and
+    rendered at the screen's pixel ratio so it stays sharp. The hotspot is the
+    spot the user pressed, mapped onto the smaller picture, so the picture
+    does not jump out from under the pointer.
+    """
+    aspect = thumb.height() / max(1, thumb.width()) if not thumb.isNull() else 0.6
+    w = _DRAG_PREVIEW_W
+    h = w * aspect
+    if h > _DRAG_PREVIEW_H:
+        h = _DRAG_PREVIEW_H
+        w = h / max(aspect, 1e-6)
+    pad = _DRAG_PREVIEW_PAD
+    dpr = max(1.0, float(dpr))
+    size = QPointF(w + 2 * pad, h + 2 * pad)
+    canvas = QPixmap(int(size.x() * dpr + 0.5), int(size.y() * dpr + 0.5))
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.setOpacity(_DRAG_PREVIEW_OPACITY)
+    rect = QRectF(pad, pad, w, h)
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread, alpha in ((10.0, 16), (5.0, 28), (2.0, 44)):
+        shadow = rect.adjusted(-spread, -spread + 4, spread, spread + 4)
+        painter.setBrush(QColor(0, 0, 0, alpha))
+        radius = _DRAG_PREVIEW_RADIUS + spread
+        painter.drawRoundedRect(shadow, radius, radius)
+    _paint_card(painter, rect, thumb, _DRAG_PREVIEW_RADIUS, 1.0)
+    painter.end()
+    fx = (grab.x() - card.x()) / max(1.0, card.width())
+    fy = (grab.y() - card.y()) / max(1.0, card.height())
+    hot = QPoint(
+        int(pad + max(0.0, min(1.0, fx)) * w),
+        int(pad + max(0.0, min(1.0, fy)) * h),
+    )
+    return canvas, hot
+
+
+def _drag_copy_cursor(dpr: float) -> QPixmap:
+    """An arrow with a green "+" badge — the pointer over a drop target.
+
+    The arrow tip is the pixmap's top-left corner, where Qt puts the hotspot.
+    Where the platform keeps its own drag badges (macOS), Qt ignores it.
+    """
+    dpr = max(1.0, float(dpr))
+    canvas = QPixmap(int(30 * dpr + 0.5), int(32 * dpr + 0.5))
+    canvas.setDevicePixelRatio(dpr)
+    canvas.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(canvas)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    arrow = QPolygonF(
+        [
+            QPointF(1.0, 1.0),
+            QPointF(1.0, 17.5),
+            QPointF(5.0, 13.8),
+            QPointF(7.8, 20.2),
+            QPointF(10.6, 19.0),
+            QPointF(7.9, 12.8),
+            QPointF(13.0, 12.8),
+        ]
+    )
+    pen = QPen(QColor(0, 0, 0, 230))
+    pen.setWidthF(1.2)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QColor(255, 255, 255))
+    painter.drawPolygon(arrow)
+    centre = QPointF(20.0, 22.0)
+    ring = QPen(QColor(255, 255, 255))
+    ring.setWidthF(1.6)
+    painter.setPen(ring)
+    painter.setBrush(_DRAG_BADGE_GREEN)
+    painter.drawEllipse(centre, 8.0, 8.0)
+    plus = QPen(QColor(255, 255, 255))
+    plus.setWidthF(2.0)
+    plus.setCapStyle(Qt.PenCapStyle.RoundCap)
+    painter.setPen(plus)
+    cx, cy = centre.x(), centre.y()
+    painter.drawLine(QPointF(cx - 4.0, cy), QPointF(cx + 4.0, cy))
+    painter.drawLine(QPointF(cx, cy - 4.0), QPointF(cx, cy + 4.0))
+    painter.end()
+    return canvas
+
+
 def _card_rect(screen, thumb: QImage) -> QRectF:
     """Where the resting card sits: the bottom-right of ``screen``'s work area.
 
@@ -594,8 +693,8 @@ class _CardWindow(QWidget):
             return
         moved = event.position() - self._press
         if abs(moved.x()) + abs(moved.y()) > _CARD_DRAG_SLOP:
-            self._press = None
-            self._start_drag()
+            grab, self._press = self._press, None
+            self._start_drag(grab)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() != Qt.MouseButton.LeftButton or self._press is None:
@@ -615,7 +714,7 @@ class _CardWindow(QWidget):
         else:  # "edit" or the picture itself
             self._owner.card_clicked(self)
 
-    def _start_drag(self) -> None:
+    def _start_drag(self, grab: QPointF) -> None:
         owner = self._owner
         image = owner.card_image if owner is not None else None
         if owner is None or image is None or image.isNull():
@@ -630,15 +729,25 @@ class _CardWindow(QWidget):
         mime.setImageData(image)
         drag = QDrag(self)
         drag.setMimeData(mime)
-        preview = QPixmap.fromImage(
-            self._thumb.scaledToWidth(160, Qt.TransformationMode.SmoothTransformation)
-        )
+        # CleanShot X's drag: the card lifts off as a smaller, rounded copy
+        # held where it was grabbed, and a green "+" beside the pointer says
+        # the field or window under it takes the picture.
+        dpr = float(self.devicePixelRatioF() or 1.0)
+        preview, hot = _drag_preview(self._thumb, self._card_area(), grab, dpr)
         drag.setPixmap(preview)
-        drag.setHotSpot(QPoint(preview.width() // 2, preview.height() // 2))
+        drag.setHotSpot(hot)
+        drag.setDragCursor(_drag_copy_cursor(dpr), Qt.DropAction.CopyAction)
         self._dismiss.stop()
         self.setWindowOpacity(0.35)
-        drag.exec(Qt.DropAction.CopyAction)
+        result = drag.exec(Qt.DropAction.CopyAction)
         self.setWindowOpacity(1.0)
+        if result == Qt.DropAction.IgnoreAction:
+            # Dropped nowhere (or Esc): the card stays, like CleanShot's.
+            self._hover = False
+            self._hot = ""
+            self._arm_dismiss(_CARD_AFTER_HOVER_MS)
+            self.update()
+            return
         self.leave()
 
     # -- hover buttons -------------------------------------------------------
