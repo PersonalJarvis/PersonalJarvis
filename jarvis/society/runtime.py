@@ -152,6 +152,7 @@ class SocietyRuntime:
         from .coding_supervision import CodingSupervision
 
         self.coding_supervision = CodingSupervision(self, app_bus)
+        self._has_mission_manager_source = mission_manager is not None
         self._get_manager = mission_manager or (lambda: None)
         self._get_mission_bus = mission_bus or (lambda: None)
         self._get_budget = budget_tracker or (lambda: None)
@@ -311,8 +312,33 @@ class SocietyRuntime:
         await self.coding_supervision.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
+        self.background(self._migrate_legacy_mission_history())
         log.info("society runtime started (%s)", self.store.path)
         return self
+
+    async def _migrate_legacy_mission_history(self) -> None:
+        """Import the retired agent board's durable mission rows off the boot path."""
+        if not self._has_mission_manager_source:
+            return
+        manager = None
+        for _ in range(30):
+            if self._closing:
+                return
+            manager = self._get_manager()
+            if manager is not None:
+                break
+            await asyncio.sleep(1.0)
+        if manager is None:
+            return
+        try:
+            from .history_migration import migrate_legacy_missions
+
+            imported = await migrate_legacy_missions(self.store, manager)
+        except Exception:  # noqa: BLE001 — migration can retry safely next start
+            log.warning("society: legacy mission history migration failed", exc_info=True)
+            return
+        if imported:
+            log.info("society: imported %d legacy mission history rows", imported)
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""

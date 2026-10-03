@@ -298,6 +298,19 @@ class SocietyStore:
         await self._bus.publish(stored)
         return stored
 
+    async def import_event(self, envelope: SocietyEnvelope) -> SocietyEnvelope:
+        """Persist one historical event idempotently without publishing it.
+
+        Migration rows must become visible to durable readers without replaying
+        old activity through live scheduler, world or notification subscribers.
+        The server is the only writer, so an exact event-id lookup is enough to
+        make a crash/retry safe.
+        """
+        existing = await self.get_event(envelope.event_id)
+        if existing is not None:
+            return existing
+        return await self._insert_event(self.conn, envelope)
+
     async def delivery_status(self, event_id: str) -> str:
         async with self.conn.execute(
             "SELECT status FROM society_deliveries WHERE event_id = ?", (event_id,)
