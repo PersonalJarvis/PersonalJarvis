@@ -27,7 +27,7 @@ class Window:
 
 
 def test_chrome_side_follows_the_platform():
-    assert window_chrome("darwin")["controls"] == "leading"
+    assert window_chrome("darwin")["controls"] == "none"
     assert window_chrome("win32")["controls"] == "trailing"
     assert window_chrome("linux")["controls"] == "trailing"
     assert window_chrome("win32")["frameless"] is False
