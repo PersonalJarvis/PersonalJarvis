@@ -88,6 +88,16 @@ describe("promoteAgentSkillForReview", () => {
     );
   });
 
+  test("rejects a promotion response that bypasses the draft state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ state: "active" }), { status: 200 })),
+    );
+    await expect(promoteAgentSkillForReview("scout", "thumbnail-style")).rejects.toThrow(
+      "must remain draft",
+    );
+  });
+
   test("treats an existing promoted draft as ready for review", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 409 })));
     await expect(promoteAgentSkillForReview("scout", "thumbnail-style")).resolves.toBeUndefined();

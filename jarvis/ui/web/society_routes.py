@@ -866,7 +866,10 @@ async def list_agent_skills(agent_id: str, request: Request) -> dict[str, Any]:
     return {"skills": skills.summaries(), "root": str(skills.root)}
 
 
-@router.post("/agents/{agent_id}/skills/{slug}/promote")
+@router.post(
+    "/agents/{agent_id}/skills/{slug}/promote",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def promote_agent_skill(agent_id: str, slug: str, request: Request) -> dict[str, Any]:
     """Copy a learned skill into the user's global skills as a DRAFT (AP-15)."""
     rt = await _runtime(request)

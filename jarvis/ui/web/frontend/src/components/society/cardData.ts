@@ -190,7 +190,14 @@ export async function promoteAgentSkillForReview(agentId: string, slug: string):
     `/api/society/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(slug)}/promote`,
     { method: "POST" },
   );
-  if (response.ok || response.status === 409) return;
+  if (response.status === 409) return;
+  if (response.ok) {
+    const body = (await response.json().catch(() => null)) as { state?: unknown } | null;
+    if (body?.state !== "draft") {
+      throw new Error("learned skill promotion must remain draft");
+    }
+    return;
+  }
   const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
   const detail = body?.detail;
   const message =
