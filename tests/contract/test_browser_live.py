@@ -136,15 +136,22 @@ def live(tmp_path, monkeypatch):
     return LiveSessions(tmp_path)
 
 
+async def _control(live, session, owner, op, args):
+    """Send the observed browser generation just as the visible viewer does."""
+    if op not in {"takeover", "cancel"}:
+        args = {"generation": session.state.get("generation", session.generation), **args}
+    return await live.control(session, owner, op, args)
+
+
 async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, site):
     agent = SimpleNamespace(
         agent_id="scout", model="", browser_allowed_domains=["http*://127.0.0.1"]
     )
     try:
         session, queue = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         frames = []
         deadline = asyncio.get_running_loop().time() + 10
         while len(frames) < 20 and asyncio.get_running_loop().time() < deadline:
@@ -213,10 +220,10 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
             if event["kind"] == "state":
                 break
         assert event["full_window"] is True
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "key", {"key": "Control+t"})
-        await live.control(session, "viewer", "text", {"text": site})
-        await live.control(session, "viewer", "key", {"key": "Enter"})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "key", {"key": "Control+t"})
+        await _control(live, session, "viewer", "text", {"text": site})
+        await _control(live, session, "viewer", "key", {"key": "Enter"})
         try:
             async with asyncio.timeout(15):
                 while True:
@@ -226,7 +233,7 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
         except TimeoutError:
             pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
         assert len(event["tabs"]) == 2
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         async with asyncio.timeout(5):
             while True:
                 event = await queue.get()
@@ -297,8 +304,8 @@ async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
         await asyncio.wait_for(takeover, 30)
         assert not job.done()
         assert len(calls) == 1
-        await live.control(session, "user", "navigate", {"url": site})
-        await live.control(session, "user", "takeover", {"enabled": False})
+        await _control(live, session, "user", "navigate", {"url": site})
+        await _control(live, session, "user", "takeover", {"enabled": False})
         result = await asyncio.wait_for(job, 45)
         assert result["ok"], result
         planning = [p for p in calls if "action" in p["schema"].get("properties", {})]
@@ -320,11 +327,11 @@ async def test_manual_control_has_one_owner(live):
     agent = SimpleNamespace(agent_id="second", model="", browser_allowed_domains=[])
     try:
         session = await live.ensure(agent)
-        await live.control(session, "one", "takeover", {"enabled": True})
+        await _control(live, session, "one", "takeover", {"enabled": True})
         with pytest.raises(ValueError, match="another viewer"):
-            await live.control(session, "two", "takeover", {"enabled": True})
+            await _control(live, session, "two", "takeover", {"enabled": True})
         with pytest.raises(ValueError, match="control first"):
-            await live.control(session, "two", "text", {"text": "forbidden"})
+            await _control(live, session, "two", "text", {"text": "forbidden"})
     finally:
         await live.close()
 
@@ -373,9 +380,9 @@ async def test_agent_download_is_a_current_task_workspace_artifact(live, site):
 
     try:
         session = await live.ensure(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         result = await live.run(
             agent, task="Download the fixture", max_steps=3, llm=model, action=apply, vision=False
         )
@@ -450,9 +457,9 @@ async def test_agent_uploads_only_the_supplied_workspace_file(live, site):
     try:
         session = await live.ensure(agent)
         upload.write_text("isolated upload proof", encoding="utf-8")
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         result = await live.run(
             agent,
             task="Upload the supplied file",
@@ -533,9 +540,9 @@ async def test_idle_animation_stream_soak(live, site, record_property):
     )
     try:
         session, queue = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         duration = float(os.environ.get("JARVIS_BROWSER_SOAK_SECONDS", "5"))
         # Measure steady rendering separately from the first target attachment.
         first_frame_started = time.monotonic()
@@ -647,9 +654,9 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
 
     async def visit(agent, path):
         session, _ = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site + path})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site + path})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         return session
 
     try:
