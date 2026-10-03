@@ -213,7 +213,16 @@ def _local_env(
 
     providers = {pid: BrainProviderConfig(base_url=url) for pid, url in (base_urls or {}).items()}
     conf = JarvisConfig(brain=BrainConfig(providers=providers))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    resolve_provider_endpoint = cfg.resolve_provider_endpoint
+
+    def _resolve(provider_id, *, vendor_default_base_url=None, config=None):
+        return resolve_provider_endpoint(
+            provider_id,
+            vendor_default_base_url=vendor_default_base_url,
+            config=conf if config is None else config,
+        )
+
+    monkeypatch.setattr(cfg, "resolve_provider_endpoint", _resolve)
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: None)
     monkeypatch.setattr(
         cfg,
