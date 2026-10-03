@@ -26,7 +26,7 @@ function lcg(seed: number): () => number {
 
 /** Metres covered by one repeat of each floor pattern. */
 const PATTERN_METRES: Record<RoomKind, number> = { lead: 2.6, team: 2, wardrobe: 2, reception: 3.2, break: 2.4, command: 3.2, server: 2,
-  arcade: 2.4, classics: 2, puzzle: 2, action: 2, foyer: 2.4, prizes: 2, snack: 1.6 };
+  arcade: 2.4, classics: 2, puzzle: 2, action: 2, foyer: 2.4, prizes: 2, snack: 1.6, levels: 3.2 };
 
 function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: number): void {
   const { base, accents } = ROOM_FLOOR_COLOURS[kind];
@@ -74,6 +74,42 @@ function drawFloor(kind: RoomKind, ctx: CanvasRenderingContext2D, w: number, h: 
       ctx.fillStyle = accents[Math.floor(rand() * accents.length)];
       const s = 2 + rand() * 4;
       ctx.fillRect(Math.floor(rand() * w), Math.floor(rand() * h), s, s * (0.6 + rand() * 0.6));
+    }
+  } else if (kind === "levels") {
+    // Level Hall: large polished slabs of midnight stone, soft lighter clouds and a thin gold vein through each.
+    const [a, b, c, gold] = [0, 1, 2, 3].map((i) => accents[i] ?? base);
+    const tiles = 2, size = w / tiles;
+    for (let ty = 0; ty < tiles; ty += 1) {
+      for (let tx = 0; tx < tiles; tx += 1) {
+        ctx.fillStyle = [a, b, c][(tx + ty * 2) % 3];
+        ctx.fillRect(tx * size, ty * size, size, size);
+        for (let i = 0; i < 40; i += 1) {
+          ctx.globalAlpha = 0.08 + rand() * 0.1;
+          ctx.fillStyle = "#4a5a96";
+          ctx.beginPath();
+          ctx.ellipse(tx * size + rand() * size, ty * size + rand() * size, 8 + rand() * 26, 5 + rand() * 12, rand() * Math.PI, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = gold;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        let vx = tx * size, vy = ty * size + rand() * size;
+        ctx.moveTo(vx, vy);
+        while (vx < (tx + 1) * size) {
+          vx += 10 + rand() * 18;
+          vy += (rand() - 0.5) * 22;
+          ctx.lineTo(Math.min(vx, (tx + 1) * size), Math.max(ty * size, Math.min((ty + 1) * size, vy)));
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+    // Brass joints between the slabs.
+    ctx.fillStyle = "rgba(217,178,92,0.55)";
+    for (let i = 0; i < tiles; i += 1) {
+      ctx.fillRect(i * size, 0, 2, h);
+      ctx.fillRect(0, i * size, w, 2);
     }
   } else if (kind === "team") {
     // Carpet grain: fine speckles in the accent tones, plus a faint weave.

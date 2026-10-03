@@ -78,6 +78,7 @@ export function LevelHud({ playerName, petName, compact }: { playerName: string;
   const pet = useProgression((s) => s.subjects[petSubject(petId)]);
   const loaded = useProgression((s) => !!s.snapshot);
   const open = useProgression((s) => s.openPanel);
+  const openHall = () => open("overview", { subject: "person" });
   if (!loaded) return null;
   const level = person?.level ?? 1;
   const fraction = levelFraction(person);
@@ -86,7 +87,7 @@ export function LevelHud({ playerName, petName, compact }: { playerName: string;
     ? t("society.level.xp_of").replace("{0}", String(person.xpIntoLevel)).replace("{1}", String(person.xpForNext))
     : person ? t("society.level.max") : t("society.level.xp_of").replace("{0}", "0").replace("{1}", "40");
   return (
-    <button type="button" className="office-card level-hud" data-compact={compact || undefined} onClick={() => open("you")}
+    <button type="button" className="office-card level-hud" data-compact={compact || undefined} onClick={openHall}
       aria-label={t("society.level.open_panel")} aria-keyshortcuts="L">
       <LevelRing kind="person" level={level} fraction={fraction} size={compact ? 34 : 44} />
       <span className="level-hud-body">

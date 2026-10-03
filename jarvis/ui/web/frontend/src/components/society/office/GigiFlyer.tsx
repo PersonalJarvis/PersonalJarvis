@@ -106,7 +106,8 @@ function bodyOffset(pet: CompanionPet, ground: boolean): number {
   return pet.kind === "gigi" ? MODEL_CENTRE_OFFSET : -pet.heightM / 2;
 }
 
-function CompanionBody({ pet, drive, reduced, paused, gigi }: {
+/** The pet's own body: its authored model, its voxel figure, or Gigi (passed in, so each host sizes it). */
+export function CompanionBody({ pet, drive, reduced, paused, gigi }: {
   pet: CompanionPet; drive: { current: PetDrive }; reduced: boolean; paused: boolean; gigi: ReactNode;
 }) {
   if (pet.kind === "model") return <PetModel pet={pet} drive={drive} reduced={reduced} paused={paused} />;
@@ -115,7 +116,7 @@ function CompanionBody({ pet, drive, reduced, paused, gigi }: {
 }
 
 /** A missing or broken GLB hides the companion's body; the glow still marks the lead. */
-class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+export class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: Error) { console.warn("Companion model unavailable", error.name); }

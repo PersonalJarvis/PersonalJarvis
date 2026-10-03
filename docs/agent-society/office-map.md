@@ -68,6 +68,11 @@ target runs WebGL.
 - **South strip:** an open reception/lobby with the elevator, the reception desk
   and the agent board; a walled break room with couches, coffee bar, water
   cooler, arcade and beanbags.
+- **Level Hall (agents floor only):** an east wing one aisle beyond the office,
+  across the floor's whole depth, with doors onto the north aisle, the spawn
+  point's cross aisle (the main door with the sign) and the south aisle. The
+  coding floor keeps the office's footprint without it; both floors share the
+  same west edge, so the elevator stands at the same spot on each.
 - **Furniture** has fixed footprints (`FURNITURE_SIZE`) shared by renderer and
   navigation; **spots** are hangout places with pose and facing; **checkpoints**
   are action places; **obstacles** are every solid footprint.
@@ -320,6 +325,16 @@ name plate wears a level chip, `L` opens the progress panel, and a level-up
 plays a light column, shockwaves and sparks in the world plus a banner on
 screen. Unlocked trails, auras, gadgets and frames are worn in the world.
 The whole contract lives in [level-system.md](level-system.md).
+
+The Level Hall is the levels' own room on the agents floor, dressed as a
+trophy hall in midnight stone and brass: the Level Wall (a live screen with the
+person's level, title, XP bar and next reward) over the Upgrade Studio's round
+stage in the north, the Level Road down the middle lined with a pedestal per
+reward (lowest unlock in the south, highest by the stage; lit once unlocked, a
+dark silhouette while locked, the next unlock under a pulsing gold beam; a
+click opens it on the reward road), and the double-sided level guide at the
+road's start. Its two checkpoints, the stage (`studio`) and the guide
+(`levels`), open the Level Hall screen (level-system.md §6).
 
 ## 6. Plan
 

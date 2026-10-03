@@ -31,6 +31,7 @@ import { TeamBoardFace } from "./TeamBoardFace";
 import { TeamRoomFittings } from "./TeamRoomDecor";
 import { BreakLoungeFittings } from "./BreakLounge";
 import { WardrobeFittings } from "./WardrobeRoom";
+import { LevelHallFittings } from "./LevelHall";
 import { LobbyFittings } from "./LobbyDecor";
 import { SpawnFittings } from "./SpawnPoint";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
@@ -189,6 +190,8 @@ function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awak
   const wardrobeRug = layout.furniture.find((f) => f.kind === "roundRug" && f.room === "wardrobe");
   const lobbyLamp = layout.furniture.find((f) => f.kind === "lobbyLamp");
   const spawnTerminal = layout.furniture.find((f) => f.kind === "spawnTerminal");
+  const levelStage = layout.furniture.find((f) => f.kind === "studioStage");
+  const levelGuide = layout.furniture.find((f) => f.kind === "levelGuide") ?? null;
   return (
     <>
       <primitive attach="background" object={background} />
@@ -226,6 +229,7 @@ function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awak
       {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
       {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}
+      {levelStage && <LevelHallFittings stage={levelStage} guide={levelGuide} />}
       {lobbyLamp && <LobbyFittings lamp={lobbyLamp} />}
       {spawnTerminal && <SpawnFittings terminal={spawnTerminal} arrival={layout.arrival} floor={floor} newcomers={newcomers} animate={awake && !reduced} />}
     </>

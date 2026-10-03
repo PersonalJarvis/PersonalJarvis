@@ -35,7 +35,15 @@ export const CHEER_MS = 2200;
 const MAX_POPUPS = 12;
 const MAX_TOASTS = 4;
 
-export type PanelTab = "you" | "pet" | "agents";
+/**
+ * The Level Hall screen's pages: where you stand, the Upgrade Studio (what you
+ * and your pet wear, with a live preview), the reward road, how XP is earned,
+ * and the team ranking. The hall's checkpoints, the level card and `L` open it.
+ */
+export type HallTab = "overview" | "studio" | "rewards" | "guide" | "team";
+export const HALL_TABS: readonly HallTab[] = ["overview", "studio", "rewards", "guide", "team"];
+/** Whose level the screen shows: the person's own, or their pet's (the pet IS Jarvis in the Verse). */
+export type HallSubject = "person" | "pet";
 
 interface ProgressionState {
   snapshot: ProgressionSnapshot | null;
@@ -48,7 +56,10 @@ interface ProgressionState {
   popups: XpPopup[];
   bursts: Burst[];
   cheerUntil: number;
-  panel: PanelTab | null;
+  panel: HallTab | null;
+  hallSubject: HallSubject;
+  /** A reward to show on the reward road (a pedestal in the hall was clicked); null = the next unlock. */
+  focusReward: RewardId | null;
   choices: ChoiceBook;
   hydrate: (snapshot: ProgressionSnapshot, away: Celebration[]) => void;
   apply: (award: AwardEvent, nowMs?: number) => void;
@@ -56,7 +67,9 @@ interface ProgressionState {
   dismissBanner: () => void;
   dismissToast: (id: number) => void;
   expire: (nowMs: number) => void;
-  openPanel: (tab: PanelTab | null) => void;
+  /** Open the Level Hall screen on a page (null closes it), optionally for a subject and a reward. */
+  openPanel: (tab: HallTab | null, options?: { subject?: HallSubject; reward?: RewardId | null }) => void;
+  setHallSubject: (subject: HallSubject) => void;
   choose: (who: "person" | "pet", slot: Slot, choice: SlotChoice) => void;
 }
 
@@ -79,6 +92,8 @@ export const useProgression = create<ProgressionState>((set, get) => ({
   bursts: [],
   cheerUntil: 0,
   panel: null,
+  hallSubject: "person",
+  focusReward: null,
   choices: loadChoices(),
   hydrate: (snapshot, away) => set((s) => {
     // A push can land before the read that was already on its way: never roll a subject back.
@@ -124,7 +139,13 @@ export const useProgression = create<ProgressionState>((set, get) => ({
     const bursts = s.bursts.filter((b) => nowMs - b.bornMs < BURST_MS);
     if (popups.length !== s.popups.length || bursts.length !== s.bursts.length) set({ popups, bursts });
   },
-  openPanel: (panel) => set({ panel }),
+  openPanel: (panel, options = {}) => set((s) => ({
+    panel,
+    hallSubject: options.subject ?? s.hallSubject,
+    focusReward: options.reward !== undefined ? options.reward : panel === "rewards" ? s.focusReward : null,
+  })),
+  // A reward focused for one subject means nothing for the other: switching forgets it.
+  setHallSubject: (hallSubject) => set((s) => (s.hallSubject === hallSubject ? s : { hallSubject, focusReward: null })),
   choose: (who, slot, choice) => set((s) => {
     const choices: ChoiceBook = { ...s.choices, [who]: { ...(s.choices[who] ?? {}), [slot]: choice } };
     saveChoices(choices);

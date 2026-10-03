@@ -31,6 +31,22 @@ export function equippedFor(rewards: readonly RewardRow[], kind: SubjectKind, le
   return loadout;
 }
 
+/**
+ * The rewards a subject kind can ever wear, in the order they unlock (lowest
+ * level first; within one level in slot order). The Level Road's pedestals
+ * and the reward road on screen both read this order.
+ */
+export function rewardRoad(rewards: readonly RewardRow[], kind: SubjectKind): RewardRow[] {
+  return rewards
+    .filter((r) => r.levels[kind] !== null)
+    .sort((a, b) => (a.levels[kind] ?? 0) - (b.levels[kind] ?? 0) || SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot));
+}
+
+/** The first reward on the road the subject has not unlocked yet; undefined once everything is open. */
+export function nextUnlock(rewards: readonly RewardRow[], kind: SubjectKind, level: number): RewardRow | undefined {
+  return rewardRoad(rewards, kind).find((r) => (r.levels[kind] ?? 0) > level);
+}
+
 /** XP gathered into the current level and the level's size, from the curve the server sent. */
 export function progressFor(levelXp: readonly number[], totalXp: number, level: number): { into: number; size: number } {
   const start = levelXp[level - 1] ?? 0;

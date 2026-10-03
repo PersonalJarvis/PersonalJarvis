@@ -221,6 +221,8 @@ export function OfficeMinimap({ layout, agents, selectedId, onOpenMap }: OfficeM
     break: t("society.office.cp_break"),
     elevator: t("society.office.cp_elevator"),
     mission: t("society.office.cp_mission"),
+    studio: t("society.office.cp_studio"),
+    levels: t("society.office.cp_levels"),
   };
   const roomLabels: Record<RoomKind, string> = {
     lead: t("society.office.room_lead"),
@@ -237,6 +239,7 @@ export function OfficeMinimap({ layout, agents, selectedId, onOpenMap }: OfficeM
     foyer: t("society.office.room_foyer"),
     prizes: t("society.office.room_prizes"),
     snack: t("society.office.room_snack"),
+    levels: t("society.office.room_levels"),
   };
   const youLabel = t("society.office.minimap_you");
   const openSpace = t("society.office.open_space");

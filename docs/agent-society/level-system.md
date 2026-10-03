@@ -106,10 +106,32 @@ Reduced motion keeps the information (banner, tag, toast) and drops the motion.
 
 ## 6. Surfaces
 
-- Level card under the floor title (click or `L` opens the progress panel).
+- Level card under the floor title (click or `L` opens the Level Hall screen).
 - Level chip on every name plate; the lead's chip shows the pet's level.
-- Progress panel: You / Pet / Agents tabs — level, wear choices, reward track,
-  the exact rules; Agents is a ranking.
+- **The Level Hall** on the agents floor (office-map.md §5f): the Level Wall,
+  the Upgrade Studio's stage, a pedestal per reward along the Level Road and the
+  level guide. Stepping on the stage opens the screen's Studio page, the guide
+  its Overview, a pedestal its reward on the Rewards page.
+- **The Level Hall screen**, for the person or their pet (switch in the head):
+  - *Overview:* level, title, XP bar with what is missing, the next title, the
+    next three unlocks (each opens in the Studio to try on) and the quickest
+    repeatable ways to earn.
+  - *Studio:* the dressing room. A live 3D preview of the person's figure or
+    the pet on the hall's stage wearing the loadout; per slot "automatic",
+    "nothing" and every piece as a card with its rarity. An unlocked piece is
+    put on with one click; a locked piece is tried on in the preview, marked
+    "Try-on" with the level and XP it still needs. A trail makes the figure
+    walk a circle; the frame shows on a name plate.
+  - *Rewards:* the reward road from the first unlock to the cap with the
+    subject's position on it; the chosen step in the preview with its rarity,
+    unlock level, missing XP and "Put it on" once open.
+  - *How to level:* three steps (earn, level up, unlock), the cost of the next
+    levels from the server's curve, and every rule for the person, the pet and
+    agents, grouped.
+  - *Team:* every agent's level, best first.
+
+  Rarity is a reading of the unlock level only (≤ 5 common, ≤ 15 rare, ≤ 30
+  epic, above legendary); it changes nothing in the rulebook.
 
 ## 7. Contracts
 
