@@ -3345,6 +3345,16 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     import jarvis.core.paths as paths
 
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    if os.name == "posix":
+        # Exercise the Windows runtime layout while retaining real POSIX
+        # private-file checks; Win32 ACL APIs do not exist on this host.
+        def private_fixture_file(descriptor):
+            assert os.fstat(descriptor).st_mode & 0o777 == 0o600
+
+        monkeypatch.setattr(
+            "jarvis.core.exclusive_process_lock._validate_windows_file_security",
+            private_fixture_file,
+        )
     monkeypatch.setattr(transport.sys, "platform", "win32")
     monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
     monkeypatch.setattr(

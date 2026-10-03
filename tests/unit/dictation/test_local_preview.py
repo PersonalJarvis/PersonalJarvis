@@ -244,8 +244,12 @@ async def test_a_timed_out_native_call_keeps_the_engine_busy_until_it_really_end
         assert await engine.transcribe(b"\x00" * 32000) is None
         assert await engine.transcribe(b"\x00" * 32000) is None
         assert engine.calls == 1, "the still-running native call must own the engine"
-        await asyncio.sleep(0.2)
+        # Wait for actual native completion, independent of CI thread scheduling.
+        assert await asyncio.to_thread(engine._busy.acquire, timeout=2)
+        engine._busy.release()
         assert await engine.transcribe(b"\x00" * 32000) is None
+        assert await asyncio.to_thread(engine._busy.acquire, timeout=2)
+        engine._busy.release()
         assert engine.calls == 2
     finally:
         mod.PREVIEW_TIMEOUT_S = original
