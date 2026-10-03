@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { formatAppshotHotkey } from "@/lib/appshotApi";
@@ -236,7 +236,7 @@ describe("AppshotsView editor", () => {
 
   beforeEach(() => {
     useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
-    useAppshotEditor.setState({ openId: null });
+    useAppshotEditor.setState({ openId: null, revision: 0 });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
@@ -252,26 +252,27 @@ describe("AppshotsView editor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens from the last appshot and closes on Escape", async () => {
+  it("opens the editor on the last appshot without leaving the page", async () => {
+    useEventStore.setState({ activeSection: "appshots" });
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
-    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
+
+    // AppshotEditorHost (mounted by App) draws it; the page only asks.
     expect(useAppshotEditor.getState().openId).toBe("shot-1");
-
-    fireEvent.keyDown(window, { key: "r" });
-    expect(
-      screen.getByTestId("appshot-editor-tool-rect").getAttribute("aria-pressed"),
-    ).toBe("true");
-
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("appshot-editor")).toBeNull());
-    expect(useAppshotEditor.getState().openId).toBeNull();
+    expect(useEventStore.getState().activeSection).toBe("appshots");
+    expect(screen.queryByTestId("appshot-editor")).toBeNull();
   });
 
-  it("opens when the card in the screen corner asked for it", async () => {
-    useAppshotEditor.getState().open("shot-1");
+  it("shows the edited picture once an edit replaced the appshot", async () => {
     render(<AppshotsView />);
-    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
+    await screen.findByTestId("appshots-preview-edit");
+    const latestCalls = () =>
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) => url === "/api/appshot/latest").length;
+    const before = latestCalls();
+
+    act(() => useAppshotEditor.getState().applied());
+
+    await waitFor(() => expect(latestCalls()).toBe(before + 1));
   });
 });
 

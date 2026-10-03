@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
 import { useAppshotEditor } from "@/store/appshotEditor";
 import { useEventStore } from "@/store/events";
-import { AppshotEditor } from "@/views/AppshotEditor";
 
 /**
  * Appshots — show the assistant the window you are working in.
@@ -215,10 +214,9 @@ export function AppshotsView() {
   const [saving, setSaving] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
-  const editorId = useAppshotEditor((s) => s.openId);
   const openEditor = useAppshotEditor((s) => s.open);
-  const closeEditor = useAppshotEditor((s) => s.close);
-  const [revision, setRevision] = useState(0);
+  // Bumped by AppshotEditorHost when an edit replaced the held picture.
+  const revision = useAppshotEditor((s) => s.revision);
   // While a shortcut field records (or refuses a gesture), its row says so
   // in place of the description.
   const [fieldStatus, setFieldStatus] = useState<{ window: string | null; region: string | null }>({
@@ -247,7 +245,8 @@ export function AppshotsView() {
     };
   }, [pushToast]);
 
-  // Refetch the last appshot whenever the backend reports a new one.
+  // Refetch the last appshot whenever the backend reports a new one, or an
+  // edit replaced it.
   useEffect(() => {
     let active = true;
     fetchLatestAppshot()
@@ -256,7 +255,7 @@ export function AppshotsView() {
     return () => {
       active = false;
     };
-  }, [lastAppshotEvent]);
+  }, [lastAppshotEvent, revision]);
 
   useEffect(
     () => () => {
@@ -575,19 +574,6 @@ export function AppshotsView() {
 
         <p className="mt-5 text-sm text-muted-foreground">{t("appshots.voice_hint")}</p>
       </div>
-      {editorId !== null && (
-        <AppshotEditor
-          appshotId={editorId}
-          onClose={() => {
-            closeEditor();
-            // An applied edit changed the held picture: show the new one.
-            setRevision((n) => n + 1);
-            fetchLatestAppshot()
-              .then((body) => setLatest(body.appshot))
-              .catch(() => undefined);
-          }}
-        />
-      )}
     </div>
   );
 }

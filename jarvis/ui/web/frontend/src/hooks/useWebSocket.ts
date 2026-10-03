@@ -24,7 +24,7 @@ import {
   useCommandActivityStore,
   COMMAND_ACTIVITY_EVENTS,
 } from "@/store/commandActivity";
-import { useAppshotEditor } from "@/store/appshotEditor";
+import { handleAppshotEditRequest } from "@/store/appshotEditor";
 import { useDeckStore } from "@/store/deck";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
@@ -156,17 +156,11 @@ export function useWebSocket(): void {
           }
         }
 
-        // A click on the appshot card in the screen corner: open the editor on
-        // the Appshots page. A detached solo window leaves it to the main one.
-        if (env.event_name === "AppshotEditRequested" && !useEventStore.getState().solo) {
-          const id = (env.payload as { appshot_id?: unknown }).appshot_id;
-          if (typeof id === "string" && id) {
-            setActiveSection("appshots");
-            useAppshotEditor.getState().open(id);
-          } else {
-            setActiveSection("appshots");
-            pushToast("warning", translate("appshots.editor.gone"));
-          }
+        // A click on the appshot card in the screen corner: the editor opens
+        // over whatever is on screen (AppshotEditorHost) — no navigation.
+        if (env.event_name === "AppshotEditRequested") {
+          const outcome = handleAppshotEditRequest(env.payload, { solo: useEventStore.getState().solo });
+          if (outcome === "gone") pushToast("warning", translate("appshots.editor.gone"));
         }
 
         // Live reasoning trace: while the text chat is waiting on a reply,

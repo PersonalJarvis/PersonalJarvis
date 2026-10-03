@@ -60,13 +60,9 @@ After the shutter the picture flies into the bottom-right corner of its
 screen and rests there as a card for about six seconds (longer while the
 pointer is on it):
 
-- **Click** opens the app on the Appshots page with the **appshot editor**:
-  arrow, rectangle, ellipse, pen, highlighter, text, pixelate and crop, with
-  undo/redo (Ctrl+Z / Ctrl+Y) and one-key tools (A, R, E, P, H, T, B, C).
-  **Copy** puts the result on the clipboard, **Save** downloads a PNG, and
-  **Use this version** replaces the held appshot, so the next message carries
-  the edited picture (a picture already sent into a voice call stays as it
-  was). The last appshot on the Appshots page opens the same editor.
+- **Click** brings the app to the front with the **appshot editor** open
+  over whatever was on screen (nothing navigates away). See
+  [The editor](#the-editor).
 - **Drag** the card into any app that accepts files or images (chat, mail,
   Explorer/Finder) to drop the picture there.
 - **Right-click** dismisses it.
@@ -77,6 +73,72 @@ moment an appshot touches disk: the picture is written to
 `<temp>/jarvis-appshots/` just then, and files older than an hour are removed
 on the next drag. With `[screen_context].deck_preview_s = 0` (keep nothing)
 the card only opens the editor and shares nothing.
+
+## The editor
+
+The editor follows CleanShot X's annotate tool — same tools, same one-letter
+keys — in this app's own look. It opens from the corner card or from
+**Edit** on the last appshot (Settings → Appshots), as a full-window layer
+over the current view.
+
+| Key | Tool | What it does |
+|---|---|---|
+| V | Select and move | Click an annotation to select it; drag moves it, arrow keys nudge it (Shift = 10 px), Delete removes it. Double-click a text to change it. |
+| A / L | Arrow / Line | Shift snaps to 45°. |
+| R / F / E | Rectangle / Filled rectangle / Ellipse | Shift makes a square or circle. |
+| D | Draw | Freehand, smoothed. |
+| M | Highlighter | Translucent marker that keeps text underneath readable. |
+| T | Text | Plain, label (filled box) or outline style; Enter commits, Shift+Enter breaks the line. |
+| C | Counter | Numbered badges; each click adds the next number. |
+| H | Spotlight | Dims everything outside the dragged areas. |
+| P | Pixelate or blur | Hides a region; the options bar switches between pixelate and blur. |
+| K | Crop | Free, 1:1, 4:3 or 16:9; undo brings the rest back. |
+| B | Background | Frames the picture on a backdrop (eight presets, padding, corner radius, shadow); applied on copy, save and use. |
+
+Colours: eight presets plus any colour from the system picker; the last one
+is remembered. Sizes: 1 / 2 / 3. History: Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y
+(⌘ on macOS).
+
+Results: **Copy** (Ctrl+C) puts the PNG on the clipboard — natively through
+`POST /api/appshot/clipboard` on the desktop, the browser clipboard
+elsewhere. **Save** (Ctrl+S) writes it to Downloads through the backend
+(the desktop WebView drops browser downloads) and the toast offers "Show in
+folder". **Use this version** (Ctrl+Enter) replaces the held appshot so the
+next message carries the edit (a picture already sent into a voice call stays
+as it was). Escape cancels a stroke, then a selection, then closes; with
+unsaved edits it asks first.
+
+### Compared with CleanShot X
+
+Reference: [cleanshot.com/features](https://cleanshot.com/features) (checked
+2026-10-03). Status here: **done** = in the editor; **elsewhere** = Personal
+Jarvis covers it outside the editor; **not done** = not built, with the
+reason.
+
+| CleanShot X | Status |
+|---|---|
+| Arrow, line, rectangle, filled rectangle, ellipse, pencil, highlighter, text, counter, spotlight, pixelate, blur, crop with aspect ratio | Done |
+| Background tool (presets, padding, aspect/position) | Done: presets, padding, corners, shadow. Custom uploads, saved presets, auto-balance and aspect ratio of the frame are not done. |
+| Colour picker with saved palette | Done: presets + any colour, last one remembered (not a palette of several) |
+| Arrow styles (4 curved) | Not done: one straight arrow |
+| Text styles (7) | Partly: 3 styles |
+| Move/select annotations | Done |
+| Rotate, flip, resize image | Not done |
+| Combine images, editable project file | Not done |
+| Capture area / window / fullscreen, freeze, magnifier, crosshair | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
+| Quick Access Overlay (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
+| Scrolling capture, self-timer | Not done (the page's "in 3 s" button is the only timer) |
+| Screen recording, video editor, GIF | Not done |
+| Cloud upload and sharing | Not done — appshots stay on this machine by design |
+| Text recognition (OCR), QR codes | Not done in the editor; the model reads the picture itself when it gets it |
+| Pin to screen (floating screenshot) | Not done: needs an always-on-top native window per OS |
+| Capture history | Not done: only the last appshot is kept, in memory |
+
+Every editor feature is web code in the app's own WebView, so it behaves the
+same on Windows, macOS and Linux. The two native paths are the clipboard
+(Windows `CF_DIB` + PNG, macOS `osascript`, Linux `wl-copy` or `xclip` —
+without either, Copy falls back to the browser clipboard and says so if that
+fails too) and Save (`~/Downloads` on every OS).
 
 ## Where a shortcut appshot goes
 
@@ -155,8 +217,11 @@ last appshot, memory only), `gesture.py` (both-Alt watcher), `hotkey.py`
 mapping), `picker/` (the area picker sidecar), `effect.py` (shutter hook),
 `delivery.py` (voice calls). The corner card lives in the indicator sidecar
 (`jarvis/cu/indicator/renderer.py`, `_CardWindow`); the editor is
-`frontend/src/views/AppshotEditor.tsx` with its document model in
-`lib/appshotEditorModel.ts`.
+`frontend/src/views/AppshotEditor.tsx`, hosted by
+`components/appshot/AppshotEditorHost.tsx` (opened through
+`store/appshotEditor.ts`), with its document model in
+`lib/appshotEditorModel.ts`, the copy path in `lib/appshotClipboard.ts` and
+the native clipboard in `jarvis/platform/clipboard_image.py`.
 The live model's `take_appshot` tool is `jarvis/plugins/tool/appshot.py`; the
 REST surface is `jarvis/ui/web/appshot_routes.py`; the page is
 `frontend/src/views/AppshotsView.tsx`.

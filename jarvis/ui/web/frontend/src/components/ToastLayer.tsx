@@ -41,12 +41,13 @@ export function ToastLayer() {
   const dismiss = useEventStore((s) => s.dismissToast);
 
   return (
-    // z-[60]: the onboarding gate overlays the whole app at z-50 and renders
-    // later in the DOM; toasts (e.g. failed permission requests during
-    // first-run setup) must stay visible above it.
+    // z-[100]: above everything that reports through a toast — the
+    // onboarding gate (z-50, rendered later in the DOM), dialogs, and the
+    // full-window appshot editor (z-95), whose Save toast carries the "Show
+    // in folder" action.
     // top-12: below the caption strip — at the top edge a toast covered the
     // restart and window buttons whose outcome it reports.
-    <div className="pointer-events-none fixed right-4 top-12 z-[60] flex w-[320px] flex-col gap-2">
+    <div className="pointer-events-none fixed right-4 top-12 z-[100] flex w-[320px] flex-col gap-2">
       {toasts.map((toast) => {
         const Icon = ICON_FOR_KIND[toast.kind];
         // A saved-file toast in the desktop shell is a native drag handle: press
