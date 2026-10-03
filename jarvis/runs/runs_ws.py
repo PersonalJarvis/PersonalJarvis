@@ -23,6 +23,8 @@ where the Run Inspector view is opened and closed repeatedly.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -37,6 +39,12 @@ from jarvis.sessions.recorder import _RAW_EVENT_KINDS as _LIVE_KINDS
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# A frame that cannot be handed to the socket within this bound means the tab
+# stopped reading. The forwarder is a wildcard bus observer and every publish
+# awaits it (up to the bus's own 5 s cap), so a wedged inspector would slow
+# EVERY event in the app until the tab closed. Same bound as the main /ws.
+_SEND_TIMEOUT_S = 3.0
 
 
 def _resolve_bus(ws: WebSocket):
@@ -83,20 +91,37 @@ async def runs_live(ws: WebSocket) -> None:
         await ws.close()
         return
 
+    closed = False
+    close_code = 1000
+
     async def _forward(event) -> None:
+        nonlocal closed, close_code
         kind = type(event).__name__
         if kind not in _LIVE_KINDS:
             return
         try:
-            await ws.send_json(
-                {
-                    "type": "event",
-                    "kind": kind,
-                    "ts_ms": getattr(event, "timestamp_ns", 0) // 1_000_000,
-                    "session_id": getattr(event, "session_id", None),
-                    "trace_id": str(getattr(event, "trace_id", "")),
-                }
+            await asyncio.wait_for(
+                ws.send_json(
+                    {
+                        "type": "event",
+                        "kind": kind,
+                        "ts_ms": getattr(event, "timestamp_ns", 0) // 1_000_000,
+                        "session_id": getattr(event, "session_id", None),
+                        "trace_id": str(getattr(event, "trace_id", "")),
+                    }
+                ),
+                timeout=_SEND_TIMEOUT_S,
             )
+        except TimeoutError:
+            # Stop observing for good: the next publish must not wait on this
+            # tab again. The receive loop's finally still closes the socket.
+            log.warning("runs_ws: send stalled >%ss — detaching the live view", _SEND_TIMEOUT_S)
+            bus.unsubscribe_all(_forward)
+            close_code = 1013
+            # Close rather than go silently stale; 1013 = try again later.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(ws.close(code=1013), timeout=1.0)
+                closed = True
         except Exception:  # noqa: BLE001,S110 — socket gone; recv loop will terminate
             pass
 
@@ -120,7 +145,8 @@ async def runs_live(ws: WebSocket) -> None:
         except Exception as exc:  # noqa: BLE001 — detach best-effort
             log.debug("runs_ws: unsubscribe_all raised (%s) — ignoring", exc)
         try:
-            await ws.close()
+            if not closed:
+                await ws.close(code=close_code)
         except Exception:  # noqa: BLE001,S110
             pass
 

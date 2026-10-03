@@ -36,6 +36,30 @@ export function cachedCanvasTexture(
   return texture;
 }
 
+const fontWaiters = new Set<string>();
+
+/**
+ * Redraw a cached canvas texture once its web fonts have loaded. Canvas text
+ * drawn before a face arrives keeps the fallback face for the whole session,
+ * because each texture is drawn once.
+ */
+export function redrawWhenFontsLoad(
+  key: string, texture: Texture | null, fonts: readonly string[], draw: (ctx: CanvasRenderingContext2D, w: number, h: number) => void,
+): void {
+  if (!texture || fontWaiters.has(key) || typeof document === "undefined" || !("fonts" in document)) return;
+  if (fonts.every((font) => document.fonts.check(font))) return;
+  fontWaiters.add(key);
+  Promise.all(fonts.map((font) => document.fonts.load(font))).then(() => {
+    const canvas = texture.image as HTMLCanvasElement | undefined;
+    const ctx = canvas?.getContext?.("2d");
+    if (!canvas || !ctx) return;
+    draw(ctx, canvas.width, canvas.height);
+    texture.needsUpdate = true;
+  }, () => {
+    // A face that fails to load leaves the fallback face already drawn, which stays legible.
+  });
+}
+
 const materialCache = new Map<string, MeshStandardMaterial>();
 
 /** A material showing a cached canvas texture; `glow` > 0 makes it self-lit like a screen. */

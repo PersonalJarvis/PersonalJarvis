@@ -105,7 +105,9 @@ class UpdateSoulTool:
     @staticmethod
     def _write_directly(path: Any, operation: str, note: str, entry_id: str) -> bool:
         """Without the learning loop: the same change, under SOUL.md's lock."""
+        from jarvis.memory.learning.notebook import OWNER_ID
         from jarvis.memory.soul import edit_soul
+        from jarvis.memory.write_feedback import announce_write
         from jarvis.society.notebook import change
 
         def mutate(soul: Any) -> bool:
@@ -119,4 +121,6 @@ class UpdateSoulTool:
             soul.set_learned(updated)
             return True
 
-        return edit_soul(path, mutate)
+        with announce_write(OWNER_ID, path.name, operation=operation) as receipt:
+            receipt.changed = edit_soul(path, mutate)
+        return receipt.changed

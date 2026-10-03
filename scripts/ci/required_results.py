@@ -6,7 +6,8 @@ merge train require ONLY this check, so adding, renaming or path-gating a job
 never needs a settings change.
 
 * Any ``failure`` / ``cancelled`` result fails the gate.
-* ``skipped`` passes in normal mode — a lane the change cannot affect.
+* With ``--pipeline``, missing/skipped selected lanes always fail.
+  Unselected lanes may skip in normal mode.
 * ``--strict`` (nightly, release) fails a skipped job too, except the jobs in
   :data:`STRICT_SKIP_OK` that can never run on those events.
 
@@ -23,20 +24,59 @@ from typing import Any
 
 # Jobs that only exist on some events: pull-request-only checks and manual
 # soak runs. A strict run may skip these and nothing else.
-STRICT_SKIP_OK = frozenset({"pr-policy", "soak"})
+STRICT_SKIP_OK = frozenset({"pr-policy", "soak", "release-qualification"})
+
+LANE_JOBS = {
+    "python": {"python-fast", "tests-linux", "tests-windows", "test-report"},
+    "frontend": {"frontend"},
+    "deps": {"deps"},
+    "realtime": {"realtime-contract", "realtime-slim"},
+    "cli": {"jarvisctl"},
+    "dragdrop": {"dragdrop"},
+    "browser": {"browser"},
+    "installer": {"installer"},
+    "updater": {"updater"},
+}
 
 
-def evaluate(needs: dict[str, dict[str, Any]] | None, *, strict: bool = False) -> dict[str, Any]:
+def expected_jobs(outputs: dict[str, str]) -> set[str]:
+    """Derive required evidence from detection, rather than trusting skipped jobs."""
+    required = {"detect", "gates"}
+    for lane, jobs in LANE_JOBS.items():
+        if outputs.get(lane) == "true":
+            required.update(jobs)
+    if outputs.get("macos") == "true" and outputs.get("python") == "true":
+        required.add("tests-macos")
+    if outputs.get("macos_desktop") == "true" and (
+        outputs.get("full") != "true" or outputs.get("macos") == "true"
+    ):
+        required.add("macos-desktop")
+    if outputs.get("release") == "true":
+        required.add("release-qualification")
+    return required
+
+
+def evaluate(
+    needs: dict[str, dict[str, Any]] | None, *, strict: bool = False, pipeline: bool = False
+) -> dict[str, Any]:
     failed: list[str] = []
     skipped: list[str] = []
     entries = needs or {}
     if not entries:
         failed.append("<no-needs>")
+    required: set[str] = set()
+    if pipeline:
+        outputs = (entries.get("detect") or {}).get("outputs") or {}
+        flags = set(LANE_JOBS) | {"full", "macos", "macos_desktop", "release"}
+        if any(outputs.get(flag) not in {"true", "false"} for flag in flags):
+            failed.append("<invalid-detection>")
+        required = expected_jobs(outputs)
+        failed.extend(required - entries.keys())
     for name, info in entries.items():
         result = (info or {}).get("result")
         if result == "success":
             continue
-        if result == "skipped" and (not strict or name in STRICT_SKIP_OK):
+        if result == "skipped" and name not in required and (not strict or name in STRICT_SKIP_OK):
             skipped.append(name)
             continue
         failed.append(name)
@@ -58,10 +98,11 @@ def render(needs: dict[str, dict[str, Any]] | None, verdict: dict[str, Any]) -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--strict", action="store_true", help="A skipped job fails too.")
+    parser.add_argument("--pipeline", action="store_true", help="Require the detected CI lanes.")
     args = parser.parse_args(argv)
 
     needs = json.load(sys.stdin)
-    verdict = evaluate(needs, strict=args.strict)
+    verdict = evaluate(needs, strict=args.strict, pipeline=args.pipeline)
     report = render(needs, verdict)
     print("\n".join(report))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

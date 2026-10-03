@@ -290,11 +290,11 @@ describe("SettingsHubView search", () => {
 
 describe("SettingsHubView health signals", () => {
   it("carries the API-Keys alert dot on a provider error", async () => {
-    mockHealth.brain = {
+    mockHealth.realtime = {
       status: "error",
       reason: "rate_limited",
-      detail: "OpenRouter: rate limited",
-      subject_id: "openrouter",
+      detail: "Gemini Live: rate limited",
+      subject_id: "gemini-live",
     };
     render(<SettingsHubView />);
     await screen.findByTestId("TAB_SETTINGS");

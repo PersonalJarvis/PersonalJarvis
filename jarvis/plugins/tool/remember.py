@@ -65,10 +65,13 @@ class RememberTool:
     @staticmethod
     async def _legacy(fact: str, category: str) -> ToolResult:
         from jarvis.memory import CORE_MEMORY_FILENAME, CoreMemory
+        from jarvis.memory.learning.notebook import OWNER_ID
+        from jarvis.memory.write_feedback import announce_write
 
         def _write() -> None:
-            mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
-            mem.add_fact(fact, category=category or "general")
+            with announce_write(OWNER_ID, CORE_MEMORY_FILENAME, operation="add"):
+                mem = CoreMemory.load(DATA_DIR / CORE_MEMORY_FILENAME)
+                mem.add_fact(fact, category=category or "general")
 
         try:
             await asyncio.to_thread(_write)

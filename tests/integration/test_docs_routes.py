@@ -231,6 +231,13 @@ def test_get_asset_path_traversal_blocked(client: TestClient) -> None:
     assert resp.status_code in (400, 404)
 
 
+def test_get_asset_cannot_run_script_in_the_app_origin(client: TestClient) -> None:
+    resp = client.get("/api/docs/asset/router-discipline/diagram.png")
+    assert resp.status_code == 200
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["content-security-policy"].startswith("sandbox")
+
+
 def test_get_asset_unknown_doc_404(client: TestClient) -> None:
     resp = client.get("/api/docs/asset/does-not-exist/diagram.png")
     assert resp.status_code == 404

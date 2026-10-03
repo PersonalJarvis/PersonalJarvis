@@ -136,6 +136,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const surface = useAgentChat((s) => s.surface);
   const catalog = useAgentChat((s) => s.catalog);
+  const catalogStale = useAgentChat((s) => s.catalogStale);
   const catalogError = useAgentChat((s) => s.catalogError);
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
   const connections = useAgentChat((s) => s.connections);
@@ -160,9 +161,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const minimal: boolean = String(surface) === "jarvis";
   const voiceMode = useVoiceModeSwitch();
 
+  // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
-    if (!catalog) void loadCatalog();
-  }, [catalog, loadCatalog]);
+    if (!catalog || catalogStale) void loadCatalog();
+  }, [catalog, catalogStale, loadCatalog]);
 
   // A real call changed a seat's recorded health, or a key was saved or
   // removed somewhere: re-read the dots (a plain read — the server never
@@ -217,7 +219,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     onAttachProblem,
   );
   // A shortcut appshot parked for "the next message" joins this one.
-  useAppshotClaim(files.attachFiles, surface === "jarvis");
+  useAppshotClaim(files.attachFiles, surface === "jarvis", activeSessionId ?? "new");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 
@@ -495,6 +497,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     if (next !== draft.effort) void setDraft({ effort: next });
   }, [provider, effortLevels, draft.effort, setDraft]);
 
+  const showEffort = Boolean(provider) && effortLevels.length > 1;
+
   const effortGroups = useMemo<ComboboxGroup[]>(
     () => [
       {
@@ -539,6 +543,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const permissionValue = planOn ? draft.buildMode || provider?.default_permission_mode || "" : draft.permissionMode;
   const permissionDescription =
     (provider?.permission_modes ?? []).find((m) => m.id === draft.permissionMode)?.description ?? "";
+  const permissionLabel = permissionModes.find((m) => m.id === permissionValue)?.label ?? "";
 
   const canSend =
     commands.isCommand || connected &&
@@ -571,7 +576,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       className={cn(
         "relative flex flex-col transition-[border-color,box-shadow]",
         minimal
-          ? "gap-1 rounded-2xl border border-border bg-card px-2.5 pb-2 pt-2.5 shadow-rim focus-within:border-border-strong"
+          ? "gap-2 rounded-[22px] border border-border bg-card px-3 pb-2.5 pt-3 shadow-rim focus-within:border-border-strong"
           : "gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}
@@ -620,7 +625,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[44px] px-1.5 text-base" : "text-reading")}
+        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[48px] px-1.5 text-base" : "text-reading")}
       />
       {minimal ? (
         <div className="flex items-center gap-1" data-testid="composer-row">
@@ -644,23 +649,27 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             }
             disabled={!connected || busy}
           />
-          {/* The stance in words, like the Codex app: a person should read
-              "Full access" before sending, not decode a glyph. A stance that
-              asks for nothing wears the warning hue. */}
+          {/* The stance as its glyph alone (maintainer, 2026-10-03): the
+              front page runs on Bypass by default, and its shield in the
+              warning hue already says "nothing asks" — spelling it out took
+              half the row. The name stays in the tooltip and the list. */}
           {provider && permissionModes.length > 0 && (
-            <span title={locks?.permissionMode ?? permissionDescription} className="inline-flex min-w-0">
+            <span
+              title={locks?.permissionMode ?? [permissionLabel, permissionDescription].filter(Boolean).join(" — ")}
+              className="inline-flex"
+            >
               <Combobox
                 value={permissionValue}
                 groups={permissionGroups}
                 onChange={(v) => void setDraft({ permissionMode: v })}
-                ariaLabel={t("agent_chat.pick_permission")}
+                ariaLabel={permissionLabel ? `${t("agent_chat.pick_permission")}: ${permissionLabel}` : t("agent_chat.pick_permission")}
                 fallbackLabel={t("agent_chat.pick_permission")}
                 disabled={Boolean(locks?.permissionMode)}
                 testId="composer-permission"
                 triggerHint={false}
-                chevron={false}
+                iconOnly
                 className={cn(
-                  "h-8 w-auto max-w-[200px] gap-1.5 rounded-full bg-transparent px-2 py-0 text-xs font-medium shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-3.5 [&_svg]:w-3.5",
+                  "h-8 w-8 justify-center gap-0 rounded-full bg-transparent p-0 shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-4 [&_svg]:w-4",
                   permissionModeIcon(permissionValue) === ShieldOff
                     ? "text-warning [&_svg]:text-warning"
                     : "text-muted-foreground",
@@ -690,6 +699,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             </button>
           )}
           <span className="flex-1" />
+          {/* Model and effort read as one label — "Sonnet 5.5 High ⌄" — the
+              way the Codex app draws its brain pick; each half still opens
+              its own list. */}
+          <span className="inline-flex min-w-0 items-center" data-testid="composer-brain">
           <Pick
             testId="composer-model"
             ariaLabel={t("agent_chat.pick_model")}
@@ -715,9 +728,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             // The model reads as a word; the provider's mark (with its red
             // dot) only joins it when that seat is failing.
             triggerIcon={Boolean(provider?.connected && liveHealthFor(provider, health[provider.id])?.status === "error")}
-            chevron={false}
+            chevron={!showEffort}
+            compact
           />
-          {provider && effortLevels.length > 1 && (
+          {showEffort && (
             <Pick
               testId="composer-effort"
               ariaLabel={t("agent_chat.pick_effort")}
@@ -728,8 +742,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               disabled={Boolean(locks?.effort)}
               title={locks?.effort}
               muted
+              compact
             />
           )}
+          </span>
           <input
             ref={fileInputRef}
             type="file"
@@ -1141,6 +1157,7 @@ function Pick({
   muted = false,
   triggerIcon = true,
   chevron = true,
+  compact = false,
 }: {
   testId: string;
   ariaLabel: string;
@@ -1157,6 +1174,8 @@ function Pick({
   muted?: boolean;
   triggerIcon?: boolean;
   chevron?: boolean;
+  /** Half of a joined label (the front page's model + effort): no side padding between the halves. */
+  compact?: boolean;
 }) {
   // The Combobox draws the selected option's own icon; the leading glyph here
   // is the column's, shown when the option has none (model, effort, permission).
@@ -1181,10 +1200,12 @@ function Pick({
         triggerIcon={triggerIcon}
         chevron={chevron}
         className={cn(
-          "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium shadow-none",
+          compact
+            ? "h-8 w-auto max-w-[200px] gap-1 rounded-lg border-transparent bg-transparent px-1 py-0 text-sm font-medium shadow-none [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5"
+            : "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium shadow-none",
           muted ? "text-muted-foreground" : "text-foreground",
           "hover:border-transparent hover:bg-secondary focus-visible:ring-1",
-          icon && !selectedHasIcon ? "pl-7" : "pl-1.5",
+          compact ? undefined : icon && !selectedHasIcon ? "pl-7" : "pl-1.5",
         )}
       />
     </span>

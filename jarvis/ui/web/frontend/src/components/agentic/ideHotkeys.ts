@@ -2,9 +2,10 @@
  * Leader-key shortcuts for the Agentic IDE.
  *
  * One chord — Ctrl+B, on every OS, like tmux — opens a small key menu; the
- * next keys pick what happens, the way tmux and herdr work: a one-line mode
- * bar at the bottom says PREFIX and names the keys, `?` opens the full list,
- * Esc or any unbound key drops back to the terminal. `Ctrl+B, C, →` opens a
+ * next keys pick what happens, with a mode bar at
+ * the bottom names the keys, `?` opens the full list. The mode is sticky — it
+ * stays on across moves, splits and workspace switches until Esc (or a
+ * dialog opening) hands the keyboard back to the terminal. `Ctrl+B, C, →` opens a
  * Claude Code pane to the right of the focused pane; `Ctrl+B, V` splits the
  * focused pane with the same agent; `Ctrl+B, W, N` starts a new workspace.
  *
@@ -73,8 +74,24 @@ export interface AgentKey extends HotkeyAgent { key: string }
 export type HotkeyOutcome =
   | { type: "step"; step: IdeHotkeyStep }
   | { type: "run"; action: IdeHotkeyAction }
+  /** Leave the mode; the key is spent. */
   | { type: "close" }
-  | { type: "ignore" };
+  /** Leave the mode and let the key through (a Ctrl/Alt/Cmd chord). */
+  | { type: "release" }
+  /** A bare modifier: nothing yet. */
+  | { type: "ignore" }
+  /** A key the mode does not use: swallowed, the mode stays on. */
+  | { type: "unknown" };
+
+/**
+ * Actions after which the mode stays on, so arrows can walk the grid and
+ * splits can follow each other. Everything else opens a dialog or ends the
+ * pane the mode was acting on, and hands the keyboard back.
+ */
+export const STICKY_ACTIONS: ReadonlySet<IdeHotkeyAction["kind"]> = new Set([
+  "spawn", "split", "focus-pane", "swap-pane", "maximize-pane", "balance",
+  "toggle-voice", "workspace-index", "workspace-step",
+]);
 
 /**
  * Is this the leader chord? Ctrl+B on every OS — Ctrl, not Cmd, on a Mac too,
@@ -164,27 +181,29 @@ function digitOf(event: HotkeyEventLike): number | null {
 }
 
 /**
- * Advance the menu by one key press.
+ * Advance the mode by one key press.
  *
- * Escape closes from anywhere; Backspace steps back one level. A key the
- * current menu does not know closes it too, so a stray press never leaves the
- * IDE waiting for input the user no longer means to give.
+ * Escape leaves from anywhere; Backspace steps back one level. A key a
+ * sub-menu does not know returns to the top level; one the top level does not
+ * know is swallowed, so a typo never lands in an agent's prompt.
  */
 export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agents: readonly AgentKey[]): HotkeyOutcome {
   if (MODIFIER_KEYS.has(event.key)) return { type: "ignore" };
   if (event.key === "Escape") return { type: "close" };
-  if (event.key === "Backspace") return step.menu === "root" ? { type: "close" } : { type: "step", step: { menu: "root" } };
-  // The full key list: any key leaves it, the way herdr's prefix+? help does.
-  if (step.menu === "help") return { type: "close" };
-  // Ctrl/Cmd/Alt combinations belong to the app and the OS, never to the menu.
-  if (event.ctrlKey || event.metaKey || event.altKey) return { type: "close" };
+  const back: HotkeyOutcome = { type: "step", step: { menu: "root" } };
+  if (event.key === "Backspace") return step.menu === "root" ? { type: "unknown" } : back;
+  // The full key list: any key goes back to the mode, without leaving the shortcut mode.
+  if (step.menu === "help") return back;
+  // Ctrl/Cmd/Alt chords belong to the agent, the app and the OS: they end the
+  // mode and go through, so Ctrl+C still reaches the pane.
+  if (event.ctrlKey || event.metaKey || event.altKey) return { type: "release" };
   const arrow = ARROWS[event.key];
   const letter = letterOf(event);
 
   if (step.menu === "direction") {
     if (arrow) return { type: "run", action: { kind: "spawn", agent: step.agent, direction: SPLIT_FOR_ARROW[arrow] } };
     if (event.key === "Enter" || event.key === " ") return { type: "run", action: { kind: "spawn", agent: step.agent, direction: null } };
-    return { type: "close" };
+    return back;
   }
 
   if (step.menu === "workspace") {
@@ -202,7 +221,7 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
     if (arrow === "left" || arrow === "up") return { type: "run", action: { kind: "workspace-step", step: -1 } };
     const digit = digitOf(event);
     if (digit) return { type: "run", action: { kind: "workspace-index", index: digit - 1 } };
-    return { type: "close" };
+    return back;
   }
 
   // Root menu.
@@ -218,7 +237,7 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
     const shifted: Record<string, IdeHotkeyAction> = {
       n: { kind: "new-workspace" }, w: { kind: "rename-workspace" }, d: { kind: "close-workspace" },
     };
-    return shifted[letter] ? { type: "run", action: shifted[letter] } : { type: "close" };
+    return shifted[letter] ? { type: "run", action: shifted[letter] } : { type: "unknown" };
   }
   if (letter) {
     const rootKeys: Record<string, IdeHotkeyAction | IdeHotkeyStep> = {
@@ -238,7 +257,7 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
     const agent = agents.find((entry) => entry.key === letter);
     if (agent) return { type: "step", step: { menu: "direction", agent: agent.name, label: agent.label } };
   }
-  return { type: "close" };
+  return { type: "unknown" };
 }
 
 /** The one-line mode bar: a badge naming the mode, then the keys that work in it. */
@@ -251,7 +270,7 @@ export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeB
       badge: step.label.toUpperCase(),
       hints: [
         { keys: ["→"], label: "right" }, { keys: ["←"], label: "left" }, { keys: ["↑"], label: "above" },
-        { keys: ["↓"], label: "below" }, { keys: ["Enter"], label: "even grid" }, { keys: ["Esc"], label: "cancel" },
+        { keys: ["↓"], label: "below" }, { keys: ["Enter"], label: "even grid" }, { keys: ["⌫"], label: "back" },
       ],
     };
   }
@@ -261,11 +280,11 @@ export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeB
       hints: [
         { keys: ["N"], label: "new" }, { keys: ["T"], label: "worktree" }, { keys: ["R"], label: "rename" },
         { keys: ["Q"], label: "close" }, { keys: ["G"], label: "git" }, { keys: ["O"], label: "options" },
-        { keys: ["P"], label: "connect folder" }, { keys: ["←→"], label: "switch" }, { keys: ["Esc"], label: "back" },
+        { keys: ["P"], label: "connect folder" }, { keys: ["←→"], label: "switch" }, { keys: ["⌫"], label: "back" },
       ],
     };
   }
-  if (step.menu === "help") return { badge: "KEYS", hints: [{ keys: ["any key"], label: "close" }] };
+  if (step.menu === "help") return { badge: "KEYS", hints: [{ keys: ["any key"], label: "back" }] };
   return {
     badge: "PREFIX",
     hints: [
@@ -276,7 +295,6 @@ export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeB
       { keys: ["Q"], label: "close" },
       { keys: ["W"], label: "workspaces" },
       { keys: ["?"], label: "all keys" },
-      { keys: ["Esc"], label: "cancel" },
       { keys: ["Ctrl", "B"], label: "send Ctrl+B" },
     ],
   };

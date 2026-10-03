@@ -426,10 +426,9 @@ def _release_fd(fd: int) -> None:
             import msvcrt  # noqa: PLC0415 - Windows-only, off import floor
 
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl  # noqa: PLC0415 - POSIX-only, off import floor
-
-            fcntl.flock(fd, fcntl.LOCK_UN)
+        # POSIX flock belongs to the shared open-file description. Closing our
+        # descriptor preserves the lock while a child still holds an inherited
+        # descriptor; LOCK_UN here would also unlock that live child.
     finally:
         os.close(fd)
 

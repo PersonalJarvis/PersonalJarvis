@@ -15,7 +15,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiKeysView } from "@/views/ApiKeysView";
+
+function renderView() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ApiKeysView />
+    </QueryClientProvider>,
+  );
+}
 
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
@@ -136,7 +146,7 @@ async function openAgentsTab() {
 describe("ApiKeysView — the subscription switcher is wired in", () => {
   it("renders the switcher inside the settings page", async () => {
     installFetchMock();
-    render(<ApiKeysView />);
+    renderView();
     await openAgentsTab();
     await waitFor(() => {
       expect(screen.getByText("Your subscriptions")).toBeTruthy();
@@ -145,7 +155,7 @@ describe("ApiKeysView — the subscription switcher is wired in", () => {
 
   it("shows both CLIs' accounts, with the active one marked per CLI", async () => {
     installFetchMock();
-    render(<ApiKeysView />);
+    renderView();
     await openAgentsTab();
     await waitFor(() => expect(screen.getByText("Max seat 2")).toBeTruthy());
 
@@ -160,7 +170,7 @@ describe("ApiKeysView — the subscription switcher is wired in", () => {
 
   it("keeps the unsigned account honest, with the way in offered", async () => {
     installFetchMock();
-    render(<ApiKeysView />);
+    renderView();
     await openAgentsTab();
     await waitFor(() => expect(screen.getByText("Default Codex login")).toBeTruthy());
     const row = screen.getByText("Default Codex login").closest("li")!;

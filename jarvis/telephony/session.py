@@ -44,7 +44,12 @@ from typing import Any
 
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.speech.completeness import Completeness, classify_completeness
-from jarvis.speech.hangup import HANGUP_RE, contains_end_signal, is_legacy_farewell
+from jarvis.speech.hangup import (
+    HANGUP_RE,
+    HangupConfirmation,
+    hangup_cancelled_reply,
+    hangup_confirmation_question,
+)
 
 from .audio import (
     STT_SAMPLE_RATE,
@@ -74,7 +79,7 @@ log = logging.getLogger("jarvis.telephony.session")
 # been resolved yet — a neutral, name-free welcome. When a name IS set the
 # assistant announces itself by THAT name instead (see _default_greeting); the
 # product imposes no fixed name here (jarvis/brain/assistant_name.py).
-DEFAULT_GREETING_DE = "Guten Tag, wie kann ich helfen?"  # i18n-allow: German TTS greeting spoken to phone callers
+DEFAULT_GREETING_DE = "Guten Tag, wie kann ich helfen?"  # i18n-allow
 DEFAULT_GREETING_EN = "Hello, how can I help?"
 
 # Send callback signature: an awaitable that ships one JSON-serialisable dict
@@ -157,6 +162,7 @@ class TelephonyCallSession:
         self._speaking = False
         self._tts_task: asyncio.Task[None] | None = None
         self._processing = False
+        self._hangup_confirmation = HangupConfirmation()
         self._ended = False
         self.status = CALL_IN_PROGRESS
         self._end_reason = ""
@@ -243,9 +249,19 @@ class TelephonyCallSession:
                 return
             log.info("telephony[%s] caller: %s", self.call_sid, text)
 
-            # Hangup guard runs BEFORE the brain (mirrors the mic path).
-            if HANGUP_RE.search(text):
+            voice_turn = object()
+            decision = self._hangup_confirmation.observe(text, voice_turn)
+            if decision == "confirmed":
                 await self.end(reason="hangup_phrase", status=CALL_COMPLETED)
+                return
+            if decision in {"request", "cancelled"}:
+                question = (
+                    hangup_confirmation_question(self._lang_short())
+                    if decision == "request" else hangup_cancelled_reply(self._lang_short())
+                )
+                frames = await self._speak(question)
+                if frames and decision == "request":
+                    self._hangup_confirmation.arm(voice_turn)
                 return
 
             # Completeness gating (spec §5) — route on classifier verdict.
@@ -257,12 +273,7 @@ class TelephonyCallSession:
                 return
 
             response = await self._think(dispatch_text)
-            # Brain-signal hangup: the brain appends [[END_CALL]] on a clear
-            # intent to end (mirrors the mic path). Read it from the RAW
-            # response BEFORE scrub_for_voice strips the sentinel below.
-            end_requested = contains_end_signal(response) or is_legacy_farewell(
-                response.strip().rstrip("!.").strip().lower()
-            )
+            # A model sentinel is stripped from speech, never treated as consent.
             spoken = scrub_for_voice(response, language=self._lang_short()).cleaned
             if not spoken.strip():
                 # Always-speak invariant (AD-OE6): never leave the caller in
@@ -272,9 +283,6 @@ class TelephonyCallSession:
             frames = await self._speak(spoken)
             self._turns += 1
             self._publish_turn(dispatch_text, response, frames)
-            if end_requested:
-                await self.end(reason="hangup_phrase", status=CALL_COMPLETED)
-                return
             log.info(
                 "telephony[%s] jarvis: %s (%d frames)",
                 self.call_sid,
@@ -623,7 +631,7 @@ class TelephonyCallSession:
     def _fallback_phrase(self) -> str:
         if self._lang_short() == "en":
             return "Sorry, I did not catch that. Could you say it again?"
-        return "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es."  # i18n-allow: German TTS fallback phrase spoken to phone callers
+        return "Entschuldigung, das habe ich nicht verstanden. Bitte wiederhole es."  # i18n-allow
 
     # -- bus events --------------------------------------------------------
 

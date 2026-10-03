@@ -14,7 +14,17 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiKeysView } from "@/views/ApiKeysView";
+
+function renderView() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ApiKeysView />
+    </QueryClientProvider>,
+  );
+}
 
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
@@ -212,7 +222,7 @@ describe("ApiKeysView — Grok Build (xAI subscription) OAuth card", () => {
 
   it("renders the connected subscription card with email AND a Set-active radio", async () => {
     installFetchMock(routesFor(grokBuildDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
     await waitFor(() => expect(screen.getByText("Grok Build")).toBeTruthy());
     expect(screen.getByText(/ada@example\.com/)).toBeTruthy();
@@ -221,7 +231,7 @@ describe("ApiKeysView — Grok Build (xAI subscription) OAuth card", () => {
 
   it("switches the subagent to Grok Build when connected", async () => {
     const { calls } = installFetchMock(routesFor(grokBuildDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -252,7 +262,7 @@ describe("ApiKeysView — Grok Build (xAI subscription) OAuth card", () => {
       ...routesFor(grokBuildNotConnected()),
       "/api/jarvis-agent/status": () => ({ body: mapping }),
     });
-    render(<ApiKeysView />);
+    renderView();
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
     await waitFor(() => expect(screen.getByText("Connect")).toBeTruthy());
     fireEvent.click(screen.getByText("Connect"));
@@ -267,7 +277,7 @@ describe("ApiKeysView — Grok Build (xAI subscription) OAuth card", () => {
 
   it("disconnects via POST /api/grok-build/logout", async () => {
     const { calls } = installFetchMock(routesFor(grokBuildDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

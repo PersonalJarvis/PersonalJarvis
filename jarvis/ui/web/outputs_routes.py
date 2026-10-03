@@ -1088,7 +1088,11 @@ async def download_output_artifact(
 # no-script inline download). FastAPI registers only GET for ``@router.get``, so
 # the probe used to answer 405 on every backend and the fallback ALWAYS won —
 # the page's own scripts never ran. FileResponse sends headers only for HEAD.
-@router.api_route("/{slug}/files/{path:path}/page", methods=["GET", "HEAD"])
+# Two registrations, not one ``methods=["GET", "HEAD"]`` route: FastAPI gives
+# both methods of a single route the same operationId, which makes the
+# published OpenAPI document invalid for client generators.
+@router.get("/{slug}/files/{path:path}/page")
+@router.head("/{slug}/files/{path:path}/page", include_in_schema=False)
 async def serve_artifact_page(slug: str, path: str, request: Request) -> FileResponse:
     """Serve an HTML deliverable as an ARTIFACT PAGE — scripts allowed, network shut.
 

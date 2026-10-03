@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,8 +67,27 @@ def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
 
 class PageHandler(BaseHTTPRequestHandler):
     profile_requests = []
+    page_requests = []
+    requests_ready = threading.Condition()
 
     def do_GET(self):
+        try:
+            self._respond()
+        finally:
+            with self.requests_ready:
+                self.page_requests.append(self.path)
+                self.requests_ready.notify_all()
+
+    @classmethod
+    def wait_for_path(cls, path):
+        with cls.requests_ready:
+            return cls.requests_ready.wait_for(lambda: path in cls.page_requests, timeout=15)
+
+    def _respond(self):
+        if self.path == "/ready":
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path.startswith(("/login", "/account")):
             signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
             self.profile_requests.append((self.path, signed_in))
@@ -80,6 +100,7 @@ class PageHandler(BaseHTTPRequestHandler):
                 )
                 signed_in = True
             self.end_headers()
+            self.wfile.write(b"<!doctype html><title>Account fixture</title>")
             self.wfile.write(b"<h1>Signed in</h1>" if signed_in else b"<h1>Sign in required</h1>")
             return
         if self.path == "/download":
@@ -97,7 +118,8 @@ class PageHandler(BaseHTTPRequestHandler):
         <h1 id="counter">0</h1>
         <script>let n=0;function paint(){document.querySelector('#counter').textContent=++n;
         document.body.style.background=n%2?'#fdd':'#ddf';requestAnimationFrame(paint)}
-        requestAnimationFrame(paint)</script>"""
+        requestAnimationFrame(paint);
+        requestAnimationFrame(()=>requestAnimationFrame(()=>fetch('/ready')))</script>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -109,14 +131,17 @@ class PageHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Upload received: " + body)
+        self.wfile.write(b"<!doctype html><title>Upload fixture</title><pre>Upload received: "
+                        + html.escape(body.decode("utf-8", errors="replace")).encode("utf-8")
+                        + b"</pre>")
 
 
 @pytest.fixture
 def site():
     PageHandler.profile_requests = []
+    PageHandler.page_requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), PageHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -128,6 +153,17 @@ def site():
 
 @pytest.fixture
 def live(tmp_path, monkeypatch):
+    worker_env = install.worker_env
+
+    def diagnostic_env(*args, **kwargs):
+        return {**worker_env(*args, **kwargs), "PYTHONFAULTHANDLER": "1"}
+
+    async def diagnostic_stderr(session):
+        while chunk := await session.proc.stderr.read(8192):
+            session.stderr_tail = (session.stderr_tail + chunk.decode("utf-8", "replace"))[-32768:]
+
+    monkeypatch.setattr(install, "worker_env", diagnostic_env)
+    monkeypatch.setattr("jarvis.society.browser.live.LiveSession.drain_stderr", diagnostic_stderr)
     python = Path(os.environ["JARVIS_BROWSER_TEST_PYTHON"])
     binary = Path(os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"])
     monkeypatch.setattr(install, "is_installed", lambda _: True)
@@ -136,15 +172,51 @@ def live(tmp_path, monkeypatch):
     return LiveSessions(tmp_path)
 
 
+async def _control(live, session, owner, op, args):
+    """Send the observed browser generation just as the visible viewer does."""
+    if op not in {"takeover", "cancel"}:
+        args = {"generation": session.state.get("generation", session.generation), **args}
+    elif op == "takeover" and args.get("enabled") is False:
+        args = {"login": False, **args}  # The test performs explicit owner handback.
+    try:
+        return await live.control(session, owner, op, args)
+    except RuntimeError as exc:
+        # Only disposable fixture traffic reaches this diagnostic. Preserve the
+        # worker's native exit status so a process crash cannot look like a UI timeout.
+        try:
+            await asyncio.wait_for(session.proc.wait(), timeout=2)
+        except TimeoutError:
+            pass  # Preserve diagnostics even when inherited handles delay process reaping.
+        await asyncio.sleep(0.05)  # Let the independent stderr reader drain its last chunk.
+        raise AssertionError(
+            f"{op}: {exc}; worker_exit={session.proc.returncode}; "
+            f"worker_stderr_start={session.stderr_tail[:6000]}; "
+            f"worker_stderr_end={session.stderr_tail[-3000:]}"
+        ) from exc
+
+
+async def _open_animation_and_hand_back(live, session, queue, site):
+    await _control(live, session, "viewer", "takeover", {"enabled": True})
+    await _control(live, session, "viewer", "navigate", {"url": site})
+    # Native navigation acknowledges input, not page load. Handing back at
+    # that point can close Chrome before it has navigated away from New Tab.
+    assert await asyncio.to_thread(PageHandler.wait_for_path, "/ready"), "Fixture did not render"
+    await _control(live, session, "viewer", "takeover", {"enabled": False})
+    async with asyncio.timeout(15):
+        while True:
+            event = await queue.get()
+            if (event["kind"] == "state" and not event["manual"]
+                    and event["url"].rstrip("/") == site):
+                return
+
+
 async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, site):
     agent = SimpleNamespace(
         agent_id="scout", model="", browser_allowed_domains=["http*://127.0.0.1"]
     )
     try:
         session, queue = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _open_animation_and_hand_back(live, session, queue, site)
         frames = []
         deadline = asyncio.get_running_loop().time() + 10
         while len(frames) < 20 and asyncio.get_running_loop().time() < deadline:
@@ -213,25 +285,28 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
             if event["kind"] == "state":
                 break
         assert event["full_window"] is True
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "key", {"key": "Control+t"})
-        await live.control(session, "viewer", "text", {"text": site})
-        await live.control(session, "viewer", "key", {"key": "Enter"})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "key", {"key": "Control+t"})
+        await _control(live, session, "viewer", "text", {"text": site})
+        await _control(live, session, "viewer", "key", {"key": "Enter"})
+        try:
+            async with asyncio.timeout(15):
+                # A plain Chrome sign-in deliberately exposes no DOM or URL.
+                # HTTP arrival proves native toolbar input reached the fixture.
+                assert await asyncio.to_thread(PageHandler.wait_for_path, "/ready")
+        except TimeoutError:
+            pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         try:
             async with asyncio.timeout(15):
                 while True:
                     event = await queue.get()
-                    if event["kind"] == "state" and event["url"].rstrip("/") == site:
+                    if (event["kind"] == "state" and not event["manual"]
+                            and event["url"].rstrip("/") == site):
                         break
         except TimeoutError:
-            pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
-        assert len(event["tabs"]) == 2
-        await live.control(session, "viewer", "takeover", {"enabled": False})
-        async with asyncio.timeout(5):
-            while True:
-                event = await queue.get()
-                if event["kind"] == "state" and not event["manual"]:
-                    break
+            pytest.fail(f"Handback did not restore the selected tab: {session.state}")
+        assert len(event["tabs"]) >= 2
         assert event["url"].rstrip("/") == site
     finally:
         await live.close()
@@ -297,8 +372,8 @@ async def test_takeover_pauses_and_resumes_the_same_browser_job(live, site):
         await asyncio.wait_for(takeover, 30)
         assert not job.done()
         assert len(calls) == 1
-        await live.control(session, "user", "navigate", {"url": site})
-        await live.control(session, "user", "takeover", {"enabled": False})
+        await _control(live, session, "user", "navigate", {"url": site})
+        await _control(live, session, "user", "takeover", {"enabled": False})
         result = await asyncio.wait_for(job, 45)
         assert result["ok"], result
         planning = [p for p in calls if "action" in p["schema"].get("properties", {})]
@@ -320,11 +395,11 @@ async def test_manual_control_has_one_owner(live):
     agent = SimpleNamespace(agent_id="second", model="", browser_allowed_domains=[])
     try:
         session = await live.ensure(agent)
-        await live.control(session, "one", "takeover", {"enabled": True})
+        await _control(live, session, "one", "takeover", {"enabled": True})
         with pytest.raises(ValueError, match="another viewer"):
-            await live.control(session, "two", "takeover", {"enabled": True})
+            await _control(live, session, "two", "takeover", {"enabled": True})
         with pytest.raises(ValueError, match="control first"):
-            await live.control(session, "two", "text", {"text": "forbidden"})
+            await _control(live, session, "two", "text", {"text": "forbidden"})
     finally:
         await live.close()
 
@@ -373,9 +448,9 @@ async def test_agent_download_is_a_current_task_workspace_artifact(live, site):
 
     try:
         session = await live.ensure(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         result = await live.run(
             agent, task="Download the fixture", max_steps=3, llm=model, action=apply, vision=False
         )
@@ -450,9 +525,9 @@ async def test_agent_uploads_only_the_supplied_workspace_file(live, site):
     try:
         session = await live.ensure(agent)
         upload.write_text("isolated upload proof", encoding="utf-8")
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site})
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         result = await live.run(
             agent,
             task="Upload the supplied file",
@@ -533,9 +608,7 @@ async def test_idle_animation_stream_soak(live, site, record_property):
     )
     try:
         session, queue = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _open_animation_and_hand_back(live, session, queue, site)
         duration = float(os.environ.get("JARVIS_BROWSER_SOAK_SECONDS", "5"))
         # Measure steady rendering separately from the first target attachment.
         first_frame_started = time.monotonic()
@@ -642,17 +715,22 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
     other = SimpleNamespace(
         agent_id="isolated", model="", browser_allowed_domains=["http*://127.0.0.1"]
     )
+    live.profiles.assign(first.agent_id, "own", None)
+    live.profiles.assign(other.agent_id, "own", None)
 
     async def visit(agent, path):
         session, _ = await live.subscribe(agent)
-        await live.control(session, "viewer", "takeover", {"enabled": True})
-        await live.control(session, "viewer", "navigate", {"url": site + path})
-        await live.control(session, "viewer", "takeover", {"enabled": False})
+        await _control(live, session, "viewer", "takeover", {"enabled": True})
+        await _control(live, session, "viewer", "navigate", {"url": site + path})
+        async with asyncio.timeout(15):
+            assert await asyncio.to_thread(PageHandler.wait_for_path, path)
+        await _control(live, session, "viewer", "takeover", {"enabled": False})
         return session
 
     try:
         await visit(first, "/login")
         await live.close()
+        live = LiveSessions(live.data_dir)
         restored = await visit(first, "/account?restored")
         isolated = await visit(other, "/account?other")
         assert restored is not isolated
@@ -667,6 +745,8 @@ async def test_crashed_worker_recovers_without_touching_the_other_agent(live):
 
     one = SimpleNamespace(agent_id="crash", model="", browser_allowed_domains=[])
     two = SimpleNamespace(agent_id="survivor", model="", browser_allowed_domains=[])
+    live.profiles.assign(one.agent_id, "own", None)
+    live.profiles.assign(two.agent_id, "own", None)
     try:
         old, _ = await live.subscribe(one)
         survivor, _ = await live.subscribe(two)

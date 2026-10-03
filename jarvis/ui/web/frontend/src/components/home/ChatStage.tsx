@@ -14,6 +14,7 @@ import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { folderLeaf } from "@/lib/folderPath";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 import { FolderCode } from "lucide-react";
 
 /**
@@ -69,16 +70,18 @@ function ChatStageContent() {
   const view = useTranscriptView(surface === "jarvis" ? activeSessionId : null, allItems);
   const items = view.items;
   const catalog = useAgentChat((s) => s.catalog);
+  const catalogStale = useAgentChat((s) => s.catalogStale);
   const decide = useAgentChat((s) => s.decide);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
   const hasContent = items.length > 0;
 
+  // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
-    if (!catalog) void loadCatalog();
-    void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
+    if (!catalog || catalogStale) void loadCatalog();
+  }, [catalog, catalogStale, loadCatalog]);
+  useHistoryPolling(loadSessions);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,

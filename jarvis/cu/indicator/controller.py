@@ -40,6 +40,7 @@ from typing import Any
 from uuid import UUID
 
 from jarvis.cu.indicator import capture_guard, protocol, self_input
+from jarvis.cu.indicator.win32 import restore_system_cursor
 
 log = logging.getLogger(__name__)
 
@@ -130,12 +131,16 @@ class CUIndicatorController:
         # Monotonic deadline until which an appshot effect owns the sidecar.
         self._snap_until = 0.0
         self._idle_quit_task: asyncio.Task | None = None
-        # The appshot card in the corner is up (hover / click / drag).
+        # At least one appshot card in the corner stack is up.
         self._card_open = False
         self._loop: asyncio.AbstractEventLoop | None = None
         # The finished picture for the current card. It can be ready before the
         # effect reached the sidecar, so ``snap`` re-sends it after the card.
         self._card_image_b64: str | None = None
+        #: The appshot that picture belongs to — the card's id in the stack.
+        self._card_image_id = ""
+        #: The monitor the last shutter played on — where a card comes back.
+        self._card_monitor: list[int] | None = None
 
     # ------------------------------------------------------------------ wiring
     def wire(self) -> None:
@@ -183,7 +188,9 @@ class CUIndicatorController:
                     if self._active and self._esc_task is not None and self._esc_holds_key
                     else ""
                 )
-                visible = await self._show_border(hint=hint, required=True)
+                visible = await self._show_border(
+                    hint=hint, required=True, pointer=bool(self._active)
+                )
         except Exception:  # noqa: BLE001 - acknowledge failure honestly
             log.warning(
                 "[screen-context-indicator] failed to show capture border",
@@ -207,9 +214,9 @@ class CUIndicatorController:
             if esc_armed
             else ""
         )
-        await self._show_border(hint=hint, required=False)
+        await self._show_border(hint=hint, required=False, pointer=True)
 
-    async def _show_border(self, *, hint: str, required: bool) -> bool:
+    async def _show_border(self, *, hint: str, required: bool, pointer: bool = False) -> bool:
         """Ensure the shared sidecar is visibly showing and return its ACK."""
         if not required and not _screen_indicator_enabled():
             log.debug("[cu-indicator] disabled via [computer_use].screen_indicator")
@@ -231,6 +238,9 @@ class CUIndicatorController:
             protocol.CMD_SHOW,
             _SHOW_ACK_TIMEOUT_S,
             hint=hint,
+            # The agent pointer belongs to control of the mouse, never to a
+            # one-shot screen look.
+            pointer=pointer,
         )
 
     async def _deactivate(self) -> None:
@@ -286,11 +296,23 @@ class CUIndicatorController:
         """
         self._snap_until = max(self._snap_until, time.monotonic() + _SNAP_LIFETIME_S)
         self._card_image_b64 = None  # a new capture: the old picture is not its picture
+        self._card_image_id = ""
 
     async def snap(
-        self, *, monitor: list[int], rect: list[float], thumb_b64: str, hint: str = ""
+        self,
+        *,
+        monitor: list[int],
+        rect: list[float],
+        thumb_b64: str,
+        hint: str = "",
+        rest_ms: int = 6000,
+        labels: dict[str, str] | None = None,
     ) -> bool:
-        """Play the appshot shutter effect. ``False`` when it cannot run here."""
+        """Play the appshot shutter effect. ``False`` when it cannot run here.
+
+        ``rest_ms`` is how long the corner card stays untouched; ``0`` keeps it
+        until the user closes it (``[appshot].card_seconds``).
+        """
         ok, reason = self._border_capability()
         if not ok:
             log.debug("[appshot-effect] unavailable: %s", reason)
@@ -304,6 +326,7 @@ class CUIndicatorController:
             # Without a border there was no guard yet: a later capture must
             # blank the resting thumbnail before its grab on every OS.
             capture_guard.register_hook(self._suppress_for_grab)
+            self._card_monitor = list(monitor)
             shown = await asyncio.to_thread(
                 self._send_and_wait,
                 protocol.CMD_SNAP,
@@ -312,27 +335,93 @@ class CUIndicatorController:
                 rect=list(rect),
                 thumb=thumb_b64,
                 hint=hint,
+                rest_ms=int(rest_ms),
+                labels=dict(labels or {}),
             )
             image = self._card_image_b64
             if shown and image:
                 await asyncio.to_thread(
-                    self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image
+                    self._send_and_wait,
+                    protocol.CMD_SNAP_IMAGE,
+                    _SHOW_ACK_TIMEOUT_S,
+                    image=image,
+                    id=self._card_image_id,
                 )
             self._schedule_idle_quit()
             return shown
 
-    async def snap_image(self, image_b64: str) -> bool:
-        """Hand the finished picture to the resting card, for a drag out.
+    async def show_card(
+        self,
+        *,
+        thumb_b64: str,
+        image_b64: str,
+        hint: str = "",
+        rest_ms: int = 6000,
+        labels: dict[str, str] | None = None,
+        fly_from: list[float] | None = None,
+        shot_id: str = "",
+    ) -> bool:
+        """Put a picture back at the bottom of the corner card stack — no flash.
 
-        Kept for the effect still on its way (``snap`` sends it after the card);
-        sent at once when the sidecar already runs. The picture never starts a
-        process of its own.
+        Used when the editor closes: the (edited) appshot comes back into the
+        corner of the screen its shutter played on, so it stays at hand. With
+        ``fly_from`` it flies there from the editor, otherwise it slides in.
+        ``shot_id`` names the card, replacing a card of the same appshot.
+        """
+        ok, reason = self._border_capability()
+        if not ok:
+            log.debug("[appshot-effect] card unavailable: %s", reason)
+            return False
+        self._loop = asyncio.get_running_loop()
+        async with self._lock:
+            self.hold_for_snap()
+            self._card_image_b64 = image_b64 or None
+            self._card_image_id = shot_id
+            await asyncio.to_thread(self._spawn_sidecar)
+            if self._proc is None:
+                return False
+            capture_guard.register_hook(self._suppress_for_grab)
+            shown = await asyncio.to_thread(
+                self._send_and_wait,
+                protocol.CMD_CARD,
+                _SHOW_ACK_TIMEOUT_S,
+                monitor=list(self._card_monitor or []),
+                thumb=thumb_b64,
+                hint=hint,
+                rest_ms=int(rest_ms),
+                labels=dict(labels or {}),
+                id=shot_id,
+                **({"from": list(fly_from)} if fly_from else {}),
+            )
+            if shown and image_b64:
+                await asyncio.to_thread(
+                    self._send_and_wait,
+                    protocol.CMD_SNAP_IMAGE,
+                    _SHOW_ACK_TIMEOUT_S,
+                    image=image_b64,
+                    id=shot_id,
+                )
+            self._schedule_idle_quit()
+            return shown
+
+    async def snap_image(self, image_b64: str, shot_id: str = "") -> bool:
+        """Hand the finished picture to the newest card, for a drag out.
+
+        ``shot_id`` becomes that card's id, so its buttons reach its own
+        appshot once newer cards stack below it. Kept for the effect still on
+        its way (``snap`` sends it after the card); sent at once when the
+        sidecar already runs. The picture never starts a process of its own.
         """
         self._card_image_b64 = image_b64
+        self._card_image_id = shot_id
         if self._proc is None or self._proc.poll() is not None:
             return False
         return await asyncio.to_thread(
-            self._send_and_wait, protocol.CMD_SNAP_IMAGE, _SHOW_ACK_TIMEOUT_S, image=image_b64
+            self._send_and_wait,
+            protocol.CMD_SNAP_IMAGE,
+            _SHOW_ACK_TIMEOUT_S,
+            image=image_b64,
+            id=shot_id,
         )
 
     def _on_sidecar_event(self, payload: dict[str, Any]) -> None:
@@ -351,18 +440,52 @@ class CUIndicatorController:
                 self._schedule_idle_quit()
         elif event == protocol.EVENT_SNAP_OPEN:
             # _open_editor logs its own failures; nothing awaits this task.
-            asyncio.get_running_loop().create_task(self._open_editor(), name="appshot-card-open")
+            asyncio.get_running_loop().create_task(
+                self._open_editor(str(payload.get("id", ""))), name="appshot-card-open"
+            )
+        elif event == protocol.EVENT_CARD_ACTION:
+            action = str(payload.get("action", ""))
+            if action in protocol.CARD_ACTIONS:
+                asyncio.get_running_loop().create_task(
+                    self._card_action(action, str(payload.get("id", ""))),
+                    name="appshot-card-action",
+                )
 
-    async def _open_editor(self) -> None:
-        """The card was clicked: show the app with the appshot editor."""
+    async def _card_action(self, action: str, shot_id: str = "") -> None:
+        """Copy, save or copy text from a card, then tell that card how it went."""
+        from jarvis.appshot.card_actions import run_card_action  # noqa: PLC0415
+
+        status = await run_card_action(action, shot_id)
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        await asyncio.to_thread(
+            self._send_and_wait,
+            protocol.CMD_CARD_STATUS,
+            _SHOW_ACK_TIMEOUT_S,
+            text=status,
+            id=shot_id,
+        )
+
+    async def _open_editor(self, shot_id: str = "") -> None:
+        """The card was clicked: open the appshot editor in front of the user.
+
+        In its own window where the desktop shell can open one, so the app
+        behind keeps its size and what it shows; otherwise the app comes to
+        the front with the editor over its page.
+        """
         try:
+            from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
             from jarvis.appshot.store import get_store  # noqa: PLC0415
             from jarvis.core.events import (  # noqa: PLC0415
                 AppshotEditRequested,
                 ShowWindowRequested,
             )
 
-            shot = get_store().latest()
+            store = get_store()
+            # The clicked card's own appshot; the last one for a card without an id.
+            shot = store.get(shot_id) if shot_id else store.latest()
+            if shot is not None and await open_editor_window(shot.id):
+                return
             await self._bus.publish(
                 AppshotEditRequested(
                     source_layer="appshot", appshot_id=shot.id if shot is not None else ""
@@ -513,6 +636,19 @@ class CUIndicatorController:
             except queue.Empty:  # timeout is the caller-visible false result
                 return False
 
+    @property
+    def pointer_visible(self) -> bool:
+        """True while the agent pointer is on screen (control is held)."""
+        return bool(self._active) and self._proc is not None
+
+    def pointer_press(self) -> None:
+        """Jarvis is about to click: the agent pointer dips and rings.
+
+        Fire-and-forget from any thread; nothing happens without control.
+        """
+        if self._active and self._proc is not None:
+            self._send(protocol.CMD_POINTER_PRESS)
+
     def _reap(self, proc: subprocess.Popen[str]) -> None:
         try:
             proc.wait(timeout=_QUIT_GRACE_S)
@@ -522,6 +658,8 @@ class CUIndicatorController:
                 proc.wait(timeout=1.0)
             except Exception:  # noqa: BLE001
                 log.debug("[cu-indicator] sidecar reap failed", exc_info=True)
+        # A killed sidecar cannot give the user's pointer back itself.
+        restore_system_cursor(only_if_marked=True)
         # Deterministic handle accounting on long-running installs — do not
         # leave the pipe FDs to GC timing.
         for pipe in (proc.stdin, proc.stdout):
@@ -685,6 +823,12 @@ def wire_cu_indicator(bus: Any) -> CUIndicatorController | None:
     global _controller
     if bus is None:
         return None
+    # The last run may have ended while the sidecar held the pointer (one
+    # file check; the cursor is only touched when a swap is on record).
+    try:
+        restore_system_cursor(only_if_marked=True)
+    except Exception:  # noqa: BLE001 — the indicator must never break boot
+        log.warning("[cu-indicator] pointer restore at boot failed", exc_info=True)
     if _controller is not None and _controller._bus is bus:
         return _controller
     try:

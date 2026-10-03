@@ -17,6 +17,7 @@ import pytest
 import jarvis.core.config as cfg
 from jarvis.core.config import BrainConfig, BrainProviderConfig, JarvisConfig
 from jarvis.plugins.brain.local_openai import LocalOpenAIBrain
+from tests.fakes.provider_config import install_provider_config
 
 
 class _FakeOpenAI:
@@ -31,7 +32,7 @@ def _with_base_url(url: str | None, monkeypatch, stored_key: str | None = None) 
     if url is not None:
         providers["local-openai"] = BrainProviderConfig(base_url=url)
     conf = JarvisConfig(brain=BrainConfig(providers=providers))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    install_provider_config(monkeypatch, conf)
     monkeypatch.setattr(
         cfg,
         "get_secret",

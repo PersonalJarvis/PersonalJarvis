@@ -324,8 +324,9 @@ async def test_blind_provider_is_skipped_for_a_screen_turn(
     result = await manager.generate("take a screenshot", use_history=False)
 
     assert result == "grounded answer"
-    assert created == ["blind", "seeing"]
+    assert created[0] == "blind" and set(created[1:]) == {"seeing"}
     assert len(recorder.calls) == 1
+    assert recorder.calls[0]["images"]
 
 
 @pytest.mark.asyncio

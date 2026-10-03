@@ -1435,6 +1435,11 @@ async def test_polish(request: Request) -> dict[str, Any]:
     sample = (
         _POLISH_PRECISION_SAMPLE if precision_enabled(cfg) else _POLISH_SAMPLE
     )
+    sample_language = "en"
+    if translate_to == "en":
+        # Exercise an actual language change, even for the default target.
+        sample = "Bitte sende den Bericht morgen um 10 Uhr an das Team."  # i18n-allow
+        sample_language = "de"
 
     pipeline = _pipeline()
     terms: tuple[str, ...] = ()
@@ -1450,7 +1455,6 @@ async def test_polish(request: Request) -> dict[str, Any]:
     # sentence is a sentence, not a task, and rewriting it into a brief would
     # show the user a prompt about shipping a report.
     from jarvis.dictation.prompt_mode import (
-        STATUS_PROMPTED,
         compose_prompt,
         prompt_mode_enabled,
     )
@@ -1461,18 +1465,17 @@ async def test_polish(request: Request) -> dict[str, Any]:
         result = await compose_prompt(
             _PROMPT_MODE_SAMPLE, cfg=cfg, protected_terms=terms, language="en"
         )
-        if result.status == STATUS_PROMPTED or not (polish_enabled(cfg) or translate_to):
-            return {
-                "status": result.status,
-                "provider": result.provider,
-                "model": result.model,
-                "latency_ms": result.latency_ms,
-                "reason": result.reason,
-                "sample_in": _PROMPT_MODE_SAMPLE,
-                "sample_out": result.text,
-            }
-        # Fell through, as a live dictation would: report the pass that
-        # actually delivered, on the sample that pass is tuned for.
+        # This button diagnoses the selected feature. A successful cleanup
+        # must not conceal a failed prompt rewrite behind a different sample.
+        return {
+            "status": result.status,
+            "provider": result.provider,
+            "model": result.model,
+            "latency_ms": result.latency_ms,
+            "reason": result.reason,
+            "sample_in": _PROMPT_MODE_SAMPLE,
+            "sample_out": result.text,
+        }
 
     if not polish_enabled(cfg) and not translate_to:
         # Reported rather than refused: "you switched it off" is a complete
@@ -1490,7 +1493,7 @@ async def test_polish(request: Request) -> dict[str, Any]:
 
     result = await polish_transcript(
         sample,
-        language="en",
+        language=sample_language,
         cfg=cfg,
         protected_terms=terms,
         style=str(getattr(cfg, "polish_style", "neutral") or "neutral"),

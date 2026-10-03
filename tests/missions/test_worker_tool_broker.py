@@ -161,6 +161,26 @@ async def test_binding_is_filtered_and_executes_only_through_supervisor() -> Non
     assert len(executor.calls) == 1
 
 
+async def test_cold_server_start_does_not_expire_a_new_worker_grant(monkeypatch) -> None:
+    from jarvis.missions.workers import worker_tool_broker as broker_module
+
+    _wire_manager(_Executor())
+    now = [100.0]
+    monkeypatch.setattr(broker_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    def slow_start():
+        now[0] += 60.0
+        return SimpleNamespace(server_address=("127.0.0.1", 12345))
+
+    monkeypatch.setattr(_BROKER, "_ensure_server", slow_start)
+    binding = _inventory().bind_broker(ttl_s=30)
+    assert binding is not None and "github/list_issues" in binding.tool_names
+    now[0] += 29
+    assert "github/list_issues" in binding.tool_names
+    now[0] += 1
+    assert binding.tool_names == ()
+
+
 @pytest.mark.parametrize(
     "name",
     (

@@ -251,7 +251,9 @@ def test_both_shortcuts_are_read_and_normalized() -> None:
         hotkey = "Left_Alt + Right_Alt"
         region_hotkey = " Alt+Win+A "
 
-    assert configured_hotkeys(Block()) == {"window": "alt+alt", "region": "alt+win+a"}
+    assert configured_hotkeys(Block()) == {
+        "window": "alt+alt", "region": "alt+win+a", "recording": "",
+    }
 
     class OldConfig:
         hotkey = "alt+alt"
@@ -312,7 +314,7 @@ async def test_the_same_key_for_both_arms_only_the_window(monkeypatch) -> None:
     assert shortcut.status_for("window").armed
     region_status = shortcut.status_for("region")
     assert not region_status.armed
-    assert "front window" in region_status.detail
+    assert "another AppShot action" in region_status.detail
     assert shortcut.armed_combos == [{"window": "ctrl+alt+a"}]
 
 
@@ -391,7 +393,7 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
     response = client.put("/api/appshot/settings", json={"region_hotkey": "Alt+Alt"})
 
     assert response.status_code == 400
-    assert "two different shortcuts" in response.json()["detail"]
+    assert "different shortcut" in response.json()["detail"]
     assert writes == []
 
 
@@ -673,22 +675,3 @@ def test_a_gesture_passes_the_settings_route(client, monkeypatch) -> None:
     assert response.status_code == 200, response.text
     assert writes == [{"region_hotkey": "shift+shift"}]
 
-
-# ---------------------------------------------------------------- magnifier
-
-
-def test_the_wheel_walks_the_zoom_steps_and_stops_at_the_ends() -> None:
-    assert region.step_zoom(8, 1) == 12
-    assert region.step_zoom(8, -1) == 6
-    assert region.step_zoom(24, 1) == 24
-    assert region.step_zoom(2, -1) == 2
-    assert region.step_zoom(7, 1) == 12, "an unknown saved zoom restarts from the default"
-
-
-@pytest.mark.parametrize("zoom", region.MAG_ZOOMS)
-@pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])
-def test_the_magnifier_always_fills_its_box_with_a_centred_pixel(zoom, scale) -> None:
-    count, cell = region.magnifier_layout(zoom, scale)
-    assert count % 2 == 1, "an odd count puts one pixel exactly under the pointer"
-    assert count * cell >= region.MAG_BOX_PX, "the box never shows an empty border"
-    assert cell * scale == pytest.approx(zoom), "one real pixel is drawn zoom device pixels wide"

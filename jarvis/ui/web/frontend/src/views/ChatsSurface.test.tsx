@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { ChatsSurface } from "@/views/ChatsSurface";
 import { useHomeStore } from "@/store/home";
 import { readHomeSurface } from "@/lib/homeSurface";
+import { useEventStore } from "@/store/events";
 
 /**
  * The front page is ONE chat with a voice mode inside it (2026-10-01). What
@@ -32,6 +33,7 @@ describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
     window.localStorage.clear();
     useHomeStore.setState({ surface: readHomeSurface(), agentChatId: null });
+    useEventStore.setState({ activeSection: "chats", voiceState: "idle" });
   });
 
   afterEach(cleanup);
@@ -53,6 +55,34 @@ describe("ChatsSurface (the front page)", () => {
     expect(screen.queryByTestId("voice")).toBeNull();
     expect(screen.queryByTestId("voice-mode-exit")).toBeNull();
     expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("chat");
+  });
+
+  it("shows voice mode when a wake-word call starts without a composer click", async () => {
+    render(<ChatsSurface />);
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+    act(() => useHomeStore.getState().ingest("VoiceSessionStarted", {
+      session_id: "wake-call", wake_keyword: "jarvis",
+    }, 1));
+    expect(screen.getByTestId("voice")).toBeTruthy();
+    expect(screen.queryByTestId("chat")).toBeNull();
+    expect(screen.getByTestId("home-view").getAttribute("data-surface")).toBe("voice");
+    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("voice");
+
+    // Returning to typing stays explicit; normal voice updates cannot undo it.
+    fireEvent.click(screen.getByTestId("voice-mode-exit"));
+    act(() => useHomeStore.getState().ingest("SystemStateChanged", {
+      previous: "LISTENING", new_state: "THINKING",
+    }, 2));
+    expect(await screen.findByTestId("chat")).toBeTruthy();
+  });
+
+  it("keeps an agent's chat open when Jarvis starts speaking", async () => {
+    useHomeStore.getState().openAgentChat("agent-7");
+    render(<ChatsSurface />);
+    expect(await screen.findByTestId("agent-chat")).toBeTruthy();
+    act(() => useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "call" }, 1));
+    expect(screen.getByTestId("agent-chat").textContent).toBe("agent-7");
+    expect(useHomeStore.getState().surface).toBe("chat");
   });
 
   it("ignores the retired Voice | Chat switch's stored choice", async () => {

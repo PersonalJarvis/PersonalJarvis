@@ -39,15 +39,15 @@ describe("ApiKeysView model selection", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><ApiKeysView /></QueryClientProvider>);
 
-    expect(screen.getByRole("tab", { name: /^brain$/i })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /^realtime$/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /computer.use|tool model/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /^realtime$/i }));
 
     expect(screen.getByRole("tab", { name: /^realtime$/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /computer.use|tool model/i })).toBeNull();
     expect(screen.queryByTestId("recommended-setup-panel")).toBeNull();
-    expect(setVoiceMode).toHaveBeenCalledWith("realtime");
+    expect(setVoiceMode).not.toHaveBeenCalled();
     client.clear();
   });
 });

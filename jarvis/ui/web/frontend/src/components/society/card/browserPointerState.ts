@@ -1,5 +1,6 @@
 /** Mouse position reported by the agent browser, in the page's own pixels. */
 export interface BrowserPointerState {
+  native_window?: boolean;
   x: number;
   y: number;
   width: number;

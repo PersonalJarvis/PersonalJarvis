@@ -15,6 +15,7 @@ from .session import (
     account_home,
     agent_argv,
     resolve_account,
+    sanitize_prompt,
 )
 
 
@@ -146,6 +147,24 @@ class CodingSessionControl:
                 raise SessionError(
                     "The coding terminal has stopped. Inspect it before opening another."
                 )
+            from jarvis.core.image_references import ImageReferenceError, get_store
+
+            from .visual_handoff import prepare
+
+            image_location = (term.cwd(owner.folder), term.computer_id, term.remote_folder)
+            try:
+                images = get_store().resolve(
+                    str(args.get("_image_scope") or ""), args.get("image_refs", []),
+                )
+                image_brief, attachments, image_receipts = await prepare(owner, term, images)
+            except ImageReferenceError as exc:
+                raise SessionError(str(exc)) from exc
+            composed = str(args["prompt"]) + image_brief
+            sanitized = sanitize_prompt(composed, keep_newlines=True)
+            if any(row["path"] not in sanitized for row in image_receipts):
+                raise SessionError(
+                    "The task would truncate an image reference; shorten it and retry."
+                )
             if not term.pty_id:
                 await self._start(owner, term)
             if action == "respond" and not args.get("input_token"):
@@ -154,9 +173,11 @@ class CodingSessionControl:
 
             term = await self.registry.send_prompt(
                 identity,
-                str(args["prompt"]),
+                composed,
                 workspace_id=workspace,
                 typed=str(args["prompt"]),
+                attachments=attachments,
+                expected_location=image_location if images else None,
                 require_idle=action != "respond",
                 expected_input=str(args.get("input_token") or "") if action == "respond" else "",
                 allow_question=action == "respond" and args.get("response_mode") == "dialog",
@@ -167,8 +188,10 @@ class CodingSessionControl:
                 "submitted": term.submitted,
                 "delivery": "accepted"
                 if term.submitted is True
-                else ("not_accepted" if term.submitted is False else "uncertain"),
+                else "uncertain",
+                "input_written": True,
                 "completed": False,
+                "images": image_receipts,
                 "retry": "Do not resend automatically. Read context and inspect delivery first.",
             }
         if action not in ("context", "observe"):

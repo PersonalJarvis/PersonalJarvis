@@ -1,5 +1,5 @@
 /**
- * Starter plans ("one key and you are done") and the readiness note.
+ * Starter plans and setup readiness.
  *
  * A plan is data from the backend catalog: a voice mode plus one provider per
  * surface, all on one or two key families. Applying it means calling the
@@ -71,10 +71,6 @@ export async function getReadiness(refresh = false): Promise<ReadinessResponse> 
   );
 }
 
-export async function markReadyCelebrated(): Promise<void> {
-  await json(await fetch("/api/setup/readiness/celebrated", { method: "POST" }));
-}
-
 /** Surfaces in the order a plan is applied; the voice mode goes last. */
 const APPLY_ORDER = ["brain", "computer-use", "subagent", "tts", "stt", "realtime"] as const;
 
@@ -86,8 +82,8 @@ export interface ApplyPlanOutcome {
 
 /**
  * Point every surface of the plan at its provider, then pin the voice mode.
- * One surface failing does not stop the others — the readiness note only
- * appears once everything answers, so a partial apply stays visible.
+ * One surface failing does not stop the others. The outcome records each
+ * failure so callers can report a partially applied plan.
  */
 export async function applyStarterPlan(plan: StarterPlan): Promise<ApplyPlanOutcome> {
   const out: ApplyPlanOutcome = { applied: [], failed: [], modeSet: false };

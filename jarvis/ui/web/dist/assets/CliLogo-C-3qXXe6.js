@@ -1,0 +1,21 @@
+import{y as i,e0 as v,e1 as k,j as a,g as _,e2 as b,e3 as p,e4 as m,e5 as h,e6 as y,e7 as u,e8 as f,e9 as x,ea as j,eb as M,ec as w,ed as C,ee as z,ef as L,eg as G,eh as R,ei as B,ej as V,ek as N,el as O,em as A,dH as n,en as D}from"./index-CZdyq8RO.js";import{C as E}from"./credit-card-BduXenlO.js";import{G as H}from"./git-branch-vEoi3Bjd.js";/**
+ * @license lucide-react v0.445.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const I=i("Boxes",[["path",{d:"M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z",key:"lc1i9w"}],["path",{d:"m7 16.5-4.74-2.85",key:"1o9zyk"}],["path",{d:"m7 16.5 5-3",key:"va8pkn"}],["path",{d:"M7 16.5v5.17",key:"jnp8gn"}],["path",{d:"M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z",key:"8zsnat"}],["path",{d:"m17 16.5-5-3",key:"8arw3v"}],["path",{d:"m17 16.5 4.74-2.85",key:"8rfmw"}],["path",{d:"M17 16.5v5.17",key:"k6z78m"}],["path",{d:"M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z",key:"1xygjf"}],["path",{d:"M12 8 7.26 5.15",key:"1vbdud"}],["path",{d:"m12 8 4.74-2.85",key:"3rx089"}],["path",{d:"M12 13.5V8",key:"1io7kd"}]]);/**
+ * @license lucide-react v0.445.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const S=i("Briefcase",[["path",{d:"M16 20V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16",key:"jecpp"}],["rect",{width:"20",height:"14",x:"2",y:"6",rx:"2",key:"i6l2r4"}]]);/**
+ * @license lucide-react v0.445.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const W=i("Cloud",[["path",{d:"M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z",key:"p7xjir"}]]);/**
+ * @license lucide-react v0.445.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */const Z=i("Rocket",[["path",{d:"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z",key:"m3kijz"}],["path",{d:"m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z",key:"1fmvmk"}],["path",{d:"M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0",key:"1f8sc4"}],["path",{d:"M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5",key:"qeys4"}]]),$={cloud:W,paas:Z,baas:D,git:H,payments:E,container:I,workspace:S,self:n,other:n},P=Object.assign({"../../assets/clis/aws.svg":A,"../../assets/clis/azure.svg":O,"../../assets/clis/cloudflare.svg":N,"../../assets/clis/docker.svg":V,"../../assets/clis/firebase.svg":B,"../../assets/clis/fly.svg":R,"../../assets/clis/github.svg":G,"../../assets/clis/gitlab.svg":L,"../../assets/clis/google-cloud.svg":z,"../../assets/clis/google.svg":C,"../../assets/clis/heroku.svg":w,"../../assets/clis/kubernetes.svg":M,"../../assets/clis/neon.svg":j,"../../assets/clis/netlify.svg":x,"../../assets/clis/planetscale.svg":f,"../../assets/clis/railway.svg":u,"../../assets/clis/render.svg":y,"../../assets/clis/stripe.svg":h,"../../assets/clis/supabase.svg":m,"../../assets/clis/twilio.svg":p,"../../assets/clis/vercel.svg":b});function T({category:t,className:o}){const l=$[t]??n;return a.jsx(l,{className:o})}function F({cliName:t,category:o,className:l,size:g="md"}){const c=v(t),s=c?k[c]:void 0,e=s?P[`../../assets/clis/${s.file}`]:void 0,d={sm:"h-7 w-7 rounded-md",md:"h-9 w-9 rounded-lg",lg:"h-12 w-12 rounded-xl"}[g],r={sm:"h-4 w-4",md:"h-5 w-5",lg:"h-7 w-7"}[g];return a.jsx("span",{"aria-hidden":"true","data-testid":`cli-logo-${t}`,"data-vendor":c??void 0,className:_("inline-flex shrink-0 items-center justify-center overflow-hidden border border-border bg-background",d,l),children:e&&(s==null?void 0:s.render)==="mono"?a.jsx("span",{className:_("block bg-foreground/85",r),style:{WebkitMaskImage:`url("${e}")`,maskImage:`url("${e}")`,WebkitMaskRepeat:"no-repeat",maskRepeat:"no-repeat",WebkitMaskPosition:"center",maskPosition:"center",WebkitMaskSize:"contain",maskSize:"contain"}}):e?a.jsx("img",{src:e,alt:"",className:_("block object-contain",r)}):a.jsx(T,{category:o,className:_("text-muted-foreground",r)})})}export{F as C};

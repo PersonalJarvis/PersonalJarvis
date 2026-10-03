@@ -81,7 +81,10 @@ async def test_cancel_during_shutdown_command_reaps_owned_process():
         await asyncio.gather(closing, *session.readers, return_exceptions=True)
 
 
-async def test_server_deadline_reaps_live_and_one_shot_browser_children(tmp_path):
+async def test_server_deadline_reaps_live_and_one_shot_browser_children(tmp_path, monkeypatch):
+    from jarvis.ui.web import server as server_module
+
+    monkeypatch.setattr(server_module, "_SOCIETY_SHUTDOWN_TIMEOUT_S", 0.1)
     runtime = SocietyRuntime(tmp_path)
     await runtime.ensure_started()
     server, cleaned = society_shutdown_server(runtime)
@@ -92,8 +95,8 @@ async def test_server_deadline_reaps_live_and_one_shot_browser_children(tmp_path
         runtime.browser.live.sessions[session.agent_id] = session
         job = await owned_child()
         runtime.browser._procs["one-shot"] = job
-        # The child acknowledges shutdown but never exits voluntarily. Exercise
-        # the production five-second server deadline, not a replaced close call.
+        # The child acknowledges shutdown but never exits voluntarily. Shorten
+        # only the outer deadline, preserving every production cleanup owner.
         with pytest.raises(RuntimeError, match="society_runtime_shutdown_incomplete"):
             await asyncio.wait_for(server.stop(), timeout=10)
         assert session.proc.returncode is not None and job.returncode is not None
@@ -109,6 +112,54 @@ async def test_server_deadline_reaps_live_and_one_shot_browser_children(tmp_path
             await reap(session.proc)
         if job is not None:
             await reap(job)
+        await runtime.close()
+
+
+async def test_slow_healthy_login_flush_survives_server_and_session_budgets(tmp_path):
+    marker = tmp_path / "profile-flushed"
+    script = """
+import json
+import sys
+import time
+from pathlib import Path
+print('READY', flush=True)
+for line in sys.stdin:
+    message = json.loads(line)
+    time.sleep(1.5)
+    print(json.dumps({'kind': 'response', 'id': message['id'], 'ok': True}), flush=True)
+    time.sleep(7.75)
+    Path(sys.argv[1]).write_text('flushed', encoding='utf-8')
+    break
+"""
+    runtime = SocietyRuntime(tmp_path / "runtime")
+    await runtime.ensure_started()
+    server, _cleaned = society_shutdown_server(runtime)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-u", "-c", script, str(marker),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    session = LiveSession("login-flush", proc, RecordingProcessTree())
+    session.login_guard = True
+    session.state = {"login_mode": True}
+    try:
+        assert (await asyncio.wait_for(proc.stdout.readline(), timeout=3)).strip() == b"READY"
+        session.readers = [
+            asyncio.create_task(session.read()),
+            asyncio.create_task(session.drain_stderr()),
+        ]
+        runtime.browser.live.sessions[session.agent_id] = session
+        # A delayed acknowledgement plus a valid sub-eight-second profile flush
+        # exceeded both the old five-second server and nine-second owner caps.
+        await asyncio.wait_for(server.stop(), timeout=15)
+        assert proc.returncode == 0
+        assert marker.read_text(encoding="utf-8") == "flushed"
+        assert not runtime.browser.live.sessions
+        assert all(task.done() for task in session.readers)
+    finally:
+        await reap(proc)
         await runtime.close()
 
 

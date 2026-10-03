@@ -1,200 +1,92 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  Bot,
-  Brain,
-  KeyRound,
-  Mic,
-  Phone,
-  Radio,
-  SlidersHorizontal,
-  Volume2,
-  Wand2,
-} from "lucide-react";
-import { ViewHeader } from "@/views/ChatsView";
+import { useEffect, useState } from "react";
+import { Bot, KeyRound, Phone, Radio, SlidersHorizontal } from "lucide-react";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { JarvisAgentSection } from "@/components/JarvisAgentSection";
-import { VoiceProviderSettings } from "@/components/providers/VoiceProviderSettings";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
-// The provider-card machinery lives in its own module so the voice section's
-// "API Keys" tab renders the very same subtree (scoped to the `stt` tier)
-// instead of forking a second implementation.
-import {
-  CategoryHero,
-  EngineModeSwitch,
-  LocalModeSwitch,
-  makeProviderCategories,
-  ProviderCategory,
-  useTierHealth,
-  type LucideIcon,
-  type VoiceEngineMode,
-} from "@/components/providers/ProviderTierSection";
-import {
-  type ProviderTier,
-  type SectionHealth,
-  useProviders,
-} from "@/hooks/useProviders";
-import { useVoiceMode } from "@/hooks/useVoiceMode";
-import { useLocalMode } from "@/lib/localMode";
+import { RealtimeTab } from "@/views/apikeys/RealtimeTab";
+import { useTierHealth, type LucideIcon } from "@/components/providers/ProviderTierSection";
+import { type SectionHealth, useProviders } from "@/hooks/useProviders";
 import {
   APIKEYS_TAB_EVENT,
+  API_KEYS_TABS,
+  type ApiKeysTab,
   clearApiKeysTabRequest,
   requestedApiKeysTab,
 } from "@/lib/apiKeysTab";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
-// Voice owns its thinking backend. Text and background work use the Agents selection.
-type CategoryKey =
-  | Exclude<ProviderTier, "computer-use">
-  | "subagents"
-  | "jarvis-key"
-  | "advanced";
+/** A tab another part of the app asked for, or the page's first tab. */
+function resolveTab(wanted: string | null): ApiKeysTab {
+  return API_KEYS_TABS.includes(wanted as ApiKeysTab) ? (wanted as ApiKeysTab) : "realtime";
+}
 
-const PIPELINE_TABS: CategoryKey[] = [
-  "brain",
-  "tts",
-  "stt",
-  "dictation",
-  "subagents",
-  "jarvis-key",
-  "advanced",
-];
-const REALTIME_TABS: CategoryKey[] = [
-  "realtime",
-  "subagents",
-  "jarvis-key",
-  "advanced",
-];
-
+/**
+ * API Keys — the realtime voice, the agents, the install's own key and the
+ * optional integrations, one tab each.
+ *
+ * Realtime is the only voice engine this page sets up. The Pipeline|Realtime
+ * switch, the Brain / Voice Output / Voice Input / Wording tabs and the Local
+ * Mode toggle are gone: speech-to-text and the dictation wording pass are
+ * configured in the voice section, where dictation lives.
+ */
 export function ApiKeysView() {
   const t = useT();
-  const { providers, loading, error, refetch, setActiveOptimistic } =
-    useProviders();
-  // Per-tab health (amber = the active provider isn't set up, red = it's set up
-  // but failing a live check). Best-effort and off the render-blocking path.
+  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
+  // Per-tab health (amber = still to set up, red = set up but failing a live
+  // check), re-bound to the provider that is actually active.
   const health = useTierHealth(providers);
-  const categories = makeProviderCategories(t);
-  const [active, setActive] = useState<CategoryKey>("brain");
-  const [engineMode, setEngineMode] = useState<VoiceEngineMode>("pipeline");
-  // The LIVE `[voice].mode` (+ cross-family availability) for the "Active"
-  // badge AND for gating the segment's own persistence (Feature A). See
-  // VoiceEngineMode / EngineModeSwitch in the provider module.
-  const {
-    mode: liveMode,
-    realtimeAvailable,
-    setMode: setVoiceMode,
-    isLoading: liveModeLoading,
-  } = useVoiceMode();
-  // Show only providers that run on the user's own hardware. A per-machine view
-  // preference (localStorage), deliberately NOT a config switch: it hides cards,
-  // it never changes what the app runs on. See lib/localMode.ts.
-  const { localMode, setLocalMode } = useLocalMode();
+  const [active, setActive] = useState<ApiKeysTab>(() => resolveTab(requestedApiKeysTab()));
 
-  // Reset the selected tab to the mode's first tab whenever the mode changes,
-  // so switching Pipeline→Realtime never leaves `active` pointing at a tab
-  // that no longer exists in the new mode (e.g. "tts").
-  // A tab another part of the app asked for (the first-run guide) wins over
-  // the mode's first tab while it is still in force.
-  useEffect(() => {
-    const tabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
-    const wanted = requestedApiKeysTab() as CategoryKey | null;
-    setActive(wanted && tabs.includes(wanted) ? wanted : tabs[0]);
-  }, [engineMode]);
-
+  // The first-run guide may ask for a tab after the page mounted (it loads
+  // lazily); a request stays in force until the user picks a tab themselves.
   useEffect(() => {
     const onRequest = (event: Event) => {
-      const wanted = (event as CustomEvent<string | null>).detail as CategoryKey | null;
-      const tabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
-      setActive(wanted && tabs.includes(wanted) ? wanted : tabs[0]);
+      setActive(resolveTab((event as CustomEvent<string | null>).detail));
     };
     window.addEventListener(APIKEYS_TAB_EVENT, onRequest);
     return () => window.removeEventListener(APIKEYS_TAB_EVENT, onRequest);
-  }, [engineMode]);
+  }, []);
 
-  const selectTab = (key: CategoryKey) => {
+  const selectTab = (key: ApiKeysTab) => {
     clearApiKeysTabRequest();
     setActive(key);
   };
 
-  // Open the view on the engine that is actually LIVE (once, when the mode
-  // query resolves) — a user whose voice runs on Realtime should not land on
-  // the Pipeline tab set. Later live-mode changes never yank the view.
-  const viewSyncedToLive = useRef(false);
-  useEffect(() => {
-    if (viewSyncedToLive.current || liveModeLoading) return;
-    viewSyncedToLive.current = true;
-    setEngineMode(liveMode === "realtime" ? "realtime" : "pipeline");
-  }, [liveMode, liveModeLoading]);
-
-  const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
-
   return (
     <div className="flex h-full min-h-0 flex-col" data-tour="apikeys-page">
-      <ViewHeader
-        icon={<KeyRound className="h-4 w-4 text-muted-foreground" />}
-        title={t("apikeys_view.title")}
-        subtitle={t("apikeys_view.subtitle")}
-        right={
-          <div className="flex items-center gap-3">
-            <LocalModeSwitch enabled={localMode} onToggle={setLocalMode} />
-            <EngineModeSwitch
-              mode={engineMode}
-              liveMode={liveMode}
-              realtimeAvailable={realtimeAvailable}
-              onSelect={setEngineMode}
-              onSetVoiceMode={setVoiceMode}
-            />
-          </div>
-        }
-      />
-
-      <CategoryTabs
-        active={active}
-        onSelect={selectTab}
-        health={health}
-        tabs={modeTabs}
-      />
+      <div className="shrink-0 px-8">
+        <PageHeader
+          icon={<KeyRound />}
+          title={t("apikeys_view.title")}
+          description={t("apikeys_view.subtitle")}
+          tabs={<CategoryTabs active={active} onSelect={selectTab} health={health} />}
+        />
+      </div>
 
       <div
         data-testid="api-keys-provider-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-6 py-3"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-6"
       >
-        {/* Use the available desktop width while keeping forms at a readable
-            measure. The key re-runs the rise animation on tab/mode changes. */}
+        {/* The key re-runs the rise animation on a tab change. */}
         <div
-          key={`${engineMode}-${active}`}
-          className="profile-rise mx-auto w-full max-w-[1440px]"
+          key={active}
+          role="tabpanel"
+          id="apikeys-panel"
+          aria-labelledby={`apikeys-tab-${active}`}
+          className="profile-rise mx-auto w-full max-w-page"
         >
-          {(active === "brain" ||
-            active === "tts" ||
-            active === "stt" ||
-            active === "dictation") && (
-            <ProviderCategory
-              meta={categories[active]}
-              tier={active}
-              providers={providers}
-              loading={loading}
-              error={error}
-              onChanged={refetch}
-              onActivateOptimistic={setActiveOptimistic}
-              health={health[active]}
-              localMode={localMode}
-              onDisableLocalMode={() => setLocalMode(false)}
-              wideGrid
-            />
-          )}
           {active === "realtime" && (
-            <VoiceProviderSettings
+            <RealtimeTab
               providers={providers}
               loading={loading}
               error={error}
               onChanged={refetch}
               onActivateOptimistic={setActiveOptimistic}
               health={health.realtime}
-              localMode={localMode}
-              onDisableLocalMode={() => setLocalMode(false)}
             />
           )}
           {active === "subagents" && <SubagentCategory />}
@@ -207,109 +99,65 @@ export function ApiKeysView() {
 }
 
 /**
- * The segmented category navigation. The four core categories are grouped in one
- * pill container; the de-emphasized "Advanced" tab is set apart by a divider and
- * neutral (non-gold) styling so it reads as secondary, never competing with the
- * four primary categories.
+ * Underline tabs on the header's rule, in the shared tab-bar look. A tab whose
+ * section needs attention swaps its icon for a status dot: red for "set up but
+ * not working", amber for "still to set up". Healthy tabs stay silent, so a
+ * dot always means "look here".
  */
 function CategoryTabs({
   active,
   onSelect,
   health,
-  tabs,
 }: {
-  active: CategoryKey;
-  onSelect: (key: CategoryKey) => void;
-  /** Per-tab health rollup keyed by category; absent keys render no dot. */
+  active: ApiKeysTab;
+  onSelect: (key: ApiKeysTab) => void;
+  /** Per-tab health rollup keyed by tab; absent keys render no dot. */
   health: Record<string, SectionHealth>;
-  /** The mode-derived tab list (PIPELINE_TABS / REALTIME_TABS) — "advanced",
-   *  if present, is rendered separately (de-emphasized, past a divider). */
-  tabs: CategoryKey[];
 }) {
   const t = useT();
-  type CoreTab = Exclude<CategoryKey, "advanced" | "jarvis-key">;
-  const tabMeta: Record<CoreTab, { label: string; icon: LucideIcon }> = {
-    brain: { label: t("apikeys_view.tab_brain"), icon: Brain },
-    tts: { label: t("apikeys_view.tab_tts"), icon: Volume2 },
-    stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
+  const meta: Record<ApiKeysTab, { label: string; icon: LucideIcon }> = {
     realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
-    dictation: { label: t("apikeys_view.tab_dictation"), icon: Wand2 },
     subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
+    "jarvis-key": { label: t("apikeys_view.tab_jarvis_key"), icon: KeyRound },
+    advanced: { label: t("apikeys_view.tab_advanced"), icon: SlidersHorizontal },
   };
-  const coreTabs = tabs.filter(
-    (key): key is CoreTab => key !== "advanced" && key !== "jarvis-key",
-  );
-  const showJarvisKey = tabs.includes("jarvis-key");
-  const showAdvanced = tabs.includes("advanced");
   return (
     <div
+      role="tablist"
       data-testid="api-keys-category-tabs"
-      className="shrink-0 overflow-x-auto border-b border-border px-6 scrollbar-jarvis"
+      className="flex items-center gap-6 overflow-x-auto border-b border-border scrollbar-jarvis"
     >
-      {/* Underline tabs on the header's own rule — no pill group inside a
-          frame inside a bar. The core tabs and the two secondary ones share
-          one baseline; a hairline separates them. */}
-      <div
-        role="tablist"
-        className="flex min-w-max flex-nowrap items-center gap-1"
-      >
-        {coreTabs.map((key) => (
-          <TabButton
-            key={key}
-            icon={tabMeta[key].icon}
-            label={tabMeta[key].label}
-            selected={active === key}
-            onClick={() => onSelect(key)}
-            health={health[key]}
-          />
-        ))}
-        {(showJarvisKey || showAdvanced) && (
-          <span
-            className="mx-2 hidden h-4 w-px bg-border sm:block"
-            aria-hidden="true"
-          />
-        )}
-        {showJarvisKey && (
-          <TabButton
-            icon={KeyRound}
-            label={t("apikeys_view.tab_jarvis_key")}
-            selected={active === "jarvis-key"}
-            onClick={() => onSelect("jarvis-key")}
-            health={health["jarvis-key"]}
-          />
-        )}
-        {showAdvanced && (
-          <TabButton
-            icon={SlidersHorizontal}
-            label={t("apikeys_view.tab_advanced")}
-            selected={active === "advanced"}
-            onClick={() => onSelect("advanced")}
-            health={health.advanced}
-          />
-        )}
-      </div>
+      {API_KEYS_TABS.map((key) => (
+        <TabButton
+          key={key}
+          id={`apikeys-tab-${key}`}
+          icon={meta[key].icon}
+          label={meta[key].label}
+          selected={active === key}
+          onClick={() => onSelect(key)}
+          health={health[key]}
+        />
+      ))}
     </div>
   );
 }
 
 function TabButton({
+  id,
   icon: Icon,
   label,
   selected,
   onClick,
   health,
 }: {
+  id: string;
   icon: LucideIcon;
   label: string;
   selected: boolean;
   onClick: () => void;
-  /** Optional health rollup driving the corner status dot. */
   health?: SectionHealth;
 }) {
   const t = useT();
-  // Only the two "needs attention" states draw a dot — amber for "still has to be
-  // set up", red for "set up but not working". `ok` / `unknown` stay silent so the
-  // tab bar is calm and a dot always means "look here".
   const indicator =
     health?.status === "error"
       ? "error"
@@ -323,35 +171,25 @@ function TabButton({
         ? t("apikeys_view.health_needs_setup")
         : "";
   // Tooltip: the plain-language status plus the backend's one-line detail
-  // (e.g. "Groq STT: key invalid"), so hovering explains exactly what's wrong.
-  const title = indicator
-    ? [statusLabel, health?.detail].filter(Boolean).join(" — ")
-    : undefined;
-
+  // (e.g. "OpenAI GPT-Live: out of credit"), so hovering says what is wrong.
+  const title = indicator ? [statusLabel, health?.detail].filter(Boolean).join(" — ") : undefined;
   return (
     <button
       type="button"
       role="tab"
+      id={id}
       aria-selected={selected}
+      aria-controls="apikeys-panel"
       onClick={onClick}
       title={title}
       className={cn(
-        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-meta font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        // The underline is an ACTIVE INDICATOR, which is one of the four jobs
-        // --primary is a fill for; the selected label rises to the ink ceiling
-        // beside it, so "you are here" is stated twice and neither statement
-        // is a colour the eye has to decode.
+        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 text-base font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         selected
-          ? "border-primary text-foreground-strong"
+          ? "border-accent text-foreground-strong"
           : "border-transparent text-muted-foreground hover:text-foreground",
       )}
     >
-      {/* The attention dot sits where the icon would, and it is the only hue
-          in the bar: fault red for "set up but broken", degraded amber for
-          "still to set up". "needs setup" used to be painted in --foreground,
-          which made a status the brightest mark on the bar and told the eye
-          nothing — a state is never ink. */}
       {indicator ? (
         <span
           aria-hidden="true"
@@ -361,7 +199,7 @@ function TabButton({
           )}
         />
       ) : (
-        <Icon className="h-4 w-4 opacity-80" />
+        <Icon aria-hidden="true" className="h-4 w-4 opacity-80" />
       )}
       {label}
       {indicator && <span className="sr-only">{` (${statusLabel})`}</span>}
@@ -369,17 +207,25 @@ function TabButton({
   );
 }
 
+/** The heading every non-voice tab opens with, in the settings-group grammar. */
+function TabIntro({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="mb-4 px-1">
+      <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
+      <p className="mt-0.5 text-base text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
 /**
- * The Subagents category — the heavy-task worker selection. `SubagentSection`
- * owns its own data source (/api/jarvis-agent/status) and card system; the hero band
- * just frames it consistently with the provider tiers.
+ * The agents tab — the heavy-task worker selection. `JarvisAgentSection` owns
+ * its own data source (/api/jarvis-agent/status) and rows.
  */
 function SubagentCategory() {
   const t = useT();
   return (
-    <div role="tabpanel">
-      <CategoryHero
-        icon={Bot}
+    <div>
+      <TabIntro
         title={t("apikeys_view.cat_subagents_title")}
         description={t("apikeys_view.cat_subagents_desc")}
       />
@@ -389,60 +235,38 @@ function SubagentCategory() {
 }
 
 /**
- * The dedicated "<Name> Key" category — the per-install Control Key that
- * unlocks the browser UI and authenticates local agents. The tab and hero are
- * named after the configured wake word via the i18n `{name}` token ("Hannes"
- * -> "Hannes Key"), so the section the lock screen points at carries the name
- * the user actually knows their assistant by.
+ * The "<Name> Key" tab — the per-install Control Key that unlocks the browser
+ * UI and authenticates local agents, named after the configured wake word via
+ * the i18n `{name}` token, so the tab the lock screen points at carries the
+ * name the user knows their assistant by.
  */
 function JarvisKeyCategory() {
   const t = useT();
   return (
-    <div role="tabpanel">
-      <CategoryHero
-        icon={KeyRound}
-        title={t("apikeys_view.jarvis_key_title")}
-        description={t("apikeys_view.jarvis_key_desc")}
-      />
-      <div className="space-y-4">
-        <JarvisApiGroup />
-      </div>
+    <div>
+      <TabIntro title={t("apikeys_view.jarvis_key_title")} description={t("apikeys_view.jarvis_key_desc")} />
+      <JarvisApiGroup />
     </div>
   );
 }
 
 /**
- * The de-emphasized "Advanced" category — everything that is NOT one of the four
- * core provider categories: the team key proxy, telephony, and the
- * knowledge-Wiki provider. Each block keeps its own labelled sub-section
- * header, so the zone reads as a clearly separated list of optional
- * integrations rather than competing with the four primary categories.
+ * Optional integrations: the team key proxy, telephony and the knowledge-Wiki
+ * provider. Each block keeps its own labelled header.
  */
 function AdvancedCategory() {
   const t = useT();
   return (
-    <div role="tabpanel">
-      <CategoryHero
-        icon={SlidersHorizontal}
-        title={t("apikeys_view.advanced_title")}
-        description={t("apikeys_view.advanced_desc")}
-      />
+    <div>
+      <TabIntro title={t("apikeys_view.advanced_title")} description={t("apikeys_view.advanced_desc")} />
       <div className="space-y-4">
-        {/* Team key proxy — credential / key-routing management, so it lives
-            with the provider keys rather than in the behaviour-focused
-            Settings view. */}
         <TeamProxyGroup />
-        {/* Telephony — the former standalone screen, embedded as a section (own
-            data source /api/telephony/*). */}
         <TelephonySection />
-        {/* Wiki — dedicated long-term-memory curator provider/model. Own data
-            source (/api/settings/wiki-provider). */}
         <WikiProviderCard />
-        {/* Nominative-use trademark notice: provider/integration names and logos
-            belong to their owners and are shown only to identify what you connect
-            to. Backs the third-party logos used on plugin cards (see
-            TRADEMARK.md). */}
-        <p className="pt-2 text-micro text-muted-foreground">
+        {/* Nominative-use trademark notice: provider and integration names and
+            logos belong to their owners and only identify what you connect to
+            (see TRADEMARK.md). */}
+        <p className="pt-2 text-sm text-muted-foreground">
           {t("apikeys_view.trademark_notice")}
         </p>
       </div>
@@ -451,20 +275,16 @@ function AdvancedCategory() {
 }
 
 /**
- * Telephony tier section. Visually a sibling of the brain/tts/stt/subagent
- * tiers: the same uppercase tier header (Phone icon + label) above the embedded
- * `TelephonyPanel`, which carries the status / credentials / calls cards in the
- * shared `card-outline` style. The heavier setup scripts + guide moved to the
- * dedicated TelephonySetupView (reached via the panel's "Setup script" button)
- * to keep this section compact. Its own data source (`/api/telephony/*`) is
- * owned by the panel, so this stays a thin wrapper.
+ * Telephony: a labelled header above the embedded `TelephonyPanel`, which owns
+ * its data source (`/api/telephony/*`); the setup scripts and guide live on the
+ * dedicated TelephonySetupView, reached through the panel's "Setup script".
  */
 function TelephonySection() {
   const t = useT();
   return (
     <section>
-      <h3 className="mb-3 inline-flex items-center gap-2 text-micro text-muted-foreground">
-        <Phone className="h-3.5 w-3.5" /> {t("apikeys_view.tier_telephony")}
+      <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+        <Phone aria-hidden="true" className="h-4 w-4" /> {t("apikeys_view.tier_telephony")}
       </h3>
       <TelephonyPanel />
     </section>

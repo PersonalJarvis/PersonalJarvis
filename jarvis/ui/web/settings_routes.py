@@ -3649,6 +3649,31 @@ def put_silence_window(body: SilenceWindowBody, request: Request) -> dict[str, o
 _TTS_VOLUME_DEFAULT = 1.0
 
 
+def _speaker_pipeline(request: Request):
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is None:
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+    if not callable(getattr(pipeline, "speaker_output_state", None)):
+        raise HTTPException(status_code=503, detail="Voice output is not ready.")
+    return pipeline
+
+
+@router.get("/speaker-mute", summary="Read the assistant speaker mute and volume")
+def get_speaker_mute(request: Request) -> dict[str, object]:
+    return _speaker_pipeline(request).speaker_output_state()
+
+
+@router.post(
+    "/speaker-mute", summary="Toggle assistant output; keep microphone and volume unchanged",
+)
+def toggle_speaker_mute(request: Request) -> dict[str, object]:
+    pipeline = _speaker_pipeline(request)
+    pipeline.toggle_speaker_mute(source="web")
+    return pipeline.speaker_output_state()
+
+
 class TtsVolumeBody(BaseModel):
     volume: float = Field(..., ge=0.0, le=1.0)
     persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")

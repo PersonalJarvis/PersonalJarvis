@@ -424,6 +424,7 @@ def test_host_death_triggers_respawn_and_reapplies_desired_state(
 
     surface.show("speak")
     surface.set_muted(True)
+    surface.set_speaker_muted(True)
     surface.set_level(0.6)
     proc._returncode = 1  # the host died
     surface.set_level(0.9)  # a call against the dead proc triggers detection
@@ -442,10 +443,11 @@ def test_host_death_triggers_respawn_and_reapplies_desired_state(
         "follow_cursor_monitor": True,
     }
     # Last known state (shown in "speak", muted, last level 0.9) re-applied.
-    assert [m["op"] for m in sent[1:]] == ["show", "set_muted", "set_level"]
+    assert [m["op"] for m in sent[1:]] == ["show", "set_muted", "set_speaker_muted", "set_level"]
     assert sent[1] == {"op": "show", "mode": "speak"}
     assert sent[2] == {"op": "set_muted", "muted": True}
-    assert sent[3] == {"op": "set_level", "level": 0.9}
+    assert sent[3] == {"op": "set_speaker_muted", "muted": True}
+    assert sent[4] == {"op": "set_level", "level": 0.9}
     assert surface._respawn_attempts == 1
     surface.stop()
 

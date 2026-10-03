@@ -13,7 +13,9 @@
  * in this repo — assertions use toBeTruthy()/toBeNull().
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 
 // ViewHeader lives in ChatsView, which drags in the whole chat surface; the
 // view only needs its shape.
@@ -26,6 +28,12 @@ vi.mock("@/lib/clipboard", () => ({ robustCopy: copyMock }));
 
 import { DictationView } from "@/views/DictationView";
 import { setUiLanguage } from "@/i18n";
+
+/** The greeting reads the profile name through react-query. */
+function render(ui: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return rtlRender(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 interface RouteResult {
   status?: number;
@@ -195,6 +203,7 @@ function defaultRoutes(
     "GET /api/dictation/history": () => ({ body: { entries, count: entries.length } }),
     "GET /api/dictation/stats": () => ({ body: STATS }),
     "PUT /api/settings/ui-language": () => ({ body: { ok: true } }),
+    "GET /api/profile": () => ({ body: { user: { name: "Ada" } } }),
     ...extra,
   };
 }
@@ -457,5 +466,55 @@ describe("DictationView header", () => {
 
     await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
     expect(container.querySelector("header")).toBeNull();
+  });
+});
+
+describe("DictationView home layout", () => {
+  it("greets the person by their profile name", async () => {
+    installFetchMock(defaultRoutes());
+    render(<DictationView />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("dictation-welcome").textContent).toBe("Welcome back, Ada"),
+    );
+  });
+
+  it("puts the dictation key in the hero title, pretty-printed", async () => {
+    installFetchMock(defaultRoutes());
+    render(<DictationView />);
+
+    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
+    const hero = screen.getByTestId("dictation-hero");
+    expect(hero.querySelector("h2")?.textContent).toContain("to dictate");
+    expect(hero.querySelector("h2")?.textContent).not.toContain("ctrl+right_alt+j");
+    expect(screen.getByTestId("dictation-state").textContent).toBe("Ready");
+  });
+
+  it("draws fourteen days of activity", async () => {
+    installFetchMock(defaultRoutes());
+    render(<DictationView />);
+
+    await waitFor(() => expect(screen.queryByTestId("dictation-activity")).toBeTruthy());
+    expect(screen.getByTestId("dictation-activity").children).toHaveLength(14);
+  });
+
+  it("keeps what was heard one click away instead of under every row", async () => {
+    installFetchMock(defaultRoutes([TODAY_ENTRY]));
+    render(<DictationView />);
+
+    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
+    expect(screen.queryByTestId("dictation-raw-text")).toBeNull();
+    fireEvent.click(screen.getByTestId("dictation-toggle-raw"));
+    expect(screen.getByTestId("dictation-raw-text").textContent).toContain(
+      "so uh send the report",
+    );
+  });
+
+  it("shows a designed empty surface when nothing was dictated yet", async () => {
+    installFetchMock(defaultRoutes([]));
+    render(<DictationView />);
+
+    await waitFor(() => expect(screen.queryByTestId("dictation-empty")).toBeTruthy());
+    expect(screen.queryByTestId("dictation-history")).toBeNull();
   });
 });

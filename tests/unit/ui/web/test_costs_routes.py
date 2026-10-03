@@ -61,6 +61,21 @@ def _client(data_dir: Path) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _no_background_cli_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the coding-CLI index scanner off for these route tests.
+
+    A summary request arms it, and it reads the REAL ~/.claude and ~/.codex
+    transcripts (gigabytes on a developer machine) into the sandbox. Its write
+    also moved the sources' newest mtime mid-test, so the panels of one page
+    load stopped sharing a cache entry and the cache test failed on any
+    machine with transcripts. The scanner has its own tests in tests/unit/costs.
+    """
+    from jarvis.ui.web import costs_routes
+
+    monkeypatch.setattr(costs_routes._refresher, "nudge", lambda data_dir: None)  # noqa: SLF001
+
+
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     _seed(tmp_path / "data")

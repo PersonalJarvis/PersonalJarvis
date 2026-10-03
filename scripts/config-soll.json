@@ -148,11 +148,16 @@
     "web_search": true,
     "instructions": "",
     "backend_instructions": "",
-    "configured": true
+    "configured": true,
+    "auth_mode": "chatgpt_subscription",
+    "subscription_account_id": "",
+    "subscription_voice": "cove",
+    "subscription_backend_model": "gpt-6.1-sol",
+    "subscription_reasoning_effort": "medium"
   },
   "brain.realtime": {
-    "provider": "openai-live",
-    "model": "gpt-live-1"
+    "provider": "openai-live-subscription",
+    "model": "gpt-live-1-codex"
   },
   "voice": {
     "mode": "realtime"

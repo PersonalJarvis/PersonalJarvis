@@ -68,9 +68,9 @@ import { cn } from "@/lib/utils";
 import { useEventStore, type VoiceState } from "@/store/events";
 import { SPEAKER_MUTE_EVENT } from "@/lib/speakerMute";
 import {
-  fetchTtsVolume,
+  fetchSpeakerMute,
   requestVoiceHangup,
-  setTtsVolume,
+  toggleSpeakerMute,
 } from "@/lib/voiceApi";
 import {
   attachToTerminal,
@@ -243,7 +243,8 @@ export function VoiceBubble({
   const [receipts, setReceipts] = useState<DropReceipt[]>([]);
   const [muted, setMuted] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const prevVolumeRef = useRef(1);
+  const muteRequests = useRef(Promise.resolve());
+  const muteRevision = useRef(-1);
 
   const mounted = open && onScreen;
 
@@ -414,16 +415,16 @@ export function VoiceBubble({
     onClose();
   }, [active, onClose, pushToast]);
 
-  // The speaker toggle mirrors the master TTS volume so it agrees with the
-  // settings slider, but its own writes are session-only (persist=false).
+  // Seed from the same session-only output state as the native speaker strip.
   useEffect(() => {
     if (!mounted) return;
     let cancelled = false;
-    fetchTtsVolume()
+    fetchSpeakerMute()
       .then((state) => {
         if (cancelled) return;
-        if (state.volume > 0) prevVolumeRef.current = state.volume;
-        setMuted(state.volume === 0);
+        if (state.revision < muteRevision.current) return;
+        muteRevision.current = state.revision;
+        setMuted(state.muted);
       })
       .catch(() => {
         // Unknown volume — treat as audible. The first toggle then simply
@@ -439,8 +440,13 @@ export function VoiceBubble({
   useEffect(() => {
     if (!mounted) return;
     const onMuteChanged = (event: Event) => {
-      const muted = (event as CustomEvent<{ muted?: unknown }>).detail?.muted;
-      if (typeof muted === "boolean") setMuted(muted);
+      const state = (event as CustomEvent<{ muted?: unknown; revision?: number }>).detail;
+      if (typeof state?.muted !== "boolean") return;
+      if (typeof state.revision === "number") {
+        if (state.revision < muteRevision.current) return;
+        muteRevision.current = state.revision;
+      }
+      setMuted(state.muted);
     };
     window.addEventListener(SPEAKER_MUTE_EVENT, onMuteChanged);
     return () => window.removeEventListener(SPEAKER_MUTE_EVENT, onMuteChanged);
@@ -457,15 +463,18 @@ export function VoiceBubble({
     [onJumpToPane],
   );
 
-  const toggleMute = useCallback(async () => {
-    const next = !muted;
-    try {
-      await setTtsVolume(next ? 0 : prevVolumeRef.current || 1, false);
-      setMuted(next);
-    } catch (error) {
-      pushToast("error", (error as Error).message);
-    }
-  }, [muted, pushToast]);
+  const toggleMute = useCallback(() => {
+    muteRequests.current = muteRequests.current.then(async () => {
+      try {
+        const state = await toggleSpeakerMute();
+        if (state.revision < muteRevision.current) return;
+        muteRevision.current = state.revision;
+        setMuted(state.muted);
+      } catch (error) {
+        pushToast("error", (error as Error).message);
+      }
+    });
+  }, [pushToast]);
 
   // ------------------------------------------------------------------ files
   const stageFiles = useCallback(

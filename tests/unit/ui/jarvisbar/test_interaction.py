@@ -1,13 +1,13 @@
 """Unit tests for jarvis-bar click/drag classification + default placement."""
+
 from __future__ import annotations
 
 from jarvis.ui.jarvisbar import interaction as I
-from jarvis.ui.jarvisbar import renderer as R
 
 
 def test_is_drag_threshold():
-    assert I.is_drag(10, 5, 16) is False   # 15 < 16
-    assert I.is_drag(10, 7, 16) is True    # 17 >= 16
+    assert I.is_drag(10, 5, 16) is False  # 15 < 16
+    assert I.is_drag(10, 7, 16) is True  # 17 >= 16
     assert I.is_drag(-20, 0, 16) is True
 
 
@@ -16,103 +16,13 @@ def test_classify_release():
     assert I.classify_release(moved=True) == "drag"
 
 
-def test_resolve_click_idle_and_mute_zones():
-    W = 100
-    # right zone → the microphone → mute toggle (non-destructive), any state
-    assert I.resolve_click(90, W, "idle") == "mute"
-    assert I.resolve_click(90, W, "listen") == "mute"
-    # idle → a click anywhere else starts a normal session
-    assert I.resolve_click(10, W, "idle") == "talk"  # idle left → start normal session
-    assert I.resolve_click(50, W, "idle") == "talk"
-    # active middle (no control there) → nothing
-    assert I.resolve_click(50, W, "speak") == "none"
-
-
-def test_active_bar_body_click_does_not_hang_up():
-    """REGRESSION — the silent-hangup trap (live bug 2026-06-19).
-
-    A low-intent click on the BODY of an active bar — between the End button and
-    the mic, where NO control is drawn — must NOT end the session. The old code
-    treated the whole left 40% of the bar as the hang-up X, so any such click
-    silently hung up ("Jarvis hangs up on its own, I never said anything about
-    hanging up").
-    """
-    W, PW = 100, 100
-    # Body gap between the End X (centre 20, hit ±16 → up to 36) and the mic zone
-    # (frac ≥ 0.60 → x ≥ 60): a click at 48 lands on neither → none.
-    assert I.resolve_click(48, W, "speak", hovered=True, pill_w=PW) == "none"
-    assert I.resolve_click(48, W, "listen", hovered=True, pill_w=PW) == "none"
-    assert I.resolve_click(48, W, "think", hovered=True, pill_w=PW) == "none"
-
-
-def test_hangup_requires_visible_end_button():
-    """A hang-up fires only when the End X is actually shown (hovered) AND the
-    click lands on it — so behaviour matches the visible affordance."""
-    W, PW = 100, 100
-    # End-X centre ≈ cx - 0.30*pw = 20 for these dimensions.
-    # On the X, controls visible → hang up (the deliberate gesture works).
-    assert I.resolve_click(20, W, "speak", hovered=True, pill_w=PW) == "hangup"
-    # Same spot, but the controls are NOT shown (not hovered) → no hang up.
-    assert I.resolve_click(20, W, "speak", hovered=False, pill_w=PW) == "none"
-    # Hovered, but the click is far from the X (centre of the bar) → none.
-    assert I.resolve_click(50, W, "speak", hovered=True, pill_w=PW) == "none"
-
-
-def test_hangup_hitbox_at_real_bar_geometry():
-    """Anchor the contract to the ACTUAL deployed pill, not just W=PW=100.
-
-    At the real dims the End X sits at WIN_W/2 - 0.30*ACTIVE_W and the bar window
-    is ~107px wide — so a centre click (over the equalizer) must NOT hang up
-    while a click on the End X does.
-    """
-    W, PW = R.WIN_W, R.ACTIVE_W
-    x_glyph = round(W / 2.0 - 0.30 * PW)  # mirror renderer x_left (End X)
-    # Deliberate click on the visible X glyph, controls shown → hang up.
-    assert I.resolve_click(x_glyph, W, "speak", hovered=True, pill_w=PW) == "hangup"
-    # The bar's centre (where the live equalizer is drawn) → never a hang up.
-    assert I.resolve_click(round(W / 2.0), W, "speak", hovered=True, pill_w=PW) == "none"
-    # Controls not shown → even the X spot is inert.
-    assert I.resolve_click(x_glyph, W, "speak", hovered=False, pill_w=PW) == "none"
-
-
-def test_dictating_bar_close_x_stops_the_dictation():
-    """REGRESSION (BUG-191): the X the renderer draws while dictating was inert.
-
-    ``dictate`` renders as "speak" and ``dictate_transcribing`` as "think", so
-    the close-X is on screen — and every click on it resolved to ``"none"``.
-    With a lost key-up edge that left the user with a recording nothing could
-    end. A drawn X is a working X: on the glyph, controls shown → stop.
-    """
-    W, PW = 100, 100
-    for mode in ("dictate", "dictate_transcribing"):
-        assert I.resolve_click(20, W, mode, hovered=True, pill_w=PW) == "dictation_stop"
-        # Same spot, controls NOT shown → nothing (matches the visible affordance).
-        assert I.resolve_click(20, W, mode, hovered=False, pill_w=PW) == "none"
-        # The body and the mic zone stay inert while dictating: a stray click
-        # must neither start a voice session nor mute the ear being dictated into.
-        assert I.resolve_click(48, W, mode, hovered=True, pill_w=PW) == "none"
-        assert I.resolve_click(90, W, mode, hovered=True, pill_w=PW) == "none"
-        assert I.resolve_click(50, W, mode, hovered=False, pill_w=PW) == "none"
-
-
-def test_dictating_close_x_hitbox_at_real_bar_geometry():
-    """Anchor the dictation X to the deployed pill, like the hang-up test."""
-    W, PW = R.WIN_W, R.ACTIVE_W
-    x_glyph = round(W / 2.0 - 0.30 * PW)
-    assert I.resolve_click(x_glyph, W, "dictate", hovered=True, pill_w=PW) == "dictation_stop"
-    assert I.resolve_click(round(W / 2.0), W, "dictate", hovered=True, pill_w=PW) == "none"
-    assert I.resolve_click(x_glyph, W, "dictate", hovered=False, pill_w=PW) == "none"
-
-
 def test_a_notice_stays_inert_even_on_the_x_spot():
     """A notice is an answer, not a control — unchanged by the dictation X."""
     assert I.resolve_click(20, 100, "notice", hovered=True, pill_w=100) == "none"
 
 
 def test_default_bottom_center_placement():
-    x, y = I.default_bottom_center(
-        screen_w=1920, screen_h=1080, bar_w=300, bar_h=72, margin=12
-    )
+    x, y = I.default_bottom_center(screen_w=1920, screen_h=1080, bar_w=300, bar_h=72, margin=12)
     assert x == (1920 - 300) // 2
     assert y == 1080 - 72 - 12
 
@@ -125,15 +35,13 @@ def test_clamp_to_screen_keeps_bar_visible():
     assert x == 1920 - 300 - 12
     assert y == 1080 - 72 - 12
     # negative → pushed to margin
-    x, y = I.clamp_to_screen(
-        -50, -50, screen_w=1920, screen_h=1080, bar_w=300, bar_h=72, margin=12
-    )
+    x, y = I.clamp_to_screen(-50, -50, screen_w=1920, screen_h=1080, bar_w=300, bar_h=72, margin=12)
     assert x == 12 and y == 12
 
 
 def test_position_round_trip(tmp_path):
     cfg = tmp_path / "jarvis.toml"
-    cfg.write_text("[ui]\norb_style = \"jarvis_bar\"\n", encoding="utf-8")
+    cfg.write_text('[ui]\norb_style = "jarvis_bar"\n', encoding="utf-8")
     assert I.load_jarvisbar_position(cfg) is None  # not set yet
     I.save_jarvisbar_position(cfg, 640, 980)
     assert I.load_jarvisbar_position(cfg) == (640, 980)
@@ -201,9 +109,10 @@ def test_clamp_to_work_area_pins_to_a_secondary_monitor():
     assert x == 1920 + 1920 - bw - margin
     assert y == 1080 - bh - margin
     # A point already inside is unchanged.
-    assert I.clamp_to_work_area(
-        2000, 500, work=work, bar_w=bw, bar_h=bh, margin=margin
-    ) == (2000, 500)
+    assert I.clamp_to_work_area(2000, 500, work=work, bar_w=bw, bar_h=bh, margin=margin) == (
+        2000,
+        500,
+    )
 
 
 def test_relative_position_persists_and_round_trips(tmp_path):

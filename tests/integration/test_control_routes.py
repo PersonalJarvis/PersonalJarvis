@@ -25,6 +25,8 @@ def client(monkeypatch, tmp_path):
     config_file = tmp_path / "jarvis.toml"
     config_file.write_text('[brain]\nreply_language = "de"\n', encoding="utf-8")
     monkeypatch.setenv("JARVIS_CONFIG", str(config_file))
+    # Config backups and the audit log land in the temp dir, never the real data dir.
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data"))
 
     # Deterministic auth: a fixed stored key, no real keyring access.
     monkeypatch.setattr(control_key, "get_control_key", lambda: KEY)
@@ -158,6 +160,86 @@ def test_put_config_unknown_path_is_400(client) -> None:
         headers=AUTH,
     )
     assert res.status_code == 400
+
+
+# --- ASK tier: propose, confirm, fail honestly ---
+
+ASK_PATH = "trigger.session_idle_timeout_s"
+
+
+def test_ask_tier_write_parks_and_confirm_applies(client) -> None:
+    tc, _, _ = client
+    res = tc.put("/api/control/config", json={"path": ASK_PATH, "value": 120}, headers=AUTH)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["needs_confirmation"] is True and body["applied"] is False
+
+    confirm = tc.post(
+        "/api/control/config/confirm", json={"pending_id": body["pending_id"]}, headers=AUTH
+    )
+    assert confirm.status_code == 200, confirm.text
+    assert confirm.json()["applied"] is True
+    assert cfg_mod.load_config().trigger.session_idle_timeout_s == 120
+
+    # The entry is consumed: a second confirm is gone, not re-applied.
+    again = tc.post(
+        "/api/control/config/confirm", json={"pending_id": body["pending_id"]}, headers=AUTH
+    )
+    assert again.status_code == 410
+
+
+def test_ask_tier_invalid_value_is_refused_when_proposed(client) -> None:
+    # Used to answer 200 "needs_confirmation" and then 500 on confirm: the
+    # value was only validated after the user had already said yes.
+    tc, config_file, _ = client
+    before = config_file.read_text(encoding="utf-8")
+    res = tc.put(
+        "/api/control/config", json={"path": ASK_PATH, "value": "not-a-number"}, headers=AUTH
+    )
+    assert res.status_code == 422
+    assert ASK_PATH in res.json()["detail"]
+    assert config_file.read_text(encoding="utf-8") == before
+
+
+def test_failed_confirm_is_an_error_status_not_ok_200(client, monkeypatch) -> None:
+    from jarvis.core.self_mod import AtomicConfigWriter
+    from jarvis.core.self_mod.errors import ReloadError
+
+    tc, _, _ = client
+    res = tc.put("/api/control/config", json={"path": ASK_PATH, "value": 90}, headers=AUTH)
+    pending_id = res.json()["pending_id"]
+
+    def _reload_fails(self, request):  # noqa: ANN001, ARG001
+        raise ReloadError("reload of C:/secret/path/jarvis.toml failed")
+
+    monkeypatch.setattr(AtomicConfigWriter, "mutate", _reload_fails)
+    confirm = tc.post(
+        "/api/control/config/confirm", json={"pending_id": pending_id}, headers=AUTH
+    )
+    assert confirm.status_code == 500
+    detail = confirm.json()["detail"]
+    assert detail.startswith("config write failed")
+    assert "secret/path" not in detail
+
+
+def test_language_switch_is_all_or_nothing(client, monkeypatch) -> None:
+    # The verb writes reply_language, then ui.language. When the second write
+    # failed, the first used to stay applied: half a language switch.
+    from jarvis.core.self_mod import AtomicConfigWriter
+    from jarvis.core.self_mod.errors import ReloadError
+
+    tc, _, _ = client
+    real_mutate = AtomicConfigWriter.mutate
+
+    def _ui_write_fails(self, request):  # noqa: ANN001
+        if request.path == "ui.language":
+            raise ReloadError("reload failed")
+        return real_mutate(self, request)
+
+    monkeypatch.setattr(AtomicConfigWriter, "mutate", _ui_write_fails)
+    res = tc.put("/api/control/language", json={"reply_language": "en"}, headers=AUTH)
+    assert res.status_code == 500
+    assert cfg_mod.load_config().brain.reply_language == "de"
 
 
 # --- secrets ---

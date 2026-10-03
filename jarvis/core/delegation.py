@@ -55,16 +55,17 @@ def result_announcement(
     """
     lang = language or DEFAULT_LOCALE
     labels = {
-        "en": {"done": "reports", "completed": "has stopped", "needs_input": "needs your input",
+        "en": {"done": "reports", "completed": "has finished", "stopped": "was interrupted",
+               "needs_input": "needs your input",
                "blocked": "is blocked", "failed": "failed", "exited": "has exited"},
         "de": {  # i18n-allow: deterministic spoken fallback
-            "done": "meldet", "completed": "hat angehalten",
+            "done": "meldet", "completed": "ist fertig", "stopped": "wurde unterbrochen",  # i18n-allow
             "needs_input": "braucht deine Antwort",  # i18n-allow
             "blocked": "ist blockiert", "failed": "ist fehlgeschlagen",  # i18n-allow
             "exited": "wurde beendet",  # i18n-allow
         },
         "es": {
-            "done": "informa", "completed": "se ha detenido",
+            "done": "informa", "completed": "ha finalizado", "stopped": "fue interrumpido",
             "needs_input": "necesita tu respuesta", "blocked": "está bloqueado",
             "failed": "ha fallado", "exited": "ha terminado",
         },

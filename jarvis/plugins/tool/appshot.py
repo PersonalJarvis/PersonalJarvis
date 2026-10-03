@@ -80,7 +80,7 @@ class AppshotTool:
             )
         trace_id = getattr(ctx, "trace_id", None)
         if scope == "screen":
-            return await _screen_appshot(trace_id)
+            return await _screen_appshot(trace_id, ctx)
 
         from jarvis.appshot.service import take_appshot
 
@@ -92,10 +92,10 @@ class AppshotTool:
         )
         if not result.ok or result.shot is None:
             return ToolResult(False, None, result.message or "The appshot could not be taken.")
-        return _picture(result.shot)
+        return _picture(result.shot, ctx, await asyncio.to_thread(_load_config))
 
 
-async def _screen_appshot(trace_id):
+async def _screen_appshot(trace_id, ctx=None):
     """The whole monitor the cursor is on, recorded as an appshot."""
     import uuid
     from dataclasses import replace
@@ -127,13 +127,20 @@ async def _screen_appshot(trace_id):
         shot_from_context(context, trigger="tool"),
         note=f"{_SCREEN_PREAMBLE}\n{model_note(context)}",
     )
-    return _picture(shot)
+    return _picture(shot, ctx, config)
 
 
-def _picture(shot):
+def _picture(shot, ctx=None, config=None):
     import base64
 
+    from jarvis.core.image_references import get_store, instruction, scope_for
     from jarvis.core.protocols import ToolResult
+
+    ref = get_store().add(
+        scope_for(getattr(ctx, "config", None), getattr(ctx, "trace_id", "")),
+        shot.image, shot.mime, source="appshot",
+        ttl_s=float(config.screen_context.ttl_s) if config is not None else 120,
+    )
 
     return ToolResult(
         True,
@@ -141,6 +148,8 @@ def _picture(shot):
             "description": f"Appshot of the {shot.label}, {shot.width}x{shot.height}.",
             "app": shot.app_name,
             "evidence": shot.note,
+            "image_ref": ref,
+            "handoff": instruction([ref]),
             "_image": {
                 "mime": shot.mime,
                 "data": base64.b64encode(shot.image).decode("ascii"),

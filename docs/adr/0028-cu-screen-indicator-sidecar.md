@@ -3,6 +3,11 @@
 Date: 2026-07-15
 Status: Accepted
 
+**Amendment (2026-10-03):** the gold glow became a thin blue border with a
+narrow inner glow, and the sidecar now also draws the agent pointer while a
+mission or live session holds the mouse (Windows hides the system pointer
+meanwhile). See [computer-use.md](../computer-use.md).
+
 ## Context
 
 Users need an unmistakable, always-visible signal that Jarvis is

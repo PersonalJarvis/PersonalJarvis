@@ -66,6 +66,7 @@ def verified(monkeypatch):
     monkeypatch.setattr(insert_mod, "_foreground_target", lambda: TARGET)
     monkeypatch.setattr(insert_mod, "_input_block_reason", lambda _: "")
     monkeypatch.setattr(insert_mod, "os", SimpleNamespace(name="nt", getpid=lambda: 4242))
+    monkeypatch.setattr(insert_mod, "sys", SimpleNamespace(platform="win32"))
     offers = []
 
     def install(*reads):

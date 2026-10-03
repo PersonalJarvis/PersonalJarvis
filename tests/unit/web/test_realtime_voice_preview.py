@@ -50,23 +50,23 @@ def test_every_preview_sampler_has_a_cataloged_realtime_provider() -> None:
 
 
 def test_unknown_provider_is_404() -> None:
-    response = _preview(TestClient(_app()), "no-such-provider", voice="alloy")
+    response = _preview(TestClient(_app()), "no-such-provider", voice="Puck")
     assert response.status_code == 404
 
 
 def test_non_realtime_tier_is_400() -> None:
-    response = _preview(TestClient(_app()), "openai", voice="alloy")
+    response = _preview(TestClient(_app()), "openai", voice="Puck")
     assert response.status_code == 400
 
 
 def test_missing_voice_is_400() -> None:
-    response = _preview(TestClient(_app()), "openai-realtime", voice="")
+    response = _preview(TestClient(_app()), "gemini-live", voice="")
     assert response.status_code == 400
 
 
 def test_uncatalogued_voice_is_422() -> None:
     response = _preview(
-        TestClient(_app()), "openai-realtime", voice="not-a-voice"
+        TestClient(_app()), "gemini-live", voice="not-a-voice"
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "unsupported_realtime_voice"
@@ -75,8 +75,8 @@ def test_uncatalogued_voice_is_422() -> None:
 def test_uncatalogued_model_is_422() -> None:
     response = _preview(
         TestClient(_app()),
-        "openai-realtime",
-        voice="alloy",
+        "gemini-live",
+        voice="Puck",
         model="not-a-model",
     )
     assert response.status_code == 422
@@ -85,7 +85,7 @@ def test_uncatalogued_model_is_422() -> None:
 
 def test_missing_credential_is_409(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _pid: None)
-    response = _preview(TestClient(_app()), "openai-realtime", voice="alloy")
+    response = _preview(TestClient(_app()), "gemini-live", voice="Puck")
     assert response.status_code == 409
     assert "credentials" in response.json()["detail"]
 
@@ -194,10 +194,10 @@ def test_sampler_failure_is_clean_502(monkeypatch: pytest.MonkeyPatch) -> None:
         raise RuntimeError("quota exhausted")
 
     monkeypatch.setitem(
-        provider_routes._REALTIME_PREVIEW_SAMPLERS, "openai-realtime", sampler
+        provider_routes._REALTIME_PREVIEW_SAMPLERS, "gemini-live", sampler
     )
 
-    response = _preview(TestClient(_app()), "openai-realtime", voice="marin")
+    response = _preview(TestClient(_app()), "gemini-live", voice="Puck")
     assert response.status_code == 502
     assert "quota exhausted" in response.json()["detail"]
 
@@ -228,10 +228,10 @@ def test_hung_sampler_times_out_as_502(monkeypatch: pytest.MonkeyPatch) -> None:
         return b"\x00\x01", 24_000
 
     monkeypatch.setitem(
-        provider_routes._REALTIME_PREVIEW_SAMPLERS, "openai-realtime", sampler
+        provider_routes._REALTIME_PREVIEW_SAMPLERS, "gemini-live", sampler
     )
 
-    response = _preview(TestClient(_app()), "openai-realtime", voice="cedar")
+    response = _preview(TestClient(_app()), "gemini-live", voice="Charon")
     assert response.status_code == 502
     assert "timed out" in response.json()["detail"]
 

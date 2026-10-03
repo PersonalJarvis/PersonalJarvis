@@ -96,7 +96,6 @@ export function QuickSwitchKeybind({ voiceConfig }: { voiceConfig: KeybindsConfi
           config={config}
           loading={false}
           onSave={save}
-          actionLabel={(action) => (action === (ACTION as string) ? label : undefined)}
         />
       )}
       {enabled && mac && (

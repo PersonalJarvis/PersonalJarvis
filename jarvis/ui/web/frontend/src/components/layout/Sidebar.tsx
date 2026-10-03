@@ -25,18 +25,18 @@ import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
-import { IdeProjectTree } from "@/components/agentic/IdeProjectTree";
+import { LazyIdeProjectTree } from "@/components/agentic/LazyIdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppInstance } from "@/hooks/useAppInstance";
-// The query alone, not ./PublishIdentity: the sign-in UI stays out of the entry chunk.
-import { usePublishIdentity } from "@/components/marketplace/publishIdentityQuery";
+import { usePublishIdentity } from "@/hooks/usePublishIdentity";
 import { PetMark } from "@/components/pets/PetMark";
 import { MarketplaceIcon } from "@/components/icons/sectionIcons";
 import { startNewTextChat } from "@/lib/newChat";
 import { useUserName } from "@/hooks/useUserName";
 import { useAgentChatStore } from "@/store/agentChat";
+import { apiKeysHealthError } from "@/lib/apiKeysTab";
 
 // The person's most-used agents. The roster query and the agent faces live in
 // the society code, so they load on their own chunk, not in the sidebar's.
@@ -256,10 +256,7 @@ export function Sidebar({
   // amber "needs setup" state is intentionally NOT shown here: on a fresh install
   // every unconfigured section would light up and the bar would never be calm.
   const { health: sectionHealth } = useSectionHealth();
-  const apikeysHasError = useMemo(
-    () => Object.entries(sectionHealth).some(([section, health]) => section !== "computer-use" && health?.status === "error"),
-    [sectionHealth],
-  );
+  const apikeysHasError = useMemo(() => apiKeysHealthError(sectionHealth), [sectionHealth]);
   // The footer card IS the button that opens API Keys, so its dot carries that
   // page's verdict rather than a decorative grey mark. Three honest states:
   // something is failing, something has answered, or nothing has reported yet
@@ -327,7 +324,7 @@ export function Sidebar({
 
   const allItems = NAV_GROUPS.flat();
   const findItem = (id: string) => allItems.find((item) => item.id === id)!;
-  const toolIds = ["memory", "board", "docs", "sessions", "run_inspector", "clis"];
+  const toolIds = ["memory", "board", "docs", "sessions", "clis"];
   const toolItems = toolIds.map(findItem);
   // Artifacts ("visualization") sits directly in the main list where the
   // retired "Jarvis Tools" folder used to be — it was the only entry hiding
@@ -560,7 +557,7 @@ export function Sidebar({
           {moreOpen && <ul id="sidebar-more" className="space-y-1">{moreItems.map((item) => renderRow(item))}</ul>}
         </nav>}
         {!railed && (onIdeSection
-          ? <IdeProjectTree />
+          ? <LazyIdeProjectTree />
           : <><Suspense fallback={null}><SidebarAgents /></Suspense><section className="mt-5 px-2 pb-3" aria-label={t("sidebar.recent_chats")}><RecentChats /></section></>)}
       </div>
 

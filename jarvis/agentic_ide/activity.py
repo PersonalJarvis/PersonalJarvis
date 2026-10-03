@@ -1,152 +1,12 @@
-"""Is this pane working, waiting for you, or done?
+"""Task lifecycle with terminal movement as a fallback observation.
 
-## The question this answers
+The sweep reads structured CLI events off the event loop. An unfinished task
+stays working through silent tools and model waits; completion and interruption
+need explicit events. Missing evidence remains unknown. Movement and visible
+permission prompts still describe providers without a readable task record.
 
-A workspace is a wall of terminals, and the one thing the wall cannot tell you
-at a glance is which of them stopped. A coding CLI that finishes a job does not
-announce it: the spinner row disappears, the input box comes back, and the pane
-looks exactly like the eleven around it that are still thinking. So the user
-watches the grid, or comes back twenty minutes later to find that everything
-had been finished for nineteen of them.
-
-## The rule: read the TERMINAL, never the product
-
-**A pane is working while its screen keeps changing after the current process
-received an instruction, and waiting once the screen has stood still.** Both
-halves are required. Movement remains a property of the terminal rather than
-of whichever product is running inside it, while the submit stamp prevents a
-CLI's own background redraws from inventing work nobody requested.
-
-Two earlier versions proved that the hard way:
-
-* **"It draws an interrupt hint while busy."** The installed Claude Code does
-  not, in the states that matter. No pane was ever seen working, so the one
-  transition the feature watches for could not happen, and the bell stayed
-  empty while terminals finished all around it.
-* **"It ticks a bracketed clock while busy."** Codex ticks one while it THINKS
-  and drops it while it WRITES, so a reply still arriving read as finished. The
-  same pattern also matched the model banner every pane carries — ``Opus 5 (1M
-  context)`` case-folds to ``(1m context)`` — and read every idle terminal as
-  busy.
-
-Both mistakes have the same shape: a claim about a product, checked against one
-product. Screen movement makes no claim at all.
-
-## Why this is safe, measured rather than assumed
-
-Sampled twice a second across Claude Code, Codex, OpenCode and Kimi
-(2026-07-29):
-
-===================  ==========================================
-While WAITING        0 screen changes in 40 samples, all four
-While WORKING        a change every sample — longest gap 0.5 s
-After finishing      still for 107 s and counting
-===================  ==========================================
-
-So the two states are not close: a working pane repaints at least twice a
-second, and an idle one is perfectly still. None of these products draws its
-own blinking cursor, keeps a clock in a status bar, or emits a heartbeat — any
-of which would have sunk this approach, which is why it was measured first.
-:data:`STILL_S` sits eight times above the longest observed gap.
-
-## Two signals, and why BOTH are needed
-
-**Either fresh output or a changed screen means working.** The first version
-used the screen alone, on the reasoning that a terminal receives plenty of bytes
-that change nothing a person can see — cursor moves, a row repainted with
-identical characters, replies to the emulator queries a CLI makes at startup —
-so fingerprinting the visible rows answers the sharper question.
-
-That reasoning was right about the noise and wrong about the cost. The
-fingerprint covers the BOTTOM :data:`TAIL_ROWS` rows, and a pane whose visible
-change happens anywhere else — an agent streaming its answer into a tall pane,
-a CLI whose busy row sits above the input box, a screen scrolling under a static
-footer — is a pane working in a blind spot. Measured on the maintainer's own
-workspace of eleven panes (2026-07-31), that read finished agents and working
-ones the same way, and the badge on half the list was wrong.
-
-The measurement that settles which signal to trust: in that same workspace,
-every RESTING pane had produced no output at all for between 19 and 69 seconds,
-and every WORKING pane had produced some within the last tenth of a second.
-There is no ambiguous middle, so bytes answer the question on their own — while
-the screen fingerprint stays as the second signal, because it survives one
-sweep longer than the byte stamp and holds the answer steady across the gap.
-
-That measurement is useful but not a universal contract. Claude Code can emit
-background terminal traffic for an MCP authentication warning before anybody
-gives the pane a task. Movement therefore becomes ``working`` only after a
-submission to the current process; a CLI repainting its own idle state cannot
-invent work. The rule remains provider-neutral because the proof is input
-history, never wording on the screen.
-
-## The two exclusions
-
-**Movement in the shadow of a keystroke is not the agent working.** A terminal
-echoes what a person types, so a pane being typed into is a pane whose screen
-changes; without this, writing a prompt by hand reads as a busy agent, and the
-moment the user pauses to think the pane is reported finished. Keystrokes are
-stamped on the pane (``Terminal.last_input_at``) and movement in their shadow
-does not count.
-
-**Movement in the shadow of a resize is not the agent working either.** A
-full-screen TUI answers a size change by redrawing its whole frame, and that
-redraw is real output AND a changed screen — both signals at once. Sizes change
-constantly in ordinary use: switching between the grid and the chat view,
-maximizing a pane, dragging a seam, switching workspace tabs (whose reconnect
-deliberately nudges a repaint), resizing the window. Every one of those made
-every FINISHED pane in the workspace read as "working" for a few seconds — at
-exactly the moment the user was looking at the list to see what had finished
-(maintainer report 2026-08-01). Resizes are stamped on the pane
-(``Terminal.last_resize_at``) and movement in their shadow does not count; an
-agent that really is working keeps producing output after the shadow passes and
-is read as working again within a couple of seconds.
-
-## The moment after Send — the movement rule's one blind window
-
-Movement proves work, but it arrives LATE at exactly the moment the user is
-looking: right after they submit. An agent can take several seconds to produce
-its first byte, and movement in the shadow of the submitting keystroke is
-deliberately discounted (see the exclusions below) — so a pane that was just
-handed work read as "waiting", which under a freshly pressed Send looks like a
-send that silently failed (maintainer report 2026-08-07, repeated after the
-badge's poll was made fast — the lag was here, not in the poll).
-
-The submission itself is the missing evidence. It is stamped only when an
-instruction verifiably reached the live process (:func:`_has_current_instruction`
-— injected prompts confirm on screen, a hand-pressed Enter is verified before
-it stamps), so for :data:`SUBMIT_GRACE_S` after the stamp a still pane is
-reported ``working`` by :func:`observed`. A question on screen still outranks
-the grace — a CLI that answers a submit with a permission prompt needs the
-user, not a spinner — and the grace lives in :func:`observed` rather than in
-:func:`read_activity` on purpose: the notification sweep keeps the strict
-movement rule, or a prompt an agent swallowed would ring the bell "finished"
-ten seconds after nothing happened.
-
-## Honest limits
-
-An agent whose process WEDGES stops repainting, so it reads as finished a few
-seconds later; the wording ("finished and waiting at its prompt") is then
-optimistic, which is the one case where this is wrong in the user's favour
-rather than silent. A CLI that genuinely draws nothing at all while it works —
-none of the four measured — would be reported early. A plain shell pane is not
-an agent and is left out entirely by the caller.
-
-## Who reads this, and why it is stamped on the pane
-
-Two callers, one reading. The notification sweep (:mod:`.notifications`) is the
-one that can actually SEE movement — it compares this sweep's fingerprint with
-the last one — and it runs every couple of seconds for as long as a workspace is
-open. Everything else that wants to know what a pane is doing (the workspace
-state, the recap poll behind the pane list) is a request handler with a single
-look and no history, and a single look cannot tell a still screen from a moving
-one.
-
-So the sweep :func:`stamp`\\ s what it observed onto the pane and the request
-handlers read it back (:func:`observed`). A stamp older than
-:data:`STAMP_FRESH_S` is not trusted: that is not a stale reading, it is
-evidence that nothing is watching this pane at all — the sweep never started, or
-its task died — and the caller gets a fresh single-look answer instead of a word
-that stopped being true minutes ago.
+The helpers below debounce terminal repainting for the initial observation and
+legacy callers. Their stillness threshold is never proof of task completion.
 """
 
 from __future__ import annotations
@@ -166,7 +26,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 #: ``asking`` — still, AND showing a question or a choice.
 #: ``failed`` — its agent could not be started.
 #: ``exited`` — its process is gone.
-Activity = Literal["starting", "working", "waiting", "asking", "failed", "exited"]
+Activity = Literal[
+    "starting", "working", "waiting", "asking", "failed", "exited", "stopped", "unknown",
+]
 
 #: How long the screen must stand still before the pane counts as waiting.
 #:
@@ -394,6 +256,19 @@ def read_activity(
         return "starting"
 
     moment = time.time() if now is None else now
+    from .task_state import evidence
+
+    proof = evidence(term, now=moment)
+    if proof is not None:
+        if shows_question(term):
+            return "asking"
+        states = {"working": "working", "completed": "waiting", "stopped": "stopped",
+                  "asking": "asking", "failed": "failed"}
+        if proof.state in states:
+            return states[proof.state]
+        if _has_current_instruction(term) and is_moving(term, moment, still_since):
+            return "working"
+        return "unknown" if has_work_behind_it(term) else "waiting"
     if _has_current_instruction(term) and is_moving(term, moment, still_since):
         return "working"
     if _contains(visible_rows(term), ASK_FRAGMENTS):
@@ -519,6 +394,11 @@ def _submit_graced(term: Any, reading: Reading, moment: float) -> Reading:
     """
     if reading.activity != "waiting":
         return reading
+    from .task_state import evidence
+
+    proof = evidence(term, now=moment)
+    if proof is not None and proof.state == "completed":
+        return reading
     if not in_submit_wake(term, moment):
         return reading
     return Reading("working", float(getattr(term, "last_submit_at", 0.0) or 0.0))
@@ -603,6 +483,11 @@ def has_work_behind_it(term: Any) -> bool:
     hand — the maintainer's whole workspace — was labelled "idle" next to a
     recap saying it had worked for ten minutes.
     """
+    from .task_state import evidence
+
+    proof = evidence(term)
+    if proof is not None and proof.state != "unknown":
+        return True
     if getattr(term, "last_submit_at", None):
         return True
     if _adopted_with_work(term):

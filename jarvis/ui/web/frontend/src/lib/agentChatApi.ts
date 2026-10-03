@@ -1,6 +1,7 @@
 // Thin client for the agent-chat REST + WebSocket API
 // (jarvis/ui/web/agent_chat_routes.py). Shapes mirror jarvis/agent_chat/*
 // one-to-one; nothing here decides behaviour.
+import { createHistoryRequests } from "@/lib/historyRequests";
 
 export interface CuratedModel {
   id: string;
@@ -344,16 +345,21 @@ export async function fetchProviderModels(providerId: string): Promise<LiveModel
     .filter((m): m is LiveModel => m !== null);
 }
 
-export async function fetchAgentChatSessions(
+const sessionRequests = createHistoryRequests<AgentChatSession[]>();
+export const invalidateAgentChatSessions = () => sessionRequests.invalidate();
+
+export function fetchAgentChatSessions(
   limit = 200,
   surface?: AgentChatSurface,
 ): Promise<AgentChatSession[]> {
   const query = surface ? `&surface=${encodeURIComponent(surface)}` : "";
-  const data = await json<{ sessions: AgentChatSession[] }>(
-    await fetch(`/api/agent-chat/sessions?limit=${limit}${query}`),
-    "sessions-failed",
-  );
-  return data.sessions;
+  const url = `/api/agent-chat/sessions?limit=${limit}${query}`;
+  return sessionRequests.read(url, async (signal) => {
+    const data = await json<{ sessions: AgentChatSession[] }>(
+      await fetch(url, { signal }), "sessions-failed",
+    );
+    return data.sessions;
+  });
 }
 
 export interface CreateSessionInput {
@@ -368,7 +374,7 @@ export interface CreateSessionInput {
 }
 
 export async function createAgentChatSession(input: CreateSessionInput): Promise<AgentChatSession> {
-  return json(
+  const session = await json<AgentChatSession>(
     await fetch("/api/agent-chat/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -376,6 +382,8 @@ export async function createAgentChatSession(input: CreateSessionInput): Promise
     }),
     "create-failed",
   );
+  invalidateAgentChatSessions();
+  return session;
 }
 
 export type PatchSessionInput = Partial<
@@ -386,7 +394,7 @@ export async function patchAgentChatSession(
   sessionId: string,
   input: PatchSessionInput,
 ): Promise<AgentChatSession> {
-  return json(
+  const session = await json<AgentChatSession>(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -394,6 +402,8 @@ export async function patchAgentChatSession(
     }),
     "patch-failed",
   );
+  invalidateAgentChatSessions();
+  return session;
 }
 
 export async function deleteAgentChatSession(sessionId: string): Promise<void> {
@@ -403,6 +413,7 @@ export async function deleteAgentChatSession(sessionId: string): Promise<void> {
     }),
     "delete-failed",
   );
+  invalidateAgentChatSessions();
 }
 
 export async function fetchAgentChatSession(
@@ -422,7 +433,7 @@ export async function sendAgentChatMessage(
   attachments: ChatAttachment[] = [],
   toolChoices: string[] = [],
 ): Promise<{ turn_id: string }> {
-  return json(
+  const result = await json<{ turn_id: string }>(
     await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -435,6 +446,8 @@ export async function sendAgentChatMessage(
     }),
     "send-failed",
   );
+  invalidateAgentChatSessions();
+  return result;
 }
 
 /**

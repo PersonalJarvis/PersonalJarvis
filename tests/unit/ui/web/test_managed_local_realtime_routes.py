@@ -445,3 +445,14 @@ def test_card_payload_carries_managed_server_only_on_local_realtime(
     assert "sentence" in providers["local-realtime"]["managed_server"]
     cloud = next(p for pid, p in providers.items() if pid != "local-realtime")
     assert cloud["managed_server"] is None
+
+
+@pytest.mark.parametrize("body", [["qwen"], "qwen", 3])
+def test_setup_refuses_a_non_object_body(server: WebServer, body: object) -> None:
+    # A JSON array or scalar used to reach ``.get`` and answer 500.
+    with TestClient(server.app) as client:
+        resp = client.post(
+            "/api/providers/local-realtime/managed-server/setup", json=body
+        )
+    assert resp.status_code == 400
+

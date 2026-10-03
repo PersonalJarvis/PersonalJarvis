@@ -41,20 +41,20 @@ def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_a_stored_cli_is_offered_like_a_built_in() -> None:
     """The whole point: one form, and every surface offers it."""
     entry = custom_clis.create_custom_cli(
-        "Antigravity", "agy", description="Google's terminal coding CLI."
+        "FixtureCLI", "fixture-cli", description="A user-provided terminal coding CLI."
     )
     registry.refresh_custom_agents()
 
-    assert entry.id == "antigravity"
+    assert entry.id == "fixturecli"
     assert entry.id in registry.coding_agent_names()
     assert entry.id in registry.agent_names()
 
     agent = registry.get_agent(entry.id)
     assert agent is not None
-    assert agent.display_name == "Antigravity"
+    assert agent.display_name == "FixtureCLI"
     assert agent.is_coding_agent
     assert agent.custom is True
-    assert agent.executable == "agy"
+    assert agent.executable == "fixture-cli"
     # No trust file of ours to seed and no install command we could honestly
     # offer — both must degrade to "nothing", never to a guess.
     assert agent.needs_trust is False
@@ -63,25 +63,25 @@ def test_a_stored_cli_is_offered_like_a_built_in() -> None:
 
 def test_the_plain_terminal_stays_last_in_the_menu() -> None:
     """A "no agent at all" choice buried among CLIs reads as one of them."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
     assert registry.agent_names()[-1] == registry.PLAIN_TERMINAL
 
 
 def test_a_rename_keeps_the_id() -> None:
     """Panes, saved workspaces and resume offers all recorded the old id."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
-    renamed = custom_clis.update_custom_cli(entry.id, display_name="Antigravity CLI")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
+    renamed = custom_clis.update_custom_cli(entry.id, display_name="FixtureCLI CLI")
     assert renamed.id == entry.id
-    assert renamed.display_name == "Antigravity CLI"
+    assert renamed.display_name == "FixtureCLI CLI"
 
 
 def test_a_name_that_is_taken_gets_its_own_id() -> None:
     """Two entries answering to one name is a pane running the wrong tool."""
-    first = custom_clis.create_custom_cli("Antigravity", "agy")
-    second = custom_clis.create_custom_cli("Antigravity", "agy2")
+    first = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
+    second = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli2")
     assert first.id != second.id
-    assert second.id.startswith("antigravity")
+    assert second.id.startswith("fixturecli")
 
 
 def test_a_built_in_name_cannot_be_claimed() -> None:
@@ -99,7 +99,7 @@ def test_accents_survive_into_the_id() -> None:
 
 @pytest.mark.parametrize(
     ("name", "command"),
-    [("", "agy"), ("  ", "agy"), ("Antigravity", ""), ("Antigravity", "  ")],
+    [("", "fixture-cli"), ("  ", "fixture-cli"), ("FixtureCLI", ""), ("FixtureCLI", "  ")],
 )
 def test_a_blank_name_or_command_is_refused(name: str, command: str) -> None:
     with pytest.raises(custom_clis.CustomCliError):
@@ -109,11 +109,11 @@ def test_a_blank_name_or_command_is_refused(name: str, command: str) -> None:
 def test_a_multi_line_command_is_refused() -> None:
     """A command line, not a script — see MAX_COMMAND_LEN's neighbours."""
     with pytest.raises(custom_clis.CustomCliError):
-        custom_clis.create_custom_cli("Two Things", "agy\nrm -rf /")
+        custom_clis.create_custom_cli("Two Things", "fixture-cli\nrm -rf /")
 
 
 def test_deleting_removes_it_from_the_registry() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
     assert entry.id in registry.coding_agent_names()
 
@@ -172,19 +172,19 @@ def test_a_hand_written_entry_cannot_shadow_a_built_in(isolated_store: Path) -> 
 
 def test_a_windows_path_survives_the_split() -> None:
     """POSIX shlex would eat the backslashes and report a working CLI missing."""
-    parts = custom_clis.split_command(r'C:\tools\agy.exe --flag "two words"')
-    assert parts == (r"C:\tools\agy.exe", "--flag", "two words")
+    parts = custom_clis.split_command(r'C:\tools\fixture-cli.exe --flag "two words"')
+    assert parts == (r"C:\tools\fixture-cli.exe", "--flag", "two words")
 
 
 @pytest.mark.parametrize(
     ("command", "through_shell"),
     [
-        ("agy", False),
+        ("fixture-cli", False),
         ("npx -y some-cli", False),
-        ("agy | tee log.txt", True),
-        ("agy && echo done", True),
-        ("FOO=1 agy", True),
-        ("agy --model $MODEL", True),
+        ("fixture-cli | tee log.txt", True),
+        ("fixture-cli && echo done", True),
+        ("FOO=1 fixture-cli", True),
+        ("fixture-cli --model $MODEL", True),
     ],
 )
 def test_shell_source_is_told_apart_from_an_argv(command: str, through_shell: bool) -> None:
@@ -192,13 +192,13 @@ def test_shell_source_is_told_apart_from_an_argv(command: str, through_shell: bo
 
 
 def test_an_environment_prefix_does_not_become_the_binary() -> None:
-    """`FOO=1 agy` must look for `agy`, not for a program called `FOO=1`."""
-    entry = custom_clis.create_custom_cli("Prefixed", "FOO=1 agy --flag")
-    assert entry.binary == "agy"
+    """`FOO=1 fixture-cli` must look for `fixture-cli`, not for a program called `FOO=1`."""
+    entry = custom_clis.create_custom_cli("Prefixed", "FOO=1 fixture-cli --flag")
+    assert entry.binary == "fixture-cli"
 
 
 def test_a_shell_entry_carries_no_half_parsed_argv() -> None:
-    custom_clis.create_custom_cli("Piped", "agy | tee log.txt")
+    custom_clis.create_custom_cli("Piped", "fixture-cli | tee log.txt")
     registry.refresh_custom_agents()
     agent = registry.get_agent("piped")
     assert agent is not None
@@ -218,7 +218,7 @@ def test_a_plain_entry_keeps_its_arguments() -> None:
 
 def test_a_shell_launch_argv_exits_with_the_agent() -> None:
     """A surviving prompt reads as a live agent to every readiness check."""
-    argv = registry.shell_run_argv("agy | tee log.txt")
+    argv = registry.shell_run_argv("fixture-cli | tee log.txt")
     if argv is None:  # a host with no shell at all
         pytest.skip("no shell on this host")
     assert "-NoExit" not in argv
@@ -235,7 +235,7 @@ async def test_detection_never_runs_a_strangers_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The sweep shares the event loop the wake microphone is delivered on."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
 
     probed: list[str] = []
@@ -247,15 +247,15 @@ async def test_detection_never_runs_a_strangers_binary(
             probed.extend(spec.name for spec in specs)
             return {spec.name: CliStatus(installed=False, version=None) for spec in specs}
 
-    monkeypatch.setattr(registry, "_on_path", lambda binary: binary == "agy")
+    monkeypatch.setattr(registry, "_on_path", lambda binary: binary == "fixture-cli")
     infos = {i.name: i for i in await registry.detect_agents(RecordingProber())}
 
-    assert "antigravity" not in probed
-    assert infos["antigravity"].installed is True
+    assert "fixturecli" not in probed
+    assert infos["fixturecli"].installed is True
     # No version, ever: asking would be the subprocess this path avoids.
-    assert infos["antigravity"].version is None
-    assert infos["antigravity"].install_command is None
-    assert infos["antigravity"].custom is True
+    assert infos["fixturecli"].version is None
+    assert infos["fixturecli"].install_command is None
+    assert infos["fixturecli"].custom is True
 
 
 @pytest.mark.asyncio
@@ -286,10 +286,10 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
 def test_a_logo_is_stored_and_served() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     updated = custom_clis.set_logo(entry.id, SVG, "mark.svg")
-    assert updated.logo == "antigravity.svg"
-    assert custom_clis.logo_url(updated) == "/api/workspace-clis/antigravity/logo"
+    assert updated.logo == "fixturecli.svg"
+    assert custom_clis.logo_url(updated) == "/api/workspace-clis/fixturecli/logo"
 
     found = custom_clis.logo_file(entry.id)
     assert found is not None
@@ -300,16 +300,16 @@ def test_a_logo_is_stored_and_served() -> None:
 
 def test_replacing_a_logo_leaves_no_stale_sibling() -> None:
     """A later lookup keyed on the id would otherwise pick up the old file."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
     updated = custom_clis.set_logo(entry.id, PNG, "mark.png")
-    assert updated.logo == "antigravity.png"
-    assert not (custom_clis.logo_dir() / "antigravity.svg").exists()
+    assert updated.logo == "fixturecli.png"
+    assert not (custom_clis.logo_dir() / "fixturecli.svg").exists()
 
 
 def test_a_file_that_is_not_what_it_claims_is_refused() -> None:
     """These bytes get handed back out over HTTP."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, b"PK\x03\x04 a zip file", "mark.svg")
     with pytest.raises(custom_clis.CustomCliError):
@@ -317,13 +317,13 @@ def test_a_file_that_is_not_what_it_claims_is_refused() -> None:
 
 
 def test_an_unknown_extension_is_refused() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, b"MZ binary", "mark.exe")
 
 
 def test_an_oversized_logo_is_refused() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     huge = SVG + b" " * custom_clis.MAX_LOGO_BYTES
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, huge, "mark.svg")
@@ -379,9 +379,9 @@ def test_a_hand_edited_id_cannot_write_or_read_outside_the_logo_directory(
 
 
 def test_deleting_an_entry_takes_its_logo_with_it() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
-    stored = custom_clis.logo_dir() / "antigravity.svg"
+    stored = custom_clis.logo_dir() / "fixturecli.svg"
     assert stored.exists()
 
     custom_clis.delete_custom_cli(entry.id)
@@ -389,7 +389,7 @@ def test_deleting_an_entry_takes_its_logo_with_it() -> None:
 
 
 def test_clearing_a_logo_falls_back_to_the_monogram() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
     cleared = custom_clis.clear_logo(entry.id)
     assert cleared.logo == ""
@@ -410,13 +410,13 @@ def test_a_short_one_word_name_claims_no_spoken_alias() -> None:
 
 
 def test_a_real_name_is_addressable_by_voice() -> None:
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
-    assert registry.spoken_aliases().get("antigravity") == "antigravity"
+    assert registry.spoken_aliases().get("fixturecli") == "fixturecli"
 
 
 def test_a_custom_name_is_reserved_against_pane_call_signs() -> None:
-    """Saying "Antigravity" must not be a coin flip between a pane and a CLI."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    """Saying "FixtureCLI" must not be a coin flip between a pane and a CLI."""
+    custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
-    assert "antigravity" in registry.reserved_call_signs()
+    assert "fixturecli" in registry.reserved_call_signs()

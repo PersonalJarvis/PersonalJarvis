@@ -76,7 +76,8 @@ def _start_process_from(fake: Path) -> subprocess.Popen[bytes]:
     target = bin_dir / "jarvis-fake"
     sleep_bin = shutil.which("sleep")
     assert sleep_bin, "CI runner without a sleep binary"
-    shutil.copy2(sleep_bin, target)
+    # Keep executable mode without copying the macOS system file's SIP flags.
+    shutil.copy(sleep_bin, target)
     target.chmod(0o755)
     return subprocess.Popen(  # noqa: S603 — self-copied system binary
         [str(target), "120"],
