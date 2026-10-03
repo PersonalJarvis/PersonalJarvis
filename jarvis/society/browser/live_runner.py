@@ -172,7 +172,11 @@ class Worker:
                 viewport={"width": 1280, "height": 800},
                 accept_downloads=True,
                 service_workers="block",
-                args=["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"],
+                args=[
+                    "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
+                    # Explicit handback resumes the tabs the person just used.
+                    *(["--restore-last-session"] if self.login_mode else []),
+                ],
             )
         private_hosts = {
             str(pattern).split("://")[-1].split("/")[0]

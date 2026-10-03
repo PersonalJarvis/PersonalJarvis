@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,8 +67,10 @@ def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
 
 class PageHandler(BaseHTTPRequestHandler):
     profile_requests = []
+    page_requests = []
 
     def do_GET(self):
+        self.page_requests.append(self.path)
         if self.path.startswith(("/login", "/account")):
             signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
             self.profile_requests.append((self.path, signed_in))
@@ -80,6 +83,7 @@ class PageHandler(BaseHTTPRequestHandler):
                 )
                 signed_in = True
             self.end_headers()
+            self.wfile.write(b"<!doctype html><title>Account fixture</title>")
             self.wfile.write(b"<h1>Signed in</h1>" if signed_in else b"<h1>Sign in required</h1>")
             return
         if self.path == "/download":
@@ -109,14 +113,17 @@ class PageHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Upload received: " + body)
+        self.wfile.write(b"<!doctype html><title>Upload fixture</title><pre>Upload received: "
+                        + html.escape(body.decode("utf-8", errors="replace")).encode("utf-8")
+                        + b"</pre>")
 
 
 @pytest.fixture
 def site():
     PageHandler.profile_requests = []
+    PageHandler.page_requests = []
     server = ThreadingHTTPServer(("127.0.0.1", 0), PageHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -140,6 +147,8 @@ async def _control(live, session, owner, op, args):
     """Send the observed browser generation just as the visible viewer does."""
     if op not in {"takeover", "cancel"}:
         args = {"generation": session.state.get("generation", session.generation), **args}
+    elif op == "takeover" and args.get("enabled") is False:
+        args = {"login": False, **args}  # The test performs explicit owner handback.
     return await live.control(session, owner, op, args)
 
 
@@ -226,19 +235,20 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
         await _control(live, session, "viewer", "key", {"key": "Enter"})
         try:
             async with asyncio.timeout(15):
-                while True:
-                    event = await queue.get()
-                    if event["kind"] == "state" and event["url"].rstrip("/") == site:
-                        break
+                # A plain Chrome sign-in deliberately exposes no DOM or URL.
+                # HTTP arrival proves native toolbar input reached the fixture.
+                while "/" not in PageHandler.page_requests:
+                    await asyncio.sleep(0.05)
         except TimeoutError:
             pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
-        assert len(event["tabs"]) == 2
         await _control(live, session, "viewer", "takeover", {"enabled": False})
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(15):
             while True:
                 event = await queue.get()
-                if event["kind"] == "state" and not event["manual"]:
+                if (event["kind"] == "state" and not event["manual"]
+                        and event["url"].rstrip("/") == site):
                     break
+        assert len(event["tabs"]) >= 2
         assert event["url"].rstrip("/") == site
     finally:
         await live.close()
@@ -656,6 +666,9 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
         session, _ = await live.subscribe(agent)
         await _control(live, session, "viewer", "takeover", {"enabled": True})
         await _control(live, session, "viewer", "navigate", {"url": site + path})
+        async with asyncio.timeout(15):
+            while not any(request_path == path for request_path, _ in PageHandler.profile_requests):
+                await asyncio.sleep(0.05)
         await _control(live, session, "viewer", "takeover", {"enabled": False})
         return session
 

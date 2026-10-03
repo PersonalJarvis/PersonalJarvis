@@ -297,10 +297,12 @@ async def test_stopping_monitors_awaits_inflight_capture_and_cursor_work(runtime
 
 
 @pytest.mark.parametrize("pinned", [None, "stable-chrome.exe", "invalid"])
+@pytest.mark.parametrize("handback", [False, True])
 async def test_startup_reuses_durable_chrome_pin_and_never_falls_back_if_invalid(
-    runtime, monkeypatch, pinned
+    runtime, monkeypatch, pinned, handback
 ):
     worker = runtime.worker
+    worker.login_mode = handback
     pw = PlaywrightStartup()
     monkeypatch.setitem(
         sys.modules,
@@ -338,7 +340,8 @@ async def test_startup_reuses_durable_chrome_pin_and_never_falls_back_if_invalid
         result = await worker.start(worker.start_args)
         assert pw.launches[0][0] == str(profile)
         assert pw.launches[0][1]["executable_path"] == (pinned or "testing-chrome.exe")
-        assert not result["login_mode"] and not result["login_available"]
+        assert ("--restore-last-session" in pw.launches[0][1]["args"]) is handback
+        assert result["login_mode"] is handback and not result["login_available"]
 
 
 async def test_person_opening_browser_starts_plain_chrome_before_any_automation(
