@@ -898,6 +898,8 @@ class WebServer:
             from jarvis.board.aggregator import BoardAggregator
             from jarvis.board.bio_brain import BIO_TIMEOUT_S, resolve_bio_brain
             from jarvis.board.evaluator import AchievementEvaluator
+            from jarvis.board.insights import BoardInsights
+            from jarvis.board.insights import default_sources as insight_sources
             from jarvis.board.profile import BioGenerator, BioStore
             from jarvis.board.scheduler import BioScheduler
             from jarvis.board.store import BoardStore
@@ -920,6 +922,13 @@ class WebServer:
                 sessions_db_path=sessions_db_path,
             )
             store = BoardStore(db_path=db_path)
+            insights = BoardInsights(
+                insight_sources(
+                    data_dir=Path(self.cfg.memory.data_dir),
+                    sessions_db=sessions_db_path,
+                    board_db=db_path,
+                )
+            )
             evaluator = AchievementEvaluator(db_path=db_path, bus=self.bus)
             bio_store = BioStore(db_path=db_path)
 
@@ -971,6 +980,7 @@ class WebServer:
             self._bio_generator = bio_generator
             app.state.board_aggregator = aggregator
             app.state.board_store = store
+            app.state.board_insights = insights
             app.state.achievement_evaluator = evaluator
             app.state.bio_generator = bio_generator
             app.state.bio_store = bio_store
@@ -989,6 +999,7 @@ class WebServer:
             self._bio_generator = None
             app.state.board_aggregator = None
             app.state.board_store = None
+            app.state.board_insights = None
             app.state.achievement_evaluator = None
             app.state.bio_generator = None
             app.state.bio_store = None

@@ -471,12 +471,7 @@
     "state_active": "Nimmt auf",
     "state_ready": "Bereit",
     "state_unavailable": "Auf diesem Computer nicht verfügbar",
-    "shortcut_set": "Halte {0}, um zu diktieren.",
-    "shortcut_unset": "Noch keine Taste zugewiesen — Diktat geht auch über den Knopf unten.",
-    "engine_local": "Erkennt lokal auf diesem Rechner ({0}); Ausweichen: {1}.",
-    "engine_cloud": "Erkennt über {0}.",
     "engine_local_off": "Lokal gerade nicht: {0}",
-    "assign_hint": "Weise unter Einstellungen → Sprach-Tastenkürzel eine Taste zu, um überall zu diktieren.",
     "start": "Diktat starten",
     "stop": "Stopp",
     "saved": "Einstellung gespeichert",
@@ -484,19 +479,45 @@
     "cannot_insert_generic": "Dein System blockiert, dass ein Programm in ein anderes tippt. Diktat funktioniert trotzdem — der Text landet in der Zwischenablage, du kannst ihn einfügen.",
     "polish_first_run": "Neu: Ein schnelles Modell räumt jetzt deine Formulierung auf, bevor der Text ankommt — dein Rohtext bleibt in dieser Liste, und auf dem Tab „Sprache“ kannst du es abschalten.",
     "history_title": "Letzte Diktate",
-    "history_empty": "Noch nichts diktiert.",
     "clear_history": "Alle löschen",
     "raw_prefix": "Gehört:",
     "removed_words": "{0} Füllwort/-wörter entfernt",
     "delete_entry": "Diesen Eintrag löschen",
     "search_placeholder": "Diktate durchsuchen",
+    "welcome": "Willkommen zurück{name_part}",
+    "hero_hold": "Halte {0} gedrückt und diktiere",
+    "hero_listening": "Ich höre zu — sprich jetzt",
+    "hero_no_key": "Sprechen statt tippen",
+    "hero_body": "Funktioniert in jeder App — E-Mail, Nachrichten, Dokumente oder überall sonst, wo du tippst.",
+    "hero_body_active": "Sobald du stoppst, landen deine Worte in dem Feld, in dem du gerade getippt hast.",
+    "hero_hands_free": "Oder drücke einmal {0}, um freihändig zu diktieren.",
+    "hero_shortcuts": "Tastenkürzel ändern",
+    "hero_assign": "Taste festlegen",
+    "engine_title": "Erkennung",
+    "engine_on_device": "Auf diesem Computer",
+    "engine_cloud_short": "Cloud",
+    "engine_fallback": "Ausweichlösung: {0}",
+    "vocab_title": "Bring ihm deine Wörter bei",
+    "vocab_body": "Füge Namen, Marken und Fachbegriffe hinzu, damit sie jedes Mal richtig geschrieben werden.",
+    "vocab_cta": "Wörterbuch öffnen",
+    "show_original": "Gehörtes anzeigen",
+    "hide_original": "Gehörtes ausblenden",
+    "empty_title": "Hier erscheinen deine Diktate",
+    "empty_body": "Halte deine Taste in irgendeiner App, sprich und lass los. Jedes Diktat bleibt hier, damit du es erneut kopieren kannst.",
     "stats": {
       "title": "Dein Diktat",
       "words": "Wörter",
       "wpm": "Wörter pro Minute",
       "streak": "Tage in Folge",
       "window_lifetime": "Gesamt",
-      "window_days": "Letzte {0} Tage"
+      "window_days": "Letzte {0} Tage",
+      "words_unit": "Wörter",
+      "wpm_unit": "WpM",
+      "streak_unit": "Tage in Folge",
+      "today": "Heute: {0} Wörter",
+      "best_streak": "Rekord: {0} Tage",
+      "activity": "Letzte 14 Tage",
+      "activity_day": "{0}: {1} Wörter"
     },
     "group": {
       "today": "Heute",
@@ -1643,6 +1664,122 @@
     "group_terminals": "Terminals",
     "group_workspaces": "Arbeitsbereiche",
     "untitled_chat": "Chat ohne Titel"
+  },
+  "board_insights": {
+    "description": "Wie du mit {name} arbeitest, gezählt auf diesem Computer.",
+    "tabs": {
+      "usage": "Nutzung",
+      "agents": "Agenten",
+      "rhythm": "Rhythmus"
+    },
+    "speed": {
+      "label": "Wörter pro Minute",
+      "hint": "Deine Diktiergeschwindigkeit. Der Strich markiert Tippen mit {0} Wörtern pro Minute.",
+      "vs_typing": "Tippgeschwindigkeit",
+      "typing_mark": "Tippen mit {0} Wörtern pro Minute",
+      "empty": "Diktiere einmal, dann erscheint hier deine Sprechgeschwindigkeit."
+    },
+    "saved": {
+      "label": "Stunden gespart durch Sprechen",
+      "hint": "Die Zeit, die das Tippen deiner diktierten Wörter mit {0} Wörtern pro Minute dauern würde, abzüglich der Zeit, die du diktiert hast.",
+      "dictations": "Diktate",
+      "spoken": "Zeit beim Diktieren",
+      "typing_would_take": "Tippen hätte gedauert"
+    },
+    "words": {
+      "label": "Wörter an {name}",
+      "novel_hint": "Diktierte Wörter plus die Wörter aus Sprachsitzungen. Ein durchschnittlicher Roman hat etwa {0} Wörter.",
+      "trend": "{0} % ggü. letzten 30 Tagen",
+      "trend_hint": "Wörter der letzten 30 Tage im Vergleich zu den 30 Tagen davor.",
+      "novels": "Das reicht für {0} Romane.",
+      "novel_share": "Das sind bisher {0} % eines Romans.",
+      "empty": "Diktiere oder starte eine Sprachsitzung, dann summieren sich hier deine Wörter.",
+      "dictated": "Diktat",
+      "spoken": "Sprache"
+    },
+    "mix": {
+      "title": "So nutzt du {name}",
+      "active_days": "Aktive Tage | {0}",
+      "empty": "Noch nichts erfasst. Diktiere, chatte oder starte einen Agenten.",
+      "dictations": "{0} Diktate",
+      "dictations_one": "{0} Diktat",
+      "agent_sessions": "{0} Agenten-Sitzungen",
+      "agent_sessions_one": "{0} Agenten-Sitzung",
+      "chat_messages": "{0} Chat-Nachrichten",
+      "chat_messages_one": "{0} Chat-Nachricht",
+      "voice_sessions": "{0} Sprachsitzungen",
+      "voice_sessions_one": "{0} Sprachsitzung"
+    },
+    "streak": {
+      "title": "{0} Tage in Folge",
+      "title_one": "{0} Tag in Folge",
+      "none": "Noch keine Serie",
+      "longest": "Längste Serie | {0} Tage",
+      "longest_one": "Längste Serie | {0} Tag"
+    },
+    "calendar": {
+      "less": "Weniger",
+      "more": "Mehr",
+      "older": "Frühere Wochen",
+      "newer": "Spätere Wochen",
+      "nothing": "nichts",
+      "started": "{0} gestartet",
+      "words": "{0} Wörter"
+    },
+    "agents": {
+      "title": "Coding-Agenten",
+      "subtitle": "Sitzungen der Coding-CLIs auf diesem Computer, aus ihren eigenen Protokollen gelesen.",
+      "used": "{0} Agenten genutzt",
+      "used_one": "{0} Agent genutzt",
+      "range_30d": "Letzte 30 Tage",
+      "range_all": "Gesamt",
+      "col_agent": "Agent",
+      "col_share": "Anteil",
+      "col_sessions": "Sitzungen",
+      "col_turns": "Züge",
+      "col_last": "Zuletzt",
+      "empty": "Auf diesem Computer wurden noch keine Coding-Agenten-Sitzungen gefunden.",
+      "stat_sessions": "Agenten-Sitzungen",
+      "stat_sessions_30d": "Sitzungen, letzte 30 Tage",
+      "stat_tokens": "Verarbeitete Tokens",
+      "stat_busiest": "Meiste Sitzungen an einem Tag"
+    },
+    "chats": {
+      "title": "Chats",
+      "messages": "{0} Nachrichten",
+      "messages_one": "{0} Nachricht",
+      "empty": "Noch keine Chat-Nachrichten."
+    },
+    "categories": {
+      "title": "Was {name} für dich erledigt hat",
+      "subtitle": "Werkzeuge aus Sprachzügen, nach Art.",
+      "empty": "In Sprachzügen wurden noch keine Werkzeuge genutzt."
+    },
+    "rhythm": {
+      "title": "Wann du arbeitest",
+      "subtitle": "Sprachzüge, Chat-Nachrichten und Agenten-Züge nach Wochentag und Stunde.",
+      "peak": "Am meisten | {0}, {1}",
+      "empty": "Noch zu wenig Aktivität für einen Rhythmus."
+    },
+    "weekly": {
+      "title": "Wörter pro Woche",
+      "subtitle": "Diktierte und gesprochene Wörter, letzte 26 Wochen.",
+      "best": "Beste Woche | {0}",
+      "tooltip": "{0} Wörter · {1} Agenten-Sitzungen"
+    },
+    "records": {
+      "title": "Rekorde",
+      "best_words": "Meiste Wörter an einem Tag",
+      "best_agents": "Meiste Agenten-Sitzungen an einem Tag",
+      "longest_streak": "Längste Serie",
+      "active_days": "Aktive Tage",
+      "since": "seit {0}",
+      "days": "{0} Tage",
+      "days_one": "{0} Tag",
+      "next_milestone": "Nächstes Ziel: {0} Wörter",
+      "to_go": "noch {0}",
+      "today": "Heute {0} Wörter."
+    }
   },
   "board_view": {
     "title": "Board",
