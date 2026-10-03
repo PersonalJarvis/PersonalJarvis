@@ -6,9 +6,9 @@ The selected recording area keeps a click-through border until recording stops.
 Elapsed time and a stop button sit below it; the toolbar moves above the area or
 inside the work area when the selection reaches the screen edges. A finalized
 video uses the existing screenshot flight animation to enter a bottom-left
-preview card. The card can play the local file, save a separate copy to Downloads,
-and shows the first video frame with a prominent play button and a video/duration label.
-or drag the MP4 to another application. Screenshot and video previews share the
+preview card. Its poster shows the first video frame with a prominent play button
+and a video/duration label. The card can play the local file, save a separate copy
+to Downloads, or drag the MP4 to another application. Screenshot and video previews share the
 indicator process and its shutdown/capture-suppression lifecycle.
 
 Windows area and 4K full-screen recordings were verified with the desktop Python
