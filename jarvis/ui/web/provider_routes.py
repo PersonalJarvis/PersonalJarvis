@@ -3323,7 +3323,10 @@ async def managed_server_setup(request: Request) -> dict[str, Any]:
         body = await request.json()
     except Exception as exc:  # noqa: BLE001 - malformed JSON is a client error
         raise HTTPException(status_code=400, detail="a JSON request body is required") from exc
-    brain_model = str((body or {}).get("brain_model", "") or "").strip()
+    if not isinstance(body, dict):
+        # A JSON array or scalar used to reach ``.get`` and answer 500.
+        raise HTTPException(status_code=400, detail="the request body must be a JSON object")
+    brain_model = str(body.get("brain_model", "") or "").strip()
     voice_model = str((body or {}).get("voice_model", "") or "").strip()
     if not brain_model or not voice_model:
         raise HTTPException(

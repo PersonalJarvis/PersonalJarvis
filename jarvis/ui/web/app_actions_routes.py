@@ -11,6 +11,11 @@ from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(prefix="/api/app-actions", tags=["app-actions"])
 
+# Plain ``def`` handlers on purpose: each reads or writes the policy/history
+# files, and the first catalog read generates the app's whole OpenAPI schema.
+# FastAPI runs them in the threadpool, off the shared event loop; the policy
+# and history modules guard their files with a threading lock.
+
 
 class ModeBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -19,7 +24,7 @@ class ModeBody(BaseModel):
 
 
 @router.get("")
-async def list_app_actions() -> dict[str, Any]:
+def list_app_actions() -> dict[str, Any]:
     from jarvis.app_actions.catalog import live_catalog
     from jarvis.app_actions.policy import effective_tier, load_policy
 
@@ -36,7 +41,7 @@ async def list_app_actions() -> dict[str, Any]:
 
 
 @router.put("/{action_id}/mode")
-async def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
+def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
     from jarvis.app_actions.catalog import live_catalog
     from jarvis.app_actions.policy import effective_tier, set_mode
 
@@ -48,7 +53,7 @@ async def set_app_action_mode(action_id: str, body: ModeBody) -> dict[str, Any]:
 
 
 @router.get("/history")
-async def app_action_history(limit: int = 50) -> dict[str, Any]:
+def app_action_history(limit: int = 50) -> dict[str, Any]:
     from jarvis.app_actions import history
     from jarvis.app_actions.catalog import live_catalog
 

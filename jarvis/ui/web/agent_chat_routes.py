@@ -131,7 +131,7 @@ def _archived_voice_history(request: Request, voice_session_id: str) -> Any:
 
 
 @router.get("/voice-chat", summary="The Jarvis chat voice calls continue")
-async def get_voice_chat(request: Request) -> VoiceChatResponse:
+def get_voice_chat(request: Request) -> VoiceChatResponse:
     return _voice_chat_answer(_service(request))
 
 
@@ -719,7 +719,7 @@ async def get_provider_health(
 
 
 @router.get("/sessions")
-async def list_sessions(
+def list_sessions(
     request: Request,
     limit: int = Query(200, ge=1, le=1000),
     surface: SurfaceName | None = None,
@@ -792,7 +792,7 @@ def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) 
 
 
 @router.post("/sessions", status_code=201)
-async def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
+def create_session(body: CreateSessionBody, request: Request) -> dict[str, Any]:
     svc = _service(request)
     ladder = ladder_key(body.surface, resolve_runner(body.provider, surface=body.surface))
     if body.permission_mode and not is_permission_mode(ladder, body.permission_mode):
@@ -822,7 +822,7 @@ async def create_session(body: CreateSessionBody, request: Request) -> dict[str,
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(
+def get_session(
     session_id: str,
     request: Request,
     tail: int | None = Query(
