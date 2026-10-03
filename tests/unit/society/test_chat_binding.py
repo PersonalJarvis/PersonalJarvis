@@ -1007,14 +1007,14 @@ async def test_m4_voice_group_delegation_exit_contract(tmp_path: Path):
         await rt.roster.create(name="Archivist", provider="openai")
         ctx = SimpleNamespace(
             trace_id=uuid4(),
-            user_utterance="Jarvis, lass Scout und Archivist das zusammen klären",
+            user_utterance="Jarvis, lass Scout und Archivist das zusammen klären",  # i18n-allow
             config={"output_language": "de"},
             memory_read=None,
         )
         result = await DelegateToAgentTool(runtime_resolver=lambda: rt).execute(
             {
                 "agents": ["Scout", "Archivist"],
-                "task": "Wählt gemeinsam einen Deployment-Anbieter.",
+                "task": "Wählt gemeinsam einen Deployment-Anbieter.",  # i18n-allow
                 "reply_policy": "always",
                 "turn_language": "de",
             },
@@ -1023,7 +1023,7 @@ async def test_m4_voice_group_delegation_exit_contract(tmp_path: Path):
         assert result.success, result.error
         assert result.output["state"] == "running"
         assert result.output["acknowledgement"] == (
-            "Scout, Archivist klären das zusammen, ich sage Bescheid."
+            "Scout, Archivist klären das zusammen, ich sage Bescheid."  # i18n-allow
         )
         room = await rt.rooms.get(result.output["room_id"])
         assert room is not None
@@ -1041,7 +1041,7 @@ async def test_m4_voice_group_delegation_exit_contract(tmp_path: Path):
                 pytest.fail(f"room turn {turn_number} was not scheduled")
             await svc.finish(
                 session_id,
-                f"Beitrag {turn_number}",
+                f"Beitrag {turn_number}",  # i18n-allow
                 turn_id=f"turn-{turn_number}",
                 cost_usd=turn_number / 100,
             )
