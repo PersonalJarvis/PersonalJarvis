@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Final
 from uuid import uuid4
+from weakref import WeakValueDictionary
 
 from .events import MsgType, RoomState, SocietyEnvelope, now_ms
 from .failure_reasons import FailureReason
@@ -116,13 +117,16 @@ class Room:
 class Rooms:
     def __init__(self, store: SocietyStore) -> None:
         self._store = store
-        # Room turns are state transitions over one durable row. Serialize each
-        # room independently so two simultaneous replies cannot both observe
-        # the same next_speaker and consume the same turn.
-        self._turn_locks: dict[str, asyncio.Lock] = {}
+        # Weak values share a lock while operations overlap without retaining
+        # one entry forever for every room id ever observed.
+        self._turn_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     def _turn_lock(self, room_id: str) -> asyncio.Lock:
-        return self._turn_locks.setdefault(room_id, asyncio.Lock())
+        lock = self._turn_locks.get(room_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._turn_locks[room_id] = lock
+        return lock
 
     async def open(
         self, *, opened_by: str, members: list[str], topic: str = "", room_id: str | None = None
@@ -151,7 +155,20 @@ class Rooms:
             turned=[],
             spoke_this_round=False,
         )
-        await self._store.insert_room(
+        event = SocietyEnvelope(
+            msg_type=MsgType.ROOM_OPEN,
+            from_agent=opened_by,
+            to_agent=None,
+            trace_id=trace_id,
+            payload={
+                "room_id": rid,
+                "members": unique,
+                "text": room.topic,
+                "max_rounds": MAX_ROUNDS,
+                "max_messages": MAX_MESSAGES,
+            },
+        )
+        await self._store.insert_room_with_events(
             {
                 "room_id": rid,
                 "trace_id": trace_id,
@@ -164,22 +181,8 @@ class Rooms:
                 "settle_reason": "",
                 "created_ms": now,
                 "updated_ms": now,
-            }
-        )
-        await self._store.append_and_publish(
-            SocietyEnvelope(
-                msg_type=MsgType.ROOM_OPEN,
-                from_agent=opened_by,
-                to_agent=None,
-                trace_id=trace_id,
-                payload={
-                    "room_id": rid,
-                    "members": unique,
-                    "text": topic,
-                    "max_rounds": MAX_ROUNDS,
-                    "max_messages": MAX_MESSAGES,
-                },
-            )
+            },
+            (event,),
         )
         return room
 
@@ -192,16 +195,16 @@ class Rooms:
         return [Room.from_row(r) for r in rows]
 
     async def say(self, room_id: str, member: str, text: str, *, cost_usd: float = 0.0) -> Room:
-        """``member`` speaks. Refused when it is not their turn or the room
-        is not running; settles the room when a cap is reached."""
+        """Member speaks; the state and SAY event commit together."""
         text = (text or "").strip()[:_MAX_TEXT]
         if not text:
             return await self.pass_turn(room_id, member)
         async with self._turn_lock(room_id):
-            room = await self._require_running(room_id)
-            self._require_turn(room, member)
-            await self._store.append_and_publish(
-                SocietyEnvelope(
+            for _ in range(2):
+                room = await self._require_running(room_id)
+                self._require_turn(room, member)
+                expected_updated_ms = room.updated_ms
+                say_event = SocietyEnvelope(
                     msg_type=MsgType.SAY,
                     from_agent=member,
                     to_agent=None,
@@ -209,76 +212,87 @@ class Rooms:
                     cost_usd=cost_usd,
                     payload={"room_id": room.room_id, "round": room.round, "text": text},
                 )
+                room.message_count += 1
+                room.spoke_this_round = True
+                room.turned.append(member)
+                events = [say_event]
+                terminal = self._advance(room)
+                if terminal is not None:
+                    events.append(terminal)
+                if await self._persist(
+                    room,
+                    expected_updated_ms=expected_updated_ms,
+                    events=events,
+                ):
+                    return room
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room_id!r} changed concurrently; retry",
             )
-            room.message_count += 1
-            room.spoke_this_round = True
-            room.turned.append(member)
-            return await self._advance(room)
 
     async def pass_turn(self, room_id: str, member: str) -> Room:
-        """``member`` stays silent this round (silence is allowed)."""
+        """Member stays silent this round; silence is allowed."""
         async with self._turn_lock(room_id):
-            room = await self._require_running(room_id)
-            self._require_turn(room, member)
-            room.turned.append(member)
-            return await self._advance(room)
+            for _ in range(2):
+                room = await self._require_running(room_id)
+                self._require_turn(room, member)
+                expected_updated_ms = room.updated_ms
+                room.turned.append(member)
+                terminal = self._advance(room)
+                events = (terminal,) if terminal is not None else ()
+                if await self._persist(
+                    room,
+                    expected_updated_ms=expected_updated_ms,
+                    events=events,
+                ):
+                    return room
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room_id!r} changed concurrently; retry",
+            )
 
     async def settle(self, room_id: str, *, reason: str, by: str = "scheduler") -> Room:
         async with self._turn_lock(room_id):
-            room = await self.get(room_id)
-            if room is None:
-                raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
-            return await self._settle(room, reason=reason, by=by)
-
-    async def _settle(self, room: Room, *, reason: str, by: str = "scheduler") -> Room:
-        """Settle a room while its per-room transition lock is already held."""
-        if room.state in (RoomState.SETTLED, RoomState.FAILED):
-            return room
-        room.state = RoomState.SETTLED
-        room.settle_reason = reason
-        await self._persist(room)
-        await self._store.append_and_publish(
-            SocietyEnvelope(
-                msg_type=MsgType.ROOM_SETTLE,
-                from_agent=by,
-                to_agent=None,
-                trace_id=room.trace_id,
-                payload={
-                    "room_id": room.room_id,
-                    "reason": reason,
-                    "rounds": room.round,
-                    "messages": room.message_count,
-                },
-            )
-        )
-        return room
+            return await self._terminalize(room_id, reason=reason, by=by, failed=False)
 
     async def fail(self, room_id: str, *, reason: str) -> Room:
         async with self._turn_lock(room_id):
+            return await self._terminalize(
+                room_id,
+                reason=reason,
+                by="scheduler",
+                failed=True,
+            )
+
+    async def _terminalize(
+        self,
+        room_id: str,
+        *,
+        reason: str,
+        by: str,
+        failed: bool,
+    ) -> Room:
+        for _ in range(2):
             room = await self.get(room_id)
             if room is None:
                 raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
             if room.state in (RoomState.SETTLED, RoomState.FAILED):
                 return room
-            room.state = RoomState.FAILED
-            room.settle_reason = reason
-            await self._persist(room)
-            await self._store.append_and_publish(
-                SocietyEnvelope(
-                    msg_type=MsgType.ROOM_SETTLE,
-                    from_agent="scheduler",
-                    to_agent=None,
-                    trace_id=room.trace_id,
-                    payload={
-                        "room_id": room.room_id,
-                        "reason": reason,
-                        "rounds": room.round,
-                        "messages": room.message_count,
-                        "failed": True,
-                    },
-                )
-            )
-            return room
+            expected_updated_ms = room.updated_ms
+            event = self._terminal_event(room, reason=reason, by=by, failed=failed)
+            if await self._persist(
+                room,
+                expected_updated_ms=expected_updated_ms,
+                events=(event,),
+            ):
+                return room
+        latest = await self.get(room_id)
+        if latest is not None and latest.state in (RoomState.SETTLED, RoomState.FAILED):
+            return latest
+        raise RoomError(
+            FailureReason.BLOCKED_BY_POLICY,
+            f"room {room_id!r} changed concurrently; retry",
+        )
 
     # ------------------------------------------------------------- policy
 
@@ -300,32 +314,65 @@ class Rooms:
                 f"not {member!r}'s turn (next: {room.next_speaker!r})",
             )
 
-    async def _advance(self, room: Room) -> Room:
+    def _advance(self, room: Room) -> SocietyEnvelope | None:
         if room.message_count >= MAX_MESSAGES:
-            await self._persist(room)
-            return await self._settle(room, reason="message_cap")
+            return self._terminal_event(room, reason="message_cap")
         if len(room.turned) >= len(room.members):
-            # A full pass over the members ends the round.
             if not room.spoke_this_round:
-                await self._persist(room)
-                return await self._settle(room, reason="silence")
+                return self._terminal_event(room, reason="silence")
             if room.round >= MAX_ROUNDS:
-                await self._persist(room)
-                return await self._settle(room, reason="round_cap")
+                return self._terminal_event(room, reason="round_cap")
             room.round += 1
             room.turned = []
             room.spoke_this_round = False
-        await self._persist(room)
-        return room
+        return None
 
-    async def _persist(self, room: Room) -> None:
-        await self._store.update_room(
+    @staticmethod
+    def _terminal_event(
+        room: Room,
+        *,
+        reason: str,
+        by: str = "scheduler",
+        failed: bool = False,
+    ) -> SocietyEnvelope:
+        room.state = RoomState.FAILED if failed else RoomState.SETTLED
+        room.settle_reason = reason
+        payload: dict[str, Any] = {
+            "room_id": room.room_id,
+            "reason": reason,
+            "rounds": room.round,
+            "messages": room.message_count,
+        }
+        if failed:
+            payload["failed"] = True
+        return SocietyEnvelope(
+            msg_type=MsgType.ROOM_SETTLE,
+            from_agent=by,
+            to_agent=None,
+            trace_id=room.trace_id,
+            payload=payload,
+        )
+
+    async def _persist(
+        self,
+        room: Room,
+        *,
+        expected_updated_ms: int,
+        events: tuple[SocietyEnvelope, ...] | list[SocietyEnvelope] = (),
+    ) -> bool:
+        updated_ms = await self._store.transition_room(
             room.room_id,
-            {
+            expected_updated_ms=expected_updated_ms,
+            fields={
                 "members_json": room._members_json(),
                 "round": room.round,
                 "message_count": room.message_count,
                 "state": str(room.state),
                 "settle_reason": room.settle_reason,
             },
+            events=events,
         )
+        if updated_ms is None:
+            return False
+        room.updated_ms = updated_ms
+        return True

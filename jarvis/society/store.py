@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -259,11 +260,13 @@ class SocietyStore:
 
     # -------------------------------------------------------------- events
 
-    async def append_and_publish(self, envelope: SocietyEnvelope) -> SocietyEnvelope:
-        """Persist, then publish. Returns the envelope with its ``seq``."""
+    async def _insert_event(
+        self, conn: aiosqlite.Connection, envelope: SocietyEnvelope
+    ) -> SocietyEnvelope:
+        """Insert one event on conn without publishing it."""
         if envelope.seq is not None:
-            raise ValueError("append_and_publish: envelope.seq must be None (server-assigned)")
-        cur = await self.conn.execute(
+            raise ValueError("event insert requires envelope.seq to be server-assigned")
+        cur = await conn.execute(
             """
             INSERT INTO society_events
                 (event_id, msg_type, from_agent, to_agent, trace_id, parent_event_id,
@@ -285,9 +288,13 @@ class SocietyStore:
         )
         row = await cur.fetchone()
         await cur.close()
-        if row is None:  # pragma: no cover — sqlite always returns the seq
+        if row is None:  # pragma: no cover - sqlite always returns the seq
             raise RuntimeError("INSERT ... RETURNING seq returned no value")
-        stored = envelope.model_copy(update={"seq": int(row[0])})
+        return envelope.model_copy(update={"seq": int(row[0])})
+
+    async def append_and_publish(self, envelope: SocietyEnvelope) -> SocietyEnvelope:
+        """Persist one event, then publish it to in-process observers."""
+        stored = await self._insert_event(self.conn, envelope)
         await self._bus.publish(stored)
         return stored
 
@@ -555,18 +562,111 @@ class SocietyStore:
         cols = ", ".join(row.keys())
         marks = ", ".join("?" for _ in row)
         await self.conn.execute(
-            f"INSERT INTO society_rooms ({cols}) VALUES ({marks})",  # noqa: S608 — identifiers from a fixed allowlist
+            f"INSERT INTO society_rooms ({cols}) VALUES ({marks})",  # noqa: S608
             tuple(row.values()),
         )
+
+    async def insert_room_with_events(
+        self,
+        row: dict[str, Any],
+        events: Sequence[SocietyEnvelope],
+    ) -> tuple[SocietyEnvelope, ...]:
+        """Commit a room row and its opening events as one SQLite transaction."""
+        conn = await aiosqlite.connect(self._db_path, isolation_level=None)
+        stored: list[SocietyEnvelope] = []
+        try:
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("PRAGMA foreign_keys=ON")
+            await conn.execute("BEGIN IMMEDIATE")
+            cols = ", ".join(row.keys())
+            marks = ", ".join("?" for _ in row)
+            await conn.execute(
+                f"INSERT INTO society_rooms ({cols}) VALUES ({marks})",  # noqa: S608
+                tuple(row.values()),
+            )
+            for event in events:
+                stored.append(await self._insert_event(conn, event))
+            await conn.execute("COMMIT")
+        except BaseException:
+            try:
+                await conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            await conn.close()
+        for event in stored:
+            await self._bus.publish(event)
+        return tuple(stored)
 
     async def update_room(self, room_id: str, fields: dict[str, Any]) -> None:
         fields = dict(fields)
         fields["updated_ms"] = now_ms()
         assignments = ", ".join(f"{k} = ?" for k in fields)
         await self.conn.execute(
-            f"UPDATE society_rooms SET {assignments} WHERE room_id = ?",  # noqa: S608 — identifiers from a fixed allowlist, values bound
+            f"UPDATE society_rooms SET {assignments} WHERE room_id = ?",  # noqa: S608
             (*fields.values(), room_id),
         )
+
+    async def transition_room(
+        self,
+        room_id: str,
+        *,
+        expected_updated_ms: int,
+        fields: dict[str, Any],
+        events: Sequence[SocietyEnvelope] = (),
+    ) -> int | None:
+        """CAS-update one room and append related events in one transaction.
+
+        A dedicated connection keeps the explicit transaction from absorbing
+        unrelated writes on the store's shared autocommit connection. The
+        server remains the sole writer process; SQLite WAL serializes these
+        short room transactions. Events are published only after COMMIT.
+        """
+        allowed = {
+            "members_json",
+            "round",
+            "message_count",
+            "state",
+            "settle_reason",
+        }
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"unsupported room fields: {sorted(unknown)}")
+        values = dict(fields)
+        updated_ms = max(now_ms(), int(expected_updated_ms) + 1)
+        values["updated_ms"] = updated_ms
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        conn = await aiosqlite.connect(self._db_path, isolation_level=None)
+        stored: list[SocietyEnvelope] = []
+        try:
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.execute("PRAGMA foreign_keys=ON")
+            await conn.execute("BEGIN IMMEDIATE")
+            cur = await conn.execute(
+                f"UPDATE society_rooms SET {assignments} "
+                "WHERE room_id = ? AND updated_ms = ?",  # noqa: S608
+                (*values.values(), room_id, int(expected_updated_ms)),
+            )
+            changed = cur.rowcount > 0
+            await cur.close()
+            if not changed:
+                await conn.execute("ROLLBACK")
+                return None
+            for event in events:
+                stored.append(await self._insert_event(conn, event))
+            await conn.execute("COMMIT")
+        except BaseException:
+            try:
+                await conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        finally:
+            await conn.close()
+        for event in stored:
+            await self._bus.publish(event)
+        return updated_ms
 
     async def get_room_row(self, room_id: str) -> dict[str, Any] | None:
         self.conn.row_factory = aiosqlite.Row
