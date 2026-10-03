@@ -566,9 +566,8 @@ def capture_permission_error(*, deep: bool = True) -> CapturePermissionIssue | N
         return CapturePermissionIssue(
             code="wayland_portal",
             message=(
-                "Screen capture is unavailable in this Wayland session because "
-                "no desktop-portal capture backend is installed. Use an X11 "
-                "session or install a supported portal backend, then ask again."
+                "Screen capture is not supported in this Wayland session yet: "
+                "Jarvis has no desktop-portal capture adapter. Use an X11 session."
             ),
         )
     try:

@@ -1462,6 +1462,31 @@ German and English, including a quieter English sample. First response text
 arrived 0.4–1.4 seconds earlier in those three comparisons; these small
 synthetic comparisons are not a physical-device latency guarantee.
 
+## AppShot permission lifecycle
+
+AppShot follows AP-35: startup, settings reads and helper processes never request
+macOS access. A user-started area selection asks for Screen Recording before the
+picker starts or reads any preview pixels. The picker silently checks its own
+usable grant and falls back to a live dim layer when it cannot capture. The final
+capture still checks permissions and applies the existing privacy filters.
+
+Saving a changed tap-based AppShot shortcut, or enabling AppShots with one already
+configured, asks for Input Monitoring on macOS through the shared permission
+service. Clearing a shortcut, saving an unchanged value, disabling AppShots and
+ordinary startup never ask. Listener status follows actual readiness and later
+grant changes; disabling AppShots stops its listeners. Both-modifier polling
+retains its existing behavior without inventing an unverified permission need.
+
+Windows and Linux/X11 retain their existing capture backends. Headless Linux and
+Wayland report unavailable support; Jarvis does not yet implement the Wayland
+Screenshot portal. Installing a portal package alone does not enable AppShots.
+Backend availability never substitutes for a macOS grant and does not disable a
+supported Mac's first-use action merely because consent has not been requested.
+
+Validation uses platform fakes, AppShot entry-point and listener lifecycle tests,
+and frontend action-state tests. Actual macOS dialogs and helper attribution,
+physical modifier gestures, and Linux desktop sessions remain unverified here.
+
 ## GPT-Live subscription access (experimental)
 
 The optional subscription provider uses the selected Codex account for native
