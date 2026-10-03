@@ -36,6 +36,7 @@ vi.mock("@/components/society/card/AgentCardOverlay", () => ({ AgentCardOverlay:
   </div>
 ) }));
 vi.mock("@/components/society/roster/RosterRail", () => ({ RosterRail: () => <div data-testid="roster" /> }));
+vi.mock("@/components/society/ledger/SocietyLedger", () => ({ SocietyLedger: () => <div data-testid="society-ledger">Ledger history</div> }));
 vi.mock("@/components/society/card/BuildingCardOverlay", () => ({ BuildingCardOverlay: () => null }));
 vi.mock("@/components/society/create/CreateAgentDialog", () => ({ CreateAgentDialog: ({ open, onClose }: any) => open ? <button onClick={onClose}>Close creator</button> : null }));
 
@@ -72,6 +73,18 @@ it("switches to Map and back without losing the selected agent or draft", async 
   expect(screen.getByText("Specialist")).toBeTruthy();
   expect(screen.getByLabelText("Draft")).toBe(draft);
   expect(draft.value).toBe("Unsent message");
+});
+
+it("opens the durable Ledger from the caption and from the office monitor", async () => {
+  render(<SocietyView />);
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_ledger" }));
+  expect(screen.getByTestId("society-ledger")).toBeTruthy();
+  expect(screen.queryByTestId("map")).toBeNull();
+
+  fireEvent.click(screen.getByRole("tab", { name: "society.world.mode_map" }));
+  fireEvent.click(await screen.findByText("Map fallback"));
+  expect(screen.getByTestId("society-ledger")).toBeTruthy();
+  expect(screen.queryByTestId("map")).toBeNull();
 });
 
 it("restores the most recently selected agent after the view is remounted", () => {

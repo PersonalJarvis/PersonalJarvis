@@ -122,6 +122,19 @@
       "model_saving": "Saving…",
       "model_apply": "Apply model"
     },
+    "ledger": {
+          "title": "Society ledger",
+          "subtitle": "Durable history from the society event log.",
+          "empty": "No society events yet.",
+          "error": "The society ledger could not be loaded.",
+          "time": "Time",
+          "type": "Type",
+          "from": "From",
+          "to": "To",
+          "detail": "Detail",
+          "cost": "Cost",
+          "board": "Board"
+    },
     "world": {
       "talk_kind_query": "asks",
       "talk_kind_answer": "answers",

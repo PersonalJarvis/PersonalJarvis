@@ -10,6 +10,7 @@ import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
 import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
 import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog";
+import { SocietyLedger } from "@/components/society/ledger/SocietyLedger";
 import type { PlaceId } from "@/components/society/world/islandLayout";
 import { useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
@@ -34,7 +35,7 @@ export function SocietyView() {
   useModelMenuData();
   const t = useT();
   useLocaleChunk("society");
-  const [mode, setMode] = useState<"agents" | "world">("agents");
+  const [mode, setMode] = useState<"agents" | "world" | "ledger">("agents");
   const roster = useSocietyRoster();
   const agents = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const sample = roster.data?.sample ?? true;
@@ -108,7 +109,7 @@ export function SocietyView() {
   }, [selectAgent]);
 
   const [fullscreenError, setFullscreenError] = useState(false);
-  const switchMode = useCallback((next: "agents" | "world") => {
+  const switchMode = useCallback((next: "agents" | "world" | "ledger") => {
     setMode(next);
     setFullscreenError(false);
     if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
@@ -155,11 +156,16 @@ export function SocietyView() {
 
   const modeSwitch = (
     <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background/80 p-0.5 backdrop-blur-sm">
-      {(["world", "agents"] as const).map((value) => {
+      {(["world", "agents", "ledger"] as const).map((value) => {
+        const label = value === "world"
+          ? "society.world.mode_map"
+          : value === "ledger"
+            ? "society.world.mode_ledger"
+            : "society.roster.title";
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
           onClick={() => switchMode(value)}
           className={`inline-flex h-5 items-center justify-center rounded px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-          {t(value === "world" ? "society.world.mode_map" : "society.roster.title")}
+          {t(label)}
         </button>;
       })}
     </div>
@@ -185,7 +191,7 @@ export function SocietyView() {
           <div className="min-w-0 flex-1">
             <CanvasActivity.Provider value={!openPlace && !creating}>
               <Suspense fallback={null}>
-                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")}
+                <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("ledger")}
                   onCreateAgent={() => setCreating(true)} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
               </Suspense>
             </CanvasActivity.Provider>
@@ -193,6 +199,7 @@ export function SocietyView() {
 
         </div>
         ) : null}
+        {mode === "ledger" ? <SocietyLedger /> : null}
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         {openGroup ? (
           <ChatGroupPanel group={openGroup} groups={groups} roster={agents} onOpenAgent={selectAgent} onOpenGroup={selectGroup}

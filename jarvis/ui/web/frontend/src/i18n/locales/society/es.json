@@ -122,6 +122,19 @@
       "model_saving": "Guardando…",
       "model_apply": "Aplicar modelo"
     },
+    "ledger": {
+          "title": "Registro de la sociedad",
+          "subtitle": "Historial duradero del registro de eventos de la sociedad.",
+          "empty": "Todavía no hay eventos de la sociedad.",
+          "error": "No se pudo cargar el registro de la sociedad.",
+          "time": "Hora",
+          "type": "Tipo",
+          "from": "De",
+          "to": "Para",
+          "detail": "Detalle",
+          "cost": "Coste",
+          "board": "Tablón"
+    },
     "world": {
       "talk_kind_query": "pregunta",
       "talk_kind_answer": "responde",

@@ -122,6 +122,19 @@
       "model_saving": "Wird gespeichert…",
       "model_apply": "Modell übernehmen"
     },
+    "ledger": {
+          "title": "Society-Ledger",
+          "subtitle": "Dauerhafte Historie aus dem Ereignisprotokoll der Society.",
+          "empty": "Noch keine Society-Ereignisse.",
+          "error": "Das Society-Ledger konnte nicht geladen werden.",
+          "time": "Zeit",
+          "type": "Typ",
+          "from": "Von",
+          "to": "An",
+          "detail": "Details",
+          "cost": "Kosten",
+          "board": "Board"
+    },
     "world": {
       "talk_kind_query": "fragt",
       "talk_kind_answer": "antwortet",
