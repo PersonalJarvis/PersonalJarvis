@@ -144,6 +144,7 @@ def _lang(args: dict[str, Any], ctx: Any) -> str:
 
             value = resolve_ambient_language()
         except Exception:  # noqa: BLE001 — a spoken fallback beats a crash on the voice path
+            log.debug("delegate_to_agent: ambient language unavailable", exc_info=True)
             value = "en"
     return value if value in _ACK else "en"
 

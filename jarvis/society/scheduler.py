@@ -241,7 +241,7 @@ class SocietyScheduler:
         if env.msg_type is MsgType.ASSIGN:
             await self._on_assign(env)
         elif (
-            env.msg_type in (MsgType.ROOM_OPEN, MsgType.SAY)
+            env.msg_type is MsgType.ROOM_OPEN
             and isinstance(env.payload.get("room_id"), str)
         ):
             await self.drive_room(str(env.payload["room_id"]))

@@ -768,7 +768,7 @@ class SocietyRuntime:
         language = str(opening.payload.get("lang") or "")
         joined_names = ", ".join(names.get(agent_id, agent_id) for agent_id in member_ids)
         group_label = {
-            "de": f"Runde mit {joined_names}",
+            "de": f"Runde mit {joined_names}",  # i18n-allow: localized room result
             "es": f"Conversación con {joined_names}",
         }.get(language, f"Discussion with {joined_names}")
         if says:
@@ -778,7 +778,7 @@ class SocietyRuntime:
             )[:4000]
         else:
             report = {
-                "de": "Die Runde endete ohne einen Beitrag.",
+                "de": "Die Runde endete ohne einen Beitrag.",  # i18n-allow: localized room result
                 "es": "La conversación terminó sin una aportación.",
             }.get(language, "The discussion ended without a contribution.")
 
