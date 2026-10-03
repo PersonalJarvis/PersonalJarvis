@@ -43,15 +43,16 @@ function agentSource(agentId: string): FlairSource {
   };
 }
 
-function Flair({ loadout, source, topSource, top, scale, paused, reduced }: {
+/** `gadgetOnFigure`: the wearer is a figure that wears its gadget on its own body (`wornGadget.tsx`). */
+function Flair({ loadout, source, topSource, top, scale, paused, reduced, gadgetOnFigure = false }: {
   loadout: Loadout; source: FlairSource; topSource?: FlairSource; top: number; scale: number; paused: boolean; reduced: boolean;
+  gadgetOnFigure?: boolean;
 }) {
   return (
     <>
       {loadout.aura && <CosmeticAura kind={loadout.aura as AuraKind} source={source} scale={scale} paused={paused} reduced={reduced} />}
       {loadout.trail && !reduced && <CosmeticTrail kind={loadout.trail as TrailKind} source={source} scale={scale} paused={paused} />}
-      {/* The wings are worn on the figure itself (AngelWings in ToyFigure's back slot), not floated beside it. */}
-      {loadout.gadget && loadout.gadget !== "gadget_wings" && <CosmeticGadget kind={loadout.gadget as GadgetKind} source={topSource ?? source} top={top} scale={scale}
+      {loadout.gadget && !gadgetOnFigure && <CosmeticGadget kind={loadout.gadget as GadgetKind} source={topSource ?? source} top={top} scale={scale}
         paused={paused} reduced={reduced} />}
     </>
   );
@@ -59,7 +60,7 @@ function Flair({ loadout, source, topSource, top, scale, paused, reduced }: {
 
 function AgentFlair({ agentId, loadout, paused, reduced }: { agentId: string; loadout: Loadout; paused: boolean; reduced: boolean }) {
   const source = useMemo(() => agentSource(agentId), [agentId]);
-  return <Flair loadout={loadout} source={source} top={OFFICE_FIGURE_HEIGHT_M + 0.02} scale={1} paused={paused} reduced={reduced} />;
+  return <Flair loadout={loadout} source={source} top={OFFICE_FIGURE_HEIGHT_M + 0.02} scale={1} paused={paused} reduced={reduced} gadgetOnFigure />;
 }
 
 /** Where a subject stands, for a burst or a "+XP", and how tall it is there. */
@@ -131,7 +132,7 @@ export function ProgressionLayer({ agents, awake, reduced }: { agents: ReadonlyM
 
   return (
     <group>
-      <Flair loadout={personLoadout} source={personSource} top={OFFICE_FIGURE_HEIGHT_M + 0.02} scale={1} paused={paused} reduced={reduced} />
+      <Flair loadout={personLoadout} source={personSource} top={OFFICE_FIGURE_HEIGHT_M + 0.02} scale={1} paused={paused} reduced={reduced} gadgetOnFigure />
       <Flair loadout={petLoadout} source={petSource} topSource={petTopSource} top={0.5} scale={0.55} paused={paused} reduced={reduced} />
       {agentLoadouts.map(({ agentId, loadout }) => <AgentFlair key={agentId} agentId={agentId} loadout={loadout} paused={paused} reduced={reduced} />)}
       {bursts.map((burst) => {

@@ -171,6 +171,12 @@ function HairCap({ color, grow = 0, fringe = true }: { color: string; grow?: num
   );
 }
 
+/** How far each hair style or hat rises above the bare head top, so headwear sits on it instead of inside it. */
+const HAIR_TOP: Record<HairStyle, number> = {
+  bald: 0, buzz: 0.012, short: 0.035, slick: 0.035, sidepart: 0.04, long: 0.035, ponytail: 0.035,
+  curly: 0.07, bun: 0.06, spiky: 0.08, beanie: 0.06, cap: 0.035,
+};
+
 const SPIKES: Array<[number, number, number, number, number]> = [
   [0, 0.6, 0.1, 0.75, 0], [-0.12, 0.6, 0.04, 0.35, 0.45], [0.12, 0.6, 0.04, 0.35, -0.45],
   [0, 0.62, -0.05, -0.2, 0], [-0.21, 0.52, -0.04, -0.1, 0.95], [0.21, 0.52, -0.04, -0.1, -0.95],
@@ -524,9 +530,11 @@ export interface ToyFigureProps {
   holding?: ReactNode;
   /** Worn on the upper back (e.g. the level wings); rides the torso through every hop and lean. */
   back?: ReactNode;
+  /** Worn on top of the head (e.g. the level halo or crown); rides every nod, hop and lean. */
+  headwear?: ReactNode;
 }
 
-export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding, back }: ToyFigureProps) {
+export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding, back, headwear }: ToyFigureProps) {
   const holds = useRef(false);
   holds.current = !!holding;
   const scale = heightM / TOY_HEIGHT;
@@ -628,6 +636,7 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
             <Face look={look} />
             <Eyewear look={look} />
             <Hair style={look.hairStyle} look={look} />
+            {headwear && <group position={[0, HD.y + HD.ry + HAIR_TOP[look.hairStyle] + 0.02, 0]}>{headwear}</group>}
           </group>
         </group>
       </group>

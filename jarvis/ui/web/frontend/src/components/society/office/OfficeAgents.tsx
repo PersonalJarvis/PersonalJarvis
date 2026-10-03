@@ -41,7 +41,7 @@ import { agentLogoAsset } from "@/components/agentic/AgentMark";
 import { LevelChip } from "../progression/LevelHud";
 import { agentSubject, petSubject } from "../progression/progressionApi";
 import { useProgression } from "../progression/progressionStore";
-import { AngelWings, useWearsWings } from "../progression/effects/AngelWings";
+import { figureGadgetSlots, useWornGadget } from "../progression/wornGadget";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -225,7 +225,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const body = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
   const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
-  const wings = useWearsWings("agent", agentSubject(agent.agentId));
+  const gadget = useWornGadget("agent", agentSubject(agent.agentId));
+  const worn = figureGadgetSlots(gadget, { drive, top: OFFICE_FIGURE_HEIGHT_M + 0.02, paused: !awake, reduced });
   const rng = useMemo(() => createRng(agent.agentId), [agent.agentId]);
   const mover = useRef<Mover>({ ...(arrivesByElevator ? ctx.spawn : { x: 0, z: 0 }), heading: Math.PI, path: [] });
   const plan = useRef<Plan | null>(null);
@@ -428,7 +429,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = ""; }}>
         {!isGigi && <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight}
-          back={wings ? <AngelWings drive={drive} paused={!awake} reduced={reduced} /> : undefined} />}
+          back={worn.back} headwear={worn.headwear} />}
+        {!isGigi && worn.beside}
       </group>
       <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? leadPlate : undefined} />
       <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}

@@ -1,7 +1,9 @@
 /**
  * What a levelled-up figure wears: an aura on the floor under it and a
- * gadget on or around it. Both follow the wearer's ground position every
- * frame; nothing here is solid, casts a shadow or takes a click.
+ * gadget on or around it. The aura follows the wearer's ground position
+ * every frame; a figure wears its gadget on its own body (`wornGadget.tsx`)
+ * and only the pet's follows a position. Nothing here is solid, casts a
+ * shadow or takes a click.
  *
  * Auras: a warm glow, a turning rune circle, a crackling storm ring and the
  * prismatic legend circle with rising motes. Gadgets: a hovering drone, a
@@ -173,15 +175,21 @@ function Motes({ radius, paused }: { radius: number; paused: boolean }) {
 
 // ------------------------------------------------------------------ gadgets
 
-/** `top` is the height of the wearer's head top above the floor. */
-export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }: {
-  kind: GadgetKind; source: FlairSource; top: number; scale?: number; paused: boolean; reduced: boolean;
+/**
+ * A gadget drawn around its own origin, which is the top of the wearer's
+ * head. A figure wears it in its head slot (halo, crown) or body group
+ * (drone) so it rides every hop; the pet's follows its position instead.
+ */
+export function GadgetModel({ kind, scale = 1, paused, reduced }: {
+  kind: GadgetKind; scale?: number; paused: boolean; reduced: boolean;
 }) {
   const spinner = useRef<Group>(null);
   const extra = useRef<Group>(null);
   const blink = useRef<Mesh>(null);
-  const group = useFollow(source, paused, (g, at, t) => {
-    g.position.set(at.x, at.y ?? top, at.z);
+  const clock = useRef(Math.random() * 10);
+  useFrame((_, rawDt) => {
+    clock.current += paused ? 0 : Math.min(rawDt, 0.1);
+    const t = clock.current;
     const calm = reduced ? 0 : 1;
     if (kind === "gadget_halo" && spinner.current) {
       spinner.current.position.y = 0.14 * scale + 0.025 * Math.sin(t * 2.2) * calm;
@@ -199,7 +207,7 @@ export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }
   });
   const [main, accent] = EFFECT_COLOURS[kind];
   return (
-    <group ref={group}>
+    <group>
       {kind === "gadget_halo" && (
         <group ref={spinner}>
           <mesh rotation={[Math.PI / 2, 0, 0]}>
@@ -253,6 +261,18 @@ export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }
           </group>
         </group>
       )}
+    </group>
+  );
+}
+
+/** A gadget that follows a ground position; `top` is the wearer's head-top height above the floor. */
+export function CosmeticGadget({ kind, source, top, scale = 1, paused, reduced }: {
+  kind: GadgetKind; source: FlairSource; top: number; scale?: number; paused: boolean; reduced: boolean;
+}) {
+  const group = useFollow(source, paused, (g, at) => { g.position.set(at.x, at.y ?? top, at.z); });
+  return (
+    <group ref={group}>
+      <GadgetModel kind={kind} scale={scale} paused={paused} reduced={reduced} />
     </group>
   );
 }

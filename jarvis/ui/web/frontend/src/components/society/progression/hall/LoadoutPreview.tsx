@@ -28,7 +28,7 @@ import { OFFICE_FIGURE_HEIGHT_M } from "../../office/OfficeAgents";
 import { ToyFigure } from "../../office/ToyFigure";
 import type { ToyLook } from "../../office/toyFigureModel";
 import type { Loadout } from "../cosmetics";
-import { AngelWings } from "../effects/AngelWings";
+import { figureGadgetSlots } from "../wornGadget";
 import { CosmeticTrail, type FlairSource, type TrailKind } from "../effects/CosmeticTrail";
 import { CosmeticAura, CosmeticGadget, type AuraKind, type GadgetKind } from "../effects/CosmeticWear";
 
@@ -66,6 +66,7 @@ function PreviewScene({ subject, loadout, paused, reduced, spin }: {
   const walkR = WALK_R / grow;
   const scale = pet ? 0.5 : 1;
   const gigi = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
+  const worn = figureGadgetSlots(pet ? null : (loadout.gadget as GadgetKind | undefined), { drive: figureDrive, top, paused, reduced });
 
   useFrame((_, rawDt) => {
     const dt = paused ? 0 : Math.min(rawDt, 0.1);
@@ -118,13 +119,16 @@ function PreviewScene({ subject, loadout, paused, reduced, spin }: {
               </Suspense>
             </ModelBoundary>
           ) : (
-            <ToyFigure look={(subject as Extract<PreviewSubject, { kind: "person" }>).look} drive={figureDrive} paused={paused} heightM={OFFICE_FIGURE_HEIGHT_M}
-              back={loadout.gadget === "gadget_wings" ? <AngelWings drive={figureDrive} paused={paused} reduced={reduced} /> : undefined} />
+            <>
+              <ToyFigure look={(subject as Extract<PreviewSubject, { kind: "person" }>).look} drive={figureDrive} paused={paused} heightM={OFFICE_FIGURE_HEIGHT_M}
+                back={worn.back} headwear={worn.headwear} />
+              {worn.beside}
+            </>
           )}
         </group>
         {loadout.aura && <CosmeticAura key={loadout.aura} kind={loadout.aura as AuraKind} source={ground} scale={scale} paused={paused} reduced={reduced} />}
         {walking && <CosmeticTrail key={loadout.trail} kind={loadout.trail as TrailKind} source={ground} scale={scale} paused={paused} />}
-        {loadout.gadget && loadout.gadget !== "gadget_wings" && (
+        {loadout.gadget && pet && (
           <CosmeticGadget key={loadout.gadget} kind={loadout.gadget as GadgetKind} source={head} top={top} scale={scale} paused={paused} reduced={reduced} />
         )}
         </group>

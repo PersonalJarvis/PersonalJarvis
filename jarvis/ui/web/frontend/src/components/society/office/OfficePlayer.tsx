@@ -25,7 +25,7 @@ import { jumpSquash, newJump, pressJump, stepJump } from "./officeJump";
 import { useProgression } from "../progression/progressionStore";
 import { PERSON_SUBJECT } from "../progression/progressionApi";
 import { LevelChip } from "../progression/LevelHud";
-import { AngelWings, useWearsWings } from "../progression/effects/AngelWings";
+import { figureGadgetSlots, useWornGadget } from "../progression/wornGadget";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -165,8 +165,9 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
     if (state.cheerUntil > prev.cheerUntil && !reduced) pressJump(jump);
   }), [jump, reduced]);
   const level = useProgression((s) => (s.snapshot ? s.subjects[PERSON_SUBJECT]?.level ?? 1 : null));
-  const wings = useWearsWings("person", PERSON_SUBJECT);
+  const gadget = useWornGadget("person", PERSON_SUBJECT);
   const airborne = useMemo(() => () => jump.airborne, [jump]);
+  const worn = figureGadgetSlots(gadget, { drive, top: OFFICE_FIGURE_HEIGHT_M + 0.02, airborne, paused: !awake, reduced });
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
   // character where it was, unless a changed floor plan put that spot in a wall.
@@ -294,7 +295,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       </mesh>
       <group ref={body}>
         <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined}
-          back={wings ? <AngelWings drive={drive} airborne={airborne} paused={!awake} reduced={reduced} /> : undefined} />
+          back={worn.back} headwear={worn.headwear} />
+        {worn.beside}
         {!firstPerson && (
           <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
             <span className="office-plate office-plate-player" data-office-ui>

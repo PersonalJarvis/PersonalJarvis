@@ -21,8 +21,6 @@ import {
   type Group, type InstancedMesh, type Material, type Points,
 } from "three";
 import type { FigureMode } from "../../figures/FigureRig";
-import { useProgression } from "../progressionStore";
-import { equippedFor } from "../cosmetics";
 import { glowTexture, starTexture } from "./flairTextures";
 
 /** One feather in its wing's plane: x points away from the body, y up (rig metres). */
@@ -367,14 +365,4 @@ export function AngelWings({ drive, airborne, paused, reduced }: {
       {!reduced && <GoldDust spread={spread} paused={paused} />}
     </group>
   );
-}
-
-/** True when this subject currently wears the wings (unlocked, and not swapped out by the person). */
-export function useWearsWings(kind: "person" | "agent", subjectId: string): boolean {
-  return useProgression((s) => {
-    const rewards = s.snapshot?.rewards;
-    const level = s.subjects[subjectId]?.level;
-    if (!rewards || !level) return false;
-    return equippedFor(rewards, kind, level, kind === "person" ? s.choices.person : undefined).gadget === "gadget_wings";
-  });
 }
