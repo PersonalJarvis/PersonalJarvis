@@ -34,8 +34,12 @@ session gets a names directive and the turn planner a `SOCIETY` reason, `delegat
 picks the fitting agent when no name is given, and a lead-assigned result comes back as a
 notice in its originating chat and, for voice requests, a batched update at a conversational
 pause (`agent-definition.md` §3.5). **M3
-world** is the maintainer's parallel track. Open in M4: rooms live under the scheduler, the
-curator.
+world** is the maintainer's parallel track. **M4 exit is now guarded end to end
+(2026-10-03):** bounded live rooms run through the single scheduler with crash recovery, the
+curator stages tainted knowledge behind the existing wiki review gate, group delegation has
+voice acknowledgement/status and completion announcements, room cost is durable/visible, and
+ROOM_OPEN/ROOM_SETTLE project into the world. The blocking CI contract runs the German voice
+exit test plus curator review/denial invariants.
 
 The research behind every claim here lives in [`research/`](research/):
 [Branch A — product & UI](research/branch-a-product-ui.md) (Hermes Agent, Grok Bot, 3D stack,
@@ -354,10 +358,11 @@ add the four controls it lacked: authenticated writes (chokepoint), bounded non-
   open-island decision makes this the largest milestone — split into M3a (terrain, navigation,
   walkers) and M3b (buildings, polish) if it crowds the month. *Exit: watching a real mission
   play out on the island, on integrated graphics, with WebGL forced off falling back cleanly.*
-- **M4 — Society dynamics (T2/T3 for voice).** Bounded group rooms (meeting table), curator +
+- **M4 — Society dynamics (T2/T3 for voice) — exit guarded.** Bounded group rooms (meeting table), curator +
   taint + wiki review gate, `delegate-to-agent` router tool + ADR amendment + voice status/ack
   paths, notifications. *Exit: the spoken request "Jarvis, lass Scout und Archivist das zusammen klären" (i18n-allow: quoted German voice example)
   works end to end, costs a visible bounded amount, and the meeting shows in the world.*
+  The exit flow and curator review invariants run in the blocking Python contract lane.
 - **M5 — Hardening & migration.** Old JarvisAgentsView/AgentsView slots replaced (deep links
   redirected, history visible in Ledger), first-run seed (a starter coordinator + one specialist),
   cost-ledger unification, German gate, boot budget, accessibility pass, full guard suite.

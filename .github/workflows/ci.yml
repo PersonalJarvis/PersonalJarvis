@@ -242,6 +242,9 @@ jobs:
             tests/unit/sessions/test_hangup_reason_parity.py \
             tests/unit/core/test_turn_language.py \
             tests/unit/skills/test_skill_routing_offline.py \
+            tests/unit/society/test_chat_binding.py::test_m4_voice_group_delegation_exit_contract \
+            tests/unit/society/test_curator.py::test_curator_stages_durable_result_behind_review_gate \
+            tests/unit/society/test_curator.py::test_memory_share_denial_closes_taint_and_cannot_be_reversed \
             tests/contract/test_plugin_auth_standard.py \
             tests/contract/test_connector_auth.py \
             tests/contract/test_service_connectors.py \
