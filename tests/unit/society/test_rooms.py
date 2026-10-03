@@ -196,6 +196,121 @@ async def test_manual_settle_rolls_back_if_event_insert_fails(rooms, monkeypatch
     assert [event.msg_type for event in events] == [MsgType.ROOM_OPEN]
 
 
+async def test_turn_claim_survives_reopen_and_completes_exactly_once(rooms):
+    service, store = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+    claimed = await service.claim_turn(room.room_id, "claim-1")
+    assert claimed.inflight_member == "a"
+    assert claimed.inflight_claim_id == "claim-1"
+    assert claimed.inflight_turn_id == ""
+    assert claimed.inflight_since_ms > 0
+
+    reopened_store = SocietyStore(store.path)
+    await reopened_store.open()
+    try:
+        loaded = await Rooms(reopened_store).get(room.room_id)
+        assert loaded is not None
+        assert loaded.inflight_member == "a"
+        assert loaded.inflight_claim_id == "claim-1"
+    finally:
+        await reopened_store.close()
+
+    with pytest.raises(RoomError):
+        await service.say(room.room_id, "a", "manual race")
+    with pytest.raises(RoomError):
+        await service.bind_turn(room.room_id, "wrong-claim", "turn-1")
+
+    bound = await service.bind_turn(room.room_id, "claim-1", "turn-1")
+    assert bound.inflight_turn_id == "turn-1"
+    rebound = await service.bind_turn(room.room_id, "claim-1", "turn-1")
+    assert rebound.inflight_turn_id == "turn-1"
+    with pytest.raises(RoomError):
+        await service.bind_turn(room.room_id, "claim-1", "turn-2")
+
+    completed = await service.complete_claim(
+        room.room_id,
+        "claim-1",
+        "model reply",
+        cost_usd=0.25,
+    )
+    assert completed.next_speaker == "b"
+    assert completed.message_count == 1
+    assert completed.inflight_member == ""
+    assert completed.inflight_claim_id == ""
+    assert completed.inflight_turn_id == ""
+    assert completed.inflight_since_ms == 0
+    events = await store.events_for_trace(room.trace_id)
+    says = [event for event in events if event.msg_type is MsgType.SAY]
+    assert len(says) == 1
+    assert says[0].text == "model reply"
+    assert says[0].cost_usd == pytest.approx(0.25)
+
+
+async def test_concurrent_turn_claims_have_one_durable_owner(rooms, monkeypatch):
+    first_service, store = rooms
+    second_service = Rooms(store)
+    room = await first_service.open(opened_by="jarvis", members=["a", "b"])
+    first_entered = asyncio.Event()
+    second_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    calls = 0
+    original = store.transition_room
+
+    async def overlapping_transition(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            first_entered.set()
+            await release_first.wait()
+        else:
+            second_entered.set()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "transition_room", overlapping_transition)
+    first = asyncio.create_task(first_service.claim_turn(room.room_id, "claim-a"))
+    await first_entered.wait()
+    second = asyncio.create_task(second_service.claim_turn(room.room_id, "claim-b"))
+    await second_entered.wait()
+    release_first.set()
+
+    results = await asyncio.gather(first, second, return_exceptions=True)
+    assert sum(isinstance(result, RoomError) for result in results) == 1
+    loaded = await first_service.get(room.room_id)
+    assert loaded is not None
+    assert loaded.inflight_member == "a"
+    assert loaded.inflight_claim_id in {"claim-a", "claim-b"}
+    assert loaded.inflight_turn_id == ""
+
+
+async def test_release_claim_requires_exact_owner_and_preserves_turn(rooms):
+    service, store = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+    await service.claim_turn(room.room_id, "claim-a")
+    with pytest.raises(RoomError):
+        await service.release_claim(room.room_id, "claim-b")
+
+    released = await service.release_claim(room.room_id, "claim-a")
+    assert released.next_speaker == "a"
+    assert released.message_count == 0
+    assert released.inflight_claim_id == ""
+    events = await store.events_for_trace(room.trace_id)
+    assert [event.msg_type for event in events] == [MsgType.ROOM_OPEN]
+
+
+async def test_terminalization_clears_inflight_claim(rooms):
+    service, _ = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+    await service.claim_turn(room.room_id, "claim-a")
+    await service.bind_turn(room.room_id, "claim-a", "turn-a")
+
+    settled = await service.settle(room.room_id, reason="kill_switch")
+    assert settled.state is RoomState.SETTLED
+    assert settled.inflight_member == ""
+    assert settled.inflight_claim_id == ""
+    assert settled.inflight_turn_id == ""
+    assert settled.inflight_since_ms == 0
+
+
 async def test_round_cap_settles(rooms):
     service, store = rooms
     room = await service.open(opened_by="jarvis", members=["a", "b"])

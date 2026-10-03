@@ -52,10 +52,12 @@ class Room:
     settle_reason: str
     created_ms: int
     updated_ms: int
-    #: Members who have had their turn in the current round (spoke or passed).
     turned: list[str]
-    #: Whether anybody spoke in the current round.
     spoke_this_round: bool
+    inflight_member: str = ""
+    inflight_claim_id: str = ""
+    inflight_turn_id: str = ""
+    inflight_since_ms: int = 0
 
     @property
     def next_speaker(self) -> str | None:
@@ -80,6 +82,7 @@ class Room:
             "state": str(self.state),
             "settle_reason": self.settle_reason,
             "next_speaker": self.next_speaker,
+            "inflight_member": self.inflight_member or None,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
         }
@@ -102,6 +105,10 @@ class Room:
             updated_ms=int(row.get("updated_ms") or 0),
             turned=list(extra.get("turned", [])),
             spoke_this_round=bool(extra.get("spoke_this_round", False)),
+            inflight_member=str(extra.get("inflight_member") or ""),
+            inflight_claim_id=str(extra.get("inflight_claim_id") or ""),
+            inflight_turn_id=str(extra.get("inflight_turn_id") or ""),
+            inflight_since_ms=int(extra.get("inflight_since_ms") or 0),
         )
 
     def _members_json(self) -> str:
@@ -110,6 +117,10 @@ class Room:
                 "members": self.members,
                 "turned": self.turned,
                 "spoke_this_round": self.spoke_this_round,
+                "inflight_member": self.inflight_member,
+                "inflight_claim_id": self.inflight_claim_id,
+                "inflight_turn_id": self.inflight_turn_id,
+                "inflight_since_ms": self.inflight_since_ms,
             }
         )
 
@@ -117,8 +128,6 @@ class Room:
 class Rooms:
     def __init__(self, store: SocietyStore) -> None:
         self._store = store
-        # Weak values share a lock while operations overlap without retaining
-        # one entry forever for every room id ever observed.
         self._turn_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
 
     def _turn_lock(self, room_id: str) -> asyncio.Lock:
@@ -194,52 +203,140 @@ class Rooms:
         rows = await self._store.list_room_rows(state=str(state) if state else None)
         return [Room.from_row(r) for r in rows]
 
-    async def say(self, room_id: str, member: str, text: str, *, cost_usd: float = 0.0) -> Room:
-        """Member speaks; the state and SAY event commit together."""
-        text = (text or "").strip()[:_MAX_TEXT]
-        if not text:
-            return await self.pass_turn(room_id, member)
+    async def claim_turn(self, room_id: str, claim_id: str) -> Room:
+        claim_id = claim_id.strip()
+        if not claim_id:
+            raise RoomError(FailureReason.BLOCKED_BY_POLICY, "room turn claim id is empty")
         async with self._turn_lock(room_id):
             for _ in range(2):
                 room = await self._require_running(room_id)
-                self._require_turn(room, member)
+                if room.inflight_claim_id:
+                    if room.inflight_claim_id == claim_id:
+                        return room
+                    raise RoomError(
+                        FailureReason.BLOCKED_BY_POLICY,
+                        f"room {room_id!r} already has an in-flight turn",
+                    )
+                member = room.next_speaker
+                if member is None:
+                    raise RoomError(
+                        FailureReason.BLOCKED_BY_POLICY,
+                        f"room {room_id!r} has no speaker to claim",
+                    )
                 expected_updated_ms = room.updated_ms
-                say_event = SocietyEnvelope(
-                    msg_type=MsgType.SAY,
-                    from_agent=member,
-                    to_agent=None,
-                    trace_id=room.trace_id,
-                    cost_usd=cost_usd,
-                    payload={"room_id": room.room_id, "round": room.round, "text": text},
-                )
-                room.message_count += 1
-                room.spoke_this_round = True
-                room.turned.append(member)
-                events = [say_event]
-                terminal = self._advance(room)
-                if terminal is not None:
-                    events.append(terminal)
-                if await self._persist(
-                    room,
-                    expected_updated_ms=expected_updated_ms,
-                    events=events,
-                ):
+                room.inflight_member = member
+                room.inflight_claim_id = claim_id
+                room.inflight_turn_id = ""
+                room.inflight_since_ms = now_ms()
+                if await self._persist(room, expected_updated_ms=expected_updated_ms):
                     return room
             raise RoomError(
                 FailureReason.BLOCKED_BY_POLICY,
                 f"room {room_id!r} changed concurrently; retry",
             )
 
-    async def pass_turn(self, room_id: str, member: str) -> Room:
-        """Member stays silent this round; silence is allowed."""
+    async def bind_turn(self, room_id: str, claim_id: str, turn_id: str) -> Room:
+        turn_id = turn_id.strip()
+        if not turn_id:
+            raise RoomError(FailureReason.BLOCKED_BY_POLICY, "agent-chat turn id is empty")
         async with self._turn_lock(room_id):
             for _ in range(2):
                 room = await self._require_running(room_id)
-                self._require_turn(room, member)
+                self._require_claim(room, claim_id)
+                if room.inflight_turn_id:
+                    if room.inflight_turn_id == turn_id:
+                        return room
+                    raise RoomError(
+                        FailureReason.BLOCKED_BY_POLICY,
+                        f"room {room_id!r} claim is already bound to another turn",
+                    )
                 expected_updated_ms = room.updated_ms
-                room.turned.append(member)
-                terminal = self._advance(room)
-                events = (terminal,) if terminal is not None else ()
+                room.inflight_turn_id = turn_id
+                if await self._persist(room, expected_updated_ms=expected_updated_ms):
+                    return room
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room_id!r} changed concurrently; retry",
+            )
+
+    async def release_claim(self, room_id: str, claim_id: str) -> Room:
+        async with self._turn_lock(room_id):
+            for _ in range(2):
+                room = await self._require_running(room_id)
+                if not room.inflight_claim_id:
+                    return room
+                self._require_claim(room, claim_id)
+                expected_updated_ms = room.updated_ms
+                self._clear_claim(room)
+                if await self._persist(room, expected_updated_ms=expected_updated_ms):
+                    return room
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room_id!r} changed concurrently; retry",
+            )
+
+    async def complete_claim(
+        self,
+        room_id: str,
+        claim_id: str,
+        text: str,
+        *,
+        cost_usd: float = 0.0,
+    ) -> Room:
+        return await self._take_turn(
+            room_id,
+            member=None,
+            text=text,
+            cost_usd=cost_usd,
+            claim_id=claim_id,
+        )
+
+    async def say(self, room_id: str, member: str, text: str, *, cost_usd: float = 0.0) -> Room:
+        return await self._take_turn(
+            room_id,
+            member=member,
+            text=text,
+            cost_usd=cost_usd,
+            claim_id=None,
+        )
+
+    async def pass_turn(self, room_id: str, member: str) -> Room:
+        return await self._take_turn(
+            room_id,
+            member=member,
+            text="",
+            cost_usd=0.0,
+            claim_id=None,
+        )
+
+    async def _take_turn(
+        self,
+        room_id: str,
+        *,
+        member: str | None,
+        text: str,
+        cost_usd: float,
+        claim_id: str | None,
+    ) -> Room:
+        text = (text or "").strip()[:_MAX_TEXT]
+        async with self._turn_lock(room_id):
+            for _ in range(2):
+                room = await self._require_running(room_id)
+                if claim_id is None:
+                    if room.inflight_claim_id:
+                        raise RoomError(
+                            FailureReason.BLOCKED_BY_POLICY,
+                            f"room {room_id!r} has an in-flight turn",
+                        )
+                    speaker = member or ""
+                else:
+                    self._require_claim(room, claim_id)
+                    speaker = room.inflight_member
+                self._require_turn(room, speaker)
+                expected_updated_ms = room.updated_ms
+                if claim_id is not None:
+                    self._clear_claim(room)
+                events = self._apply_turn(room, speaker, text, cost_usd=cost_usd)
                 if await self._persist(
                     room,
                     expected_updated_ms=expected_updated_ms,
@@ -294,8 +391,6 @@ class Rooms:
             f"room {room_id!r} changed concurrently; retry",
         )
 
-    # ------------------------------------------------------------- policy
-
     async def _require_running(self, room_id: str) -> Room:
         room = await self.get(room_id)
         if room is None:
@@ -314,6 +409,54 @@ class Rooms:
                 f"not {member!r}'s turn (next: {room.next_speaker!r})",
             )
 
+    @staticmethod
+    def _require_claim(room: Room, claim_id: str) -> None:
+        if not claim_id or room.inflight_claim_id != claim_id:
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room.room_id!r} turn claim does not match",
+            )
+        if not room.inflight_member:
+            raise RoomError(
+                FailureReason.BLOCKED_BY_POLICY,
+                f"room {room.room_id!r} turn claim has no owner",
+            )
+
+    @staticmethod
+    def _clear_claim(room: Room) -> None:
+        room.inflight_member = ""
+        room.inflight_claim_id = ""
+        room.inflight_turn_id = ""
+        room.inflight_since_ms = 0
+
+    def _apply_turn(
+        self,
+        room: Room,
+        member: str,
+        text: str,
+        *,
+        cost_usd: float,
+    ) -> list[SocietyEnvelope]:
+        events: list[SocietyEnvelope] = []
+        if text:
+            events.append(
+                SocietyEnvelope(
+                    msg_type=MsgType.SAY,
+                    from_agent=member,
+                    to_agent=None,
+                    trace_id=room.trace_id,
+                    cost_usd=cost_usd,
+                    payload={"room_id": room.room_id, "round": room.round, "text": text},
+                )
+            )
+            room.message_count += 1
+            room.spoke_this_round = True
+        room.turned.append(member)
+        terminal = self._advance(room)
+        if terminal is not None:
+            events.append(terminal)
+        return events
+
     def _advance(self, room: Room) -> SocietyEnvelope | None:
         if room.message_count >= MAX_MESSAGES:
             return self._terminal_event(room, reason="message_cap")
@@ -327,14 +470,15 @@ class Rooms:
             room.spoke_this_round = False
         return None
 
-    @staticmethod
     def _terminal_event(
+        self,
         room: Room,
         *,
         reason: str,
         by: str = "scheduler",
         failed: bool = False,
     ) -> SocietyEnvelope:
+        self._clear_claim(room)
         room.state = RoomState.FAILED if failed else RoomState.SETTLED
         room.settle_reason = reason
         payload: dict[str, Any] = {
