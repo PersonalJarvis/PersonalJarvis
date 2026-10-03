@@ -82,6 +82,16 @@ _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
 )
 _WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
 
+def _accepts_keyword(callable_obj: Any, name: str) -> bool:
+    try:
+        params = inspect.signature(callable_obj).parameters
+    except (TypeError, ValueError):
+        return False
+    if name in params:
+        return True
+    return any(param.kind is inspect.Parameter.VAR_KEYWORD for param in params.values())
+
+
 _current: SocietyRuntime | None = None
 
 
@@ -777,7 +787,7 @@ class SocietyRuntime:
             turn_id = await svc.send(
                 session.session_id,
                 incoming.prompt,
-                incoming=incoming,
+                **({"incoming": incoming} if _accepts_keyword(svc.send, "incoming") else {}),
                 **({"read_only": True} if env.payload.get("read_only") is True else {}),
                 **(
                     {"direct_user": False}
@@ -893,7 +903,7 @@ class SocietyRuntime:
                 turn_id = await svc.send(
                     session.session_id,
                     prompt,
-                    incoming=incoming,
+                    **({"incoming": incoming} if _accepts_keyword(svc.send, "incoming") else {}),
                     **(
                         {"direct_user": False}
                         if getattr(svc, "supports_turn_completion", False)

@@ -209,6 +209,7 @@ class OpenRoomBody(BaseModel):
     members: list[str] = Field(min_length=2, max_length=6)
     topic: str = ""
     opened_by: str = "user"
+    live: bool = False
 
 
 class RoomSayBody(BaseModel):
@@ -969,7 +970,12 @@ async def open_room(body: OpenRoomBody, request: Request) -> dict[str, Any]:
                 404, {"reason": str(FailureReason.TARGET_UNKNOWN), "member": member}
             )
     try:
-        room = await rt.rooms.open(opened_by=body.opened_by, members=body.members, topic=body.topic)
+        room = await rt.rooms.open(
+            opened_by=body.opened_by,
+            members=body.members,
+            topic=body.topic,
+            live=body.live,
+        )
     except RoomError as exc:
         raise _typed_error(exc) from exc
     return {"room": room.to_dict()}

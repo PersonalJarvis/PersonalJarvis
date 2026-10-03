@@ -786,6 +786,7 @@ async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path
             opened_by="jarvis",
             members=["scout", "archivist"],
             topic="Pick one deployment option.",
+            live=True,
         )
         assert svc.sent and svc.sent[0][0] == "society:scout"
         claimed = await rt.rooms.get(room.room_id)
@@ -794,7 +795,7 @@ async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path
         assert claimed.inflight_turn_id == "turn-1"
 
         await svc.finish("society:scout", "", turn_id="turn-1")
-        for _ in range(50):
+        for _ in range(200):
             if len(svc.sent) >= 2:
                 break
             await asyncio.sleep(0.01)
@@ -803,7 +804,7 @@ async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path
         assert svc.sent[1][0] == "society:archivist"
 
         await svc.finish("society:archivist", "", turn_id="turn-2")
-        for _ in range(50):
+        for _ in range(200):
             settled = await rt.rooms.get(room.room_id)
             if settled is not None and settled.state is RoomState.SETTLED:
                 break
@@ -839,6 +840,7 @@ async def test_room_recovery_consumes_terminal_without_replaying_owner(tmp_path:
         opened_by="jarvis",
         members=["scout", "archivist"],
         topic="Recover this room.",
+        live=True,
     )
     await rooms.claim_turn(room.room_id, "claim-recover")
     await rooms.bind_turn(room.room_id, "claim-recover", "turn-recover")

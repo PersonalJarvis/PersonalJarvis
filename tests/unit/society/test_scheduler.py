@@ -120,7 +120,7 @@ async def test_room_open_is_driven_by_the_same_scheduler(tmp_path: Path):
         budget_tracker=FakeBudget(),
     ).attach()
     try:
-        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
         loaded = await rooms.get(opened.room_id)
         assert loaded is not None
         assert loaded.inflight_member == "scout"
@@ -144,7 +144,7 @@ async def test_room_open_honors_kill_switch(tmp_path: Path):
     scheduler = SocietyScheduler(store, roster, rooms=rooms, room_turn=room_turn).attach()
     try:
         await store.set_kill_switch(True)
-        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
         loaded = await rooms.get(opened.room_id)
         assert loaded is not None
         assert loaded.state is RoomState.SETTLED
@@ -172,7 +172,7 @@ async def test_room_open_honors_global_budget(tmp_path: Path):
         budget_tracker=FakeBudget(exceeded=True),
     ).attach()
     try:
-        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"])
+        opened = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
         loaded = await rooms.get(opened.room_id)
         assert loaded is not None
         assert loaded.state is RoomState.FAILED

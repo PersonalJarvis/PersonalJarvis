@@ -151,7 +151,7 @@ class SocietyScheduler:
         if rooms is None or dispatch is None:
             return
         room = await rooms.get(room_id)
-        if room is None or room.state is not RoomState.RUNNING:
+        if room is None or room.state is not RoomState.RUNNING or not room.live:
             return
         if await self._store.kill_switch():
             await rooms.settle(room_id, reason="kill_switch")

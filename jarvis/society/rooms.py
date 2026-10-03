@@ -54,6 +54,7 @@ class Room:
     updated_ms: int
     turned: list[str]
     spoke_this_round: bool
+    live: bool = False
     inflight_member: str = ""
     inflight_claim_id: str = ""
     inflight_turn_id: str = ""
@@ -82,6 +83,7 @@ class Room:
             "state": str(self.state),
             "settle_reason": self.settle_reason,
             "next_speaker": self.next_speaker,
+            "live": self.live,
             "inflight_member": self.inflight_member or None,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -105,6 +107,7 @@ class Room:
             updated_ms=int(row.get("updated_ms") or 0),
             turned=list(extra.get("turned", [])),
             spoke_this_round=bool(extra.get("spoke_this_round", False)),
+            live=bool(extra.get("live", False)),
             inflight_member=str(extra.get("inflight_member") or ""),
             inflight_claim_id=str(extra.get("inflight_claim_id") or ""),
             inflight_turn_id=str(extra.get("inflight_turn_id") or ""),
@@ -117,6 +120,7 @@ class Room:
                 "members": self.members,
                 "turned": self.turned,
                 "spoke_this_round": self.spoke_this_round,
+                "live": self.live,
                 "inflight_member": self.inflight_member,
                 "inflight_claim_id": self.inflight_claim_id,
                 "inflight_turn_id": self.inflight_turn_id,
@@ -138,7 +142,13 @@ class Rooms:
         return lock
 
     async def open(
-        self, *, opened_by: str, members: list[str], topic: str = "", room_id: str | None = None
+        self,
+        *,
+        opened_by: str,
+        members: list[str],
+        topic: str = "",
+        room_id: str | None = None,
+        live: bool = False,
     ) -> Room:
         unique = list(dict.fromkeys(m.strip() for m in members if m and m.strip()))
         if not MIN_MEMBERS <= len(unique) <= MAX_MEMBERS:
@@ -163,6 +173,7 @@ class Rooms:
             updated_ms=now,
             turned=[],
             spoke_this_round=False,
+            live=live,
         )
         event = SocietyEnvelope(
             msg_type=MsgType.ROOM_OPEN,
@@ -175,6 +186,7 @@ class Rooms:
                 "text": room.topic,
                 "max_rounds": MAX_ROUNDS,
                 "max_messages": MAX_MESSAGES,
+                "live": live,
             },
         )
         await self._store.insert_room_with_events(
