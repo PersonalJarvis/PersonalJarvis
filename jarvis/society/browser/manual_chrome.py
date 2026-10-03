@@ -335,7 +335,8 @@ class PlainChrome:
             # Keep spawn and ownership assignment atomic against cancellation.
             self.process = subprocess.Popen(  # noqa: ASYNC220
                 [self.executable, f"--user-data-dir={self.profile.resolve()}", "--new-window",
-                 "--no-first-run", "--disable-background-mode", "chrome://newtab/"],
+                 "--no-first-run", "--disable-background-mode",
+                 "--disable-backgrounding-occluded-windows", "chrome://newtab/"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=self.creationflags,
             )

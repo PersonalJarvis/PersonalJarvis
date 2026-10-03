@@ -68,9 +68,22 @@ def test_actual_browser_click_emits_pointer_telemetry(tmp_path):
 class PageHandler(BaseHTTPRequestHandler):
     profile_requests = []
     page_requests = []
+    requests_ready = threading.Condition()
 
     def do_GET(self):
-        self.page_requests.append(self.path)
+        try:
+            self._respond()
+        finally:
+            with self.requests_ready:
+                self.page_requests.append(self.path)
+                self.requests_ready.notify_all()
+
+    @classmethod
+    def wait_for_path(cls, path):
+        with cls.requests_ready:
+            return cls.requests_ready.wait_for(lambda: path in cls.page_requests, timeout=15)
+
+    def _respond(self):
         if self.path.startswith(("/login", "/account")):
             signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
             self.profile_requests.append((self.path, signed_in))
@@ -177,15 +190,28 @@ async def _control(live, session, owner, op, args):
         ) from exc
 
 
+async def _open_animation_and_hand_back(live, session, queue, site):
+    await _control(live, session, "viewer", "takeover", {"enabled": True})
+    await _control(live, session, "viewer", "navigate", {"url": site})
+    # Native navigation acknowledges input, not page load. Handing back at
+    # that point can close Chrome before it has navigated away from New Tab.
+    assert await asyncio.to_thread(PageHandler.wait_for_path, "/"), "Fixture page did not load"
+    await _control(live, session, "viewer", "takeover", {"enabled": False})
+    async with asyncio.timeout(15):
+        while True:
+            event = await queue.get()
+            if (event["kind"] == "state" and not event["manual"]
+                    and event["url"].rstrip("/") == site):
+                return
+
+
 async def test_live_pixels_change_between_tasks_and_sessions_stay_open(live, site):
     agent = SimpleNamespace(
         agent_id="scout", model="", browser_allowed_domains=["http*://127.0.0.1"]
     )
     try:
         session, queue = await live.subscribe(agent)
-        await _control(live, session, "viewer", "takeover", {"enabled": True})
-        await _control(live, session, "viewer", "navigate", {"url": site})
-        await _control(live, session, "viewer", "takeover", {"enabled": False})
+        await _open_animation_and_hand_back(live, session, queue, site)
         frames = []
         deadline = asyncio.get_running_loop().time() + 10
         while len(frames) < 20 and asyncio.get_running_loop().time() < deadline:
@@ -262,8 +288,7 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
             async with asyncio.timeout(15):
                 # A plain Chrome sign-in deliberately exposes no DOM or URL.
                 # HTTP arrival proves native toolbar input reached the fixture.
-                while "/" not in PageHandler.page_requests:
-                    await asyncio.sleep(0.05)
+                assert await asyncio.to_thread(PageHandler.wait_for_path, "/")
         except TimeoutError:
             pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
         await _control(live, session, "viewer", "takeover", {"enabled": False})
@@ -575,9 +600,7 @@ async def test_idle_animation_stream_soak(live, site, record_property):
     )
     try:
         session, queue = await live.subscribe(agent)
-        await _control(live, session, "viewer", "takeover", {"enabled": True})
-        await _control(live, session, "viewer", "navigate", {"url": site})
-        await _control(live, session, "viewer", "takeover", {"enabled": False})
+        await _open_animation_and_hand_back(live, session, queue, site)
         duration = float(os.environ.get("JARVIS_BROWSER_SOAK_SECONDS", "5"))
         # Measure steady rendering separately from the first target attachment.
         first_frame_started = time.monotonic()
@@ -692,8 +715,7 @@ async def test_login_profile_survives_restart_and_stays_with_its_agent(live, sit
         await _control(live, session, "viewer", "takeover", {"enabled": True})
         await _control(live, session, "viewer", "navigate", {"url": site + path})
         async with asyncio.timeout(15):
-            while not any(request_path == path for request_path, _ in PageHandler.profile_requests):
-                await asyncio.sleep(0.05)
+            assert await asyncio.to_thread(PageHandler.wait_for_path, path)
         await _control(live, session, "viewer", "takeover", {"enabled": False})
         return session
 
