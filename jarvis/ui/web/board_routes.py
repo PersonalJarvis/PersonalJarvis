@@ -318,7 +318,9 @@ class InsightsAgents(BaseModel):
 
 class InsightsDay(BaseModel):
     date: str
+    dictations: int
     dictation_words: int
+    voice_sessions: int
     voice_words: int
     chat_messages: int
     agent_sessions: int

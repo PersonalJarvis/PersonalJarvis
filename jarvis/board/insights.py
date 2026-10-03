@@ -123,6 +123,7 @@ class _Day:
         "chat_messages",
         "dictation_words",
         "dictations",
+        "voice_sessions",
         "voice_words",
     )
 
@@ -130,13 +131,14 @@ class _Day:
         self.dictation_words = 0
         self.dictations = 0
         self.voice_words = 0
+        self.voice_sessions = 0
         self.chat_messages = 0
         self.agent_sessions = 0
         self.agent_turns = 0
 
     def active(self) -> bool:
         return bool(
-            self.dictations or self.voice_words or self.chat_messages
+            self.dictations or self.voice_words or self.voice_sessions or self.chat_messages
             or self.agent_sessions or self.agent_turns
         )
 
@@ -179,7 +181,9 @@ class BoardInsights:
             day = days.get(key)
             series.append({
                 "date": key,
+                "dictations": day.dictations if day else 0,
                 "dictation_words": day.dictation_words if day else 0,
+                "voice_sessions": day.voice_sessions if day else 0,
                 "voice_words": day.voice_words if day else 0,
                 "chat_messages": day.chat_messages if day else 0,
                 "agent_sessions": day.agent_sessions if day else 0,
@@ -277,6 +281,7 @@ class BoardInsights:
                         "session_count, conversation_seconds_estimate FROM daily_stats"
                     ):
                         days[date].voice_words += int(user_words or 0)
+                        days[date].voice_sessions += int(sessions or 0)
                         out["user_words"] += int(user_words or 0)
                         out["jarvis_words"] += int(jarvis_words or 0)
                         out["sessions"] += int(sessions or 0)
