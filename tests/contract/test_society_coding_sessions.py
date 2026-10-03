@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.agent_chat.store import AgentChatStore
 from jarvis.agentic_ide import agent_transcript, control, fleet_actions
 from jarvis.agentic_ide import session as sessions
 from jarvis.agentic_ide.control import CodingSessionControl
@@ -45,12 +46,24 @@ async def rig(tmp_path, monkeypatch):
     gateway = CodingSessionControl(registry)
     runtime._coding_sessions = gateway
     agent, _ = await runtime.roster.create(name="New coding coordinator", grant_mode="all")
+    chat_store = AgentChatStore(tmp_path / "chat-sessions.sqlite3")
+    chat_store.create_session(
+        provider=agent.provider,
+        model=agent.model,
+        effort="medium",
+        cwd=str(tmp_path),
+        permission_mode=str(agent.approval_mode or "ask"),
+        session_id=agent.session_id,
+        surface="society",
+    )
+    runtime._get_chat = lambda: SimpleNamespace(store=chat_store)
     tool = CodingSessionTool(runtime, agent.agent_id)
     try:
         yield registry, manager, gateway, runtime, tool, agent
     finally:
         await registry.close_all()
         await runtime.close()
+        chat_store.close()
 
 
 async def open_one(rig, tmp_path, agent="claude"):
@@ -419,11 +432,7 @@ async def test_new_registered_cli_is_discovered_and_can_open(rig, tmp_path, monk
 async def test_plan_mode_cannot_use_subscription_gate(rig):
     from jarvis.society.surface import coding_tool_for_session
 
-    rig[3]._get_chat = lambda: SimpleNamespace(
-        store=SimpleNamespace(
-            get_session=lambda session_id: SimpleNamespace(permission_mode="plan"),
-        )
-    )
+    rig[3].chat_service().store.update_session(rig[5].session_id, permission_mode="plan")
     assert await coding_tool_for_session(rig[5].session_id) is None
     assert not (await rig[4].execute({"action": "open", "request_id": "plan"}, None)).success
 
@@ -505,7 +514,7 @@ async def test_jarvis_chat_receives_controller_without_becoming_a_coding_cli(rig
     assert "Read" in tools and "coding-session" in tools
     result = await tools["coding-session"].execute({
         "action": "open", "cwd": str(tmp_path), "agent": "codex", "request_id": "lead-request",
-    }, None)
+    }, SimpleNamespace(approved_by="user"))
     assert result.success and result.output["agent"] == "codex"
     session.permission_mode = "plan"
     tools, _ = await kit_payload(session, SimpleNamespace(_config=None))

@@ -89,7 +89,11 @@ async def test_plan_session_gets_readonly_browser_but_not_coding_control(tmp_pat
     try:
         await rt.roster.create(name="Nala", permission_ceiling="safe")
         rt.chat_service = lambda: SimpleNamespace(
-            store=SimpleNamespace(get_session=lambda _: SimpleNamespace(permission_mode="plan"))
+            store=SimpleNamespace(
+                get_session=lambda _: SimpleNamespace(
+                    session_id="society:nala", surface="society", permission_mode="plan"
+                )
+            )
         )
         browser = await browser_tool_for_session("society:nala")
         assert browser is not None and browser.risk_tier == "safe"
@@ -154,7 +158,11 @@ async def test_root_subscription_browser_uses_chat_model_without_changing_roster
     await rt.ensure_started()
     seen = []
     session = SimpleNamespace(
-        surface="jarvis", provider="openai-codex", model="picked-model", permission_mode="ask"
+        session_id="root-chat",
+        surface="jarvis",
+        provider="openai-codex",
+        model="picked-model",
+        permission_mode="ask",
     )
     rt.chat_service = lambda: SimpleNamespace(store=SimpleNamespace(get_session=lambda _: session))
 
@@ -167,7 +175,9 @@ async def test_root_subscription_browser_uses_chat_model_without_changing_roster
         original = await rt.roster.get(rt.lead_id)
         browser = await browser_tool_for_session("root-chat")
         assert browser is not None
-        result = await browser.execute({"task": "Read the page"}, SimpleNamespace())
+        result = await browser.execute(
+            {"task": "Read the page"}, SimpleNamespace(approved_by="user")
+        )
         assert result.success
         assert seen == [(rt.lead_id, "openai-codex", "picked-model")]
         current = await rt.roster.get(rt.lead_id)
