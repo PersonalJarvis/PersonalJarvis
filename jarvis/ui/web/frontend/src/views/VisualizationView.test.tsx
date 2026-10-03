@@ -185,6 +185,36 @@ describe("parseArtifactUtterance", () => {
 });
 
 describe("VisualizationView", () => {
+  it("never runs scripts or navigation in automatic gallery covers", async () => {
+    class VisibleObserver {
+      constructor(private callback: (entries: unknown[]) => void) {}
+      observe(target: Element) {
+        this.callback([{ target, isIntersecting: true, contentRect: { width: 320, height: 200 } }]);
+      }
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal("IntersectionObserver", VisibleObserver);
+    vi.stubGlobal("ResizeObserver", VisibleObserver);
+    try {
+      installFetchMock([DASH_RUN], { mission_dash: [DASH_FILE] }, {}, {
+        mission_dash: '<p>Report</p><script>location="https://example.invalid"</script>' +
+          '<meta http-equiv="refresh" content="0;url=https://example.invalid">' +
+          '<a href="https://example.invalid">link</a>',
+      });
+      renderView();
+      const frame = await screen.findByTestId("artifact-card-frame");
+      expect(frame.getAttribute("sandbox")).toBe("");
+      expect(frame.getAttribute("src")).toBeNull();
+      const doc = new DOMParser().parseFromString(frame.getAttribute("srcdoc")!, "text/html");
+      expect(doc.querySelector("script,[href],meta[http-equiv=refresh]")).toBeNull();
+      expect(doc.body.textContent).toContain("Report");
+    } finally {
+      cleanup();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("opens a card full-size on the stage, labelled by its page title", async () => {
     installFetchMock([DASH_RUN], { mission_dash: [DASH_FILE] });
 
@@ -199,11 +229,12 @@ describe("VisualizationView", () => {
     fireEvent.click(rows[0]);
 
     const frame = await screen.findByTestId("visualization-frame");
-    // The artifact-page route: scripts allowed server-side …
-    expect(frame.getAttribute("src")).toContain("/files/tasks/t1/artifacts/files/umsatz-dashboard.html/page");
-    // … and client-side the page runs in an opaque origin — scripts yes,
-    // same-origin never.
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(frame.getAttribute("sandbox")).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Run interactive HTML" }));
+    const interactive = screen.getByTestId("visualization-frame");
+    expect(interactive.getAttribute("src")).toContain("/files/tasks/t1/artifacts/files/umsatz-dashboard.html/page");
+    expect(interactive.getAttribute("sandbox")).toBe("allow-scripts");
     expect(screen.getByTestId("visualization-title").textContent).toBe("Umsatz-Dashboard");
     // The run graph is a tab away, not on stage.
     expect(screen.queryByTestId("graph-node-start")).toBeNull();

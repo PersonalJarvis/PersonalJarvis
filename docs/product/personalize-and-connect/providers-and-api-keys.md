@@ -8,7 +8,7 @@ order: 1
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-03
 phase: "-"
 audience: end-user
 tags: [providers, api-keys, models, capabilities, fallback, connections]
@@ -163,20 +163,19 @@ saved**; one on the shared key shows the covered note.
 
 ### Starter plans (first run)
 
-The first-run guide opens with **How do you want to start?** A starter plan
-is one voice mode plus a provider for every part that mode needs, all on one
-provider family:
+The first-run guide's key step switches a starter plan on by itself: a starter
+plan is live voice plus the thinking model it needs, all on one key.
 
-| Plan | Mode | Keys | What it sets |
+| Plan | Mode | Key | What it sets |
 |---|---|---|---|
-| **Pipeline with Gemini** (recommended) | Pipeline | Gemini | Brain, tool model, agents, voice out, voice in |
-| Realtime with Gemini | Realtime | Gemini | Gemini Live, plus the Pipeline parts as fallback |
-| Gemini + OpenAI | Realtime | Gemini, OpenAI | OpenAI Realtime speaks; Gemini thinks, plans and runs the agents |
-| Pick everything myself | — | any | The full provider list, as before |
+| **OpenAI GPT-Live** (recommended) | Realtime | OpenAI | Brain, tool model, live voice |
+| Gemini Live | Realtime | Gemini | Brain, tool model, live voice |
 
-Choosing a plan narrows the key list to the families it needs. The moment
-every key is saved, the guide points each part at that key and pins the voice
-mode. Parts that could not be applied are listed and can be fixed later here.
+The moment a plan's key is saved, the guide points each part at that key and
+pins the voice mode. Any other Brain key works too: it becomes the Brain, and
+voice runs the classic way (speech to text, answer read aloud). Parts that could
+not be applied are listed and can be fixed later here. The **Recommended** badge
+on the Brain cards marks the same provider as the recommended plan.
 
 ### Every saved key is checked
 

@@ -156,18 +156,24 @@ function installHeadProbeMock(headStatus: number) {
 }
 
 describe("ArtifactViewer HTML page probe", () => {
-  it("frames the sandboxed /page when the backend answers HEAD with 405 (route present)", async () => {
+  it("keeps the preview inert until interaction is enabled, including legacy HEAD support", async () => {
     installHeadProbeMock(405);
     renderViewer([HTML_FILE]);
     const frame = await waitFor(() => screen.getByTitle("dash.html") as HTMLIFrameElement);
-    expect(frame.getAttribute("src")).toContain("/page");
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(frame.getAttribute("sandbox")).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Run interactive HTML" }));
+    const interactive = screen.getByTitle("dash.html");
+    expect(interactive.getAttribute("src")).toContain("/page");
+    expect(interactive.getAttribute("sandbox")).toBe("allow-scripts");
   });
 
   it("falls back to the no-script inline download when the route is missing (404)", async () => {
     installHeadProbeMock(404);
     renderViewer([HTML_FILE]);
-    const frame = await waitFor(() => screen.getByTitle("dash.html") as HTMLIFrameElement);
+    await waitFor(() => screen.getByTitle("dash.html"));
+    fireEvent.click(screen.getByRole("button", { name: "Run interactive HTML" }));
+    const frame = screen.getByTitle("dash.html");
     expect(frame.getAttribute("src")).toContain("/download?disposition=inline");
   });
 });

@@ -89,13 +89,17 @@ const LONG_SCRIPT = [
 
 describe("OutputPreview cards", () => {
   it("runs an HTML deliverable in its sandbox on the page instead of pointing at Files", async () => {
-    installFetchMock([file("dashboard.html")], {});
+    installFetchMock([file("dashboard.html")], { "dashboard.html": "<p>Dashboard</p><script>location='https://example.invalid'</script>" });
     renderPreview(RUN);
     const frame = (await screen.findByTestId("artifact-html-page")) as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(frame.getAttribute("src")).toMatch(/\/files\/dashboard\.html\/page\?theme=(light|dark)$/);
+    expect(frame.getAttribute("sandbox")).toBe("");
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(frame.getAttribute("srcdoc")).toContain("Dashboard");
+    expect(frame.getAttribute("srcdoc")).not.toContain("<script>");
+    fireEvent.click(screen.getByRole("button", { name: "Run interactive HTML" }));
+    expect(screen.getByTestId("artifact-html-page").getAttribute("src")).toMatch(/\/files\/dashboard\.html\/page\?theme=(light|dark)$/);
     expect(screen.queryByText(/not drawn on the page/)).toBeNull();
-    expect(screen.getByText(/Runs in a sandbox/)).toBeDefined();
+    expect(screen.getByText(/may access the network/)).toBeDefined();
   });
 
   it("draws a long script as a card — description, definitions, source folded", async () => {

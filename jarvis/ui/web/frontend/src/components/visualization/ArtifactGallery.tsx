@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
@@ -38,9 +39,11 @@ import {
   revealArtifact,
   revealOutput,
   useOutputsCapabilities,
+  useArtifactFile,
   type OutputStatus,
 } from "@/hooks/useOutputs";
 import { artifactPageUrl, type VisualArtifact, type VisualKind } from "@/hooks/useVisualArtifacts";
+import { wrapInlineHtml } from "@/components/outputs/RenderedFence";
 import {
   RAIL_FILTERS,
   relativeWhen,
@@ -63,8 +66,8 @@ import {
  * The Artifacts library — every artifact as a card with the artifact itself
  * drawn on it, the way a gallery of finished work should look.
  *
- * A page's card frames the live page (scaled down, scripts running, network
- * shut — the same sandbox as the stage), a picture shows the picture, a PDF
+ * A page's card shows sanitized static HTML with scripts disabled; a picture
+ * shows the picture, a PDF
  * its first page, and a run that drew nothing gets a composed text cover
  * from its own answer. Previews mount only while their card is near the
  * viewport, so a library of a hundred dashboards costs what a screenful
@@ -527,7 +530,6 @@ function ArtifactCard({
 
 /** What fills the top of a card: the artifact itself, or a composed cover. */
 function CardCover({ row }: { row: RailRow }) {
-  const theme = useThemeValue();
   if (row.kind === "build") return <BuildingCover />;
   if (row.kind === "run") {
     return (
@@ -543,11 +545,10 @@ function CardCover({ row }: { row: RailRow }) {
   if (visual.kind === "page") {
     return (
       <ScaledFrame
-        src={`${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}`}
+        html={visual}
         title={visual.title}
         virtualWidth={PAGE_VIRTUAL_WIDTH}
-        // allow-scripts WITHOUT allow-same-origin, exactly as on the stage.
-        sandbox="allow-scripts"
+        sandbox=""
       />
     );
   }
@@ -606,12 +607,14 @@ function useBoxSize(ref: RefObject<HTMLElement | null>): { width: number; height
  */
 function ScaledFrame({
   src,
+  html,
   title,
   virtualWidth,
   sandbox,
   white = false,
 }: {
-  src: string;
+  src?: string;
+  html?: VisualArtifact;
   title: string;
   virtualWidth: number;
   sandbox: string;
@@ -619,18 +622,23 @@ function ScaledFrame({
 }) {
   const box = useRef<HTMLDivElement>(null);
   const near = useNearViewport(box);
+  const theme = useThemeValue();
+  const full = useArtifactFile(near && html ? html.slug : null, near && html ? html.path : null);
+  const srcDoc = useMemo(() => html && full.data
+    ? wrapInlineHtml(full.data.text, theme, "cover") : undefined, [html, full.data, theme]);
   const { width, height } = useBoxSize(box);
   const [loaded, setLoaded] = useState(false);
-  useEffect(() => setLoaded(false), [src]);
+  useEffect(() => setLoaded(false), [src, srcDoc]);
   const scale = width > 0 ? width / virtualWidth : 0;
 
   return (
     <div ref={box} className="absolute inset-0" aria-hidden>
       {!loaded && <div className="absolute inset-0 animate-pulse bg-foreground/5" />}
-      {near && scale > 0 && (
+      {near && scale > 0 && (!html || srcDoc !== undefined) && (
         <iframe
           key={src}
           src={src}
+          srcDoc={srcDoc}
           title={title}
           tabIndex={-1}
           sandbox={sandbox}

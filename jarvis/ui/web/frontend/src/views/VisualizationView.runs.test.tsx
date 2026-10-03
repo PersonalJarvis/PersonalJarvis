@@ -564,15 +564,11 @@ describe("VisualizationView — the Files tab", () => {
       expect(el).toBeTruthy();
       return el as HTMLIFrameElement;
     });
-    // The reader's frame follows the app's theme through the same `?theme=`
-    // query the stage appends.
-    expect(iframe.getAttribute("src")).toMatch(
-      new RegExp(`^/api/outputs/html-slug/files/${HTML_PATH.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/page\\?theme=(light|dark)$`),
-    );
-    expect(iframe.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(iframe.getAttribute("src")).toBeNull();
+    expect(iframe.getAttribute("sandbox")).toBe("");
+    expect(iframe.getAttribute("srcdoc")).toContain("hi");
     expect(screen.queryByText(HTML_SOURCE)).toBeNull();
-    // Rendered mode never fetches the raw text.
-    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/raw"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes("/raw"))).toBe(true);
 
     fireEvent.click(within(reader).getByRole("button", { name: "Source" }));
     await waitFor(() => expect(screen.getByText(HTML_SOURCE)).toBeTruthy());

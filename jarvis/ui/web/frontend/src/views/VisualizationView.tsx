@@ -48,6 +48,7 @@ import {
 import { ViewHeader } from "@/views/ChatsView";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
+import { HtmlPage } from "@/components/outputs/ArtifactViewer";
 import { cn } from "@/lib/utils";
 import { artifactKind, isTextKind } from "@/lib/artifactKind";
 import { cleanRequest } from "@/lib/runRequest";
@@ -779,10 +780,6 @@ function ArtifactToolbar({
  */
 function ArtifactStage({ visual }: { visual: VisualArtifact }) {
   const t = useT();
-  /* The page follows the APP's theme, not the OS's: the artifact brief has every
-   * page stamp `data-theme` from this query (design_guide.THEME_BOOTSTRAP_JS),
-   * so a light app shows a light artifact even on a dark-mode machine. */
-  const theme = useThemeValue();
   const [failed, setFailed] = useState(false);
   const id = visualId(visual);
   // A new file must not inherit the previous file's failure verdict.
@@ -815,16 +812,11 @@ function ArtifactStage({ visual }: { visual: VisualArtifact }) {
   if (visual.kind === "page") {
     return (
       <div className="flex h-full flex-col">
-        <iframe
-          key={`${id}:${theme}`}
-          src={`${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}`}
-          title={visual.title}
-          data-testid="visualization-frame"
-          onError={() => setFailed(true)}
-          // allow-scripts WITHOUT allow-same-origin: the page's JS runs in an
-          // opaque origin. No forms, no popups, no navigation of the app.
-          sandbox="allow-scripts"
-          className="min-h-0 w-full flex-1 border-0 bg-background"
+        <HtmlPage
+          slug={visual.slug}
+          path={visual.path}
+          testId="visualization-frame"
+          className="min-h-0 w-full flex-1"
         />
         <p className="flex shrink-0 items-center gap-1.5 border-t border-border px-4 py-1.5 text-sm text-muted-foreground">
           <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />

@@ -10,6 +10,8 @@ import { MarkdownProse } from "@/components/outputs/MarkdownProse";
 import {
   INLINE_HTML_CSP,
   INLINE_HTML_SIZE_MESSAGE,
+  STATIC_HTML_CSP,
+  InlineHtmlFrame,
   wrapInlineHtml,
   svgDataUrl,
 } from "@/components/outputs/RenderedFence";
@@ -26,7 +28,7 @@ const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rec
 
 describe("wrapInlineHtml", () => {
   it("wraps a fragment in a themed page with the artifact CSP and the size reporter", () => {
-    const doc = wrapInlineHtml("<div>hi</div>", "dark", ":r1:");
+    const doc = wrapInlineHtml("<div>hi</div>", "dark", ":r1:", true);
     expect(doc.startsWith("<!doctype html>")).toBe(true);
     expect(doc).toContain('data-theme="dark"');
     expect(doc).toContain(`content="${INLINE_HTML_CSP}"`);
@@ -37,7 +39,7 @@ describe("wrapInlineHtml", () => {
 
   it("stamps a whole page instead of wrapping it", () => {
     const page = "<html><head><title>t</title></head><body><p>x</p></body></html>";
-    const doc = wrapInlineHtml(page, "light", "a");
+    const doc = wrapInlineHtml(page, "light", "a", true);
     expect(doc.match(/<html/g)).toHaveLength(1);
     expect(doc).toContain('<html data-theme="light">');
     expect(doc).toContain(`<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy"`);
@@ -45,7 +47,7 @@ describe("wrapInlineHtml", () => {
   });
 
   it("keeps a page's own theme stamp and adds a head when it has none", () => {
-    const doc = wrapInlineHtml('<html data-theme="dark"><body>x</body></html>', "light", "a");
+    const doc = wrapInlineHtml('<html data-theme="dark"><body>x</body></html>', "light", "a", true);
     expect(doc).toContain('<html data-theme="dark"><head><meta charset="utf-8">');
     expect(doc).not.toContain('data-theme="light"');
   });
@@ -74,7 +76,7 @@ describe("MarkdownProse fences", () => {
     );
 
     const frame = within(fences[1]).getByTestId("inline-html-frame") as HTMLIFrameElement;
-    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(frame.getAttribute("sandbox")).toBe("");
     expect(frame.getAttribute("srcdoc")).toContain('<div id="card">hi</div>');
     expect(frame.getAttribute("srcdoc")).toContain("Content-Security-Policy");
   });
@@ -100,4 +102,32 @@ describe("MarkdownProse fences", () => {
     expect(screen.queryByTestId("rendered-fence")).toBeNull();
     expect(screen.getByText("print(1)")).toBeDefined();
   });
+});
+
+it.each(["light", "dark"] as const)("keeps automatic %s previews inert", theme => {
+  const doc = wrapInlineHtml(`<html><head><meta http-equiv="refresh" content="0;url=https://example.invalid">
+    <style>p{color:red}</style></head><body><p>Visible report</p>
+    <script>location.href='https://example.invalid/leak'</script>
+    <a href="https://example.invalid" ping="https://example.invalid/ping">link</a>
+    <form action="https://example.invalid"><button formaction="https://example.invalid">send</button></form>
+    <iframe srcdoc="unsafe"></iframe><svg><a xlink:href="https://example.invalid">SVG link</a></svg>
+    <img src="https://example.invalid/image" onerror="location='https://example.invalid'">
+    </body></html>`, theme, "fixture");
+  const parsed = new DOMParser().parseFromString(doc, "text/html");
+  expect(parsed.querySelector("script,iframe,form,object,embed,base,link")).toBeNull();
+  expect(parsed.querySelector('meta[http-equiv="refresh"]')).toBeNull();
+  expect(parsed.querySelector("[href],[xlink\\:href],[action],[formaction],[ping],[onerror]")).toBeNull();
+  expect(parsed.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute("content")).toBe(STATIC_HTML_CSP);
+  expect(parsed.body.textContent).toContain("Visible report");
+  expect(parsed.documentElement.dataset.theme).toBe(theme);
+});
+
+it("requires a click for scripts and revokes it when content changes", () => {
+  const { rerender } = render(<InlineHtmlFrame html="<b>first</b>" title="preview" />);
+  expect(screen.getByText(/can access the network/)).toBeDefined();
+  expect(screen.getByTestId("inline-html-frame").getAttribute("sandbox")).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Run interactive HTML" }));
+  expect(screen.getByTestId("inline-html-frame").getAttribute("sandbox")).toBe("allow-scripts");
+  rerender(<InlineHtmlFrame html="<b>replacement</b>" title="preview" />);
+  expect(screen.getByTestId("inline-html-frame").getAttribute("sandbox")).toBe("");
 });

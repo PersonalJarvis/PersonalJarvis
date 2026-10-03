@@ -315,7 +315,8 @@ export function artifactInlineUrl(slug: string, path: string): string {
 
 /**
  * An HTML deliverable as an ARTIFACT PAGE: the server lets the page's own
- * scripts run but shuts every way out (no network, no forms, no navigation);
+ * scripts run after the user enables interaction. Self-navigation can access
+ * the network despite the subresource CSP;
  * the viewer frames it with `sandbox="allow-scripts"` and no same-origin, so
  * the page lives in an opaque origin that cannot reach the app.
  */
