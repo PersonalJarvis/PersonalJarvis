@@ -13,13 +13,19 @@ import { useT } from "@/i18n";
 import type { SocietyAgent } from "../data";
 import { levelFraction, unlockedFor, type SlotChoice } from "./cosmetics";
 import { LevelChip, LevelRing, XpBar } from "./LevelHud";
-import { SLOTS, type RewardId, type SubjectKind } from "./levelCatalog";
+import { SLOTS, type RewardId, type Slot, type SubjectKind } from "./levelCatalog";
 import { agentSubject, PERSON_SUBJECT, petSubject, type RewardRow, type XpRuleRow } from "./progressionApi";
 import { useProgression, type PanelTab } from "./progressionStore";
 import { RewardIcon } from "./RewardIcon";
 import { useLevelSound } from "./levelSounds";
 
 const LEAD_AGENT_ID = "jarvis";
+
+// Stable fallbacks: a selector that returns a fresh [] or {} re-renders forever.
+const NO_RULES: XpRuleRow[] = [];
+const NO_REWARDS: RewardRow[] = [];
+const NO_TITLES: { level: number; title: string }[] = [];
+const NO_CHOICES: Partial<Record<Slot, SlotChoice>> = {};
 
 function duration(seconds: number, t: (key: string) => string): string {
   return seconds >= 60
@@ -40,7 +46,7 @@ export function ruleLimit(rule: XpRuleRow, t: (key: string) => string): string {
 
 function Rules({ kind }: { kind: SubjectKind }) {
   const t = useT();
-  const rules = useProgression((s) => s.snapshot?.rules ?? []);
+  const rules = useProgression((s) => s.snapshot?.rules ?? NO_RULES);
   const mine = rules.filter((r) => r.kind === kind);
   return (
     <section className="level-section">
@@ -65,8 +71,8 @@ function Rules({ kind }: { kind: SubjectKind }) {
 
 function Wardrobe({ who, kind, level }: { who: "person" | "pet"; kind: SubjectKind; level: number }) {
   const t = useT();
-  const rewards = useProgression((s) => s.snapshot?.rewards ?? []);
-  const choices = useProgression((s) => s.choices[who] ?? {});
+  const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
+  const choices = useProgression((s) => s.choices[who] ?? NO_CHOICES);
   const choose = useProgression((s) => s.choose);
   const open = useMemo(() => unlockedFor(rewards, kind, level), [rewards, kind, level]);
   return (
@@ -107,8 +113,8 @@ function Wardrobe({ who, kind, level }: { who: "person" | "pet"; kind: SubjectKi
 
 function Track({ kind, level }: { kind: SubjectKind; level: number }) {
   const t = useT();
-  const rewards = useProgression((s) => s.snapshot?.rewards ?? []);
-  const titles = useProgression((s) => s.snapshot?.titles[kind] ?? []);
+  const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
+  const titles = useProgression((s) => s.snapshot?.titles[kind] ?? NO_TITLES);
   const steps = useMemo(() => {
     const byLevel = new Map<number, { rewards: RewardRow[]; title?: string }>();
     for (const r of rewards) {

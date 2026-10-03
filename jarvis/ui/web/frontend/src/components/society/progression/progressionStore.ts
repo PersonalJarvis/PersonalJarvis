@@ -81,8 +81,12 @@ export const useProgression = create<ProgressionState>((set, get) => ({
   panel: null,
   choices: loadChoices(),
   hydrate: (snapshot, away) => set((s) => {
-    const subjects: Record<string, SubjectLevel> = {};
-    for (const row of snapshot.subjects) subjects[row.subjectId] = row;
+    // A push can land before the read that was already on its way: never roll a subject back.
+    const subjects: Record<string, SubjectLevel> = { ...s.subjects };
+    for (const row of snapshot.subjects) {
+      const known = subjects[row.subjectId];
+      if (!known || known.xp <= row.xp) subjects[row.subjectId] = row;
+    }
     const banners = [...s.banners, ...away.filter((c) => c.kind !== "agent")];
     const toasts = [...s.toasts, ...away.filter((c) => c.kind === "agent")].slice(-MAX_TOASTS);
     return { snapshot, subjects, petId: snapshot.petId, banners, toasts };

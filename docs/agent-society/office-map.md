@@ -310,6 +310,17 @@ which follows like on the coding floor).
   where a game aims with it, and a touch pad on coarse pointers. Escape or E
   leaves.
 
+## 5f. Levels (2026-10-03)
+
+The person, their pet and every agent level up from real work: finished
+Jarvis turns, agent results, quests, missions, new agents, plus small metered
+actions in the Verse (daily visit, floors, the office dog, arcade rounds, team
+meetings, walks with the pet). A level card sits under the floor title, every
+name plate wears a level chip, `L` opens the progress panel, and a level-up
+plays a light column, shockwaves and sparks in the world plus a banner on
+screen. Unlocked trails, auras, gadgets and frames are worn in the world.
+The whole contract lives in [level-system.md](level-system.md).
+
 ## 6. Plan
 
 1. First map (done 2026-09-28).

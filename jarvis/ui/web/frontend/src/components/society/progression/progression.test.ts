@@ -76,7 +76,7 @@ describe("progressionApi", () => {
 
 describe("progressionStore", () => {
   beforeEach(() => {
-    useProgression.setState({ snapshot: null, subjects: {}, banners: [], toasts: [], popups: [], bursts: [], cheerUntil: 0 });
+    useProgression.setState({ snapshot: null, subjects: {}, banners: [], toasts: [], popups: [], bursts: [], cheerUntil: 0, choices: {} });
     useProgression.getState().hydrate(snapshot(), []);
   });
 
@@ -97,6 +97,12 @@ describe("progressionStore", () => {
     expect(s.toasts.map((b) => b.subjectId)).toEqual(["agent:scout"]);
     expect(s.bursts).toHaveLength(2);
     expect(s.cheerUntil).toBeGreaterThan(1000);
+  });
+
+  it("never rolls a subject back to a read older than a push", () => {
+    useProgression.getState().apply({ seq: 9, subjectId: "person", kind: "person", source: "agent_hired", xp: 50, totalXp: 50, level: 2, previousLevel: 1, title: "newcomer", unlocked: [] }, 0);
+    useProgression.getState().hydrate(snapshot({ subjects: [{ subjectId: "person", kind: "person", xp: 25, level: 1, xpIntoLevel: 25, xpForNext: 40, title: "newcomer" }] }), []);
+    expect(useProgression.getState().subjects.person.xp).toBe(50);
   });
 
   it("ignores a late duplicate push", () => {
