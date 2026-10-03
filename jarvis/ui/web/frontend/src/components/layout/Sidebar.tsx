@@ -643,7 +643,14 @@ function NavRow({
           data-tour={`nav-${item.id}`}
           onClick={onClick}
           title={compact ? `${label}${hint ? ` — ${hint}` : ""}` : hint}
-          aria-label={compact ? label : undefined}
+          aria-current={active ? "page" : undefined}
+          aria-label={
+            compact
+              ? badge !== undefined && badge > 0
+                ? `${label} (${badge})`
+                : label
+              : undefined
+          }
           className={clsx(
             "group relative flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

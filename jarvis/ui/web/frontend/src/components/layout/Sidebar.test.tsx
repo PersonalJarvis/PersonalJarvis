@@ -136,6 +136,37 @@ function renderSidebar(width?: number) {
   );
 }
 
+test("agents navigation exposes current state and unread count in the compact rail", () => {
+  act(() => {
+    useEventStore.setState({
+      activeSection: "agents",
+      societyAttentionCount: 3,
+    });
+  });
+
+  renderSidebar(SIDEBAR_RAIL_WIDTH);
+
+  const agents = screen.getByRole("button", { name: "Agents (3)" });
+  expect(agents.getAttribute("aria-current")).toBe("page");
+  cleanup();
+});
+
+test("expanded navigation exposes the current section to assistive technology", () => {
+  act(() => {
+    useEventStore.setState({
+      activeSection: "agents",
+      societyAttentionCount: 2,
+    });
+  });
+
+  renderSidebar(SIDEBAR_DEFAULT_WIDTH);
+
+  const agents = screen.getByTestId("nav-row-agents");
+  expect(agents.getAttribute("aria-current")).toBe("page");
+  expect(agents.textContent).toContain("2");
+  cleanup();
+});
+
 describe("Sidebar voice header", () => {
   beforeEach(() => {
     useEventStore.setState({
