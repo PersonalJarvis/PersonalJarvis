@@ -47,6 +47,7 @@ import {
   emptyHistory,
   exportPng,
   frameLayout,
+  grabScope,
   hitTest,
   isMeaningful,
   nextCounter,
@@ -500,14 +501,25 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     return true;
   };
 
+  /** The annotation a press at ``p`` would move with the current tool, if any. */
+  const grabbable = (p: Point) => {
+    const scope = grabScope(tool);
+    if (scope === "none") return null;
+    const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
+    if (!hit || (tool === "text" && hit.kind === "text")) return null;
+    return scope === "any" || hit.id === selectedId ? hit : null;
+  };
+
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!image || event.button !== 0) return;
     const p = toImage(event);
     if (tool === "background") return;
     if (tool !== "crop") {
-      // Every annotation can be taken by the hand, whatever tool is active:
-      // a grip of the selected one reshapes it, the annotation itself moves.
-      if (selected && selectedLive) {
+      // The select tool takes hold of any annotation; a shape tool only of
+      // the one it has selected (a grip reshapes it, the body moves it); pen,
+      // highlighter and counter never do — a press with them always draws.
+      const scope = grabScope(tool);
+      if (scope !== "none" && selected && selectedLive) {
         const grip = handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure);
         if (grip) {
           event.preventDefault();
@@ -518,8 +530,8 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       }
       // Spotlights and redactions cover what lies in them, so only the
       // select tool picks them; with a drawing tool they stay drawable on.
-      const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
-      if (hit && !(tool === "text" && hit.kind === "text")) {
+      const hit = grabbable(p);
+      if (hit) {
         event.preventDefault();
         if (typing) commitText();
         event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -538,7 +550,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       return;
     }
     if (tool === "counter") {
-      setSelectedId(push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) }));
+      // Not selected afterwards: the next click right beside it places the
+      // next number instead of dragging this one.
+      push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) });
       return;
     }
     event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -579,10 +593,12 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!current) {
       // Say with the pointer what a press here would do: reshape, move, or draw.
       if (!image || tool === "crop" || tool === "background") return setHoverCursor(null);
-      const grip = selectedLive ? handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure) : null;
+      const grip =
+        selectedLive && grabScope(tool) !== "none"
+          ? handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure)
+          : null;
       if (grip) return setHoverCursor(handleCursor(grip));
-      const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
-      setHoverCursor(hit && !(tool === "text" && hit.kind === "text") ? "move" : null);
+      setHoverCursor(grabbable(p) ? "move" : null);
       return;
     }
     if (current.kind === "resize") {
@@ -627,12 +643,15 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!isMeaningful(shape)) return;
     const id = push(shape);
     if (shape.kind === "crop") setTool("move");
-    // A fresh annotation is selected at once, so its grips are right there.
-    else setSelectedId(id);
+    // A fresh shape is selected at once, so its grips are right there; ink
+    // is not, or its box would catch the next stroke written beside it.
+    else if (grabScope(tool) !== "none") setSelectedId(id);
   };
 
   const onDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!image || typing) return;
+    // Only the select and text tools open a text for editing; a quick
+    // double stroke with the pen stays ink.
+    if (!image || typing || (tool !== "move" && tool !== "text")) return;
     editTextAt(toImage(event));
   };
 

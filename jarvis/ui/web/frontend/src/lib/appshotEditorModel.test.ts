@@ -16,6 +16,7 @@ import {
   contrastOn,
   emptyHistory,
   frameLayout,
+  grabScope,
   hitTest,
   isMeaningful,
   nextCounter,
@@ -293,5 +294,23 @@ describe("grips", () => {
     expect(handleCursor("se")).toBe("nwse-resize");
     expect(handleCursor("ne")).toBe("nesw-resize");
     expect(handleCursor("to")).toBe("grab");
+  });
+});
+
+describe("grabScope", () => {
+  it("lets only the select tool pick up any annotation", () => {
+    expect(grabScope("move")).toBe("any");
+  });
+
+  it("keeps pen, highlighter and counter drawing over what is already there", () => {
+    expect(grabScope("pen")).toBe("none");
+    expect(grabScope("highlight")).toBe("none");
+    expect(grabScope("counter")).toBe("none");
+  });
+
+  it("lets a shape tool reshape only the shape it just drew", () => {
+    for (const tool of ["arrow", "line", "rect", "filled", "ellipse", "text", "redact", "spotlight"] as const) {
+      expect(grabScope(tool)).toBe("selected");
+    }
   });
 });

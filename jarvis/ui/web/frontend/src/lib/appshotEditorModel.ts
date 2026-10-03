@@ -87,6 +87,21 @@ export const TOOL_KEYS: readonly { tool: Tool; key: string }[] = [
   { tool: "background", key: "b" },
 ];
 
+/**
+ * What a press with ``tool`` may take hold of instead of drawing:
+ *
+ * - ``any``: the select tool picks up every annotation;
+ * - ``selected``: a shape tool reshapes or moves only the annotation it has
+ *   selected (the one it just drew); a press anywhere else draws a new one;
+ * - ``none``: pen, highlighter and counter always draw, so writing over
+ *   earlier ink or placing badges side by side never drags anything along.
+ */
+export function grabScope(tool: Tool): "any" | "selected" | "none" {
+  if (tool === "move") return "any";
+  if (tool === "pen" || tool === "highlight" || tool === "counter") return "none";
+  return "selected";
+}
+
 export function toolForKey(key: string): Tool | null {
   const lower = key.toLowerCase();
   return TOOL_KEYS.find((entry) => entry.key === lower)?.tool ?? null;
