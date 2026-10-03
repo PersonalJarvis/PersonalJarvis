@@ -90,7 +90,7 @@ own other computer and therefore keeps model choices and budgets.
 - e-mail addresses (except `example.com/.org/.net`);
 - international phone numbers (a leading `+`; bare digit runs are dates and
   ids far more often);
-- home folders (`C:\Users\…`, `/Users/…`, `/home/…`);
+- home folders (the Windows `Users` folder and the macOS and Linux home roots);
 - private network addresses (10/8, 172.16/12, 192.168/16).
 
 Each replacement is listed on the sheet with a hint that names it to its

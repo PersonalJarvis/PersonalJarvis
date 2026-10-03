@@ -285,7 +285,7 @@ def public_avatar(avatar: Any) -> dict[str, Any]:
         # the colour of a floating shape.
         try:
             CompanionAppearance.model_validate(kept)
-        except ValidationError:
+        except ValidationError:  # silent by design: an unusable companion drops, the look stays
             kept = {}
         if kept:
             out["companion"] = kept
@@ -583,7 +583,7 @@ def load_overlay(data_dir: Path, agent_id: str) -> dict[str, Any]:
     path = _overlay_path(data_dir, agent_id)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError:  # silent by design: no draft yet is the normal first state
         return {}
     except (OSError, ValueError):
         log.warning("society: unreadable share draft at %s — starting fresh", path)

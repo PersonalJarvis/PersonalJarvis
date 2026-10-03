@@ -112,7 +112,7 @@ class ShareTemplateTool:
 
                 overlay = load_overlay(rt.data_dir, agent.agent_id)
             draft = build_draft(agent, overlay)
-        except TemplateError as exc:
+        except TemplateError as exc:  # not silent: returned to the agent as a typed refusal
             return _failure(FailureReason.BLOCKED_BY_POLICY, str(exc))
         except OSError as exc:
             log.warning("society: share draft for %s not saved", agent.agent_id, exc_info=True)
