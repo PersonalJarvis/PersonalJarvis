@@ -149,15 +149,22 @@ function handLayers(): { primaries: Feather[]; coverts: Feather[] } {
   return { primaries, coverts };
 }
 
-/** The gold blade under a flight feather: a touch longer and wider, a hair behind it, so a gilded rim shows. */
+/** The gold blade inside a flight feather: a touch longer and wider, so a gilded rim shows around it. */
 function trimOf(feathers: readonly Feather[]): Feather[] {
-  return feathers.map((f) => ({ ...f, length: f.length * 1.045, width: f.width * 1.25, z: f.z + 0.007 }));
+  return feathers.map((f) => ({ ...f, length: f.length * 1.045, width: f.width * 1.25, z: f.z + 0.006 }));
+}
+
+/** The feather's far face: a second vane behind the gold blade, so the rim reads from both sides. */
+function farFaceOf(feathers: readonly Feather[]): Feather[] {
+  return feathers.map((f) => ({ ...f, z: f.z + 0.012 }));
 }
 
 const ARM_LAYERS = armLayers();
 const HAND_LAYERS = handLayers();
 const SECONDARY_TRIM = trimOf(ARM_LAYERS.secondaries);
 const PRIMARY_TRIM = trimOf(HAND_LAYERS.primaries);
+const SECONDARY_FAR = farFaceOf(ARM_LAYERS.secondaries);
+const PRIMARY_FAR = farFaceOf(HAND_LAYERS.primaries);
 
 function Feathers({ feathers, geometry, material, shadow }: {
   feathers: readonly Feather[]; geometry: BufferGeometry; material: Material; shadow: boolean;
@@ -185,41 +192,43 @@ function Feathers({ feathers, geometry, material, shadow }: {
 // ------------------------------------------------------------------ gold ornaments
 
 /** A flat spiral in the wing plane, for the filigree scrolls under the arm. */
-function scrollCurve(cx: number, cy: number, radius: number, turns: number, start: number): CatmullRomCurve3 {
+function scrollCurve(cx: number, cy: number, radius: number, turns: number, start: number, z: number): CatmullRomCurve3 {
   const points: Vector3[] = [];
   for (let i = 0; i <= 24; i += 1) {
     const t = i / 24;
     const a = start + t * turns * Math.PI * 2;
     const r = radius * (1 - 0.82 * t);
-    points.push(new Vector3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, -0.03));
+    points.push(new Vector3(cx + Math.cos(a) * r, cy + Math.sin(a) * r, z));
   }
   return new CatmullRomCurve3(points);
 }
 
-function ArmOrnaments() {
+/** The gold rail, jewelled joints and filigree on one face of the arm; `face` −1 is the outer side, +1 the body side. */
+function ArmOrnaments({ face }: { face: 1 | -1 }) {
   const kit = wingKit();
+  const z = face < 0 ? -0.04 : 0.05;
   const rail = useMemo(() => {
     const curve = new CatmullRomCurve3([
-      new Vector3(-0.01, -0.04, -0.035), new Vector3(0.1, 0.16, -0.04), new Vector3(0.2, 0.3, -0.04),
-      new Vector3(0.31, 0.42, -0.04), new Vector3(0.42, 0.51, -0.035),
+      new Vector3(-0.01, -0.04, z), new Vector3(0.1, 0.16, z), new Vector3(0.2, 0.3, z),
+      new Vector3(0.31, 0.42, z), new Vector3(0.42, 0.51, z),
     ]);
     return new TubeGeometry(curve, 40, 0.024, 10, false);
-  }, []);
+  }, [z]);
   const scrolls = useMemo(() => [
-    new TubeGeometry(scrollCurve(0.12, 0.08, 0.075, 1.3, 0.6), 48, 0.009, 6, false),
-    new TubeGeometry(scrollCurve(0.29, 0.31, 0.065, 1.2, 0.9), 48, 0.008, 6, false),
-    new TubeGeometry(scrollCurve(0.05, -0.11, 0.06, 1.1, 1.8), 40, 0.008, 6, false),
-  ], []);
+    new TubeGeometry(scrollCurve(0.12, 0.08, 0.075, 1.3, 0.6, z), 48, 0.009, 6, false),
+    new TubeGeometry(scrollCurve(0.29, 0.31, 0.065, 1.2, 0.9, z), 48, 0.008, 6, false),
+    new TubeGeometry(scrollCurve(0.05, -0.11, 0.06, 1.1, 1.8, z), 40, 0.008, 6, false),
+  ], [z]);
   useLayoutEffect(() => () => { rail.dispose(); scrolls.forEach((g) => g.dispose()); }, [rail, scrolls]);
   const joints: [number, number, number][] = [[0.0, -0.03, 0.05], [0.2, 0.3, 0.045], [0.42, 0.51, 0.05]];
   return (
     <group>
-      <mesh geometry={rail} material={kit.gold} castShadow />
+      <mesh geometry={rail} material={kit.gold} castShadow={face < 0} />
       {scrolls.map((g, i) => <mesh key={i} geometry={g} material={kit.gold} />)}
       {joints.map(([x, y, r], i) => (
-        <group key={i} position={[x, y, -0.04]}>
+        <group key={i} position={[x, y, z]}>
           <mesh geometry={kit.knob} material={kit.gold} scale={r} />
-          <mesh geometry={kit.jewel} material={kit.gem} position={[0, 0, -r * 0.8]} scale={r * 0.55} />
+          <mesh geometry={kit.jewel} material={kit.gem} position={[0, 0, face * r * 0.8]} scale={r * 0.55} />
         </group>
       ))}
     </group>
@@ -338,13 +347,16 @@ export function AngelWings({ drive, airborne, paused, reduced }: {
           <group ref={(g) => { arms.current[i] = g; }}>
             <mesh position={[0.4, 0.15, 0.08]} scale={1.6}>
               <planeGeometry args={[1, 1]} />
-              <meshBasicMaterial map={glowTexture()} color="#ffd36b" transparent opacity={0.38} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
+              <meshBasicMaterial map={glowTexture()} color="#ffe6a8" transparent opacity={0.24} blending={AdditiveBlending} depthWrite={false} toneMapped={false} />
             </mesh>
+            <Feathers feathers={SECONDARY_FAR} geometry={kit.flight} material={kit.feather} shadow={false} />
             <Feathers feathers={SECONDARY_TRIM} geometry={kit.flight} material={kit.gold} shadow={false} />
             <Feathers feathers={ARM_LAYERS.secondaries} geometry={kit.flight} material={kit.feather} shadow />
             <Feathers feathers={ARM_LAYERS.coverts} geometry={kit.covert} material={kit.feather} shadow={false} />
-            <ArmOrnaments />
+            <ArmOrnaments face={-1} />
+            <ArmOrnaments face={1} />
             <group ref={(g) => { hands.current[i] = g; }} position={[ARM[2][0], ARM[2][1], 0]}>
+              <Feathers feathers={PRIMARY_FAR} geometry={kit.flight} material={kit.feather} shadow={false} />
               <Feathers feathers={PRIMARY_TRIM} geometry={kit.flight} material={kit.gold} shadow={false} />
               <Feathers feathers={HAND_LAYERS.primaries} geometry={kit.flight} material={kit.feather} shadow />
               <Feathers feathers={HAND_LAYERS.coverts} geometry={kit.covert} material={kit.feather} shadow={false} />
