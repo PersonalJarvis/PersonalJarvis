@@ -265,7 +265,7 @@ describe("AppshotsView editor", () => {
   });
 
   it("edits in its own window where the desktop shell opens one", async () => {
-    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn<(url: string, init?: RequestInit) => Promise<Response>>>;
     const base = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
       url === "/api/appshot/open-editor" ? json({ window: true }) : base(url, init),
