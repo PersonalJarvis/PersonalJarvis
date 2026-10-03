@@ -795,6 +795,9 @@ class LiveVoiceSession:
             await self._send_json(
                 {
                     "type": "audio_ready",
+                    "sound_effects": bool(
+                        getattr(getattr(self._config, "ui", None), "sound_effects", True)
+                    ),
                     "provider": self.active_provider,
                     "model": profile.model,
                     "language": self._language,

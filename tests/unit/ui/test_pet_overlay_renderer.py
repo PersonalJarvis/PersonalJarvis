@@ -533,3 +533,39 @@ def test_a_pet_without_acts_just_idles() -> None:
     renderer, _ = _renderer(clock)
     clock.now += 120.0
     assert renderer.frame_key()[2] == "idle"
+
+
+def test_activation_nod_is_visible_bounded_and_does_not_mutate_cached_frames() -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock)
+    renderer.on_mode("listen")
+    original = renderer.render().copy()
+    renderer.greet()
+    assert renderer.next_frame_delay_ms() <= 36
+    clock.now += 0.35
+    assert renderer.frame_key()[-1] > 0
+    nodded = renderer.render()
+    assert nodded.size == renderer.size
+    assert nodded.getpixel((0, 0)) == (255, 0, 255)
+    clock.now += 0.36
+    assert len(renderer.frame_key()) == 4
+    assert renderer._frames["listening"][0].tobytes() == original.tobytes()
+
+
+@pytest.mark.parametrize("mode", ["idle", "think", "speak", "dictate"])
+def test_activation_nod_stops_when_listening_ends(mode: str) -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock)
+    renderer.on_mode("listen")
+    renderer.greet()
+    clock.now += 0.2
+    renderer.on_mode(mode)
+    assert len(renderer.frame_key()) == 4
+
+
+def test_no_figure_never_starts_an_activation_animation() -> None:
+    clock = _Clock()
+    renderer, _ = _renderer(clock, pet_id="none", loader=_Loader({"none": None}))
+    renderer.on_mode("listen")
+    renderer.greet()
+    assert renderer.next_frame_delay_ms() == pr.MAX_FRAME_DELAY_MS

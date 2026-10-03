@@ -9083,6 +9083,8 @@ class SpeechPipeline:
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
             self._session_has_assistant_spoken = False
+            self._listening_cue_started = False
+            self._listening_cue_task: asyncio.Task[None] | None = None
             session_id = str(uuid4())
             self._termination_producer = ""
             self._termination_detail = {}
@@ -9136,11 +9138,9 @@ class SpeechPipeline:
                             self._active_voice_mode,
                         )
                         await self._set_turn_state(TurnTakingState.LISTENING)
-                        # Activation feedback is now visual-only. Playing a
-                        # chime or spoken ACK while a portable desktop mic is
-                        # live forces an impossible choice: discard simultaneous
-                        # user speech or feed speaker echo into STT. The visible
-                        # bar is the truthful zero-loss acknowledgement.
+                        # The selected engine confirms readiness with a brief
+                        # non-speech cue. Never play the legacy spoken ACK or
+                        # pause capture: the opening words are already buffered.
                         hangup_reason = await self._active_session(
                             input_buffer=input_buffer
                         )
@@ -9152,6 +9152,14 @@ class SpeechPipeline:
                 self._termination_producer = "speech.pipeline._state_loop.error"
                 log.exception("Voice session failed: %s", exc)
             finally:
+                cue = getattr(self, "_listening_cue_task", None)
+                if cue is not None:
+                    await cancel_and_reap(
+                        cue,
+                        budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                        heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                    )
+                    self._listening_cue_task = None
                 termination = self._termination_snapshot(hangup_reason)
                 reopen_after_engine_change = bool(
                     getattr(self, "_reopen_after_engine_change", False)
@@ -9269,6 +9277,23 @@ class SpeechPipeline:
             await self._player.play_pcm(pcm, sample_rate=sample_rate)
         except Exception as exc:  # noqa: BLE001
             log.debug("Earcon playback skipped (%s).", exc)
+
+    def _start_listening_cue(self) -> None:
+        """Confirm native capture once, without blocking or suppressing input."""
+        if getattr(self, "_listening_cue_started", False):
+            return
+        self._listening_cue_started = True
+        if (
+            not self._earcons_enabled()
+            or self.is_speaker_muted
+            or getattr(self, "_muted", False)
+            or self._hangup_event.is_set()
+            or self._external_hangup_pending.is_set()
+        ):
+            return
+        self._listening_cue_task = asyncio.create_task(
+            self._play_earcon(CHIME_PCM), name="voice-listening-cue"
+        )
 
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Play the legacy chime and optional pre-rendered acknowledgement.
@@ -9394,6 +9419,7 @@ class SpeechPipeline:
         async with self._session_input_source(
             input_buffer, discard_suppressed=True
         ) as input_chunks:
+            self._start_listening_cue()
             vad_iter = self._vad.utterances(
                 self._session_input_stream(input_chunks)
             ).__aiter__()
@@ -9933,6 +9959,7 @@ class SpeechPipeline:
                 # already listening (field report 2026-08-06). Say the true
                 # state now: from here the session hears the user.
                 await self._transition("LISTENING")
+                self._start_listening_cue()
             elif kind == "transcript":
                 role = str(message.get("role", ""))
                 if role == "user" and bool(message.get("is_final", False)):

@@ -2,6 +2,7 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import { playListeningCue } from "./listeningCue";
 import { MediaActivity, type MediaLevels } from "./mediaLevels";
 import { requestConnect } from "./connectBudget";
 import { mintWsTicket } from "./ws";
@@ -464,6 +465,8 @@ export class RealtimeAudioClient {
   private outputMuted = true;
   private outputVolume = 1;
   private outputRevision = -1;
+  private listeningCueConsumed = false;
+  private stopListeningCue: (() => void) | null = null;
 
   private applyOutputState(muted: unknown, volume: unknown, revision: unknown): void {
     if (typeof muted !== "boolean") return;
@@ -472,6 +475,7 @@ export class RealtimeAudioClient {
     if (typeof revision === "number") this.outputRevision = revision;
     const changed = this.outputMuted !== effectiveMuted;
     this.outputMuted = effectiveMuted;
+    if (effectiveMuted || volume === 0) this.stopListeningCue?.();
     if (typeof volume === "number" && Number.isFinite(volume)) {
       this.outputVolume = Math.max(0, Math.min(1, volume));
     }
@@ -583,6 +587,7 @@ export class RealtimeAudioClient {
     this.inputMuted = muted;
     this.syncInputTracks();
     if (muted) {
+      this.stopListeningCue?.();
       this.startupNode?.port.postMessage({ type: "suspend" });
       this.startupPreroll = [];
       this.startupPrerollBytes = 0;
@@ -592,6 +597,7 @@ export class RealtimeAudioClient {
   }
 
   private stopInput(): void {
+    this.stopListeningCue?.();
     this.inputStopped = true;
     this.syncInputTracks();
   }
@@ -609,6 +615,7 @@ export class RealtimeAudioClient {
     this.startupAt = performance.now();
     this.startupMarks = {};
     this.intentionalClose = false;
+    this.listeningCueConsumed = false;
     this.serverClosed = false;
     this.reconnecting = false;
     this.inputMuted = false;
@@ -928,6 +935,13 @@ export class RealtimeAudioClient {
               this.reconnecting = false;
               this.sendMediaLevels(true);
               this.flushStartupPreroll();
+              if (!this.listeningCueConsumed) {
+                this.listeningCueConsumed = true;
+                if (this.ctx && message.sound_effects !== false && !this.inputMuted &&
+                    !this.inputStopped && !this.outputMuted) {
+                  this.stopListeningCue = playListeningCue(this.ctx, this.outputVolume);
+                }
+              }
               if (!settled) {
                 settled = true;
                 window.clearTimeout(timeout);
@@ -1125,6 +1139,8 @@ export class RealtimeAudioClient {
   }
 
   private async teardown(sendStop: boolean): Promise<void> {
+    this.stopListeningCue?.();
+    this.stopListeningCue = null;
     if (this.remoteMeter) this.remoteMeter.port.onmessage = null;
     this.remoteMeter?.disconnect();
     this.remoteMeter = null;

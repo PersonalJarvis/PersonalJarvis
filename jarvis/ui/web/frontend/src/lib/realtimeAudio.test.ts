@@ -28,13 +28,24 @@ class FakeAudioNode {
 }
 
 class FakeAudioContext {
+  static voices: Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
+  state = "running";
+  currentTime = 0;
   sampleRate = 48_000;
   destination = {} as AudioDestinationNode;
   audioWorklet = { addModule: vi.fn(async () => undefined) };
   resume = vi.fn(async () => undefined);
   close = vi.fn(async () => undefined);
   createMediaStreamSource = vi.fn(() => new FakeAudioNode());
-  createGain = vi.fn(() => Object.assign(new FakeAudioNode(), { gain: { value: 1 } }));
+  createGain = vi.fn(() => Object.assign(new FakeAudioNode(), { gain: {
+    value: 1, setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn(), exponentialRampToValueAtTime: vi.fn(),
+  } }));
+  createOscillator = vi.fn(() => {
+    const voice = { frequency: { value: 0 }, connect: vi.fn(), disconnect: vi.fn(),
+      start: vi.fn(), stop: vi.fn(), onended: null };
+    FakeAudioContext.voices.push(voice);
+    return voice;
+  });
   createMediaStreamDestination = vi.fn(() => Object.assign(new FakeAudioNode(), {
     stream: { getAudioTracks: () => ["buffered-track"], getTracks: () => [] },
   }));
@@ -126,6 +137,42 @@ function installVoiceBrowserFakes() {
 }
 
 describe("realtime audio client", () => {
+  it.each([
+    { sound_effects: false }, { input_muted: true }, { output_muted: true }, { output_volume: 0 },
+  ])("respects readiness cue mute %j", async (state) => {
+    installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient();
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready", ...state });
+    await connecting;
+    expect(FakeAudioContext.voices).toHaveLength(0);
+    await client.disconnect();
+  });
+
+  it("plays once and cancels the cue on output mute without stopping the microphone", async () => {
+    const { track } = installVoiceBrowserFakes();
+    const client = new RealtimeAudioClient();
+    const connecting = client.connect();
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    const socket = FakeWebSocket.instances[0];
+    socket.open();
+    socket.receive({ type: "audio_ready" });
+    await connecting;
+    expect(FakeAudioContext.voices).toHaveLength(2);
+    socket.receive({ type: "output_state", muted: true, revision: 1 });
+    expect(FakeAudioContext.voices.every(voice => voice.disconnect.mock.calls.length === 1)).toBe(true);
+    expect(track.stop).not.toHaveBeenCalled();
+    socket.receive({ type: "reconnecting" });
+    socket.receive({ type: "audio_ready", output_muted: false, output_revision: 2 });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(FakeAudioContext.voices).toHaveLength(2);
+    await client.disconnect();
+  });
+
   it("does not consume the media deadline while microphone permission is pending", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
@@ -159,10 +206,12 @@ describe("realtime audio client", () => {
     socket.receive({ type: "audio_ready", requires_webrtc_answer: true, webrtc_answer_sdp: "answer" });
     await Promise.resolve();
     expect(gate.port.postMessage.mock.calls.some(([message]) => message.type === "start")).toBe(false);
+    expect(FakeAudioContext.voices).toHaveLength(0);
     peer.connectionState = "connected";
     peer.events.dispatchEvent(new Event("connectionstatechange"));
     await connecting;
     expect(gate.port.postMessage.mock.calls.filter(([message]) => message.type === "start")).toHaveLength(1);
+    expect(FakeAudioContext.voices).toHaveLength(2);
     socket.receive({ type: "audio_closed" });
     await client.disconnect();
   });
@@ -449,6 +498,7 @@ describe("realtime audio client", () => {
   });
 
   beforeEach(() => {
+    FakeAudioContext.voices = [];
     vi.stubGlobal("window", {
       location: { protocol: "https:", host: "app.example", hostname: "app.example" },
       __JARVIS_TOKEN: "tok",

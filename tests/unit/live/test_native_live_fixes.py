@@ -167,6 +167,20 @@ async def test_ready_provider_opens_after_one_probe(call, make_provider):
         assert len(live.provider.opened_with) == 1
         assert live.sent("error_spoken") == []
         assert len(live.sent("audio_ready")) == 1
+        assert live.sent("audio_ready")[0]["sound_effects"] is True
+    finally:
+        await live.session.end()
+
+
+@both_providers
+@pytest.mark.asyncio
+async def test_readiness_cue_respects_the_shared_sound_effects_switch(call, make_provider):
+    config = _config()
+    config.ui = SimpleNamespace(sound_effects=False)
+    live = call(make_provider(), config)
+    await live.start()
+    try:
+        assert live.sent("audio_ready")[0]["sound_effects"] is False
     finally:
         await live.session.end()
 
