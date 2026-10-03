@@ -53,6 +53,7 @@ export const VOICE_STATES: readonly VoiceState[] = [
 ];
 
 export type SectionId =
+  | "browser"
   | "chats"
   | "agents"
   | "skills"
@@ -122,6 +123,7 @@ export type SectionId =
   | "marketplace";
 
 export const SECTION_IDS = [
+  "browser",
   "chats",
   "agents",
   "skills",
@@ -221,6 +223,7 @@ export function soloWindowFromSearch(search: string): boolean {
 }
 
 export const SECTION_LABELS: Record<SectionId, string> = {
+  browser: "Browser",
   chats: "Chats",
   agents: "Agents",
   skills: "Skills",

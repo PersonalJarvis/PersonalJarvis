@@ -1,4 +1,22 @@
 {
+  "system_browser": {
+    "title": "Navegador",
+    "subtitle": "Tu navegador, tus perfiles",
+    "docked": "Ventana de Chrome acoplada aquí",
+    "detach": "Liberar ventana",
+    "open": "Abrir navegador predeterminado",
+    "windows": "Mostrar ventanas",
+    "heading": "Usa tu Chrome habitual",
+    "description": "Abre tu navegador predeterminado y elige tu perfil habitual de Chrome. Después, pulsa Mostrar ventanas y selecciona una ventana para acoplarla aquí. Tus sesiones, extensiones y pestañas permanecen en ese perfil de Chrome.",
+    "lifecycle": "Esta versión beta coloca tu ventana real de Chrome sobre esta área. Sigue siendo una ventana independiente. Al salir de esta sección, abrir un diálogo o liberar la ventana, se restaura su posición original. Chrome permanece abierto.",
+    "unsupported": "El acoplamiento requiere la aplicación de escritorio de Windows con Chrome como navegador predeterminado. Otros navegadores y sistemas operativos aún no son compatibles.",
+    "choose_profile": "Elige tu perfil en Chrome, vuelve aquí y pulsa Mostrar ventanas.",
+    "no_windows": "No se encontraron ventanas visibles de Chrome. Abre Chrome, elige un perfil y pulsa Mostrar ventanas de nuevo.",
+    "too_small": "Amplía la ventana de Jarvis para dejar suficiente espacio para Chrome.",
+    "session_ended": "La ventana se ha liberado o cerrado. Pulsa Mostrar ventanas para seleccionarla de nuevo.",
+    "connection_lost": "Se interrumpió la conexión con el navegador. Su posición original se restaurará automáticamente.",
+    "failed": "No se pudo completar la acción. Comprueba que Chrome esté abierto y vuelve a mostrar sus ventanas."
+  },
   "apikeys_realtime": {
     "aria": "Voz en tiempo real",
     "loading": "Cargando proveedores de voz…",

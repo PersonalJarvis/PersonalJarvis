@@ -1,4 +1,22 @@
 {
+  "system_browser": {
+    "title": "Browser",
+    "subtitle": "Dein Browser, deine Profile",
+    "docked": "Chrome-Fenster hier angedockt",
+    "detach": "Fenster lösen",
+    "open": "Standardbrowser öffnen",
+    "windows": "Fenster anzeigen",
+    "heading": "Nutze dein gewohntes Chrome",
+    "description": "Öffne deinen Standardbrowser und wähle dein gewohntes Chrome-Profil. Klicke danach auf Fenster anzeigen und wähle das Fenster für diesen Bereich. Deine bestehenden Logins, Erweiterungen und Tabs bleiben in diesem Chrome-Profil.",
+    "lifecycle": "Diese Beta platziert dein echtes Chrome-Fenster über diesem Bereich. Es bleibt ein eigenständiges Browserfenster. Beim Verlassen des Bereichs, Öffnen eines Dialogs oder Lösen des Fensters wird seine ursprüngliche Position wiederhergestellt. Chrome bleibt geöffnet.",
+    "unsupported": "Das Andocken benötigt derzeit die Windows-Desktop-App mit Chrome als Standardbrowser. Andere Browser und Betriebssysteme werden noch nicht unterstützt.",
+    "choose_profile": "Wähle dein Profil in Chrome. Kehre danach hierher zurück und klicke auf Fenster anzeigen.",
+    "no_windows": "Keine sichtbaren Chrome-Fenster gefunden. Öffne Chrome, wähle ein Profil und klicke erneut auf Fenster anzeigen.",
+    "too_small": "Vergrößere das Jarvis-Fenster, damit Chrome genügend Platz hat.",
+    "session_ended": "Das Browserfenster wurde gelöst oder geschlossen. Du kannst es über Fenster anzeigen erneut auswählen.",
+    "connection_lost": "Die Browserverbindung wurde unterbrochen. Die ursprüngliche Fensterposition wird automatisch wiederhergestellt.",
+    "failed": "Die Browseraktion konnte nicht abgeschlossen werden. Prüfe, ob Chrome geöffnet ist, und lasse die Fenster erneut anzeigen."
+  },
   "apikeys_realtime": {
     "aria": "Realtime-Stimme",
     "loading": "Sprach-Provider werden geladen…",

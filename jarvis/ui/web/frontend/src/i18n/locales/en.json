@@ -1,4 +1,22 @@
 {
+  "system_browser": {
+    "title": "Browser",
+    "subtitle": "Your browser, your profiles",
+    "docked": "Chrome window docked here",
+    "detach": "Release window",
+    "open": "Open default browser",
+    "windows": "Show windows",
+    "heading": "Use the Chrome you already use",
+    "description": "Open your default browser, choose your usual Chrome profile, then select Show windows and pick the window to dock here. Your existing logins, extensions and tabs stay in that Chrome profile.",
+    "lifecycle": "This beta positions your real Chrome window over this area. It stays an independent browser window. Leaving this section, opening a dialog or releasing the window restores its original position. Chrome remains open.",
+    "unsupported": "Docking currently requires the Windows desktop app with Chrome set as the default browser. Other browsers and operating systems are not supported yet.",
+    "choose_profile": "Choose your profile in Chrome, then return here and select Show windows.",
+    "no_windows": "No visible Chrome windows found. Open Chrome, choose a profile and try Show windows again.",
+    "too_small": "Make the Jarvis window larger to provide enough room for Chrome.",
+    "session_ended": "The browser window was released or closed. Show windows to select it again.",
+    "connection_lost": "The browser connection was interrupted. Its original position will be restored automatically.",
+    "failed": "The browser action could not finish. Check that Chrome is open, then show its windows again."
+  },
   "apikeys_realtime": {
     "aria": "Realtime voice",
     "loading": "Loading voice providers…",

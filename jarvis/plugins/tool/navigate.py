@@ -2,7 +2,7 @@
 
 Router-tier, risk ``safe`` (pure UI navigation — no side effects beyond
 switching the active screen). The brain calls it when the user asks to open or
-show a section ("zeig die Socials", "open settings", "show the agents"). It
+show a section ("show Socials", "open settings", "show the agents"). It
 publishes a :class:`~jarvis.core.events.NavigateSidebar` event; the frontend
 listener (``useWebSocket.ts``) switches the active section when ``section`` is a
 known ``SectionId`` and otherwise no-ops gracefully.
@@ -23,6 +23,7 @@ from jarvis.core.protocols import ToolResult
 # jarvis/ui/web/frontend/src/store/events.ts (parity-tested).
 KNOWN: frozenset[str] = frozenset(
     {
+        "browser",
         "chats",
         "agents",
         "skills",

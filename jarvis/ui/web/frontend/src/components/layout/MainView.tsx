@@ -100,6 +100,9 @@ const SessionsView = lazyView(["sessions"], () =>
 const ClisHubView = lazyView(["clis", "cli-test-hub"], () =>
   import("@/views/ClisHubView").then((m) => ({ default: m.ClisHubView })),
 );
+const SystemBrowserView = lazyView(["browser"], () =>
+  import("@/views/SystemBrowserView").then((m) => ({ default: m.SystemBrowserView })),
+);
 const DocsView = lazyView(["docs"], () =>
   import("@/views/DocsView").then((m) => ({ default: m.DocsView })),
 );
@@ -363,6 +366,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ClisHubView />;
     case "docs":
       return <DocsView />;
+    case "browser":
+      return <SystemBrowserView />;
     case "sessions":
       return <SessionsView />;
     case "run_inspector":

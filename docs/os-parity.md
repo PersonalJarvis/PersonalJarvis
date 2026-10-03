@@ -1,5 +1,33 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## System browser tab (2026-10-03, beta, T2)
+
+The Browser section can launch the Windows HTTPS default browser through its
+registered executable, preserving its ordinary startup and profile picker.
+With Chrome as the default, the user can explicitly select a visible Chrome
+window and dock it over the tab's reserved area. This is a positioned native
+top-level window, not a child WebView. Profiles, cookies, extensions and browser
+process ownership stay with Chrome. No profile data is read or copied and no
+automation or debugging connection is established.
+
+The dock restores the window's saved placement on release, section changes,
+dialogs, ordinary host closure, or expiration of its frontend presence lease.
+A hard desktop-process crash leaves Chrome alive at its last position; it can
+still be moved or closed normally. Window movement follows WinEvent hooks,
+which are unregistered when docking stops. Nothing launches during startup or
+on section mount. Commands are discoverable under `jarvis api system-browser`.
+
+macOS, Linux and headless hosts report docking unavailable; the same frontend
+shows the limitation. Other default browsers can be launched on Windows but
+are not docked. Firefox, Safari and other Chromium browsers are not qualified.
+
+Validation: focused controller, navigation, route, observer-lifecycle and React
+tests; production frontend build; live Windows default-browser discovery and
+observer start/stop. Native mouse/keyboard use, Chrome profile-picker handoff,
+multiple monitors, light/dark appearance and the complete desktop user journey
+remain unverified. This beta is not release-qualified until those checks pass.
+
+
 ## Native macOS window controls (2026-10-03, T2)
 
 Main, reopened main, and detached windows retain Cocoa's native title bar on
