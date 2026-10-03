@@ -1962,6 +1962,12 @@ _TTS_DEFAULTS: dict[str, dict[str, str]] = {
         "voice_en": "Charon",
         "language_code": "de-DE",
     },
+    "vertex-tts": {
+        "model": "gemini-3.1-flash-tts-preview",
+        "voice_de": "Charon",
+        "voice_en": "Charon",
+        "language_code": "de-DE",
+    },
     "grok-voice": {
         # model is ignored by the Grok plugin (no model param in GrokVoiceTTS).
         # voice from jarvis/plugins/tts/grok_voice_tts.py: GROK_VOICE_LEO = "leo"

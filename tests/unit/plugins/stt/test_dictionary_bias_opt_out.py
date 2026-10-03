@@ -32,6 +32,7 @@ def _cloud_provider(monkeypatch: pytest.MonkeyPatch) -> type[_RecordingProvider]
     _RecordingProvider.built = []
     monkeypatch.setattr(stt_plugins, "_resolve_effective_stt", lambda name: (name, ""))
     monkeypatch.setattr(stt_plugins, "_load_provider_class", lambda name: _RecordingProvider)
+    monkeypatch.setattr("jarvis.core.config.get_provider_secret", lambda _: "fixture-key")
     monkeypatch.setattr(
         dictionary, "dictionary_bias_words", lambda *_a, **_k: ["GitHub", "Agentic IDE"]
     )

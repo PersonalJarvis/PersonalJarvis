@@ -84,6 +84,10 @@ class PageHandler(BaseHTTPRequestHandler):
             return cls.requests_ready.wait_for(lambda: path in cls.page_requests, timeout=15)
 
     def _respond(self):
+        if self.path == "/ready":
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path.startswith(("/login", "/account")):
             signed_in = "fixture_session=verified" in self.headers.get("Cookie", "")
             self.profile_requests.append((self.path, signed_in))
@@ -114,7 +118,8 @@ class PageHandler(BaseHTTPRequestHandler):
         <h1 id="counter">0</h1>
         <script>let n=0;function paint(){document.querySelector('#counter').textContent=++n;
         document.body.style.background=n%2?'#fdd':'#ddf';requestAnimationFrame(paint)}
-        requestAnimationFrame(paint)</script>"""
+        requestAnimationFrame(paint);
+        requestAnimationFrame(()=>requestAnimationFrame(()=>fetch('/ready')))</script>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
@@ -195,7 +200,7 @@ async def _open_animation_and_hand_back(live, session, queue, site):
     await _control(live, session, "viewer", "navigate", {"url": site})
     # Native navigation acknowledges input, not page load. Handing back at
     # that point can close Chrome before it has navigated away from New Tab.
-    assert await asyncio.to_thread(PageHandler.wait_for_path, "/"), "Fixture page did not load"
+    assert await asyncio.to_thread(PageHandler.wait_for_path, "/ready"), "Fixture did not render"
     await _control(live, session, "viewer", "takeover", {"enabled": False})
     async with asyncio.timeout(15):
         while True:
@@ -288,16 +293,19 @@ async def test_native_chrome_toolbar_keyboard_and_agent_handoff(live, site):
             async with asyncio.timeout(15):
                 # A plain Chrome sign-in deliberately exposes no DOM or URL.
                 # HTTP arrival proves native toolbar input reached the fixture.
-                assert await asyncio.to_thread(PageHandler.wait_for_path, "/")
+                assert await asyncio.to_thread(PageHandler.wait_for_path, "/ready")
         except TimeoutError:
             pytest.fail(f"Native browser did not select the navigated tab: {session.state}")
         await _control(live, session, "viewer", "takeover", {"enabled": False})
-        async with asyncio.timeout(15):
-            while True:
-                event = await queue.get()
-                if (event["kind"] == "state" and not event["manual"]
-                        and event["url"].rstrip("/") == site):
-                    break
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    event = await queue.get()
+                    if (event["kind"] == "state" and not event["manual"]
+                            and event["url"].rstrip("/") == site):
+                        break
+        except TimeoutError:
+            pytest.fail(f"Handback did not restore the selected tab: {session.state}")
         assert len(event["tabs"]) >= 2
         assert event["url"].rstrip("/") == site
     finally:
