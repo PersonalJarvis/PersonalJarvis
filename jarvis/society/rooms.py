@@ -224,9 +224,14 @@ class Rooms:
             return await self._advance(room)
 
     async def settle(self, room_id: str, *, reason: str, by: str = "scheduler") -> Room:
-        room = await self.get(room_id)
-        if room is None:
-            raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+        async with self._turn_lock(room_id):
+            room = await self.get(room_id)
+            if room is None:
+                raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+            return await self._settle(room, reason=reason, by=by)
+
+    async def _settle(self, room: Room, *, reason: str, by: str = "scheduler") -> Room:
+        """Settle a room while its per-room transition lock is already held."""
         if room.state in (RoomState.SETTLED, RoomState.FAILED):
             return room
         room.state = RoomState.SETTLED
@@ -249,30 +254,31 @@ class Rooms:
         return room
 
     async def fail(self, room_id: str, *, reason: str) -> Room:
-        room = await self.get(room_id)
-        if room is None:
-            raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
-        if room.state in (RoomState.SETTLED, RoomState.FAILED):
-            return room
-        room.state = RoomState.FAILED
-        room.settle_reason = reason
-        await self._persist(room)
-        await self._store.append_and_publish(
-            SocietyEnvelope(
-                msg_type=MsgType.ROOM_SETTLE,
-                from_agent="scheduler",
-                to_agent=None,
-                trace_id=room.trace_id,
-                payload={
-                    "room_id": room.room_id,
-                    "reason": reason,
-                    "rounds": room.round,
-                    "messages": room.message_count,
-                    "failed": True,
-                },
+        async with self._turn_lock(room_id):
+            room = await self.get(room_id)
+            if room is None:
+                raise RoomError(FailureReason.TARGET_UNKNOWN, f"room {room_id!r} not found")
+            if room.state in (RoomState.SETTLED, RoomState.FAILED):
+                return room
+            room.state = RoomState.FAILED
+            room.settle_reason = reason
+            await self._persist(room)
+            await self._store.append_and_publish(
+                SocietyEnvelope(
+                    msg_type=MsgType.ROOM_SETTLE,
+                    from_agent="scheduler",
+                    to_agent=None,
+                    trace_id=room.trace_id,
+                    payload={
+                        "room_id": room.room_id,
+                        "reason": reason,
+                        "rounds": room.round,
+                        "messages": room.message_count,
+                        "failed": True,
+                    },
+                )
             )
-        )
-        return room
+            return room
 
     # ------------------------------------------------------------- policy
 
@@ -297,15 +303,15 @@ class Rooms:
     async def _advance(self, room: Room) -> Room:
         if room.message_count >= MAX_MESSAGES:
             await self._persist(room)
-            return await self.settle(room.room_id, reason="message_cap")
+            return await self._settle(room, reason="message_cap")
         if len(room.turned) >= len(room.members):
             # A full pass over the members ends the round.
             if not room.spoke_this_round:
                 await self._persist(room)
-                return await self.settle(room.room_id, reason="silence")
+                return await self._settle(room, reason="silence")
             if room.round >= MAX_ROUNDS:
                 await self._persist(room)
-                return await self.settle(room.room_id, reason="round_cap")
+                return await self._settle(room, reason="round_cap")
             room.round += 1
             room.turned = []
             room.spoke_this_round = False
