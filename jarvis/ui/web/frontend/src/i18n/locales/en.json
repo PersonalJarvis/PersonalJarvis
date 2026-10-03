@@ -5696,18 +5696,9 @@
   },
   "trace_report": {
     "locale": "en",
-    "copy": "Copy",
-    "copied": "Copied",
-    "copy_failed": "Could not copy",
     "show_more": "Show more",
     "show_less": "Show less",
-    "worked_for": "Worked for {duration}",
-    "worked": "Worked",
-    "thought_for": "Thought for {duration}",
-    "thought": "Thought",
     "took": "Took {duration}",
-    "failed_count_one": "{count} failed",
-    "failed_count_other": "{count} failed",
     "act": {
       "command_one": "ran a command",
       "command_other": "ran commands",
@@ -5731,8 +5722,7 @@
       "search": "Searched for {pattern}",
       "search_in": "Searched for {pattern} in {path}",
       "edit": "Edited {target}",
-      "write": "Created {target}",
-      "image": "Viewed {target}"
+      "write": "Created {target}"
     },
     "state": {
       "running": "Running",

@@ -169,3 +169,14 @@
   max-width: 100%;
   border-radius: 0.5rem;
 }
+/* Work lines and reasoning are set in the size of the surface's own text,
+   as in the Codex app: 15/25 on the front page, 13/21 in agent chats. */
+/* !important: the typography plugin's .prose sets its own size. */
+.trace-text {
+  font-size: var(--trace-text-size, 15px) !important;
+  line-height: var(--trace-text-leading, 25px) !important;
+}
+[data-testid="work-trace"][data-conversation] {
+  --trace-text-size: 13px;
+  --trace-text-leading: 21px;
+}

@@ -5663,21 +5663,12 @@
   },
   "trace_report": {
     "locale": "de",
-    "copy": "Kopieren",
-    "copied": "Kopiert",
-    "copy_failed": "Kopieren fehlgeschlagen",
     "show_more": "Mehr anzeigen",
     "show_less": "Weniger anzeigen",
-    "worked_for": "{duration} gearbeitet",
-    "worked": "Gearbeitet",
-    "thought_for": "{duration} nachgedacht",
-    "thought": "Nachgedacht",
     "took": "Dauer: {duration}",
-    "failed_count_one": "{count} fehlgeschlagen",
-    "failed_count_other": "{count} fehlgeschlagen",
     "act": {
-      "command_one": "einen Befehl ausgeführt",
-      "command_other": "Befehle ausgeführt",
+      "command_one": "hat einen Befehl ausgeführt",
+      "command_other": "hat Befehle ausgeführt",
       "read_one": "eine Datei gelesen",
       "read_other": "Dateien gelesen",
       "list_one": "einen Ordner aufgelistet",
@@ -5698,8 +5689,7 @@
       "search": "Nach {pattern} gesucht",
       "search_in": "In {path} nach {pattern} gesucht",
       "edit": "{target} bearbeitet",
-      "write": "{target} erstellt",
-      "image": "{target} angesehen"
+      "write": "{target} erstellt"
     },
     "state": {
       "running": "Läuft",

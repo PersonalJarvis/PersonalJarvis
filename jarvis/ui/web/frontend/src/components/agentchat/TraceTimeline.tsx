@@ -1,9 +1,8 @@
 import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronRight, Copy, FilePlus2, FileText, FolderOpen, Globe, Image, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
+import { ChevronRight, FilePlus2, FileText, FolderOpen, Globe, Image, Pencil, Search, SquareTerminal, Wrench } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
-import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { ToolBlock, TurnBlock, TurnStatus } from "./reduce";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
@@ -11,7 +10,7 @@ import type { ToolChoice } from "./toolChoices";
 import { toolIdentity, toolIdentityStyle } from "./toolIdentity";
 import { traceToolIdentity } from "./traceActivity";
 import {
-  buildTimeline, plural, readableOutput, summarize, traceDuration, tr,
+  buildTimeline, readableOutput, summarize, traceDuration, tr,
   type ActivityEntry, type Call, type ProseEntry, type Timeline,
 } from "./traceEntries";
 
@@ -55,7 +54,7 @@ export function timelineItems(timeline: Timeline, renderers: TimelineRenderers):
 
 // ── Marks ────────────────────────────────────────────────────────────────
 
-const glyph = "h-[15px] w-[15px] shrink-0";
+const glyph = "h-4 w-4 shrink-0";
 const GLYPHS = { command: SquareTerminal, read: FileText, list: FolderOpen, search: Search, edit: Pencil, write: FilePlus2, image: Image, web: Globe } as const;
 
 function cliRow(binary: string): ToolChoice {
@@ -68,7 +67,7 @@ function cliRow(binary: string): ToolChoice {
 /** A brand drawn the way the composer draws it: the real logo, themed. */
 function BrandMark({ row }: { row: ToolChoice }) {
   return <span className="tool-identity inline-flex shrink-0" style={toolIdentityStyle(row)} data-trace-brand={row.id}>
-    <ToolChoiceIcon row={row} size={15} />
+    <ToolChoiceIcon row={row} size={16} />
   </span>;
 }
 
@@ -119,7 +118,7 @@ function StretchMark({ calls }: { calls: Call[] }) {
 
 function ProseView({ entry, renderers }: { entry: ProseEntry; renderers: TimelineRenderers }) {
   // Media in narration stays a thumbnail: the trace is the story, not the gallery.
-  if (entry.tone === "narration") return <div className="trace-narration min-w-0 py-1.5" data-trace-entry="narration">{renderers.renderNarration(entry.text, entry.id)}</div>;
+  if (entry.tone === "narration") return <div className="trace-narration min-w-0 py-2" data-trace-entry="narration">{renderers.renderNarration(entry.text, entry.id)}</div>;
   return <Reasoning text={entry.text} />;
 }
 
@@ -133,9 +132,9 @@ function Reasoning({ text }: { text: string }) {
     const el = ref.current;
     if (el && !open) setOverflows(el.scrollHeight > el.clientHeight + 1);
   }, [text, open]);
-  return <div className="min-w-0 py-1.5" data-trace-entry="reasoning">
+  return <div className="min-w-0 py-2" data-trace-entry="reasoning">
     <div ref={ref} className={cn(
-      "prose prose-sm max-w-none text-sm leading-6 text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
+      "prose max-w-none trace-text text-muted-foreground dark:prose-invert [overflow-wrap:anywhere]",
       "prose-p:my-1 prose-p:text-muted-foreground prose-li:text-muted-foreground prose-strong:text-foreground-secondary prose-pre:overflow-auto",
       "[&>:first-child]:mt-0 [&>:last-child]:mb-0",
       !open && "max-h-36 overflow-hidden",
@@ -152,7 +151,7 @@ function Reasoning({ text }: { text: string }) {
 
 // ── Activity ─────────────────────────────────────────────────────────────
 
-const lineButton = "group/line flex w-full min-w-0 items-center gap-2 rounded-md py-1 text-left text-sm leading-6 text-muted-foreground transition-colors enabled:hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default";
+const lineButton = "group/line flex w-full min-w-0 items-center gap-2.5 rounded-md py-1.5 text-left trace-text text-muted-foreground transition-colors enabled:hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default";
 
 function Chevron({ open }: { open: boolean }) {
   return <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover/line:opacity-70 group-focus-visible/line:opacity-70", open && "rotate-90 opacity-70")} />;
@@ -164,13 +163,11 @@ function ActivityView({ entry, renderers }: { entry: ActivityEntry; renderers: T
   const running = entry.calls.filter((call) => call.status === "running");
   const settled = entry.calls.filter((call) => call.status !== "running");
   if (entry.calls.length === 1) return <CallLine call={entry.calls[0]} renderers={renderers} />;
-  const problems = settled.filter((call) => call.status !== "done").length;
   const lang = t("trace_report.locale");
   return <div className="min-w-0" data-trace-entry="activity">
     {settled.length ? <button type="button" className={lineButton} aria-expanded={open} onClick={() => setOpen(!open)}>
       <StretchMark calls={settled} />
       <span className="min-w-0 truncate">{settled.length === entry.calls.length ? entry.summary : summarize(settled, t, lang)}</span>
-      {problems ? <span className="shrink-0 text-destructive">{tr(t, `failed_count_${plural(lang, problems)}`, { count: problems })}</span> : null}
       <Chevron open={open} />
     </button> : null}
     {open ? <div className="mb-1 ml-[7px] min-w-0 border-l border-border pl-4">
@@ -190,7 +187,8 @@ function CallLine({ call, renderers }: { call: Call; renderers: TimelineRenderer
     <button type="button" className={lineButton} aria-expanded={running ? undefined : open} disabled={running} onClick={() => setOpen(!open)}>
       <CallMark call={call} />
       <span className={cn("min-w-0 truncate", running && "trace-shimmer")} title={call.text}>{call.text}</span>
-      {call.detail ? <span className="min-w-0 truncate text-muted-foreground/70" title={call.detail}>{call.detail}</span> : null}
+      {/* The detail takes only the room the words leave. */}
+      {call.detail ? <span className="min-w-0 flex-1 basis-0 truncate text-muted-foreground/70" title={call.detail}>{call.detail}</span> : null}
       {call.added || call.removed ? <span className="shrink-0 font-mono text-xs tabular-nums">
         <span className="diff-count-add">+{call.added}</span>{" "}<span className="diff-count-del">−{call.removed}</span>
       </span> : null}
@@ -198,7 +196,7 @@ function CallLine({ call, renderers }: { call: Call; renderers: TimelineRenderer
       {!running ? <Chevron open={open} /> : null}
     </button>
     {/* Why a call failed reads without opening anything. */}
-    {problem && call.reason && !open ? <p data-trace-reason className="-mt-0.5 mb-1 truncate pl-[23px] text-xs leading-5 text-destructive" title={call.reason}>{call.reason}</p> : null}
+    {problem && call.reason && !open ? <p data-trace-reason className="-mt-1 mb-1 truncate pl-[26px] text-[13px] leading-5 text-destructive" title={call.reason}>{call.reason}</p> : null}
     {open ? <div className="mb-2 ml-[7px] min-w-0 border-l border-border pl-4 pt-0.5"><CallDetails call={call} renderers={renderers} /></div> : null}
   </div>;
 }
@@ -229,22 +227,4 @@ function CallDetails({ call, renderers }: { call: Call; renderers: TimelineRende
     {renderers.renderDetails(call.block)}
     {took}
   </div>;
-}
-
-/** "Copy" — the timeline as Markdown on the clipboard; shown when the fold is hovered. */
-export function CopyTimeline({ text }: { text: () => string }) {
-  const t = useT();
-  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
-  const copy = async () => {
-    const ok = await robustCopy(text());
-    setState(ok ? "copied" : "failed");
-    window.setTimeout(() => setState("idle"), 2000);
-  };
-  const Icon = state === "copied" ? Check : Copy;
-  return <button type="button" onClick={() => void copy()}
-    className={cn("mt-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-opacity hover:bg-secondary hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-      state === "idle" ? "opacity-0 group-hover/fold-body:opacity-100" : "opacity-100")}>
-    <Icon aria-hidden className="h-3.5 w-3.5" />
-    <span aria-live="polite">{t(state === "copied" ? "trace_report.copied" : state === "failed" ? "trace_report.copy_failed" : "trace_report.copy")}</span>
-  </button>;
 }

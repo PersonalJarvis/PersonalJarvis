@@ -61,35 +61,28 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
     { kind: "text", id: "reply", text: "I will send the mail next." },
     live,
   ]} />);
-  // The finished turn shows the reply; the interruption folds behind the toggle.
-  expect(screen.getByText("I will send the mail next.")).toBeTruthy();
-  expect(screen.queryByText("Interrupted without a result")).toBeNull();
-  expect(screen.queryByText("Inspect archive.")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /^Worked for 4\.1s.*1 failed/ }));
-  // Opening the fold shows the whole timeline in one tap: the model's words,
-  // the call, and that it never returned.
-  const lane2 = screen.getByTestId("work-trace").textContent!;
-  expect(lane2).toContain("Inspect archive.");
-  expect(lane2).toContain("Searched for archive");
-  expect(lane2).toContain("Stopped");
+  // Like the Codex app, nothing folds: the model's words, the reply and the
+  // call that never returned all stay in view, in order.
+  const text = screen.getByTestId("work-trace").textContent!;
+  expect(text.indexOf("Inspect archive.")).toBeLessThan(text.indexOf("I will send the mail next."));
+  expect(text.indexOf("I will send the mail next.")).toBeLessThan(text.indexOf("Searched for archive"));
+  expect(text).toContain("Stopped");
   expect(container.querySelectorAll(".mx-auto")).toHaveLength(0);
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
 
-it("folds a failure with the surrounding work, keeping only the reply out", () => {
+it("keeps a failure in view beside the reply, its reason under its line", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={2000} blocks={[
     tool,
     { ...tool, callId: "error", isError: true, output: "Upload failed" },
     { kind: "text", id: "reply", text: "I could not finish." },
   ]} />);
-  expect(screen.queryByText("Upload failed")).toBeNull();
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
   expect(screen.getByText("I could not finish.")).toBeTruthy();
-  expect(screen.queryByText("Report contents")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /^Worked for 2\.0s.*1 failed/ }));
   // One quiet line for the stretch; it opens to the calls, and the failed
   // one says why under its own line.
-  fireEvent.click(screen.getByRole("button", { name: /^Read files.*1 failed/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Read files$/ }));
   expect(screen.getByText("Upload failed")).toBeTruthy();
   // The raw output stays one tap further, under the call.
   expect(screen.queryByText("Report contents")).toBeNull();
@@ -97,18 +90,15 @@ it("folds a failure with the surrounding work, keeping only the reply out", () =
   expect(screen.getByText("Report contents")).toBeTruthy();
 });
 
-it("folds failures but keeps pending approvals visible in the conversation style", () => {
+it("keeps a pending approval actionable in the conversation style", () => {
   const base: ToolBlock = { kind: "tool", callId: "failure", name: "send_message", input: {}, output: "Delivery failed", isError: true, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[
     base,
     { ...base, callId: "approval", isError: false, output: null, approval: { approvalId: "ap", summary: "Send this message?", decision: null } },
   ]} onDecide={() => undefined} />);
-  expect(screen.queryByText("Delivery failed")).toBeNull();
-  expect(screen.getByText("Send this message?")).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: /^Worked for 1\.0s/ }));
+  // The failed call says why on its own line; the approval needs a tap.
   expect(screen.getByText("Delivery failed")).toBeTruthy();
-  // The approval card survives opening the fold — it still needs a tap.
+  expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
 });
 
@@ -124,34 +114,25 @@ it("shows agent message direction and truthful delivery state without preview cl
   expect(screen.getByRole("alert").textContent).toBe("Connection closed");
 });
 
-it("folds successful work and post-reply errors behind one toggle without reordering the conversation", () => {
+it("keeps work after the reply after it, without reordering the conversation", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [tool, { ...tool, callId: "b", name: "write_file" }, { kind: "text" as const, id: "reply", text: "Your report is ready." }, { ...tool, callId: "error", isError: true, output: "Upload failed" }];
   const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
-  // While it runs, finished calls already read as their timeline line.
+  // While it runs, finished calls already read as their line.
   expect(screen.getByRole("button", { name: /^Read a file, created a file/ })).toBeTruthy();
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={blocks} />);
-  expect(screen.queryByRole("button", { name: /^Read a file, created a file/ })).toBeNull();
-  expect(screen.getByText("Your report is ready.")).toBeTruthy();
-  expect(screen.queryByText("Upload failed")).toBeNull();
-  expect(screen.queryByText("Report contents")).toBeNull();
-  const toggle = screen.getByRole("button", { name: /^Worked for 1\.0s.*1 failed/ });
-  fireEvent.click(toggle);
-  // One tap opens the timeline: the post-reply error joins the stretch, the
-  // reply stays where it was.
-  const stretch = screen.getByRole("button", { name: /^Read files, created a file.*1 failed/ });
+  const text = screen.getByTestId("work-trace").textContent ?? "";
+  expect(text.indexOf("Read a file, created a file")).toBeLessThan(text.indexOf("Your report is ready."));
+  expect(text.indexOf("Your report is ready.")).toBeLessThan(text.indexOf("Read report.csv"));
   expect(screen.getAllByText("Your report is ready.")).toHaveLength(1);
+  // The call after the reply failed and says why without opening anything.
+  expect(screen.getByText("Upload failed")).toBeTruthy();
+  // Each stretch opens to its calls, and closes again.
+  const stretch = screen.getByRole("button", { name: /^Read a file, created a file/ });
   fireEvent.click(stretch);
-  const calls = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']")).map((c) => c.textContent);
-  expect(calls[0]).toContain("Read report.csv");
-  expect(calls[1]).toContain("Created report.csv");
-  expect(calls[2]).toContain("Upload failed");
-  // Each call's raw output stays tappable on its own.
-  const first = screen.getAllByRole("button", { name: /^Read report\.csv/ })[0];
-  fireEvent.click(first);
-  expect(screen.getAllByText("Report contents").length).toBeGreaterThan(0);
-  fireEvent.click(first);
-  expect(screen.queryAllByText("Report contents")).toHaveLength(0);
+  expect(screen.getByRole("button", { name: /^Created report\.csv/ })).toBeTruthy();
+  fireEvent.click(stretch);
+  expect(screen.queryByRole("button", { name: /^Created report\.csv/ })).toBeNull();
 });
 
 it("does not offer a thought toggle when the turn is only a reply", () => {
@@ -160,7 +141,7 @@ it("does not offer a thought toggle when the turn is only a reply", () => {
   expect(screen.getByText("Hello.")).toBeTruthy();
 });
 
-it("hides intermediate replies behind one thought toggle once the turn completes", () => {
+it("tells intermediate replies as narration once the turn completes", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   const blocks = [
     tool,
@@ -168,18 +149,12 @@ it("hides intermediate replies behind one thought toggle once the turn completes
     { ...tool, callId: "b", name: "list_dir" },
     { kind: "text" as const, id: "final", text: "The report is ready." },
   ];
-  const { rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
+  const { container, rerender } = render(<WorkTrace conversation status="running" startedMs={0} durationMs={null} blocks={blocks} />);
   expect(screen.getByText("I will inspect the files first.")).toBeTruthy();
-  expect(screen.getByText("The report is ready.")).toBeTruthy();
   rerender(<WorkTrace conversation status="done" startedMs={0} durationMs={4000} blocks={blocks} />);
-  expect(screen.queryByText("I will inspect the files first.")).toBeNull();
-  expect(screen.queryByText("Used tools")).toBeNull();
+  // The words between calls read as narration, not as a second answer.
+  const narration = container.querySelector("[data-trace-entry='narration']");
+  expect(narration?.textContent).toContain("I will inspect the files first.");
   expect(screen.getByText("The report is ready.")).toBeTruthy();
-  const toggle = screen.getByRole("button", { name: /^Worked for 4\.0s/ });
-  expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  fireEvent.click(toggle);
-  expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  expect(screen.getByText("I will inspect the files first.")).toBeTruthy();
-  fireEvent.click(toggle);
-  expect(screen.queryByText("I will inspect the files first.")).toBeNull();
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
 });

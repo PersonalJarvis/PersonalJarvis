@@ -17,11 +17,9 @@ it("reopens a stored voice turn as a Claude/Codex-style timeline", () => {
     step({ id: "x", detail: "run-app-action", status: "error", denied: true, error: "blacklist: <tool-declared-block>" }),
   ];
   render(<VoiceWorkTrace steps={steps} durationMs={2400} />);
-  // Folded to one line that says what happened.
-  const toggle = screen.getByRole("button", { name: /^Worked for 2\.4s.*1 failed/ });
-  // The turn is not called failed because one call was refused.
+  // Nothing folds; the turn is not called failed because one call was refused.
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
   expect(screen.getByRole("status").textContent).toContain("Done");
-  fireEvent.click(toggle);
 
   // The model's own words read as prose, Markdown and all.
   const words = document.querySelector<HTMLElement>("[data-trace-entry='reasoning']")!;
@@ -29,7 +27,7 @@ it("reopens a stored voice turn as a Claude/Codex-style timeline", () => {
   // No bullets, threads or rings — just the lines.
   expect(document.querySelector(".trace-dot, .trace-report-num")).toBeNull();
   // The stretch is one quiet line; it opens to its calls.
-  fireEvent.click(screen.getByRole("button", { name: /^Searched the wiki, used Run app action.*1 failed/ }));
+  fireEvent.click(screen.getByRole("button", { name: /^Searched the wiki, used Run app action$/ }));
   const [wiki, refused] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
   expect(wiki.textContent).toContain("Searched the wikiUrlaub 2026");
   expect(refused.textContent).toContain("Run app action");
@@ -40,7 +38,6 @@ it("reopens a stored voice turn as a Claude/Codex-style timeline", () => {
   expect(within(wiki).getByText("Input")).toBeTruthy();
   fireEvent.click(within(refused).getByRole("button"));
   expect(refused.textContent).toContain("Blocked: a safety rule blocks this action");
-  expect(screen.getByRole("button", { name: "Copy" })).toBeTruthy();
 });
 
 it("draws nothing for a turn whose only step is the brain call", () => {

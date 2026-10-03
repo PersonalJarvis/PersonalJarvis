@@ -5663,18 +5663,9 @@
   },
   "trace_report": {
     "locale": "es",
-    "copy": "Copiar",
-    "copied": "Copiado",
-    "copy_failed": "No se pudo copiar",
     "show_more": "Mostrar más",
     "show_less": "Mostrar menos",
-    "worked_for": "Trabajó durante {duration}",
-    "worked": "Trabajó",
-    "thought_for": "Pensó durante {duration}",
-    "thought": "Pensó",
     "took": "Tardó {duration}",
-    "failed_count_one": "{count} falló",
-    "failed_count_other": "{count} fallaron",
     "act": {
       "command_one": "ejecutó un comando",
       "command_other": "ejecutó comandos",
@@ -5698,8 +5689,7 @@
       "search": "Buscó {pattern}",
       "search_in": "Buscó {pattern} en {path}",
       "edit": "Editó {target}",
-      "write": "Creó {target}",
-      "image": "Vio {target}"
+      "write": "Creó {target}"
     },
     "state": {
       "running": "En curso",

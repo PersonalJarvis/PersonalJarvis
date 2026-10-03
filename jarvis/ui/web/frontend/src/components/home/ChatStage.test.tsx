@@ -764,8 +764,7 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
 
     const trace = screen.getByTestId("work-trace");
-    // The finished turn folds behind "Worked for …"; one tap opens its timeline.
-    fireEvent.click(within(trace).getByRole("button", { name: /^Worked for 6\.0s/ }));
+    // Like the Codex app, the finished turn keeps its work in view.
     const text = trace.textContent!;
     expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
     expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
@@ -837,10 +836,9 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
-    const toggle = screen.getByRole("button", { name: /^Worked for 12s/ });
-    // The plugin the turn used shows on the folded line by its own logo.
-    expect(toggle.querySelector("img, [data-logo]")).toBeTruthy();
-    fireEvent.click(toggle);
+    // The plugin the turn used shows on its line by its own logo.
+    const stretch = screen.getByRole("button", { name: /^Ran a command, used GitHub/ });
+    expect(stretch.querySelector("img, [data-logo]")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Ran a command, used GitHub/ }));
     const [shell, github] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
     expect(shell.textContent).toContain("Get-ChildItem -Path 'C:\\Users'");

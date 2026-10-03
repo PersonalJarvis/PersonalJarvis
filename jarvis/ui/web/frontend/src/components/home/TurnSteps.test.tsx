@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import { TurnSteps, formatThoughtDuration, traceWorthShowing } from "./TurnSteps";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
@@ -7,9 +7,6 @@ it("keeps brief voice errors visible", () => {
  const steps: ThinkingStep[] = [{ id: "s", kind: "note", status: "error", labelKey: "thinking.step_update", error: "Connection lost", startedTs: 0 }];
  expect(traceWorthShowing(steps, 20, false)).toBe(true);
  render(<TurnSteps steps={steps} durationMs={20} />);
- // The finished trace folds into its report; the toggle says a step failed.
- const toggle = screen.getByRole("button", { name: /1 failed/ });
- fireEvent.click(toggle);
  // A failed step says why under its own line.
  expect(screen.getByText("Connection lost")).toBeTruthy();
 });
