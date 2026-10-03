@@ -138,6 +138,25 @@ async def test_room_survives_reopen(rooms, tmp_path: Path):
     assert (await again.list(state=RoomState.RUNNING))[0].room_id == room.room_id
 
 
+async def test_concurrent_terminal_transitions_emit_once(rooms):
+    service, store = rooms
+    room = await service.open(opened_by="jarvis", members=["a", "b"])
+
+    settled, failed = await asyncio.gather(
+        service.settle(room.room_id, reason="done"),
+        service.fail(room.room_id, reason="boom"),
+    )
+
+    loaded = await service.get(room.room_id)
+    assert loaded is not None
+    assert loaded.state in (RoomState.SETTLED, RoomState.FAILED)
+    assert settled.state is loaded.state
+    assert failed.state is loaded.state
+    events = await store.events_for_trace(room.trace_id)
+    terminal = [event for event in events if event.msg_type is MsgType.ROOM_SETTLE]
+    assert len(terminal) == 1
+
+
 async def test_manual_settle_and_fail(rooms):
     service, store = rooms
     room = await service.open(opened_by="jarvis", members=["a", "b"])
