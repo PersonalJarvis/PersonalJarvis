@@ -1334,6 +1334,17 @@ class SocietyRuntime:
             log.warning("society: RESULT for %s could not be written", run_id, exc_info=True)
         if env.from_agent == LEAD_AGENT_ID and (reports or not questions):
             await self.report_to_lead(target, env, status=status, summary=summary)
+        elif env.from_agent == "user":
+            # Direct board assignments do not pass through the lead result path,
+            # but their terminal RESULT still needs to reach the live UI.
+            await self.publish_attention(
+                kind="result",
+                status=status,
+                text=summary,
+                agent_ids=(target.agent_id,),
+                society_trace=env.trace_id,
+                request_id=env.event_id,
+            )
         digest = TurnDigest(
             task=env.text or str(env.payload.get("task") or ""),
             final_text=final_text,
