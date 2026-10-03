@@ -40,30 +40,38 @@ selection, so nothing stays resident. It looks like macOS's area capture
 ### Marking up before the shot
 
 Letting go of the drag (or clicking a window) does not take the shot yet. The
-area stays on screen with eight resize handles, its size in pixels above its
-corner, and a toolbar docked under it (above it, or inside it, when there is
-no room). Everything drawn here is what
-the assistant sees, so it can be pointed at directly:
+area stays on screen with eight resize handles (they are the crop), its size
+in pixels above its corner, and a toolbar docked under it (above it, or
+inside it, when there is no room). Everything drawn here is what the
+assistant sees, so it can be pointed at directly. The tools, keys and looks
+are the same as in the full editor below:
 
 | Key | Tool | |
 |---|---|---|
-| V | Select and move | Click a marking to pick it, drag to move it, Delete removes it |
+| V | Select and move | Click a marking to pick it, drag to move it, Delete removes it, arrow keys nudge it |
 | R | Rectangle | Shift = square |
+| F | Filled rectangle | Shift = square |
 | E | Ellipse | Shift = circle |
-| A | Arrow (default) | Tapered arrow; Shift snaps to 45 degrees |
 | L | Line | Shift snaps to 45 degrees |
-| P | Pen | Free stroke |
-| H | Highlighter | Wide translucent stroke |
-| T | Text | Click, type; Enter finishes, Shift+Enter is a new line, Ctrl+V pastes |
-| N | Numbered step | Each click places the next number |
-| B | Blur | Hides what is under the box |
-| X | Pixelate | Hides what is under the box |
+| A | Arrow (default) | Tapered, classic or two heads; Shift snaps to 45 degrees |
+| T | Text | Click, type; Enter finishes, Shift+Enter is a new line, Ctrl+V pastes; plain, label or outline look |
+| P | Pixelate / blur | Hides what is under the box |
+| H | Spotlight | Dims everything outside the box |
+| C | Numbered step | Each click places the next number |
+| D | Draw | Free stroke |
+| M | Highlighter | Wide translucent stroke |
+| B | Background | Puts the area on a gradient or solid frame |
 
-Colours: eight presets (keys 1-8). Line width: the width button or the mouse
-wheel (text and step markers scale with it). Ctrl+Z / Ctrl+Y undo and redo;
-picking a marking with V and then a colour or width changes that marking.
-Dragging a handle resizes the area at any time; a press outside an unmarked
-area, or a right-click on it, starts a new selection.
+Tools with looks (arrow, text, pixelate/blur, background) show them in a
+second row under the toolbar. Colours: eight presets. Size: keys 1-5, the
+size button or the mouse wheel (new text and step markers follow it). Ctrl+Z
+/ Ctrl+Y undo and redo. A marking that was just drawn, or picked with V,
+shows grips: lines and arrows at both ends, boxes and strokes at the corners,
+a step marker on its rim, and text at all four corners — dragging one scales
+the text, font size and all, from the opposite corner. A colour, size or
+look chosen then changes that marking. Double-clicking a text (with V or T)
+edits it. Dragging an area handle resizes the area at any time; a press
+outside an unmarked area, or a right-click on it, starts a new selection.
 
 Finishing:
 
@@ -79,7 +87,8 @@ The capture itself is unchanged: after the overlay closes, Screen Context
 grabs the area (denylist, redaction and all), and only that finished picture
 gets the markings (`jarvis/appshot/markup.py`) — blur and pixelate on the
 capture's own pixels first, then the drawn markings as a transparent layer
-stretched to the capture's size. The markings never show anything the
+stretched to the capture's size, then the background frame if one was
+chosen. The markings never show anything the
 privacy filter removed. A marked appshot carries the same note as an editor
 edit (the markings are the user's), and the corner card's thumbnail shows
 them too. While the toolbar is up the global Esc stops cancelling, so Esc can
