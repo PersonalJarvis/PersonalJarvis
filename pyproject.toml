@@ -485,6 +485,11 @@ tts-eval = [
 
 [project.scripts]
 jarvis = "jarvis.__main__:main"
+# Same entry point under the product name, so `personal-jarvis` in a terminal
+# starts (and `personal-jarvis update` updates) the app exactly like `jarvis`.
+# Never add a `personaljarvis` alias: Windows paths ignore case, and the venv's
+# Scripts folder already holds `PersonalJarvis.exe`, the branded launcher.
+personal-jarvis = "jarvis.__main__:main"
 # Phase 8.5 — Review-Pipeline-Run-GC (Plan §6.5).
 jarvis-review-gc = "jarvis.cli.review_gc:main"
 # Phase 8.6 — Review-Pipeline-Eval-Harness (Plan §6.6).

@@ -35,7 +35,7 @@ def _use_plan(monkeypatch: pytest.MonkeyPatch, plan: UninstallPlan) -> None:
 
 
 def _record_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Replace the five removal helpers with recorders; return the shared log."""
+    """Replace the six removal helpers with recorders; return the shared log."""
     called: list[str] = []
     monkeypatch.setattr(
         uninstall,
@@ -48,6 +48,7 @@ def _record_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         lambda: called.append("desktop"),
     )
     monkeypatch.setattr(uninstall, "_remove_autostart", lambda: called.append("autostart"))
+    monkeypatch.setattr(uninstall, "_remove_cli_commands", lambda p: called.append("cli"))
     monkeypatch.setattr(uninstall, "_remove_keys", lambda k: called.append("keys"))
     monkeypatch.setattr(uninstall, "_remove_folder", lambda p: called.append("folder"))
     return called
@@ -135,6 +136,7 @@ def test_assume_yes_runs_all_four_steps(tmp_path: Path, monkeypatch: pytest.Monk
         "stop",
         "desktop",
         "autostart",
+        "cli",
         "keys",
         "folder",
     ]  # order: stop the live app first, then outside-the-folder registrations

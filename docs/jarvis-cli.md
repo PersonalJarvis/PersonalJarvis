@@ -36,16 +36,58 @@ It runs on Linux, macOS, and Windows (pure-Python: `typer`, `httpx`,
 
 ## Install
 
-The CLI ships with the package, so after the normal install it is on your PATH:
+The one-line installer puts the commands on your PATH on every OS, per user and
+without administrator rights (`jarvis/setup/cli_path.py`):
+
+| OS | Where the commands live | How the terminal finds them |
+| --- | --- | --- |
+| Windows | `<install folder>\bin\jarvis.exe`, `personal-jarvis.exe`, `jarvisctl.exe` | that folder is added to the per-user `Path` |
+| macOS | symlinks in `~/.local/bin` | one guarded line in `~/.zshrc` (or the profile of your shell) |
+| Linux | symlinks in `~/.local/bin` | one guarded line in `~/.bashrc` (or the profile of your shell) |
+
+Open a new terminal after the install. An unrelated command that already owns a
+name is kept, never overwritten, and `jarvis --uninstall` removes all of it again.
+A plain `pip install -e .` provides the same binaries inside that environment.
+
+## Start and update the app
+
+`personal-jarvis` is the same command as `jarvis`; use whichever you like.
 
 ```bash
-pip install -e .            # provides the `jarvis` binary (aliases: jarvisctl, jctl)
-jarvis version
+jarvis                      # start the desktop app (window + voice + orb)
+jarvis update               # install the newest published version
+jarvis update --check       # only report whether a newer version exists
+jarvis serve                # headless server for a VPS (no window)
 ```
 
-Bare `jarvis` (no subcommand) still launches the app/tray as before; `jarvis serve`
-still starts the headless server. Only the control subcommands (`jarvis missions
-…`, `jarvis brain …`, etc.) route into the CLI.
+Typed into an interactive terminal, `jarvis` starts the app in the background
+and hands the prompt back at once; closing the terminal does not close the app.
+If the app is already open, its window comes to the front. `jarvis --foreground`
+keeps the app attached to the terminal with its log, and shortcuts, autostart
+entries and scripts (no terminal) keep the in-process start they always had. On
+a Linux machine without a screen, `jarvis` stays in the foreground and explains
+what is missing.
+
+`jarvis update` is the terminal twin of the in-app **Update** button for an
+install made with the one-line installer. It uses the same release check, the
+same pinned GitHub release tag and the same installer run, and it rolls back to
+the previous version automatically if anything fails. The app has to be closed
+first: a running desktop app is never quit from the terminal (only a click in
+the app may do that), so `jarvis update` asks you to quit it or click Update in
+the app instead. A background service that keeps routines running is asked to
+hand back on its own. A developer checkout or a `pip install` cannot update
+itself and gets the matching command (`git pull` / `pip install --upgrade`)
+instead.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | updated, or already the newest version |
+| 1 | the check, download or install failed (an install failure is rolled back) |
+| 2 | this copy cannot update itself (developer checkout, pip install, native installer) |
+| 3 | the app is running and has to be closed first |
+
+Only the control subcommands (`jarvis missions …`, `jarvis brain …`, etc.) route
+into the control CLI described below.
 
 ## Auth & discovery
 

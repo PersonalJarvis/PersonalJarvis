@@ -41,7 +41,6 @@ import argparse
 import json
 import os
 import platform
-import shlex
 import shutil
 import stat
 import subprocess
@@ -828,40 +827,41 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
 
 
 def step_cli_links(*, dry_run: bool) -> None:
-    """Expose Linux venv entry points without replacing unrelated commands."""
-    if not sys.platform.startswith("linux"):
+    """Make `jarvis` / `personal-jarvis` plain terminal commands on every OS.
+
+    The venv's console scripts are linked (macOS/Linux, ``~/.local/bin``) or
+    copied (Windows, ``<install>\\bin``) onto the user's PATH — see
+    ``jarvis/setup/cli_path.py``. Never fatal: the app itself works without
+    the terminal commands, so a failure here is reported and the install goes on.
+    """
+    from jarvis.setup.cli_path import install_commands
+
+    try:
+        report = install_commands(repo_root(), dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - terminal commands are optional
+        note(f"Could not set up the terminal commands: {rich_escape(str(exc))}")
         return
-    bin_dir = Path.home() / ".local" / "bin"
-    for command in ("jarvis", "jarvisctl"):
-        target = repo_root() / ".venv" / "bin" / command
-        link = bin_dir / command
-        if dry_run:
-            note(f"(dry-run) CLI link: {rich_escape(str(link))} -> {rich_escape(str(target))}")
-            continue
-        try:
-            if not target.is_file():
-                note(f"CLI entry point missing: {rich_escape(str(target))}")
-                continue
-            if link.is_symlink() and link.resolve() == target.resolve():
-                continue
-            if link.exists() or link.is_symlink():
-                note(
-                    f"Keeping existing {rich_escape(str(link))}; "
-                    f"use {rich_escape(str(target))}"
-                )
-                continue
-            bin_dir.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(target)
-        except OSError as exc:
-            note(
-                f"Could not create CLI link: {rich_escape(str(exc))}; "
-                f"use {rich_escape(str(target))}"
-            )
-    if str(bin_dir) not in os.environ.get("PATH", "").split(os.pathsep):
-        export = f"export PATH={shlex.quote(str(bin_dir))}:\"$PATH\""
-        note("To use jarvis / jarvisctl in this shell:")
-        console.print(export, markup=False, highlight=False, soft_wrap=True)
-        note("Add that line to your shell profile to keep the commands on PATH.")
+    target = rich_escape(str(report.bin_dir))
+    if dry_run:
+        note(f"(dry-run) terminal commands {', '.join(report.linked)} -> {target}")
+        return
+    for command in report.missing:
+        note(f"CLI entry point missing: {rich_escape(command)}")
+    for command in report.kept:
+        note(
+            f"Keeping existing {rich_escape(str(report.bin_dir / command))}; "
+            f"use {rich_escape(str(repo_root() / '.venv' / 'bin' / command))}"
+        )
+    for error in report.errors:
+        note(f"Could not create CLI link: {rich_escape(error)}")
+    for command, other in report.shadowed_by.items():
+        note(f"Another {rich_escape(command)} comes first on your PATH: {rich_escape(other)}")
+    if report.linked:
+        note(f"Terminal commands ready: {', '.join(report.linked)}")
+    if report.path_updated:
+        note(f"Added {target} to your PATH ({rich_escape(report.path_updated)}).")
+    if report.needs_new_terminal:
+        note("Open a new terminal window to use them.")
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
@@ -885,7 +885,10 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     else:
         rows.append(("Start again", ".venv/bin/python -m jarvis.ui.web.launcher", "brand"))
         rows.append(("", "(in the install folder)", "muted"))
-    rows.append(("Update", "re-run the same install one-liner - it updates in place", "muted"))
+    if not (headless or is_headless_linux()):
+        rows.append(("", "or type jarvis in a new terminal", "muted"))
+    rows.append(("Update", "type jarvis update in a terminal", "muted"))
+    rows.append(("", "(or re-run the same install one-liner)", "muted"))
     if update:
         rows.append(("Next", "your setup and settings are kept - no re-onboarding", "muted"))
     elif headless or is_headless_linux():
