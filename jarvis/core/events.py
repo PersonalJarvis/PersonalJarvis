@@ -641,6 +641,22 @@ class MemoryUpdated(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryFileWrite(Event):
+    """An agent's persistent memory file is being written, or the write settled.
+
+    Published by ``jarvis.memory.write_feedback`` around the real write:
+    ``pending`` first, then ``saved`` only after the file was replaced on
+    disk, ``unchanged`` for a no-op, ``failed`` when the write raised. Both
+    steps share ``update_id``. Carries no path, entry text or error detail.
+    """
+    update_id: str = ""
+    agent_id: str = ""
+    file: str = ""           # bare name, e.g. "MEMORY.md"; "" when not known yet
+    phase: str = "pending"   # pending | saved | unchanged | failed
+    operation: str = "edit"  # add | replace | remove | edit
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileUpdated(Event):
     """The Curator wrote a fact to USER.md / people/*.md.
 

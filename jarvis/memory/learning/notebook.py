@@ -150,6 +150,15 @@ class JarvisNotebook:
         books[SOUL] = self._soul_entries()
         return books
 
+    def _file_name(self, target: str) -> str:
+        """The real file a target is kept in, as the UI may name it."""
+        from jarvis.memory.workspace import SOUL_MD
+        from jarvis.society.memory_books import FILES
+
+        if target == SOUL:
+            return self.soul_path.name if self.soul_path is not None else SOUL_MD
+        return FILES[target]
+
     def _soul_entries(self) -> list[Any]:
         from jarvis.memory.soul import Soul
 
@@ -201,6 +210,7 @@ class JarvisNotebook:
         Every applied change is appended to a ledger with its old and new text,
         so nothing the loop replaces or removes is ever unrecoverable.
         """
+        from jarvis.memory.write_feedback import announce_write
         from jarvis.society.memory_books import edit_book
 
         if target not in TARGETS:
@@ -220,33 +230,41 @@ class JarvisNotebook:
             if grown > budget * _HARD_LIMIT and grown > used:
                 raise ValueError(f"the {target} notebook is full; consolidate first")
         if target == SOUL:
-            if not self._edit_soul(
-                text, operation=operation, entry_id=entry_id, importance=importance, origin=origin
-            ):
+            with announce_write(OWNER_ID, self._file_name(SOUL), operation=operation) as receipt:
+                receipt.changed = self._edit_soul(
+                    text,
+                    operation=operation,
+                    entry_id=entry_id,
+                    importance=importance,
+                    origin=origin,
+                )
+            if not receipt.changed:
                 return None
             after = text if operation != "remove" else ""
             change = Change(target, operation, entry_id, before, after)
             self._append_ledger(change, evidence=evidence, source=source)
             return change
-        for attempt in range(_REPLACE_ATTEMPTS):
-            try:
-                result = edit_book(
-                    self._vault,
-                    self._owner,
-                    text,
-                    target=target,
-                    operation=operation,
-                    entry_id=entry_id,
-                    importance=max(1, min(10, int(importance))),
-                    origin=origin,
-                )
-                break
-            except PermissionError:
-                # Windows refuses to replace a file another process (a virus
-                # scanner, the search indexer, Obsidian) has open for a moment.
-                if attempt == _REPLACE_ATTEMPTS - 1:
-                    raise
-                time.sleep(0.05 * (attempt + 1))
+        with announce_write(OWNER_ID, self._file_name(target), operation=operation) as receipt:
+            for attempt in range(_REPLACE_ATTEMPTS):
+                try:
+                    result = edit_book(
+                        self._vault,
+                        self._owner,
+                        text,
+                        target=target,
+                        operation=operation,
+                        entry_id=entry_id,
+                        importance=max(1, min(10, int(importance))),
+                        origin=origin,
+                    )
+                    break
+                except PermissionError:
+                    # Windows refuses to replace a file another process (a virus
+                    # scanner, the search indexer, Obsidian) has open for a moment.
+                    if attempt == _REPLACE_ATTEMPTS - 1:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
+            receipt.changed = result.changed
         if not result.changed:
             return None
         change = Change(target, operation, entry_id, before, text if operation != "remove" else "")

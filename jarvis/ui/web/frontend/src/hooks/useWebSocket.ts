@@ -26,6 +26,7 @@ import {
 } from "@/store/commandActivity";
 import { handleAppshotEditRequest } from "@/store/appshotEditor";
 import { useDeckStore } from "@/store/deck";
+import { MEMORY_WRITE_EVENT, useMemoryWrites } from "@/store/memoryWrites";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
@@ -343,6 +344,12 @@ export function useWebSocket(): void {
         // another one, the shortcut): the My Pets page re-reads the list.
         if (env.event_name === "PetChanged") {
           void queryClient.invalidateQueries({ queryKey: petKeys.all });
+        }
+
+        // An agent's memory file is being written, or the write settled: the
+        // lead pet's thought bubble names the file (store/memoryWrites).
+        if (env.event_name === MEMORY_WRITE_EVENT) {
+          useMemoryWrites.getState().receive(env.payload);
         }
 
         if (env.event_name === "TranscriptionUpdate") {
