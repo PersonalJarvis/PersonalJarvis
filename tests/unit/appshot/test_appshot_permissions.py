@@ -117,9 +117,6 @@ def test_preview_helper_checks_silently(gate, state, allowed):
 
 @pytest.mark.parametrize("allowed", [False, True])
 def test_picker_never_reads_pixels_without_its_own_grant(monkeypatch, allowed):
-    pytest.importorskip("PySide6")
-    from jarvis.appshot.picker.renderer import Picker
-
     grabs = []
     pixmap = SimpleNamespace(isNull=lambda: False, width=lambda: 100)
 
@@ -128,9 +125,17 @@ def test_picker_never_reads_pixels_without_its_own_grant(monkeypatch, allowed):
         return pixmap
 
     monkeypatch.setattr(region, "preview_capture_allowed", lambda: allowed)
-    result = Picker._grab(SimpleNamespace(grabWindow=grab_window))
+    result = region.grab_preview(SimpleNamespace(grabWindow=grab_window))
     assert result is (pixmap if allowed else None)
     assert grabs == ([True] if allowed else [])
+
+
+def test_failed_preview_uses_live_overlay_without_retrying_or_prompting(gate):
+    def broken_capture(_handle):
+        raise RuntimeError("capture unavailable")
+
+    assert region.grab_preview(SimpleNamespace(grabWindow=broken_capture)) is None
+    assert gate.ensure_calls("screen_recording") == []
 
 
 @pytest.mark.parametrize(

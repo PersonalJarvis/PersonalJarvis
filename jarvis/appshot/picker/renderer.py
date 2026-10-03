@@ -57,6 +57,7 @@ from jarvis.appshot.region import (
     MAG_BOX_PX,
     MAG_DEFAULT_ZOOM,
     MAG_ZOOMS,
+    grab_preview,
     magnifier_layout,
     match_monitor,
     selection_fractions,
@@ -456,16 +457,7 @@ class Picker(QObject):
 
     @staticmethod
     def _grab(screen) -> QPixmap | None:
-        try:
-            from jarvis.appshot.region import preview_capture_allowed
-
-            if not preview_capture_allowed():
-                return None
-            pixmap = screen.grabWindow(0)
-        except Exception:  # noqa: BLE001 - no frozen frame: fall back to a live dim layer
-            sys.stderr.write("appshot-picker: screen grab failed; using a live overlay\n")
-            return None
-        return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
+        return grab_preview(screen)
 
     def _march(self) -> None:
         self.ants_offset = (self.ants_offset + 1.0) % (2 * _DASH)

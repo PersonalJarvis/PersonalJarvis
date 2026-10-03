@@ -412,6 +412,18 @@ def preview_capture_allowed() -> bool:
     return state_allows_capture(screen_recording_state(deep=False))
 
 
+def grab_preview(screen: Any) -> Any | None:
+    """Read a preview only with this helper's grant; no Qt import or prompt."""
+    try:
+        if not preview_capture_allowed():
+            return None
+        pixmap = screen.grabWindow(0)
+        return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
+    except Exception:  # noqa: BLE001 - the picker can dim the live desktop instead
+        log.debug("appshot: preview unavailable; using a live overlay", exc_info=True)
+        return None
+
+
 async def pick_region(
     *, timeout_s: float = PICK_TIMEOUT_S, trace_id: UUID | None = None,
 ) -> Selection | None:
