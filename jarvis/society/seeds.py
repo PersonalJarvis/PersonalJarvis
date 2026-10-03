@@ -2,12 +2,11 @@
 
 Two things happen here:
 
-* ``STARTER_TEAM`` — the first-run seed: one coordinator (``Scout``, an
-  orchestrator that researches and delegates) and one specialist
-  (``Archivist``, who curates the wiki). Created once per install, guarded by
-  a meta flag, adoptable by name like any other agent, archivable by the
-  user like any other agent. An empty island reads as broken; two teammates
-  read as a team.
+* ``STARTER_TEAM`` / ``seed_first_run`` — an explicit opt-in starter
+  fixture retained for tests and migrations. Production runtime does NOT call
+  it by default: the maintainer decision is Jarvis-only until the person picks
+  teammates. The helper stays idempotent so an explicit migration cannot
+  resurrect an archived teammate.
 * ``propose_seeds`` — Grok's onboarding idea done local-first: teammates
   proposed from CONNECTED capabilities. A mail agent is proposed only when a
   mail plugin is connected, a repo agent only with ``gh``, and so on. Pure
@@ -198,7 +197,11 @@ async def create_from_proposals(
 
 
 async def seed_first_run(roster: Roster, store: Any) -> list[str]:
-    """Create the starter team once. Returns the ids created (empty later)."""
+    """Explicitly create the legacy starter team once.
+
+    Production onboarding is Jarvis-only plus connected-capability proposals;
+    this helper remains opt-in for tests and migrations.
+    """
     if await store.get_meta(_SEEDED_KEY, "0") == "1":
         return []
     created: list[str] = []

@@ -410,9 +410,10 @@ vault cannot: taint state, curation cursors, FTS over agent notes — derived, r
 
 - **Create**: three fields + Advanced (brain, grants, ceiling, budget, avatar). The agent
   introduces itself as the first chat message, in the turn language, naming its focus tools.
-- **Seed on first run**: propose teammates from CONNECTED capabilities (Gmail plugin connected →
-  "Mail agent"; `gh` connected → "Repo agent"); ship a starter coordinator once the maintainer
-  decides §10.6.
+- **Seed on first run**: Production starts with Jarvis only. Propose teammates from CONNECTED
+  capabilities (Gmail plugin connected → "Mail agent"; `gh` connected → "Repo agent") and let
+  the person choose. The fixed Scout/Archivist seed helper is explicit opt-in for tests/migrations,
+  not automatic onboarding.
 - **Duplicate**: copies profile, grants, rules, skills, routines, avatar; not the chat, not the
   memory page, not the workspace.
 - **Pause**: no routine fires, no `ASSIGN` accepted, chat still answers. **Hide**: roster only.
