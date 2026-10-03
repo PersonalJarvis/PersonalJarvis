@@ -154,3 +154,30 @@ async def test_close_includes_start_already_waiting_on_storage(meeting):
     assert all(task.done() for task in rt.meetings._tasks.values())
     with pytest.raises(ValueError, match="shutting down"):
         await rt.meetings.start("team", "No new spend")
+
+
+@pytest.mark.parametrize("silent", ["society:scout", "society:writer", "both"])
+async def test_agents_can_pass_without_publishing_or_polluting_context(meeting, silent):
+    rt, svc = meeting
+    for session in ("society:scout", "society:writer"):
+        if silent in (session, "both"):
+            svc.replies[session] = "  [[MEETING_PASS]]\n"
+    await rt.meetings.start("team", "Who has something useful to add?")
+    await asyncio.gather(*rt.meetings._tasks.values())
+    snapshot = await rt.meetings.snapshot("team")
+    assert len(svc.sent) == 2
+    assert not snapshot["running"]
+    assert snapshot["room"]["state"] == "settled"
+    assert all("[[MEETING_PASS]]" not in m["text"] for m in snapshot["messages"])
+    speakers = [m["speaker"] for m in snapshot["messages"]]
+    assert speakers == (
+        ["user"]
+        if silent == "both"
+        else ["user", "writer" if silent == "society:scout" else "scout"]
+    )
+    assert "repeat an answer" in svc.sent[0][1]
+    if silent == "society:scout":
+        assert "Contribution from society:scout" not in svc.sent[1][1]
+    assert snapshot["room"]["settle_reason"] == (
+        "silence" if silent == "both" else "user_round_complete"
+    )
