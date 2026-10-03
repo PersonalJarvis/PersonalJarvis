@@ -246,6 +246,7 @@ jobs:
             tests/unit/society/test_curator.py::test_curator_stages_durable_result_behind_review_gate \
             tests/unit/society/test_curator.py::test_memory_share_denial_closes_taint_and_cannot_be_reversed \
             tests/unit/society/test_seeds.py::test_runtime_seeds_only_the_lead_by_default \
+            tests/unit/society/test_history_migration.py \
             tests/contract/test_plugin_auth_standard.py \
             tests/contract/test_connector_auth.py \
             tests/contract/test_service_connectors.py \
