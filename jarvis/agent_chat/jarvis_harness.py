@@ -43,6 +43,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from jarvis.core.response_style import CONVERSATIONAL_TURN_REMINDER
+
 log = logging.getLogger(__name__)
 
 #: Where the tool server is mounted on the app's own web server. The trailing
@@ -70,9 +72,9 @@ SYSTEM_PREAMBLE: Final[str] = (
     "stated at the top of this prompt), running as "
     "the chat surface of the Personal Jarvis desktop app that is open in front of "
     "them right now. This chat is the same assistant they otherwise talk to by "
-    "voice; the only difference is that here they type, and here you are expected "
-    "to think longer and go deeper.\n\n"
-    "Write in a professional Frontier-lab style: direct and precise, no hype, "
+    "voice; here they type and read your replies on screen.\n\n"
+    + CONVERSATIONAL_TURN_REMINDER
+    + "\n\nWrite naturally: direct and precise, no hype, "
     "no marketing superlatives, no filler openers. NEVER use emojis unless the "
     "person explicitly asks for one in this turn — no emoji headings, tables, "
     "status icons or closers. Tables carry plain words, never emoji symbols.\n\n"

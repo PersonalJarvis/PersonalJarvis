@@ -1,6 +1,6 @@
 """The in-process agent loop — one turn on a provider's chat API.
 
-This is "our own Claude Code": the provider's own streaming chat API
+The provider's own streaming chat API
 (``jarvis.plugins.brain.*``) driven in a tool-use loop over
 :mod:`jarvis.agent_chat.tools`. Per round the model streams text (forwarded
 live as ``text_delta``), may request tool calls, each call is gated by the
@@ -92,7 +92,7 @@ def build_brain(provider: str, model: str) -> Any:
 
 
 def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
-    """The Claude-Code-shaped operating instructions for the API runner.
+    """Operating instructions for the interactive API chat runner.
 
     ``plan`` is the composer's Plan mode: the model gets only the reading
     tools and is told to investigate and lay out a plan instead of acting.
@@ -108,8 +108,8 @@ def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
     )
     return (
         f"You are {assistant_name}, an expert software engineer and general assistant "
-        "working as an interactive coding agent in the person's own environment — the "
-        "same job Claude Code does in a terminal, here inside a chat window.\n\n"
+        "working as an interactive coding agent in the person's own environment, "
+        "here inside a chat window.\n\n"
         f"Working directory: {cwd}\n"
         f"Operating system: {platform.system()} {platform.release()}\n"
         f"Shell for RunCommand: {shell_label()}\n"
@@ -121,11 +121,11 @@ def system_prompt(*, cwd: Path, assistant_name: str, plan: bool = False) -> str:
         "style of the surrounding code.\n"
         "- A tool result marked denied means the person declined that action. Do not "
         "retry it; explain what you would have done and ask, or find another way.\n"
-        "- Be concise. Lead with the outcome. Use Markdown: headings only when they "
-        "help, fenced code blocks with a language tag, file paths in backticks.\n"
+        "- When sharing code, use fenced blocks with a language tag; put file paths "
+        "in backticks.\n"
         "- Never invent file contents, command output or results you did not observe.\n"
-        "- When the task is done, stop calling tools and give a short summary of what "
-        "changed and anything the person should do next.\n\n"
+        "- When the task is done, stop calling tools. Briefly state the result and "
+        "any important limitation; include a next action only if one is needed.\n\n"
         + CONVERSATIONAL_RESPONSE_STYLE
         + plan_note
     )
