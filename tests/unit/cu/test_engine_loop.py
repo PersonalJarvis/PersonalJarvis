@@ -378,6 +378,7 @@ def _darwin_world(monkeypatch, **tcc_kwargs):
     tcc_kwargs.setdefault("default_policy", DialogPolicy.NEVER_ANSWERED)
     tcc = FakeTCC(**tcc_kwargs)
     install_port(monkeypatch, tcc.port("darwin"))
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "")
     return tcc
 
 
@@ -513,6 +514,7 @@ async def test_dispatch_off_macos_asks_nothing_and_changes_nothing(monkeypatch, 
 
     tcc = FakeTCC()
     install_port(monkeypatch, tcc.port(platform))
+    monkeypatch.setattr(engine_mod, "sys", SimpleNamespace(platform=platform))
     executor = FakeExecutor()
 
     ok, _detail = await engine_mod._dispatch_tool(

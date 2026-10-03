@@ -162,7 +162,7 @@ async def test_approve_builds_english_summary_en_for_file_deliverable(
         f"summary_en must be English, got {approved.summary_en!r}"
     )
     # The German field still speaks German — the two diverge as designed.
-    assert "Fertig" in approved.summary_de and "Datei" in approved.summary_de  # i18n-allow (German value under summary_de field)
+    assert "Fertig" in approved.summary_de and "Artefakt" in approved.summary_de  # i18n-allow
 
 
 async def test_approve_mirrors_materialised_report_to_user_folder(

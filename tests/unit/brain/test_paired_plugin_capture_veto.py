@@ -168,7 +168,7 @@ def _write_music_skill(root: Path, name: str, plugin_id: str, pattern: str) -> N
     )
 
 
-def test_match_skill_for_turn_swaps_disconnected_spotify(tmp_path: Path) -> None:
+def test_match_skill_for_turn_swaps_disconnected_spotify(tmp_path: Path, monkeypatch) -> None:
     """The live 17:13 veto-before-rematch: Spotify wins the trigger, is not
     connected, capture must still return YouTube Music."""
     _write_music_skill(tmp_path, "plugin-spotify", "spotify", "(musik|music)")
@@ -180,8 +180,9 @@ def test_match_skill_for_turn_swaps_disconnected_spotify(tmp_path: Path) -> None
     set_skill_context(SkillContext(registry=registry, runner=_StubRunner()))  # type: ignore[arg-type]
     try:
         mgr = BrainManager(config=JarvisConfig(), bus=EventBus(), tools={})
-        mgr._plugin_disconnected = (  # type: ignore[method-assign]
-            lambda pid, store=None: pid != "youtube_music"
+        monkeypatch.setattr(
+            BrainManager, "_plugin_disconnected",
+            staticmethod(lambda pid, store=None: pid != "youtube_music"),
         )
         matched = mgr._match_skill_for_turn("spiel mal musik")  # i18n-allow
         assert matched is not None

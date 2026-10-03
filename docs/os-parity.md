@@ -1636,3 +1636,14 @@ container. Windows additionally has real subscription audio/delegation evidence
 with project API credentials disabled, and a native login-binary check with Node
 absent. These checks do not establish physical-device or latency parity on other
 platforms. The private upstream voice protocol remains experimental.
+
+## Profile locks and notebook migration
+
+On macOS and Linux, closing the parent's profile-lock descriptor retains the
+lock while a live child still owns an inherited descriptor. Windows retains
+its existing process-lock implementation.
+
+Agent notebook migration explicitly normalizes the final `USER.md` and
+`MEMORY.md` filename spelling on case-insensitive filesystems. The migration
+journal and backups continue to preserve the original content on every OS.
+The inherited-lock and migration recovery contracts run in the OS test shards.

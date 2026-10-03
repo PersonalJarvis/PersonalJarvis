@@ -2596,24 +2596,24 @@ _PROVIDER_DOWN_CAUSE_PHRASES: dict[str, dict[str, str]] = {
             "de nuevo en un momento."
         ),
     },
-    # A screenshot was attached but every reachable brain reported blind.
+    # A screen capture or attachment exists, but every reachable brain is blind.
     # This is NOT a missing/invalid API key — the key is often present and
     # the API-Keys card is green; the model simply cannot inspect images.
     # Spoken separately so a vision skip is not heard as "your key is broken".
     "vision_unsupported": {
         "de": (
-            "Entschuldige — ich habe den Bildschirm aufgenommen, aber keiner "  # i18n-allow
+            "Entschuldige — keiner "  # i18n-allow
             "der verbundenen Assistenten kann gerade Bilder auswerten. Der "  # i18n-allow
             "Schlüssel ist da, nur das Sehen fehlt. Nimm unter API-Keys "  # i18n-allow
             "einen Anbieter mit Bildverarbeitung."  # i18n-allow
         ),
         "en": (
-            "Sorry — I captured the screen, but none of the connected "
+            "Sorry — none of the connected "
             "assistants can inspect images right now. The key is there; "
             "vision is not. Pick a vision-capable provider under API keys."
         ),
         "es": (
-            "Lo siento: capturé la pantalla, pero ninguno de los asistentes "
+            "Lo siento: ninguno de los asistentes "
             "conectados puede analizar imágenes ahora. La clave está; falta "
             "la visión. Elige un proveedor con visión en Claves API."
         ),

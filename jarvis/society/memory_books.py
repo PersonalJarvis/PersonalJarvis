@@ -101,7 +101,13 @@ def _recover(folder: Path, journal: Path) -> None:
     for item in plan["legacy"]:
         legacy = folder / item["name"]
         canonical = folder / ("USER.md" if item["name"].lower() == "user.md" else "MEMORY.md")
-        if legacy.is_file() and not legacy.samefile(canonical):
+        if legacy.is_file() and legacy.samefile(canonical):
+            # Replacing content can retain the old directory-entry spelling
+            # on case-insensitive filesystems. Rename that same file explicitly;
+            # its original content is already preserved in the migration backup.
+            if legacy.name != canonical.name:
+                os.replace(legacy, canonical)
+        elif legacy.is_file():
             if _hash(_read(legacy)) != item["hash"]:
                 raise ValueError("Legacy memory changed during migration; originals were preserved")
             os.replace(legacy, folder / f".legacy-{item['name']}-{item['hash']}.bak")

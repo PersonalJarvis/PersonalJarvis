@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -53,8 +54,30 @@ def test_garbage_is_refused_as_not_a_glb(client: TestClient):
 
 
 @pytest.mark.skipif(_shipped() is None, reason="no figure asset built yet")
-def test_a_contract_figure_is_accepted_stored_and_served(client: TestClient):
-    body = _shipped().read_bytes()  # type: ignore[union-attr]
+def test_a_contract_figure_is_accepted_stored_and_served(client: TestClient, tmp_path: Path):
+    # Uploads are standalone. Shipped figures share a separate clip library,
+    # so embed those existing clips in this test-only file before importing it.
+    gt = _tools()
+    shipped = _shipped()
+    figure_glb = gt.read_glb(shipped)
+    extras = gt.figure_extras(figure_glb.doc)
+    library = gt.read_glb(shipped.with_name(extras.pop("clips_from")))
+    nodes = gt.node_index_by_name(figure_glb.doc)
+    figure_glb.doc["animations"] = deepcopy(library.doc["animations"])
+    for animation in figure_glb.doc["animations"]:
+        for sampler in animation["samplers"]:
+            for field in ("input", "output"):
+                index = sampler[field]
+                sampler[field] = gt.append_accessor(
+                    figure_glb, gt.accessor_values(library, index),
+                    library.doc["accessors"][index]["type"],
+                )
+        for channel in animation["channels"]:
+            node = library.doc["nodes"][channel["target"]["node"]]["name"]
+            channel["target"]["node"] = nodes[node]
+    standalone = tmp_path / "standalone.glb"
+    gt.write_glb(standalone, figure_glb.doc, figure_glb.blob)
+    body = standalone.read_bytes()
     res = client.post("/api/society/figures?name=My Hero", content=body)
     assert res.status_code == 200, res.text
     payload = res.json()

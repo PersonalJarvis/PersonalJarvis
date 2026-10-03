@@ -24,6 +24,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
+import pytest
+
 import jarvis.speech.pipeline as pipeline_mod
 from jarvis.core.events import TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk
@@ -32,6 +34,8 @@ from jarvis.platform.permissions import PermissionId
 from jarvis.sessions.constants import HANGUP_HOTKEY, HANGUP_TURN_COMPLETE
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
 from tests.fakes.fake_permission_service import FakePermissionService
+
+pytestmark = pytest.mark.usefixtures("granted_microphone")
 
 
 class FakeTTS:
