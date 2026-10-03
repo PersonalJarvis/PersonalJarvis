@@ -341,6 +341,7 @@ async def test_startup_reuses_durable_chrome_pin_and_never_falls_back_if_invalid
         assert pw.launches[0][0] == str(profile)
         assert pw.launches[0][1]["executable_path"] == (pinned or "testing-chrome.exe")
         assert ("--restore-last-session" in pw.launches[0][1]["args"]) is handback
+        assert pw.launches[0][1]["ignore_default_args"] == (["about:blank"] if handback else None)
         assert result["login_mode"] is handback and not result["login_available"]
 
 

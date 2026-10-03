@@ -172,6 +172,9 @@ class Worker:
                 viewport={"width": 1280, "height": 800},
                 accept_downloads=True,
                 service_workers="block",
+                # Playwright's extra blank startup tab would take focus from
+                # the session Chrome restores after explicit handback.
+                ignore_default_args=["about:blank"] if self.login_mode else None,
                 args=[
                     "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
                     # Explicit handback resumes the tabs the person just used.

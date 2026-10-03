@@ -140,7 +140,12 @@ def live(tmp_path, monkeypatch):
     def diagnostic_env(*args, **kwargs):
         return {**worker_env(*args, **kwargs), "PYTHONFAULTHANDLER": "1"}
 
+    async def diagnostic_stderr(session):
+        while chunk := await session.proc.stderr.read(8192):
+            session.stderr_tail = (session.stderr_tail + chunk.decode("utf-8", "replace"))[-32768:]
+
     monkeypatch.setattr(install, "worker_env", diagnostic_env)
+    monkeypatch.setattr("jarvis.society.browser.live.LiveSession.drain_stderr", diagnostic_stderr)
     python = Path(os.environ["JARVIS_BROWSER_TEST_PYTHON"])
     binary = Path(os.environ["JARVIS_BROWSER_TEST_EXECUTABLE"])
     monkeypatch.setattr(install, "is_installed", lambda _: True)
@@ -167,7 +172,8 @@ async def _control(live, session, owner, op, args):
         await asyncio.sleep(0.05)  # Let the independent stderr reader drain its last chunk.
         raise AssertionError(
             f"{op}: {exc}; worker_exit={session.proc.returncode}; "
-            f"worker_stderr={session.stderr_tail[-5000:]}"
+            f"worker_stderr_start={session.stderr_tail[:6000]}; "
+            f"worker_stderr_end={session.stderr_tail[-3000:]}"
         ) from exc
 
 
