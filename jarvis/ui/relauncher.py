@@ -449,6 +449,30 @@ def _apply_branded_launch_env(env: dict[str, str], argv: list[str]) -> dict[str,
     return env
 
 
+def launch_desktop_detached(*, _popen: object | None = None) -> object:
+    """Start the desktop app so it outlives the terminal that asked for it.
+
+    What ``jarvis`` typed into a terminal does: the same OS identity a restart
+    uses (macOS LaunchServices bundle, Windows branded exe, Linux launcher
+    module), detached, so the prompt returns at once and closing the terminal
+    does not take the app with it. Unlike a restart, the terminal's own
+    environment is kept verbatim — a ``JARVIS__*`` override set in that shell
+    is exactly what the user meant — minus the one-process branding guard.
+    """
+    import jarvis
+
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() != WINDOWS_BRANDED_LAUNCH_ENV_VAR.upper()
+    }
+    cmd = build_launch_command(sys.executable)
+    cwd = str(Path(jarvis.__file__).resolve().parent.parent)
+    return spawn_detached(
+        cmd, cwd=cwd, env=_apply_branded_launch_env(env, cmd), _popen=_popen
+    )
+
+
 def _restart_admin_port(cwd: str | Path | None = None) -> int:
     """Admin port the fresh instance will bind, including the instance offset."""
     from jarvis.core.instance import current_instance
