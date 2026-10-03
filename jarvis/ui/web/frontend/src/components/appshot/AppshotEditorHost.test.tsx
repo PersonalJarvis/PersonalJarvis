@@ -107,6 +107,10 @@ describe("AppshotEditorHost", () => {
     const undoButton = screen.getByTestId("appshot-editor-undo") as HTMLButtonElement;
     await waitFor(() => expect(undoButton.disabled).toBe(false));
 
+    // A fresh annotation is selected: the first Escape lets go of it, the
+    // next one asks before throwing the edits away.
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByTestId("appshot-editor-discard")).toBeNull();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(await screen.findByTestId("appshot-editor-discard")).toBeDefined();
     // Escape again keeps editing.
@@ -172,6 +176,38 @@ describe("AppshotEditorHost", () => {
 
     fireEvent.keyDown(window, { key: "5" });
     expect((screen.getByTestId("appshot-editor-size") as HTMLInputElement).value).toBe("4");
+  });
+
+  it("takes any annotation by the hand: drag moves it, a grip reshapes it", async () => {
+    render(<AppshotEditorHost />);
+    act(() => useAppshotEditor.getState().open("shot-1"));
+    const canvas = await screen.findByTestId("appshot-editor-canvas");
+    const undo = () => screen.getByTestId("appshot-editor-undo") as HTMLButtonElement;
+    const steps = () => {
+      let n = 0;
+      while (!undo().disabled && n < 10) {
+        fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+        n += 1;
+      }
+      return n;
+    };
+
+    // Draw an arrow with the arrow tool (the default)...
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 20, clientY: 20, pointerId: 1 });
+    fireEvent.pointerMove(canvas, { clientX: 200, clientY: 120, pointerId: 1 });
+    fireEvent.pointerUp(canvas, { clientX: 200, clientY: 120, pointerId: 1 });
+    // ...then, with the same tool, drag its tip grip somewhere else...
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 200, clientY: 120, pointerId: 2 });
+    fireEvent.pointerMove(canvas, { clientX: 300, clientY: 60, pointerId: 2 });
+    fireEvent.pointerUp(canvas, { clientX: 300, clientY: 60, pointerId: 2 });
+    // ...and the arrow itself, from its middle.
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 160, clientY: 40, pointerId: 3 });
+    fireEvent.pointerMove(canvas, { clientX: 180, clientY: 90, pointerId: 3 });
+    fireEvent.pointerUp(canvas, { clientX: 180, clientY: 90, pointerId: 3 });
+
+    // Drawing, reshaping and moving are three steps — never a second arrow.
+    await waitFor(() => expect(undo().disabled).toBe(false));
+    expect(steps()).toBe(3);
   });
 
   it("says when the appshot is gone instead of showing an empty editor", async () => {

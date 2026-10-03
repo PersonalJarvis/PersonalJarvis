@@ -58,6 +58,11 @@ import {
   strokeWidths,
   textSize,
   toolForKey,
+  handleAt,
+  handleCursor,
+  handles,
+  reshape,
+  type HandleId,
   translate,
   undo as undoHistory,
   viewport,
@@ -137,6 +142,8 @@ const TOOL_ICONS: Record<Tool, typeof Square | null> = {
 
 
 const COLOR_KEY = "jarvis.appshotEditor.color";
+/** Radius of a selection grip, in screen pixels. */
+const GRIP_RADIUS = 5;
 const ARROW_KEY = "jarvis.appshotEditor.arrowStyle";
 const BACKGROUND_KEY = "jarvis.appshotEditor.background";
 
@@ -172,7 +179,9 @@ function stamp(): string {
 
 type Gesture =
   | { kind: "draw"; shape: Draft; start: Point }
-  | { kind: "move"; id: number; start: Point; dx: number; dy: number };
+  | { kind: "move"; id: number; start: Point; dx: number; dy: number }
+  /** A grip of the selected annotation being dragged; `original` as it was. */
+  | { kind: "resize"; id: number; handle: HandleId; original: Op; at: Point };
 
 type LoadState = "loading" | "ready" | "failed";
 
@@ -331,17 +340,28 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const ch = Math.max(1, Math.round(shown.h * scale));
   const ratio = CROP_RATIOS.find((entry) => entry.id === cropRatio)?.ratio ?? null;
 
-  // What is on screen: the document, a move in progress, and the shape being drawn.
+  // An annotation as it looks right now: moved or reshaped by the drag in progress.
+  const live = useCallback(
+    (op: Op): Op => {
+      if (gesture?.kind === "move" && gesture.id === op.id) return translate(op, gesture.dx, gesture.dy);
+      if (gesture?.kind === "resize" && gesture.id === op.id) {
+        return reshape(gesture.original, gesture.handle, gesture.at, measure);
+      }
+      return op;
+    },
+    [gesture, measure],
+  );
+
+  // What is on screen: the document, a move or reshape in progress, and the shape being drawn.
   const drawn = useMemo<Draft[]>(() => {
-    const live: Draft[] =
-      gesture?.kind === "move"
-        ? ops.map((op) => (op.id === gesture.id ? translate(op, gesture.dx, gesture.dy) : op))
-        : [...ops];
-    if (gesture?.kind === "draw" && gesture.shape.kind !== "crop") live.push(gesture.shape);
-    return live;
-  }, [gesture, ops]);
+    const shapes: Draft[] = ops.map(live);
+    if (gesture?.kind === "draw" && gesture.shape.kind !== "crop") shapes.push(gesture.shape);
+    return shapes;
+  }, [gesture, live, ops]);
 
   const selected = selectedId === null ? null : ops.find((op) => op.id === selectedId) ?? null;
+  const selectedLive = selected ? live(selected) : null;
+  const [hoverCursor, setHoverCursor] = useState<string | null>(null);
 
   // -- paint ---------------------------------------------------------------
   useEffect(() => {
@@ -368,24 +388,37 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
       ctx.restore();
     }
-    const outlined =
-      selected && gesture?.kind === "move" && gesture.id === selected.id
-        ? translate(selected, gesture.dx, gesture.dy)
-        : selected;
-    if (outlined) {
-      const box = bounds(outlined, measure);
-      const pad = 6 / scale;
+    if (selectedLive) {
+      // The selection: a dashed frame (not for a line or an arrow, whose two
+      // grips say it all) and a round grip wherever it can be reshaped.
       ctx.save();
-      ctx.lineWidth = 1.5 / scale;
-      ctx.setLineDash([5 / scale, 4 / scale]);
-      ctx.strokeStyle = "rgba(0,0,0,0.6)";
-      ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2);
-      ctx.lineDashOffset = 4.5 / scale;
-      ctx.strokeStyle = "#ffffff";
-      ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2);
+      if (selectedLive.kind !== "arrow" && selectedLive.kind !== "line") {
+        const box = bounds(selectedLive, measure);
+        const pad = 6 / scale;
+        ctx.lineWidth = 1.5 / scale;
+        ctx.setLineDash([5 / scale, 4 / scale]);
+        ctx.strokeStyle = "rgba(0,0,0,0.6)";
+        ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2);
+        ctx.lineDashOffset = 4.5 / scale;
+        ctx.strokeStyle = "#ffffff";
+        ctx.strokeRect(box.x - pad, box.y - pad, box.w + pad * 2, box.h + pad * 2);
+        ctx.setLineDash([]);
+      }
+      for (const grip of handles(selectedLive, measure)) {
+        ctx.beginPath();
+        ctx.arc(grip.at.x, grip.at.y, GRIP_RADIUS / scale, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.shadowColor = "rgba(0,0,0,0.45)";
+        ctx.shadowBlur = 4 / scale;
+        ctx.fill();
+        ctx.shadowColor = "transparent";
+        ctx.lineWidth = 1.5 / scale;
+        ctx.strokeStyle = "#0a84ff";
+        ctx.stroke();
+      }
       ctx.restore();
     }
-  }, [image, drawn, gesture, tool, cw, ch, scale, shown.x, shown.y, shown.w, shown.h, iw, ih, view, selected, measure]);
+  }, [image, drawn, gesture, tool, cw, ch, scale, shown.x, shown.y, shown.w, shown.h, iw, ih, view, selectedLive, measure]);
 
   // -- editing -------------------------------------------------------------
   const apply = useCallback((next: Op[]) => {
@@ -393,7 +426,15 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     setDirty(true);
   }, []);
 
-  const push = useCallback((shape: Draft) => apply([...history.present, withId(shape)]), [apply, history.present]);
+  /** Add a shape; its id, so a fresh annotation can be selected at once. */
+  const push = useCallback(
+    (shape: Draft) => {
+      const op = withId(shape);
+      apply([...history.present, op]);
+      return op.id;
+    },
+    [apply, history.present],
+  );
 
   const undo = useCallback(() => {
     setHistory(undoHistory);
@@ -463,6 +504,31 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!image || event.button !== 0) return;
     const p = toImage(event);
     if (tool === "background") return;
+    if (tool !== "crop") {
+      // Every annotation can be taken by the hand, whatever tool is active:
+      // a grip of the selected one reshapes it, the annotation itself moves.
+      if (selected && selectedLive) {
+        const grip = handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure);
+        if (grip) {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          setGesture({ kind: "resize", id: selected.id, handle: grip, original: selected, at: p });
+          return;
+        }
+      }
+      // Spotlights and redactions cover what lies in them, so only the
+      // select tool picks them; with a drawing tool they stay drawable on.
+      const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
+      if (hit && !(tool === "text" && hit.kind === "text")) {
+        event.preventDefault();
+        if (typing) commitText();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        setSelectedId(hit.id);
+        setGesture({ kind: "move", id: hit.id, start: p, dx: 0, dy: 0 });
+        return;
+      }
+      setSelectedId(null);
+    }
     if (tool === "text") {
       // Keep the press from moving focus away: it would blur (and so close)
       // the text box this click is about to open.
@@ -472,16 +538,11 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       return;
     }
     if (tool === "counter") {
-      push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) });
+      setSelectedId(push({ kind: "counter", at: p, n: nextCounter(ops), color, size: counterSize(width) }));
       return;
     }
     event.currentTarget.setPointerCapture?.(event.pointerId);
-    if (tool === "move") {
-      const hit = hitTest(ops, p, 6 / scale, measure);
-      setSelectedId(hit?.id ?? null);
-      if (hit) setGesture({ kind: "move", id: hit.id, start: p, dx: 0, dy: 0 });
-      return;
-    }
+    if (tool === "move") return;
     const zero = { x: p.x, y: p.y, w: 0, h: 0 };
     let shape: Draft;
     switch (tool) {
@@ -514,8 +575,20 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
 
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const current = gestureRef.current;
-    if (!current) return;
     const p = toImage(event);
+    if (!current) {
+      // Say with the pointer what a press here would do: reshape, move, or draw.
+      if (!image || tool === "crop" || tool === "background") return setHoverCursor(null);
+      const grip = selectedLive ? handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure) : null;
+      if (grip) return setHoverCursor(handleCursor(grip));
+      const hit = hitTest(ops, p, 6 / scale, measure, { areas: tool === "move" });
+      setHoverCursor(hit && !(tool === "text" && hit.kind === "text") ? "move" : null);
+      return;
+    }
+    if (current.kind === "resize") {
+      setGesture({ ...current, at: p });
+      return;
+    }
     if (current.kind === "move") {
       setGesture({ ...current, dx: p.x - current.start.x, dy: p.y - current.start.y });
       return;
@@ -533,6 +606,12 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     const current = gestureRef.current;
     if (!current) return;
     setGesture(null);
+    if (current.kind === "resize") {
+      const reshaped = reshape(current.original, current.handle, current.at, measure);
+      if ("rect" in reshaped && (reshaped.rect.w < 2 || reshaped.rect.h < 2)) return;
+      apply(ops.map((op) => (op.id === current.id ? reshaped : op)));
+      return;
+    }
     if (current.kind === "move") {
       if (current.dx !== 0 || current.dy !== 0) {
         apply(ops.map((op) => (op.id === current.id ? translate(op, current.dx, current.dy) : op)));
@@ -546,8 +625,10 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       shape = { ...shape, rect } as Draft;
     }
     if (!isMeaningful(shape)) return;
-    push(shape);
+    const id = push(shape);
     if (shape.kind === "crop") setTool("move");
+    // A fresh annotation is selected at once, so its grips are right there.
+    else setSelectedId(id);
   };
 
   const onDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -757,8 +838,14 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const textScreen = typing
     ? { left: (typing.at.x - shown.x) * scale, top: (typing.at.y - shown.y) * scale }
     : null;
+  const toolCursor =
+    tool === "text" ? "text" : tool === "move" || tool === "background" ? "default" : "crosshair";
   const cursor =
-    tool === "text" ? "text" : tool === "move" ? (gesture?.kind === "move" ? "grabbing" : "default") : tool === "background" ? "default" : "crosshair";
+    gesture?.kind === "move"
+      ? "grabbing"
+      : gesture?.kind === "resize"
+        ? handleCursor(gesture.handle)
+        : hoverCursor ?? toolCursor;
   const frameOn = framing.enabled;
   const preset = presetById(background.preset);
   const zoomLabel = zoom === "fit" ? label("zoom_fit") : `${Math.round(zoom * 100)}%`;
@@ -1089,6 +1176,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
                     onPointerCancel={() => setGesture(null)}
+                    onPointerLeave={() => setHoverCursor(null)}
                     onDoubleClick={onDoubleClick}
                     data-testid="appshot-editor-canvas"
                   />

@@ -119,7 +119,15 @@ app. Nothing navigates away.
 
 | Key | Tool | What it does |
 |---|---|---|
-| V | Select and move | Click an annotation to select it; drag moves it, arrow keys nudge it (Shift = 10 px), Delete removes it. Double-click a text to change it. |
+| V | Select and move | Click an annotation to select it; drag moves it, arrow keys nudge it (Shift = 10 px), Delete removes it. Double-click a text to change it. The only tool that also picks spotlights and redactions. |
+
+With **any** tool, an annotation can be taken by the hand: the pointer turns
+into a move cursor over it, a drag moves it, and a click selects it. A fresh
+annotation is selected right away. A selected one shows round grips — at both
+ends of an arrow or line (drag the tip somewhere else), at the corners of a
+box, a stroke or a redaction (resize from the opposite corner), at a text's
+corner (its size) and on a counter's rim (the badge's size). Every move and
+reshape is one undo step.
 | A / L | Arrow / Line | Shift snaps to 45°. |
 | R / F / E | Rectangle / Filled rectangle / Ellipse | Shift makes a square or circle. |
 | D | Draw | Freehand, smoothed. |

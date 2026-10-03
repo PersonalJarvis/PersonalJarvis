@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARROW_STYLES,
+  handleAt,
+  handleCursor,
+  handles,
+  reshape,
   BACKGROUND_PRESETS,
   DEFAULT_BACKGROUND,
   TOOL_KEYS,
@@ -244,5 +248,50 @@ describe("tapered arrow", () => {
 
   it("offers three arrow looks", () => {
     expect(ARROW_STYLES).toEqual(["tapered", "classic", "double"]);
+  });
+});
+
+describe("grips", () => {
+  const arrow = withId({ kind: "arrow", from: { x: 10, y: 10 }, to: { x: 110, y: 60 }, color: "#f00", width: 4 });
+  const box = withId({ kind: "rect", rect: { x: 100, y: 100, w: 80, h: 40 }, color: "#f00", width: 4 });
+
+  it("puts a grip at each end of an arrow and each corner of a box", () => {
+    expect(handles(arrow).map((h) => h.id)).toEqual(["from", "to"]);
+    expect(handles(box).map((h) => h.id)).toEqual(["nw", "ne", "sw", "se"]);
+    expect(handles(withId({ kind: "crop", rect: { x: 0, y: 0, w: 5, h: 5 } }))).toEqual([]);
+  });
+
+  it("finds the grip under the pointer", () => {
+    expect(handleAt(arrow, { x: 112, y: 58 }, 6)).toBe("to");
+    expect(handleAt(arrow, { x: 60, y: 35 }, 6)).toBeNull();
+    expect(handleAt(box, { x: 181, y: 141 }, 6)).toBe("se");
+  });
+
+  it("moves an arrow's tip and leaves its tail", () => {
+    const moved = reshape(arrow, "to", { x: 200, y: 20 });
+    expect(moved.to).toEqual({ x: 200, y: 20 });
+    expect(moved.from).toEqual(arrow.from);
+    expect(moved.id).toBe(arrow.id);
+  });
+
+  it("resizes a box from the corner held, keeping the opposite one", () => {
+    expect(reshape(box, "se", { x: 220, y: 200 }).rect).toEqual({ x: 100, y: 100, w: 120, h: 100 });
+    // Dragged past the opposite corner, the box flips instead of going negative.
+    expect(reshape(box, "nw", { x: 200, y: 160 }).rect).toEqual({ x: 180, y: 140, w: 20, h: 20 });
+  });
+
+  it("scales a stroke, a text and a counter", () => {
+    const pen = withId({ kind: "pen", points: [{ x: 0, y: 0 }, { x: 10, y: 10 }], color: "#f00", width: 3 });
+    expect(reshape(pen, "se", { x: 20, y: 20 }).points[1]).toEqual({ x: 20, y: 20 });
+    const text = withId({ kind: "text", at: { x: 0, y: 0 }, text: "Hi", color: "#fff", size: 20, style: "plain" as const });
+    expect(reshape(text, "se", { x: 0, y: 50 }, () => 20).size).toBe(40);
+    const badge = withId({ kind: "counter", at: { x: 0, y: 0 }, n: 1, color: "#f00", size: 12 });
+    expect(reshape(badge, "size", { x: 30, y: 0 }).size).toBe(30);
+  });
+
+  it("shows a cursor that fits the grip", () => {
+    expect(handleCursor("se")).toBe("nwse-resize");
+    expect(handleCursor("ne")).toBe("nesw-resize");
+    expect(handleCursor("to")).toBe("grab");
   });
 });

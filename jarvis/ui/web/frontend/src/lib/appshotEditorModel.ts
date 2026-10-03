@@ -281,8 +281,14 @@ function hits(op: Op, p: Point, slop: number, measure?: MeasureText): boolean {
  * anywhere on them. Spotlights and redactions come last — they cover
  * whatever sits in them — and crops are never picked.
  */
-export function hitTest(ops: readonly Op[], p: Point, slop: number, measure?: MeasureText): Op | null {
-  for (const areas of [false, true]) {
+export function hitTest(
+  ops: readonly Op[],
+  p: Point,
+  slop: number,
+  measure?: MeasureText,
+  { areas: withAreas = true }: { areas?: boolean } = {},
+): Op | null {
+  for (const areas of withAreas ? [false, true] : [false]) {
     for (let i = ops.length - 1; i >= 0; i -= 1) {
       const op = ops[i];
       if (AREA_KINDS.has(op.kind) !== areas) continue;
@@ -311,6 +317,122 @@ export function translate<T extends Draft>(op: T, dx: number, dy: number): T {
     default:
       return { ...op, rect: { ...op.rect, x: op.rect.x + dx, y: op.rect.y + dy } };
   }
+}
+
+// -- handles: reshaping an annotation in place --------------------------------
+
+/**
+ * A grip on a selected annotation. Lines and arrows have one at each end
+ * (``from``, ``to``); boxes and strokes one at each corner; text a corner
+ * that scales its size; a counter one on its rim (``size``).
+ */
+export type HandleId = "from" | "to" | "nw" | "ne" | "sw" | "se" | "size";
+
+export interface Handle {
+  id: HandleId;
+  at: Point;
+}
+
+const OPPOSITE: Record<"nw" | "ne" | "sw" | "se", "nw" | "ne" | "sw" | "se"> = {
+  nw: "se",
+  ne: "sw",
+  sw: "ne",
+  se: "nw",
+};
+
+function corner(box: Rect, id: "nw" | "ne" | "sw" | "se"): Point {
+  return {
+    x: id === "nw" || id === "sw" ? box.x : box.x + box.w,
+    y: id === "nw" || id === "ne" ? box.y : box.y + box.h,
+  };
+}
+
+/** The grips a selected annotation shows. */
+export function handles(op: Draft, measure?: MeasureText): Handle[] {
+  switch (op.kind) {
+    case "arrow":
+    case "line":
+      return [
+        { id: "from", at: op.from },
+        { id: "to", at: op.to },
+      ];
+    case "crop":
+      return [];
+    case "counter":
+      return [{ id: "size", at: { x: op.at.x + op.size, y: op.at.y } }];
+    case "text":
+      return [{ id: "se", at: corner(bounds(op, measure), "se") }];
+    default: {
+      const box = bounds(op, measure);
+      return (["nw", "ne", "sw", "se"] as const).map((id) => ({ id, at: corner(box, id) }));
+    }
+  }
+}
+
+/** The grip under `p` (within `radius`), nearest first; null when none. */
+export function handleAt(op: Draft, p: Point, radius: number, measure?: MeasureText): HandleId | null {
+  let best: HandleId | null = null;
+  let bestDistance = radius;
+  for (const handle of handles(op, measure)) {
+    const distance = Math.hypot(handle.at.x - p.x, handle.at.y - p.y);
+    if (distance <= bestDistance) {
+      best = handle.id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * ``original`` with grip ``handle`` dragged to ``p``. Always computed from
+ * the shape as it was when the drag began, so a long drag never drifts.
+ * An arrow's end follows the pointer; a box keeps the opposite corner
+ * fixed; a stroke scales from it; text grows with its corner; a counter's
+ * badge grows with its rim.
+ */
+export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point, measure?: MeasureText): T {
+  const op = original as Draft;
+  switch (op.kind) {
+    case "arrow":
+    case "line":
+      if (handle === "from") return { ...op, from: p } as T;
+      if (handle === "to") return { ...op, to: p } as T;
+      return original;
+    case "crop":
+      return original;
+    case "counter":
+      return { ...op, size: Math.max(8, Math.hypot(p.x - op.at.x, p.y - op.at.y)) } as T;
+    case "text": {
+      const box = bounds(op, measure);
+      const factor = Math.max(0.25, (p.y - box.y) / Math.max(1, box.h));
+      return { ...op, size: Math.max(8, Math.round(op.size * factor)) } as T;
+    }
+    case "pen":
+    case "highlight": {
+      if (handle === "from" || handle === "to" || handle === "size") return original;
+      const box = bounds(op);
+      const anchor = corner(box, OPPOSITE[handle]);
+      const grip = corner(box, handle);
+      const sx = Math.abs(grip.x - anchor.x) < 1e-6 ? 1 : (p.x - anchor.x) / (grip.x - anchor.x);
+      const sy = Math.abs(grip.y - anchor.y) < 1e-6 ? 1 : (p.y - anchor.y) / (grip.y - anchor.y);
+      return {
+        ...op,
+        points: op.points.map((q) => ({ x: anchor.x + (q.x - anchor.x) * sx, y: anchor.y + (q.y - anchor.y) * sy })),
+      } as T;
+    }
+    default: {
+      if (handle === "from" || handle === "to" || handle === "size") return original;
+      return { ...op, rect: rectFrom(corner(op.rect, OPPOSITE[handle]), p) } as T;
+    }
+  }
+}
+
+/** The pointer cursor that fits a grip. */
+export function handleCursor(handle: HandleId): string {
+  if (handle === "nw" || handle === "se") return "nwse-resize";
+  if (handle === "ne" || handle === "sw") return "nesw-resize";
+  if (handle === "size") return "ew-resize";
+  return "grab";
 }
 
 /** Is this freshly drawn shape big enough to keep (not a stray click)? */
