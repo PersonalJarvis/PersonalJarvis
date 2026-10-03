@@ -215,6 +215,11 @@ class AppshotShortcut:
                 self._trigger_task = asyncio.get_running_loop().create_task(
                     self._run_combos(combos), name="appshot-hotkey"
                 )
+            from jarvis.appshot.recording import warm_recording_service
+
+            await warm_recording_service(
+                owns and bool(getattr(getattr(config, "screen_context", None), "enabled", False))
+            )
         except Exception as exc:  # noqa: BLE001 - a bad shortcut must not break boot
             log.warning("appshot: shortcut could not be armed", exc_info=True)
             await self.stop()  # never leave half of a failed arming running
@@ -234,6 +239,9 @@ class AppshotShortcut:
         return self.status
 
     async def stop(self) -> None:
+        from jarvis.appshot.recording import warm_recording_service
+
+        await warm_recording_service(False)
         watchers, self._watchers = self._watchers, []
         for watcher in watchers:
             await asyncio.to_thread(watcher.stop)
@@ -440,6 +448,17 @@ async def start_appshot_shortcut(bus: Any) -> AppshotShortcut:
         _shortcut = AppshotShortcut(bus)
         await _shortcut.start()
     return _shortcut
+
+
+async def stop_appshot_shortcut() -> None:
+    """Stop shortcut ownership before closing the active or standby recorder."""
+    global _shortcut
+    shortcut, _shortcut = _shortcut, None
+    if shortcut is not None:
+        await shortcut.stop()
+    from jarvis.appshot.recording import close_recording_service
+
+    await close_recording_service()
 
 
 __all__ = [

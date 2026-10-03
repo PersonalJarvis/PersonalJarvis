@@ -1,4 +1,4 @@
-"""Visible capture UI, loaded only in the user-started recorder process."""
+"""Warm desktop runtime; capture and visible UI require an explicit start command."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def emit(phase: str, **values: object) -> None:
         pass
 
 
-def run(output: Path, language: str = "en") -> int:
+def run(output: Path | None, language: str = "en", *, standby: bool = False) -> int:
     import importlib
 
     # Load native DLLs on the sidecar main thread before Qt's event loop.
@@ -45,17 +45,29 @@ def run(output: Path, language: str = "en") -> int:
     from jarvis.appshot.video_encoder import FPS, FirstFramePoster, VideoEncoder
     from jarvis.platform.probes import is_wayland
 
+    if is_wayland():
+        importlib.import_module("PySide6.QtMultimedia")  # Imports alone never open the portal.
+
     app = QApplication(["Personal Jarvis — Screen recording"])
     app.setQuitOnLastWindowClosed(False)
     labels = LABELS.get(language, LABELS["en"])
 
     class ParentPipe(QObject):
         stop = Signal()
+        start = Signal(dict)
 
         def read(self) -> None:
             try:
-                for _line in sys.stdin:
-                    self.stop.emit()
+                for line in sys.stdin:
+                    if line.strip() == "stop":
+                        self.stop.emit()
+                        continue
+                    try:
+                        command = json.loads(line)
+                    except ValueError:
+                        continue  # Ignore non-protocol input; EOF still stops the worker.
+                    if isinstance(command, dict) and command.get("cmd") == "start":
+                        self.start.emit(command)
             except OSError:
                 pass  # A closed pipe means the parent exited: always stop below.
             self.stop.emit()
@@ -228,6 +240,7 @@ def run(output: Path, language: str = "en") -> int:
             else:
                 self.picker = RecordingPicker(app)
                 self.picker.start()
+                emit("selection_ready")
 
         def portal_frame(self, frame) -> None:
             now = time.monotonic()
@@ -428,12 +441,31 @@ def run(output: Path, language: str = "en") -> int:
             event.ignore()
             self.stop()
 
-    session = Session()
+    session = None
+    closing = False
     pipe = ParentPipe()
-    pipe.stop.connect(session.stop)
-    threading.Thread(target=pipe.read, name="appshot-recording-parent", daemon=True).start()
 
-    def begin() -> None:
+    def stop() -> None:
+        nonlocal closing
+        closing = True
+        if session is None:
+            app.quit()
+        else:
+            session.stop()
+
+    def begin(command=None) -> None:
+        nonlocal session, output, labels
+        if session is not None or closing:
+            return
+        if command is not None:
+            value = command.get("output")
+            if not isinstance(value, str) or not value:
+                emit("error", message="The recording output is missing.")
+                stop()
+                return
+            output = Path(value)
+            labels = LABELS.get(command.get("language", "en"), LABELS["en"])
+        session = Session()
         try:
             if sys.platform == "darwin":
                 from jarvis.platform import screen_access
@@ -451,19 +483,28 @@ def run(output: Path, language: str = "en") -> int:
             logging.getLogger(__name__).exception("appshot: capture initialization failed")
             session.fail("Screen capture could not start. Check desktop support and permissions.")
 
-    QTimer.singleShot(0, begin)
+    pipe.stop.connect(stop)
+    pipe.start.connect(begin)
+    threading.Thread(target=pipe.read, name="appshot-recording-parent", daemon=True).start()
+    if standby:
+        emit("ready")  # No Session, windows, timers, pixels or permission prompts in standby.
+    else:
+        QTimer.singleShot(0, begin)
     return app.exec()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--standby", action="store_true")
     parser.add_argument("--language", choices=("en", "de", "es"), default="en")
     args = parser.parse_args()
+    if not args.standby and args.output is None:
+        parser.error("--output is required unless --standby is used")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     try:
-        return run(args.output, args.language)
+        return run(args.output, args.language, standby=args.standby)
     except Exception:
         import logging
 

@@ -3859,6 +3859,18 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug("agent chat cancel_all failed")
 
+        try:
+            from jarvis.appshot.hotkey import stop_appshot_shortcut
+
+            appshot_task = getattr(self, "_appshot_shortcut_task", None)
+            if appshot_task is not None:
+                appshot_task.cancel()
+                await asyncio.gather(appshot_task, return_exceptions=True)
+                self._appshot_shortcut_task = None
+            await stop_appshot_shortcut()
+        except Exception:
+            logger.opt(exception=True).warning("Appshot recorder failed to stop")
+
         # Stop token refresh before the plugin registry so an in-flight refresh
         # cannot enqueue a live-session rebuild while that registry is closing.
         await self._stop_marketplace_refresh_scheduler()

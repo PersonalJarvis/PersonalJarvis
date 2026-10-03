@@ -77,6 +77,43 @@ class RecordingService:
         self._reader: asyncio.Task[None] | None = None
         self._state: dict[str, Any] = {"phase": "idle", "id": "", "message": ""}
         self._started: float | None = None
+        from jarvis.appshot.recording_runtime import RecordingRuntime
+
+        self._runtime = RecordingRuntime()
+        self._warm_enabled = False
+        self._warm_task: asyncio.Task[None] | None = None
+        self._requested: float | None = None
+
+    async def set_warm(self, enabled: bool) -> None:
+        """Prepare after boot; disabling/reloading shortcuts never stops an active video."""
+        self._warm_enabled = enabled
+        if enabled:
+            self._schedule_warm()
+            return
+        task, self._warm_task = self._warm_task, None
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await self._runtime.close()
+
+    def _schedule_warm(self) -> None:
+        if self._process is None and (self._warm_task is None or self._warm_task.done()):
+            self._warm_task = asyncio.create_task(self._prepare(), name="appshot-recorder-warm")
+
+    async def _prepare(self) -> None:
+        try:
+            ready = await asyncio.to_thread(capability)
+            if ready["available"] or ready.get("permission_required"):
+                await self._runtime.prewarm()
+        except Exception:
+            log.warning(
+                "appshot: recorder preparation failed; next start will retry", exc_info=True
+            )
+
+    async def close(self) -> None:
+        await self.set_warm(False)
+        await self.stop()
 
     def status(self) -> dict[str, Any]:
         state = dict(self._state)
@@ -86,7 +123,6 @@ class RecordingService:
 
     async def start(self) -> dict[str, Any]:
         from jarvis.core.config import load_config
-        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
         async with self._lock:
             if self._process is not None:
@@ -112,31 +148,15 @@ class RecordingService:
             await asyncio.to_thread(folder.mkdir, parents=True, exist_ok=True)
             self._started = None
             self._state = {"phase": "selecting", "id": recording_id, "message": ""}
-            # A cancelled HTTP request must not lose ownership during spawn.
-            spawn = asyncio.create_task(
-                asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-m",
-                    "jarvis.appshot.recording_worker",
-                    "--output",
-                    str(folder / f"{recording_id}.mp4"),
-                    "--language",
-                    str(getattr(config.ui, "language", "en")),
-                    stdin=asyncio.subprocess.PIPE,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.DEVNULL,
-                    creationflags=NO_WINDOW_CREATIONFLAGS,
-                )
-            )
+            self._requested = time.perf_counter()
             try:
-                self._process = await asyncio.shield(spawn)
+                self._process = await self._runtime.take(
+                    folder / f"{recording_id}.mp4", str(getattr(config.ui, "language", "en"))
+                )
             except asyncio.CancelledError:
-                process = await spawn
-                process.kill()
-                await process.wait()
                 self._state["phase"] = "cancelled"
                 raise
-            except OSError as exc:
+            except (OSError, TimeoutError) as exc:
                 self._state.update(phase="error", message="The recorder could not start.")
                 log.exception("appshot: recorder spawn failed")
                 raise ValueError(self._state["message"]) from exc
@@ -156,6 +176,12 @@ class RecordingService:
                 if not isinstance(event, dict):
                     continue
                 phase = event.get("phase")
+                if phase == "selection_ready" and self._requested is not None:
+                    log.info(
+                        "appshot: recording picker visible in %.1f ms",
+                        (time.perf_counter() - self._requested) * 1000,
+                    )
+                    continue
                 if phase not in {"selecting", "recording", "saved", "cancelled", "error"}:
                     continue
                 self._state.update(
@@ -189,6 +215,9 @@ class RecordingService:
             if process.stdin:
                 process.stdin.close()
             self._process = None
+            self._runtime.release()
+            if self._warm_enabled:
+                self._schedule_warm()
 
     async def stop(self) -> dict[str, Any]:
         async with self._lock:
@@ -227,3 +256,17 @@ def get_recording_service() -> RecordingService:
     if _service is None:
         _service = RecordingService()
     return _service
+
+
+async def warm_recording_service(enabled: bool) -> None:
+    if enabled:
+        await get_recording_service().set_warm(True)
+    elif _service is not None:
+        await _service.set_warm(False)
+
+
+async def close_recording_service() -> None:
+    global _service
+    service, _service = _service, None
+    if service is not None:
+        await service.close()

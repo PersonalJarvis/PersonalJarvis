@@ -1,5 +1,24 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## AppShot recording startup latency (2026-10-03, T2)
+
+The primary desktop instance prepares one idle recording worker after shortcut
+arming when AppShots are enabled. Standby loads Qt and the encoder libraries;
+it creates no capture session, windows, video files, or permission prompts and
+takes no pixels. A user start still checks current permissions before sending
+the selection command. After a recording finishes, a fresh worker is prepared.
+Disabling AppShots releases standby; application shutdown also finalizes any
+active recording and reaps its process.
+
+Windows native checks measured about 150–260 ms from a prepared start to the
+visible picker, versus about 1.7 seconds for a cold process on the same desktop.
+Two consecutive selected-area recordings produced playable MP4s and reused their
+prepared workers. Timeout, cancellation during spawn, dead-worker recovery,
+permission revocation and shutdown have focused regression coverage. Standby
+was checked to create neither widgets nor screen grabs. macOS and Linux use the
+same ownership protocol; their native latency remains unmeasured, and a first
+permission dialog or Wayland portal selection still requires user interaction.
+
 ## AppShot recording frame and completion card (2026-10-03, T2)
 
 The selected recording area keeps a click-through border until recording stops.
