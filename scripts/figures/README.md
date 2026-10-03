@@ -16,6 +16,9 @@ blender -b --python scripts/figures/build_figures.py -- --target biped-medium
 
   Output lands in `jarvis/ui/web/frontend/src/assets/society/figures/`; every produced file is
   validated by the gate before the script exits 0.
+- `repair_sheet.py` — stdlib-only Route-D validate-and-repair: nearest resize to the
+  128×128 contract, 1-bit alpha, ≤32 colours, exact recipe-palette restamp and an optional
+  face-contrast gate when a UV template supplies explicit bounds. It never calls an image service.
 - `cache/` — fetched sources and generated sheets; gitignored.
 
 Adding a character from an existing source = a `targets` entry in `contract.json` plus a
