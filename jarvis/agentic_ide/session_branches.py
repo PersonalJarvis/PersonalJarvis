@@ -45,7 +45,7 @@ class CreatedBranch:
 
 _STRING = r"""(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')"""
 _EXEC = re.compile(r"\b(?:tools\.)?exec_command\s*\(\s*\{(?:" + _STRING + r"""|[^}"'])*\}""")
-_FIELD = re.compile(r"\b(cmd|workdir)\s*:\s*(" + _STRING + r")")
+_FIELD = re.compile(r"""(?<!\w)["']?(cmd|workdir)["']?\s*:\s*(""" + _STRING + r")")
 _CREATED = re.compile(r"(?:new branch|[Cc]reated branch)\s+['\"]([^'\"]+)['\"]")
 
 
@@ -70,6 +70,10 @@ def _commands(arguments: dict[str, Any]) -> Iterable[tuple[str, str]]:
                 continue
             if isinstance(value, str):
                 fields[key] = value
+        if re.search(r"""\bworkdir["']?\s*:""", match[0]) and "workdir" not in fields:
+            # A dynamic workdir can name a different repository. Its absence
+            # from the literal fields is not permission to assume this pane.
+            continue
         if fields.get("cmd"):
             yield fields["cmd"], fields.get("workdir", "")
 
