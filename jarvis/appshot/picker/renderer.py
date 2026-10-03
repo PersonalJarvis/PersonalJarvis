@@ -550,7 +550,7 @@ class _SelectWindow(QWidget):
             self._toolbar.set_history(h.can_undo, h.can_redo)
 
     def _sync_options(self) -> None:
-        """The option row for the current tool (or the selected marking's kind)."""
+        """The looks shown for the current tool (or the selected marking's kind)."""
         bar = self._toolbar
         if bar is None:
             return

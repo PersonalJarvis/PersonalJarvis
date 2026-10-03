@@ -9,7 +9,7 @@ at.
 
 The rules live in :mod:`jarvis.appshot.picker.markup_model` (plain data);
 this module paints them like the full editor does, draws the toolbar and its
-option row, and measures text. The markings leave the process as a
+looks for the current tool inline, and measures text. The markings leave the process as a
 transparent PNG overlay plus the pixelate/blur rectangles and the background
 frame; the main process applies them to the real, privacy-filtered capture
 (:mod:`jarvis.appshot.markup`).
@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -905,9 +904,9 @@ def _glyphs() -> dict[str, Callable[[QPainter, QColor], None]]:  # noqa: C901 - 
 class Toolbar(QFrame):
     """The floating marking toolbar, docked to the selection by its window.
 
-    The main row holds the tools, colours, size, history and the finishing
-    actions; an option row under it appears for tools that have looks to
-    choose from (arrow, text, pixelate/blur, background).
+    One row: the tools, then — for a tool with looks to choose from (arrow,
+    text, pixelate/blur, background) — those looks, then colours, size,
+    history and the finishing actions.
     """
 
     tool_chosen = Signal(str)
@@ -939,7 +938,7 @@ class Toolbar(QFrame):
             f"""
             QFrame#hud {{ background: {bg}; border: 1px solid {edge}; border-radius: 11px; }}
             QFrame#sep {{ background: {sep}; border: none; }}
-            QFrame#rowsep {{ background: {sep}; border: none; }}
+            QToolButton#option:checked {{ background: rgba(10, 132, 255, 90); }}
             QToolButton {{ border: none; border-radius: 7px; background: transparent; }}
             QToolButton:hover {{ background: {hover}; }}
             QToolButton:checked {{ background: #0A84FF; }}
@@ -955,19 +954,11 @@ class Toolbar(QFrame):
         shadow.setColor(QColor(0, 0, 0, 110))
         self.setGraphicsEffect(shadow)
 
-        rows = QVBoxLayout(self)
-        rows.setContentsMargins(6, 5, 6, 5)
-        rows.setSpacing(4)
-        main = QHBoxLayout()
+        main = QHBoxLayout(self)
+        main.setContentsMargins(6, 5, 6, 5)
         main.setSpacing(2)
-        rows.addLayout(main)
-        self._rowsep = QFrame(self)
-        self._rowsep.setObjectName("rowsep")
-        self._rowsep.setFixedHeight(1)
-        rows.addWidget(self._rowsep)
         self._options = QHBoxLayout()
         self._options.setSpacing(2)
-        rows.addLayout(self._options)
         self._option_buttons: list[QToolButton] = []
 
         self._tools = QButtonGroup(self)
@@ -982,6 +973,10 @@ class Toolbar(QFrame):
             if kind == mm.BACKGROUND:
                 main.addWidget(self._separator())
             main.addWidget(button)
+        # The current tool's looks sit right after the tools, in the same row.
+        self._optsep = self._separator()
+        main.addWidget(self._optsep)
+        main.addLayout(self._options)
         main.addWidget(self._separator())
         self._swatches: dict[str, QToolButton] = {}
         for colour in mm.PALETTE:
@@ -1126,7 +1121,7 @@ class Toolbar(QFrame):
         self._redo.setEnabled(can_redo)
 
     def set_options(self, options: list[tuple[str, str]], chosen: str, group: str = "") -> None:
-        """Fill the option row: ``(value, kind)`` pairs, ``kind`` = glyph or ``preset``."""
+        """Show the current tool's looks: ``(value, kind)``, ``kind`` = glyph or ``preset``."""
         # Empty the row completely — buttons and the stretch after them.
         while self._options.count():
             item = self._options.takeAt(0)
@@ -1140,22 +1135,20 @@ class Toolbar(QFrame):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.setCheckable(True)
             button.setChecked(value == chosen)
-            button.setFixedSize(QSize(self._BTN, 26))
+            button.setFixedSize(QSize(self._BTN, self._BTN))
             button.setIconSize(QSize(18, 18))
             if kind == "preset":
                 button.setObjectName("swatch")
                 button.setIcon(self._swatch_icon(value, value == chosen, square=True))
                 button.setToolTip(value)
             else:
+                button.setObjectName("option")
                 button.setIcon(self._icon(kind))
                 button.setToolTip(self._labels.get(kind, value))
             button.clicked.connect(lambda _c=False, g=group, v=value: self.option_chosen.emit(g, v))
             self._options.addWidget(button)
             self._option_buttons.append(button)
-        if self._option_buttons:
-            self._options.addStretch(1)
-        visible = bool(self._option_buttons)
-        self._rowsep.setVisible(visible)
+        self._optsep.setVisible(bool(self._option_buttons))
         self.adjustSize()
 
 
