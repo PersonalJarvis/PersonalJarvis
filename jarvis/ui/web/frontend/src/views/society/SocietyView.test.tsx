@@ -142,21 +142,21 @@ it("supports roving keyboard navigation across Map, Agents, and Ledger tabs", ()
 
   agents.focus();
   fireEvent.keyDown(agents, { key: "ArrowRight" });
-  expect(ledger).toHaveFocus();
+  expect(document.activeElement).toBe(ledger);
   expect(ledger).toHaveAttribute("aria-selected", "true");
   expect(ledger.tabIndex).toBe(0);
   expect(agents.tabIndex).toBe(-1);
 
   fireEvent.keyDown(ledger, { key: "Home" });
-  expect(map).toHaveFocus();
+  expect(document.activeElement).toBe(map);
   expect(map).toHaveAttribute("aria-selected", "true");
 
   fireEvent.keyDown(map, { key: "ArrowLeft" });
-  expect(ledger).toHaveFocus();
+  expect(document.activeElement).toBe(ledger);
   expect(ledger).toHaveAttribute("aria-selected", "true");
 
   fireEvent.keyDown(ledger, { key: "End" });
-  expect(ledger).toHaveFocus();
+  expect(document.activeElement).toBe(ledger);
   expect(ledger).toHaveAttribute("aria-selected", "true");
 });
 
