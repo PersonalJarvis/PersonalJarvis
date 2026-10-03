@@ -432,7 +432,11 @@ async def test_a_late_but_successful_preview_ends_the_failure_streak():
     try:
         assert await engine.transcribe(b"\x00" * 32000) is None  # times out, worker runs on
         assert engine._failures == 1
-        await asyncio.sleep(0.15)  # the worker finishes late
+        # Observe native completion rather than assuming a hosted runner can
+        # schedule the worker and its callback inside a fixed sleep.
+        async with asyncio.timeout(2):
+            while engine._busy.locked():
+                await asyncio.sleep(0.005)
         assert engine._failures == 0
         assert engine.ready is True
     finally:
