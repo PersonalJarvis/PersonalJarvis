@@ -109,6 +109,18 @@ WITHHELD: Final[dict[str, str]] = {
     "POST /api/society/agents/{agent_id}/browser/login/done": (
         "the second half of the interactive login flow; useless without the window"
     ),
+    "GET /api/society/agents/{agent_id}/screen": (
+        "isolated-screen lease state is local machine execution state; remote clients "
+        "may assign work but do not inspect or control the owner's sandbox resources"
+    ),
+    "POST /api/society/agents/{agent_id}/screen": (
+        "allocates a local isolated desktop and host resources; owner UI only, never "
+        "an unattended remote-client capability"
+    ),
+    "DELETE /api/society/agents/{agent_id}/screen": (
+        "tears down a local isolated desktop and any work inside it; destructive "
+        "host-resource control stays with the owner UI"
+    ),
     "GET /api/society/agents/{agent_id}/routines": (
         "routines are scheduled spend; listing is harmless but pairs with creation, "
         "and neither belongs on a surface a client can drive unattended"
