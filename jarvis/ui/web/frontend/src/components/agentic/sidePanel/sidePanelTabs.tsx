@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { Bot, Building2, FileDiff, FolderTree, GitBranch, type LucideIcon } from "lucide-react";
+import { Bot, Building2, FileDiff, FolderTree, GitBranch, Library, type LucideIcon } from "lucide-react";
 import type { SidePanelTabId } from "@/store/ideSidePanel";
 import { AgentsOverview } from "./AgentsOverview";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
 import { GitOverviewTab } from "./git/GitOverviewTab";
 import { OfficeTab } from "./OfficeTab";
+import { SkillsTab } from "./skills/SkillsTab";
 
 /** One function the side panel can show. */
 export interface SidePanelTabDef {
@@ -46,6 +47,12 @@ export const SIDE_PANEL_TABS: readonly SidePanelTabDef[] = [
     labelKey: "ide_side_panel.tabs.git",
     icon: GitBranch,
     render: () => <GitOverviewTab />,
+  },
+  {
+    id: "skills",
+    labelKey: "ide_side_panel.tabs.skills",
+    icon: Library,
+    render: () => <SkillsTab />,
   },
   {
     id: "office",

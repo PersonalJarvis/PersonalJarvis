@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSkillsStore } from "@/store/ideSkills";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
@@ -215,6 +216,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Report the selected pane: it is the voice/prompt target, and the backend
   // saves it with the workspace so a reopened app restores the focus.
   const sessionId = session?.id ?? "";
+  // The Skills tab pastes into the selected pane when a card's button is used.
+  useEffect(() => {
+    useIdeSkillsStore.getState().setTarget(sessionId && selected ? { workspaceId: sessionId, pane: selected } : null);
+  }, [sessionId, selected]);
+  useEffect(() => () => useIdeSkillsStore.getState().setTarget(null), []);
   useEffect(() => {
     if (!sessionId || !selected) return;
     void syncAgenticIdeSurface({ workspaceId: sessionId, view: "grid", onScreen, terminal: null, promptTarget: selected })

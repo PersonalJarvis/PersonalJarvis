@@ -7,13 +7,17 @@
  * Conventions copied from PtyTerminal: xterm instance in a ref (never state, or
  * it rerenders per chunk), dispose() on unmount (WebGL context cap).
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
+import { usePaneFileDrag } from "../agentic/paneFileDrag";
+import { announceSkillRefused, pasteSkillText, type SkillDragPayload } from "../agentic/skillDrag";
+import { SkillDropCard } from "../agentic/sidePanel/skills/SkillDropCard";
+import { useIdeSkillsStore } from "@/store/ideSkills";
 import { requestConnect } from "@/lib/connectBudget";
 import { FONT_DEFAULT } from "../agentic/paneFont";
 import {
@@ -269,8 +273,26 @@ export function WorkspaceTerminal({
     if (term) term.options.theme = themeFor(appearance);
   }, [appearance]);
 
+  // A skill from the Skills tab, dropped here: one bracketed paste, not sent
+  // (a plain shell without bracketed paste refuses a multi-line one).
+  // Files have no route into a plain shell; the drop is only claimed so it
+  // cannot navigate the IDE away.
+  const pasteSkill = useCallback((skill: SkillDragPayload) => {
+    const term = termRef.current;
+    if (!term || !skill.content) return;
+    if (!pasteSkillText(term, skill.content)) {
+      announceSkillRefused(title);
+      return;
+    }
+    useIdeSkillsStore.getState().recordUse(skill.id, title);
+  }, [title]);
+  const ignoreFiles = useCallback(() => {}, []);
+  const { dragging, carrying, handlers: dragHandlers } = usePaneFileDrag(ignoreFiles, pasteSkill);
+  const skillInFlight = useIdeSkillsStore((state) => (carrying === "skill" ? state.dragging : null));
+
   return (
     <div
+      {...dragHandlers}
       className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-border"
       style={{ background: PANE_CHROME[appearance].shell }}
     >
@@ -295,6 +317,8 @@ export function WorkspaceTerminal({
         </span>
       </header>
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
+      {dragging && carrying === "skill" && <SkillDropCard skill={skillInFlight} target={title}
+        blocked={Boolean(skillInFlight?.multiline) && !termRef.current?.modes.bracketedPasteMode} />}
       {error && (
         <div className="border-t border-border bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
           {error}
