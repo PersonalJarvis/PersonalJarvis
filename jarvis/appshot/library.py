@@ -14,10 +14,14 @@ pictures are the finished, privacy-filtered appshots, never a raw frame.
 
 Layout, one folder per appshot under ``<data dir>/appshots/``::
 
-    <id>/meta.json        what the page shows (no pixels)
-    <id>/original.<ext>   the appshot as captured
-    <id>/edited.png       the last edit saved in the editor, when there is one
-    <id>/thumb-*.jpg      gallery thumbnails, made on first view
+    <id>/meta.json                         what the page shows (no pixels)
+    <id>/appshot-<taken>.<ext>             the appshot as captured
+    <id>/appshot-<taken>-edited.png        the last edit saved in the editor
+    <id>/thumb-*.jpg                       gallery thumbnails, made on first view
+
+The picture files carry the capture time in their names because a drag hands
+the file itself to a chat, a terminal agent or another app, where
+``appshot-20261003-114747.png`` says what it is and ``original.png`` does not.
 
 Nothing here is imported at boot (AP-26).
 """
@@ -130,12 +134,36 @@ def _write_meta(folder: Path, meta: dict[str, object]) -> None:
     tmp.replace(folder / "meta.json")
 
 
-def _original_file(folder: Path) -> Path | None:
-    for ext in _MIMES:
+def _stem(taken_at: float) -> str:
+    return time.strftime("appshot-%Y%m%d-%H%M%S", time.localtime(taken_at))
+
+
+def _named(folder: Path, meta: dict[str, object], key: str) -> Path | None:
+    """The picture ``meta[key]`` names, when it is a plain file name that exists."""
+    name = meta.get(key)
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        return None
+    candidate = folder / name
+    return candidate if candidate.is_file() else None
+
+
+def _original_file(folder: Path, meta: dict[str, object]) -> Path | None:
+    named = _named(folder, meta, "file")
+    if named is not None:
+        return named
+    for ext in _MIMES:  # entries written before the files carried their time
         candidate = folder / f"original.{ext}"
         if candidate.is_file():
             return candidate
     return None
+
+
+def _edited_file(folder: Path, meta: dict[str, object]) -> Path | None:
+    named = _named(folder, meta, "edited_file")
+    if named is not None:
+        return named
+    legacy = folder / "edited.png"
+    return legacy if legacy.is_file() else None
 
 
 def _drop_thumbs(folder: Path, variant: Variant) -> None:
@@ -163,9 +191,11 @@ def save(shot: Appshot) -> bool:
         ext = _EXTENSIONS.get(shot.mime, "jpg")
         with _lock:
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / f"original.{ext}").write_bytes(shot.image)
+            name = f"{_stem(shot.taken_at)}.{ext}"
+            (folder / name).write_bytes(shot.image)
             meta = {
                 **_base_meta(shot),
+                "file": name,
                 "mime": shot.mime,
                 "width": shot.width,
                 "height": shot.height,
@@ -188,10 +218,15 @@ def save_edit(shot: Appshot) -> bool:
         folder = _folder(shot.id)
         with _lock:
             folder.mkdir(parents=True, exist_ok=True)
-            (folder / "edited.png").write_bytes(shot.image)
             meta = _read_meta(folder) or _base_meta(shot)
+            taken = meta.get("taken_at")
+            name = (
+                f"{_stem(taken if isinstance(taken, (int, float)) else shot.taken_at)}-edited.png"
+            )
+            (folder / name).write_bytes(shot.image)
             meta.update(
                 {
+                    "edited_file": name,
                     "edited_at": time.time(),
                     "edited_width": shot.width,
                     "edited_height": shot.height,
@@ -219,9 +254,9 @@ def _items_for(folder: Path, meta: dict[str, object]) -> list[LibraryItem]:
         "taken_at": _num("taken_at"),
     }
     items: list[LibraryItem] = []
-    edited = folder / "edited.png"
-    has_edit = edited.is_file()
-    if has_edit:
+    edited = _edited_file(folder, meta)
+    has_edit = edited is not None
+    if edited is not None:
         items.append(
             LibraryItem(
                 variant="edited",
@@ -234,7 +269,7 @@ def _items_for(folder: Path, meta: dict[str, object]) -> list[LibraryItem]:
                 **common,  # type: ignore[arg-type]
             )
         )
-    original = _original_file(folder)
+    original = _original_file(folder, meta)
     if original is not None:
         items.append(
             LibraryItem(
@@ -346,8 +381,11 @@ def delete(shot_id: str, variant: Variant) -> bool:
     with _lock:
         if not folder.is_dir():
             return False
-        edited = folder / "edited.png"
-        if variant == "edited" and _original_file(folder) is not None:
+        meta = _read_meta(folder) or {}
+        if variant == "edited" and _original_file(folder, meta) is not None:
+            edited = _edited_file(folder, meta)
+            if edited is None:
+                return False
             try:
                 edited.unlink()
             except FileNotFoundError:  # already gone: the route answers 404

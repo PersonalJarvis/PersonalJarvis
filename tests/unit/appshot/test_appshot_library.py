@@ -42,6 +42,9 @@ def test_a_kept_appshot_lists_without_its_screen_text() -> None:
 
     [item] = library.list_items()
     assert (item.id, item.variant, item.width, item.app_name) == ("a1", "original", 64, "Editor")
+    assert item.path.name.startswith("appshot-") and item.path.suffix == ".png", (
+        "a dragged file says what it is"
+    )
     assert item.path.read_bytes() == _shot().image
     stored = "".join(p.read_text("utf-8") for p in item.path.parent.glob("*.json"))
     assert "secret on-screen text" not in stored, "the scrubbed UI text never reaches disk"
@@ -57,6 +60,7 @@ def test_an_edit_sits_right_before_its_original_and_newest_comes_first() -> None
     assert rows == [("new", "original"), ("old", "edited"), ("old", "original")]
     edit = library.get_item("old", "edited")
     assert edit is not None and edit.path.read_bytes() == edited
+    assert edit.path.name.endswith("-edited.png")
     assert library.get_item("old", "original").has_edit
 
 
@@ -171,3 +175,18 @@ def test_the_gallery_can_be_deleted(client) -> None:
     assert client.delete("/api/appshot/library/a1").status_code == 404
     assert client.delete("/api/appshot/library").json() == {"ok": True, "removed": 1}
     assert client.get("/api/appshot/library").json()["items"] == []
+
+
+def test_an_entry_written_with_the_old_file_names_still_lists(tmp_path) -> None:
+    folder = library.library_root() / "legacy"
+    folder.mkdir(parents=True)
+    (folder / "original.png").write_bytes(_png())
+    (folder / "edited.png").write_bytes(_png(8, 8))
+    (folder / "meta.json").write_text('{"taken_at": 5, "width": 64, "height": 48}', "utf-8")
+
+    assert [(i.variant, i.path.name) for i in library.list_items()] == [
+        ("edited", "edited.png"),
+        ("original", "original.png"),
+    ]
+    assert library.delete("legacy", "edited")
+    assert [i.variant for i in library.list_items()] == ["original"]

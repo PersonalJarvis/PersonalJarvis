@@ -208,16 +208,9 @@ export function appshotLibraryImageUrl(item: AppshotLibraryItem, thumb = false):
   return `/api/appshot/library/${encodeURIComponent(item.id)}/image?${params.toString()}`;
 }
 
-/** A file name for a dragged-out picture: `appshot-20261003-114747(-edited).png`. */
+/** The picture's own file name (`appshot-20261003-114747(-edited).png`), for a drag out. */
 export function appshotLibraryFileName(item: AppshotLibraryItem): string {
-  const fromPath = item.path.split(/[\\/]/).pop() ?? "";
-  const extension = fromPath.includes(".") ? fromPath.split(".").pop() : "png";
-  const stamp = new Date(item.taken_at * 1000)
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\..*$/, "")
-    .replace("T", "-");
-  return `appshot-${stamp}${item.variant === "edited" ? "-edited" : ""}.${extension}`;
+  return item.path.split(/[\\/]/).pop() || `appshot-${item.id}.png`;
 }
 
 /**

@@ -28,6 +28,11 @@ import { useEventStore } from "@/store/events";
  * composer attaches it and a terminal pane hands it to its agent — the drop
  * targets need no appshot-specific code. Inside the desktop shell the grip
  * starts a native file drag instead, which reaches any other app as well.
+ *
+ * The gallery sits in the Settings dialog, which covers the chat and the
+ * terminals — the very fields a picture is dragged into. So while a tile is
+ * being dragged the dialog steps aside (`html[data-appshot-drag]`, see
+ * LIFT_DIALOG_CSS) and comes back the moment the drag ends.
  */
 
 type Filter = "all" | "edited";
@@ -36,6 +41,29 @@ type Filter = "all" | "edited";
 const PAGE = 48;
 
 const tileKey = (item: AppshotLibraryItem) => `${item.id}:${item.variant}`;
+
+/**
+ * While a tile is dragged: the Settings dialog and its dim fade out and let
+ * the drag through to the app behind. Radix keeps `pointer-events: none` on
+ * the body while a modal is open, which would hide every drop target, so the
+ * body is opened up for exactly as long as the drag lasts. The dim is the
+ * element right before the dialog — only that one: the dialog is a child of
+ * <body>, so a looser sibling match would hide the whole app (#root).
+ */
+const LIFT_DIALOG_CSS = `
+html[data-appshot-drag] body { pointer-events: auto !important; }
+html[data-appshot-drag] [data-testid="settings-hub-dialog"],
+html[data-appshot-drag] [data-state]:has(+ [data-testid="settings-hub-dialog"]) {
+  opacity: 0;
+  pointer-events: none !important;
+  transition: opacity 120ms ease-out;
+}`;
+
+function liftDialog(lifted: boolean): void {
+  const root = document.documentElement;
+  if (lifted) root.dataset.appshotDrag = "1";
+  else delete root.dataset.appshotDrag;
+}
 
 function when(item: AppshotLibraryItem): string {
   return new Date((item.edited_at || item.taken_at) * 1000).toLocaleString([], {
@@ -76,12 +104,16 @@ function Tile({
     const absoluteUrl = new URL(appshotLibraryImageUrl(item), window.location.href).toString();
     dt.setData("DownloadURL", `${item.mime}:${appshotLibraryFileName(item)}:${absoluteUrl}`);
     if (imageRef.current) dt.setDragImage(imageRef.current, 24, 24);
+    // Not in this tick: hiding the drag source before the browser has taken
+    // its picture cancels the drag in Chromium.
+    window.setTimeout(() => liftDialog(true), 0);
   };
 
   return (
     <li
       draggable
       onDragStart={onDragStart}
+      onDragEnd={() => liftDialog(false)}
       data-testid="appshot-library-tile"
       data-variant={item.variant}
       className="group relative flex cursor-grab flex-col overflow-hidden rounded-lg border border-border bg-background active:cursor-grabbing"
@@ -211,6 +243,22 @@ export function AppshotLibrary({
     [],
   );
 
+  // Backstops for a drag whose `dragend` never reaches the tile (the drop
+  // landed in another window, or the tile re-rendered): any drop or drag end
+  // on the page, any pointer or key event afterwards (none fire during a
+  // drag), and leaving the window all bring the dialog back. Unmounting too.
+  useEffect(() => {
+    const settle = () => {
+      if (document.documentElement.dataset.appshotDrag) liftDialog(false);
+    };
+    const events = ["drop", "dragend", "pointermove", "pointerdown", "keydown", "blur"] as const;
+    for (const name of events) window.addEventListener(name, settle, true);
+    return () => {
+      for (const name of events) window.removeEventListener(name, settle, true);
+      liftDialog(false);
+    };
+  }, []);
+
   const editedCount = useMemo(
     () => (items ?? []).filter((item) => item.variant === "edited").length,
     [items],
@@ -284,6 +332,7 @@ export function AppshotLibrary({
       className="mt-5 rounded-xl border border-border bg-card p-5"
       aria-labelledby="appshot-library-title"
     >
+      <style>{LIFT_DIALOG_CSS}</style>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-[min(100%,16rem)] flex-1">
           <p id="appshot-library-title" className="text-base font-medium text-foreground">

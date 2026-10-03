@@ -11,7 +11,7 @@ import { AppshotLibrary } from "@/views/AppshotLibrary";
 const ORIGINAL: AppshotLibraryItem = {
   id: "a1",
   variant: "original",
-  path: "C:\\Jarvis\\data\\appshots\\a1\\original.png",
+  path: "C:\\Jarvis\\data\\appshots\\a1\\appshot-20260921-120000.png",
   mime: "image/png",
   width: 1280,
   height: 720,
@@ -25,7 +25,7 @@ const ORIGINAL: AppshotLibraryItem = {
 const EDITED: AppshotLibraryItem = {
   ...ORIGINAL,
   variant: "edited",
-  path: "C:\\Jarvis\\data\\appshots\\a1\\edited.png",
+  path: "C:\\Jarvis\\data\\appshots\\a1\\appshot-20260921-120000-edited.png",
   edited_at: 1_790_000_100,
   has_edit: false,
 };
@@ -104,6 +104,15 @@ describe("AppshotLibrary", () => {
     expect(dt.getData("DownloadURL")).toMatch(/^image\/png:appshot-.*-edited\.png:http/);
     // The drop side (paneDrop, shared by panes and the composer) reads it back verbatim.
     expect(extractPaneDrop(dt as unknown as DataTransfer).paths).toEqual([EDITED.path]);
+  });
+
+  it("lifts the Settings dialog out of the way while a tile is dragged", async () => {
+    render(<AppshotLibrary enabled refreshKey="" />);
+    const [tile] = await screen.findAllByTestId("appshot-library-tile");
+    fireEvent.dragStart(tile, { dataTransfer: new FakeDataTransfer() });
+    await waitFor(() => expect(document.documentElement.dataset.appshotDrag).toBe("1"));
+    fireEvent.dragEnd(tile);
+    expect(document.documentElement.dataset.appshotDrag).toBeUndefined();
   });
 
   it("deletes only the edit from an edited tile", async () => {
