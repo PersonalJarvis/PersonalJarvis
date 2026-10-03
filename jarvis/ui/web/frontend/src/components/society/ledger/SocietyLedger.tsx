@@ -23,12 +23,12 @@ async function fetchSocietyCost(): Promise<number> {
 
 export function ledgerCost(costUsd: number): string {
   if (!(costUsd > 0)) return "—";
-  return costUsd < 0.01 ? `${costUsd.toFixed(4)}` : `${costUsd.toFixed(2)}`;
+  return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`;
 }
 
 export function ledgerTotalCost(costUsd: number): string {
   if (!(costUsd > 0)) return "$0.00";
-  return costUsd < 0.01 ? `${costUsd.toFixed(4)}` : `${costUsd.toFixed(2)}`;
+  return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`;
 }
 
 function detail(event: SocietyEnvelope): string {

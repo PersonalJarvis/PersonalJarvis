@@ -345,7 +345,11 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                     str(row["name"]) == "surface"
                     for row in conn.execute("PRAGMA table_info(agent_chat_sessions)")
                 )
-            except sqlite3.Error:
+            except sqlite3.Error as exc:
+                log.debug(
+                    "cost read model: cannot inspect agent chat surface column (%s)",
+                    exc,
+                )
                 session_has_surface = False
             columns = "session_id, title, provider, model"
             if session_has_surface:
