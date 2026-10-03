@@ -46,7 +46,7 @@ import { useEventStore } from "@/store/events";
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { RetireButton } from "./RetireButton";
 import { CapabilityChip } from "../CapabilityChip";
-import { useAgentActivity, useAgentSkills, type AgentActivity } from "../cardData";
+import { useAgentActivity, useAgentSkills, usePromoteAgentSkill, type AgentActivity } from "../cardData";
 import { AGENT_APPROVAL_MODES, PERMISSION_CEILINGS, fetchSocietyProviders, type AgentApprovalMode } from "@/lib/societyApi";
 
 import {
@@ -221,12 +221,15 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
   const capabilities = useSocietyCapabilities();
   const activity = useAgentActivity(agent.agentId);
   const skills = useAgentSkills(agent.agentId);
+  const promoteSkill = usePromoteAgentSkill(agent.agentId);
   const setPaused = useSetAgentPaused();
   const computers = useComputers();
   const remoteComputer = agent.computerId
     ? (computers.data ?? []).find((c) => c.id === agent.computerId) ?? null
     : null;
   const [busy, setBusy] = useState(false);
+  const [skillReviewError, setSkillReviewError] = useState("");
+  const [skillReviewSlug, setSkillReviewSlug] = useState<string | null>(null);
   const byId = useMemo(() => {
     const map = new Map<string, Capability>();
     for (const c of capabilities.data ?? []) map.set(c.id, c);
@@ -270,6 +273,19 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
       await setPaused(agent, !paused);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const reviewLearnedSkill = async (slug: string) => {
+    setSkillReviewError("");
+    setSkillReviewSlug(slug);
+    try {
+      await promoteSkill.mutateAsync(slug);
+      useEventStore.getState().setActiveSection("skills");
+    } catch (error) {
+      setSkillReviewError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSkillReviewSlug(null);
     }
   };
 
@@ -345,25 +361,42 @@ export function AgentSpecSheet({ agent, onOpenChat, onRetired }: AgentSpecSheetP
 
           {learned.length > 0 ? (
             <section>
-              <h3 className="ac-head mb-2.5">{t("society.card.learned")}</h3>
+              <h3 className="ac-head mb-2">{t("society.card.learned")}</h3>
+              <p className="ac-prose mb-2.5 text-xs leading-relaxed text-muted-foreground">
+                {t("society.card.learned_review_hint")}
+              </p>
               <ul className="flex flex-wrap gap-3">
                 {learned.map((skill) => (
-                  <CapabilityTile
-                    key={skill.slug}
-                    id={`skill:${skill.slug}`}
-                    capability={{
-                      id: `skill:${skill.slug}`,
-                      kind: "skill",
-                      label: skill.name,
-                      one_liner: skill.whenToUse || skill.description,
-                      risk_tier: "safe",
-                      connected: true,
-                      tool_name: "",
-                    }}
-                    palette={agent.palette}
-                  />
+                  <li key={skill.slug} className="flex max-w-52 flex-col gap-1.5">
+                    <CapabilityTile
+                      id={`skill:${skill.slug}`}
+                      capability={{
+                        id: `skill:${skill.slug}`,
+                        kind: "skill",
+                        label: skill.name,
+                        one_liner: skill.whenToUse || skill.description,
+                        risk_tier: "safe",
+                        connected: true,
+                        tool_name: "",
+                      }}
+                      palette={agent.palette}
+                    />
+                    <button
+                      type="button"
+                      disabled={skillReviewSlug !== null}
+                      onClick={() => void reviewLearnedSkill(skill.slug)}
+                      className="rounded-md border border-border px-2 py-1 text-left text-xs font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                    >
+                      {skillReviewSlug === skill.slug
+                        ? t("society.card.learned_reviewing")
+                        : t("society.card.learned_review")}
+                    </button>
+                  </li>
                 ))}
               </ul>
+              {skillReviewError ? (
+                <p role="alert" className="mt-2 text-xs text-destructive">{skillReviewError}</p>
+              ) : null}
             </section>
           ) : null}
 

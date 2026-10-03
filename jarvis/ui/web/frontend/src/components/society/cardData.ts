@@ -14,7 +14,7 @@ export { describeTrigger } from "@/lib/triggerDescription";
  * card treats them as enrichment and never blocks on them.
  */
 import { useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 const routineListeners = new Set<(agentId: string) => void>();
 
@@ -174,6 +174,43 @@ export function useAgentSkills(agentId: string | null) {
         description: String(s.description ?? ""),
         whenToUse: String(s.when_to_use ?? ""),
       }));
+    },
+  });
+}
+
+/**
+ * Put one private learned skill into the global Skills catalog as a draft.
+ *
+ * A 409 means the exact promoted target already exists. For the model-card
+ * review flow that is success: the next step is still to open Skills and let
+ * the person inspect/activate the draft there.
+ */
+export async function promoteAgentSkillForReview(agentId: string, slug: string): Promise<void> {
+  const response = await fetch(
+    `/api/society/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(slug)}/promote`,
+    { method: "POST" },
+  );
+  if (response.ok || response.status === 409) return;
+  const body = (await response.json().catch(() => null)) as { detail?: unknown } | null;
+  const detail = body?.detail;
+  const message =
+    typeof detail === "string"
+      ? detail
+      : detail && typeof detail === "object" && "reason" in detail
+        ? String((detail as { reason?: unknown }).reason ?? "")
+        : "";
+  throw new Error(message || `HTTP ${response.status}`);
+}
+
+export function usePromoteAgentSkill(agentId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => promoteAgentSkillForReview(agentId, slug),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ["society", "agent-skills", agentId] }),
+        client.invalidateQueries({ queryKey: ["skills"] }),
+      ]);
     },
   });
 }

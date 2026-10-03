@@ -1,8 +1,9 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   describeTrigger,
   displayRoutineTitle,
+  promoteAgentSkillForReview,
   routineScheduleLine,
 } from "@/components/society/cardData";
 
@@ -22,6 +23,10 @@ const phrases: Record<string, string> = {
 };
 
 const t = (key: string) => phrases[key] ?? key;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("displayRoutineTitle", () => {
   test("strips the scheduler's agent prefix", () => {
@@ -67,4 +72,32 @@ describe("routineScheduleLine", () => {
 test("calendar display preserves the saved zone instead of converting to the viewer zone", () => {
   expect(describeTrigger({ type: "calendar", local_time: "08:00", timezone: "America/Los_Angeles" }, t))
     .toBe("Every day at 08:00 · America/Los_Angeles");
+});
+
+
+describe("promoteAgentSkillForReview", () => {
+  test("copies the learned skill through the governed draft endpoint", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ state: "draft" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetcher);
+
+    await promoteAgentSkillForReview("Scout Agent", "thumbnail-style");
+
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/society/agents/Scout%20Agent/skills/thumbnail-style/promote",
+      { method: "POST" },
+    );
+  });
+
+  test("treats an existing promoted draft as ready for review", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 409 })));
+    await expect(promoteAgentSkillForReview("scout", "thumbnail-style")).resolves.toBeUndefined();
+  });
+
+  test("surfaces a real promotion failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ detail: { reason: "target_unknown" } }),
+      { status: 404 },
+    )));
+    await expect(promoteAgentSkillForReview("scout", "missing")).rejects.toThrow("target_unknown");
+  });
 });

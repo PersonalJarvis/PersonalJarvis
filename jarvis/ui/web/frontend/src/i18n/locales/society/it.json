@@ -17,6 +17,11 @@
     "office": {
       "reduced_motion": "Riduci movimento è attivo. Il piano 3D animato è in pausa; il Registro mantiene disponibile la stessa attività degli agenti senza movimento.",
       "ledger": "Apri registro"
+    },
+    "card": {
+      "learned_review_hint": "Le skill apprese private restano istruzioni consultive. Inviane una a Skills come bozza per revisionarla prima dell'attivazione globale.",
+      "learned_review": "Rivedi in Skills",
+      "learned_reviewing": "Preparazione bozza…"
     }
   }
 }
