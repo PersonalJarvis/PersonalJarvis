@@ -106,14 +106,15 @@ export function SocietyLedger() {
         ) : (
           <div className="overflow-x-auto px-5 py-4">
             <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+              <caption className="sr-only">{t("society.ledger.title")}</caption>
               <thead className="text-muted-foreground">
                 <tr className="border-b border-border">
-                  <th className="px-2 py-2 font-medium">{t("society.ledger.time")}</th>
-                  <th className="px-2 py-2 font-medium">{t("society.ledger.type")}</th>
-                  <th className="px-2 py-2 font-medium">{t("society.ledger.from")}</th>
-                  <th className="px-2 py-2 font-medium">{t("society.ledger.to")}</th>
-                  <th className="px-2 py-2 font-medium">{t("society.ledger.detail")}</th>
-                  <th className="px-2 py-2 text-right font-medium">{t("society.ledger.cost")}</th>
+                  <th scope="col" className="px-2 py-2 font-medium">{t("society.ledger.time")}</th>
+                  <th scope="col" className="px-2 py-2 font-medium">{t("society.ledger.type")}</th>
+                  <th scope="col" className="px-2 py-2 font-medium">{t("society.ledger.from")}</th>
+                  <th scope="col" className="px-2 py-2 font-medium">{t("society.ledger.to")}</th>
+                  <th scope="col" className="px-2 py-2 font-medium">{t("society.ledger.detail")}</th>
+                  <th scope="col" className="px-2 py-2 text-right font-medium">{t("society.ledger.cost")}</th>
                 </tr>
               </thead>
               <tbody>
