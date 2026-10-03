@@ -17,10 +17,11 @@ import {
   X,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+import { Badge, badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { TabBar } from "@/components/layout/SectionTabBar";
 import { ViewHeader } from "@/views/ChatsView";
 import {
   GithubSignInDialog,
@@ -292,8 +293,10 @@ export function MarketplaceView() {
       }
       return res.json();
     },
-    onSuccess: (result) => {
-      setOpenEntry(null);
+    onSuccess: (result, installed) => {
+      // Close the sheet only if it still shows what was installed — the person
+      // may have moved on to another entry while the request ran.
+      setOpenEntry((current) => (current?.name === installed.name ? null : current));
       setLanding(result);
       // Everything that lists installed things must reflect the new arrival.
       queryClient.invalidateQueries({ queryKey: ["marketplace-community"] });
@@ -303,16 +306,22 @@ export function MarketplaceView() {
   });
 
   const openDetail = (entry: Entry) => {
-    // An error from a previous entry's install must not follow the sheet.
-    install.reset();
+    // An error from a previous entry's install must not follow the sheet; a
+    // running install keeps its state so its spinner and toast stay honest.
+    if (!install.isPending) install.reset();
     setOpenEntry(entry);
   };
 
   // "/" jumps into the search, the way every storefront with a search does —
-  // unless the person is already typing somewhere.
+  // unless the person is already typing somewhere, or a modal layer is open
+  // (focus must not escape into the page behind it).
+  const modalOpen = openEntry !== null || studioOpen || signInOpen;
+  const modalOpenRef = useRef(modalOpen);
+  modalOpenRef.current = modalOpen;
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (modalOpenRef.current) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable='true']")) return;
       event.preventDefault();
@@ -355,6 +364,9 @@ export function MarketplaceView() {
   const status = data?.status;
   const offline = status === "stale" || status === "unavailable";
   const ready = !isLoading && !error && localeReady;
+  // Switched off, or unreachable with nothing cached: there is no shelf to
+  // invite anybody onto, so the page says only that.
+  const indexDown = entries.length === 0 && (status === "disabled" || status === "unavailable");
   const frontPage = kindFilter === "all" && !needle;
 
   const clearAll = () => {
@@ -408,22 +420,22 @@ export function MarketplaceView() {
         }
       />
 
-      <div className="shrink-0 border-b border-border px-8 pb-3">
-        <div className="flex w-full max-w-6xl flex-wrap items-center gap-3">
-          <SearchField
-            inputRef={searchRef}
-            value={query}
-            onChange={setQuery}
-            placeholder={t("marketplace.search_placeholder")}
-            clearLabel={t("marketplace.empty_clear")}
-          />
-          <FilterChips
+      <div className="shrink-0 border-b border-border px-8">
+        <div className="flex w-full max-w-6xl flex-wrap items-center gap-x-6 gap-y-2">
+          <FilterTabs
             active={kindFilter}
             onChange={setKindFilter}
             counts={counts}
             showInstalled={localeReady && entries.some((e) => e.installed)}
             showMine={localeReady && login !== null}
             t={t}
+          />
+          <SearchField
+            inputRef={searchRef}
+            value={query}
+            onChange={setQuery}
+            placeholder={t("marketplace.search_placeholder")}
+            clearLabel={t("marketplace.empty_clear")}
           />
         </div>
       </div>
@@ -482,17 +494,11 @@ export function MarketplaceView() {
             />
           )}
 
-          {ready && frontPage && (
-            <Hero
-              login={login}
-              publishEnabled={publishEnabled}
-              onPublish={() => setStudioOpen(true)}
-              onSignIn={() => setSignInOpen(true)}
-              t={t}
-            />
+          {ready && frontPage && !indexDown && (
+            <Hero publishEnabled={publishEnabled} t={t} />
           )}
 
-          {ready && entries.length === 0 && (status === "disabled" || status === "unavailable") && (
+          {ready && indexDown && (
             <EmptyState
               icon={status === "disabled" ? <Store /> : <AlertTriangle />}
               title={
@@ -506,9 +512,7 @@ export function MarketplaceView() {
             />
           )}
 
-          {ready &&
-            visible.length === 0 &&
-            !(entries.length === 0 && (status === "disabled" || status === "unavailable")) && (
+          {ready && visible.length === 0 && !indexDown && (
             <NoResults
               query={query.trim()}
               filter={kindFilter}
@@ -539,7 +543,7 @@ export function MarketplaceView() {
             </Shelf>
           )}
 
-          {ready && visible.length > 0 && (
+          {ready && visible.length > 0 && !indexDown && (
             <PublishInvite
               enabled={publishEnabled}
               onPublish={() => setStudioOpen(true)}
@@ -558,8 +562,12 @@ export function MarketplaceView() {
             setOpenEntry(null);
             setActiveSection(HOME_SECTION[openEntry.kind]);
           }}
-          installing={install.isPending}
-          installError={install.error ? (install.error as Error).message : null}
+          installing={install.isPending && install.variables?.name === openEntry.name}
+          installError={
+            install.error && install.variables?.name === openEntry.name
+              ? (install.error as Error).message
+              : null
+          }
           t={t}
         />
       )}
@@ -617,7 +625,7 @@ function SearchField({
   clearLabel: string;
 }) {
   return (
-    <div className="relative min-w-[240px] flex-1">
+    <div className="relative my-1.5 min-w-[240px] max-w-md flex-1 sm:ml-auto">
       <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
       <input
         ref={inputRef}
@@ -665,7 +673,8 @@ function SearchField({
   );
 }
 
-function FilterChips({
+/** The kind switch: the house underline tabs, each with its live count. */
+function FilterTabs({
   active,
   onChange,
   counts,
@@ -680,46 +689,23 @@ function FilterChips({
   showMine: boolean;
   t: Translate;
 }) {
-  const chips: { id: KindFilter; label: string }[] = [
-    { id: "all", label: t("marketplace.filter_all") },
-    { id: "plugin", label: t("marketplace.filter_plugins") },
-    { id: "skill", label: t("marketplace.filter_skills") },
-  ];
-  if (showInstalled || active === "installed") {
-    chips.push({ id: "installed", label: t("marketplace.installed") });
-  }
-  if (showMine) chips.push({ id: "mine", label: t("marketplace.filter_mine") });
+  const ids: KindFilter[] = ["all", "plugin", "skill"];
+  if (showInstalled || active === "installed") ids.push("installed");
+  if (showMine) ids.push("mine");
+  const label: Record<KindFilter, string> = {
+    all: t("marketplace.filter_all"),
+    plugin: t("marketplace.filter_plugins"),
+    skill: t("marketplace.filter_skills"),
+    installed: t("marketplace.installed"),
+    mine: t("marketplace.filter_mine"),
+  };
   return (
-    <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-card p-0.5">
-      {chips.map((chip) => {
-        const on = active === chip.id;
-        return (
-          <button
-            key={chip.id}
-            type="button"
-            onClick={() => onChange(chip.id)}
-            aria-pressed={on}
-            className={cn(
-              "flex h-7 items-center rounded-md px-2.5 text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              on
-                ? "bg-secondary text-foreground-strong"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {chip.label}
-            <span
-              className={cn(
-                "ml-1.5 text-xs tabular-nums",
-                on ? "text-muted-foreground" : "text-foreground-faint",
-              )}
-            >
-              {counts[chip.id]}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+    <TabBar
+      tabs={ids.map((id) => ({ id, label: label[id], count: counts[id] }))}
+      active={active}
+      onChange={(id) => onChange(id as KindFilter)}
+      className="shrink-0 border-b-0"
+    />
   );
 }
 
@@ -738,7 +724,7 @@ function Shelf({
   return (
     <section className="mb-10 last:mb-0">
       <div className="mb-3 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <h3 className="text-lg font-semibold text-foreground-strong">{title}</h3>
+        <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
         <span className="text-sm tabular-nums text-muted-foreground">{count}</span>
         <span className="w-full text-sm text-muted-foreground sm:ml-2 sm:w-auto">{hint}</span>
       </div>
@@ -751,7 +737,7 @@ const GRID = "grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%
 
 function SkeletonGrid() {
   return (
-    <div aria-hidden data-testid="marketplace-skeleton">
+    <div role="status" aria-busy="true" data-testid="marketplace-skeleton">
       <div className="mb-3 h-5 w-32 rounded bg-secondary" />
       <div className={GRID}>
         {Array.from({ length: 6 }, (_, index) => (
@@ -780,6 +766,8 @@ function SkeletonGrid() {
 // white app-icon surface, else the Simple Icons glyph on the brand's own
 // colour, else a monogram on that colour.
 const DEFAULT_BRAND_TILE = "#3F3F46";
+/** Bundled marks drawn in white; on the white app-icon surface they invert. */
+const INVERTED_MARKS = new Set(["github", "vercel", "notion", "cal_com"]);
 
 /** A glyph colour that stays legible on the tile (a few brands are near-white). */
 function glyphColor(tileHex: string): string {
@@ -848,6 +836,7 @@ function EntryMark({ entry, size = "md" }: { entry: Entry; size?: "md" | "lg" })
           alt=""
           loading="lazy"
           className={cn(
+            onWhite && INVERTED_MARKS.has(entry.name.replace(/-/g, "_")) && "invert",
             onWhite
               ? size === "lg"
                 ? "h-8 w-8"
@@ -863,17 +852,25 @@ function EntryMark({ entry, size = "md" }: { entry: Entry; size?: "md" | "lg" })
   );
 }
 
-/** The state an entry is in, as one small label — or nothing when it is just on the shelf. */
+/**
+ * The state an entry is in, as one small label — or nothing when it is just
+ * on the shelf. A `<span>` with the badge recipe, because it sits inside the
+ * card's `<button>`, which allows phrasing content only.
+ */
 function EntryState({ entry, t }: { entry: Entry; t: Translate }) {
   if (entry.updateAvailable) {
-    return <Badge variant="accent">{t("marketplace.update_available")}</Badge>;
+    return (
+      <span className={cn(badgeVariants({ variant: "accent" }), "shrink-0")}>
+        {t("marketplace.update_available")}
+      </span>
+    );
   }
   if (entry.installed) {
     return (
-      <Badge variant="success">
+      <span className={cn(badgeVariants({ variant: "success" }), "shrink-0")}>
         <Check />
         {t("marketplace.installed")}
-      </Badge>
+      </span>
     );
   }
   return null;
@@ -939,14 +936,14 @@ function EntryCard({
         </div>
         <EntryState entry={entry} t={t} />
       </div>
-      <p
+      <span
         className={cn(
           "line-clamp-2 min-h-[40px] text-base",
           entry.description || entry.broken ? "text-muted-foreground" : "italic text-foreground-faint",
         )}
       >
         {description}
-      </p>
+      </span>
       <div className="mt-auto flex w-full items-center gap-2 text-xs text-muted-foreground">
         <span className="min-w-0 flex-1 truncate tabular-nums">{meta.join(" · ")}</span>
         <ChevronRight className="h-4 w-4 shrink-0 text-foreground-faint transition-colors group-hover:text-foreground" />
@@ -1023,50 +1020,24 @@ function NoResults({
 }
 
 /**
- * The storefront's opening line: what this shelf is, and — only when the app
- * can actually do it — the door to publish under a GitHub name. Drawn on the
- * unfiltered front page only, so a search never scrolls past it.
+ * The storefront's opening line: what this shelf is and how it is vetted.
+ * Drawn on the unfiltered front page only, so a search never scrolls past
+ * it. It carries no buttons — Publish lives in the header and at the foot of
+ * the page, and a third copy here only made the page louder.
  */
-function Hero({
-  login,
-  publishEnabled,
-  onPublish,
-  onSignIn,
-  t,
-}: {
-  login: string | null;
-  publishEnabled: boolean;
-  onPublish: () => void;
-  onSignIn: () => void;
-  t: Translate;
-}) {
+function Hero({ publishEnabled, t }: { publishEnabled: boolean; t: Translate }) {
   return (
     <section
-      className="mb-8 flex flex-wrap items-center gap-x-8 gap-y-4 rounded-lg border border-border bg-card px-5 py-4 shadow-rim"
+      className="mb-8 rounded-lg border border-border bg-card px-5 py-4 shadow-rim"
       data-testid="marketplace-hero"
     >
-      <div className="min-w-0 flex-1 basis-[420px]">
-        <p className="text-xs font-medium text-accent">{t("marketplace.hero_eyebrow")}</p>
-        <h2 className="mt-0.5 text-lg font-semibold text-foreground-strong">
-          {t("marketplace.hero_title")}
-        </h2>
-        <p className="mt-1 max-w-2xl text-base text-muted-foreground">
-          {publishEnabled ? t("marketplace.hero_body") : t("marketplace.hero_body_browse")}
-        </p>
-      </div>
-      {publishEnabled && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {!login && (
-            <Button size="sm" variant="outline" onClick={onSignIn}>
-              {t("marketplace.identity_sign_in")}
-            </Button>
-          )}
-          <Button size="sm" onClick={onPublish} data-testid="hero-publish">
-            <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
-            {login ? t("marketplace.hero_publish_signed_in") : t("marketplace.publish_cta")}
-          </Button>
-        </div>
-      )}
+      <p className="text-xs font-medium text-accent">{t("marketplace.hero_eyebrow")}</p>
+      <h2 className="mt-0.5 text-lg font-semibold text-foreground-strong">
+        {t("marketplace.hero_title")}
+      </h2>
+      <p className="mt-1 max-w-2xl text-base text-muted-foreground">
+        {publishEnabled ? t("marketplace.hero_body") : t("marketplace.hero_body_browse")}
+      </p>
     </section>
   );
 }
@@ -1095,15 +1066,17 @@ function PublishInvite({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <Button
-          variant={enabled ? "ghost" : "outline"}
-          size="sm"
-          onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
-          title={t("marketplace.publish_on_web")}
-        >
-          {t("marketplace.publish_on_web")}
-          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-        </Button>
+        {!enabled && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
+            title={t("marketplace.publish_on_web")}
+          >
+            {t("marketplace.publish_on_web")}
+            <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+          </Button>
+        )}
         {enabled && (
           <Button size="sm" onClick={onPublish}>
             <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
@@ -1229,9 +1202,9 @@ function EntrySheet({
               <p className="text-xs text-muted-foreground">
                 {t(`marketplace.kind_${entry.kind}`)}
               </p>
-              <h3 id={titleId} className="truncate text-xl font-semibold text-foreground-strong">
+              <h2 id={titleId} className="truncate text-xl font-semibold text-foreground-strong">
                 {entry.title}
-              </h3>
+              </h2>
               {byline && <p className="truncate text-sm text-muted-foreground">{byline}</p>}
             </div>
             <Button
@@ -1318,7 +1291,16 @@ function EntrySheet({
               {contents.error && (
                 <p className="text-sm text-destructive">{(contents.error as Error).message}</p>
               )}
-              {contents.data && (
+              {contents.data?.error && (
+                <p
+                  role="alert"
+                  className="mb-2 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/[0.08] px-3 py-2 text-sm text-foreground"
+                >
+                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+                  {contents.data.error}
+                </p>
+              )}
+              {contents.data && !(contents.data.error && contents.data.files.length === 0) && (
                 <div className="overflow-hidden rounded-lg border border-border">
                   {contents.data.files.length === 0 && (
                     <p className="px-3 py-2.5 text-sm text-muted-foreground">
@@ -1369,10 +1351,10 @@ function SheetSection({
 }) {
   return (
     <section>
-      <h4 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-foreground-strong">
+      <h3 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-foreground-strong">
         {icon}
         {title}
-      </h4>
+      </h3>
       {children}
     </section>
   );

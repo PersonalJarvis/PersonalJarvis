@@ -421,6 +421,41 @@ describe("MarketplaceView", () => {
 
     expect(await screen.findAllByText(/switched off in this install/i)).toBeTruthy();
     expect(screen.queryByText(/Nothing is published in this category/i)).toBeNull();
+    // No invitation onto shelves that do not exist.
+    expect(screen.queryByTestId("marketplace-hero")).toBeNull();
+    expect(screen.queryByText(/Share what you built/i)).toBeNull();
+  });
+
+  it("says a package could not be read instead of claiming it has no files", async () => {
+    const fetchMock = installFetchMock();
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/contents")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ...CONTENTS, files: [], error: "The download timed out." }),
+        } as Response;
+      }
+      return base!(input, init);
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Three Bullet Brief"));
+
+    expect(await screen.findByText("The download timed out.")).toBeTruthy();
+    expect(screen.queryByText(/publishes no readable text files/i)).toBeNull();
+  });
+
+  it("keeps the search shortcut away from the page while the sheet is open", async () => {
+    installFetchMock();
+    renderView();
+    fireEvent.click(await screen.findByText("Sentry"));
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(window, { key: "/" });
+
+    expect(document.activeElement).not.toBe(screen.getByLabelText(/Search plugins/i));
   });
 
   it("filters to the signed-in account's own publications", async () => {
