@@ -1354,10 +1354,13 @@ async def resolve_approval(
     except KeyError as exc:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)}) from exc
     promoted: str | None = None
-    if body.approve and item.capability == MEMORY_SHARE_CAPABILITY:
+    if item.capability == MEMORY_SHARE_CAPABILITY:
         knowledge_id = int(item.action.get("knowledge_id") or 0)
         try:
-            promoted = await rt.memory.promote(knowledge_id)
+            if str(item.state) == "approved":
+                promoted = await rt.memory.promote(knowledge_id)
+            elif str(item.state) == "denied":
+                await rt.memory.dismiss(knowledge_id)
         except MemoryRefused as exc:
             raise HTTPException(409, {"reason": "blocked_by_policy", "detail": str(exc)}) from exc
     return {"approval": item.to_dict(), "promoted": promoted}

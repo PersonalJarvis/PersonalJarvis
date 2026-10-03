@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -116,6 +117,55 @@ async def test_curator_skips_plain_chat_completion(tmp_path: Path):
             _result(trace="curator:chat-only", output=["chat:society:scout"])
         )
         assert await rt.store.knowledge_for_source_event(stored.event_id) is None
+    finally:
+        await rt.close()
+
+
+@pytest.mark.asyncio
+async def test_memory_share_denial_closes_taint_and_cannot_be_reversed(tmp_path: Path):
+    from jarvis.ui.web.society_routes import ResolveApprovalBody, resolve_approval
+
+    rt = await _runtime(tmp_path)
+    try:
+        stored = await rt.store.append_and_publish(
+            _result(
+                trace="curator:deny",
+                output=["file:reports/deny.md"],
+                evidence=["https://example.test/source"],
+            )
+        )
+        row = await rt.store.knowledge_for_source_event(stored.event_id)
+        assert row is not None and row["reviewed"] == 0
+        approval = next(
+            item
+            for item in await rt.approvals.pending()
+            if int(item.action.get("knowledge_id") or 0) == int(row["id"])
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(society=rt))
+        )
+
+        denied = await resolve_approval(
+            approval.id,
+            ResolveApprovalBody(approve=False, note="not shared"),
+            request,
+        )
+        assert denied["approval"]["state"] == "denied"
+        assert denied["promoted"] is None
+        closed = await rt.store.knowledge_for_source_event(stored.event_id)
+        assert closed is not None and closed["reviewed"] == 1
+        assert not (rt.memory.root() / "society" / "shared").exists()
+
+        # Approval resolution is idempotent. A later opposite request cannot
+        # turn an already-denied review into an approved wiki promotion.
+        retried = await resolve_approval(
+            approval.id,
+            ResolveApprovalBody(approve=True, note="changed mind"),
+            request,
+        )
+        assert retried["approval"]["state"] == "denied"
+        assert retried["promoted"] is None
+        assert not (rt.memory.root() / "society" / "shared").exists()
     finally:
         await rt.close()
 
