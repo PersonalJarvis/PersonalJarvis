@@ -59,7 +59,7 @@ CREATE TABLE mission_events (
 _AGENT_CHAT_DDL = """
 CREATE TABLE agent_chat_sessions (
     session_id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,
-    created_ms INTEGER, updated_ms INTEGER
+    created_ms INTEGER, updated_ms INTEGER, surface TEXT NOT NULL DEFAULT 'agent'
 );
 CREATE TABLE agent_chat_events (
     session_id TEXT, seq INTEGER, ts_ms INTEGER, kind TEXT, payload TEXT
@@ -151,8 +151,8 @@ def _agent_chat_db(path: Path) -> None:
     conn.executescript(_AGENT_CHAT_DDL)
     conn.execute(
         "INSERT INTO agent_chat_sessions (session_id, title, provider, model, created_ms, "
-        "updated_ms) VALUES (?,?,?,?,?,?)",
-        ("chat-1", "Fix the build", "claude", "claude-opus-4-7-20251022", T0, T0),
+        "updated_ms, surface) VALUES (?,?,?,?,?,?,?)",
+        ("chat-1", "Fix the build", "claude", "claude-opus-4-7-20251022", T0, T0, "agent"),
     )
     conn.execute(
         "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) VALUES (?,?,?,?,?)",
@@ -219,6 +219,96 @@ def test_agent_chat_usage_is_bucketed_by_direction(sources: CostSources) -> None
     # Cache reads are their own bucket — billed at a fraction of input.
     assert entry.tokens_cached == 12_000
     assert entry.cost_usd == pytest.approx(0.31)
+
+
+
+def test_society_chat_is_a_distinct_cost_surface(tmp_path: Path) -> None:
+    path = tmp_path / "society-agent-chat.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(_AGENT_CHAT_DDL)
+    conn.execute(
+        "INSERT INTO agent_chat_sessions "
+        "(session_id, title, provider, model, created_ms, updated_ms, surface) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "society:scout",
+            "Scout",
+            "openai",
+            "gpt-5.6-sol",
+            T0,
+            T0,
+            "society",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "society:scout",
+            1,
+            T0 + 10_000,
+            "turn_finished",
+            json.dumps(
+                {
+                    "turn_id": "turn-society",
+                    "status": "done",
+                    "cost_usd": 0.12,
+                    "usage": {"input_tokens": 1000, "output_tokens": 200},
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_entries(CostSources(agent_chat_db=path))
+    assert len(rows) == 1
+    assert rows[0].surface == "society"
+    assert rows[0].role == "agent"
+    assert rows[0].ref_id == "society:scout"
+    assert rows[0].cost_usd == pytest.approx(0.12)
+
+
+def test_pre_surface_agent_chat_db_stays_backward_compatible(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-agent-chat.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE agent_chat_sessions (
+            session_id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,
+            created_ms INTEGER, updated_ms INTEGER
+        );
+        CREATE TABLE agent_chat_events (
+            session_id TEXT, seq INTEGER, ts_ms INTEGER, kind TEXT, payload TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_sessions VALUES (?,?,?,?,?,?)",
+        ("legacy", "Legacy", "openai", "gpt-5.6-sol", T0, T0),
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_events VALUES (?,?,?,?,?)",
+        (
+            "legacy",
+            1,
+            T0 + 10_000,
+            "turn_finished",
+            json.dumps(
+                {
+                    "status": "done",
+                    "cost_usd": 0.05,
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    rows = collect_entries(CostSources(agent_chat_db=path))
+    assert len(rows) == 1
+    assert rows[0].surface == "agent-chat"
 
 
 # ---------------------------------------------------------------------------

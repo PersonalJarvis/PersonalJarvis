@@ -133,6 +133,7 @@
           "to": "An",
           "detail": "Details",
           "cost": "Kosten",
+          "total_cost": "Erfasste Modellkosten",
           "board": "Board"
     },
     "world": {

@@ -243,6 +243,7 @@ export function priceSourceTone(source: PriceSource): "ok" | "warn" | "off" | "e
 export const ALL_SURFACES: CostSurface[] = [
   "voice",
   "agent-chat",
+  "society",
   "mission",
   "agentic-ide",
   "jarvis-voice",
@@ -277,6 +278,10 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
     surfaces: ["voice", "agent-chat", "mission", "background"],
     roles: ["realtime", "tool", "pipeline", "agent", "worker", "background"],
   },
+  // Canonical chats owned by Society agents. Kept separate from Jarvis'
+  // personal agent chat so the Society ledger and this page filter the exact
+  // same authoritative cost rows.
+  { id: "society", surfaces: ["society"], roles: ["agent"] },
   // The assistant's voice — the speech layer built around the brain: the
   // ears (speech to text) and the mouth (text to speech). Bills by audio
   // second and by character, never by token, which is why it is its own

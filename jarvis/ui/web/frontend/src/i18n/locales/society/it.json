@@ -11,6 +11,7 @@
       "to": "A",
       "detail": "Dettaglio",
       "cost": "Costo",
+      "total_cost": "Costo modelli registrato",
       "board": "Bacheca"
     }
   }

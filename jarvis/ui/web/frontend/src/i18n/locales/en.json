@@ -4872,6 +4872,7 @@
     "area": {
       "all": "Overall",
       "jarvis": "{name}",
+      "society": "Society",
       "agentic_ide": "Agentic IDE",
       "jarvis_voice": "{name} Voice"
     },
@@ -5010,6 +5011,7 @@
       "background": "Behind the scenes",
       "voice": "Voice",
       "agent_chat": "Agent chat",
+      "society": "Society",
       "mission": "Mission",
       "agentic_ide": "Agentic IDE",
       "jarvis_voice": "{name} Voice"

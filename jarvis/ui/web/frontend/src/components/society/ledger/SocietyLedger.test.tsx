@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { SocietyLedger, ledgerCost } from "./SocietyLedger";
+import { SocietyLedger, ledgerCost, ledgerTotalCost } from "./SocietyLedger";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 
@@ -23,10 +23,18 @@ function renderLedger() {
 }
 
 it("renders the durable society event history newest first with cost", async () => {
-  const fetchMock = vi.fn(async () => ({
-    ok: true,
-    json: async () => ({
-      events: [
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith("/api/costs/summary")) {
+      return {
+        ok: true,
+        json: async () => ({ totals: { cost_usd: 0.3142 } }),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        events: [
         {
           seq: 1,
           event_id: "open",
@@ -51,9 +59,10 @@ it("renders the durable society event history newest first with cost", async () 
           cost_usd: 0.0042,
           payload: { text: "Use the smaller one" },
         },
-      ],
-    }),
-  })) as unknown as typeof fetch;
+        ],
+      }),
+    };
+  }) as unknown as typeof fetch;
   vi.stubGlobal("fetch", fetchMock);
 
   renderLedger();
@@ -63,11 +72,17 @@ it("renders the durable society event history newest first with cost", async () 
   expect(rows[1].textContent).toContain("SAY");
   expect(rows[1].textContent).toContain("$0.0042");
   expect(rows[2].textContent).toContain("ROOM_OPEN");
+  expect(screen.getByTestId("society-ledger-total-cost").textContent).toContain("$0.31");
   expect(fetchMock).toHaveBeenCalledWith("/api/society/events?limit=200", { cache: "no-store" });
+  expect(fetchMock).toHaveBeenCalledWith("/api/costs/summary?days=0&surface=society", {
+    cache: "no-store",
+  });
 });
 
 it("keeps sub-cent spend visible instead of rounding it to zero", () => {
   expect(ledgerCost(0)).toBe("—");
   expect(ledgerCost(0.0042)).toBe("$0.0042");
   expect(ledgerCost(0.2)).toBe("$0.20");
+  expect(ledgerTotalCost(0)).toBe("$0.00");
+  expect(ledgerTotalCost(0.0042)).toBe("$0.0042");
 });

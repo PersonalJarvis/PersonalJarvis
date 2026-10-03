@@ -34,6 +34,7 @@ from .model import (
     SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
     SURFACE_AGENTIC_IDE,
+    SURFACE_SOCIETY,
     SURFACE_BACKGROUND,
     SURFACE_JARVIS_VOICE,
     SURFACE_MISSION,
@@ -337,10 +338,19 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
         if not _has_table(conn, "agent_chat_events"):
             return
         sessions: dict[str, sqlite3.Row] = {}
+        session_has_surface = False
         if _has_table(conn, "agent_chat_sessions"):
-            for row in conn.execute(
-                "SELECT session_id, title, provider, model FROM agent_chat_sessions"
-            ):
+            try:
+                session_has_surface = any(
+                    str(row["name"]) == "surface"
+                    for row in conn.execute("PRAGMA table_info(agent_chat_sessions)")
+                )
+            except sqlite3.Error:
+                session_has_surface = False
+            columns = "session_id, title, provider, model"
+            if session_has_surface:
+                columns += ", surface"
+            for row in conn.execute(f"SELECT {columns} FROM agent_chat_sessions"):
                 sessions[str(row["session_id"])] = row
 
         # ``turn_started`` is where the runner is named, and it is the only
@@ -412,9 +422,14 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 subscription=start.get("runner", "") in SUBSCRIPTION_RUNNERS,
                 tokens_cached=tokens_cached,
             )
+            chat_surface = (
+                str(session["surface"] or "")
+                if session is not None and session_has_surface
+                else ""
+            )
             yield CostEntry(
                 ts_ms=_int(row["ts_ms"]),
-                surface=SURFACE_AGENT_CHAT,
+                surface=SURFACE_SOCIETY if chat_surface == "society" else SURFACE_AGENT_CHAT,
                 role=ROLE_AGENT,
                 provider=provider,
                 model=model,

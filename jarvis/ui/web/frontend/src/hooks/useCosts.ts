@@ -29,6 +29,7 @@ export type CostRole =
 export type CostSurface =
   | "voice"
   | "agent-chat"
+  | "society"
   | "mission"
   | "agentic-ide"
   | "jarvis-voice"

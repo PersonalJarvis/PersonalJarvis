@@ -1,4 +1,8 @@
 {
+  "costs_view": {
+    "area": { "society": "Society" },
+    "surface": { "society": "Society" }
+  },
   "use_web_socket": {
     "society_approval_attention_one": "Un'approvazione agente richiede la tua attenzione.",
     "society_approval_attention_many": "{0} approvazioni agente richiedono la tua attenzione."

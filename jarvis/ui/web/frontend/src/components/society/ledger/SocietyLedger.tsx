@@ -13,9 +13,22 @@ async function fetchLedger(): Promise<SocietyEnvelope[]> {
   return Array.isArray(body.events) ? body.events : [];
 }
 
+async function fetchSocietyCost(): Promise<number> {
+  const res = await fetch("/api/costs/summary?days=0&surface=society", { cache: "no-store" });
+  if (!res.ok) throw new Error(`society cost ledger ${res.status}`);
+  const body = (await res.json()) as { totals?: { cost_usd?: number } };
+  const value = body.totals?.cost_usd;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
 export function ledgerCost(costUsd: number): string {
   if (!(costUsd > 0)) return "—";
-  return costUsd < 0.01 ? `$${costUsd.toFixed(4)}` : `$${costUsd.toFixed(2)}`;
+  return costUsd < 0.01 ? `${costUsd.toFixed(4)}` : `${costUsd.toFixed(2)}`;
+}
+
+export function ledgerTotalCost(costUsd: number): string {
+  if (!(costUsd > 0)) return "$0.00";
+  return costUsd < 0.01 ? `${costUsd.toFixed(4)}` : `${costUsd.toFixed(2)}`;
 }
 
 function detail(event: SocietyEnvelope): string {
@@ -36,17 +49,36 @@ export function SocietyLedger() {
     refetchInterval: 5_000,
     retry: false,
   });
+  const costQuery = useQuery({
+    queryKey: ["society", "ledger", "cost"],
+    queryFn: fetchSocietyCost,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+    retry: false,
+  });
   const events = [...(query.data ?? [])].reverse();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="society-ledger">
-      <div className="border-b border-border px-5 py-3">
-        <h2 className="font-display text-base font-semibold text-foreground">
-          {t("society.ledger.title")}
-        </h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {t("society.ledger.subtitle")}
-        </p>
+      <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-3">
+        <div>
+          <h2 className="font-display text-base font-semibold text-foreground">
+            {t("society.ledger.title")}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {t("society.ledger.subtitle")}
+          </p>
+        </div>
+        <div className="shrink-0 text-right" data-testid="society-ledger-total-cost">
+          <div className="text-[11px] text-muted-foreground">
+            {t("society.ledger.total_cost")}
+          </div>
+          <div className="font-mono text-sm font-medium text-foreground">
+            {costQuery.isLoading || costQuery.isError
+              ? "—"
+              : ledgerTotalCost(costQuery.data ?? 0)}
+          </div>
+        </div>
       </div>
       <ScrollArea className="min-h-0 flex-1">
         {query.isError ? (

@@ -133,6 +133,7 @@
           "to": "Para",
           "detail": "Detalle",
           "cost": "Coste",
+          "total_cost": "Coste de modelos registrado",
           "board": "Tablón"
     },
     "world": {

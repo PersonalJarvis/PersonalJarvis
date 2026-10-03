@@ -133,6 +133,7 @@
           "to": "To",
           "detail": "Detail",
           "cost": "Cost",
+          "total_cost": "Tracked model cost",
           "board": "Board"
     },
     "world": {

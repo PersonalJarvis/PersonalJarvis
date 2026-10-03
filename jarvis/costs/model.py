@@ -35,6 +35,10 @@ from typing import Any, Literal
 
 SURFACE_VOICE = "voice"
 SURFACE_AGENT_CHAT = "agent-chat"
+#: Canonical chats owned by Society agents. They share the agent-chat store,
+#: but are a distinct spend surface so the Society ledger and global Costs
+#: section read the same authoritative rows.
+SURFACE_SOCIETY = "society"
 SURFACE_MISSION = "mission"
 #: The speech layer. Its own surface because it does not bill by token:
 #: hearing costs audio seconds, speaking costs characters.
@@ -82,6 +86,7 @@ ROLES: tuple[str, ...] = (
 SURFACES: tuple[str, ...] = (
     SURFACE_VOICE,
     SURFACE_AGENT_CHAT,
+    SURFACE_SOCIETY,
     SURFACE_MISSION,
     SURFACE_AGENTIC_IDE,
     SURFACE_JARVIS_VOICE,
