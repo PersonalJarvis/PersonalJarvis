@@ -682,13 +682,21 @@ class TaskRunner:
             else:
                 assert self._brain is not None
                 try:
-                    result = await self._brain.run_task(
-                        prompt=prompt,
-                        allowed_tools=allowed_tools,
-                        model_tier=action.model_tier,
-                        trace_id=trace_id,
-                        prefer_api=owned_failed is not None,
-                    )
+                    if owned_failed is not None:
+                        result = await self._brain.run_task(
+                            prompt=prompt,
+                            allowed_tools=allowed_tools,
+                            model_tier=action.model_tier,
+                            trace_id=trace_id,
+                            prefer_api=True,
+                        )
+                    else:
+                        result = await self._brain.run_task(
+                            prompt=prompt,
+                            allowed_tools=allowed_tools,
+                            model_tier=action.model_tier,
+                            trace_id=trace_id,
+                        )
                 except Exception as exc:
                     if owned_failed is not None:
                         raise RuntimeError(
