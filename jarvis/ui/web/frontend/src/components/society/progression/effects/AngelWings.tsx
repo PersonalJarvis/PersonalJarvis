@@ -289,11 +289,11 @@ function GoldDust({ spread, paused }: { spread: { current: number }; paused: boo
 
 /** How open the wings rest in each figure mode (0 folded, 1 spread). */
 const SPREAD: Record<FigureMode, number> = {
-  idle: 0.55, walk: 0.32, work: 0, talk: 0.5, sit: 0, sleep: 0, celebrate: 1, wave: 0.9,
+  idle: 0.8, walk: 0.45, work: 0, talk: 0.75, sit: 0, sleep: 0, celebrate: 1, wave: 0.95,
 };
 
 /** The whole pair's size on the rig; the plan above is drawn at 1. */
-const WING_SCALE = 1.15;
+const WING_SCALE = 1.3;
 
 export interface WingMotion {
   /** True while the wearer is off the floor (a jump): the wings spread and beat. */
