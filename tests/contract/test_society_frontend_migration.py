@@ -15,6 +15,9 @@ def test_agents_deep_link_mounts_society_and_legacy_view_stays_removed() -> None
         encoding="utf-8"
     )
     events = (FRONTEND / "store" / "events.ts").read_text(encoding="utf-8")
+    society_view = (FRONTEND / "views" / "society" / "SocietyView.tsx").read_text(
+        encoding="utf-8"
+    )
 
     assert 'import("@/views/society/SocietyView")' in main_view
     assert re.search(
@@ -22,4 +25,6 @@ def test_agents_deep_link_mounts_society_and_legacy_view_stays_removed() -> None
         main_view,
     )
     assert '"agents",' in events
+    assert 'import { SocietyLedger }' in society_view
+    assert re.search(r'mode\\s*===\\s*"ledger".*?<SocietyLedger\\s*/>', society_view, re.S)
     assert not (FRONTEND / "views" / "AgentsView.tsx").exists()
