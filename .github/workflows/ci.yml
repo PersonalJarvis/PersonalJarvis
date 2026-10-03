@@ -228,6 +228,8 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
           python -m pip install -e ".[telephony]"
+      - name: Cold boot budget
+        run: python scripts/ci/check_boot_budget.py
       # Blocking and outside the ratchet on purpose: these pin contracts that
       # are cheap to break and expensive to notice (ADR-0011 router, AP-11
       # scrubber, AP-4 enum parity, the one turn-language resolver, skill
