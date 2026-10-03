@@ -111,7 +111,11 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
         const stayOnVoice = useHomeStore.getState().surface === "voice";
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {
-          void opened.then((messages) => seedTranscript(transcriptFromMessages(messages)));
+          void opened.then((messages) => {
+            const active = useEventStore.getState();
+            if (active.activeKind !== "voice" || active.activeThreadId !== row.id) return;
+            seedTranscript(transcriptFromMessages(messages));
+          });
         } else {
           void opened;
           setSurface("chat");
