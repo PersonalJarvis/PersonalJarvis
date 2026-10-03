@@ -22,7 +22,7 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from .companion import validate_avatar_companion
+from .companion import validate_avatar
 from .events import (
     AgentApprovalMode,
     AgentState,
@@ -373,10 +373,10 @@ def _coerce(field_name: str, value: Any) -> Any:
         if not isinstance(value, dict):
             raise RosterError(FailureReason.BLOCKED_BY_POLICY, "avatar must be an object")
         try:
-            value = validate_avatar_companion(value)
+            value = validate_avatar(value)
         except ValidationError as exc:
             raise RosterError(
-                FailureReason.BLOCKED_BY_POLICY, "invalid companion appearance"
+                FailureReason.BLOCKED_BY_POLICY, "invalid avatar appearance"
             ) from exc
         return json.dumps(value, ensure_ascii=False)
     if field_name == "approval_rules":
