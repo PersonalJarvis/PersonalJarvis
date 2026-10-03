@@ -457,6 +457,10 @@ class Picker(QObject):
     @staticmethod
     def _grab(screen) -> QPixmap | None:
         try:
+            from jarvis.appshot.region import preview_capture_allowed
+
+            if not preview_capture_allowed():
+                return None
             pixmap = screen.grabWindow(0)
         except Exception:  # noqa: BLE001 - no frozen frame: fall back to a live dim layer
             sys.stderr.write("appshot-picker: screen grab failed; using a live overlay\n")

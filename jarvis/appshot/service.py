@@ -105,19 +105,20 @@ async def take_appshot(
                 message="Appshots are switched off. Turn them on under Settings > Appshots.",
             )
         service = get_service(bus=bus)
+        capture_trace_id = trace_id or uuid.uuid4()
         if scope == "region":
-            picked = await _pick_area(service)
+            picked = await _pick_area(service, trace_id=capture_trace_id)
             if isinstance(picked, AppshotResult):
                 return picked
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
-                trace_id=trace_id or uuid.uuid4(),
+                trace_id=capture_trace_id,
                 region=picked,
             )
         else:
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
-                trace_id=trace_id or uuid.uuid4(),
+                trace_id=capture_trace_id,
             )
         if outcome.status != "captured" or outcome.context is None:
             return AppshotResult(
@@ -159,16 +160,24 @@ async def take_appshot(
     return AppshotResult(status="captured", shot=replace(shot, delivered_to=delivered_to))
 
 
-async def _pick_area(service: Any) -> tuple[int, int, int, int] | AppshotResult:
+async def _pick_area(
+    service: Any, *, trace_id: uuid.UUID | None = None,
+) -> tuple[int, int, int, int] | AppshotResult:
     """Run the area picker; the chosen rectangle, or the refusal to return."""
     from jarvis.appshot.region import (  # noqa: PLC0415
         RegionUnavailable,
         pick_region,
         selection_to_bbox,
     )
+    from jarvis.platform.screen_access import ScreenCaptureRefused
 
     try:
-        selection = await pick_region()
+        selection = await pick_region(trace_id=trace_id)
+    except ScreenCaptureRefused as exc:
+        log.info("appshot: area selection refused (%s)", exc.reason or "capture_permission")
+        return AppshotResult(
+            status="refused", reason_code="capture_permission", message=exc.user_detail,
+        )
     except RegionUnavailable as exc:  # reported to the caller as a refused appshot
         return AppshotResult(status="refused", reason_code="region_unavailable", message=str(exc))
     if selection is None:

@@ -34,6 +34,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 log = logging.getLogger(__name__)
 
@@ -404,7 +405,16 @@ async def _escape_cancels(proc: subprocess.Popen[str]) -> None:
         log.debug("appshot: global Escape for the area picker unavailable", exc_info=True)
 
 
-async def pick_region(*, timeout_s: float = PICK_TIMEOUT_S) -> Selection | None:
+def preview_capture_allowed() -> bool:
+    """A picker helper may read its grant silently, but must never request one."""
+    from jarvis.platform.screen_access import screen_recording_state, state_allows_capture
+
+    return state_allows_capture(screen_recording_state(deep=False))
+
+
+async def pick_region(
+    *, timeout_s: float = PICK_TIMEOUT_S, trace_id: UUID | None = None,
+) -> Selection | None:
     """Let the user drag a rectangle. ``None`` = cancelled or timed out.
 
     Raises :class:`RegionUnavailable` when no picker can run on this host.
@@ -417,6 +427,11 @@ async def pick_region(*, timeout_s: float = PICK_TIMEOUT_S) -> Selection | None:
         raise RegionUnavailable("An area is already being selected. Finish or press Esc first.")
     _picking = True
     try:
+        # This is the user gesture. Ask in the parent before even enumerating
+        # windows or starting a helper that freezes the desktop (AP-35).
+        from jarvis.platform.screen_access import require_screen_recording_async
+
+        await require_screen_recording_async("appshot", trace_id=trace_id)
         payload, code, timed_out = await _run_picker(timeout_s)
     finally:
         _picking = False
