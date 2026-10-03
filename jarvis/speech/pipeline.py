@@ -1984,8 +1984,6 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
     if not incoming:
         return current
 
-    current_words = current.split()
-    incoming_words = incoming.split()
     current_norm = _normalized_partial_words(current)
     incoming_norm = _normalized_partial_words(incoming)
 
@@ -1994,11 +1992,16 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
     if _is_likely_repeated_tail(current_norm, incoming_norm):
         return current
 
-    max_overlap = min(len(current_words), len(incoming_words))
+    max_overlap = min(len(current_norm), len(incoming_norm))
 
     for overlap in range(max_overlap, 0, -1):
         if current_norm[-overlap:] == incoming_norm[:overlap]:
-            return " ".join([*current_words, *incoming_words[overlap:]])
+            # Match and slice the SAME tokens. Whitespace splitting counts
+            # "read-only" once while the comparison counts it twice, which
+            # used to delete the next meaningful word from the live text.
+            spans = list(re.finditer(r"[\w']+", incoming, flags=re.UNICODE))
+            tail = incoming[spans[overlap - 1].end():].lstrip(",.;:!?、。，；：！？").lstrip()
+            return f"{current} {tail}" if tail else current
     if incoming.lower() in current.lower():
         return current
     if current.lower() in incoming.lower():
@@ -2007,11 +2010,11 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
 
 
 def _normalized_partial_words(text: str) -> list[str]:
-    words = re.findall(r"[\w']+", text.lower(), flags=re.UNICODE)
+    words = re.findall(r"[\w']+", text, flags=re.UNICODE)
     normalized: list[str] = []
     for word in words:
         word = (
-            word.replace("ä", "ae")
+            word.lower().replace("ä", "ae")
             .replace("ö", "oe")
             .replace("ü", "ue")
             .replace("ß", "ss")

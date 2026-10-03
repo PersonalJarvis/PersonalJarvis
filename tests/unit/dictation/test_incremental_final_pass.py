@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from jarvis.core.config import DictationConfig
-from jarvis.core.events import DictationCompleted
+from jarvis.core.events import DictationCompleted, DictationTranscript
 from jarvis.dictation.segment import next_quality_window, quality_windows
 from jarvis.speech.pipeline import SpeechPipeline
 from jarvis.speech.stt_fallback import FallbackSTT
@@ -239,6 +239,53 @@ async def test_a_short_recording_is_one_window_read_at_release(_no_preview: None
     assert _audit(events, "final_windows_prefetched") == 0
     assert _audit(events, "final_windows") == 1
     assert _completed(events).raw_text.startswith("alpha")
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+@pytest.mark.parametrize("polish_enabled", [False, True])
+async def test_final_delivery_preserves_content_after_window_seam(
+    _no_preview: None, concurrent: bool, polish_enabled: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Both provider answers are complete. The merger used to count "read-only"
+    # as two normalized words but discard two SPACE-separated words, losing
+    # the negation "never" before cleanup and delivery even got to see it.
+    stt = _CountingSTT(concurrent=concurrent, script=[
+        "Please keep all of these important files marked read only",
+        "read-only never delete any of the original files from this folder.",
+    ])
+    mic = _FakeMic(_voiced(6.0))
+    pipe, events = _session_pipeline(stt, mic, segment_seconds=0.0, partial_interval_s=0.0)
+    pipe._dictation_cfg.polish = polish_enabled
+    pipe._dictation_cfg.polish_min_words = 1
+    polish_inputs: list[str] = []
+
+    async def _identity_polish(raw: str, **_kwargs: Any) -> Any:
+        from jarvis.dictation.polish import PolishOutcome
+
+        polish_inputs.append(raw)
+        return PolishOutcome(
+            text=raw, status="unchanged", provider="fake", model="", latency_ms=0, reason="",
+        )
+
+    monkeypatch.setattr("jarvis.dictation.polish.polish_transcript", _identity_polish)
+    task = asyncio.create_task(pipe._dictation_session())
+    await asyncio.wait_for(mic.delivered.wait(), timeout=10)
+    pipe._dictation_stop_event.set()
+    await asyncio.wait_for(task, timeout=30)
+
+    expected = (
+        "Please keep all of these important files marked read only "
+        "never delete any of the original files from this folder."
+    )
+    assert stt.calls == 2
+    assert _completed(events).raw_text == expected
+    assert _completed(events).text == expected
+    final = next(e for e in events if isinstance(e, DictationTranscript) and e.is_final)
+    assert final.text == expected
+    if polish_enabled:
+        assert "never delete" in " ".join(polish_inputs)
+    else:
+        assert polish_inputs == []
 
 
 # --------------------------------------------------------------------------
