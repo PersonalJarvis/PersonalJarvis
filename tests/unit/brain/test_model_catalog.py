@@ -83,7 +83,7 @@ class TestProviderCatalog:
     def test_stt_providers_select_a_model(self) -> None:
         # Local "faster-whisper" was removed as a user-selectable STT provider
         # (v1.0.1); the cloud STT providers still each expose a model list.
-        for p in ("groq-api", "openai-api", "deepgram"):
+        for p in ("groq-api", "openai-api", "deepgram-api"):
             spec = catalog_spec(p)
             assert spec is not None, p
             assert spec.tier == "stt"
@@ -103,7 +103,7 @@ class TestProviderCatalog:
     @pytest.mark.asyncio
     async def test_list_models_for_stt_returns_models(self, tmp_path: Path) -> None:
         cat = ModelCatalog(cache_path=tmp_path / "c.json")
-        result = await cat.list_models("deepgram")
+        result = await cat.list_models("deepgram-api")
         assert result.selects == "model"
         assert any("nova" in m.id for m in result.models)
 
