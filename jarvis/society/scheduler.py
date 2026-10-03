@@ -198,7 +198,8 @@ class SocietyScheduler:
         if not had_claim:
             try:
                 room = await rooms.claim_turn(room_id, claim_id)
-            except RoomError:
+            except RoomError as exc:
+                log.debug("society room %s claim lost a concurrent race: %s", room_id, exc)
                 return
         try:
             run_id = await dispatch(target, room, claim_id)
