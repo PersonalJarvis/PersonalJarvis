@@ -616,9 +616,15 @@ type WorkTraceProps = {
    * and coding-pane traces keep the plain node.
    */
   companion?: boolean;
+  /**
+   * Steps that belong to this turn's work but are not blocks of it (a
+   * memory receipt posted after the turn). They sit on the trace above the
+   * reply and never below it.
+   */
+  extras?: { key: string; node: ReactNode }[];
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, extras }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
@@ -648,7 +654,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
   // While a turn runs, its replies and streaming pieces stay live rows; once
   // it is done, text before the answer reads as the timeline's narration and
-  // anything after the answer follows it.
+  // anything after the answer sits above it too: the answer is always last.
   const timeline = useTimeline(rail ? (split ? split.work : blocks) : NO_BLOCKS, status, live);
   const afterAnswer = useTimeline(rail && split ? split.after : NO_BLOCKS, status, live);
   const answerGroups = useMemo(() => rail && split ? groupConversationTrace(split.answer) : null, [rail, split]);
@@ -698,10 +704,21 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
         : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={text} /></div>,
       renderDetails: (block) => <ToolDetails block={block} />,
     };
+    const work = timelineItems(timeline, renderers);
+    // A live turn's streaming reply is the timeline's tail; extra steps go
+    // above it, as they go above the finished answer.
+    let extraAt = work.length;
+    if (!split) while (extraAt > 0 && !work[extraAt - 1].rail) extraAt--;
+    const extraItems: RailItem[] = (extras ?? []).map((extra) => ({ key: `extra:${extra.key}`, node: extra.node, rail: true }));
     const items: RailItem[] = [
-      ...timelineItems(timeline, renderers),
-      ...(answerGroups ? traceGroupItems({ groups: answerGroups, ...groupProps }) : []),
+      ...work.slice(0, extraAt),
+      ...extraItems,
+      ...work.slice(extraAt),
+      // Work that came after the reply is still work: it goes above the
+      // reply, which is always the last thing the turn shows (maintainer,
+      // 2026-10-03 — nobody should scroll back up to find the answer).
       ...timelineItems(afterAnswer, renderers),
+      ...(answerGroups ? traceGroupItems({ groups: answerGroups, ...groupProps }) : []),
     ];
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
     items.push(statusItem);
@@ -719,6 +736,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       {classicGroups(groups)}
       {foldedError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{foldedError}</p> : null}
     </ConversationWorkFold> : classicGroups(groups)}
+    {extras?.map((extra) => <Fragment key={`extra:${extra.key}`}>{extra.node}</Fragment>)}
     {restGroups ? classicGroups(restGroups) : null}
     {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
     <div role="status" aria-live="polite" className={cn("flex flex-wrap items-center gap-2 text-xs text-muted-foreground", conversation ? "px-1 pb-2 pt-1" : "border-t border-border pt-3", status === "error" && "text-destructive")}>
@@ -730,7 +748,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; extras?: WorkTraceProps["extras"] }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());
