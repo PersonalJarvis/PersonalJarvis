@@ -1,6 +1,6 @@
 # JARVIS-LAB next remote frontier
 
-Verified on 2026-10-04: `jarvis-lab` HEAD `f558b692` has a successful GitHub Actions run (`37189140518`), and PR #1 remains open and draft.
+Verified on 2026-10-04: `jarvis-lab` HEAD `f30c79f8` has a successful GitHub Actions run (`37204211506`), and PR #1 remains open and draft.
 
 M4 room scheduling is no longer the next unblocked task. The branch now carries bounded live-room scheduling through the existing `SocietyScheduler`, restart recovery, voice completion/status, curator review/taint invariants, and blocking exit contracts. M5 hardening guards are also present for legacy Agents routing, Jarvis-only production seeding, capability-driven teammate proposals, the canonical Society cost surface, locale/enum parity, boot budget, and Ledger accessibility.
 
