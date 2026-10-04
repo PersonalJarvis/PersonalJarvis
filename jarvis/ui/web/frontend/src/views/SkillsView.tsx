@@ -601,6 +601,7 @@ function SkillRow({
   const t = useT();
   const locale = useUiLanguage();
   const broken = isBrokenDraft(skill);
+  const needsReview = skill.state === "draft" && !broken;
   const on = isSkillOn(skill.state);
   const selectable = selectionMode && !skill.is_builtin;
   const reason = "reason" in skill ? skill.reason : undefined;
@@ -654,6 +655,14 @@ function SkillRow({
             <AlertTriangle className="h-3.5 w-3.5" />
             {t("skills_view.error")}
           </span>
+        ) : needsReview ? (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="rounded-md border border-border bg-background px-2 py-1 text-micro font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            {t("skills_view.review_draft")}
+          </button>
         ) : (
           <Switch
             checked={on}
@@ -992,6 +1001,7 @@ function SkillDetailPage({
   }
 
   const broken = isBrokenDraft(data);
+  const needsReview = data.state === "draft" && !broken;
   const on = isSkillOn(data.state);
   const fm = (data.frontmatter ?? {}) as Record<string, unknown>;
   const resourceFiles: { kind: ResourceKind; filename: string }[] = RESOURCE_KINDS.flatMap(
@@ -1062,18 +1072,35 @@ function SkillDetailPage({
           }
           actions={
             <>
-              {!broken && (
-                <Switch
-                  checked={on}
+              {needsReview ? (
+                <Button
+                  size="sm"
+                  className="gap-1.5"
                   disabled={setEnabled.isPending}
-                  onCheckedChange={(next) =>
+                  onClick={() =>
                     setEnabled.mutate(
-                      { name: data.name, enabled: next },
-                      { onSuccess: () => refetch() },
+                      { name: data.name, enabled: true },
+                      { onSuccess: () => void refetch() },
                     )
                   }
-                  aria-label={`${data.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
-                />
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  {t("skills_view.approve_draft")}
+                </Button>
+              ) : (
+                !broken && (
+                  <Switch
+                    checked={on}
+                    disabled={setEnabled.isPending}
+                    onCheckedChange={(next) =>
+                      setEnabled.mutate(
+                        { name: data.name, enabled: next },
+                        { onSuccess: () => void refetch() },
+                      )
+                    }
+                    aria-label={`${data.name}: ${on ? t("skills_view.on") : t("skills_view.off")}`}
+                  />
+                )
               )}
               <ActionMenu
                 label={t("skills_view.more_actions")}
@@ -1087,6 +1114,20 @@ function SkillDetailPage({
             </>
           }
         />
+
+        {needsReview && (
+          <div
+            className="mt-4 rounded-md border border-border bg-muted p-3"
+            role="status"
+          >
+            <p className="text-xs font-medium text-foreground">
+              {t("skills_view.review_draft_title")}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("skills_view.review_draft_body")}
+            </p>
+          </div>
+        )}
 
         {data.description && (
           <ClampedText
