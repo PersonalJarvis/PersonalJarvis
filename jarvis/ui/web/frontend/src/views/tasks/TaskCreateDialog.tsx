@@ -320,11 +320,20 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                     <Segmented
                       size="sm"
                       value={whenKey}
-                      onChange={setWhenKey}
+                      onChange={(next) => {
+                        setWhenKey(next);
+                        // External webhook payloads are appended as untrusted data
+                        // to agent prompts. Start a GitHub preset there instead of
+                        // Computer-Use, whose prompt only interpolates explicit ctx.
+                        if (next === "github_pr_merged" && thenKind === "computer_use") {
+                          setThenKind("agent");
+                        }
+                      }}
                       options={[
                         { id: "mission_succeeded", label: t("tasks_view.create.when_mission_succeeded") },
                         { id: "mission_failed", label: t("tasks_view.create.when_mission_failed") },
                         { id: "mission_cancelled", label: t("tasks_view.create.when_mission_cancelled") },
+                        { id: "github_pr_merged", label: t("tasks_view.create.when_github_pr_merged") },
                       ]}
                     />
                   </div>
@@ -374,7 +383,11 @@ export function TaskCreateDialog({ onClose, initialDraft }: TaskCreateDialogProp
                   />
                 </Field>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t("tasks_view.create.when_then_hint")}
+                  {t(
+                    whenKey === "github_pr_merged"
+                      ? "tasks_view.create.when_github_pr_merged_hint"
+                      : "tasks_view.create.when_then_hint",
+                  )}
                 </p>
               </div>
             )}
