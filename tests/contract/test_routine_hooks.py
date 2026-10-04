@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from pydantic import ValidationError
 
 from jarvis.core.bus import EventBus
-from jarvis.tasks import webhook_auth
+from jarvis.tasks import external_auth, webhook_auth
 from jarvis.tasks.hook_inbox import MAX_PAYLOAD_BYTES, encode_payload, matches
 from jarvis.tasks.runner import TaskRunner
 from jarvis.tasks.scheduler import TaskScheduler
@@ -45,6 +45,7 @@ class Brain:
 async def world(tmp_path, monkeypatch):
     keys = {}
     monkeypatch.setattr(webhook_auth, "get_secret", keys.get)
+    monkeypatch.setattr(external_auth, "get_secret", keys.get)
 
     def save(key, value):
         keys[key] = value
