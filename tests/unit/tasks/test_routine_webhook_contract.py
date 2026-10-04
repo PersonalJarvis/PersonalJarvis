@@ -1,13 +1,15 @@
 """Focused contracts for external routine webhook connection metadata."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 from types import SimpleNamespace
 from uuid import uuid4
 
-import pytest
-from fastapi import HTTPException, Response
+from fastapi import Response
 
 from jarvis.tasks.schema import SpeakAction, TaskSpec, TriggerWebhook
+from jarvis.tasks.webhook_auth import verify_signature
 from jarvis.ui.web.routine_hooks_routes import (
     get_webhook_connection,
     rotate_webhook_connection,
@@ -33,10 +35,10 @@ def _request(spec: TaskSpec):
         "created_at_ns": 123,
     }
     state = SimpleNamespace(task_store=_Store(spec, row), task_scheduler=object())
-    return SimpleNamespace(app=SimpleNamespace(state=state))
+    return SimpleNamespace(app=SimpleNamespace(state=state)), row
 
 
-async def test_github_connection_reports_provider_secret_not_bearer_token(monkeypatch) -> None:
+async def test_github_connection_returns_hmac_signing_secret(monkeypatch) -> None:
     task_id = uuid4()
     spec = TaskSpec(
         id=task_id,
@@ -44,19 +46,27 @@ async def test_github_connection_reports_provider_secret_not_bearer_token(monkey
         trigger=TriggerWebhook(provider="github"),
         action=SpeakAction(text="Merged"),
     )
-    monkeypatch.setattr("jarvis.core.config.get_secret", lambda _slot: "configured-secret")
+    request, row = _request(spec)
+    secrets: dict[str, str] = {}
+    monkeypatch.setattr("jarvis.tasks.webhook_auth.get_secret", secrets.get)
+    monkeypatch.setattr(
+        "jarvis.tasks.webhook_auth.set_secret",
+        lambda slot, value: not secrets.__setitem__(slot, value),
+    )
 
     response = Response()
-    body = await get_webhook_connection(task_id, _request(spec), response)
+    body = await get_webhook_connection(task_id, request, response)
 
-    assert body["provider"] == "github"
-    assert body["configured"] is True
-    assert body["token"] == ""
+    assert body["token"]
     assert body["path"] == f"/api/tasks/hooks/{task_id}"
     assert response.headers["Cache-Control"] == "no-store"
 
+    raw = b'{"action":"closed","pull_request":{"merged":true}}'
+    digest = hmac.new(body["token"].encode(), raw, hashlib.sha256).hexdigest()
+    assert verify_signature(row, raw, "sha256=" + digest)
 
-async def test_github_connection_does_not_offer_generic_token_rotation() -> None:
+
+async def test_github_connection_rotation_revokes_old_signing_secret(monkeypatch) -> None:
     task_id = uuid4()
     spec = TaskSpec(
         id=task_id,
@@ -64,9 +74,20 @@ async def test_github_connection_does_not_offer_generic_token_rotation() -> None
         trigger=TriggerWebhook(provider="github"),
         action=SpeakAction(text="Merged"),
     )
+    request, row = _request(spec)
+    secrets: dict[str, str] = {}
+    monkeypatch.setattr("jarvis.tasks.webhook_auth.get_secret", secrets.get)
+    monkeypatch.setattr(
+        "jarvis.tasks.webhook_auth.set_secret",
+        lambda slot, value: not secrets.__setitem__(slot, value),
+    )
 
-    with pytest.raises(HTTPException) as raised:
-        await rotate_webhook_connection(task_id, _request(spec), Response())
+    old = await get_webhook_connection(task_id, request, Response())
+    new = await rotate_webhook_connection(task_id, request, Response())
 
-    assert raised.value.status_code == 409
-    assert "provider" in str(raised.value.detail).lower()
+    assert old["token"] != new["token"]
+    raw = b'{"action":"closed","pull_request":{"merged":true}}'
+    old_digest = hmac.new(old["token"].encode(), raw, hashlib.sha256).hexdigest()
+    new_digest = hmac.new(new["token"].encode(), raw, hashlib.sha256).hexdigest()
+    assert not verify_signature(row, raw, "sha256=" + old_digest)
+    assert verify_signature(row, raw, "sha256=" + new_digest)
