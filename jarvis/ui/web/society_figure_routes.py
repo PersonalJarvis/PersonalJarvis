@@ -152,7 +152,7 @@ async def import_figure(request: Request, name: str = Query("figure")) -> dict[s
 
 
 @router.post("/share/validate", openapi_extra={"x-jarvis-readonly": True})
-async def validate_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
+def validate_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
     """Validate a recipe-only marketplace candidate without publishing or writing files."""
     return {"shareable": True, "draft": body.normalized()}
 
