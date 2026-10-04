@@ -569,7 +569,10 @@ class _StubSTT:
 
 @pytest.mark.asyncio
 async def test_start_dictation_records_the_requested_target() -> None:
+    from tests.fakes.fake_permission_service import FakePermissionService
+
     pipe = SpeechPipeline.__new__(SpeechPipeline)
+    pipe._permission_gate = FakePermissionService()
     pipe._utterance_stt = _StubSTT()
     pipe._dictation_task = None
     pipe._dictation_stop_event = asyncio.Event()

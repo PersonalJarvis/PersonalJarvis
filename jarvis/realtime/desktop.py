@@ -493,13 +493,13 @@ class DesktopRealtimePlayback:
         self._resume_without_prebuffer_s = max(
             0.0, float(resume_without_prebuffer_s)
         )
-        self._queue: asyncio.Queue[AudioChunk | None] | None = None
+        self._queue: asyncio.Queue[tuple[int, AudioChunk] | None] | None = None
         self._task: asyncio.Task[bool | None] | None = None
         self._closed = False
         self._last_finish_at = 0.0
 
     async def send_binary(self, pcm: bytes) -> None:
-        if not pcm or self._closed:
+        if not pcm or self._closed or getattr(self._player, "output_muted", False):
             return
         if self._task is None or self._task.done():
             prebuffer_s = self._prebuffer_s
@@ -534,9 +534,10 @@ class DesktopRealtimePlayback:
             # ``finish_turn`` callers still receive the same exception.
             self._task.add_done_callback(self._observe_playback_result)
         assert self._queue is not None
-        await self._queue.put(
+        generation = getattr(self._player, "output_generation", 0)
+        await self._queue.put((generation,
             AudioChunk(pcm=bytes(pcm), sample_rate=self._sample_rate, timestamp_ns=0)
-        )
+        ))
 
     def set_sample_rate(self, sample_rate: int) -> None:
         """Set the rate announced by the accepted provider handshake.
@@ -645,7 +646,9 @@ class DesktopRealtimePlayback:
 
     def _detach(
         self,
-    ) -> tuple[asyncio.Queue[AudioChunk | None] | None, asyncio.Task[bool | None] | None]:
+    ) -> tuple[
+        asyncio.Queue[tuple[int, AudioChunk] | None] | None, asyncio.Task[bool | None] | None,
+    ]:
         queue, task = self._queue, self._task
         self._queue = None
         self._task = None
@@ -653,7 +656,7 @@ class DesktopRealtimePlayback:
 
     async def _chunks(
         self,
-        queue: asyncio.Queue[AudioChunk | None],
+        queue: asyncio.Queue[tuple[int, AudioChunk] | None],
         prebuffer_s: float | None = None,
     ) -> AsyncIterator[AudioChunk]:
         """Yield the turn's audio, opening with the jitter buffer.
@@ -666,7 +669,7 @@ class DesktopRealtimePlayback:
         overrides the configured reserve for THIS task (0.0 on a same-answer
         resume).
         """
-        banked: list[AudioChunk] = []
+        banked: list[tuple[int, AudioChunk]] = []
         ended = False
         if prebuffer_s is None:
             prebuffer_s = self._prebuffer_s
@@ -687,16 +690,21 @@ class DesktopRealtimePlayback:
                     ended = True
                     break
                 banked.append(chunk)
-                banked_bytes += len(chunk.pcm)
-        for chunk in banked:
-            yield chunk
+                banked_bytes += len(chunk[1].pcm)
+        for generation, chunk in banked:
+            if (not getattr(self._player, "output_muted", False)
+                    and generation == getattr(self._player, "output_generation", 0)):
+                yield chunk
         if ended:
             return
         while True:
             chunk = await queue.get()
             if chunk is None:
                 return
-            yield chunk
+            generation, audio = chunk
+            if (not getattr(self._player, "output_muted", False)
+                    and generation == getattr(self._player, "output_generation", 0)):
+                yield audio
 
 
 __all__ = ["DesktopRealtimeBargeInDetector", "DesktopRealtimePlayback"]

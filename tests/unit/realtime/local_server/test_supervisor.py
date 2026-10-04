@@ -49,6 +49,7 @@ def _local_models_switch_on(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: (16.0, "nvidia-smi"),
     )
     monkeypatch.setattr(supervisor, "_probe_client", lambda: None)
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *args, **kwargs: None)
 
 
 def _spawn_ready(monkeypatch, tmp_path: Path) -> list[dict[str, Any]]:

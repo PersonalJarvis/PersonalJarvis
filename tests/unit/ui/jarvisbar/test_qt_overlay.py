@@ -111,10 +111,13 @@ def test_hidden_side_dock_restores_only_its_reserved_edge(
     full = (0, 0, 1440, 900)
 
     assert qt_overlay._dock_reserved_edge(full, available) == edge  # noqa: SLF001
-    assert qt_overlay._expand_geometry_for_hidden_dock(  # noqa: SLF001
-        full,
-        available,
-    ) == expanded
+    assert (
+        qt_overlay._expand_geometry_for_hidden_dock(  # noqa: SLF001
+            full,
+            available,
+        )
+        == expanded
+    )
 
 
 def test_macos_dock_visibility_uses_onscreen_windows_on_the_target_display(
@@ -509,7 +512,7 @@ def test_hover_poll_tracks_distinct_mouse_out_and_mouse_over_states(
         @staticmethod
         def contains(point: _Point) -> bool:
             center_x = renderer.WIN_W // 2
-            center_y = round(renderer.pill_center_y(renderer.COLLAPSED_H))
+            center_y = round(renderer.pill_center_y(renderer.WIN_H))
             return _Rect(center_x - 5, center_y - 3, 10, 6).contains(point)
 
     class _Window:
@@ -532,7 +535,7 @@ def test_hover_poll_tracks_distinct_mouse_out_and_mouse_over_states(
             self.updates += 1
 
     center_x = renderer.WIN_W // 2
-    center_y = round(renderer.pill_center_y(renderer.COLLAPSED_H))
+    center_y = round(renderer.pill_center_y(renderer.WIN_H))
     cursor = [_Point(center_x, center_y)]
     monkeypatch.setattr(
         qt_overlay,
@@ -554,7 +557,7 @@ def test_hover_poll_tracks_distinct_mouse_out_and_mouse_over_states(
 
     # A point outside the collapsed acquisition mask but inside the stable
     # hovered pill must survive Cocoa's spurious Leave during setMask().
-    hovered_w, hovered_h = renderer.target_pill_size(mode, True)
+    hovered_w, hovered_h = renderer.target_pill_size(mode, hovered=True)
     cursor[0] = _Point(
         round(center_x - hovered_w / 2.0 + 3),
         round(renderer.pill_center_y(hovered_h)),
@@ -584,9 +587,7 @@ def test_hover_poll_clears_stale_state_when_surface_is_hidden(
     monkeypatch.setattr(
         surface,
         "_pointer_over_bar_ui",
-        lambda: (_ for _ in ()).throw(
-            AssertionError("hidden surface must not inspect the cursor")
-        ),
+        lambda: (_ for _ in ()).throw(AssertionError("hidden surface must not inspect the cursor")),
     )
 
     surface._poll_hover_ui()  # noqa: SLF001
@@ -606,9 +607,18 @@ def test_clicks_are_forwarded_to_parent_owned_callbacks() -> None:
     assert surface._dispatch_click_ui(renderer.WIN_W / 2) == "talk"  # noqa: SLF001
 
     surface._mode = "listen"  # noqa: SLF001
-    assert surface._dispatch_click_ui(renderer.WIN_W * 0.8) == "mute"  # noqa: SLF001
+    assert (
+        surface._dispatch_click_ui(
+            next(
+                (a + b) / 2
+                for action, a, b in renderer.controls.pet_strip_layout(renderer.strip_scale()).slots
+                if action == "mic_mute"
+            )
+        )
+        == "mute"
+    )  # noqa: SLF001
 
-    close_x = renderer.WIN_W / 2 - 0.42 * renderer.ACTIVE_W
+    close_x = renderer.controls.pet_strip_layout(renderer.strip_scale()).call[0]
     assert surface._dispatch_click_ui(close_x, hovered=True) == "hangup"  # noqa: SLF001
 
     assert voice_actions == ["talk", "hangup"]

@@ -23,6 +23,7 @@ from jarvis.brain.model_catalog import (
     parse_models_response,
 )
 from jarvis.core.config import JarvisConfig
+from tests.fakes.provider_config import install_provider_config
 
 
 class _FakeResponse:
@@ -73,7 +74,7 @@ def _catalog(tmp_path, client: _FakeClient) -> ModelCatalog:
 
 def _plain_env(monkeypatch, keys: dict[str, str | None]) -> None:
     """No base-url overrides, no team proxy — the stock cloud setup."""
-    monkeypatch.setattr(cfg, "load_config", lambda: JarvisConfig())
+    install_provider_config(monkeypatch, JarvisConfig())
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: keys.get(pid))
 
 
@@ -213,7 +214,7 @@ def _local_env(
 
     providers = {pid: BrainProviderConfig(base_url=url) for pid, url in (base_urls or {}).items()}
     conf = JarvisConfig(brain=BrainConfig(providers=providers))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    install_provider_config(monkeypatch, conf)
     monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: None)
     monkeypatch.setattr(
         cfg,

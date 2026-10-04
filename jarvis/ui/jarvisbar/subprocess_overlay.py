@@ -72,6 +72,7 @@ def _respawn_after_backoff_weakly(
         return
     surface._respawn_after_backoff(attempt)
 
+
 _HOST_MODULE = "jarvis.ui.jarvisbar.host"
 
 
@@ -137,6 +138,8 @@ class SubprocessBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._on_speaker_toggle: Callable[[], None] | None = None
+        self._on_compose: Callable[[], None] | None = None
+        self._speaker_muted = False
 
     # ------------------------------------------------------------------ #
     # Lifecycle                                                          #
@@ -349,6 +352,13 @@ class SubprocessBarOverlay:
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
         self._on_show_window = callback
 
+    def set_on_compose(self, callback: Callable[[], None] | None) -> None:
+        self._on_compose = callback
+
+    def set_speaker_muted(self, muted: bool) -> None:
+        self._speaker_muted = bool(muted)
+        self._send({"op": "set_speaker_muted", "muted": self._speaker_muted})
+
     def set_on_speaker_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_speaker_toggle = callback
 
@@ -506,6 +516,7 @@ class SubprocessBarOverlay:
                     "paused": self._prompt_mode_paused,
                 }
             )
+        self._send({"op": "set_speaker_muted", "muted": self._speaker_muted})
         if self._last_level is not None:
             self._send({"op": "set_level", "level": self._last_level})
 
@@ -556,6 +567,10 @@ class SubprocessBarOverlay:
                 cb_show = self._on_show_window
                 if cb_show is not None:
                     cb_show()
+            elif event == "compose":
+                callback = self._on_compose or self._on_show_window
+                if callback is not None:
+                    callback()
             elif event == "speaker_toggle":
                 self._dispatch_speaker_toggle()
             elif event == "drop":
@@ -607,8 +622,11 @@ class SubprocessBarOverlay:
         # Same source names as the in-process orb window, so the pipeline's
         # VoiceSpeakerMuteChanged says which control the user pressed.
         source = "pet" if getattr(self, "_style", "") == "pet" else "orb"
-        if toggle_speaker_mute(source=source) is None:
+        result = toggle_speaker_mute(source=source)
+        if result is None:
             log.debug("orb speaker toggle had no live pipeline in the parent")
+        else:
+            self.set_speaker_muted(result)
 
     def _dispatch_talk_action(self) -> None:
         """Start a voice session in the parent process.

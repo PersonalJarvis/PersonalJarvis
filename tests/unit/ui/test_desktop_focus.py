@@ -101,3 +101,32 @@ def test_foreground_lock_recovery_attaches_and_always_detaches() -> None:
         (10, 20, False),
         (10, 30, False),
     ]
+
+
+class _ShowRecordingUser32(_User32):
+    def __init__(self, *, iconic: bool) -> None:
+        super().__init__()
+        self.iconic = iconic
+        self.shows: list[int] = []
+
+    def ShowWindow(self, _hwnd: int, mode: int) -> bool:
+        self.shows.append(mode)
+        return True
+
+    def IsIconic(self, _hwnd: int) -> bool:
+        return self.iconic
+
+
+def test_raising_a_window_on_screen_never_restores_it() -> None:
+    """SW_RESTORE un-maximizes a maximized window (appshot card click, 2026-10-03)."""
+    user32 = _ShowRecordingUser32(iconic=False)
+
+    assert _force_foreground_hwnd(200, user32, _Kernel32()) is True
+    assert 9 not in user32.shows
+
+
+def test_raising_a_minimized_window_still_restores_it() -> None:
+    user32 = _ShowRecordingUser32(iconic=True)
+
+    assert _force_foreground_hwnd(200, user32, _Kernel32()) is True
+    assert user32.shows.count(9) >= 1

@@ -326,7 +326,8 @@ function callOf(block: ToolBlock, turn: TurnStatus, t: Translate, lang: string):
   }
   if (action === "read") {
     const path = firstString(record, ACTION_KEYS.read) || description.detail;
-    if (IMAGE_FILE.test(path)) return { ...base, kind: "image", text: tr(t, "call.image", { target: shortPath(path) }), bucket: "image" };
+    // Codex says "Viewed an image"; the file name follows quieter.
+    if (IMAGE_FILE.test(path)) return { ...base, kind: "image", text: capitalize(tr(t, "act.image_one")), detail: shortPath(path), bucket: "image" };
     return { ...base, kind: "read", text: tr(t, "call.read", { target: shortPath(path) }), bucket: "read" };
   }
   if (action === "list") {
@@ -431,41 +432,4 @@ export function buildTimeline(blocks: TurnBlock[], options: TimelineOptions): Ti
   }
   flush();
   return { entries, callCount, problemCount };
-}
-
-/** The folded line: "Worked for 4m 07s" when calls ran, "Thought for 3.0s" otherwise. */
-export function headerLabel(timeline: Timeline, durationMs: number | null, t: Translate): string {
-  const worked = timeline.callCount > 0;
-  if (durationMs === null || durationMs <= 0) return tr(t, worked ? "worked" : "thought");
-  return tr(t, worked ? "worked_for" : "thought_for", { duration: traceDuration(durationMs) });
-}
-
-function codeSpan(text: string): string {
-  const fence = text.includes("`") ? "``" : "`";
-  const pad = fence === "``" ? " " : "";
-  return `${fence}${pad}${text}${pad}${fence}`;
-}
-
-/** The timeline as Markdown — what "Copy" puts on the clipboard. */
-export function timelineMarkdown(timeline: Timeline, header: string, t: Translate): string {
-  const out: string[] = [`**${header}**`];
-  for (const entry of timeline.entries) {
-    if (entry.kind === "live") continue;
-    out.push("");
-    if (entry.kind === "prose") {
-      out.push(entry.text);
-      continue;
-    }
-    if (entry.calls.length > 1) out.push(`*${entry.summary}*`);
-    for (const call of entry.calls) {
-      const words = call.kind === "command" ? codeSpan(call.text) : call.text;
-      const size = call.added || call.removed ? ` (+${call.added} −${call.removed})` : "";
-      const tail = call.detail ? ` — ${call.detail}` : "";
-      const result = call.result ? `: ${call.result}` : "";
-      const state = call.status === "done" || call.status === "running" ? ""
-        : ` — ${tr(t, `state.${call.status}`)}${call.reason ? `: ${call.reason}` : ""}`;
-      out.push(`- ${words}${size}${tail}${result}${state}`);
-    }
-  }
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }

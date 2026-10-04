@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Check, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
+import { SessionGitHubBadge } from "./SessionGitHubBadge";
 import { usePaneTitle } from "@/store/paneRecaps";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { SplitAboveIcon, SplitBelowIcon, SplitLeftIcon, SplitRightIcon } from "./splitIcons";
@@ -18,6 +19,7 @@ interface Props {
   onToggleSendRightClicks?: () => void;
   name: string;
   workspaceId?: string;
+  githubStatusEnabled?: boolean;
   promptCount?: number;
   agent: string;
   agentLogoUrl?: string;
@@ -74,7 +76,7 @@ export function WorkspaceTerminalHeader({
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
   onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
-  computerName, placementItems, workspaceItems, variant = "bar", focused = false,
+  computerName, placementItems, workspaceItems, variant = "bar", focused = false, githubStatusEnabled = true,
 }: Props) {
   const brand = PANE_BRAND[appearance];
   // The pane's goal in a few words, in place of its call-sign; the call-sign
@@ -265,11 +267,12 @@ export function WorkspaceTerminalHeader({
           className={`flex min-w-0 max-w-[35%] shrink items-center gap-1 ${radius} bg-[color:var(--pane-chip)] px-1.5 py-0.5 text-[11px] font-normal text-[color:var(--pane-ink-muted)]`}>
           <Server className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{computerName}</span></span>}
         {branch && <span data-testid={`pane-branch-${name}`} title={`Runs in its own git worktree on branch ${branch}`}
-          className={`flex min-w-0 max-w-[45%] shrink items-center gap-1 ${radius} bg-[color:var(--pane-chip)] px-1.5 py-0.5 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]`}>
+          className="flex min-w-0 max-w-[45%] shrink items-center gap-1 font-mono text-[11px] font-normal text-[color:var(--pane-ink-muted)]">
           <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" /><span className="truncate">{branch}</span>
         </span>}
       </button> : renameForm}
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
+      <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
         {moreButton}
         {maximizeButton}

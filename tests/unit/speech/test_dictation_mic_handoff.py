@@ -26,6 +26,8 @@ from jarvis.core.config import DictationConfig
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 
+pytestmark = pytest.mark.usefixtures("granted_microphone")
+
 
 class _FakeTTS:
     name = "fake-tts"

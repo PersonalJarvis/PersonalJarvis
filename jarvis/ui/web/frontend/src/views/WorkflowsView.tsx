@@ -21,7 +21,6 @@ import {
   PowerOff,
   Power,
   Send,
-  Info,
 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -32,20 +31,18 @@ import { cn } from "@/lib/utils";
 import { translate, useT } from "@/i18n";
 import {
   useDeleteWorkflow,
-  useIntegrations,
   useRunDetail,
   useRunWorkflow,
   useToggleWorkflow,
   useWorkflowDetail,
   useWorkflows,
-  type IntegrationsResponse,
   type WorkflowSummary,
   type WorkflowRun,
   type WorkflowRunStep,
 } from "@/hooks/useWorkflows";
 
 // ---------------------------------------------------------------------
-// Icon-Mapping per Step-Kind
+// Icons by step kind
 // ---------------------------------------------------------------------
 
 const STEP_ICON: Record<string, typeof Clock> = {
@@ -87,7 +84,6 @@ export function WorkflowsView() {
   const t = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const { data, isLoading, error, refetch, isRefetching } = useWorkflows();
-  const { data: integrations } = useIntegrations();
 
   const workflows = data?.workflows ?? [];
   const summary = data?.summary;
@@ -113,7 +109,6 @@ export function WorkflowsView() {
       />
 
       <DashboardStats summary={summary} />
-      <IntegrationsBanner integrations={integrations} />
 
       <ScrollArea className="flex-1">
         <div className="space-y-3 p-6">
@@ -142,87 +137,6 @@ export function WorkflowsView() {
           ))}
         </div>
       </ScrollArea>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// IntegrationsBanner — zeigt fehlende externe Konfigurationen
-// ---------------------------------------------------------------------
-
-function IntegrationsBanner({
-  integrations,
-}: {
-  integrations: IntegrationsResponse | undefined;
-}) {
-  const t = useT();
-  const [dismissed, setDismissed] = useState(false);
-  if (!integrations || dismissed) return null;
-
-  const issues: Array<{ name: string; hint: string; has_partial?: string }> =
-    [];
-  if (!integrations.telegram.configured) {
-    let partial: string | undefined;
-    if (integrations.telegram.has_token && !integrations.telegram.has_chat_id) {
-      partial = `${t("workflows_view.partial_token_ok")} — ${t(
-        "workflows_view.partial_chat_id_missing",
-      )}`;
-    } else if (
-      !integrations.telegram.has_token &&
-      integrations.telegram.has_chat_id
-    ) {
-      partial = `${t("workflows_view.partial_chat_id_ok")} — ${t(
-        "workflows_view.partial_token_missing",
-      )}`;
-    }
-    issues.push({
-      name: "Telegram",
-      hint: integrations.telegram.setup_hint,
-      has_partial: partial,
-    });
-  }
-  if (!integrations.gws_cli.configured) {
-    issues.push({
-      name: "Google Workspace (gws-CLI)",
-      hint: integrations.gws_cli.setup_hint,
-    });
-  }
-
-  if (issues.length === 0) return null;
-
-  return (
-    <div className="border-b border-border bg-primary/5 px-6 py-3">
-      <div className="flex items-start gap-3">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-foreground">
-            {t("workflows_view.integrations_need_setup")} ({issues.length})
-          </div>
-          <ul className="mt-1 space-y-1.5 text-xs text-muted-foreground">
-            {issues.map((iss) => (
-              <li key={iss.name}>
-                <span className="font-medium text-foreground">
-                  {iss.name}:
-                </span>{" "}
-                {iss.has_partial && (
-                  <span className="text-foreground">
-                    {iss.has_partial} —{" "}
-                  </span>
-                )}
-                {iss.hint}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <button
-          type="button"
-          onClick={() => setDismissed(true)}
-          className="text-xs text-muted-foreground hover:text-foreground"
-          aria-label={t("workflows_view.dismiss_banner")}
-        >
-          ×
-        </button>
-      </div>
     </div>
   );
 }

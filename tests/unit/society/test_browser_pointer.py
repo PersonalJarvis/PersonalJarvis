@@ -65,11 +65,16 @@ async def test_native_upgrade_waits_for_the_active_browser_task(tmp_path):
         pytest.skip("Windows native-session upgrade")
     live = LiveSessions(tmp_path)
     old = SimpleNamespace(closed=False, state={"full_window": False},
-                          run_lock=asyncio.Lock(), control_owner=None, window_upgrade_pending=False)
+                          run_lock=asyncio.Lock(), control_lock=asyncio.Lock(),
+                          control_owner=None, window_upgrade_pending=False)
+    agent = SimpleNamespace(agent_id="busy", browser_mode="own")
+    live.profiles.assign(agent.agent_id, "own", None)
+    old.profile_binding = live.profiles.resolve(agent)
+    old.profile_lease = None
     live.sessions["busy"] = old
     await old.run_lock.acquire()
     try:
-        assert await live.ensure(SimpleNamespace(agent_id="busy", browser_mode="own"), window_view=True) is old
+        assert await live.ensure(agent, window_view=True) is old
         assert old.window_upgrade_pending
         assert not old.closed
     finally:

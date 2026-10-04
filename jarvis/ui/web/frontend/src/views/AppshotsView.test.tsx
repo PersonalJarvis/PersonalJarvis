@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { formatAppshotHotkey } from "@/lib/appshotApi";
@@ -228,6 +228,14 @@ describe("AppshotsView shortcut recorder", () => {
     await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+shift+s" }]));
   });
 
+  it("saves the actual letter rather than the US keyboard position", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "KeyY", key: "z" });
+    fireEvent.keyUp(window, { code: "KeyY", key: "z" });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "z" }]));
+  });
+
   it("Esc cancels without saving, and a lone modifier explains itself", async () => {
     render(<AppshotsView />);
     const change = await screen.findByTestId("appshots-hotkey-change");
@@ -260,7 +268,7 @@ describe("AppshotsView editor", () => {
 
   beforeEach(() => {
     useEventStore.setState({ events: [], toasts: [], assistantName: "Jarvis" });
-    useAppshotEditor.setState({ openId: null });
+    useAppshotEditor.setState({ openId: null, revision: 0 });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
@@ -276,26 +284,43 @@ describe("AppshotsView editor", () => {
     vi.unstubAllGlobals();
   });
 
-  it("opens from the last appshot and closes on Escape", async () => {
+  it("edits in the page when no editor window can open", async () => {
+    useEventStore.setState({ activeSection: "appshots" });
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
-    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
-    expect(useAppshotEditor.getState().openId).toBe("shot-1");
 
-    fireEvent.keyDown(window, { key: "r" });
-    expect(
-      screen.getByTestId("appshot-editor-tool-rect").getAttribute("aria-pressed"),
-    ).toBe("true");
+    // The window route answers 404 here (a browser); AppshotEditorHost
+    // (mounted by App) then draws the editor — the page only asks.
+    await waitFor(() => expect(useAppshotEditor.getState().openId).toBe("shot-1"));
+    expect(useEventStore.getState().activeSection).toBe("appshots");
+    expect(screen.queryByTestId("appshot-editor")).toBeNull();
+  });
 
-    fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByTestId("appshot-editor")).toBeNull());
+  it("edits in its own window where the desktop shell opens one", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn<(url: string, init?: RequestInit) => Promise<Response>>>;
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) =>
+      url === "/api/appshot/open-editor" ? json({ window: true }) : base(url, init),
+    );
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-preview-edit"));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/appshot/open-editor")).toBe(true),
+    );
     expect(useAppshotEditor.getState().openId).toBeNull();
   });
 
-  it("opens when the card in the screen corner asked for it", async () => {
-    useAppshotEditor.getState().open("shot-1");
+  it("shows the edited picture once an edit replaced the appshot", async () => {
     render(<AppshotsView />);
-    expect(await screen.findByTestId("appshot-editor")).toBeDefined();
+    await screen.findByTestId("appshots-preview-edit");
+    const latestCalls = () =>
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) => url === "/api/appshot/latest").length;
+    const before = latestCalls();
+
+    act(() => useAppshotEditor.getState().applied());
+
+    await waitFor(() => expect(latestCalls()).toBe(before + 1));
   });
 });
 

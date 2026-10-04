@@ -586,9 +586,8 @@ def test_a_prompt_that_drops_the_files_the_user_named_is_rejected() -> None:
     assert prompt_guard_reason(spoken, vague) == "dropped_detail"
 
 
-def test_one_missing_literal_is_a_slip_not_a_rejection() -> None:
-    """A recognizer writes the same spoken name two ways in one breath;
-    rejecting on one of those costs a good prompt."""
+def test_one_missing_identifier_is_still_lost_information() -> None:
+    """An explicit component name must not disappear behind a nearby path."""
     spoken = (
         "please fix src/auth/handler.ts and AuthHandler and the retry_count "
         "setting, the login has been broken since yesterday afternoon"
@@ -598,7 +597,7 @@ def test_one_missing_literal_is_a_slip_not_a_rejection() -> None:
         "has been broken since yesterday afternoon and needs to work again."
     )
     assert lost_literals(spoken, almost) == ["AuthHandler"]
-    assert prompt_guard_reason(spoken, almost) == ""
+    assert prompt_guard_reason(spoken, almost) == "dropped_detail"
 
 
 def test_a_prompt_collapsed_to_a_fraction_of_the_transcript_is_rejected() -> None:

@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Lightweight fakes shared by all stubs below
 # ---------------------------------------------------------------------------
@@ -27,12 +26,21 @@ class _FakeBus:
     def subscribe(self, *args: object, **kwargs: object) -> None:
         pass
 
+    def subscribe_all(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def unsubscribe_all(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def unsubscribe(self, *args: object, **kwargs: object) -> None:
+        pass
+
     async def publish(self, event: object) -> None:
         pass
 
 
 class _FakeState:
-    """Nimmt beliebige Attribut-Zuweisung (mirrors Starlette State)."""
+    """Accept arbitrary attributes, like Starlette State."""
 
 
 class _FakeApp:
@@ -46,14 +54,14 @@ class _FakeApp:
 
 
 # ---------------------------------------------------------------------------
-# Mock WebServer — zentrales Lifecycle-Testsubjekt
+# Fake WebServer: the central lifecycle test subject
 # ---------------------------------------------------------------------------
 
 
 class _MockWebServer:
     """Stand-in for jarvis.ui.web.server.WebServer."""
 
-    instances: list["_MockWebServer"] = []
+    instances: list[_MockWebServer] = []
 
     def __init__(self, cfg):
         self.cfg = cfg

@@ -211,7 +211,7 @@ async def test_the_stt_language_list_has_exactly_one_source():
     from jarvis.ui.web.settings_routes import _STT_LANGUAGES, get_stt_language
 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(config=None)))
-    body = await get_stt_language(request)  # type: ignore[arg-type]
+    body = get_stt_language(request)  # type: ignore[arg-type]
     assert body["options"] == list(_STT_LANGUAGES), (
         "GET /api/settings/stt-language must ship the full accepted set — it is "
         "the only place the UI can learn which languages are selectable."

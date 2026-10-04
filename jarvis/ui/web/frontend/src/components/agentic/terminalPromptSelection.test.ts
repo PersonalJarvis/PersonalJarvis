@@ -337,3 +337,35 @@ describe("terminal prompt selection", () => {
     expect(pane.press("Delete").passthrough).toBe(true);
   });
 });
+
+describe("terminal prompt selection on a full scrollback", () => {
+  it("does not spin when the whole scrollback is one soft-wrapped line", async () => {
+    // Live 2026-10-02: a pane whose scrollback held nothing but one long
+    // wrapped line hung the whole window. xterm's getLine wraps around its
+    // ring past the last row, so a walk "down while wrapped" never ended.
+    const cols = 20;
+    const terminal = new Terminal({ cols, rows: 5, scrollback: 10, allowProposedApi: true });
+    terminals.push(terminal);
+    await new Promise<void>((resolve) => terminal.write("x".repeat(cols * 60), resolve));
+    const buffer = terminal.buffer.active;
+    expect(buffer.length).toBe(15);
+    expect(buffer.getLine(0)?.isWrapped).toBe(true);
+
+    let onRender = () => {};
+    const cleanup = installPromptSelectionBridge({
+      cols,
+      buffer: terminal.buffer,
+      getSelectionPosition: () => undefined,
+      select: () => {},
+      clearSelection: () => {},
+      input: () => {},
+      onSelectionChange: () => ({ dispose: () => {} }),
+      onRender: (listener) => {
+        onRender = listener;
+        return { dispose: () => {} };
+      },
+    }, () => () => {}, false);
+    onRender();
+    cleanup();
+  });
+});

@@ -5,6 +5,7 @@ import { useOverlayStyle } from "@/hooks/useOverlayStyle";
 import { useEventStore } from "@/store/events";
 import { useMissionDrag } from "@/store/missionDrag";
 import { PetMark } from "@/components/pets/PetMark";
+import { BarPreview } from "@/components/overlay/OverlayStylePreviews";
 import { playDropConfirm } from "@/lib/sound";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -50,7 +51,7 @@ function isDroppable(dt: DataTransfer | null): boolean {
  * shows the OS "no-drop" sign and a toss *near* Jarvis still lands. A successful
  * drop plays a quiet confirmation chime and an "absorb" burst.
  *
- * It mirrors the chosen on-screen display style: a slim bar for `jarvis_bar`,
+ * It mirrors the chosen on-screen display style: the Jarvis Bar for `jarvis_bar`,
  * the ghost mascot otherwise. This in-app surface is the cloud-first drop
  * target — it works in any browser, unlike the separate Tk overlay windows.
  */
@@ -63,7 +64,7 @@ export function JarvisDock() {
   const [fileArmed, setFileArmed] = useState(false); // a native OS drag is in flight
   const [flash, setFlash] = useState(false); // brief post-drop "absorb" burst
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mascot ONLY when explicitly selected; the slim bar for "jarvis_bar"/"none"
+  // Mascot ONLY when explicitly selected; the bar for "jarvis_bar"/"none"
   // and while the style is still loading (config === null). Defaulting the
   // unknown/loading state to the bar (the documented default) stops a ghost
   // mascot from flashing in for a user who picked the bar.
@@ -253,12 +254,7 @@ export function JarvisDock() {
 
         <span className={cn(flash && "animate-[dock-pop_0.5s_ease-out]")}>
           {isBar ? (
-            <span className="flex h-6 items-end gap-0.5" aria-hidden>
-              <span className="h-3 w-1 rounded-sm bg-primary/80" />
-              <span className="h-5 w-1 rounded-sm bg-foreground" />
-              <span className="h-2 w-1 rounded-sm bg-primary/60" />
-              <span className="h-4 w-1 rounded-sm bg-primary/80" />
-            </span>
+            <BarPreview />
           ) : (
             <PetMark size={28} reactive />
           )}

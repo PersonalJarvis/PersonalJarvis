@@ -329,11 +329,11 @@ def reset_polish_state(*, now: Callable[[], float] | None = None) -> None:
 def polish_enabled(cfg: Any) -> bool:
     """Whether the polish pass is switched on. Cheap: no I/O, no import cost.
 
-    Called on the dictation path before anything heavier happens, so it must
-    stay a single attribute read. An absent key reads as OFF — a config that
-    predates the feature must not silently acquire it.
+    Either explicit wording switch starts the pass. Precision is independently
+    selectable in settings and must work with ordinary cleanup switched off.
+    Absent keys read as OFF.
     """
-    return bool(getattr(cfg, "polish", False))
+    return bool(getattr(cfg, "polish", False)) or precision_enabled(cfg)
 
 
 def precision_enabled(cfg: Any) -> bool:
@@ -501,7 +501,7 @@ async def polish_transcript(
         # translation on it delivers a German sentence into an English document,
         # and a feature that works on long dictations but not short ones reads as
         # broken rather than as tuned. The empty check above is the only floor.
-        if not translating:
+        if not translating and not precision_enabled(cfg):
             min_words = _cfg_int(
                 cfg, "polish_min_words", _DEFAULT_MIN_WORDS, lo=0, hi=1000
             )
@@ -885,7 +885,7 @@ async def _run_chain(
     one would otherwise pay that refusal on every delivery.
     """
     primary_id = chain[0].id
-    for family in chain:
+    for index, family in enumerate(chain):
         model = resolve_model(
             family, cfg, primary_id=primary_id, translating=translating
         )
@@ -901,14 +901,23 @@ async def _run_chain(
             attempt.error = "no_client"
             continue
 
-        remaining = max(_MIN_CALL_TIMEOUT_S, deadline - time.monotonic())
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        # Reserve part of the existing deadline for a different family. A
+        # transport timeout alone does not enforce a wall-clock ceiling, and
+        # giving the first provider everything made timeout fallback impossible.
+        call_budget = remaining * 0.75 if index < len(chain) - 1 else remaining
         try:
-            text = await client.complete(
-                system,
-                user,
-                max_output_tokens=max_output_tokens,
-                temperature=temperature,
-                timeout_s=remaining,
+            text = await asyncio.wait_for(
+                client.complete(
+                    system,
+                    user,
+                    max_output_tokens=max_output_tokens,
+                    temperature=temperature,
+                    timeout_s=call_budget,
+                ),
+                timeout=call_budget,
             )
         except asyncio.CancelledError:
             raise
@@ -922,7 +931,7 @@ async def _run_chain(
                 "dictation polish provider %r failed (%s); crossing to the next "
                 "family.",
                 family.id,
-                exc,
+                type(exc).__name__,
             )
             continue
 

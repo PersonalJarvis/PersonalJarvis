@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Timer } from "lucide-react";
-import { useEventStore } from "@/store/events";
 import { useDeckStore } from "@/store/deck";
 import type { TurnPhase } from "@/lib/deckState";
 import { DeckCard } from "@/components/deck/DeckCard";
@@ -37,7 +36,6 @@ export function TurnCard({ className }: { className?: string }) {
   const t = useT();
   const turn = useDeckStore((s) => s.turn);
   const cuActive = useDeckStore((s) => s.cu.active);
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
 
   const live = turn.phase !== "idle";
   // The stopwatch ticks only while a turn is open — ten times a second, which
@@ -66,8 +64,6 @@ export function TurnCard({ className }: { className?: string }) {
       }
       live={live && !quiet}
       variant="chamfer"
-      onOpen={() => setActiveSection("run_inspector")}
-      openLabel={t("deck.open_section")}
       className={className}
       bodyClassName="p-0"
     >

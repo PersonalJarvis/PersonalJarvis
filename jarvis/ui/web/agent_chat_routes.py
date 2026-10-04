@@ -101,7 +101,7 @@ class ChatSelectionBody(BaseModel):
 
 
 @router.put("/selection", summary="Remember the model for new Jarvis chats and agents")
-async def save_chat_selection(body: ChatSelectionBody, request: Request) -> dict[str, str]:
+def save_chat_selection(body: ChatSelectionBody, request: Request) -> dict[str, str]:
     from jarvis.agent_chat.store import ChatSelection
 
     provider = body.provider.strip().lower()
@@ -362,7 +362,6 @@ async def get_catalog(
     brain plugin drives — and no CLI is probed for its model list either.
     """
     svc = _service(request)
-    rows: list[dict[str, Any]] = []
     cli_seats = kit_for(surface).cli_seats
     from jarvis.agent_chat.runner_cli import cli_catalog_scope
 
@@ -384,6 +383,27 @@ async def get_catalog(
         ignore_user_config=kit_for(surface).brain_runner and cli_seats,
     ):
         live_models = await _live_cli_models() if cli_seats else {}
+    # Off the event loop: every CLI row resolves its binary on PATH, and that
+    # many ``shutil.which`` walks cost ~0.3 s on a Windows PATH — a stall the
+    # whole app shared on every composer open (AP-26 spirit, async-def freeze).
+    rows = await asyncio.to_thread(_catalog_rows, surface, live_models)
+    return {
+        "providers": rows,
+        "default_cwd": svc.default_cwd(surface),
+        "shell": shell_label(),
+        "selection": (
+            selection.to_dict()
+            if surface == "jarvis" and (selection := svc.store.chat_selection()) is not None
+            else None
+        ),
+    }
+
+
+def _catalog_rows(
+    surface: str, live_models: dict[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """The provider rows for ``surface`` with this machine's runner facts."""
+    rows: list[dict[str, Any]] = []
     for row in rows_for(surface):
         d = row.to_dict()
         runner = resolve_runner(row.id, surface=surface)
@@ -414,16 +434,7 @@ async def get_catalog(
         # to a seat that would read it as plain text.
         d["typeahead"] = list(typeahead.triggers_for(runner, surface))
         rows.append(d)
-    return {
-        "providers": rows,
-        "default_cwd": svc.default_cwd(surface),
-        "shell": shell_label(),
-        "selection": (
-            selection.to_dict()
-            if surface == "jarvis" and (selection := svc.store.chat_selection()) is not None
-            else None
-        ),
-    }
+    return rows
 
 
 # ----------------------------------------------------------- typeahead

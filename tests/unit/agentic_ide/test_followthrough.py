@@ -19,6 +19,12 @@ def pane(monkeypatch):
         transcript=SimpleNamespace(tail=lambda n: ["Which repository should I change?"]),
     )
     monkeypatch.setattr(ft, "_turns", lambda t: list(turns))
+    from jarvis.agentic_ide import task_state
+
+    async def completed(_term):
+        return task_state.Evidence("completed")
+
+    monkeypatch.setattr(task_state, "probe", completed)
     return term, turns
 
 
@@ -74,10 +80,13 @@ async def test_later_prompt_or_process_cannot_claim_previous_result(pane, change
 
 
 @pytest.mark.asyncio
-async def test_question_does_not_consume_later_completion(pane):
+async def test_question_does_not_consume_later_completion(pane, monkeypatch):
     pending = await arm(pane)
     term, turns = pane
     events = []
+    from jarvis.agentic_ide import activity
+
+    monkeypatch.setattr(activity, "shows_question", lambda _term: True)
     await ft.publish_result("needs_input", term, pending, events.append)
     assert "Which repository" in events[0].report
     assert term.delegation_result is pending
@@ -113,3 +122,56 @@ async def test_fast_job_finishing_between_sweeps_still_returns_its_fresh_answer(
     turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Fixed immediately.")])
     await ft.poll_ready(registry, events.append, now=141.0)
     assert len(events) == 1 and "Fixed immediately" in events[0].report
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["working", "asking", "unknown", "stopped"])
+async def test_silence_and_interim_text_do_not_announce_completion(pane, monkeypatch, state):
+    from jarvis.agentic_ide import task_state
+
+    pending = await arm(pane)
+    term, turns = pane
+    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Checking the tests now.")])
+
+    async def unfinished(_term):
+        return task_state.Evidence(state)
+
+    monkeypatch.setattr(task_state, "probe", unfinished)
+    events = []
+    assert not await ft.publish_result("completed", term, pending, events.append)
+    assert not events
+    assert term.delegation_result is pending
+
+
+@pytest.mark.asyncio
+async def test_auto_resume_during_report_read_does_not_publish_stale_completion(pane, monkeypatch):
+    from jarvis.agentic_ide import task_state
+
+    pending = await arm(pane)
+    calls = []
+
+    async def resuming(_term):
+        calls.append(None)
+        return task_state.Evidence("completed" if len(calls) == 1 else "working")
+
+    monkeypatch.setattr(task_state, "probe", resuming)
+    events = []
+    assert not await ft.publish_result("completed", pane[0], pending, events.append)
+    assert not events
+
+
+@pytest.mark.asyncio
+async def test_confirmed_stop_has_distinct_wording_and_no_completion_claim(pane, monkeypatch):
+    from jarvis.agentic_ide import task_state
+
+    pending = await arm(pane)
+
+    async def stopped(_term):
+        return task_state.Evidence("stopped")
+
+    monkeypatch.setattr(task_state, "probe", stopped)
+    events = []
+    assert await ft.publish_result("stopped", pane[0], pending, events.append)
+    assert "was interrupted" in events[0].text
+    assert "no completion" in events[0].report
+    assert pane[0].delegation_result is None

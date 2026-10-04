@@ -41,13 +41,13 @@ def test_extract_fence_returns_code_block_body() -> None:
         "Be concise.\n"
         "```\n"
         "\n"
-        "## Quellen\n"
+        "## Sources\n"
     )
     block = _extract_fence_after_marker(md)
     assert "You are JARVIS." in block
     assert "Be concise." in block
-    # The "Quellen" section after it must not be included
-    assert "Quellen" not in block
+    # The "Sources" section after it must not be included
+    assert "Sources" not in block
 
 
 def test_extract_fence_ignores_fences_before_marker() -> None:
@@ -97,11 +97,10 @@ def test_load_persona_prompt_extracts_real_persona(monkeypatch) -> None:
     assert "LANGUAGE POLICY" in prompt
     # Mandate phase 2: ECHO-PARAPHRASE section right after OUTPUT RULES
     assert "ECHO-PARAPHRASE" in prompt
-    # The hangup contract must be in the persona block, otherwise it never
-    # reaches the brain (probe drift scenario 10: 'Bis dann.' instead of a
-    # clear farewell).
-    # The farewell is now profile-name-driven — no hardcoded owner name.
-    assert "Goodbye" in prompt or "Auf Wiedersehen" in prompt  # i18n-allow
+    # The host-owned two-turn confirmation must reach the brain. A farewell
+    # alone must never be presented as sufficient consent to end the call.
+    assert "Voice hang-up always requires confirmation" in prompt
+    assert "separate explicit yes" in prompt
 
 
 def test_compact_persona_is_a_real_distillation() -> None:

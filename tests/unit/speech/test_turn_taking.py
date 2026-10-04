@@ -328,8 +328,9 @@ async def test_hangup_accepts_split_auf_leg_transcript() -> None:
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
-    assert keep_session is False
-    assert pipe._spoken == []
+    assert keep_session is True
+    assert pipe._spoken and "?" in pipe._spoken[0][0]
+    assert not pipe._hangup_event.is_set()
 
 
 @pytest.mark.asyncio
@@ -905,7 +906,7 @@ async def test_probe_forces_endpoint_on_stable_repeating_tail() -> None:
 
 
 @pytest.mark.asyncio
-async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
+async def test_semantic_closing_asks_before_the_brain_can_end_the_call() -> None:
     # Conservative-but-clear dismissal: STT text is NOT an explicit regex
     # command, so the brain decides — and signals end via the sentinel.
     pipe = _make_pipeline(
@@ -916,10 +917,10 @@ async def test_brain_end_call_sentinel_hangs_up_and_is_not_spoken() -> None:
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
-    assert keep_session is False
-    assert pipe._spoken == [("Bis später, Ruben.", "de")]  # sentinel stripped  # i18n-allow
-    assert pipe._session_end_reason == "voice_pattern"
-    assert pipe._hangup_event.is_set()
+    assert keep_session is True
+    assert pipe._spoken and "?" in pipe._spoken[0][0]
+    assert pipe._session_end_reason is None
+    assert not pipe._hangup_event.is_set()
 
 
 @pytest.mark.asyncio
@@ -941,15 +942,38 @@ async def test_polite_thanks_no_longer_auto_hangs_up() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_auflegen_still_hard_hangs_up_via_regex() -> None:
+async def test_explicit_auflegen_requires_a_separate_yes() -> None:
     pipe = _make_pipeline(FakeSTT(text="Auflegen bitte"))
     pipe._player = SlowPlayer()
 
     keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
 
+    assert keep_session is True
+    assert not pipe._hangup_event.is_set()
+    assert pipe._player.stop_calls == 0
+    pipe._stt.text = "Ja"
+    keep_session = await pipe._handle_utterance(b"\x01\x00" * 1024)
     assert keep_session is False
     assert pipe._hangup_event.is_set()
-    assert pipe._player.stop_calls == 1  # "auflegen" stays an absolute kill switch
+    assert pipe._player.stop_calls == 1  # only confirmed voice termination stops playback
+
+
+@pytest.mark.parametrize("answer", ["No", "Explain this task", "Yes, keep talking"])
+async def test_classic_hangup_cannot_reuse_a_later_task_approval(answer) -> None:
+    pipe = _make_pipeline(
+        FakeSTT(text="Hang up"), continue_listening_after_response=True,
+    )
+    for text in ["Hang up", answer, "Yes"]:
+        pipe._stt.text = text
+        assert await pipe._handle_utterance(b"\x01\x00" * 1024)
+        assert not pipe._hangup_event.is_set()
+
+
+async def test_muted_classic_hangup_question_never_arms_confirmation() -> None:
+    pipe = _make_pipeline(FakeSTT(text="Hang up"))
+    pipe._muted = True
+    assert await pipe._handle_utterance(b"\x01\x00" * 1024)
+    assert pipe._hangup_confirmation.pending_turn is None
 
 
 @pytest.mark.asyncio

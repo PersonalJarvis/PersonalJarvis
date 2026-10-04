@@ -33,6 +33,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: pypi-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   # Release admission (release-gate.yml): tag == version, on main, CI green on
   # this exact commit. Skipped for a manual run from a branch, which builds
@@ -41,17 +45,41 @@ jobs:
     if: github.ref_type == 'tag'
     permissions:
       contents: read
-      checks: read
+      actions: read
     uses: ./.github/workflows/release-gate.yml
 
-  build:
+  prepare:
+    name: prepare immutable release
     needs: admit
+    if: github.ref_type == 'tag' && needs.admit.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Require an unpublished draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci/release_assets.py prepare --repo "$GITHUB_REPOSITORY" --tag "$GITHUB_REF_NAME"
+
+
+  build:
+    needs: [admit, prepare]
     if: ${{ !failure() && !cancelled() }}
     name: Build sdist + wheel
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out the tagged tree
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -59,7 +87,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tooling
-        run: python -m pip install --upgrade build twine
+        run: python -m pip install -r scripts/ci/requirements-build.txt
 
       # A tag that disagrees with the shipped version would publish something
       # nobody can trace back to a commit. Fail before the artifacts exist.
@@ -82,7 +110,7 @@ jobs:
         run: python scripts/ci/check_readme_absolute_urls.py README.md
 
       - name: Build
-        run: python -m build
+        run: python -m build --no-isolation
 
       # Metadata only. Do NOT read this as "the README was checked": twine maps
       # `text/markdown` to no renderer at all ("Rendering cannot fail"), so a
@@ -100,10 +128,11 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    if: github.ref_type == 'tag'
-    needs: build
+    needs: [admit, prepare, build]
+    if: github.ref_type == 'tag' && needs.admit.result == 'success' && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     environment: pypi
+    timeout-minutes: 10
     permissions:
       # The ONLY thing this job is trusted with: minting the OIDC token that
       # PyPI exchanges for a short-lived upload credential.

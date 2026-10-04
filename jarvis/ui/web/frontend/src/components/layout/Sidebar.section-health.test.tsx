@@ -67,8 +67,8 @@ afterEach(() => {
 describe("Sidebar — API-Keys alert dot", () => {
   it("shows a red attention dot on the profile button when a section reports error", () => {
     mockHealth = {
-      brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
-      tts: { status: "ok", reason: "ok", detail: "", subject_id: "gemini-flash-tts" },
+      realtime: { status: "error", reason: "no_credits", detail: "OpenAI GPT-Live: out of credit", subject_id: "openai-live" },
+      subagents: { status: "ok", reason: "ok", detail: "", subject_id: null },
     };
     render(<Sidebar />);
     // The profile button IS the Settings hub's entry point now, so its dot is
@@ -77,6 +77,15 @@ describe("Sidebar — API-Keys alert dot", () => {
     const dot = screen.getByTestId("sidebar-profile-attention");
     expect(dot).toBeTruthy();
     expect(dot.className).toMatch(/bg-destructive/);
+  });
+
+  it("ignores a failing section the API Keys page does not show", () => {
+    mockHealth = {
+      brain: { status: "error", reason: "rate_limited", detail: "OpenRouter: rate limited", subject_id: "openrouter" },
+      stt: { status: "error", reason: "bad_key", detail: "Groq STT: key invalid", subject_id: "groq-api" },
+    };
+    render(<Sidebar />);
+    expect(screen.queryByTestId("sidebar-profile-attention")).toBeNull();
   });
 
   it("stays calm (no dot) when nothing is broken", () => {

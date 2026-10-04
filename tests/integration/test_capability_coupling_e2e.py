@@ -27,7 +27,7 @@ from __future__ import annotations
 import pytest
 
 from jarvis.brain.local_action_gate import LocalActionMode, match_local_action
-from jarvis.core.capabilities import CapabilityRegistry, get_registry
+from jarvis.core.capabilities import CapabilityRegistry
 from jarvis.core.capabilities_seed import seed_registry
 
 
@@ -36,11 +36,13 @@ from jarvis.core.capabilities_seed import seed_registry
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def seeded_registry() -> CapabilityRegistry:
-    """Production-equivalent registry: seeded once per module."""
-    reg = get_registry()
-    seed_registry(reg)
-    return reg
+def seeded_registry():
+    """A fresh base install with no connected plugins, independent of prior tests."""
+    reg = CapabilityRegistry()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("jarvis.core.capabilities._registry_instance", reg)
+        seed_registry(reg)
+        yield reg
 
 
 HARD_NEGATIVE_UTTERANCES = [
@@ -150,12 +152,11 @@ def test_hard_positive_local_action_not_unsupported(
 def test_hard_positive_file_ops_resolves_to_file_capability(
     seeded_registry: CapabilityRegistry,
 ) -> None:
-    """'Lies die Datei foo.txt' must resolve to a file-capable harness."""
+    """A file-read request resolves to the shell capability that owns file operations."""
     cap = seeded_registry.resolve_intent("Lies die Datei foo.txt")  # i18n-allow
     assert cap is not None, "Expected a capability match for file-read"
-    assert "file" in cap.id or cap.source == "harness", (
-        f"Expected a file-capable harness/tool, got {cap!r}"
-    )
+    assert cap.id == "tool.run-shell"
+    assert cap.requires_evidence is True
 
 
 def test_hard_positive_smalltalk_not_action_intent(

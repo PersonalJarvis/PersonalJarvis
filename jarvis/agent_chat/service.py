@@ -733,6 +733,12 @@ class AgentChatService:
             # What the turn receives; ``text`` stays what the person typed so the
             # timeline shows their sentence rather than a page of extracted PDF.
             prompt = chat_attachments.compose(text, attached)
+            if attached and session.surface == "jarvis":
+                image_context = await asyncio.to_thread(
+                    chat_attachments.handoff_context, session.cwd, attached, session_id=session_id,
+                )
+                if image_context:
+                    prompt += "\n\n" + image_context
             # Agent cards serialize Add selections as capability pins. Translate the
             # browser pin to the same validated receipt used by the root composer.
             if session.surface == "jarvis" and any(

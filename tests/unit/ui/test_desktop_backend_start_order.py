@@ -39,11 +39,17 @@ class _FakeWebServer:
     # heavy ``server.start()`` _init_* chain runs relative to the wake listener.
     events: list[str] | None = None
 
-    def __init__(self, cfg: Any) -> None:
+    def __init__(self, cfg: Any, *, defer_feature_routes: bool = False) -> None:
         self.cfg = cfg
+        self.defer_feature_routes = defer_feature_routes
         self.bus = _FakeBus()
         self.app = _FakeApp()
         self.stopped = False
+
+    async def prepare_app(self) -> None:
+        assert self.defer_feature_routes
+        if _FakeWebServer.events is not None:
+            _FakeWebServer.events.append("feature_setup")
 
     async def start(self, *, start_serving: bool = True) -> None:
         if _FakeWebServer.events is not None:
@@ -285,6 +291,7 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
     app.session_token = "test-session-token"
     app._backend_loop = None
     app._server = None
+    app._shutdown_done = False
     app._workflow_store = None
     app._workflow_scheduler = None
     app._conductor_store = None
@@ -326,6 +333,8 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
     assert events[0] == "run_forever"
     assert events[1] == "speech"
     assert "server_start" in events
+    assert events.index("speech") < events.index("feature_setup")
+    assert events.index("feature_setup") < events.index("server_start")
     assert events.index("speech") < events.index("server_start"), (
         f"wake must arm before the heavy server.start() chain; got {events}"
     )

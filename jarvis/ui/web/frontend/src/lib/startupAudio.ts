@@ -69,6 +69,11 @@ export class StartupAudioQueue {
     this.suspended = true;
   }
 
+  /** Resume local retention after unmute without releasing an unready call. */
+  resume(): void {
+    this.suspended = false;
+  }
+
   process(input: Float32Array, output: Float32Array): void {
     output.fill(0);
     if (this.suspended) return;

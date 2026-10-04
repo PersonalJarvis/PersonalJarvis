@@ -72,16 +72,23 @@ class WorkspaceOrchestrationTool:
         "without requiring a focused terminal. On needs_clarification pick from the returned "
         "candidates when one clearly fits, else ask; never invent a target. "
         "Send right away with the resolved IDs and the request_id from resolve (the app "
-        "remembers its resolves, so a slightly mistyped id still works); reuse it for "
+        "repairs a mistyped request ID only when the target agrees); reuse it for "
         "retries. Explicit background targets never switch the visible workspace. "
         "Accepted means delivered, not completed; uncertain delivery must not be retried. "
         "The result returns asynchronously to this conversation; keep talking to the user "
         "instead of waiting or polling in a loop. "
-        "After a proven pre-write refusal, resolve again for a fresh request_id "
+        "Creation receipts own their new panes: never send recovery or correction prompts "
+        "to existing panes, and never recreate after uncertain startup or delivery. "
+        "After a proven pre-write refusal, resolve the SAME pane for a fresh request_id "
         "before a new attempt. "
         "Use context with the same IDs to inspect recorded results. No prompt rewriting is needed. "
         "A prompt for create, open_workspace or send is a work order the agent carries "
-        "out, never a read-only request unless the user asked for one (see prompt)."
+        "out, never a read-only request unless the user asked for one (see prompt). "
+        "For work based on an uploaded image or appshot, pass its actual image_refs. "
+        "A description alone is insufficient. Select only images relevant to this task. "
+        "The authorized handoff copies those images into the target workspace; "
+        "missing or expired images refuse delivery. "
+        "Never claim an image was sent without a receipt."
     )
     schema = {
         "type": "object",
@@ -121,6 +128,17 @@ class WorkspaceOrchestrationTool:
                 "description": (
                     "create/open_workspace/send: the full, self-contained task brief; "
                     "respond: the answer to type. " + AGENT_BRIEF_RULE
+                ),
+            },
+            "image_refs": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": True,
+                "items": {"type": "string"},
+                "description": (
+                    "create/open_workspace/send: IDs of the visual references for this "
+                    "work order, from uploaded images or take_appshot. No paths or URLs. "
+                    "Omit for a task that does not use images."
                 ),
             },
             # No pattern: a schema rejection would discard the whole call over
@@ -201,13 +219,36 @@ class WorkspaceOrchestrationTool:
         }
 
     async def execute(self, args: dict, ctx: ExecutionContext) -> ToolResult:
+        from jarvis.agentic_ide.dispatch_intent import dispatch_context
+        from jarvis.core.image_references import get_store, scope_for
+
+        scope = scope_for(ctx.config, ctx.trace_id)
+        if args.get("action") in {"send", "create", "open_workspace"} and args.get("prompt"):
+            available = get_store().available(scope)
+            if available and "image_refs" not in args:
+                return ToolResult(
+                    False,
+                    {
+                        "status": "image_selection_required",
+                        "available_images": available,
+                    "reason": (
+                        "Select the image_refs used by this work order; use [] only if this "
+                        "task does not use any images. No task has been sent."
+                    ),
+                    },
+                )
+
         from jarvis.core.delegation import current_delegation_origin, origin_metadata
 
         token = current_delegation_origin.set(origin_metadata(
             language=str(ctx.config.get("output_language") or ""),
         ))
         try:
-            result = await self.gateway.run(args, trace_id=str(ctx.trace_id))
+            result = await self.gateway.run(
+                {**args, "_image_scope": scope,
+                 **dispatch_context(ctx.user_utterance, ctx.config, str(ctx.trace_id))},
+                trace_id=str(ctx.trace_id),
+            )
         except ValueError as exc:
             # Invalid arguments go back to the model as the tool error.
             return ToolResult(success=False, output=None, error=str(exc))

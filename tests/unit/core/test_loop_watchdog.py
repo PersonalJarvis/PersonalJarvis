@@ -11,10 +11,12 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from jarvis.core.loop_watchdog import EventLoopWatchdog
+from tests.fakes.fake_watchdog_clock import ScriptedWatchdogClock
 
 
 class _Recorder:
@@ -121,31 +123,21 @@ def test_an_ongoing_stall_is_not_repeated_every_check(live_loop):
     )
 
 
-def test_recovery_re_arms_the_report(live_loop):
+def test_recovery_re_arms_the_report(monkeypatch):
     """After the loop frees itself, a LATER stall is reported again."""
+    from jarvis.core import loop_watchdog
+
+    clock = ScriptedWatchdogClock([True, False, False, False, True, False, False, False])
+    monkeypatch.setattr(loop_watchdog, "time", SimpleNamespace(monotonic=clock.monotonic))
     recorder = _Recorder()
     watchdog = EventLoopWatchdog(
-        live_loop, interval_s=0.05, stall_s=0.2, repeat_s=30.0, on_stall=recorder
+        clock, interval_s=0.25, stall_s=0.5, repeat_s=30.0, on_stall=recorder
     )
-    watchdog.start()
-
-    try:
-        first = threading.Event()
-        live_loop.call_soon_threadsafe(lambda: first.wait(1.0))
-        assert recorder.seen.wait(3.0)
-        first.set()
-
-        time.sleep(0.3)  # let the loop beat again — this clears the report
-        recorder.seen.clear()
-
-        second = threading.Event()
-        live_loop.call_soon_threadsafe(lambda: second.wait(1.0))
-        assert recorder.seen.wait(3.0), "a fresh stall after recovery went unreported"
-        second.set()
-    finally:
-        watchdog.stop()
-
-    assert len(recorder.calls) == 2
+    # Real-loop tests above cover thread scheduling. This case controls the
+    # recovery boundary so CI load cannot introduce an unrelated third stall.
+    watchdog._stop = clock
+    watchdog._run()
+    assert [duration for duration, _stack in recorder.calls] == [0.5, 0.5]
 
 
 def test_stop_is_idempotent_and_start_does_not_double_up(live_loop):

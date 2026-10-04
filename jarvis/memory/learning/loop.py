@@ -560,6 +560,7 @@ def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
     from jarvis.memory.learning import notebook as notebook_module
     from jarvis.memory.learning.review import ModelReviewer
 
+    _connect_write_feedback(bus)
     cfg = config.memory.learning
     if not cfg.enabled:
         notebook_module.set_active(None)
@@ -585,11 +586,28 @@ def start_learning(config: Any, bus: Any) -> JarvisLearningLoop | None:
     return _loop
 
 
+def _connect_write_feedback(bus: Any) -> None:
+    """Show Jarvis' memory writes in the UI (``MemoryFileWrite`` on ``bus``).
+
+    Wired even when learning is off: the remember and update_soul tools still
+    write memory files then, and the person should see those writes too.
+    """
+    from jarvis.memory import write_feedback
+
+    try:
+        write_feedback.connect(bus)
+    except RuntimeError:
+        # No running event loop (a synchronous test harness): nothing to show it on.
+        log.debug("learning: memory write receipts not wired (no running loop)")
+
+
 async def stop_learning() -> None:
     global _loop
+    from jarvis.memory import write_feedback
     from jarvis.memory.learning import notebook as notebook_module
 
     loop, _loop = _loop, None
     notebook_module.set_active(None)
+    write_feedback.disconnect()
     if loop is not None:
         await loop.stop()

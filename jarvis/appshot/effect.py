@@ -7,7 +7,10 @@ frame in memory and piped to the local indicator sidecar; it is never stored
 and never published on the event bus.
 
 The thumbnail then rests in the corner as a card: a click opens the appshot
-editor in the app, a drag hands the picture to another app. For that drag the
+editor (in its own window where the desktop shell allows), a drag hands the
+picture to another app, and on hover it offers Copy, Save, Edit and Close
+(:mod:`jarvis.appshot.card_actions`). How long it rests is
+``[appshot].card_seconds`` (``0`` = until closed). For that drag the
 finished, privacy-filtered appshot follows (:func:`attach_card_image`) — the
 raw-frame thumbnail itself never leaves the sidecar.
 """
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import io
 import logging
 from typing import Any
@@ -27,6 +31,12 @@ log = logging.getLogger(__name__)
 _THUMB_EDGE = 560
 
 _tasks: set[asyncio.Task[None]] = set()
+
+#: Markings the user drew in the area picker for the capture now running
+#: (:mod:`jarvis.appshot.markup`); the thumbnail shows them like the appshot.
+shutter_markup: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "appshot_shutter_markup", default=None
+)
 
 # The card's hover line — app chrome, so it follows [ui].language; a phrase
 # table always carries every supported locale.
@@ -51,12 +61,19 @@ def on_shutter(target: Any, size: tuple[int, int], rgb: bytes, monitors: list[di
         return
     # Before the capture's own border dismissal can quit the sidecar.
     controller.hold_for_snap()
-    task = asyncio.get_running_loop().create_task(
-        _play(controller, tuple(target.bbox), size, rgb, monitors),
+    loop = asyncio.get_running_loop()
+    task = loop.create_task(
+        _play(controller, tuple(target.bbox), size, rgb, monitors, shutter_markup.get()),
         name="appshot-effect",
     )
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
+    # The card that follows opens the editor: have its window loaded by then.
+    from jarvis.appshot.editor_window import prewarm_editor_window  # noqa: PLC0415
+
+    warm = loop.create_task(prewarm_editor_window(), name="appshot-editor-prewarm")
+    _tasks.add(warm)
+    warm.add_done_callback(_tasks.discard)
 
 
 async def _play(
@@ -65,6 +82,7 @@ async def _play(
     size: tuple[int, int],
     rgb: bytes,
     monitors: list[dict],
+    markup: Any = None,
 ) -> None:
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
@@ -72,6 +90,12 @@ async def _play(
         config = await asyncio.to_thread(load_config)
         if not bool(getattr(getattr(config, "appshot", None), "effect", True)):
             return
+        from jarvis.appshot.card_actions import card_labels, card_rest_ms  # noqa: PLC0415
+
+        if markup is not None:
+            from jarvis.appshot.markup import apply_to_rgb  # noqa: PLC0415
+
+            size, rgb = await asyncio.to_thread(apply_to_rgb, size, rgb, markup)
         thumb = await asyncio.to_thread(thumbnail_jpeg, size, rgb)
         monitor, rect = placement(bbox, monitors)
         shown = await controller.snap(
@@ -79,6 +103,8 @@ async def _play(
             rect=rect,
             thumb_b64=base64.b64encode(thumb).decode("ascii"),
             hint=card_hint(config),
+            rest_ms=card_rest_ms(config),
+            labels=card_labels(config),
         )
         if not shown:
             log.info("appshot: shutter effect could not be shown on this desktop")
@@ -86,15 +112,19 @@ async def _play(
         log.warning("appshot: shutter effect failed", exc_info=True)
 
 
-async def attach_card_image(image: bytes) -> None:
-    """Give the resting card the finished picture, so a drag can share it."""
+async def attach_card_image(image: bytes, shot_id: str = "") -> None:
+    """Give the resting card the finished picture, so a drag can share it.
+
+    ``shot_id`` ties the card to its appshot, so Copy, Save and Edit on an
+    older card in the corner stack reach that card's own picture.
+    """
     try:
         from jarvis.cu.indicator.controller import get_indicator_controller  # noqa: PLC0415
 
         controller = get_indicator_controller()
         if controller is None:
             return
-        await controller.snap_image(base64.b64encode(image).decode("ascii"))
+        await controller.snap_image(base64.b64encode(image).decode("ascii"), shot_id=shot_id)
     except Exception:  # noqa: BLE001 - without it the card still opens the editor
         log.warning("appshot: could not hand the picture to the card", exc_info=True)
 
@@ -107,6 +137,18 @@ def thumbnail_jpeg(size: tuple[int, int], rgb: bytes) -> bytes:
     image.thumbnail((_THUMB_EDGE, _THUMB_EDGE), Image.Resampling.BILINEAR)
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=82)
+    return buffer.getvalue()
+
+
+def thumbnail_from_image(image: bytes) -> bytes:
+    """A small JPEG of a finished (edited) appshot, for the card coming back."""
+    from PIL import Image  # noqa: PLC0415
+
+    with Image.open(io.BytesIO(image)) as picture:
+        small = picture.convert("RGB")
+        small.thumbnail((_THUMB_EDGE, _THUMB_EDGE), Image.Resampling.BILINEAR)
+        buffer = io.BytesIO()
+        small.save(buffer, format="JPEG", quality=82)
     return buffer.getvalue()
 
 
@@ -149,4 +191,11 @@ def placement(
     ]
 
 
-__all__ = ["attach_card_image", "card_hint", "on_shutter", "placement", "thumbnail_jpeg"]
+__all__ = [
+    "attach_card_image",
+    "card_hint",
+    "on_shutter",
+    "placement",
+    "shutter_markup",
+    "thumbnail_jpeg",
+]

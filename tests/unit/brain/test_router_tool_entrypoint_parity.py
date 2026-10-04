@@ -38,6 +38,7 @@ INTERNAL_ONLY: dict[str, str] = {
     # Attached by the router only when a turn is about the screen
     # (jarvis/brain/vision_gate.py), so it is not a static ROUTER_TOOLS member.
     "screenshot": "gated per-turn by the vision gate",
+    "live-screen-snapshot": "added as screen_snapshot by the live ToolGateway",
 }
 
 

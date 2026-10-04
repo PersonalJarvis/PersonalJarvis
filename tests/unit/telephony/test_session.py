@@ -8,9 +8,10 @@ import struct
 
 import pytest
 
+from jarvis.speech.hangup import HANGUP_RE
 from jarvis.telephony.audio import TWILIO_SAMPLE_RATE, pcm16_to_ulaw
 from jarvis.telephony.constants import CALL_COMPLETED, CALL_NO_AUDIO
-from jarvis.telephony.session import HANGUP_RE, TelephonyCallSession
+from jarvis.telephony.session import TelephonyCallSession
 from tests.fakes.fake_telephony_stack import FakeBrain, FakeSTT, FakeTTS
 
 # asyncio_mode = "auto" (pyproject) runs async tests with no marker; sync tests
@@ -113,10 +114,12 @@ async def test_brain_receives_transcript():
     assert brain.prompts == ["Was ist die Uhrzeit?"]  # i18n-allow
 
 
-async def test_hangup_phrase_ends_call_before_brain():
+async def test_hangup_phrase_waits_for_confirmation_before_ending():
     sink = _Sink()
     brain = FakeBrain("should not be called")
-    session = _make_session(sink, stt=FakeSTT(["Auflegen bitte."]), brain=brain)
+    session = _make_session(sink, stt=FakeSTT(["Auflegen bitte.", "Ja"]), brain=brain)
+    await _drive_one_utterance(session)
+    assert not session.ended
     await _drive_one_utterance(session)
     assert session.ended
     assert session.status == CALL_COMPLETED
@@ -239,7 +242,7 @@ async def test_turn_and_end_events_reach_the_bus():
     assert end_events[0].reason == "test"
 
 
-async def test_brain_end_call_sentinel_ends_call_after_speaking():
+async def test_semantic_closing_asks_without_calling_the_brain():
     sink = _Sink()
     brain = FakeBrain("Auf Wiedersehen, Ruben. [[END_CALL]]")
     tts = FakeTTS(ms_per_char=2)
@@ -252,9 +255,26 @@ async def test_brain_end_call_sentinel_ends_call_after_speaking():
 
     await _drive_one_utterance(session)
 
-    assert brain.prompts == ["Ich glaube wir sind durch"]  # brain WAS reached
-    assert session.ended
-    assert session.status == CALL_COMPLETED
-    assert session.end_reason == "hangup_phrase"
-    assert tts.calls, "the farewell must be spoken before hanging up"
+    assert brain.prompts == []
+    assert not session.ended
+    assert tts.calls and "?" in tts.calls[0][0]
     assert all("[[END_CALL]]" not in text for (text, _lang) in tts.calls)
+
+
+async def test_model_sentinel_cannot_end_an_ordinary_telephone_turn():
+    session = _make_session(
+        _Sink(), stt=FakeSTT(["Explain this task"]),
+        brain=FakeBrain("The task is done. [[END_CALL]]"),
+    )
+    await _drive_one_utterance(session)
+    assert not session.ended
+
+
+async def test_declining_telephone_hangup_does_not_arm_a_later_yes():
+    session = _make_session(
+        _Sink(), stt=FakeSTT(["Hang up", "No", "Yes"]),
+        brain=FakeBrain("Okay. [[END_CALL]]"),
+    )
+    for _ in range(3):
+        await _drive_one_utterance(session)
+        assert not session.ended

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderPlus, Loader2, X } from "lucide-react";
-import { FolderPicker } from "@/components/agentic/FolderPicker";
+import { ProjectConnectDialog } from "@/components/agentic/ProjectConnectDialog";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
@@ -78,8 +78,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [projectDialog, setProjectDialog] = useState(false);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [projectName, setProjectName] = useState("");
   const [workspaceProject, setWorkspaceProject] = useState<IdeProject | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
@@ -135,7 +133,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [session?.id]);
 
   useEffect(() => {
-    if (!dialogOpen) return;
+    if (!dialogOpen || projectDialog) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
     if (!dialog) return;
@@ -298,16 +296,16 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     void activateFromTree(action.workspaceId);
   }, [action, activateFromTree, installed, projects, session?.id]);
 
-  const connect = () => void run(async () => {
+  const connect = async (projectPath: string, projectName?: string) => {
     if (!projectPath) throw new Error("Choose a folder for this project.");
-    const project = await openProject(projectPath, projectName.trim() || undefined);
-    setProjectDialog(false); setProjectPath(null); setProjectName("");
+    const project = await openProject(projectPath, projectName);
     const listing = await fetchIdeProjects();
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
     const found = listing.projects.find((entry) => entry.id === project.id);
     if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(found.id)); }
-  });
+    setProjectDialog(false);
+  };
 
   const notify = useCallback((message: string) => pushToast("success", message), [pushToast]);
 
@@ -481,9 +479,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       }
       case "spawn": {
         if (!session) { setProjectDialog(true); return; }
-        // A workspace has no pane limit and no grid bound, so a split beside
-        // the focused pane always fits.
         const anchor = session.terminals.find((terminal) => terminal.name === selected);
+        // A workspace has no size limit: beside the selected pane always fits.
         const fits = Boolean(anchor && hotkey.direction);
         addAgent(hotkey.agent, session.id, fits ? anchor!.name : undefined, fits ? hotkey.direction! : "down",
           anchor ? anchor.computer_id || null : workspaceRunsOn(session.terminals));
@@ -631,36 +628,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </section>
     </div>}
 
-    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setProjectDialog(false); }}>
-      {/* A fixed height, so the dialog does not jump each time a folder with
-          a different number of subfolders is opened. */}
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" aria-describedby="connect-project-hint" aria-busy={busy}
-        className="flex h-[min(46rem,90vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-        <header className="shrink-0 px-6 pb-1 pt-6">
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold tracking-tight">Connect a project</h2>
-            <button type="button" aria-label="Close" disabled={busy} onClick={() => setProjectDialog(false)}
-              className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
-          </div>
-          <p id="connect-project-hint" className="mt-1 text-sm text-muted-foreground">Choose the folder your coding agents will work in. Open it in the list, find it by name, or make a new one.</p>
-        </header>
-        <div className="flex min-h-0 flex-1 flex-col px-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
-        <footer className="flex shrink-0 flex-wrap items-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
-          <label className="min-w-[14rem] flex-1 text-xs font-medium text-muted-foreground">Project name <span className="font-normal opacity-70">(optional)</span>
-            <input value={projectName} onChange={(event) => setProjectName(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter" && projectPath && !busy) { event.preventDefault(); connect(); } }}
-              placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Uses the folder name"}
-              className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/30" />
-          </label>
-          <div className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setProjectDialog(false)} className="h-10 rounded-lg px-4 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
-            <button type="button" disabled={busy || !projectPath} onClick={connect} title={projectPath ? undefined : "Choose a folder first"}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
-              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}Connect project</button>
-          </div>
-        </footer>
-      </section>
-    </div>}
+    {projectDialog && <ProjectConnectDialog onClose={() => setProjectDialog(false)} onConnect={connect} />}
 
     {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setWorkspaceProject(null); }}>
       <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" aria-busy={busy}

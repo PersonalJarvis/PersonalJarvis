@@ -158,3 +158,41 @@ def test_client_disconnect_cleans_up_subscription(web_server: WebServer) -> None
         time.sleep(0.1)
         after = len(web_server.bus._wildcard_subscribers)  # type: ignore[attr-defined]
         assert after == before, f"Leak: {before} → {after}"
+
+
+def test_failing_command_handler_keeps_the_socket_open(web_server: WebServer) -> None:
+    """One malformed command must not tear down the UI's whole event socket.
+
+    ``terminal.resize`` with a non-numeric size used to raise ``ValueError``
+    out of the frame router; the receive loop treated it as fatal and closed
+    ``/ws``, so every live view lost its event stream until a reconnect.
+    """
+    received: list[ErrorOccurred] = []
+
+    async def handler(evt: ErrorOccurred) -> None:
+        received.append(evt)
+
+    web_server.bus.subscribe(ErrorOccurred, handler)
+
+    with TestClient(web_server.app) as client:
+        with client.websocket_connect("/ws") as ws:
+            _receive_welcome(ws)
+            ws.send_json(
+                {
+                    "type": "command",
+                    "action": "terminal.resize",
+                    "payload": {"terminal_id": "t-1", "cols": "wide", "rows": 1},
+                }
+            )
+            frame = ws.receive_json()
+            assert frame["type"] == "event"
+            assert frame["event_name"] == "ErrorOccurred"
+            assert frame["payload"]["recoverable"] is True
+
+            # The same connection still answers.
+            ws.send_json({"type": "command", "action": "ping", "payload": {"n": 7}})
+            frame = ws.receive_json()
+            assert frame["type"] == "pong"
+            assert frame["payload"] == {"n": 7}
+
+    assert [evt.error_type for evt in received] == ["CommandFailed"]

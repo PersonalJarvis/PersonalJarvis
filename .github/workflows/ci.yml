@@ -61,8 +61,8 @@ on:
 # organisation's concurrent-job limit — the newest run covers every commit
 # before it. The nightly run and manual dispatches get their own group.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main') }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main') }}
 
 permissions:
   contents: read
@@ -98,6 +98,8 @@ jobs:
       windows_shards: ${{ steps.shards.outputs.windows_shards }}
       tests_full: ${{ steps.shards.outputs.tests_full }}
       os_matrix: ${{ steps.mode.outputs.os_matrix }}
+      duration_snapshot: ${{ steps.snapshot.outputs.name }}
+      release: ${{ github.ref_type == 'tag' }}
     steps:
       - name: Checkout (full history for the diff base)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -158,6 +160,30 @@ jobs:
             git diff --name-only "$BASE" HEAD | tee changed.txt | python3 scripts/ci/classify_changes.py
           fi
 
+      # Resolve the mutable cache ONCE. All shards download the same immutable
+      # snapshot; staggered runners must never compute different partitions.
+      - name: Restore duration history once
+        if: steps.lanes.outputs.python == 'true'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: test_durations.json
+          key: test-durations-never-exact
+          restore-keys: test-durations-
+      - name: Ensure a duration snapshot exists
+        id: snapshot
+        if: steps.lanes.outputs.python == 'true'
+        run: |
+          test -f test_durations.json || echo '{}' > test_durations.json
+          echo "name=test-duration-snapshot-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Share duration snapshot with every shard
+        if: steps.lanes.outputs.python == 'true'
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: ${{ steps.snapshot.outputs.name }}
+          path: test_durations.json
+          if-no-files-found: error
+          retention-days: 7
+
       # Linux always runs the whole suite in six shards. Windows runs the
       # whole suite in four shards on main, nightly, full manual runs and
       # pipeline changes; on a pull request one runner takes the tests the
@@ -204,6 +230,29 @@ jobs:
           [ -n "$BASE" ] && args+=(--base "$BASE")
           [ "$PR_MODE" = "true" ] && args+=(--pr)
           python scripts/ci/run_gates.py "${args[@]}"
+      - name: Validate workflow syntax, expressions and action inputs
+        if: always()
+        run: |
+          GOBIN="$RUNNER_TEMP/actionlint" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$RUNNER_TEMP/actionlint/actionlint" -shellcheck= -pyflakes=
+
+  release-qualification:
+    name: release qualification
+    needs: [detect, gates]
+    if: github.ref_type == 'tag' && needs.detect.outputs.full == 'true' && needs.detect.outputs.macos == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e . --no-deps
+      - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
+      - name: Require real browser auth evidence for release
+        run: python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass
 
   python-fast:
     name: python contracts (fast)
@@ -276,14 +325,12 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
+          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2 libegl1 libopengl0
           python -m pip install -e ".[dev,telephony]"
-      - name: Restore the per-file duration cache (written by main only)
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download the shared duration snapshot
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          path: test_durations.json
-          key: test-durations-never-exact
-          restore-keys: test-durations-
+          name: ${{ needs.detect.outputs.duration_snapshot }}
       - name: Run shard
         continue-on-error: true
         run: >-
@@ -343,13 +390,11 @@ jobs:
       - name: Install
         if: steps.pick.outputs.mode != 'none'
         run: python -m pip install -e ".[dev,telephony]"
-      - name: Restore the per-file duration cache
+      - name: Download the shared duration snapshot
         if: steps.pick.outputs.mode != 'none'
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          path: test_durations.json
-          key: test-durations-never-exact
-          restore-keys: test-durations-
+          name: ${{ needs.detect.outputs.duration_snapshot }}
       - name: Run shard
         if: steps.pick.outputs.mode != 'none'
         continue-on-error: true
@@ -391,12 +436,10 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install
         run: python -m pip install -e ".[dev,telephony]"
-      - name: Restore the per-file duration cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      - name: Download the shared duration snapshot
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          path: test_durations.json
-          key: test-durations-never-exact
-          restore-keys: test-durations-
+          name: ${{ needs.detect.outputs.duration_snapshot }}
       - name: Run shard
         continue-on-error: true
         run: >-
@@ -434,7 +477,7 @@ jobs:
           path: reports
           merge-multiple: true
       - name: Min-passed floor across all Linux shards (BLOCKING)
-        run: python scripts/ci/ratchet_tests.py summary --floor --baseline scripts/ci/test-baseline-linux.json reports
+        run: python scripts/ci/ratchet_tests.py summary --floor --expected-shards 6 --baseline scripts/ci/test-baseline-linux.json reports
       - name: Merge the duration cache (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python scripts/ci/ratchet_tests.py durations --out test_durations.json reports
@@ -804,6 +847,7 @@ jobs:
       - detect
       - gates
       - python-fast
+      - release-qualification
       - tests-linux
       - tests-windows
       - tests-macos
@@ -832,6 +876,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           STRICT: ${{ github.event_name == 'schedule' }}
         run: |
-          args=()
+          args=(--pipeline)
           [ "$STRICT" = "true" ] && args+=(--strict)
           printf '%s' "$NEEDS" | python3 scripts/ci/required_results.py "${args[@]}"

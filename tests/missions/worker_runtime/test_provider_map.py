@@ -207,6 +207,7 @@ def test_ad6_table_is_complete() -> None:
         "openrouter",
         "grok",
         "nvidia",
+        "vertex",
         "ollama",
         "local-openai",
     }

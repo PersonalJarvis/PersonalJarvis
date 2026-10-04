@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 # is "Personal Jarvis Dev", so neither instance ever raises the other's window.
 WINDOW_TITLE = current_instance().display_name
 
+# True while the WebView shows the app's own document — booted or still
+# booting. A stale error body has no ``#root``. See ``_reload_window_if_stale``.
+_SPA_DOCUMENT_PROBE = "document.getElementById('root') !== null"
+
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.
 ensure_standard_streams()
@@ -109,6 +113,15 @@ DETACHABLE_VIEWS: dict[str, str] = {
     # picture is something you keep looking at WHILE you carry on working, and
     # on a second monitor it stops competing with the section that produced it.
     "visualization": "Visualization",
+    # The appshot editor: a click on the corner card opens
+    # it in front of the user without raising or resizing the main window.
+    # Always on one appshot (``&appshot=<id>``); ONE window is reused.
+    "appshot-editor": "Appshot Editor",
+    # The Jarvis X annotation editor. Never a section of the main window: it
+    # opens from a capture's thumbnail card or the library, always on one
+    # item (``&item=<id>``), and ONE editor window is reused — opening another
+    # capture navigates it instead of stacking windows (open_jarvisx_editor).
+    "jarvisx-editor": "Jarvis X Editor",
 }
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
@@ -138,6 +151,10 @@ _REALTIME_WARM_MIN_INTERVAL_S = 20.0
 #: and relaunch again, so the app stays down and says why instead. Comfortably
 #: above a full cold boot, including model prefetch on a cold disk.
 _BACKEND_MIN_UPTIME_FOR_RECOVERY_S = 120.0
+
+# The force-exit backstop must outwait the server's bounded profile cleanup.
+# The asynchronous backend drain below continues to own orderly loop shutdown.
+_SHUTDOWN_FORCE_EXIT_MIN_S = 45.0
 
 
 def _clamp_pet_scale(value: object) -> float:
@@ -699,7 +716,12 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
     the supported recovery. Every attachment is detached in ``finally`` so a
     failed focus attempt cannot poison keyboard routing.
     """
-    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # SW_RESTORE only for a minimized window: on a maximized one it means
+    # "back to the normal size", which shrank the app every time something
+    # merely asked to bring it forward (an appshot card click, 2026-10-03).
+    restore = _is_minimized(hwnd, user32)
+    if restore:
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
     if user32.SetForegroundWindow(hwnd):
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -722,7 +744,8 @@ def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
         ):
             attached_target = bool(user32.AttachThreadInput(current_thread, target_thread, True))
         user32.BringWindowToTop(hwnd)
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if restore:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.SetForegroundWindow(hwnd)
         user32.SetActiveWindow(hwnd)
         if user32.GetForegroundWindow() == hwnd:
@@ -782,6 +805,134 @@ def _window_answers(hwnd: int, user32: Any, *, timeout_ms: int = _WINDOW_ANSWER_
         return True
 
 
+def _is_minimized(hwnd: int, user32: Any) -> bool:
+    """``IsIconic`` when the binding has it; an unknown state counts as minimized
+    so the old restore-everything behaviour is the fallback, never a no-op."""
+    probe = getattr(user32, "IsIconic", None)
+    if probe is None:
+        return True
+    try:
+        return bool(probe(hwnd))
+    except Exception:  # noqa: BLE001 - unreadable state: restore as before
+        return True
+
+
+def window_needs_restore(title: str) -> bool:
+    """Whether raising the window titled ``title`` must restore it first.
+
+    ``True`` for a minimized or hidden window, and wherever it cannot be told
+    (other OSes, no such window). ``False`` for a visible one — restoring
+    that would turn a maximized window back into its smaller normal size.
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd:
+            return True
+        return bool(user32.IsIconic(hwnd)) or not bool(user32.IsWindowVisible(hwnd))
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return True
+
+
+#: ``WINDOWPLACEMENT.flags``: a minimized window that comes back maximized.
+_WPF_RESTORETOMAXIMIZED = 0x0002
+
+
+def _placement_restores_maximized(hwnd: int, user32: Any) -> bool:
+    """Was this (minimized) window maximized before it was minimized?
+
+    ``GetWindowPlacement`` keeps that in ``WPF_RESTORETOMAXIMIZED``. Unknown
+    counts as "no", the old restore-to-normal behaviour.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Placement(ctypes.Structure):
+            _fields_ = [
+                ("length", wintypes.UINT),
+                ("flags", wintypes.UINT),
+                ("showCmd", wintypes.UINT),
+                ("ptMinPosition", wintypes.POINT),
+                ("ptMaxPosition", wintypes.POINT),
+                ("rcNormalPosition", wintypes.RECT),
+            ]
+
+        placement = _Placement()
+        placement.length = ctypes.sizeof(_Placement)
+        if not user32.GetWindowPlacement(hwnd, ctypes.byref(placement)):
+            return False
+        return bool(placement.flags & _WPF_RESTORETOMAXIMIZED)
+    except Exception:  # noqa: BLE001 - unknown placement: restore as before
+        return False
+
+
+def window_restores_maximized(title: str) -> bool:
+    """Whether the minimized window titled ``title`` was maximized before.
+
+    pywebview's ``restore()`` sets the normal size, so a maximized window that
+    was minimized came back small; such a window is restored by Win32
+    ``SW_RESTORE`` alone (``_bring_window_to_front_by_title``), which returns
+    it maximized. ``False`` off Windows and whenever it cannot be told.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        hwnd = user32.FindWindowW(None, title)
+        if not hwnd or not user32.IsIconic(hwnd):
+            return False
+        return _placement_restores_maximized(hwnd, user32)
+    except Exception:  # noqa: BLE001 - unknown state: restore as before
+        return False
+
+
+def detached_window_size(view: str, screen: tuple[int, int] | None) -> tuple[int, int]:
+    """Opening size of a detached window.
+
+    The appshot editor opens in compact proportions: about two fifths of
+    the screen's width and a little under half its height, centred — a tool
+    window in front of the app, never one that looks like the app shrunk. It
+    never goes below the size its whole toolbar needs. Every other view keeps
+    the compact default.
+    """
+    if view != "appshot-editor" or not screen:
+        return 1100, 750
+    screen_w, screen_h = screen
+    width = min(screen_w, max(_EDITOR_MIN_SIZE[0], int(screen_w * 0.4)))
+    height = min(screen_h, max(_EDITOR_MIN_SIZE[1], int(screen_h * 0.46)))
+    return width, height
+
+
+#: The smallest appshot editor window that still shows every toolbar button.
+_EDITOR_MIN_SIZE = (900, 600)
+
+
+def _primary_screen_size(webview_module: Any) -> tuple[int, int] | None:
+    """The first screen's size in pywebview's units, or None when unknown."""
+    try:
+        screen = webview_module.screens[0]
+        return int(screen.width), int(screen.height)
+    except Exception:  # noqa: BLE001 - unknown screen: the default size
+        return None
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -821,6 +972,8 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         user32.IsIconic.argtypes = [wintypes.HWND]
         user32.IsIconic.restype = wintypes.BOOL
+        user32.IsWindowVisible.argtypes = [wintypes.HWND]
+        user32.IsWindowVisible.restype = wintypes.BOOL
         user32.MoveWindow.argtypes = [
             wintypes.HWND,
             ctypes.c_int,
@@ -874,11 +1027,18 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         offscreen_minimized = rect.left <= -30000 or rect.top <= -30000
 
         # Order matters: SHOW/RESTORE first, then move if needed, then
-        # Foreground+Active for keyboard focus.
-        user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
-        user32.ShowWindow(hwnd, 5)  # SW_SHOW
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        if was_minimized or offscreen_minimized:
+        # Foreground+Active for keyboard focus. A window that is already on
+        # screen keeps its state: SHOWNORMAL/RESTORE would un-maximize it.
+        # A window minimized while maximized comes back maximized: SW_RESTORE
+        # alone does that, SW_SHOWNORMAL and the move below would shrink it.
+        to_maximized = was_minimized and _placement_restores_maximized(hwnd, user32)
+        if to_maximized:
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        elif was_minimized or offscreen_minimized or not user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 1)  # SW_SHOWNORMAL
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        if (was_minimized or offscreen_minimized) and not to_maximized:
             width = max(900, min(1600, rect.right - rect.left))
             height = max(600, min(1000, rect.bottom - rect.top))
             if width > 5000 or height > 5000:
@@ -1987,7 +2147,6 @@ class DesktopApp:
         # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
         # this import; prefetching still overlaps all subsequent backend work.
         from jarvis.speech.warmup_prefetch import (
-            start_anthropic_import_prefetch,
             start_tts_import_prefetch,
             start_wake_import_prefetch,
         )
@@ -1997,12 +2156,9 @@ class DesktopApp:
         # from the wake import and remains a logged no-op for another provider
         # or a headless host without the optional dependency.
         start_tts_import_prefetch()
-        # Anthropic SDK import is the GIL stall that froze the desktop
-        # window on 2026-08-28 (worker thread in ``from anthropic import
-        # AsyncAnthropic``; Tk bar stopped pumping; health timed out).
-        # Prefetch here so the first recap/wiki/claude-api turn is a cache
-        # hit. Not voice-gated: those callers run with voice off too.
-        start_anthropic_import_prefetch()
+        # Background providers import their SDK when their actual consumer
+        # needs it. Warming every installed SDK here competes with voice and
+        # the route graph even when the selected providers never use it.
 
         # Start the audio-device settle after the shell paint too. Phase A then
         # reuses the result instead of re-paying the blocking stability poll.
@@ -2047,7 +2203,9 @@ class DesktopApp:
         # /api/health while it builds — that is what lets the window appear at
         # bind time rather than after the ~1 s ctor. WebServer.__init__ is
         # loop-agnostic (pure construction + route mounting), so off-loop is safe.
-        server = loop.run_until_complete(asyncio.to_thread(WebServer, self.cfg))
+        server = loop.run_until_complete(
+            asyncio.to_thread(WebServer, self.cfg, defer_feature_routes=True)
+        )
         self._server = server
         _db_mark("webserver_ctor")
 
@@ -2662,6 +2820,20 @@ class DesktopApp:
         # handler runs on the asyncio loop and immediately thread-hops, because
         # pywebview calls block their calling thread (see _on_show_window_requested).
         server.bus.subscribe(ShowWindowRequested, self._on_show_window_requested)
+        # The appshot card and the Appshots page open the editor in a window
+        # of its own (jarvis.appshot.editor_window holds the opener; it is
+        # always called from a worker thread, as open_detached_window needs).
+        try:
+            from jarvis.appshot.editor_window import EDITOR_VIEW, register_window_opener
+
+            register_window_opener(
+                lambda query: self.open_detached_window(EDITOR_VIEW, query=query),
+                prewarm=self.prewarm_appshot_editor,
+            )
+        except Exception as exc:  # noqa: BLE001 - the page editor stays the fallback
+            from loguru import logger as _alog
+
+            _alog.opt(exception=exc).debug("appshot editor window wiring skipped")
         # The pet's pen asks for a fresh chat: the window comes up through the
         # very same off-loop path; the frontend opens the new chat itself.
         server.bus.subscribe(ComposeRequested, self._on_show_window_requested)
@@ -2921,7 +3093,9 @@ class DesktopApp:
                 if exc is not None:
                     from loguru import logger as _slog
 
-                    _slog.opt(exception=exc).error("Voice/orb startup task crashed.")
+                    _slog.opt(exception=exc).error(
+                        "Startup task {} crashed.", task.get_name()
+                    )
 
             # Wake-model GIL-priority gate: set by ``_start_speech_and_orb`` once
             # the (light base/cpu) wake model has finished loading. The heavy
@@ -2992,6 +3166,15 @@ class DesktopApp:
                         "Heavy backend: wake-model gate timed out (12 s) — "
                         "starting the backend anyway."
                     )
+                if self._shutdown_done:
+                    return
+                # Route imports/mounting and the board used to run before the
+                # speech task even existed. Complete them off-loop only after
+                # wake warmup, and never expose a partially installed API.
+                await server.prepare_app()
+                if self._shutdown_done:
+                    return
+                _db_mark("feature_routes")
                 # Hand the REAL app to the bootstrap BEFORE the heavy _init_*
                 # chain runs. Every route whose subsystem is still warming
                 # answers its documented 503/None placeholder (the WebServer
@@ -3096,7 +3279,10 @@ class DesktopApp:
 
                 loop.create_task(_provision_wake_model(), name="wake-model-provision")
 
-            loop.create_task(_heavy_backend_bg(), name="heavy-backend")
+            self._heavy_backend_task = loop.create_task(
+                _heavy_backend_bg(), name="heavy-backend"
+            )
+            self._heavy_backend_task.add_done_callback(_log_speech_and_orb_done)
             loop.call_soon(self._start_virtual_cursor)
             # Watch this loop from OFF it, for the rest of the process's life.
             # Everything the user touches — every WebSocket frame, every route,
@@ -4926,8 +5112,11 @@ class DesktopApp:
                 self._ensure_main_window()
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
+        needs_restore = window_needs_restore(WINDOW_TITLE)
+        to_maximized = window_restores_maximized(WINDOW_TITLE)
         self._window.show()
-        self._window.restore()
+        if needs_restore and not to_maximized:
+            self._window.restore()
         self._window_visible = True
         focused = _bring_window_to_front_by_title(WINDOW_TITLE)
         # Restore the persistent bar if a prior minimise cleared it.
@@ -5068,7 +5257,7 @@ class DesktopApp:
 
         return resolve_theme(self._configured_theme())
 
-    def open_detached_window(self, view: str) -> dict[str, Any]:
+    def open_detached_window(self, view: str, query: str = "") -> dict[str, Any]:
         """Open ``view`` in its own solo window — MUST run on a worker thread.
 
         pywebview materializes runtime windows only from a thread whose name is
@@ -5080,11 +5269,26 @@ class DesktopApp:
         honest degrade on hosts whose webview backend cannot create runtime
         windows.
         """
-        fallback = f"/?view={view}&solo=1"
+        suffix = f"&{query}" if query else ""
+        fallback = f"/?view={view}&solo=1{suffix}"
         if view not in DETACHABLE_VIEWS:
             return {"ok": False, "reason": "unknown_view"}
         existing = self._detached_windows.get(view)
+        if existing is not None and view == "appshot-editor":
+            # The editor window is kept warm and hidden between uses: point it
+            # at the appshot in place and show it — no reload, no boot screen.
+            return self._show_warm_editor(existing, query, fallback)
         if existing is not None:
+            if query:
+                # Same window, new content: navigate it rather than open a
+                # second one (the title is the window's identity on Windows).
+                try:
+                    existing.load_url(f"{self._url()}{fallback}")
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger
+
+                    logger.opt(exception=exc).warning("Detached '{}' could not navigate", view)
+                    return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
             _bring_window_to_front_by_title(self._detached_title(view))
             return {"ok": True, "already_open": True, "view": view}
         if self._window is None and not self._detached_windows:
@@ -5096,11 +5300,12 @@ class DesktopApp:
             import webview  # noqa: PLC0415 — [desktop] extra, never module-level
 
             title = self._detached_title(view)
+            width, height = detached_window_size(view, _primary_screen_size(webview))
             window = webview.create_window(
                 title,
-                f"{self._url()}/?view={view}&solo=1",
-                width=1100,
-                height=750,
+                f"{self._url()}{fallback}",
+                width=width,
+                height=height,
                 min_size=(800, 520),
                 resizable=True,
                 # Cocoa owns the traffic lights and their native zoom/fullscreen behavior.
@@ -5129,6 +5334,84 @@ class DesktopApp:
         self._publish_detached_event_threadsafe(view, opened=True)
         return {"ok": True, "already_open": False, "view": view}
 
+    def open_jarvisx_editor(self, item_id: str) -> dict[str, Any]:
+        """Open (or re-point) the Jarvis X editor window on one capture.
+
+        Worker-thread only, like :meth:`open_detached_window`: the card click
+        and ``POST /api/jarvisx/items/<id>/open-editor`` both reach it through
+        ``asyncio.to_thread``. ``item_id`` is the library's hex id, validated
+        by the caller, so it is safe to put into the URL as is.
+        """
+        return self.open_detached_window("jarvisx-editor", query=f"item={item_id}")
+
+    def _show_warm_editor(self, window: Any, query: str, fallback: str) -> dict[str, Any]:
+        """Show the kept-warm appshot editor on the appshot named in ``query``."""
+        shot_id = query.partition("appshot=")[2].split("&", 1)[0]
+        pointed = False
+        if shot_id:
+            try:
+                pointed = bool(
+                    window.evaluate_js(
+                        "typeof window.__jarvisOpenAppshot === 'function'"
+                        f" && window.__jarvisOpenAppshot({json.dumps(shot_id)})"
+                    )
+                )
+            except Exception:  # noqa: BLE001 - still loading: navigate instead
+                pointed = False
+        try:
+            if shot_id and not pointed:
+                # The page has not finished loading yet: load it on this shot.
+                window.load_url(f"{self._url()}{fallback}")
+            window.show()
+        except Exception as exc:  # noqa: BLE001
+            from loguru import logger
+
+            logger.opt(exception=exc).warning("The appshot editor window could not be shown")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        _bring_window_to_front_by_title(self._detached_title("appshot-editor"))
+        return {"ok": True, "already_open": True, "view": "appshot-editor"}
+
+    def prewarm_appshot_editor(self) -> dict[str, Any]:
+        """Create the appshot editor window hidden, so its first click is instant.
+
+        Worker-thread only, like :meth:`open_detached_window`. Called when an
+        appshot is taken: by the time its corner card is clicked, the editor
+        page has loaded behind the scenes. A no-op when it already exists.
+        """
+        view = "appshot-editor"
+        if view in self._detached_windows:
+            return {"ok": True, "already_open": True}
+        if self._window is None:
+            return {"ok": False, "reason": "no_live_window"}
+        try:
+            import webview  # noqa: PLC0415 — [desktop] extra, never module-level
+
+            width, height = detached_window_size(view, _primary_screen_size(webview))
+            window = webview.create_window(
+                self._detached_title(view),
+                f"{self._url()}/?view={view}&solo=1",
+                width=width,
+                height=height,
+                min_size=_EDITOR_MIN_SIZE,
+                resizable=True,
+                frameless=True,
+                easy_drag=False,
+                confirm_close=False,
+                hidden=True,
+                background_color=self._window_background(),
+                **TEXT_SELECTABLE,
+            )
+        except Exception as exc:  # noqa: BLE001 - opening on click still works
+            from loguru import logger
+
+            logger.opt(exception=exc).debug("The appshot editor could not be prepared")
+            return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        self._detached_windows[view] = window
+        self._arm_window_frame(window)
+        window.events.loaded += lambda w=window, v=view: self._inject_into_secondary(w, v)
+        window.events.closed += lambda v=view: self._on_detached_closed(v)
+        return {"ok": True, "already_open": False}
+
     def close_detached_window(self, view: str) -> dict[str, Any]:
         """Close the detached window for ``view`` — worker-thread only.
 
@@ -5139,6 +5422,15 @@ class DesktopApp:
         window = self._detached_windows.get(view)
         if window is None:
             return {"ok": False, "reason": "not_detached"}
+        if view == "appshot-editor":
+            # Hidden, not destroyed: the next appshot opens it at once.
+            try:
+                window.hide()
+                return {"ok": True, "view": view, "hidden": True}
+            except Exception as exc:  # noqa: BLE001 - a window that will not hide is closed
+                from loguru import logger
+
+                logger.opt(exception=exc).debug("Appshot editor window would not hide; closing it")
         try:
             window.destroy()
         except Exception as exc:  # noqa: BLE001
@@ -5863,9 +6155,12 @@ class DesktopApp:
         try:
             from pathlib import Path as _Path
 
+            from jarvis.appshot.dragfile import drag_folder
             from jarvis.ui.native_drag import install_native_drag
 
-            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads"])
+            # Downloads for saved files; the appshot drag folder for the
+            # editor's "Drag me" handle (jarvis/appshot/dragfile.py).
+            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads", drag_folder()])
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
             pass
 
@@ -5929,11 +6224,7 @@ class DesktopApp:
             self._hand_off_to_background_service()
         code = self.shutdown()
         if self._user_requested_quit:
-            with suppress(Exception):
-                sys.stdout.flush()
-            with suppress(Exception):
-                sys.stderr.flush()
-            os._exit(code)
+            self._exit_after_backend_shutdown(code)
         return code
 
     def _degrade_to_browser_ui(self, exc: BaseException, *, remedy: str | None = None) -> int:
@@ -6232,8 +6523,15 @@ class DesktopApp:
                 self._ensure_main_window()
             return
         try:
+            # pywebview's restore() un-maximizes a visible window too; only a
+            # minimized or hidden one needs it.
+            needs_restore = window_needs_restore(WINDOW_TITLE)
+            # A window minimized while maximized is restored by Win32 below,
+            # which brings it back maximized; pywebview's restore would not.
+            to_maximized = window_restores_maximized(WINDOW_TITLE)
             self._window.show()
-            self._window.restore()
+            if needs_restore and not to_maximized:
+                self._window.restore()
             self._window_visible = True
             _bring_window_to_front_by_title(WINDOW_TITLE)
             self._reload_window_if_stale()
@@ -6255,25 +6553,31 @@ class DesktopApp:
         rendered last. When the user hides the window for a while and
         the FastAPI server later recovers, ``show()`` only un-hides the
         cached frame — including stale 4xx/5xx pages such as the bare
-        ``Internal Server Error`` body. Probing ``document.title`` lets
-        us recognise that the React app never booted and forces a fresh
-        navigation to the SPA root.
+        ``Internal Server Error`` body. The SPA document always carries
+        ``#root`` (from ``index.html``, before React even mounts); an error
+        body never does, so its absence is what forces a fresh navigation.
+
+        The probe used to look for "Jarvis" in ``document.title``, but the
+        title has been the neutral "Assistant" since 2026-07-01, so EVERY
+        show — a tray click, the orb, a click on the appshot card — reloaded
+        a perfectly healthy window: the editor the card had just opened was
+        wiped and a running voice call hung up.
         """
         if self._window is None:
             return
         from loguru import logger
 
         try:
-            title = self._window.evaluate_js("document.title")
+            booted = self._window.evaluate_js(_SPA_DOCUMENT_PROBE)
         except Exception as exc:  # noqa: BLE001
-            # A probe that ALWAYS fails looks identical to "the SPA never
-            # booted", so every show() reloads the window — the reload loop
-            # that reads as a flickering window at startup. Distinguishing a
-            # broken probe from a genuinely stale frame needs this line.
-            logger.debug("Staleness probe failed, assuming a stale frame: {}", exc)
-            title = None
-        if title and isinstance(title, str) and "Jarvis" in title:
+            # A probe that fails says nothing about the page; reloading on it
+            # would reload a healthy window on every show (the old loop that
+            # read as a flickering window at startup), so keep what is there.
+            logger.debug("Staleness probe failed; leaving the window as it is: {}", exc)
             return
+        if booted is True:
+            return
+        logger.info("The window shows no app (stale error page); reloading it.")
         try:
             self._window.load_url(self._url())
         except Exception as exc:  # noqa: BLE001
@@ -6466,11 +6770,75 @@ class DesktopApp:
         bounded worst case, so it only fires on a genuine infinite hang.
         """
 
+        after_s = max(after_s, _SHUTDOWN_FORCE_EXIT_MIN_S)
+
         def _kill() -> None:
             time.sleep(after_s)
             os._exit(0)
 
         threading.Thread(target=_kill, name="jarvis-force-exit", daemon=True).start()
+
+    _BACKEND_SHUTDOWN_WAIT_S = 3.0
+
+    async def _drain_backend_shutdown(self, server: Any, bootstrap: Any) -> None:
+        """Keep the backend loop alive until its owned construction is drained."""
+        loop = asyncio.get_running_loop()
+
+        async def cleanup() -> None:
+            try:
+                if bootstrap is not None:
+                    await bootstrap.stop()
+            finally:
+                await server.stop()
+
+        owned = asyncio.create_task(cleanup(), name="desktop-backend-cleanup")
+        try:
+            try:
+                await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                # Cancellation of a waiting caller cannot abandon construction
+                # or close its loop early. Propagate only after owned cleanup.
+                await asyncio.shield(owned)
+                raise
+        finally:
+            loop.call_soon(loop.stop)
+
+    def _exit_after_backend_shutdown(self, code: int) -> None:
+        """Exit after orderly cleanup without blocking the GUI thread.
+
+        The existing force-exit watchdog remains the emergency deadline for a
+        genuinely wedged native call. A normal slow route build gets to finish
+        and release its stores before the process exits.
+        """
+        future = getattr(self, "_backend_shutdown_future", None)
+        backend = getattr(self, "_backend_thread", None)
+
+        def finish() -> None:
+            try:
+                if future is not None:
+                    future.result()
+            except Exception:
+                logging.getLogger(__name__).exception("Backend cleanup failed before exit")
+            finally:
+                if backend is not None and backend is not threading.current_thread():
+                    backend.join()
+                with suppress(Exception):
+                    sys.stdout.flush()
+                with suppress(Exception):
+                    sys.stderr.flush()
+                os._exit(code)
+
+        if (future is not None and not future.done()) or (
+            backend is not None and backend.is_alive()
+        ):
+            # Non-daemon: returning from the launcher must not let interpreter
+            # shutdown kill the backend before its cleanup coroutine resumes.
+            self._shutdown_exit_thread = threading.Thread(
+                target=finish, name="desktop-cleanup-exit", daemon=False
+            )
+            self._shutdown_exit_thread.start()
+        else:
+            finish()
 
     def shutdown(self) -> int:
         """Idempotent. Stops the server + backend loop, cleans the meta file."""
@@ -6598,6 +6966,9 @@ class DesktopApp:
                     from loguru import logger as _logger
 
                     _logger.warning("Wake-upgrade task cancel did not dispatch: {}", exc)
+            _heavy = getattr(self, "_heavy_backend_task", None)
+            if _heavy is not None and not _heavy.done():
+                loop.call_soon_threadsafe(_heavy.cancel)
             _wml = getattr(self, "_wake_model_loaded", None)
             if _wml is not None:
                 try:
@@ -6679,35 +7050,31 @@ class DesktopApp:
                 # _pty_cleanup already logs its own failure; this only bounds
                 # how long the quit waits for it.
                 pass
-            # Stop the serve-first bootstrap (it owns the listening socket).
-            if self._bootstrap is not None:
+            # The GUI only waits briefly. The backend owns the full drain and
+            # stops its loop AFTER server cleanup, including any deferred route
+            # worker. A GUI timeout must not close a loop that still owns work.
+            shutdown_coro = self._drain_backend_shutdown(server, self._bootstrap)
+            try:
+                self._backend_shutdown_future = asyncio.run_coroutine_threadsafe(
+                    shutdown_coro, loop
+                )
+            except RuntimeError as exc:
+                shutdown_coro.close()
+                logging.getLogger(__name__).warning(
+                    "Backend shutdown could not be scheduled: %s", exc
+                )
+            else:
                 try:
-                    asyncio.run_coroutine_threadsafe(self._bootstrap.stop(), loop).result(
-                        timeout=3.0
+                    self._backend_shutdown_future.result(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
+                except TimeoutError:
+                    logging.getLogger(__name__).info(
+                        "Backend cleanup continues after the bounded desktop wait"
                     )
-                except Exception:  # noqa: BLE001, S110
-                    # Timed out or already down; the loop stop below is the
-                    # backstop that frees the socket either way.
-                    pass
-            try:
-                fut = asyncio.run_coroutine_threadsafe(server.stop(), loop)
-                try:
-                    fut.result(timeout=3.0)
-                except Exception:  # noqa: BLE001, S110
-                    # Server shutdown may hang; the event loop still stops forcibly.
-                    pass
-            except Exception:  # noqa: BLE001, S110
-                # Could not even schedule the stop (loop already closing); the
-                # forced loop.stop below covers it.
-                pass
-            try:
-                loop.call_soon_threadsafe(loop.stop)
-            except Exception:  # noqa: BLE001, S110
-                # The loop is already stopped or closed — the desired end state.
-                pass
+                except Exception:
+                    logging.getLogger(__name__).exception("Backend shutdown failed")
 
         if self._backend_thread is not None:
-            self._backend_thread.join(timeout=3.0)
+            self._backend_thread.join(timeout=self._BACKEND_SHUTDOWN_WAIT_S)
 
         # Tray last — pystray.stop() prevents the tray icon from lingering
         # in the taskbar after the process ends.

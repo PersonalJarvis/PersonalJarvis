@@ -1291,3 +1291,35 @@ async def test_durable_read_failure_releases_the_agent_slot(tmp_path: Path, monk
         assert rt.scheduler.running == {}
     finally:
         await rt.close()
+
+
+async def test_a_picture_that_could_not_be_shown_does_not_block_finished_work(tmp_path: Path):
+    """Live 2026-10-02: Scout's finished research came back "blocked" because
+    two screenshots it mentioned could not be displayed in its chat."""
+    import asyncio
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(from_agent="user", to_agent="scout", text="x", msg_type=MsgType.ASSIGN)
+        for q in list(svc.queues["society:scout"]):
+            for kind, payload in (
+                ("assistant_text", {"text": "Research done: three findings."}),
+                ("assistant_text", {"text": "![image](/media/a.png)", "media_only": True}),
+                ("error", {"message": "Media could not be displayed: a.png",
+                           "display_only": True}),
+                ("turn_finished", {"status": "ok"}),
+            ):
+                q.put_nowait({"kind": kind, "payload": {"turn_id": "turn-1", **payload}})
+        await asyncio.sleep(0.05)
+        result = (await rt.store.events_for_trace(env.trace_id))[-1]
+        assert result.msg_type is MsgType.RESULT
+        assert result.payload["status"] == "done"
+        assert result.payload["done"] == "Research done: three findings."
+    finally:
+        await rt.close()

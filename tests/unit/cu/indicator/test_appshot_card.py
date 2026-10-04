@@ -113,7 +113,7 @@ async def test_a_picture_that_may_not_be_kept_is_never_handed_to_the_card(monkey
 
     sent: list[bytes] = []
 
-    async def attach(image: bytes) -> None:
+    async def attach(image: bytes, shot_id: str = "") -> None:
         sent.append(image)
 
     monkeypatch.setattr(effect, "attach_card_image", attach)

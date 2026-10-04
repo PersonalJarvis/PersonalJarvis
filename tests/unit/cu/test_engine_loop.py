@@ -19,6 +19,7 @@ pytest.importorskip("PIL", reason="pillow required for frame handling")
 import jarvis.cu.engine as engine_mod
 from jarvis.cu.capture import VisualProbe, capture_stable_frame
 from jarvis.cu.geometry import MonitorInfo
+from tests.fakes.fake_permission_service import FakePermissionService
 
 MONITOR = MonitorInfo(left=0, top=0, width=192, height=108)
 
@@ -91,6 +92,9 @@ def _solid(shade: int = 30) -> tuple[tuple[int, int], bytes]:
 @pytest.fixture
 def patched(monkeypatch, tmp_path):
     """Patch every OS touchpoint of the engine to deterministic fakes."""
+    gate = FakePermissionService()
+    monkeypatch.setattr(engine_mod, "_permission_gate", lambda: gate)
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "")
     state = SimpleNamespace(
         screen_shade=30,
         typed_lands=True,  # bool, or a list popped per verify call
@@ -374,6 +378,7 @@ def _darwin_world(monkeypatch, **tcc_kwargs):
     tcc_kwargs.setdefault("default_policy", DialogPolicy.NEVER_ANSWERED)
     tcc = FakeTCC(**tcc_kwargs)
     install_port(monkeypatch, tcc.port("darwin"))
+    monkeypatch.setattr(engine_mod, "_frontmost_system_consent_owner", lambda: "")
     return tcc
 
 
@@ -509,6 +514,7 @@ async def test_dispatch_off_macos_asks_nothing_and_changes_nothing(monkeypatch, 
 
     tcc = FakeTCC()
     install_port(monkeypatch, tcc.port(platform))
+    monkeypatch.setattr(engine_mod, "sys", SimpleNamespace(platform=platform))
     executor = FakeExecutor()
 
     ok, _detail = await engine_mod._dispatch_tool(

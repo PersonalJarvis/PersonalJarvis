@@ -184,6 +184,7 @@ export function createNewPaneChatStore(options: NewPaneChatOptions) {
       startable,
       catalog,
       connections: [],
+      catalogStale: false,
       catalogError: null,
       backendOutdated: false,
       liveModels: {},

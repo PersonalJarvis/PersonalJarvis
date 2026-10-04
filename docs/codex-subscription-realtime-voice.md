@@ -49,7 +49,7 @@ transport that cannot hold a dependable call.
 - **API realtime voice** (`openai-realtime`, `gemini-live`,
   `local-realtime`): unchanged, metered or self-hosted.
 - **The isolated `codex-subscription-voice` login profile**, its
-  provider routes (`/api/providers/codex/subscription-voice/*`), status
+  provider routes (`/api/codex/subscription-voice/{status,login}`), status
   payloads, and the hardened app-server process containment in
   `jarvis/codex_app_server.py` — all shared with the stable composition.
   The unused `thread/realtime` RPC helpers inside `codex_app_server.py`

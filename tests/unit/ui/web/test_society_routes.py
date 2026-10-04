@@ -333,11 +333,17 @@ def test_browser_routes(client, tmp_path, monkeypatch):
     c.post("/api/society/agents", json={"name": "Scout"})
     per_agent = c.get("/api/society/agents/scout/browser").json()
     assert per_agent["installed"] is False and per_agent["mode"] == "own"
-    assert per_agent["logged_in_profile"] is False
-    # Not installed: a login session is refused with a typed reason.
+    assert per_agent["logged_in_profile"] is None  # An unopened profile has unverified login state.
+    # On-demand setup failures remain typed; this unit test never provisions a runtime.
+    from jarvis.society.browser import install as install_mod
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("Fixture browser setup is unavailable")
+
+    monkeypatch.setattr(install_mod, "ensure_installed", unavailable)
     refused = c.post("/api/society/agents/scout/browser/login", json={})
     assert refused.status_code == 409
-    assert refused.json()["detail"]["reason"] == "blocked_by_policy"
+    assert refused.json()["detail"]["reason"] == "target_busy"
     assert c.post("/api/society/agents/scout/browser/login/done").json()["closed"] is False
     # Attach mode is a roster field with its own check.
     patched = c.patch("/api/society/agents/scout", json={"browser_mode": "attach"}).json()

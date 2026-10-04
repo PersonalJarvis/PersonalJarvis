@@ -30,9 +30,10 @@ export function LeadBrain() {
   const providerById = useAgentChatStore((s) => s.providerById);
   const loadCatalog = useAgentChatStore((s) => s.loadCatalog);
   const catalog = useAgentChatStore((s) => s.catalog);
+  const catalogStale = useAgentChatStore((s) => s.catalogStale);
   useEffect(() => {
-    if (!catalog) void loadCatalog();
-  }, [catalog, loadCatalog]);
+    if (!catalog || catalogStale) void loadCatalog();
+  }, [catalog, catalogStale, loadCatalog]);
   const provider = providerById(draft.provider);
   return (
     <div className="flex flex-col gap-1.5">

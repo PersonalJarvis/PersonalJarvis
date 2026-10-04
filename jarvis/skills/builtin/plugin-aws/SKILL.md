@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-aws
 description: Inspect cloud resources, storage and costs through the official AWS MCP server
-when_to_use: Use for explicit operations on the connected AWS account.
+when_to_use: Use when the user requests operations on the connected AWS account.
 category: integrations
 plugin_id: aws
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

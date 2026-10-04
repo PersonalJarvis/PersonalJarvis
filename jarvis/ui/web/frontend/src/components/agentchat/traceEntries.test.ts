@@ -5,7 +5,7 @@ import es from "@/i18n/locales/es.json";
 import { reduceThinkingSteps, type ThinkingStep } from "@/lib/thinkingSteps";
 import type { ToolBlock, TurnBlock } from "./reduce";
 import {
-  buildTimeline, commandBinary, headerLabel, shortPath, timelineMarkdown, traceDuration, withoutCd,
+  buildTimeline, commandBinary, shortPath, traceDuration, withoutCd,
   type ActivityEntry, type Call, type TimelineOptions,
 } from "./traceEntries";
 import { stepsToBlocks } from "./VoiceWorkTrace";
@@ -62,7 +62,7 @@ describe("trace timeline (Codex-style)", () => {
 
   it("names each call in its own words", () => {
     expect(only(tool("r", { name: "Read", input: { file_path: "C:/repo/src/app/main.ts" }, output: "x" })).text).toBe("Read …/src/app/main.ts");
-    expect(only(tool("i", { name: "Read", input: { file_path: "shots/hero.png" }, output: "" }))).toMatchObject({ kind: "image", text: "Viewed shots/hero.png" });
+    expect(only(tool("i", { name: "Read", input: { file_path: "shots/hero.png" }, output: "" }))).toMatchObject({ kind: "image", text: "Viewed an image", detail: "shots/hero.png" });
     expect(only(tool("g", { name: "Grep", input: { pattern: "TODO", path: "src/lib" }, output: "" })).text).toBe("Searched for TODO in src/lib");
     expect(only(tool("l", { name: "LS", input: { path: "src" }, output: "" })).text).toBe("Listed src");
     expect(only(tool("w", { name: "Write", input: { file_path: "new.ts", content: "a\nb" }, output: "ok" }))).toMatchObject({ kind: "write", text: "Created new.ts" });
@@ -148,30 +148,6 @@ describe("trace timeline (Codex-style)", () => {
     expect((line.entries[0] as ActivityEntry).calls[0]).toMatchObject({ text: "Find app action", detail: "computers" });
     expect((line.entries[2] as ActivityEntry).calls[0]).toMatchObject({ text: "Run app action", status: "blocked" });
     expect(line.problemCount).toBe(1);
-    expect(headerLabel(line, 2400, t)).toBe("Worked for 2.4s");
-  });
-
-  it("says Thought for … when the turn only thought", () => {
-    const line = buildTimeline([thinking("r", "Plan the answer.")], opts());
-    expect(headerLabel(line, 3000, t)).toBe("Thought for 3.0s");
-    expect(headerLabel(line, null, t)).toBe("Thought");
-  });
-
-  it("copies as Markdown in the timeline's own order", () => {
-    const line = buildTimeline([
-      text("n", "First the port."),
-      tool("c", { output: "8080" }),
-      tool("f", { name: "Edit", input: { file_path: "b.ts", old_string: "a", new_string: "b" }, output: "boom", isError: true }),
-    ], opts());
-    expect(timelineMarkdown(line, headerLabel(line, 4200, t), t)).toBe([
-      "**Worked for 4.2s**",
-      "",
-      "First the port.",
-      "",
-      "*Ran a command, edited a file*",
-      "- `ls`",
-      "- Edited b.ts (+1 −1) — Failed: boom",
-    ].join("\n"));
   });
 
   it("formats durations and paths the way a line shows them", () => {
@@ -190,7 +166,8 @@ describe("trace timeline (Codex-style)", () => {
       tool("d", { name: "Read", input: { file_path: "a.png" }, output: "" }),
       tool("e", { name: "mcp__linear__list_issues", input: {}, output: "[]" }),
     ], { t: tl, lang, status: "done", live: false });
-    const all = timelineMarkdown(line, headerLabel(line, 9000, tl), tl);
+    const all = line.entries.flatMap((e) => e.kind === "activity"
+      ? [e.summary, ...e.calls.map((c) => `${c.text} ${c.detail} ${c.result} ${c.reason}`)] : []).join(" | ");
     expect(all).not.toMatch(/\{\w+\}|trace_report\./);
   });
 });

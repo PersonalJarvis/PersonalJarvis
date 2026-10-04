@@ -14,7 +14,17 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiKeysView } from "@/views/ApiKeysView";
+
+function renderView() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ApiKeysView />
+    </QueryClientProvider>,
+  );
+}
 
 // ApiKeysView now reads the live `[voice].mode` (for the Pipeline|Realtime
 // mode switch's "Active" badge only) via useVoiceMode, which needs a
@@ -215,7 +225,7 @@ afterEach(() => {
 describe("ApiKeysView - Codex is subagent-only", () => {
   it("does not render Codex as a Brain provider card", async () => {
     installFetchMock(routesFor(codexDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
@@ -229,7 +239,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
 
   it("switches the subagent to Codex without calling brain switch", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
@@ -251,7 +261,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
 
   it("shows the Connect button while not logged in and starts login", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptorNotConnected()));
-    render(<ApiKeysView />);
+    renderView();
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
@@ -269,7 +279,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
 
   it("disconnects via POST /api/codex/logout", async () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
-    render(<ApiKeysView />);
+    renderView();
     // Codex lives in the "Subagents" category tab now; open it first.
     fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 

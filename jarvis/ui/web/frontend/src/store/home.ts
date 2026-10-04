@@ -175,6 +175,12 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     if (name === "VoiceSessionStarted") {
       // A call already started elsewhere must not be ended on card re-entry.
       set({ freshVoicePending: false, liveSessionId: (payload as { session_id?: string })?.session_id || null });
+      // Wake words and external call controls start the same voice session as
+      // the composer button. Follow that session in the open Jarvis chat
+      // without starting another call or navigating away from other work.
+      if (useEventStore.getState().activeSection === "chats" && !get().agentChatId && get().surface === "chat") {
+        get().setSurface("voice");
+      }
     }
     const before = get().transcript;
     const after = reduceTranscript(before, name, payload, tsMs);
