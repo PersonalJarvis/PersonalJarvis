@@ -1132,6 +1132,8 @@
       "when_mission_succeeded": "Una misión termina",
       "when_mission_failed": "Una misión falla",
       "when_mission_cancelled": "Una misión se cancela",
+      "when_github_pr_merged": "Se fusiona una PR de GitHub",
+      "when_github_pr_merged_hint": "Usa un webhook firmado de GitHub. Después de crear la automatización, abre la conexión del activador y configura el mismo secreto de firma en Jarvis y GitHub.",
       "then_label": "Entonces",
       "then_computer_use": "Computer-Use",
       "then_agent": "Tarea de agente",
