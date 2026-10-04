@@ -230,7 +230,15 @@ def test_only_google_provider_families_have_alt_credentials() -> None:
     Every non-Google provider keeps one credential path.
     """
     for spec in PROVIDERS:
-        if spec.id in ("gemini", "gemini-flash-tts", "gemini-live", "vertex"):
+        if spec.id in {
+            "gemini",
+            "vertex",
+            "gemini-flash-tts",
+            "vertex-tts",
+            "gemini-api",
+            "vertex-stt",
+            "vertex-live",
+        }:
             continue
         assert spec.alt_credential is None, f"{spec.id}: unexpected alt_credential"
 
