@@ -1132,6 +1132,8 @@
       "when_mission_succeeded": "Eine Mission ist fertig",
       "when_mission_failed": "Eine Mission scheitert",
       "when_mission_cancelled": "Eine Mission wird abgebrochen",
+      "when_github_pr_merged": "Ein GitHub-PR wird gemergt",
+      "when_github_pr_merged_hint": "Verwendet einen signierten GitHub-Webhook. Öffne nach dem Erstellen die Trigger-Verbindung und hinterlege in Jarvis und GitHub dasselbe Signatur-Secret.",
       "then_label": "Dann",
       "then_computer_use": "Computer-Use",
       "then_agent": "Agenten-Aufgabe",
