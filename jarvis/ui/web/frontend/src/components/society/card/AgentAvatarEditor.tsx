@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Shuffle, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { useT } from "@/i18n";
 import { type SocietyAgent, defaultFigureFor } from "../data";
 import { AgentFigureViewer } from "../figures/AgentFigureViewer";
@@ -147,42 +148,39 @@ export function AgentAvatarEditor({ agent, sample }: { agent: SocietyAgent; samp
       </div>
 
       <div className="grid gap-3 rounded-xl border border-border p-4 sm:grid-cols-2">
-        <label className="space-y-1 text-sm">
+        <div className="space-y-1 text-sm">
           <span className="text-xs text-muted-foreground">{t("society.create.style")}</span>
-          <select
-            aria-label={t("society.create.style")}
+          <BrandedSelect
+            ariaLabel={t("society.create.style")}
             className="w-full rounded-lg border border-border bg-background px-3 py-2"
             value={style}
             disabled={sample || save.isPending}
-            onChange={(event) => {
-              const next = event.target.value;
+            onValueChange={(next) => {
               if (next === "custom") return;
               const first = basesForStyle(next)[0];
               if (first) selectBase(next, first.base);
             }}
-          >
-            {publicStyles.map((id) => (
-              <option key={id} value={id}>{t(`society.style.${id}`)}</option>
-            ))}
-            {recipe.model ? <option value="custom">{t("society.style.custom")}</option> : null}
-          </select>
-        </label>
+            options={[
+              ...publicStyles.map((id) => ({ value: id, label: t(`society.style.${id}`) })),
+              ...(recipe.model
+                ? [{ value: "custom", label: t("society.style.custom") }]
+                : []),
+            ]}
+          />
+        </div>
 
         {recipe.model ? null : (
-          <label className="space-y-1 text-sm">
+          <div className="space-y-1 text-sm">
             <span className="text-xs text-muted-foreground">{t("society.create.base")}</span>
-            <select
-              aria-label={t("society.create.base")}
+            <BrandedSelect
+              ariaLabel={t("society.create.base")}
               className="w-full rounded-lg border border-border bg-background px-3 py-2"
               value={recipe.base}
               disabled={sample || save.isPending}
-              onChange={(event) => selectBase(style, event.target.value)}
-            >
-              {bases.map((base) => (
-                <option key={base.id} value={base.base}>{base.label}</option>
-              ))}
-            </select>
-          </label>
+              onValueChange={(value) => selectBase(style, value)}
+              options={bases.map((base) => ({ value: base.base, label: base.label }))}
+            />
+          </div>
         )}
       </div>
 
