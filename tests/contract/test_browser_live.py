@@ -447,10 +447,8 @@ async def test_agent_download_is_a_current_task_workspace_artifact(live, site):
         return {"ok": not bool(result.get("error")), "error": result.get("error")}
 
     try:
-        session = await live.ensure(agent)
-        await _control(live, session, "viewer", "takeover", {"enabled": True})
-        await _control(live, session, "viewer", "navigate", {"url": site})
-        await _control(live, session, "viewer", "takeover", {"enabled": False})
+        session, queue = await live.subscribe(agent)
+        await _open_animation_and_hand_back(live, session, queue, site)
         result = await live.run(
             agent, task="Download the fixture", max_steps=3, llm=model, action=apply, vision=False
         )
@@ -523,11 +521,9 @@ async def test_agent_uploads_only_the_supplied_workspace_file(live, site):
         return {"ok": not bool(result.get("error")), "error": result.get("error")}
 
     try:
-        session = await live.ensure(agent)
+        session, queue = await live.subscribe(agent)
         upload.write_text("isolated upload proof", encoding="utf-8")
-        await _control(live, session, "viewer", "takeover", {"enabled": True})
-        await _control(live, session, "viewer", "navigate", {"url": site})
-        await _control(live, session, "viewer", "takeover", {"enabled": False})
+        await _open_animation_and_hand_back(live, session, queue, site)
         result = await live.run(
             agent,
             task="Upload the supplied file",
