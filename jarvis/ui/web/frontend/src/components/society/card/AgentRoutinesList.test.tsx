@@ -46,6 +46,9 @@ describe("AgentRoutinesList", () => {
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const path = String(url);
       const method = init?.method ?? "GET";
+      if (path === "/api/tasks/events") {
+        return json({ events: [{ name: "MissionCompleted", fields: ["mission_id", "status", "result_uri"] }] });
+      }
       if (path.includes("/routines") && method === "POST") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { title?: string; prompt?: string };
         routines = [
@@ -146,6 +149,34 @@ describe("AgentRoutinesList", () => {
       const post = fetchMock.mock.calls.find((call) => (call[1] as RequestInit | undefined)?.method === "POST");
       expect(post).toBeTruthy();
       expect(JSON.parse(String(post?.[1]?.body)).schedule).toEqual({ type: "webhook", provider: "generic", conditions: { "customer.vip": true } });
+    });
+  });
+
+  test("the system-event composer persists a validated field filter", async () => {
+    mount();
+    fireEvent.click(await screen.findByTestId("agent-routines-add"));
+    fireEvent.change(screen.getByPlaceholderText("Title"), { target: { value: "Approved mission" } });
+    fireEvent.change(screen.getByPlaceholderText("What to do"), { target: { value: "Archive the approved result." } });
+    fireEvent.click(screen.getByTestId("routine-trigger-group"));
+    fireEvent.click(await screen.findByRole("option", { name: "System" }));
+    fireEvent.click(screen.getByTestId("agent-routines-kind"));
+    fireEvent.click(await screen.findByRole("option", { name: "System event" }));
+    fireEvent.click(await screen.findByTestId("routine-event-name"));
+    fireEvent.click(await screen.findByRole("option", { name: "MissionCompleted" }));
+    expect(screen.getByText("Allowed event fields: mission_id, status, result_uri")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Event filter (optional)"), { target: { value: "status == 'approved'" } });
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (call) => String(call[0]).includes("/api/society/agents/mailbox/routines") && (call[1] as RequestInit | undefined)?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post?.[1]?.body)).schedule).toEqual({
+        type: "on_event",
+        event_name: "MissionCompleted",
+        filter_expr: "status == 'approved'",
+        max_firings: null,
+      });
     });
   });
 

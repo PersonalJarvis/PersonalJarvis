@@ -41,6 +41,7 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
   const [pattern, setPattern] = useState("*");
   const [recursive, setRecursive] = useState(false);
   const [eventName, setEventName] = useState(String(initialValue?.event_name ?? ""));
+  const [eventFilter, setEventFilter] = useState(String(initialValue?.filter_expr ?? ""));
   const [filters, setFilters] = useState("{}");
   const [fields, setFields] = useState('{"message":{"label":"Message","kind":"text","required":true}}');
   const [upstreamKind, setUpstreamKind] = useState("task");
@@ -62,6 +63,10 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
     staleTime: 60_000,
     queryFn: fetchTaskEventCatalog,
   });
+  const selectedEvent = useMemo(
+    () => (eventCatalog.data ?? []).find((row) => row.name === eventName) ?? null,
+    [eventCatalog.data, eventName],
+  );
   const eventOptions = useMemo(() => {
     const options = (eventCatalog.data ?? []).map((row) => ({ value: row.name, label: row.name }));
     return eventName && !options.some((row) => row.value === eventName)
@@ -80,7 +85,12 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
       if (kind === "cron") return { type: kind, expression, timezone };
       if (kind === "at_time") return date ? { type: kind, iso_timestamp: new Date(date).toISOString() } : null;
       if (kind === "webhook" || group === "external") return { type: "webhook", provider: group === "external" ? kind : "generic", conditions };
-      if (kind === "on_event" || kind === "event_hook") return eventName ? { type: kind, event_name: eventName, ...(kind === "event_hook" ? { conditions } : { max_firings: null }) } : null;
+      if (kind === "on_event") {
+        if (!eventName) return null;
+        const filter_expr = eventFilter.trim();
+        return { type: kind, event_name: eventName, ...(filter_expr ? { filter_expr } : {}), max_firings: null };
+      }
+      if (kind === "event_hook") return eventName ? { type: kind, event_name: eventName, conditions } : null;
       const source: Record<string, unknown> = { kind: kind.startsWith("workflow_") ? "workflow" : kind };
       if (group === "stream") {
         if (!endpoint || (kind !== "sse" && !topic)) return null;
@@ -97,7 +107,7 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
       }
       return { type: "source", source, conditions };
     } catch { return null; /* Invalid editor input is never submitted. */ }
-  }, [kind, group, filters, amount, unit, time, timezone, expression, date, endpoint, topic, consumerGroup, path, pattern, recursive, fields, upstreamKind, upstreamId, when, eventName]);
+  }, [kind, group, filters, amount, unit, time, timezone, expression, date, endpoint, topic, consumerGroup, path, pattern, recursive, fields, upstreamKind, upstreamId, when, eventName, eventFilter]);
   useEffect(() => {
     // Keep calendar restrictions and hook options the compact editor does not expose.
     onChange(value && initialValue?.type === value.type ? { ...initialValue, ...value } : value);
@@ -115,9 +125,17 @@ export function TriggerBuilder({ onChange, initialValue, timeOnly = false }: {
     {kind === "at_time" && input("date", date, setDate, "datetime-local")}
     {group === "stream" && <>{input("endpoint", endpoint, setEndpoint)}{kind !== "sse" && <>{input("topic", topic, setTopic)}{input("consumer_group", consumerGroup, setConsumerGroup)}</>}<p className="text-[11px] text-muted-foreground">{label("credentials_hint")}</p></>}
     {kind === "file" && <>{input("path", path, setPath)}{input("pattern", pattern, setPattern)}<label className="text-[11px]"><input type="checkbox" checked={recursive} onChange={(e) => setRecursive(e.target.checked)} /> {label("recursive")}</label></>}
-    {kind === "on_event" && (eventOptions.length > 0
-      ? <BrandedSelect value={eventName} onValueChange={setEventName} options={eventOptions} ariaLabel={label("event_name")} testId="routine-event-name" />
-      : input("event_name", eventName, setEventName))}
+    {kind === "on_event" && <>
+      {eventOptions.length > 0
+        ? <BrandedSelect value={eventName} onValueChange={setEventName} options={eventOptions} ariaLabel={label("event_name")} testId="routine-event-name" />
+        : input("event_name", eventName, setEventName)}
+      {eventName ? <>
+        {input("event_filter", eventFilter, setEventFilter)}
+        {selectedEvent?.fields.length
+          ? <p className="text-[11px] text-muted-foreground">{label("event_fields")}: {selectedEvent.fields.join(", ")}</p>
+          : null}
+      </> : null}
+    </>}
     {kind === "event_hook" && input("event_name", eventName, setEventName)}
     {kind === "form" && <label className="block text-[11px]">{label("form_fields")}<textarea className={field} aria-label={label("form_fields")} value={fields} onChange={(e) => setFields(e.target.value)} rows={4} /></label>}
     {(kind === "workflow" || kind.startsWith("workflow_")) && <><BrandedSelect ariaLabel={label("workflow")} value={upstreamKind} onValueChange={(next) => { setUpstreamKind(next); setUpstreamId(""); }} options={[{ value: "task", label: label("routine") }, { value: "workflow", label: label("workflow") }]} /><BrandedSelect value={upstreamId} onValueChange={setUpstreamId} options={(upstream.data ?? []).map((row) => ({ value: row.id, label: row.title ?? row.name ?? row.id }))} ariaLabel={label("upstream")} />{kind === "workflow" && <BrandedSelect ariaLabel={label("when.succeeded")} value={when} onValueChange={setWhen} options={["succeeded", "failed", "activated"].map((key) => ({ value: key, label: label(`when.${key}`) }))} />}{upstream.error ? <p role="alert">{label("upstream_unavailable")}</p> : null}</>}

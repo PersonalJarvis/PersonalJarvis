@@ -22,6 +22,10 @@
       "learned_review_hint": "Le skill apprese private restano istruzioni consultive. Inviane una a Skills come bozza per revisionarla prima dell'attivazione globale.",
       "learned_review": "Rivedi in Skills",
       "learned_reviewing": "Preparazione bozza…"
+    },
+    "triggers": {
+      "event_filter": "Filtro evento (opzionale)",
+      "event_fields": "Campi evento consentiti"
     }
   }
 }

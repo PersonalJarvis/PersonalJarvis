@@ -553,7 +553,9 @@
         "blocked": "Activador bloqueado"
       },
       "filtered": "La entrada no coincide con los filtros.",
-      "duplicate": "La entrada ya se recibió."
+      "duplicate": "La entrada ya se recibió.",
+      "event_filter": "Filtro de evento (opcional)",
+      "event_fields": "Campos de evento permitidos"
     },
     "browser_live": {
       "live": "En directo",

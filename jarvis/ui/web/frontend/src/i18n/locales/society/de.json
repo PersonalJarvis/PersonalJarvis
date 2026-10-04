@@ -553,7 +553,9 @@
         "blocked": "Trigger blockiert"
       },
       "filtered": "Die Eingabe passt nicht zu den Filtern.",
-      "duplicate": "Die Eingabe wurde bereits empfangen."
+      "duplicate": "Die Eingabe wurde bereits empfangen.",
+      "event_filter": "Ereignisfilter (optional)",
+      "event_fields": "Erlaubte Ereignisfelder"
     },
     "browser_live": {
       "live": "Live",
