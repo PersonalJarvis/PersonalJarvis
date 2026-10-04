@@ -133,7 +133,8 @@ describe("OptionsRail", () => {
   test("leases and releases an isolated screen from the options rail", async () => {
     mount(agent());
     const control = await screen.findByTestId("agent-screen-control");
-    fireEvent.click(within(control).getByRole("button", { name: "Open isolated screen" }));
+    const open = await within(control).findByRole("button", { name: "Open isolated screen" });
+    fireEvent.click(open);
     await waitFor(() => expect(control.textContent).toContain("xvfb"));
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/society/agents/gamil-agent/screen",
