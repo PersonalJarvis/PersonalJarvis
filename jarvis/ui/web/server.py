@@ -98,6 +98,10 @@ class WebServer:
     def __init__(self, cfg: JarvisConfig, bus: EventBus | None = None) -> None:
         self.cfg = cfg
         self._browser_prepare_task: asyncio.Task[None] | None = None
+        # Deferred boot work belongs to this server instance. Explicit handles
+        # let stop() drain it before pytest/asyncio tears the event loop down.
+        self._anyio_pool_warm_task: asyncio.Task[None] | None = None
+        self._deferred_reload_task: asyncio.Task[None] | None = None
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -756,7 +760,9 @@ class WebServer:
                 return
             logger.info("anyio worker pool warmed: {} thread(s) resident", resident)
 
-        asyncio.create_task(_warm(), name="anyio-pool-warm")
+        self._anyio_pool_warm_task = asyncio.create_task(
+            _warm(), name="anyio-pool-warm"
+        )
 
     async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:
         """Release boot waiters after a failed warm-up without promising speech.
@@ -3810,6 +3816,18 @@ class WebServer:
             self._browser_prepare_task.cancel()
             await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
             self._browser_prepare_task = None
+
+        # A short-lived server can stop before these delayed boot helpers run.
+        # Own and drain them here instead of leaving asyncio.run()/pytest to
+        # discover them during loop teardown. Stop the deferred registry reload
+        # before its registries are closed below so shutdown cannot race a scan.
+        for attr in ("_anyio_pool_warm_task", "_deferred_reload_task"):
+            task = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
         society = getattr(self.app.state, "society", None)
         society_shutdown_failure: str | None = None
         if society is not None:
