@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.core.instance import DEV_PORT_OFFSET
 from scripts.ci import check_frozen_browser as probe
+from tests.fakes.fake_frozen_browser import FrozenBrowserApp
 
 
 def test_probe_does_not_inherit_account_or_runtime_credentials(tmp_path, monkeypatch):
@@ -23,12 +24,15 @@ def test_probe_does_not_inherit_account_or_runtime_credentials(tmp_path, monkeyp
     assert env["PYTHON_KEYRING_BACKEND"] == "keyring.backends.null.Keyring"
 
 
-def test_probe_refuses_http_redirect_instead_of_forwarding_its_key():
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_probe_refuses_http_redirect_instead_of_forwarding_its_key(method):
     class Redirect(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(302)
             self.send_header("Location", "http://127.0.0.1:1/unrelated")
             self.end_headers()
+
+        do_POST = do_GET
 
         def log_message(self, *_args):
             pass  # Test traffic is intentionally quiet.
@@ -38,12 +42,48 @@ def test_probe_refuses_http_redirect_instead_of_forwarding_its_key():
     thread.start()
     try:
         with pytest.raises(probe.ProbeHTTPError) as error:
-            probe.request_json(server.server_port, "/api/health", "test-key")
+            probe.request_json(server.server_port, "/api/health", "test-key", method=method)
         assert error.value.code == 302
     finally:
         server.shutdown()
         thread.join(timeout=5)
         server.server_close()
+
+
+def _boot_simulated_app(tmp_path, monkeypatch, app):
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    monkeypatch.setattr(probe.subprocess, "Popen", lambda *_args, **_kwargs: app)
+    monkeypatch.setattr(probe, "request_json", app.request)
+    monkeypatch.setattr(probe, "check_macos_permissions", lambda *_args: {})
+    monkeypatch.setattr(probe, "capture_frame", app.capture)
+    monkeypatch.setattr(probe, "stop_owned_tree", app.stopped.append)
+    monkeypatch.setattr(probe.time, "sleep", lambda _seconds: None)
+    return probe.boot(tmp_path / "launcher", profile, tmp_path / "boot", "test-key", timeout=5)
+
+
+@pytest.mark.parametrize("installed,running", [(False, False), (True, False), (False, True)])
+def test_probe_requests_optional_setup_once_and_still_requires_a_frame(
+    tmp_path, monkeypatch, installed, running,
+):
+    app = FrozenBrowserApp(installed=installed, running=running)
+    report = _boot_simulated_app(tmp_path, monkeypatch, app)
+    posts = [request for request in app.requests if request[0] == "POST"]
+    assert posts == (
+        [] if installed or running else [("POST", "/api/society/browser/install", "test-key")]
+    )
+    assert report["browser_install_requested"] is (not installed and not running)
+    assert len(app.frames) == 1
+    assert app.stopped == [app]
+    assert report["width"] == 640
+
+
+def test_probe_refuses_to_accept_an_ignored_install_request(tmp_path, monkeypatch):
+    app = FrozenBrowserApp(refuse=True)
+    with pytest.raises(RuntimeError, match="declined the requested browser setup"):
+        _boot_simulated_app(tmp_path, monkeypatch, app)
+    assert app.frames == []
+    assert app.stopped == [app]
 
 
 def test_failed_stream_cannot_count_as_first_frame(tmp_path, monkeypatch):
