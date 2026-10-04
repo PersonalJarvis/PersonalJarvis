@@ -95,6 +95,46 @@ def test_a_figure_facing_the_wrong_way_is_refused_with_the_reason(
     assert client.get("/api/society/figures").json()["total"] == 0
 
 
+def test_shared_recipe_validation_is_recipe_only_and_fail_closed(client: TestClient):
+    safe = {
+        "name": "Scout olive",
+        "license": "CC0-1.0",
+        "source": "KayKit Character Pack / reviewed recipe",
+        "recipe": {
+            "contract": 1,
+            "archetype": "biped",
+            "base": "rogue",
+            "parts": {},
+            "palette": {"primary": "#315d45"},
+            "style": "fantasy",
+        },
+    }
+    accepted = client.post("/api/society/figures/share/validate", json=safe)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["shareable"] is True
+    assert accepted.json()["draft"]["recipe"]["base"] == "rogue"
+
+    local_model = {
+        **safe,
+        "recipe": {**safe["recipe"], "model": "/api/society/figures/custom.glb"},
+    }
+    assert client.post("/api/society/figures/share/validate", json=local_model).status_code == 422
+
+    hidden_payload = {**safe, "recipe": {**safe["recipe"], "payload": "opaque"}}
+    hidden = client.post("/api/society/figures/share/validate", json=hidden_payload)
+    assert hidden.status_code == 422
+
+    gigi = {
+        **safe,
+        "recipe": {**safe["recipe"], "archetype": "spirit", "base": "gigi"},
+    }
+    assert client.post("/api/society/figures/share/validate", json=gigi).status_code == 422
+
+    unreviewed_license = {**safe, "license": "commercial-use-claimed"}
+    unreviewed = client.post("/api/society/figures/share/validate", json=unreviewed_license)
+    assert unreviewed.status_code == 422
+
+
 def test_serving_never_leaves_the_figures_folder(client: TestClient):
     assert client.get("/api/society/figures/..%2F..%2Fjarvis.toml").status_code == 404
     assert client.get("/api/society/figures/nope.glb").status_code == 404

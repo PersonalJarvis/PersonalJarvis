@@ -27,6 +27,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
 from jarvis.core.config import DATA_DIR
+from jarvis.society.figure_sharing import SharedFigureDraft
 from jarvis.core.path_safety import UnsafePathError, safe_child
 
 log = logging.getLogger(__name__)
@@ -148,6 +149,12 @@ async def import_figure(request: Request, name: str = Query("figure")) -> dict[s
         return {"accepted": False, "problems": problems}
     log.info("society figure imported: %s (%d bytes)", path.name, len(body))
     return {"accepted": True, "figure": _describe(path)}
+
+
+@router.post("/share/validate", openapi_extra={"x-jarvis-readonly": True})
+async def validate_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
+    """Validate a recipe-only marketplace candidate without publishing or writing files."""
+    return {"shareable": True, "draft": body.normalized()}
 
 
 @router.get("/{file_name}")
