@@ -11,7 +11,7 @@ vi.mock("./AgentAvatarEditor", () => ({ AgentAvatarEditor: () => <div data-testi
 
 const agent = { ...SAMPLE_ROSTER[1], agentId: "research", name: "Research", title: "Researcher", description: "Check primary sources.", tier: "specialist" as const };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-const learnedSkills = [{ slug: "check", state: "draft", name: "Check sources", description: "Verify source dates." }];
+const learnedSkills = [{ slug: "check", state: "draft", name: "Check sources", description: "Verify source dates.", when_to_use: "When sources need validation." }];
 const knowledge = { files: [
   { path: "memory/memory.md", name: "memory.md", kind: "memory", updated_ms: 1, size: 50 },
   { path: "memory/notes.md", name: "notes.md", kind: "memory", updated_ms: 2, size: 50 },
@@ -77,7 +77,7 @@ it("shows automatically learned instructions and review status separately from u
 it("promotes an agent-learned skill into the global draft review flow", async () => {
   const { fetcher } = setup();
   await screen.findByText("Check sources");
-  expect(screen.getByText(/Verify source dates\. · draft/)).toBeTruthy();
+  expect(screen.getByText(/Verify source dates\. · society\.profile_card\.kind_skills/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "society.card.learned_review" }));
   await screen.findByText("society.profile_card.saved");
   expect(fetcher).toHaveBeenCalledWith(

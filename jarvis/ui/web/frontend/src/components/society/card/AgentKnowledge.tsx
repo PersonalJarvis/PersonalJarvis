@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { MemoryMarkdown } from "../chat/MemoryDocument";
+import { promoteAgentSkillForReview, useAgentSkills } from "../cardData";
 
 export interface AgentKnowledge {
   files: { path: string; name: string; kind: "memory" | "skills"; updated_ms: number; size: number }[];
@@ -47,39 +48,14 @@ export function useAgentKnowledge(agentId: string, sample: boolean) {
   });
 }
 
-interface LearnedSkillSummary {
-  slug: string;
-  state: string;
-  name: string;
-  description: string;
-}
-
-function useAgentSkills(agentId: string, sample: boolean) {
-  return useQuery({
-    queryKey: ["society", "agent-skills", agentId],
-    enabled: !sample,
-    retry: false,
-    staleTime: 10_000,
-    queryFn: ({ signal }) => get<{ skills: LearnedSkillSummary[] }>(
-      `/api/society/agents/${encodeURIComponent(agentId)}/skills`,
-      signal,
-    ),
-  });
-}
-
 export function LearnedInstructions({ agentId, sample }: { agentId: string; sample: boolean }) {
   const t = useT();
   const query = useAgentKnowledge(agentId, sample);
-  const skillsQuery = useAgentSkills(agentId, sample);
+  const skillsQuery = useAgentSkills(sample ? null : agentId);
   const [promoted, setPromoted] = useState<string[]>([]);
   const promote = useMutation({
     mutationFn: async (slug: string) => {
-      const response = await fetch(
-        `/api/society/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(slug)}/promote`,
-        { method: "POST" },
-      );
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      await response.json();
+      await promoteAgentSkillForReview(agentId, slug);
       return slug;
     },
     onSuccess: (slug) => setPromoted((current) => current.includes(slug) ? current : [...current, slug]),
@@ -104,16 +80,16 @@ export function LearnedInstructions({ agentId, sample }: { agentId: string; samp
         {data?.last_review && <p className="mt-1 text-xs text-muted-foreground">{t("society.profile_card.last_review")}: {new Date(data.last_review.updated_ms).toLocaleString()}</p>}
         {skillsQuery.isLoading ? <p className="mt-4 text-xs text-muted-foreground">{t("society.profile_card.loading")}</p>
           : skillsQuery.isError ? <p role="alert" className="mt-4 text-sm text-destructive">{t("society.profile_card.load_error")}</p>
-          : skillsQuery.data?.skills.length ? <div className="mt-4 border-t border-border pt-3">
+          : skillsQuery.data?.length ? <div className="mt-4 border-t border-border pt-3">
             <p className="mb-3 text-xs leading-relaxed text-muted-foreground">{t("society.card.learned_review_hint")}</p>
             <ul className="space-y-2">
-              {skillsQuery.data.skills.map((skill) => {
+              {skillsQuery.data.map((skill) => {
                 const done = promoted.includes(skill.slug);
                 const busy = promote.isPending && promote.variables === skill.slug;
                 return <li key={skill.slug} className="flex items-start justify-between gap-3 rounded-lg bg-secondary/40 p-3">
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">{skill.name || skill.slug}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">{skill.description || skill.slug} · {skill.state}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{skill.description || skill.whenToUse || skill.slug} · {t("society.profile_card.kind_skills")}</span>
                   </span>
                   {done
                     ? <span role="status" className="shrink-0 text-xs text-muted-foreground">{t("society.profile_card.saved")}</span>
