@@ -14,7 +14,7 @@ const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 
 function renderEditor(sample = false) {
-  const fetcher = vi.fn(async () => json({ agent: {} }));
+  const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ agent: {} }));
   vi.stubGlobal("fetch", fetcher);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
