@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass, field, replace
 from dataclasses import fields as fields_of
@@ -489,7 +490,20 @@ class DictationHistory:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_name, self._path)
+            # Windows can transiently deny ReplaceFile semantics while an
+            # indexer/AV scanner has the destination open. The shared path lock
+            # prevents Jarvis writers from racing each other, but it cannot
+            # control those external readers. Retry only this narrow, known
+            # transient and keep the same fully-written tempfile so atomicity
+            # is preserved.
+            for attempt in range(6):
+                try:
+                    os.replace(tmp_name, self._path)
+                    break
+                except PermissionError:
+                    if os.name != "nt" or attempt == 5:
+                        raise
+                    time.sleep(0.01 * (2**attempt))
         except Exception:
             try:
                 os.unlink(tmp_name)
