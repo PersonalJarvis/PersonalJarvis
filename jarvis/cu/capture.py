@@ -85,6 +85,7 @@ class _CapturedPixels:
 RawCapture = tuple[tuple[int, int], bytes] | _CapturedPixels
 _RawCapture = RawCapture
 
+
 def raw_pixels(
     size: tuple[int, int],
     data: bytes | bytearray | memoryview,
@@ -103,7 +104,6 @@ def raw_pixels(
     if fmt == "BGRX":
         return _CapturedPixels(size, data)
     raise ValueError(f"unsupported pixel format: {pixel_format!r}")
-
 
 
 def _capture_size(raw: _RawCapture) -> tuple[int, int]:
