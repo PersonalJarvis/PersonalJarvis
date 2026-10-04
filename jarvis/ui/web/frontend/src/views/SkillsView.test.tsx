@@ -1,8 +1,8 @@
 /**
  * Component tests for the reworked SkillsView: a flat list where every healthy
  * skill has an On/Off switch (on by default), a broken draft is shown locked
- * with no switch, a healthy draft has an off switch (promote via enable),
- * deletion is confirmed before it fires, and built-in skills cannot be
+ * with no switch, and a healthy draft must be reviewed before an explicit
+ * approval activates it. Deletion is confirmed before it fires, and built-in skills cannot be
  * deleted. Drag-reorder is verified live (jsdom has no real pointer/layout).
  *
  * Driven through a mocked fetch (mirrors ContactsView.test.tsx) with the UI
@@ -151,8 +151,19 @@ describe("SkillsView — draft is locked", () => {
     expect(screen.getByText("Error")).toBeTruthy();
   });
 
-  it("a healthy draft shows an off switch, not an error", async () => {
-    installFetchMock({
+  it("a healthy draft offers review instead of an activation switch", async () => {
+    const calls = installFetchMock({
+      "GET /api/skills/morning": () => ({
+        body: skill({
+            name: "morning",
+            state: "draft",
+            error: null,
+            body: "Review me before activation.",
+            body_hash: "draft-hash",
+            path: "morning/SKILL.md",
+            frontmatter: { name: "morning", description: "Morning draft" },
+          }),
+      }),
       "GET /api/skills": () => ({
         body: {
           skills: [skill({ name: "morning", state: "draft", error: null })],
@@ -163,13 +174,33 @@ describe("SkillsView — draft is locked", () => {
     renderView();
 
     await screen.findByText("morning");
-    const sw = screen.getByRole("switch");
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    expect(screen.queryByText("Error")).toBeNull();
+    expect(screen.queryByRole("switch")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    expect(await screen.findByRole("button", { name: "Approve & activate" })).toBeTruthy();
+    expect(screen.getByText("This draft needs your review")).toBeTruthy();
+    expect(
+      calls.some(
+        (c) =>
+          c.method === "POST" &&
+          c.url.endsWith("/api/skills/morning/enable"),
+      ),
+    ).toBe(false);
   });
 
-  it("turning a healthy draft on calls enable", async () => {
+  it("approving a reviewed healthy draft calls enable", async () => {
     const calls = installFetchMock({
+      "GET /api/skills/morning": () => ({
+        body: skill({
+            name: "morning",
+            state: "draft",
+            error: null,
+            body: "Review me before activation.",
+            body_hash: "draft-hash",
+            path: "morning/SKILL.md",
+            frontmatter: { name: "morning", description: "Morning draft" },
+          }),
+      }),
       "GET /api/skills": () => ({
         body: {
           skills: [skill({ name: "morning", state: "draft", error: null })],
@@ -183,7 +214,8 @@ describe("SkillsView — draft is locked", () => {
     renderView();
 
     await screen.findByText("morning");
-    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & activate" }));
 
     await waitFor(() => {
       expect(
