@@ -45,20 +45,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("shows only public avatar styles and never offers the reserved spirit", () => {
+it("shows only public avatar styles and never offers the reserved spirit", async () => {
   renderEditor();
-  const style = screen.getByLabelText("society.create.style") as HTMLSelectElement;
-  const values = Array.from(style.options).map((option) => option.value);
-  expect(values).toContain("fantasy");
-  expect(values).not.toContain("spirit");
-  expect(values).not.toContain("custom");
+  fireEvent.click(screen.getByRole("combobox", { name: "society.create.style" }));
+  expect(
+    await screen.findByRole("option", { name: "society.style.fantasy" }),
+  ).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "society.style.spirit" })).toBeNull();
+  expect(screen.queryByRole("option", { name: "society.style.custom" })).toBeNull();
 });
 
 it("patches only the avatar when a catalog base changes", async () => {
   const { fetcher } = renderEditor();
-  fireEvent.change(screen.getByLabelText("society.create.base"), {
-    target: { value: "knight" },
-  });
+  fireEvent.click(screen.getByRole("combobox", { name: "society.create.base" }));
+  const options = await screen.findAllByRole("option");
+  const knight = options.find((option) => option.getAttribute("data-value") === "knight");
+  expect(knight).toBeTruthy();
+  fireEvent.click(knight!);
   fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
 
   await waitFor(() => expect(fetcher).toHaveBeenCalled());
@@ -75,7 +78,9 @@ it("patches only the avatar when a catalog base changes", async () => {
 
 it("keeps avatar changes disabled for sample rows", () => {
   const { fetcher } = renderEditor(true);
-  expect((screen.getByLabelText("society.create.style") as HTMLSelectElement).disabled).toBe(true);
+  expect(
+    (screen.getByRole("combobox", { name: "society.create.style" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   expect((screen.getByRole("button", { name: "society.card.save" }) as HTMLButtonElement).disabled).toBe(true);
   expect(fetcher).not.toHaveBeenCalled();
 });
