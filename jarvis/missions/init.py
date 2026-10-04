@@ -34,6 +34,7 @@ from typing import Any
 from jarvis.core.bus import EventBus as _SpeechEventBus
 
 from .budget import BudgetTracker
+from .capacity import WorkerCapacityUnavailable, pinned_to_subscription
 from .cleanup import daily_cleanup_task, startup_sweep
 from .critic.runner import CriticRunner
 from .event_bus import MissionBus
@@ -510,22 +511,13 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
-def _claude_cli_auth_viable() -> bool:
-    """True when the ``claude`` CLI has a REACHABLE auth surface for a worker.
+def _claude_subscription_login_state() -> bool | None:
+    """The ``claude`` CLI's SUBSCRIPTION login: usable (True), proven dead this
+    session (False), or absent (None).
 
-    Binary presence alone is NOT viability (2026-07-06 incident): the worker
-    must have one of three executable auth surfaces:
-
-    1. the process-local ``claude_auth_dead`` flag (a worker PROVED the current
-       credential dead this session — fingerprinted, so a fresh login/key
-       re-enables Claude instantly);
-    2. a live file-backed OAuth bearer for the legacy isolated-config path, or
-       a native CLI account plus the ``--safe-mode`` capability (preserves the
-       macOS Keychain while disabling hooks/plugins);
-    3. failing that, a classic (non-``sk-ant-oat``) Anthropic API key.
-
-    The CLI probes are tightly timed and process-cached. A probe failure is not
-    fatal: the cross-family worker resolver continues to another usable family.
+    Surfaces 1 and 2 of :func:`_claude_cli_auth_viable` — never the classic
+    Anthropic API key, which bills per token. A mission pinned to the
+    subscription (jarvis/missions/capacity.py) runs Claude only on this.
     """
     from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
     from jarvis.missions.isolation.env import (
@@ -555,6 +547,31 @@ def _claude_cli_auth_viable() -> bool:
             )
     except Exception:  # noqa: BLE001,S110 — optional native auth path
         pass
+    return None
+
+
+def _claude_cli_auth_viable() -> bool:
+    """True when the ``claude`` CLI has a REACHABLE auth surface for a worker.
+
+    Binary presence alone is NOT viability (2026-07-06 incident): the worker
+    must have one of three executable auth surfaces:
+
+    1. the process-local ``claude_auth_dead`` flag (a worker PROVED the current
+       credential dead this session — fingerprinted, so a fresh login/key
+       re-enables Claude instantly);
+    2. a live file-backed OAuth bearer for the legacy isolated-config path, or
+       a native CLI account plus the ``--safe-mode`` capability (preserves the
+       macOS Keychain while disabling hooks/plugins);
+    3. failing that, a classic (non-``sk-ant-oat``) Anthropic API key.
+
+    The CLI probes are tightly timed and process-cached. A probe failure is not
+    fatal: the cross-family worker resolver continues to another usable family.
+    """
+    from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
+
+    login = _claude_subscription_login_state()
+    if login is not None:
+        return login
 
     try:
         from jarvis.core.config import get_jarvis_agent_secret
@@ -645,6 +662,8 @@ def reachable_worker_families() -> list[str]:
 def _cross_family_last_resort_worker(
     task_text: str,
     capability_inventory: WorkerCapabilityInventory | None = None,
+    *,
+    allow_metered: bool = True,
 ) -> Any | None:
     """The key-aware, cross-family LAST-resort heavy worker (open-source AP-22/23).
 
@@ -711,6 +730,10 @@ def _cross_family_last_resort_worker(
     # 3. In-process API worker on whatever single key the user has, crossing
     #    families — the same cross-family set the Brain fallback chain uses.
     #    Viability-gated (not existence-gated): see _api_key_family_viable.
+    #    Skipped on a subscription install (``allow_metered=False``): a per-token
+    #    key is billed only after the user approves it (missions/capacity.py).
+    if not allow_metered:
+        return None
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
     for prov in ("claude-api", "gemini", "openrouter", "openai", "grok", "nvidia"):
@@ -726,10 +749,52 @@ def _cross_family_last_resort_worker(
     return None
 
 
+def _pinned_claude_worker(
+    capability_inventory: WorkerCapabilityInventory | None,
+    *,
+    binary_present: bool,
+    login: bool | None,
+) -> Any:
+    """The Claude worker for a mission pinned to the subscription, or a
+    :class:`WorkerCapacityUnavailable` that parks the mission.
+
+    ``login`` is :func:`_claude_subscription_login_state`. Never codex, never
+    another family, never the Anthropic API key: the user approves paid use per
+    mission (jarvis/missions/capacity.py).
+    """
+    from jarvis.claude_quota_state import claude_in_quota_cooldown
+
+    if not binary_present:
+        raise WorkerCapacityUnavailable(
+            "provider_unavailable",
+            "claude",
+            "the claude CLI is not installed; the Anthropic API key needs approval",
+        )
+    if claude_in_quota_cooldown():
+        raise WorkerCapacityUnavailable("provider_quota", "claude")
+    if login is not True:
+        raise WorkerCapacityUnavailable("provider_auth", "claude")
+    return ClaudeDirectWorker(capability_inventory=capability_inventory, backend_fallback=False)
+
+
+def _pinned_codex_worker(capability_inventory: WorkerCapabilityInventory | None) -> Any:
+    """The codex worker for a pinned mission, or a WorkerCapacityUnavailable."""
+    from jarvis.codex_auth_state import codex_needs_reauth
+    from jarvis.codex_quota_state import codex_in_quota_cooldown
+
+    if codex_needs_reauth():
+        raise WorkerCapacityUnavailable("provider_auth", "codex")
+    if codex_in_quota_cooldown():
+        raise WorkerCapacityUnavailable("provider_quota", "codex")
+    return CodexDirectWorker(capability_inventory=capability_inventory, backend_fallback=False)
+
+
 def _resolve_api_agent_worker(
     provider: str,
     task_text: str,
     capability_inventory: WorkerCapabilityInventory | None = None,
+    *,
+    pinned: bool = False,
 ) -> Any:
     """Worker for an ``api_agent``-kind Jarvis-Agent provider.
 
@@ -755,6 +820,15 @@ def _resolve_api_agent_worker(
             provider,
         )
         return ApiAgentWorker(provider, capability_inventory=inventory)
+    if pinned:
+        # A subscription install never crosses to another family on its own
+        # (jarvis/missions/capacity.py): park the mission instead.
+        from jarvis.api_family_quota_state import api_family_in_cooldown
+
+        raise WorkerCapacityUnavailable(
+            "provider_quota" if api_family_in_cooldown(provider) else "provider_unavailable",
+            provider,
+        )
     logger.warning(
         "Mission worker: subagent provider %r has no API key configured, "
         "so it cannot run — trying the user's other provider families "
@@ -1164,14 +1238,26 @@ async def bootstrap_missions(
         live_provider = _live_subagent_provider(sub_jarvis_provider)
         kind = _select_subagent_worker_kind(live_provider, getattr(step, "model", "") or "")
         if kind == "claude_direct":
-            # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
-            # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
-            # API key instead of failing on the missing binary. The CLI stays
-            # preferred (subscription-first) whenever the binary IS present.
             from jarvis.missions.workers.claude_direct_worker import (
                 _resolve_claude_binary,
             )
 
+            # Capacity policy (jarvis/missions/capacity.py): on a subscription
+            # install the mission stays on Claude's subscription login — a spent
+            # window or a dead login parks it in WAITING_CAPACITY instead of
+            # moving it to codex, another family, or the Anthropic API key.
+            binary_present = _resolve_claude_binary() is not None
+            login = _claude_subscription_login_state() if binary_present else None
+            if pinned_to_subscription(
+                configured_is_subscription=binary_present and login is not None
+            ):
+                return _pinned_claude_worker(
+                    capability_inventory, binary_present=binary_present, login=login
+                )
+            # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
+            # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
+            # API key instead of failing on the missing binary. The CLI stays
+            # preferred (subscription-first) whenever the binary IS present.
             if _resolve_claude_binary() is None and _api_key_family_viable("claude-api"):
                 logger.info(
                     "Mission worker -> ApiAgentWorker('claude-api'): no `claude` CLI "
@@ -1218,6 +1304,9 @@ async def bootstrap_missions(
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
             return ClaudeDirectWorker(capability_inventory=capability_inventory)
         if kind == "codex_direct":
+            # The ChatGPT login is a subscription: pinned like Claude above.
+            if pinned_to_subscription(configured_is_subscription=True):
+                return _pinned_codex_worker(capability_inventory)
             # If a codex subprocess already proved the ChatGPT login dead this
             # session, skip codex entirely and run on Claude Max directly (one
             # path, like grok) — re-spawning the dead provider + double-falling-
@@ -1259,7 +1348,12 @@ async def bootstrap_missions(
             # `_resolve_api_agent_worker` (viability-gated, cross-family
             # fallback, honest Claude last resort).
             provider = live_provider or ""
-            return _resolve_api_agent_worker(provider, task_text, capability_inventory)
+            return _resolve_api_agent_worker(
+                provider,
+                task_text,
+                capability_inventory,
+                pinned=pinned_to_subscription(configured_is_subscription=False),
+            )
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
             # heavy worker IN-PROCESS via ApiAgentWorker instead of failing on the
@@ -1294,8 +1388,13 @@ async def bootstrap_missions(
         # nested-claude hang; see docs/BUGS.md).
         # Open-source AP-22/AP-23: try the user's ACTUAL provider family before
         # the Claude last resort, so an openrouter/gemini/openai-only downloader
-        # is not dead-ended on the absent `claude` binary.
-        cross = _cross_family_last_resort_worker(task_text, capability_inventory)
+        # is not dead-ended on the absent `claude` binary. A subscription
+        # install never lands on a per-token key this way (missions/capacity.py).
+        cross = _cross_family_last_resort_worker(
+            task_text,
+            capability_inventory,
+            allow_metered=not pinned_to_subscription(configured_is_subscription=False),
+        )
         if cross is not None:
             return cross
         return ClaudeDirectWorker(capability_inventory=capability_inventory)

@@ -51,7 +51,7 @@ import {
   useMissionsStore,
 } from "@/components/missions/store";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { agentBrand } from "@/lib/agentBrand";
 import { useEventStore } from "@/store/events";
 import type { MissionPlanReady } from "@/types/missions";
@@ -294,7 +294,8 @@ function ReasoningPanel() {
       return (s.eventsByMission[s.selectedMissionId] ?? []).filter(
         (e) =>
           e.payload.event_type === "WorkerProgress" ||
-          e.payload.event_type === "WorkerCorrectionRequired",
+          e.payload.event_type === "WorkerCorrectionRequired" ||
+          e.payload.event_type === "MissionWaitingCapacity",
       );
     }),
   );
@@ -341,6 +342,41 @@ function ReasoningPanel() {
                   <span className="font-mono">w{p.worker_id.slice(0, 8)}</span>
                 </div>
                 <p className="mt-1 text-foreground/90">{p.correction_instruction}</p>
+              </li>
+            );
+          }
+          if (env.payload.event_type === "MissionWaitingCapacity") {
+            const p = env.payload;
+            const provider = p.provider || t("missions_view.capacity_wait.provider_fallback");
+            const open = Math.max(p.steps_total - p.steps_done, 0);
+            return (
+              <li
+                key={`${env.event_id}-${idx}`}
+                className="rounded border border-warning/40 bg-warning/10 p-2 text-xs"
+              >
+                <p className="font-medium text-warning">
+                  {fill(t(`missions_view.capacity_wait.${p.reason}`), { provider })}
+                </p>
+                <p className="mt-1 text-foreground/90">
+                  {p.checkpoint_path && `${t("missions_view.capacity_wait.saved")} `}
+                  {p.steps_total > 1
+                    ? fill(t("missions_view.capacity_wait.progress"), {
+                        done: p.steps_done,
+                        total: p.steps_total,
+                        open,
+                      })
+                    : t("missions_view.capacity_wait.progress_single")}
+                  {p.files_saved > 0 &&
+                    ` ${fill(t("missions_view.capacity_wait.files"), { files: p.files_saved })}`}
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  {t(
+                    p.reason === "provider_auth"
+                      ? "missions_view.capacity_wait.wait_auth"
+                      : "missions_view.capacity_wait.wait",
+                  )}{" "}
+                  {t("missions_view.capacity_wait.paid")}
+                </p>
               </li>
             );
           }

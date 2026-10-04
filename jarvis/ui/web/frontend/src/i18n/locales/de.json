@@ -4181,7 +4181,20 @@
     "timeline_label": "Event-Timeline",
     "no_events": "Noch keine Events für diese Mission.",
     "no_critic_verdicts": "Noch keine Critic-Verdicts für diese Mission.",
-    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…"
+    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…",
+    "capacity_wait": {
+      "provider_quota": "{provider}-Kapazität momentan ausgeschöpft.",
+      "provider_auth": "Die {provider}-Anmeldung ist abgelaufen.",
+      "provider_unavailable": "{provider} ist momentan nicht nutzbar.",
+      "provider_fallback": "KI-Anbieter",
+      "saved": "Der bisherige Stand wurde gesichert.",
+      "progress": "{done} von {total} Teilschritten erledigt, {open} offen.",
+      "progress_single": "Die Aufgabe selbst ist noch offen.",
+      "files": "Gespeicherte Dateien: {files}.",
+      "wait": "Die Mission wartet, bis wieder Kapazität verfügbar ist.",
+      "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",
+      "paid": "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen Freigabe."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Freigaben",
@@ -4272,7 +4285,8 @@
     "approved": "fertig",
     "failed": "Fehler",
     "cancelled": "abgebrochen",
-    "timed_out": "Timeout"
+    "timed_out": "Timeout",
+    "waiting_capacity": "wartet auf Kapazität"
   },
   "mascot_gigi": {
     "aria_label": "{name}-Maskottchen Gigi",

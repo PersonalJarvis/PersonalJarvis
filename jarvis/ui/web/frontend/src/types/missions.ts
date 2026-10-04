@@ -14,7 +14,10 @@ export type MissionState =
   | "APPROVED"
   | "FAILED"
   | "CANCELLED"
-  | "TIMED_OUT";
+  | "TIMED_OUT"
+  // Parked: the worker's subscription has no capacity left, so the work is
+  // checkpointed and the mission waits (jarvis/missions/capacity.py).
+  | "WAITING_CAPACITY";
 
 export type SourceActor =
   | "hauptjarvis"
@@ -41,7 +44,8 @@ export type EventType =
   | "MissionTimedOut"
   | "MissionStateChanged"
   | "BusStats"
-  | "MissionBudgetWarning";
+  | "MissionBudgetWarning"
+  | "MissionWaitingCapacity";
 
 export interface BasePayload {
   event_type: EventType;
@@ -192,6 +196,20 @@ export interface BusStats extends BasePayload {
   active_subs: number;
 }
 
+/** Mirror of CAPACITY_WAIT_REASONS in jarvis/missions/events.py. */
+export type CapacityWaitReason = "provider_quota" | "provider_auth" | "provider_unavailable";
+
+export interface MissionWaitingCapacity extends BasePayload {
+  event_type: "MissionWaitingCapacity";
+  reason: CapacityWaitReason;
+  provider: string | null;
+  steps_done: number;
+  steps_total: number;
+  files_saved: number;
+  checkpoint_path: string;
+  error_detail: string | null;
+}
+
 export interface MissionBudgetWarning extends BasePayload {
   event_type: "MissionBudgetWarning";
   mission_id: string;
@@ -213,6 +231,7 @@ export type AnyPayload =
   | MissionCancelled
   | MissionTimedOut
   | MissionStateChanged
+  | MissionWaitingCapacity
   | BusStats
   | MissionBudgetWarning;
 
@@ -406,6 +425,11 @@ export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = 
     labelKey: "mission_state.timed_out",
     className: "border-foreground/40 bg-foreground/10 text-foreground",
     iconName: "Skull",
+  },
+  WAITING_CAPACITY: {
+    labelKey: "mission_state.waiting_capacity",
+    className: "border-warning/40 bg-warning/10 text-warning",
+    iconName: "Clock",
   },
 };
 

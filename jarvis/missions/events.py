@@ -155,6 +155,34 @@ class MissionFailed(_PayloadBase):
     failed_provider: str | None = None
 
 
+# Why a mission is parked in WAITING_CAPACITY. Closed vocabulary, mirrored in
+# frontend/src/types/missions.ts (CapacityWaitReason) and the voice phrase
+# table (CAPACITY_WAIT_PHRASES) — guarded by
+# tests/missions/test_capacity_wait_parity.py (AP-4).
+CAPACITY_WAIT_REASONS: Final[frozenset[str]] = frozenset({
+    "provider_quota",        # usage/session window or credit spent
+    "provider_auth",         # subscription login expired
+    "provider_unavailable",  # the worker cannot run without a paid fallback
+})
+
+
+class MissionWaitingCapacity(_PayloadBase):
+    """The mission is parked: its worker has no usable capacity right now.
+
+    Every field is a runtime fact (counts, paths, the provider slug), never
+    worker text, so the voice layer can render it as a static phrase.
+    """
+
+    event_type: Literal["MissionWaitingCapacity"] = "MissionWaitingCapacity"
+    reason: Literal["provider_quota", "provider_auth", "provider_unavailable"]
+    provider: str | None = None
+    steps_done: int = 0
+    steps_total: int = 0
+    files_saved: int = 0
+    checkpoint_path: str = ""
+    error_detail: str | None = None
+
+
 class MissionCancelled(_PayloadBase):
     event_type: Literal["MissionCancelled"] = "MissionCancelled"
     cascade: bool = False
@@ -194,7 +222,22 @@ class MissionBudgetWarning(_PayloadBase):
 
 
 Payload = Annotated[
-    MissionDispatched | MissionPlanReady | WorkerSpawned | WorkerProgress | WorkerDraftReady | CriticVerdictReady | WorkerCorrectionRequired | WorkerKilled | MissionApproved | MissionFailed | MissionCancelled | MissionTimedOut | MissionStateChanged | BusStats | MissionBudgetWarning,
+    MissionDispatched
+    | MissionPlanReady
+    | WorkerSpawned
+    | WorkerProgress
+    | WorkerDraftReady
+    | CriticVerdictReady
+    | WorkerCorrectionRequired
+    | WorkerKilled
+    | MissionApproved
+    | MissionFailed
+    | MissionCancelled
+    | MissionTimedOut
+    | MissionStateChanged
+    | BusStats
+    | MissionBudgetWarning
+    | MissionWaitingCapacity,
     Field(discriminator="event_type"),
 ]
 

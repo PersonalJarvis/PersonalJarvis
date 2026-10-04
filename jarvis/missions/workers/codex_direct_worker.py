@@ -458,11 +458,15 @@ class CodexDirectWorker:
         self,
         *,
         capability_inventory: WorkerCapabilityInventory | None = None,
+        backend_fallback: bool = True,
     ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
         self.last_thread_id: str | None = None
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
+        # False pins this worker to codex: a usage cap or a dead login surfaces
+        # as an error instead of finishing on Claude (jarvis/missions/capacity.py).
+        self.backend_fallback = backend_fallback
 
     async def spawn(
         self,
@@ -512,7 +516,7 @@ class CodexDirectWorker:
                 timeout_s=timeout_s,
                 first_output_timeout_s=first_output_timeout_s,
                 mission_id=mission_id,
-                allow_backend_fallback=allow_backend_fallback,
+                allow_backend_fallback=allow_backend_fallback and self.backend_fallback,
                 broker_binding=broker_binding,
                 **_unused,
             ):
@@ -894,23 +898,26 @@ class CodexDirectWorker:
             and not _auth_dead
             and _codex_error_is_usage_limited(_err)
         )
+        # The flags are armed whether or not the fallback runs: a pinned worker
+        # (backend_fallback=False) relies on them so the worker factory parks
+        # the mission in WAITING_CAPACITY (jarvis/missions/capacity.py).
+        if _auth_dead:
+            from jarvis.codex_auth_state import mark_codex_needs_reauth
+
+            mark_codex_needs_reauth()
+        elif _usage_capped:
+            # Proactive complement to the reactive fallback below (2026-07-07,
+            # mission_019f3cd8-1dd4): remember the cap so the worker factory
+            # skips codex until the cooldown self-expires, instead of burning
+            # ~28 s per mission re-proving it. A codex success clears it
+            # immediately.
+            from jarvis.codex_quota_state import mark_codex_quota_cooldown
+
+            mark_codex_quota_cooldown()
         # `allow_backend_fallback=False` marks a NESTED fallback run (the
-        # claude worker already fell back to codex) — surface the error
-        # honestly instead of bouncing codex->claude->codex forever.
+        # claude worker already fell back to codex) or a pinned worker —
+        # surface the error honestly instead of bouncing codex->claude->codex.
         if (_auth_dead or _usage_capped) and allow_backend_fallback:
-            if _auth_dead:
-                from jarvis.codex_auth_state import mark_codex_needs_reauth
-
-                mark_codex_needs_reauth()
-            else:
-                # Proactive complement to this reactive fallback (2026-07-07,
-                # mission_019f3cd8-1dd4): remember the cap so the worker
-                # factory skips codex until the cooldown self-expires, instead
-                # of burning ~28 s per mission re-proving it. A codex success
-                # clears it immediately.
-                from jarvis.codex_quota_state import mark_codex_quota_cooldown
-
-                mark_codex_quota_cooldown()
             # Viability gate on the nested Claude spawn (2026-07-07 incident):
             # the fallback used to be HARDCODED to ClaudeDirectWorker, so a
             # usage-capped codex + a dead Claude login looped codex->claude->

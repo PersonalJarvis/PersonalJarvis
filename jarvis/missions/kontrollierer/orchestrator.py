@@ -37,6 +37,7 @@ from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
+from ..capacity import WorkerCapacityUnavailable, write_checkpoint
 from ..critic.escalation import FRONTIER_MODEL
 from ..critic.reflections import ReflectionMemory
 from ..critic.runner import MAX_CRITIC_LOOPS, CriticRunner
@@ -54,6 +55,7 @@ from ..events import (
     MissionCancelled,
     MissionFailed,
     MissionPlanReady,
+    MissionWaitingCapacity,
     WorkerCorrectionRequired,
     WorkerDraftReady,
     WorkerKilled,
@@ -744,6 +746,11 @@ class TaskOutcome:
     # stays the generic ERROR -> task_error. (Voice strings live in
     # readback.FAILURE_REASON_PHRASES; see the deep-dive README.)
     TIMED_OUT = "timed_out"
+    # The worker has no usable capacity (spent window, dead subscription login,
+    # nothing it may run on without a paid fallback). The mission is parked in
+    # WAITING_CAPACITY with a checkpoint instead of failing — see
+    # jarvis/missions/capacity.py.
+    WAITING_CAPACITY = "waiting_capacity"
 
 
 class Kontrollierer:
@@ -836,6 +843,10 @@ class Kontrollierer:
         # generic "worktree_setup_failed" fallback. Last write wins, same
         # convention as `_mission_failure_context`.
         self._setup_failure_reason: dict[str, str] = {}
+        # Per-mission capacity-wait cause (reason, provider, error_detail) —
+        # written where a task returns WAITING_CAPACITY, consumed once by
+        # `_park_mission`. Last write wins, as above.
+        self._capacity_wait: dict[str, dict[str, str | None]] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -848,7 +859,7 @@ class Kontrollierer:
     async def run_mission(self, mission_id: str) -> MissionState:
         """Runs a mission end-to-end and returns the final state.
 
-        Returns: APPROVED | FAILED | CANCELLED | TIMED_OUT.
+        Returns: APPROVED | FAILED | CANCELLED | TIMED_OUT | WAITING_CAPACITY.
 
         The in-flight asyncio task is tracked in ``_running_missions`` so an
         external cancel (REST ``POST /api/missions/{id}/cancel``) can abort
@@ -1030,6 +1041,7 @@ class Kontrollierer:
         # Parallel task execution with semaphore limit
         sem = asyncio.Semaphore(min(plan.n_workers, self._max_workers))
         task_outcomes: list[str] = []
+        step_outcomes: dict[str, str] = {}
 
         async def _run(step: Step) -> None:
             outcome = await self._run_task_with_critic_loop(
@@ -1041,6 +1053,7 @@ class Kontrollierer:
                 sem=sem,
             )
             task_outcomes.append(outcome)
+            step_outcomes[step.task_id] = outcome
 
         # Cross-mission concurrency cap: serialise the heavy claude
         # (worker + critic) phase so a burst of missions cannot overload the
@@ -1088,6 +1101,21 @@ class Kontrollierer:
         # or critic-reject is more recoverable when the user can see the
         # work the worker actually produced.
         partial = self._collect_partial_artifacts(mission_id, plan)
+        # A task without worker capacity parks the whole mission with a
+        # checkpoint — the finished steps are kept, nothing is failed and no
+        # provider is switched (jarvis/missions/capacity.py). Only an exceeded
+        # budget outranks it: that is a hard stop, not a wait.
+        if (
+            TaskOutcome.WAITING_CAPACITY in task_outcomes
+            and TaskOutcome.BUDGET_EXCEEDED not in task_outcomes
+        ):
+            return await self._park_mission(
+                mission_id,
+                plan,
+                prompt=view.prompt,
+                step_outcomes=step_outcomes,
+                partial_artifacts=partial,
+            )
         # Execution/setup failures outrank review outcomes in a multi-task
         # mission. Otherwise one review time guard can mask a real worker crash
         # in another step and show the user the wrong terminal cause.
@@ -1375,8 +1403,22 @@ class Kontrollierer:
                 mission_id, MissionState.CRITIQUING, f"iter-{iteration}-start"
             )
 
-            # Worker spawn (real or fake depending on the factory)
-            worker = self._worker_factory(step)
+            # Worker spawn (real or fake depending on the factory). A factory
+            # that refuses to switch to a billing fallback parks the task.
+            try:
+                worker = self._worker_factory(step)
+            except WorkerCapacityUnavailable as exc:
+                logger.warning(
+                    "Task %s iter %d: no worker capacity (%s) — parking the "
+                    "mission instead of switching provider",
+                    step.task_id, iteration, exc,
+                )
+                self._capacity_wait[mission_id] = {
+                    "reason": exc.reason,
+                    "provider": exc.provider,
+                    "error_detail": exc.detail or None,
+                }
+                return TaskOutcome.WAITING_CAPACITY
             log_dir = mission_dir / "tasks" / step.task_id[:13] / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1632,6 +1674,18 @@ class Kontrollierer:
                     # (auth/billing/non-timeout crash) stays ERROR.
                     if is_timeout:
                         return TaskOutcome.TIMED_OUT
+                    # A spent quota window is not a fault of the work: park
+                    # the mission with its checkpoint instead of failing it.
+                    if error_class == "provider_quota":
+                        self._capacity_wait[mission_id] = {
+                            "reason": "provider_quota",
+                            "provider": (
+                                getattr(worker, "provider", None)
+                                or getattr(worker, "cli", None)
+                            ),
+                            "error_detail": error_detail,
+                        }
+                        return TaskOutcome.WAITING_CAPACITY
                     return TaskOutcome.ERROR
 
             # WorkerDraftReady event — BudgetTracker.bind_to_event_bus
@@ -2853,6 +2907,103 @@ class Kontrollierer:
                     to_state.value,
                 )
                 return False
+
+    async def _park_mission(
+        self,
+        mission_id: str,
+        plan: MissionPlan,
+        *,
+        prompt: str,
+        step_outcomes: dict[str, str],
+        partial_artifacts: list[str],
+    ) -> MissionState:
+        """Checkpoint the mission and park it in WAITING_CAPACITY.
+
+        The checkpoint records every step with its outcome and where its
+        archived artifacts live (the per-task archive already ran in each
+        task's ``finally``). The ``MissionWaitingCapacity`` event carries only
+        counts and paths, so the voice layer renders it as a static phrase.
+        """
+        self._task_answers.pop(mission_id, None)
+        self._mission_failure_context.pop(mission_id, None)
+        wait = self._capacity_wait.pop(mission_id, {})
+        reason = wait.get("reason") or "provider_quota"
+        provider = wait.get("provider")
+        error_detail = wait.get("error_detail")
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+
+        steps: list[dict[str, Any]] = []
+        files_saved = 0
+        for step in plan.steps:
+            outcome = step_outcomes.get(step.task_id, "not_started")
+            files_dir = mission_dir / "tasks" / step.task_id[:13] / "artifacts" / "files"
+            try:
+                n_files = sum(1 for p in files_dir.rglob("*") if p.is_file())
+            except OSError:
+                # Missing or unreadable: nothing countable was saved for it.
+                n_files = 0
+            files_saved += n_files
+            steps.append({
+                "task_id": step.task_id,
+                "slug": step.slug,
+                "prompt": step.prompt,
+                "outcome": outcome,
+                "done": outcome == TaskOutcome.APPROVED,
+                "files_saved": n_files,
+                "artifacts_dir": str(files_dir.parent),
+            })
+        steps_done = sum(1 for st in steps if st["done"])
+
+        checkpoint_path = ""
+        try:
+            checkpoint_path = str(await asyncio.to_thread(
+                write_checkpoint,
+                mission_dir,
+                {
+                    "mission_id": mission_id,
+                    "prompt": prompt,
+                    "reason": reason,
+                    "provider": provider,
+                    "error_detail": error_detail,
+                    "created_ms": now_ms(),
+                    "steps": steps,
+                    "partial_artifacts": partial_artifacts,
+                },
+            ))
+        except OSError:
+            # The per-task archives still hold the work; only the index is
+            # missing, and the event says so (empty checkpoint_path).
+            logger.exception("Mission %s: checkpoint write failed", mission_id)
+
+        if not await self._safe_transition(
+            mission_id, MissionState.WAITING_CAPACITY, f"capacity:{reason}"
+        ):
+            # Cancelled (or otherwise finished) while the tasks wound down.
+            current = await self._manager.mission(mission_id)
+            return current.state if current is not None else MissionState.FAILED
+        await self._manager.store.append_and_publish(
+            EventEnvelope(
+                mission_id=mission_id,
+                source_actor="kontrollierer",
+                ts_ms=now_ms(),
+                payload=MissionWaitingCapacity(
+                    reason=reason,  # type: ignore[arg-type]
+                    provider=provider,
+                    steps_done=steps_done,
+                    steps_total=len(plan.steps),
+                    files_saved=files_saved,
+                    checkpoint_path=checkpoint_path,
+                    error_detail=error_detail,
+                ),
+            )
+        )
+        logger.warning(
+            "Mission %s parked in WAITING_CAPACITY (%s, provider=%s): %d/%d "
+            "steps done, %d file(s) saved, checkpoint=%s",
+            mission_id, reason, provider, steps_done, len(plan.steps),
+            files_saved, checkpoint_path or "<none>",
+        )
+        return MissionState.WAITING_CAPACITY
 
     async def _approve_mission(
         self, mission_id: str, plan: MissionPlan, *, prompt: str = ""

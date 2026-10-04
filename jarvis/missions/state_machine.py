@@ -33,6 +33,12 @@ class MissionState(str, Enum):
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
     TIMED_OUT = "TIMED_OUT"
+    # Parked, not finished: the worker's subscription has no capacity left
+    # (quota window spent, login expired, provider unreachable). The work done
+    # so far is checkpointed and the mission waits instead of failing or
+    # moving to a paid key. Deliberately NOT terminal — see
+    # jarvis/missions/capacity.py.
+    WAITING_CAPACITY = "WAITING_CAPACITY"
 
 
 class MissionType(str, Enum):
@@ -95,6 +101,14 @@ ALLOWED_TRANSITIONS: frozenset[tuple[MissionState, MissionState]] = frozenset(
         (MissionState.RUNNING, MissionState.TIMED_OUT),
         (MissionState.CRITIQUING, MissionState.TIMED_OUT),
         (MissionState.LOOPING, MissionState.TIMED_OUT),
+        # Capacity pause from any active state, and out of it again: resume,
+        # give up, or cancel.
+        (MissionState.RUNNING, MissionState.WAITING_CAPACITY),
+        (MissionState.CRITIQUING, MissionState.WAITING_CAPACITY),
+        (MissionState.LOOPING, MissionState.WAITING_CAPACITY),
+        (MissionState.WAITING_CAPACITY, MissionState.RUNNING),
+        (MissionState.WAITING_CAPACITY, MissionState.FAILED),
+        (MissionState.WAITING_CAPACITY, MissionState.CANCELLED),
     }
 )
 

@@ -307,6 +307,100 @@ def failure_phrase_key(reason: str, error_class: str | None) -> str:
     return (reason or "").split(":", 1)[0].strip()
 
 
+# WAITING_CAPACITY readback (jarvis/missions/capacity.py). Built from runtime
+# counts only — never worker text (ADR-0009 §1). Keys mirror
+# CAPACITY_WAIT_REASONS in jarvis/missions/events.py; parity is guarded by
+# tests/missions/test_capacity_wait_parity.py.
+CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
+    "de": {
+        "provider_quota": "{provider}-Kapazität momentan ausgeschöpft.",  # i18n-allow
+        "provider_auth": "Die {provider}-Anmeldung ist abgelaufen.",  # i18n-allow
+        "provider_unavailable": "{provider} ist momentan nicht nutzbar.",  # i18n-allow
+        "saved": "Der bisherige Stand wurde gesichert.",  # i18n-allow
+        "progress": "{done} von {total} Teilschritten erledigt, {open} offen.",  # i18n-allow
+        "progress_single": "Die Aufgabe selbst ist noch offen.",  # i18n-allow
+        "file": "1 Datei gespeichert.",  # i18n-allow
+        "files": "{files} Dateien gespeichert.",  # i18n-allow
+        "wait": "Die Mission wartet, bis wieder Kapazität verfügbar ist.",  # i18n-allow
+        "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",  # i18n-allow
+        "paid": (
+            "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen Freigabe."  # i18n-allow
+        ),
+    },
+    "en": {
+        "provider_quota": "{provider} capacity is used up for now.",
+        "provider_auth": "The {provider} sign-in has expired.",
+        "provider_unavailable": "{provider} cannot be used right now.",
+        "saved": "The progress so far has been saved.",
+        "progress": "{done} of {total} steps done, {open} open.",
+        "progress_single": "The task itself is still open.",
+        "file": "1 file saved.",
+        "files": "{files} files saved.",
+        "wait": "The mission is waiting until capacity is available again.",
+        "wait_auth": "The mission is waiting until you sign in again.",
+        "paid": "Paid API use only with your explicit approval.",
+    },
+}
+
+_MAX_PROVIDER_CHARS: Final[int] = 40
+
+# Display names for worker provider slugs in the capacity readback. A slug
+# without an entry is spoken as-is.
+_PROVIDER_DISPLAY: Final[dict[str, str]] = {
+    "claude": "Claude",
+    "claude-api": "Claude",
+    "codex": "ChatGPT",
+    "chatgpt": "ChatGPT",
+    "openai": "OpenAI",
+    "gemini": "Gemini",
+    "antigravity": "Gemini",
+    "grok": "Grok",
+    "openrouter": "OpenRouter",
+    "nvidia": "NVIDIA",
+}
+
+
+def render_capacity_wait(
+    *,
+    reason: str,
+    provider: str | None,
+    steps_done: int,
+    steps_total: int,
+    files_saved: int,
+    checkpoint_saved: bool,
+    language: Lang = "de",
+) -> str:
+    """Short readback for a mission parked in WAITING_CAPACITY: why it stopped,
+    what is done, what is open, and the options (wait / approve paid use)."""
+    table = CAPACITY_WAIT_PHRASES.get(language, CAPACITY_WAIT_PHRASES["en"])
+    slug = (provider or "").strip()
+    fallback = "KI-Anbieter" if language == "de" else "AI provider"  # i18n-allow
+    name = (_PROVIDER_DISPLAY.get(slug.lower(), slug) or fallback)[:_MAX_PROVIDER_CHARS]
+    head = [table.get(reason, table["provider_unavailable"]).format(provider=name)]
+    if checkpoint_saved:
+        head.append(table["saved"])
+    tail = [table["wait_auth" if reason == "provider_auth" else "wait"], table["paid"]]
+    progress = (
+        table["progress"].format(
+            done=steps_done, total=steps_total, open=max(steps_total - steps_done, 0),
+        )
+        if steps_total > 1
+        else table["progress_single"]
+    )
+    files = (
+        table["file"] if files_saved == 1
+        else table["files"].format(files=files_saved) if files_saved > 1
+        else ""
+    )
+    # Why it stopped and the options must survive the length cap; the file
+    # count gives way first, then the step count.
+    for optional in ([progress, files], [progress], []):
+        text = " ".join([*head, *(o for o in optional if o), *tail])
+        if len(text) <= MAX_VOICE_CHARS:
+            return text
+    return _truncate(text)
+
+
 def _truncate(text: str, max_chars: int = MAX_VOICE_CHARS) -> str:
     """Truncate to max_chars; no suffix so TTS does not say '...'.
 

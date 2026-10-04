@@ -406,6 +406,8 @@ _STATE_TO_STATUS: dict[str, str] = {
     # MissionState (state_machine.py) — real DB labels
     "CRITIQUING": "running",
     "LOOPING": "running",
+    # Parked for capacity: not landed yet, resumes from its checkpoint.
+    "WAITING_CAPACITY": "running",
     # Legacy aliases kept for back-compat with older missions on disk
     "CRITIC_REVIEW": "running",
     "AWAITING_CORRECTION": "running",

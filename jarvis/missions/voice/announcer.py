@@ -42,6 +42,7 @@ from jarvis.missions.voice.readback import (
     FAILURE_REASON_PHRASES,
     failure_phrase_key,
     render_agent_brand,
+    render_capacity_wait,
 )
 
 from ..event_bus import MissionBus
@@ -52,6 +53,7 @@ from ..events import (
     MissionCancelled,
     MissionFailed,
     MissionTimedOut,
+    MissionWaitingCapacity,
 )
 
 logger = logging.getLogger(__name__)
@@ -263,6 +265,23 @@ class MissionAnnouncer:
             # "random" intrusion. Queue at "normal" so it is still spoken
             # (AD-OE6 — no silent drops) but at the next natural turn boundary.
             return (text, "normal")
+
+        if isinstance(payload, MissionWaitingCapacity):
+            # Parked, not failed (jarvis/missions/capacity.py): say why, what
+            # is done, what is open, and that paid use needs approval. Queued
+            # for the next turn boundary like a failure (AD-OE5).
+            return (
+                render_capacity_wait(
+                    reason=payload.reason,
+                    provider=payload.provider,
+                    steps_done=payload.steps_done,
+                    steps_total=payload.steps_total,
+                    files_saved=payload.files_saved,
+                    checkpoint_saved=bool(payload.checkpoint_path),
+                    language=lang,
+                ),
+                "normal",
+            )
 
         if isinstance(payload, MissionCancelled):
             text = (

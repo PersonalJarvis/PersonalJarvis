@@ -4181,7 +4181,20 @@
     "timeline_label": "Cronología de eventos",
     "no_events": "Aún no hay eventos para esta misión.",
     "no_critic_verdicts": "Aún no hay veredictos del crítico para esta misión.",
-    "no_missions_yet": "Aún no hay misiones. Jarvis principal enviará una en breve…"
+    "no_missions_yet": "Aún no hay misiones. Jarvis principal enviará una en breve…",
+    "capacity_wait": {
+      "provider_quota": "La capacidad de {provider} está agotada por ahora.",
+      "provider_auth": "El inicio de sesión de {provider} ha caducado.",
+      "provider_unavailable": "{provider} no se puede usar ahora mismo.",
+      "provider_fallback": "proveedor de IA",
+      "saved": "El progreso hasta ahora se ha guardado.",
+      "progress": "{done} de {total} pasos hechos, {open} pendientes.",
+      "progress_single": "La tarea en sí sigue pendiente.",
+      "files": "Archivos guardados: {files}.",
+      "wait": "La misión espera hasta que vuelva a haber capacidad.",
+      "wait_auth": "La misión espera hasta que vuelvas a iniciar sesión.",
+      "paid": "Uso de API de pago solo con tu aprobación explícita."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Aprobaciones",
@@ -4272,7 +4285,8 @@
     "approved": "listo",
     "failed": "error",
     "cancelled": "cancelado",
-    "timed_out": "tiempo agotado"
+    "timed_out": "tiempo agotado",
+    "waiting_capacity": "esperando capacidad"
   },
   "mascot_gigi": {
     "aria_label": "Mascota Gigi de {name}",

@@ -4181,7 +4181,20 @@
     "timeline_label": "Event timeline",
     "no_events": "No events for this mission yet.",
     "no_critic_verdicts": "No critic verdicts for this mission yet.",
-    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…"
+    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…",
+    "capacity_wait": {
+      "provider_quota": "{provider} capacity is used up for now.",
+      "provider_auth": "The {provider} sign-in has expired.",
+      "provider_unavailable": "{provider} cannot be used right now.",
+      "provider_fallback": "AI provider",
+      "saved": "The progress so far has been saved.",
+      "progress": "{done} of {total} steps done, {open} open.",
+      "progress_single": "The task itself is still open.",
+      "files": "Files saved: {files}.",
+      "wait": "The mission is waiting until capacity is available again.",
+      "wait_auth": "The mission is waiting until you sign in again.",
+      "paid": "Paid API use only with your explicit approval."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Approvals",
@@ -4272,7 +4285,8 @@
     "approved": "done",
     "failed": "error",
     "cancelled": "cancelled",
-    "timed_out": "timeout"
+    "timed_out": "timeout",
+    "waiting_capacity": "waiting for capacity"
   },
   "mascot_gigi": {
     "aria_label": "{name} mascot Gigi",
