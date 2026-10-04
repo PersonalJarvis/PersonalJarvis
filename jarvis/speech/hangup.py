@@ -164,9 +164,9 @@ def user_asked_to_hang_up(user_text: str | None) -> bool:
 
 
 _CONFIRM_HANGUP_RE = re.compile(
-    r"\s*(?:yes|yeah|yep|ja|sí|si)"  # i18n-allow
+    r"\A\s*(?:yes|yeah|yep|ja|sí|si)"  # i18n-allow
     r"(?:[\s,]+(?:please|bitte|por favor|hang up|end the call|"  # i18n-allow
-    r"auflegen|leg auf|beende das gespräch|cuelga))*[\s.!]*",  # i18n-allow
+    r"auflegen|leg auf|beende das gespräch|cuelga))*[\s.!]*\Z",  # i18n-allow
     re.IGNORECASE,
 )
 
@@ -227,7 +227,7 @@ class HangupConfirmation:
             if confirms_hangup(text):
                 return "confirmed"
             if re.fullmatch(
-                r"\s*(?:no|nope|nein|cancel|abbrechen)[\s.!]*",  # i18n-allow
+                r"\A\s*(?:no|nope|nein|cancel|abbrechen)[\s.!]*\Z",  # i18n-allow
                 text, re.I,
             ):
                 return "cancelled"
