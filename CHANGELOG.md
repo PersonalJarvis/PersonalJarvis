@@ -20,6 +20,7 @@ versioning per [SemVer](https://semver.org/).
 - Keep delegated results attached to their originating chat and serialize direct chat sessions.
 - Require a separate confirmation before ending a voice conversation.
 - Bound Windows clipboard reads so dictation cannot remain blocked on delayed clipboard data.
+- Retry brief file locks when saving dictation history so completed restorations are retained.
 - Restore macOS desktop controls and request native permissions at the point of use.
 - Defer optional browser setup on headless installations and repair cross-platform lifecycle behavior.
 - Strengthen execution, credential storage, refresh and release-admission boundaries.
