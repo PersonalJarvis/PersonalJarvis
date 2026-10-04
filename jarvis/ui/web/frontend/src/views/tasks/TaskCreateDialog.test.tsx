@@ -153,6 +153,40 @@ describe("TaskCreateDialog", () => {
     fireEvent.change(boxes[1], { target: { value: "Y" } });
     expect(saveBtn.disabled).toBe(false);
   });
+  it("submits the GitHub PR merged preset as an authenticated webhook", async () => {
+    const posted: Record<string, unknown>[] = [];
+    installFetch((body) => posted.push(body));
+    renderDialog();
+    await screen.findByText("Gmail");
+
+    const boxes = screen.getAllByRole("textbox");
+    fireEvent.change(boxes[0], { target: { value: "Review merged PR" } });
+    fireEvent.change(boxes[1], { target: { value: "Summarize the merged pull request." } });
+
+    fireEvent.click(screen.getByText("When-Then"));
+    fireEvent.click(screen.getByText("A GitHub PR is merged"));
+
+    // The preset starts on Agent so the signed webhook payload is supplied as
+    // untrusted context rather than silently lost by a Computer-Use prompt.
+    expect(screen.getByText("Agent")).toBeTruthy();
+    expect(
+      screen.getByText(/signed GitHub webhook/i),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Create"));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].trigger).toEqual({
+      type: "webhook",
+      provider: "github",
+      conditions: {
+        action: "closed",
+        "pull_request.merged": true,
+      },
+      max_firings: null,
+    });
+    expect((posted[0].action as { kind?: string }).kind).toBe("agent");
+  });
+
   it("submits the selected source after the trigger editor changes", async () => {
     const posted: Record<string, unknown>[] = [];
     installFetch((body) => posted.push(body));
