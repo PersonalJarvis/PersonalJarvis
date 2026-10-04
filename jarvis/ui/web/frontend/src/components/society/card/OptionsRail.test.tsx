@@ -3,7 +3,7 @@
  * ⋯ (still two-press), and a switch of agent swaps both panes.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { OptionsRail } from "@/components/society/card/OptionsRail";
@@ -67,8 +67,17 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 describe("OptionsRail", () => {
   beforeEach(() => {
-    fetchMock = vi.fn(async (url: string) => {
+    fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const path = String(url);
+      const method = init?.method ?? "GET";
+      if (path.endsWith("/gamil-agent/screen")) {
+        if (method === "POST") return json({ screen: { screen_id: "screen-1", kind: "xvfb", owner: "society:gamil-agent", purpose: "Gamil agent isolated screen", isolated: true, hidden: true } });
+        if (method === "DELETE") return json({ closed: true });
+        return json({ screen: { available: true, blocked_reason: null, active: null } });
+      }
+      if (path.endsWith("/scout/screen")) {
+        return json({ screen: { available: false, blocked_reason: "no isolated screen is available", active: null } });
+      }
       if (path.includes("/browser/status")) {
         return json({ installed: false, phase: "idle", percent: 0, running: false });
       }
@@ -119,6 +128,30 @@ describe("OptionsRail", () => {
     await waitFor(() => expect(screen.getByTestId("agent-routines").textContent).toContain("Inbox sweep"));
     expect(screen.queryByTestId("agent-card-retire")).toBeNull();
     expect(screen.getByTestId("agent-card-options-more")).toBeTruthy();
+  });
+
+  test("leases and releases an isolated screen from the options rail", async () => {
+    mount(agent());
+    const control = await screen.findByTestId("agent-screen-control");
+    fireEvent.click(within(control).getByRole("button", { name: "Open isolated screen" }));
+    await waitFor(() => expect(control.textContent).toContain("xvfb"));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/society/agents/gamil-agent/screen",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ purpose: "Gamil agent isolated screen" }) }),
+    );
+    fireEvent.click(within(control).getByRole("button", { name: "Close isolated screen" }));
+    await waitFor(() => expect(within(control).getByRole("button", { name: "Open isolated screen" })).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/society/agents/gamil-agent/screen",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  test("shows why another agent cannot get an isolated screen", async () => {
+    mount(agent({ agentId: "scout", name: "Scout" }));
+    const control = await screen.findByTestId("agent-screen-control");
+    await waitFor(() => expect(control.textContent).toContain("no isolated screen is available"));
+    expect(within(control).queryByRole("button", { name: "Open isolated screen" })).toBeNull();
   });
 
   test("Retire lives behind ⋯ and still only arms on the first press", async () => {

@@ -12,6 +12,7 @@ import { useT } from "@/i18n";
 
 import type { SocietyAgent } from "../data";
 import { AgentBrowserPreview } from "./AgentBrowserPreview";
+import { AgentScreenControl } from "./AgentScreenControl";
 import { AgentRoutinesList } from "./AgentRoutinesList";
 import { JarvisHistoryRail } from "../chat/JarvisHistoryRail";
 import { RetireButton } from "./RetireButton";
@@ -88,6 +89,7 @@ export function OptionsRail({ agent, onRetired, sample = false }: OptionsRailPro
         <button type="button" onClick={() => setAppearanceOpen(true)} data-testid="edit-agent-appearance" className="shrink-0 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium text-foreground hover:bg-secondary">{t("society.companion.appearance")}</button>
         <div className={routineOpen ? "hidden" : "contents"}>
           <AgentBrowserPreview agent={agent} />
+          <AgentScreenControl agent={agent} sample={sample} />
           {agent.tier === "lead" ? <JarvisHistoryRail /> : null}
         </div>
         <AgentRoutinesList

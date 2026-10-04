@@ -26,6 +26,19 @@
     "triggers": {
       "event_filter": "Filtro evento (opzionale)",
       "event_fields": "Campi evento consentiti"
+    },
+    "screen": {
+      "title": "Schermo isolato",
+      "hint": "Un desktop privato dell’agente. Non usa mai come ripiego lo schermo fisico dell’utente.",
+      "loading": "Verifica disponibilità…",
+      "open": "Apri schermo isolato",
+      "opening": "Apertura…",
+      "close": "Chiudi schermo isolato",
+      "closing": "Chiusura…",
+      "active": "Schermo attivo",
+      "isolated": "isolato",
+      "unavailable": "Non disponibile",
+      "load_error": "Impossibile leggere lo stato dello schermo."
     }
   }
 }

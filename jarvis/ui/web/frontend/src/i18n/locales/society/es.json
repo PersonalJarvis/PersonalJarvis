@@ -1182,6 +1182,19 @@
       "learned_review_hint": "Las habilidades privadas aprendidas siguen siendo instrucciones consultivas. Envía una a Habilidades como borrador para revisarla antes de activarla globalmente.",
       "learned_review": "Revisar en Habilidades",
       "learned_reviewing": "Preparando borrador…"
+    },
+    "screen": {
+      "title": "Pantalla aislada",
+      "hint": "Un escritorio privado del agente. Nunca usa como alternativa tu pantalla física.",
+      "loading": "Comprobando disponibilidad…",
+      "open": "Abrir pantalla aislada",
+      "opening": "Abriendo…",
+      "close": "Cerrar pantalla aislada",
+      "closing": "Cerrando…",
+      "active": "Pantalla activa",
+      "isolated": "aislada",
+      "unavailable": "No disponible",
+      "load_error": "No se pudo consultar el estado de la pantalla."
     }
   }
 }

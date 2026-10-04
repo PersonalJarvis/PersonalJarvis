@@ -1182,6 +1182,19 @@
       "learned_review_hint": "Gelernte private Skills bleiben beratende Anweisungen. Sende einen als Entwurf an Skills, um ihn vor der globalen Aktivierung zu prüfen.",
       "learned_review": "In Skills prüfen",
       "learned_reviewing": "Entwurf wird vorbereitet…"
+    },
+    "screen": {
+      "title": "Isolierter Bildschirm",
+      "hint": "Ein privater Agent-Desktop. Er greift niemals auf deinen physischen Bildschirm zurück.",
+      "loading": "Verfügbarkeit wird geprüft…",
+      "open": "Isolierten Bildschirm öffnen",
+      "opening": "Wird geöffnet…",
+      "close": "Isolierten Bildschirm schließen",
+      "closing": "Wird geschlossen…",
+      "active": "Aktiver Bildschirm",
+      "isolated": "isoliert",
+      "unavailable": "Nicht verfügbar",
+      "load_error": "Bildschirmstatus konnte nicht geladen werden."
     }
   }
 }

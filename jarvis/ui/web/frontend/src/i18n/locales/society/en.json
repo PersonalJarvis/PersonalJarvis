@@ -1182,6 +1182,19 @@
       "learned_review_hint": "Learned private skills remain advisory instructions. Send one to Skills as a draft to review it before global activation.",
       "learned_review": "Review in Skills",
       "learned_reviewing": "Preparing draft…"
+    },
+    "screen": {
+      "title": "Isolated screen",
+      "hint": "A private agent desktop. It never falls back to your physical screen.",
+      "loading": "Checking availability…",
+      "open": "Open isolated screen",
+      "opening": "Opening…",
+      "close": "Close isolated screen",
+      "closing": "Closing…",
+      "active": "Active screen",
+      "isolated": "isolated",
+      "unavailable": "Unavailable",
+      "load_error": "Could not read screen status."
     }
   }
 }
