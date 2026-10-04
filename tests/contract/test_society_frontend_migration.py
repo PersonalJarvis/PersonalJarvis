@@ -26,5 +26,5 @@ def test_agents_deep_link_mounts_society_and_legacy_view_stays_removed() -> None
     )
     assert '"agents",' in events
     assert 'import { SocietyLedger }' in society_view
-    assert re.search(r'mode\\s*===\\s*"ledger".*?<SocietyLedger\\s*/>', society_view, re.S)
+    assert re.search(r'mode\s*===\s*"ledger".*?<SocietyLedger\s*/>', society_view, re.S)
     assert not (FRONTEND / "views" / "AgentsView.tsx").exists()
