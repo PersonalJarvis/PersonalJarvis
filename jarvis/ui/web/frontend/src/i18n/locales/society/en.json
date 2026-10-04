@@ -123,18 +123,18 @@
       "model_apply": "Apply model"
     },
     "ledger": {
-          "title": "Society ledger",
-          "subtitle": "Durable history from the society event log.",
-          "empty": "No society events yet.",
-          "error": "The society ledger could not be loaded.",
-          "time": "Time",
-          "type": "Type",
-          "from": "From",
-          "to": "To",
-          "detail": "Detail",
-          "cost": "Cost",
-          "total_cost": "Tracked model cost",
-          "board": "Board"
+      "title": "Society ledger",
+      "subtitle": "Durable history from the society event log.",
+      "empty": "No society events yet.",
+      "error": "The society ledger could not be loaded.",
+      "time": "Time",
+      "type": "Type",
+      "from": "From",
+      "to": "To",
+      "detail": "Detail",
+      "cost": "Cost",
+      "total_cost": "Tracked model cost",
+      "board": "Board"
     },
     "world": {
       "talk_kind_query": "asks",
@@ -1175,6 +1175,11 @@
       "errand_flying": "Taking {0} a task",
       "errand_task": "Here is a new task for you.",
       "errand_ack": "Got it, on it!"
+    },
+    "card": {
+      "learned_review_hint": "Learned private skills remain advisory instructions. Send one to Skills as a draft to review it before global activation.",
+      "learned_review": "Review in Skills",
+      "learned_reviewing": "Preparing draft…"
     }
   }
 }

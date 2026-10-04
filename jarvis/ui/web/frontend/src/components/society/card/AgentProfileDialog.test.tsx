@@ -11,6 +11,7 @@ vi.mock("./AgentAvatarEditor", () => ({ AgentAvatarEditor: () => <div data-testi
 
 const agent = { ...SAMPLE_ROSTER[1], agentId: "research", name: "Research", title: "Researcher", description: "Check primary sources.", tier: "specialist" as const };
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+const learnedSkills = [{ slug: "check", state: "draft", name: "Check sources", description: "Verify source dates." }];
 const knowledge = { files: [
   { path: "memory/memory.md", name: "memory.md", kind: "memory", updated_ms: 1, size: 50 },
   { path: "memory/notes.md", name: "notes.md", kind: "memory", updated_ms: 2, size: 50 },
@@ -20,6 +21,8 @@ const knowledge = { files: [
 function setup(options: { lead?: boolean; sample?: boolean; fetcher?: typeof fetch; knowledgeFailure?: boolean } = {}) {
   const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     if (String(url).endsWith("/knowledge")) return json(knowledge, options.knowledgeFailure ? 500 : 200);
+    if (String(url).endsWith("/skills")) return json({ skills: learnedSkills, root: "/tmp/research/skills" });
+    if (String(url).endsWith("/skills/check/promote")) return json({ promoted: "/tmp/check", state: "draft" });
     return options.fetcher ? options.fetcher(url, init) : json({});
   });
   vi.stubGlobal("fetch", fetcher);
@@ -71,6 +74,19 @@ it("shows automatically learned instructions and review status separately from u
   expect((screen.getByLabelText("society.profile_card.instructions") as HTMLTextAreaElement).value).toBe(agent.description);
 });
 
+it("promotes an agent-learned skill into the global draft review flow", async () => {
+  const { fetcher } = setup();
+  await screen.findByText("Check sources");
+  expect(screen.getByText(/Verify source dates\. · draft/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "society.card.learned_review" }));
+  await screen.findByText("society.profile_card.saved");
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/society/agents/research/skills/check/promote",
+    expect.objectContaining({ method: "POST" }),
+  );
+  expect(screen.queryByRole("button", { name: "society.card.learned_review" })).toBeNull();
+});
+
 it("opens avatar editing for specialists but keeps the lead figure reserved", async () => {
   setup();
   fireEvent.mouseDown(screen.getByRole("tab", { name: "society.companion.character" }), {
@@ -87,7 +103,7 @@ it("opens avatar editing for specialists but keeps the lead figure reserved", as
 
 it("loads memory on demand, opens another file and filters filenames", async () => {
   const { fetcher } = setup({ fetcher: async (url) => json({ content: String(url).includes("notes.md") ? "Dated note" : "Durable memory" }) });
-  expect(fetcher.mock.calls.every(([url]) => String(url).endsWith("/knowledge"))).toBe(true);
+  expect(fetcher.mock.calls.every(([url]) => String(url).endsWith("/knowledge") || String(url).endsWith("/skills"))).toBe(true);
   fireEvent.mouseDown(screen.getByRole("tab", { name: "society.profile_card.memory" }), { button: 0, ctrlKey: false });
   await screen.findByText("Durable memory");
   fireEvent.click(screen.getByRole("button", { name: "notes.md society.profile_card.kind_memory" }));

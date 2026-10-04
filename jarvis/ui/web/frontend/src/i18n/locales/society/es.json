@@ -123,18 +123,18 @@
       "model_apply": "Aplicar modelo"
     },
     "ledger": {
-          "title": "Registro de la sociedad",
-          "subtitle": "Historial duradero del registro de eventos de la sociedad.",
-          "empty": "Todavía no hay eventos de la sociedad.",
-          "error": "No se pudo cargar el registro de la sociedad.",
-          "time": "Hora",
-          "type": "Tipo",
-          "from": "De",
-          "to": "Para",
-          "detail": "Detalle",
-          "cost": "Coste",
-          "total_cost": "Coste de modelos registrado",
-          "board": "Tablón"
+      "title": "Registro de la sociedad",
+      "subtitle": "Historial duradero del registro de eventos de la sociedad.",
+      "empty": "Todavía no hay eventos de la sociedad.",
+      "error": "No se pudo cargar el registro de la sociedad.",
+      "time": "Hora",
+      "type": "Tipo",
+      "from": "De",
+      "to": "Para",
+      "detail": "Detalle",
+      "cost": "Coste",
+      "total_cost": "Coste de modelos registrado",
+      "board": "Tablón"
     },
     "world": {
       "talk_kind_query": "pregunta",
@@ -1175,6 +1175,11 @@
       "errand_flying": "Lleva una tarea a {0}",
       "errand_task": "Aquí tienes una tarea nueva.",
       "errand_ack": "¡Entendido, voy!"
+    },
+    "card": {
+      "learned_review_hint": "Las habilidades privadas aprendidas siguen siendo instrucciones consultivas. Envía una a Habilidades como borrador para revisarla antes de activarla globalmente.",
+      "learned_review": "Revisar en Habilidades",
+      "learned_reviewing": "Preparando borrador…"
     }
   }
 }

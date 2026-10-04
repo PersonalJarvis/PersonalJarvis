@@ -123,18 +123,18 @@
       "model_apply": "Modell übernehmen"
     },
     "ledger": {
-          "title": "Society-Ledger",
-          "subtitle": "Dauerhafte Historie aus dem Ereignisprotokoll der Society.",
-          "empty": "Noch keine Society-Ereignisse.",
-          "error": "Das Society-Ledger konnte nicht geladen werden.",
-          "time": "Zeit",
-          "type": "Typ",
-          "from": "Von",
-          "to": "An",
-          "detail": "Details",
-          "cost": "Kosten",
-          "total_cost": "Erfasste Modellkosten",
-          "board": "Board"
+      "title": "Society-Ledger",
+      "subtitle": "Dauerhafte Historie aus dem Ereignisprotokoll der Society.",
+      "empty": "Noch keine Society-Ereignisse.",
+      "error": "Das Society-Ledger konnte nicht geladen werden.",
+      "time": "Zeit",
+      "type": "Typ",
+      "from": "Von",
+      "to": "An",
+      "detail": "Details",
+      "cost": "Kosten",
+      "total_cost": "Erfasste Modellkosten",
+      "board": "Board"
     },
     "world": {
       "talk_kind_query": "fragt",
@@ -1175,6 +1175,11 @@
       "errand_flying": "Bringt {0} eine Aufgabe",
       "errand_task": "Hier ist eine neue Aufgabe für dich.",
       "errand_ack": "Verstanden, bin dran!"
+    },
+    "card": {
+      "learned_review_hint": "Gelernte private Skills bleiben beratende Anweisungen. Sende einen als Entwurf an Skills, um ihn vor der globalen Aktivierung zu prüfen.",
+      "learned_review": "In Skills prüfen",
+      "learned_reviewing": "Entwurf wird vorbereitet…"
     }
   }
 }
