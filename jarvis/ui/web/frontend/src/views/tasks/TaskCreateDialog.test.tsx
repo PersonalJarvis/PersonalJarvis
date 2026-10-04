@@ -168,7 +168,7 @@ describe("TaskCreateDialog", () => {
 
     // The preset starts on Agent so the signed webhook payload is supplied as
     // untrusted context rather than silently lost by a Computer-Use prompt.
-    expect(screen.getByText("Agent")).toBeTruthy();
+    expect(await screen.findByText("Agent")).toBeTruthy();
     expect(
       screen.getByText(/signed GitHub webhook/i),
     ).toBeTruthy();
