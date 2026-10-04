@@ -1,4 +1,10 @@
 {
+  "skills_view": {
+    "review_draft": "Rivedi",
+    "approve_draft": "Approva e attiva",
+    "review_draft_title": "Questa bozza richiede la tua revisione",
+    "review_draft_body": "Controlla qui sotto istruzioni e attivatori. Non può essere eseguita finché non la approvi."
+  },
   "costs_view": {
     "area": { "society": "Society" },
     "surface": { "society": "Society" }
