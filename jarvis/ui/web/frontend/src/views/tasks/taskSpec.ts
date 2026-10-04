@@ -20,7 +20,11 @@ export interface DraftPluginGrant {
 export type WhenKey =
   | "mission_succeeded"
   | "mission_failed"
-  | "mission_cancelled";
+  | "mission_cancelled"
+  | "github_pr_merged";
+
+type MissionWhenKey = Exclude<WhenKey, "github_pr_merged">;
+export type WebhookProvider = "generic" | "github" | "linear" | "gmail" | "slack" | "stripe";
 
 /** The "then" action a When-Then rule runs. */
 export type ThenKind = "computer_use" | "agent" | "notify";
@@ -52,7 +56,7 @@ export interface HookOptions { conditions?: Record<string, string | number | boo
 export type TaskTrigger =
   | ({ type: "source"; source: SourceSettings } & HookOptions)
   | { type: "cron"; expression: string; timezone: string }
-  | ({ type: "webhook" } & HookOptions)
+  | ({ type: "webhook"; provider?: WebhookProvider; oidc_audience?: string; service_account?: string } & HookOptions)
   | ({ type: "event_hook"; event_name: string } & HookOptions)
   | { type: "after_delay"; delay_seconds: number }
   | { type: "at_time"; iso_timestamp: string }
@@ -99,7 +103,7 @@ export interface TaskSpecPayload {
 
 /** Curated "when" → (event class, filter) mapping. The single place that knows
  * a mission outcome is a `MissionCompleted` filtered by `status`. */
-export const WHEN_FILTERS: Record<WhenKey, string> = {
+export const WHEN_FILTERS: Record<MissionWhenKey, string> = {
   mission_succeeded: "status == 'approved'",
   mission_failed: "status == 'failed'",
   mission_cancelled: "status == 'cancelled'",
@@ -172,10 +176,24 @@ export function nextDailyOccurrence(timeHHMM: string, now: Date): string {
  * `whenKey`. A standing rule (max_firings null) — it fires for every matching
  * mission until the user deletes it. */
 export function buildEventTrigger(draft: TaskDraft): TaskTrigger {
+  if (draft.whenKey === "github_pr_merged") {
+    // GitHub's pull_request webhook reports a merge as action=closed plus
+    // pull_request.merged=true. HookInbox evaluates dot-path equality against
+    // the authenticated JSON body, so no second listener or scheduler is needed.
+    return {
+      type: "webhook",
+      provider: "github",
+      conditions: {
+        action: "closed",
+        "pull_request.merged": true,
+      },
+      max_firings: null,
+    };
+  }
   return {
     type: "on_event",
     event_name: "MissionCompleted",
-    filter_expr: WHEN_FILTERS[draft.whenKey] ?? null,
+    filter_expr: WHEN_FILTERS[draft.whenKey],
     max_firings: null,
   };
 }
