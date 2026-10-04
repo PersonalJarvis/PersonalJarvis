@@ -21,10 +21,13 @@ work", AP-22).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
+import random
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,6 +41,15 @@ CHECKPOINT_NAME = "checkpoint.json"
 
 #: Bumped when the checkpoint layout changes incompatibly.
 CHECKPOINT_VERSION = 1
+
+#: How often parked missions are re-checked for returned capacity. The check
+#: itself is offline (quota cooldowns, login state), so it costs nothing; a
+#: subscription window resets on a scale of minutes to hours.
+RESUME_INTERVAL_S = 300.0
+
+#: Random extra delay per tick so instances and windows never fire in lockstep
+#: (AP-33).
+RESUME_JITTER_S = 60.0
 
 
 class WorkerCapacityUnavailable(RuntimeError):
@@ -77,6 +89,17 @@ def pinned_to_subscription(*, configured_is_subscription: bool) -> bool:
         return True
 
 
+def worker_family(worker: object) -> str:
+    """The provider family a worker bills — the identity a parked mission is
+    pinned to. Every built-in worker declares ``family``; anything else falls
+    back to its ``provider``/``cli`` attribute."""
+    for attr in ("family", "provider", "cli"):
+        value = getattr(worker, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    return type(worker).__name__
+
+
 def write_checkpoint(mission_dir: Path, data: dict[str, Any]) -> Path:
     """Atomically write the checkpoint and return its path."""
     mission_dir.mkdir(parents=True, exist_ok=True)
@@ -93,11 +116,56 @@ def write_checkpoint(mission_dir: Path, data: dict[str, Any]) -> Path:
     return path
 
 
+def read_checkpoint(mission_dir: Path) -> dict[str, Any] | None:
+    """The stored checkpoint, or None when it is missing or unreadable."""
+    path = mission_dir / CHECKPOINT_NAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.warning("capacity: unreadable checkpoint %s", path, exc_info=True)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+async def capacity_resume_loop(
+    resume_pass: Callable[[], Awaitable[list[str]]],
+    *,
+    interval_s: float = RESUME_INTERVAL_S,
+    jitter_s: float = RESUME_JITTER_S,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    jitter: Callable[[float, float], float] = random.uniform,
+) -> None:
+    """Run ``resume_pass`` on a jittered timer until cancelled.
+
+    The first pass waits one interval: nothing here belongs on the boot
+    critical path (AP-26). A failing pass is logged and the loop carries on —
+    one bad tick must not stop every later resume.
+    """
+    while True:
+        await sleep(interval_s + jitter(0.0, jitter_s))
+        try:
+            resumed = await resume_pass()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - logged; the next tick retries
+            log.exception("capacity: resume pass failed")
+            continue
+        if resumed:
+            log.info("capacity: resumed %d parked mission(s): %s", len(resumed), resumed)
+
+
 __all__ = [
     "CHECKPOINT_NAME",
     "CHECKPOINT_VERSION",
+    "RESUME_INTERVAL_S",
+    "RESUME_JITTER_S",
     "CapacityWaitReason",
     "WorkerCapacityUnavailable",
+    "capacity_resume_loop",
     "pinned_to_subscription",
+    "read_checkpoint",
+    "worker_family",
     "write_checkpoint",
 ]

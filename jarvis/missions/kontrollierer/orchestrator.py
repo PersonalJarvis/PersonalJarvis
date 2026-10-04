@@ -37,7 +37,12 @@ from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
-from ..capacity import WorkerCapacityUnavailable, write_checkpoint
+from ..capacity import (
+    WorkerCapacityUnavailable,
+    read_checkpoint,
+    worker_family,
+    write_checkpoint,
+)
 from ..critic.escalation import FRONTIER_MODEL
 from ..critic.reflections import ReflectionMemory
 from ..critic.runner import MAX_CRITIC_LOOPS, CriticRunner
@@ -147,6 +152,14 @@ _CORRECTION_WORKER_TIMEOUT_S: float = 360.0
 _TASK_TIME_BUDGET_S: float = 1380.0
 # One critic subprocess call (mirrors critic.runner.DEFAULT_TIMEOUT_SECONDS).
 _CRITIC_TIME_RESERVE_S: float = 240.0
+
+# Leads the first worker prompt of a step resumed from a capacity checkpoint.
+_RESUME_NOTE: Final[str] = (
+    "RESUMED TASK: this workspace already contains the partial work of an "
+    "earlier attempt at this task, which stopped when the provider ran out of "
+    "capacity. Inspect it and continue from it; do not start over or redo "
+    "finished parts."
+)
 
 
 def _worker_error_is_transient(err: str) -> bool:
@@ -393,6 +406,30 @@ def _real_diff_is_empty(diff_text: str) -> bool:
 # Cap on the content embedded for a verified external file. Large enough for a
 # typical document deliverable, small enough not to blow the Critic's prompt.
 _EXTERNAL_VERIFY_MAX_CHARS: Final[int] = 8000
+
+
+def _plan_from_checkpoint(checkpoint: dict[str, Any] | None) -> MissionPlan | None:
+    """The plan a parked mission was running, or None if the checkpoint has none."""
+    raw = checkpoint.get("plan") if checkpoint else None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return MissionPlan.model_validate(raw)
+    except ValueError:  # pydantic.ValidationError is a ValueError
+        logger.warning("Checkpoint plan does not validate", exc_info=True)
+        return None
+
+
+def _done_task_ids(checkpoint: dict[str, Any]) -> set[str]:
+    """Task ids a checkpoint records as approved — never run again."""
+    steps = checkpoint.get("steps")
+    if not isinstance(steps, list):
+        return set()
+    return {
+        str(step["task_id"])
+        for step in steps
+        if isinstance(step, dict) and step.get("done") is True and step.get("task_id")
+    }
 
 
 def _path_is_within(child: Path, parent: Path) -> bool:
@@ -847,6 +884,12 @@ class Kontrollierer:
         # written where a task returns WAITING_CAPACITY, consumed once by
         # `_park_mission`. Last write wins, as above.
         self._capacity_wait: dict[str, dict[str, str | None]] = {}
+        # Missions resumed from a capacity checkpoint: the provider family they
+        # are pinned to (no other family runs them without approval), which
+        # resume attempt this is, and how many steps were done before it.
+        self._resume_family: dict[str, str] = {}
+        self._resume_attempt: dict[str, int] = {}
+        self._resume_done_before: dict[str, int] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -990,7 +1033,13 @@ class Kontrollierer:
         # Error states (FAILED / TIMED_OUT / ESCALATED / ORCHESTRATOR_CRASH)
         # stay re-runnable ON PURPOSE: a crash_recovery'd mission must still be
         # retryable to completion (test_recovery_then_rerun_is_idempotent).
-        if view.state in (MissionState.APPROVED, MissionState.CANCELLED):
+        # A parked mission continues only through `resume_mission`, from its
+        # checkpoint — a fresh run would re-plan and redo finished steps.
+        if view.state in (
+            MissionState.APPROVED,
+            MissionState.CANCELLED,
+            MissionState.WAITING_CAPACITY,
+        ):
             logger.info(
                 "run_mission: %s already %s — skipping re-run",
                 mission_id, view.state.value,
@@ -1025,6 +1074,25 @@ class Kontrollierer:
             ",".join(step.slug for step in plan.steps),
             plan.expected_output,
         )
+        return await self._execute_plan(mission_id, view.prompt, plan)
+
+    async def _execute_plan(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        *,
+        done_task_ids: frozenset[str] = frozenset(),
+        restore_dirs: dict[str, Path] | None = None,
+    ) -> MissionState:
+        """Run the plan's open steps, then aggregate every step's outcome.
+
+        ``done_task_ids`` are steps a checkpoint records as approved: they are
+        not run again and count as approved. ``restore_dirs`` maps an open
+        step to the artifacts its earlier attempt archived, restored into the
+        fresh workspace before the worker starts (see ``resume_mission``).
+        """
+        restore_dirs = restore_dirs or {}
 
         # Mission directory for reflections + logs.
         # 2026-05-17 (BUG-LIVE-10): UUID7 IDs share the first 8 hex chars
@@ -1040,17 +1108,22 @@ class Kontrollierer:
 
         # Parallel task execution with semaphore limit
         sem = asyncio.Semaphore(min(plan.n_workers, self._max_workers))
-        task_outcomes: list[str] = []
-        step_outcomes: dict[str, str] = {}
+        step_outcomes: dict[str, str] = {
+            tid: TaskOutcome.APPROVED
+            for tid in done_task_ids
+            if any(step.task_id == tid for step in plan.steps)
+        }
+        task_outcomes: list[str] = list(step_outcomes.values())
 
         async def _run(step: Step) -> None:
             outcome = await self._run_task_with_critic_loop(
                 mission_id=mission_id,
-                mission_prompt=view.prompt,
+                mission_prompt=prompt,
                 step=step,
                 mission_dir=mission_dir,
                 reflections=reflections,
                 sem=sem,
+                restore_dir=restore_dirs.get(step.task_id),
             )
             task_outcomes.append(outcome)
             step_outcomes[step.task_id] = outcome
@@ -1064,6 +1137,8 @@ class Kontrollierer:
                 async with asyncio.timeout(self._mission_deadline_s):
                     async with asyncio.TaskGroup() as tg:
                         for step in plan.steps:
+                            if step.task_id in step_outcomes:
+                                continue  # approved in an earlier run
                             tg.create_task(_run(step), name=f"task-{step.task_id[:13]}")
             except TimeoutError:
                 # The mission ran past its wall-clock deadline. TaskGroup
@@ -1092,7 +1167,7 @@ class Kontrollierer:
             await self._fail_mission(mission_id, "task_error")
             return MissionState.FAILED
         if all(o == TaskOutcome.APPROVED for o in task_outcomes):
-            await self._approve_mission(mission_id, plan, prompt=view.prompt)
+            await self._approve_mission(mission_id, plan, prompt=prompt)
             return MissionState.APPROVED
 
         # Which task failed determines the failure reason.
@@ -1112,7 +1187,7 @@ class Kontrollierer:
             return await self._park_mission(
                 mission_id,
                 plan,
-                prompt=view.prompt,
+                prompt=prompt,
                 step_outcomes=step_outcomes,
                 partial_artifacts=partial,
             )
@@ -1191,8 +1266,14 @@ class Kontrollierer:
         mission_dir: Path,
         reflections: ReflectionMemory,
         sem: asyncio.Semaphore,
+        restore_dir: Path | None = None,
     ) -> str:
-        """Runs a step through the Worker+Critic loop (max MAX_CRITIC_LOOPS)."""
+        """Runs a step through the Worker+Critic loop (max MAX_CRITIC_LOOPS).
+
+        ``restore_dir`` is this step's archived artifacts from a run that was
+        parked for capacity; its work is put back into the fresh workspace so
+        the worker continues instead of starting over.
+        """
         async with sem:
             try:
                 # Pre-spawn budget check — do not start a worker if already over.
@@ -1256,6 +1337,12 @@ class Kontrollierer:
                     worktree, exc_info=True,
                 )
 
+            restored = False
+            if restore_dir is not None:
+                restored = await asyncio.to_thread(
+                    self._restore_task_workspace, worktree, restore_dir
+                )
+
             try:
                 return await self._run_iterations(
                     mission_id=mission_id,
@@ -1264,6 +1351,7 @@ class Kontrollierer:
                     mission_dir=mission_dir,
                     worktree=worktree,
                     reflections=reflections,
+                    resumed=restored,
                 )
             finally:
                 # Archive + teardown run in a worker thread (git and file
@@ -1319,9 +1407,11 @@ class Kontrollierer:
         mission_dir: Path,
         worktree: Path,
         reflections: ReflectionMemory,
+        resumed: bool = False,
     ) -> str:
         """Inner critic-loop body. Extracted so the worktree-finally in the
-        caller wraps every return path."""
+        caller wraps every return path. ``resumed`` means the workspace holds
+        restored partial work from a parked run (see ``resume_mission``)."""
         # Anchor for the per-task time budget (queue wait excluded — the
         # caller already holds the concurrency semaphore, mirroring
         # _MISSION_DEADLINE_S semantics).
@@ -1350,6 +1440,8 @@ class Kontrollierer:
         for iteration in range(MAX_CRITIC_LOOPS):
             # Per-iteration: render reflections, spawn worker, capture diff+log
             prior_block = reflections.render_for_worker_prompt(n=3)
+            if resumed and iteration == 0:
+                prior_block = "\n\n".join(b for b in (_RESUME_NOTE, prior_block) if b)
             # Lead every worker prompt with the artifact-language directive so
             # generated code defaults to English regardless of the request
             # language (the German-request -> German-code leak). This is the one
@@ -1407,6 +1499,7 @@ class Kontrollierer:
             # that refuses to switch to a billing fallback parks the task.
             try:
                 worker = self._worker_factory(step)
+                self._check_resume_family(mission_id, worker)
             except WorkerCapacityUnavailable as exc:
                 logger.warning(
                     "Task %s iter %d: no worker capacity (%s) — parking the "
@@ -1679,10 +1772,7 @@ class Kontrollierer:
                     if error_class == "provider_quota":
                         self._capacity_wait[mission_id] = {
                             "reason": "provider_quota",
-                            "provider": (
-                                getattr(worker, "provider", None)
-                                or getattr(worker, "cli", None)
-                            ),
+                            "provider": worker_family(worker),
                             "error_detail": error_detail,
                         }
                         return TaskOutcome.WAITING_CAPACITY
@@ -2908,6 +2998,229 @@ class Kontrollierer:
                 )
                 return False
 
+    # --- Capacity resume ----------------------------------------------------
+
+    async def resume_waiting_missions(self) -> list[str]:
+        """One pass over parked missions: resume each whose provider has
+        capacity again.
+
+        Sequential on purpose — resumed missions must not compete for the one
+        subscription window that just came back. Returns the resumed ids.
+        """
+        resumed: list[str] = []
+        for mission_id, _prompt, state in await self._manager.store.list_non_terminal_missions():
+            if state != MissionState.WAITING_CAPACITY.value:
+                continue
+            if mission_id in self._running_missions:
+                continue
+            if not await self._capacity_is_back(mission_id):
+                continue
+            # Its own task, shielded: cancelling the timer loop on shutdown
+            # must not tear a resumed mission down half-way. The shutdown path
+            # (`cancel_all_running`) finalizes it like any in-flight mission.
+            task = asyncio.create_task(
+                self.resume_mission(mission_id), name=f"mission-resume-{mission_id[:13]}"
+            )
+            await asyncio.shield(task)
+            resumed.append(mission_id)
+        return resumed
+
+    async def _capacity_is_back(self, mission_id: str) -> bool:
+        """Whether the worker a parked mission is pinned to can run again.
+
+        Asks the worker factory — the same offline rules (quota cooldowns,
+        login state, key viability) that parked the mission, so the check
+        never calls a provider. A factory answer on a DIFFERENT provider
+        family is not capacity: switching needs the user's approval.
+        """
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            return True  # resume_mission fails it honestly (checkpoint_missing)
+        done = _done_task_ids(checkpoint)
+        open_steps = [step for step in plan.steps if step.task_id not in done]
+        if not open_steps:
+            return True
+        try:
+            worker = await asyncio.to_thread(self._worker_factory, open_steps[0])
+        except WorkerCapacityUnavailable:
+            return False
+        except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
+            logger.warning(
+                "Mission %s: capacity probe failed — staying parked", mission_id,
+                exc_info=True,
+            )
+            return False
+        pinned = checkpoint.get("provider")
+        family = worker_family(worker)
+        if isinstance(pinned, str) and pinned and family != pinned:
+            logger.warning(
+                "Mission %s stays parked: it is pinned to %s, the configured "
+                "worker is now %s — switching provider needs approval",
+                mission_id, pinned, family,
+            )
+            return False
+        return True
+
+    async def resume_mission(self, mission_id: str) -> MissionState:
+        """Continue a WAITING_CAPACITY mission exactly from its checkpoint.
+
+        Steps the checkpoint records as approved are not run again; open
+        steps get their archived partial work restored into a fresh workspace,
+        and the critic's earlier reflections still lead their prompts. Tracked
+        in ``_running_missions`` like ``run_mission`` so cancel and shutdown
+        reach it.
+        """
+        if mission_id in self._running_missions:
+            # Already running here (a resume or a run) — that caller owns the
+            # mission and its tracking; a second resume must not touch either.
+            view = await self._manager.mission(mission_id)
+            return view.state if view is not None else MissionState.FAILED
+        task = asyncio.current_task()
+        if task is not None:
+            self._running_missions[mission_id] = task
+        try:
+            return await self._resume_mission_inner(mission_id)
+        finally:
+            if self._running_missions.get(mission_id) is task:
+                self._running_missions.pop(mission_id, None)
+            self._resume_family.pop(mission_id, None)
+            self._resume_attempt.pop(mission_id, None)
+            self._resume_done_before.pop(mission_id, None)
+
+    async def _resume_mission_inner(self, mission_id: str) -> MissionState:
+        view = await self._manager.mission(mission_id)
+        if view is None:
+            raise KeyError(f"Mission not found: {mission_id}")
+        if view.state != MissionState.WAITING_CAPACITY:
+            logger.info(
+                "resume_mission: %s is %s, not parked — nothing to resume",
+                mission_id, view.state.value,
+            )
+            return view.state
+
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            logger.error(
+                "resume_mission: %s has no usable checkpoint in %s — cannot "
+                "continue exactly where it stopped",
+                mission_id, mission_dir,
+            )
+            await self._fail_mission(mission_id, "checkpoint_missing")
+            return MissionState.FAILED
+
+        plan_ids = {step.task_id for step in plan.steps}
+        done = _done_task_ids(checkpoint) & plan_ids
+        restore_dirs: dict[str, Path] = {}
+        for step in plan.steps:
+            artifacts = mission_dir / "tasks" / step.task_id[:13] / "artifacts"
+            if step.task_id not in done and artifacts.is_dir():
+                restore_dirs[step.task_id] = artifacts
+
+        # The claim: only the caller that moves the mission out of
+        # WAITING_CAPACITY runs it, so a mission is never resumed twice.
+        if not await self._safe_transition(
+            mission_id, MissionState.RUNNING, "capacity_resumed"
+        ):
+            current = await self._manager.mission(mission_id)
+            return current.state if current is not None else MissionState.FAILED
+        try:
+            await self._manager.store.touch_heartbeat(mission_id, now_ms())
+        except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory
+            logger.debug("Resume heartbeat failed (non-fatal): %s", hb_exc)
+
+        pinned = checkpoint.get("provider")
+        if isinstance(pinned, str) and pinned:
+            self._resume_family[mission_id] = pinned
+        attempts = checkpoint.get("resume_attempts")
+        self._resume_attempt[mission_id] = (attempts if isinstance(attempts, int) else 0) + 1
+        self._resume_done_before[mission_id] = len(done)
+        answers = checkpoint.get("task_answers")
+        if isinstance(answers, list) and answers:
+            self._task_answers[mission_id] = [str(a) for a in answers]
+
+        logger.info(
+            "resume_mission: %s resumes on %s — %d/%d step(s) already done, "
+            "%d with partial work to restore (attempt %d)",
+            mission_id, pinned or "<unknown>", len(done), len(plan.steps),
+            len(restore_dirs), self._resume_attempt[mission_id],
+        )
+        return await self._execute_plan(
+            mission_id,
+            view.prompt,
+            plan,
+            done_task_ids=frozenset(done),
+            restore_dirs=restore_dirs,
+        )
+
+    def _check_resume_family(self, mission_id: str, worker: Any) -> None:
+        """A resumed mission runs only on the provider family it was parked
+        on; anything else parks it again instead of switching unasked."""
+        pinned = self._resume_family.get(mission_id)
+        if pinned is None:
+            return
+        family = worker_family(worker)
+        if family != pinned:
+            raise WorkerCapacityUnavailable(
+                "provider_unavailable",
+                pinned,
+                f"the configured worker is now {family}; switching needs approval",
+            )
+
+    def _restore_task_workspace(self, worktree: Path, artifacts: Path) -> bool:
+        """Put a parked step's archived work back into its fresh workspace.
+
+        ``diff.patch`` first (it carries edits to existing files and the full
+        content of new ones); when it does not apply — the repository moved
+        on since — the ``files/`` deliverable snapshot is copied instead.
+        Worker thread only. Returns True when anything was restored.
+        """
+        try:
+            patch = artifacts / "diff.patch"
+            if patch.is_file() and patch.stat().st_size > 0:
+                result = subprocess.run(  # noqa: S603
+                    ["git", "apply", "--whitespace=nowarn", str(patch)],
+                    cwd=str(worktree),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30.0,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+                if result.returncode == 0:
+                    logger.info("Restored partial work into %s from %s", worktree, patch)
+                    return True
+                logger.warning(
+                    "Partial-work patch %s does not apply (%s) — restoring the "
+                    "file snapshot instead",
+                    patch, (result.stderr or "").strip()[:200],
+                )
+            files_root = artifacts / "files"
+            copied = 0
+            if files_root.is_dir():
+                for src in files_root.rglob("*"):
+                    if not src.is_file():
+                        continue
+                    dst = worktree / src.relative_to(files_root)
+                    if not _path_is_within(dst, worktree):
+                        continue
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    copied += 1
+            if copied:
+                logger.info("Restored %d saved file(s) into %s", copied, worktree)
+            return copied > 0
+        except (OSError, subprocess.SubprocessError):
+            # The worker then starts from a clean workspace; the archived work
+            # stays on disk untouched.
+            logger.warning("Restoring partial work into %s failed", worktree, exc_info=True)
+            return False
+
     async def _park_mission(
         self,
         mission_id: str,
@@ -2924,8 +3237,12 @@ class Kontrollierer:
         task's ``finally``). The ``MissionWaitingCapacity`` event carries only
         counts and paths, so the voice layer renders it as a static phrase.
         """
-        self._task_answers.pop(mission_id, None)
+        # Answers of approved read-only steps feed the final summary; they go
+        # into the checkpoint so a resumed run can still report them.
+        task_answers = self._task_answers.pop(mission_id, [])
         self._mission_failure_context.pop(mission_id, None)
+        attempt = self._resume_attempt.get(mission_id, 0)
+        done_before = self._resume_done_before.get(mission_id, 0)
         wait = self._capacity_wait.pop(mission_id, {})
         reason = wait.get("reason") or "provider_quota"
         provider = wait.get("provider")
@@ -2966,7 +3283,10 @@ class Kontrollierer:
                     "provider": provider,
                     "error_detail": error_detail,
                     "created_ms": now_ms(),
+                    "resume_attempts": attempt,
+                    "plan": plan.model_dump(mode="json"),
                     "steps": steps,
+                    "task_answers": task_answers,
                     "partial_artifacts": partial_artifacts,
                 },
             ))
@@ -2994,6 +3314,8 @@ class Kontrollierer:
                     files_saved=files_saved,
                     checkpoint_path=checkpoint_path,
                     error_detail=error_detail,
+                    resume_attempt=attempt,
+                    repeat=attempt > 0 and steps_done <= done_before,
                 ),
             )
         )

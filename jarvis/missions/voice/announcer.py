@@ -269,7 +269,10 @@ class MissionAnnouncer:
         if isinstance(payload, MissionWaitingCapacity):
             # Parked, not failed (jarvis/missions/capacity.py): say why, what
             # is done, what is open, and that paid use needs approval. Queued
-            # for the next turn boundary like a failure (AD-OE5).
+            # for the next turn boundary like a failure (AD-OE5). A resume
+            # that parked again with no new step done has nothing new to say.
+            if payload.repeat:
+                return ("", "normal")
             return (
                 render_capacity_wait(
                     reason=payload.reason,

@@ -181,6 +181,11 @@ class MissionWaitingCapacity(_PayloadBase):
     files_saved: int = 0
     checkpoint_path: str = ""
     error_detail: str | None = None
+    # 0 for the first pause; N after the Nth automatic resume parked again.
+    resume_attempt: int = 0
+    # True when a resume attempt parked again without finishing another step:
+    # nothing new to tell, so the voice layer stays silent.
+    repeat: bool = False
 
 
 class MissionCancelled(_PayloadBase):

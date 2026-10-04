@@ -295,7 +295,9 @@ function ReasoningPanel() {
         (e) =>
           e.payload.event_type === "WorkerProgress" ||
           e.payload.event_type === "WorkerCorrectionRequired" ||
-          e.payload.event_type === "MissionWaitingCapacity",
+          // A resume that parked again with no new step done repeats the
+          // card already shown.
+          (e.payload.event_type === "MissionWaitingCapacity" && !e.payload.repeat),
       );
     }),
   );

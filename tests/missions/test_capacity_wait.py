@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,16 +17,13 @@ import pytest
 
 from jarvis.missions import capacity
 from jarvis.missions import init as mi
-from jarvis.missions.budget import BudgetTracker
 from jarvis.missions.capacity import (
     CHECKPOINT_NAME,
     WorkerCapacityUnavailable,
     pinned_to_subscription,
 )
-from jarvis.missions.critic.verdict import REQUIRED_AXES, CriticAxis, CriticVerdict
 from jarvis.missions.events import MissionWaitingCapacity
 from jarvis.missions.kontrollierer.decomposer import MissionPlan, Step
-from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.recovery import startup_recover
 from jarvis.missions.state_machine import MissionState, is_terminal, transition
@@ -35,6 +31,11 @@ from jarvis.missions.voice.readback import MAX_VOICE_CHARS, render_capacity_wait
 from jarvis.missions.workers.api_agent_worker import ApiAgentWorker
 from jarvis.missions.workers.claude_direct_worker import ClaudeDirectWorker
 from jarvis.missions.workers.codex_direct_worker import CodexDirectWorker
+from tests.fakes.fake_mission_runtime import (
+    ApprovingCritic,
+    FakeMissionWorker,
+    make_kontrollierer,
+)
 
 # --- State machine ------------------------------------------------------------
 
@@ -242,98 +243,6 @@ async def test_pinned_worker_disables_its_cross_backend_fallback(
 # --- Orchestrator: parking with a checkpoint ----------------------------------
 
 
-@dataclass
-class _ResultEvent:
-    type: str = "result"
-    cost_usd: float = 0.0
-    total_tokens: int = 0
-    session_id: str | None = "s"
-    is_error: bool = False
-    result: str = ""
-    subtype: str = "success"
-
-
-class _QuotaWorker:
-    """Every spawn ends on a spent subscription window with no output."""
-
-    cli = "claude"
-    provider = "claude"
-
-    def __init__(self) -> None:
-        self.last_pid = 4242
-        self.spawns = 0
-
-    async def spawn(self, prompt: str, *, log_dir: Path, **_k: Any) -> AsyncIterator[Any]:
-        self.spawns += 1
-        _write_log(log_dir)
-        yield _ResultEvent(
-            is_error=True,
-            subtype="error_during_execution",
-            result="You've hit your session limit · resets 11:10pm",
-        )
-
-
-class _OkWorker:
-    cli = "claude"
-
-    def __init__(self) -> None:
-        self.last_pid = 4243
-
-    async def spawn(self, prompt: str, *, log_dir: Path, **_k: Any) -> AsyncIterator[Any]:
-        _write_log(log_dir)
-        yield _ResultEvent()
-
-
-class _ApproveCritic:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def run(self, **_k: Any) -> CriticVerdict:
-        self.calls += 1
-        return CriticVerdict(
-            verdict="approve",
-            axes={ax: CriticAxis(status="pass", evidence=["x:1"]) for ax in REQUIRED_AXES},
-            issues=[],
-            correction_instruction="",
-            summary="ok",
-            summary_de="ok",
-            confidence=0.9,
-            suggested_next_action="accept",
-        )
-
-
-class _Decomposer:
-    def __init__(self, plan: MissionPlan) -> None:
-        self._plan = plan
-
-    async def decompose(self, _prompt: str) -> MissionPlan:
-        return self._plan
-
-
-class _Job:
-    async def __aenter__(self) -> _Job:
-        return self
-
-    async def __aexit__(self, *_a: object) -> None:
-        return None
-
-    def assign(self, _pid: int) -> None:
-        return None
-
-
-class _Worktrees:
-    def __init__(self, base: Path) -> None:
-        self._base = base
-
-    def create(self, *, task_id: str, **_k: Any) -> Path:
-        wt = self._base / task_id[:13]
-        wt.mkdir(parents=True, exist_ok=True)
-        return wt
-
-    def remove(self, _path: Path, **_k: Any) -> None:
-        return None
-
-
 @pytest.fixture
 async def manager(tmp_missions_db: Path):
     m = MissionManager(tmp_missions_db)
@@ -342,29 +251,8 @@ async def manager(tmp_missions_db: Path):
     await m.stop()
 
 
-def _kontrollierer(
-    manager: MissionManager, tmp_path: Path, plan: MissionPlan, factory: Any, critic: Any
-) -> Kontrollierer:
-    return Kontrollierer(
-        manager=manager,
-        decomposer=_Decomposer(plan),  # type: ignore[arg-type]
-        critic_runner=critic,  # type: ignore[arg-type]
-        worktree_mgr=_Worktrees(tmp_path / "worktrees"),  # type: ignore[arg-type]
-        env_builder=lambda _p: {},
-        budget=BudgetTracker(per_mission_usd=10.0, daily_usd=100.0),
-        worker_factory=factory,
-        job_factory=_Job,
-        isolation_root=tmp_path / "missions",
-    )
-
-
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _write_log(log_dir: Path) -> None:
-    log_dir.mkdir(parents=True, exist_ok=True)
-    (log_dir / "stream.jsonl").write_text("{}\n", encoding="utf-8")
 
 
 async def _events(manager: MissionManager, mid: str) -> list[Any]:
@@ -374,9 +262,9 @@ async def _events(manager: MissionManager, mid: str) -> list[Any]:
 async def test_spent_quota_parks_mission_with_checkpoint(
     manager: MissionManager, tmp_path: Path
 ) -> None:
-    worker = _QuotaWorker()
+    worker = FakeMissionWorker(quota=True)
     plan = MissionPlan(steps=[Step(slug="task", prompt="do it")], n_workers=1)
-    k = _kontrollierer(manager, tmp_path, plan, lambda _s: worker, _ApproveCritic())
+    k = make_kontrollierer(manager, tmp_path, plan, lambda _s: worker, ApprovingCritic())
     mid = await manager.dispatch(prompt="write the report")
 
     state = await k.run_mission(mid)
@@ -407,8 +295,8 @@ async def test_factory_refusal_parks_without_spawning(
         raise WorkerCapacityUnavailable("provider_auth", "codex")
 
     plan = MissionPlan(steps=[Step(slug="task", prompt="do it")], n_workers=1)
-    critic = _ApproveCritic()
-    k = _kontrollierer(manager, tmp_path, plan, _factory, critic)
+    critic = ApprovingCritic()
+    k = make_kontrollierer(manager, tmp_path, plan, _factory, critic)
     mid = await manager.dispatch(prompt="p")
 
     assert await k.run_mission(mid) == MissionState.WAITING_CAPACITY
@@ -427,10 +315,10 @@ async def test_finished_steps_are_kept_and_counted(
     def _factory(step: Step) -> Any:
         if step.task_id == blocked.task_id:
             raise WorkerCapacityUnavailable("provider_quota", "claude")
-        return _OkWorker()
+        return FakeMissionWorker()
 
     plan = MissionPlan(steps=[ok, blocked], n_workers=1)
-    k = _kontrollierer(manager, tmp_path, plan, _factory, _ApproveCritic())
+    k = make_kontrollierer(manager, tmp_path, plan, _factory, ApprovingCritic())
     mid = await manager.dispatch(prompt="p")
 
     assert await k.run_mission(mid) == MissionState.WAITING_CAPACITY
@@ -449,7 +337,7 @@ async def test_parked_mission_can_be_cancelled(
         raise WorkerCapacityUnavailable("provider_quota", "claude")
 
     plan = MissionPlan(steps=[Step(slug="task", prompt="x")], n_workers=1)
-    k = _kontrollierer(manager, tmp_path, plan, _factory, _ApproveCritic())
+    k = make_kontrollierer(manager, tmp_path, plan, _factory, ApprovingCritic())
     mid = await manager.dispatch(prompt="p")
     await k.run_mission(mid)
 
@@ -468,7 +356,7 @@ async def test_recovery_never_sweeps_a_parked_mission(
         raise WorkerCapacityUnavailable("provider_quota", "claude")
 
     plan = MissionPlan(steps=[Step(slug="task", prompt="x")], n_workers=1)
-    k = _kontrollierer(manager, tmp_path, plan, _factory, _ApproveCritic())
+    k = make_kontrollierer(manager, tmp_path, plan, _factory, ApprovingCritic())
     mid = await manager.dispatch(prompt="p")
     await k.run_mission(mid)
 

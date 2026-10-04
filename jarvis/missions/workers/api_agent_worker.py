@@ -249,6 +249,11 @@ class ApiAgentWorker:
         self.last_session_id: str | None = None
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
 
+    @property
+    def family(self) -> str:
+        """Provider family this worker bills (jarvis/missions/capacity.worker_family)."""
+        return self.provider
+
     async def spawn(
         self,
         prompt: str,

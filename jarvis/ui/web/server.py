@@ -3325,6 +3325,18 @@ class WebServer:
                 name="mission-recovery-resweep",
             )
 
+            # Missions parked in WAITING_CAPACITY resume from their checkpoint
+            # once their own subscription has capacity again — never on another
+            # provider or a paid key (jarvis/missions/capacity.py). Primary
+            # instance only, like the sweep: two instances must not both
+            # resume one mission.
+            from jarvis.missions.capacity import capacity_resume_loop
+
+            self._missions_resume_task = asyncio.create_task(
+                capacity_resume_loop(result["kontrollierer"].resume_waiting_missions),
+                name="mission-capacity-resume",
+            )
+
     async def _init_wiki_integration(self) -> None:
         """Phase B5 wiki write-wiring: bootstrap SessionRollupWorker + WikiCurator.
 
@@ -4197,6 +4209,17 @@ class WebServer:
             except (TimeoutError, asyncio.CancelledError):
                 pass
             self._missions_resweep_task = None
+
+        # The resume timer stops here; a mission it already resumed runs in its
+        # own task and is finalized by cancel_all_running below.
+        resume_task = getattr(self, "_missions_resume_task", None)
+        if resume_task is not None:
+            resume_task.cancel()
+            try:
+                await asyncio.wait_for(resume_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            self._missions_resume_task = None
 
         cleanup_task = getattr(self, "_missions_cleanup_task", None)
         if cleanup_task is not None:

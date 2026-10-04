@@ -453,6 +453,8 @@ class CodexDirectWorker:
     """
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "codex"
+    # Provider family this worker bills (jarvis/missions/capacity.worker_family).
+    family: ClassVar[str] = "codex"
 
     def __init__(
         self,

@@ -1059,6 +1059,7 @@
       "attempts_timed_out": "Todos los intentos agotaron el tiempo",
       "budget_exceeded": "Se superó el presupuesto de coste",
       "worktree_setup_failed": "No se pudo preparar el espacio de trabajo",
+      "checkpoint_missing": "Faltaba el progreso guardado, así que no se pudo continuar",
       "critic_unavailable": "No había revisor disponible para comprobar el resultado",
       "critic_rejected": "El revisor rechazó el resultado",
       "review_time_budget_exhausted": "La revisión agotó su tiempo",

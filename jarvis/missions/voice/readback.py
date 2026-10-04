@@ -196,6 +196,9 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         "empty_diff": "Es wurden keine Dateien geschrieben.",  # i18n-allow
         "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",  # i18n-allow
         "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",  # i18n-allow
+        "checkpoint_missing": (
+            "Der gesicherte Zwischenstand fehlt, ich kann nicht fortsetzen."  # i18n-allow
+        ),
         "git_missing": "{agents} brauchen eine Git-Installation im PATH.",  # i18n-allow
         "git_not_a_repository": (
             "{agents} brauchen einen Git-Checkout, bitte über den "  # i18n-allow
@@ -233,6 +236,7 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "The reviewer crashed; the work is preserved in the worktree."
         ),
         "worktree_setup_failed": "I could not create a workspace.",
+        "checkpoint_missing": "The saved progress is missing, so I cannot continue.",
         "git_missing": "{agents} require git to be installed and on PATH.",
         "git_not_a_repository": (
             "{agents} require a git checkout (install via the "

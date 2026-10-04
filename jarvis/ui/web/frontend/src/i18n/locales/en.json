@@ -1059,6 +1059,7 @@
       "attempts_timed_out": "Every attempt ran out of time",
       "budget_exceeded": "The cost budget was exceeded",
       "worktree_setup_failed": "The workspace could not be set up",
+      "checkpoint_missing": "The saved progress was missing, so the run could not continue",
       "critic_unavailable": "No reviewer was available to check the result",
       "critic_rejected": "The reviewer rejected the result",
       "review_time_budget_exhausted": "The review ran out of time",

@@ -232,6 +232,8 @@ class GrokBuildDirectWorker:
     """
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "codex"
+    # Provider family this worker bills (jarvis/missions/capacity.worker_family).
+    family: ClassVar[str] = "grok-build"
 
     def __init__(
         self,

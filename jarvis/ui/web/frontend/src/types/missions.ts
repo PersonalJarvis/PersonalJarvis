@@ -208,6 +208,8 @@ export interface MissionWaitingCapacity extends BasePayload {
   files_saved: number;
   checkpoint_path: string;
   error_detail: string | null;
+  resume_attempt: number;
+  repeat: boolean;
 }
 
 export interface MissionBudgetWarning extends BasePayload {

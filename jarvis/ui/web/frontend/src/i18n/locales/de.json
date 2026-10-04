@@ -1059,6 +1059,7 @@
       "attempts_timed_out": "Jeder Versuch hat die Zeit überschritten",
       "budget_exceeded": "Das Kostenbudget wurde überschritten",
       "worktree_setup_failed": "Der Arbeitsbereich konnte nicht eingerichtet werden",
+      "checkpoint_missing": "Der gesicherte Zwischenstand fehlte, Fortsetzen war nicht möglich",
       "critic_unavailable": "Kein Prüfer verfügbar, um das Ergebnis zu prüfen",
       "critic_rejected": "Der Prüfer hat das Ergebnis abgelehnt",
       "review_time_budget_exhausted": "Die Prüfung hat ihre Zeit überschritten",

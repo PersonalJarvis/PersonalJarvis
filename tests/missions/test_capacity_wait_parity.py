@@ -70,3 +70,30 @@ def test_ui_locales_cover_badge_and_reasons(lang: str) -> None:
 def test_ui_locales_share_capacity_keys() -> None:
     keys = [set(_locale(lang)["missions_view"]["capacity_wait"]) for lang in _LOCALES]
     assert all(k == keys[0] for k in keys)
+
+
+def test_event_fields_python_ts_parity() -> None:
+    m = re.search(
+        r"export interface MissionWaitingCapacity extends BasePayload \{([^}]+)\}", _MISSIONS_TS
+    )
+    assert m, "MissionWaitingCapacity interface not found in missions.ts"
+    ts_fields = set(re.findall(r"^\s*(\w+):", m.group(1), re.MULTILINE))
+    assert ts_fields == set(MissionWaitingCapacity.model_fields)
+
+
+def test_repeated_pause_is_not_announced_again() -> None:
+    from jarvis.missions.events import EventEnvelope
+    from jarvis.missions.voice.listener import MissionVoiceListener
+    from jarvis.missions.voice.readback import MissionReadback
+
+    first = MissionWaitingCapacity(reason="provider_quota", provider="claude", steps_total=2)
+    again = first.model_copy(update={"resume_attempt": 1, "repeat": True})
+    listener = MissionVoiceListener.__new__(MissionVoiceListener)
+    listener._readback = MissionReadback()
+    listener._announce_critic_loop = False
+
+    def env(payload: MissionWaitingCapacity) -> EventEnvelope:
+        return EventEnvelope(mission_id="m", source_actor="kontrollierer", ts_ms=1, payload=payload)
+
+    assert listener._render(env(first), "de")
+    assert listener._render(env(again), "de") == ""

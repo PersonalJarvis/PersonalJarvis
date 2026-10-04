@@ -146,6 +146,8 @@ class MissionVoiceListener:
             return self._readback.render_cancelled(language=lang)
 
         if isinstance(payload, MissionWaitingCapacity):
+            if payload.repeat:
+                return ""  # parked again with no new step done: nothing new to say
             return render_capacity_wait(
                 reason=payload.reason,
                 provider=payload.provider,
