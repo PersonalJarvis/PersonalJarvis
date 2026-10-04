@@ -1,4 +1,10 @@
 {
+  "tasks_view": {
+    "create": {
+      "when_github_pr_merged": "Viene unita una PR GitHub",
+      "when_github_pr_merged_hint": "Usa un webhook GitHub firmato. Dopo aver creato l'automazione, apri la connessione del trigger e imposta lo stesso secret di firma in Jarvis e GitHub."
+    }
+  },
   "skills_view": {
     "review_draft": "Rivedi",
     "approve_draft": "Approva e attiva",
