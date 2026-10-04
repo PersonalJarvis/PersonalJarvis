@@ -371,10 +371,13 @@ async def get_webhook_connection(
     """The UI reveals credentials here; chat tools never return these credentials."""
     _, _, row = await _webhook(request, task_id)
     spec = await _services(request)[0].get_spec(str(task_id))
-    if spec.trigger.provider not in {"generic", "github"}:
+    if spec.trigger.provider != "generic":
         from jarvis.core.config import get_secret
         from jarvis.tasks.webhook_auth import _slot
 
+        # Provider webhooks authenticate with the provider's verification
+        # contract. GitHub is HMAC-SHA256 over the raw body, so exposing the
+        # generic Bearer token here is misleading: GitHub never sends it.
         configured = (
             bool(spec.trigger.oidc_audience and spec.trigger.service_account)
             if spec.trigger.provider == "gmail"
@@ -410,7 +413,7 @@ async def rotate_webhook_connection(
     """Only this routine's token changes; already queued deliveries remain queued."""
     store, _, row = await _webhook(request, task_id)
     spec = await store.get_spec(str(task_id))
-    if spec.trigger.provider not in {"generic", "github"}:
+    if spec.trigger.provider != "generic":
         raise HTTPException(409, "Update the verification settings supplied by your provider")
     try:
         token = await asyncio.to_thread(connection_token, row, rotate=True)
