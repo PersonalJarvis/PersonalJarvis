@@ -120,6 +120,27 @@ describe("buildTaskSpec — When-Then event mapping", () => {
     expect(spec.announce_on_success).toBe("Your mission is ready.");
   });
 
+  it("maps a GitHub PR merge to the authenticated webhook trigger", () => {
+    const spec = buildTaskSpec(
+      baseDraft({
+        triggerMode: "event",
+        whenKey: "github_pr_merged",
+        thenKind: "agent",
+        prompt: "Review the merged pull request.",
+      }),
+    );
+    expect(spec.trigger).toEqual({
+      type: "webhook",
+      provider: "github",
+      conditions: {
+        action: "closed",
+        "pull_request.merged": true,
+      },
+      max_firings: null,
+    });
+    expect(spec.action.kind).toBe("agent");
+  });
+
   it("maps the failed/cancelled when-keys to the right filter", () => {
     const failed = buildTaskSpec(baseDraft({ triggerMode: "event", whenKey: "mission_failed" }));
     expect((failed.trigger as { filter_expr: string }).filter_expr).toBe("status == 'failed'");
