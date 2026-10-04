@@ -50,7 +50,14 @@ python() {
 """
 
 
-def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
+def _exercise(
+    tmp_path: Path,
+    step_names: list[str],
+    *,
+    workflow_name: str = "release-cut.yml",
+    job_id: str = "cut",
+    **overrides: str,
+):
     bash = shutil.which("bash")
     if os.name == "nt":
         # System32/bash.exe enters WSL instead of the runner's Windows shell.
@@ -62,8 +69,8 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
     if bash is None:
         pytest.skip("the workflow shell requires Bash")
     root = Path(__file__).resolve().parents[3]
-    workflow = yaml.safe_load((root / ".github/workflows/release-cut.yml").read_text("utf-8"))
-    steps = {step.get("name"): step for step in workflow["jobs"]["cut"]["steps"]}
+    workflow = yaml.safe_load((root / ".github/workflows" / workflow_name).read_text("utf-8"))
+    steps = {step.get("name"): step for step in workflow["jobs"][job_id]["steps"]}
     trace = tmp_path / "commands.txt"
     script = tmp_path / "release-test.sh"
     script.write_text(
@@ -96,6 +103,7 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
             "RESUME_SHA": _SHA,
             "BASE_VERSION": "1.2.3",
             "RESUME_VERSION": "1.2.3",
+            "RELEASE_REF": "refs/tags/v1.2.3",
             "TAG_EXISTS": "1",
             "TAG_SHA": _SHA,
             **overrides,
@@ -108,6 +116,52 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
     )
     commands = trace.read_text("utf-8").splitlines() if trace.exists() else []
     return result, commands
+
+
+@pytest.mark.parametrize(
+    "ref,strict",
+    [
+        ("refs/tags/v2.9.0", False),
+        ("refs/tags/v2.9.1", True),
+        ("refs/tags/v2.10.0", True),
+        ("refs/tags/v2.9.0-rc.1", True),
+        ("refs/tags/v2.9.00", True),
+        ("refs/heads/v2.9.0", True),
+        ("refs/heads/main", True),
+        ("", True),
+    ],
+)
+def test_plugin_acceptance_exception_is_exactly_one_release(tmp_path, ref, strict):
+    result, commands = _exercise(
+        tmp_path,
+        ["Qualify plugin auth with the v2.9.0 exception"],
+        workflow_name="ci.yml",
+        job_id="release-qualification",
+        RELEASE_REF=ref,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = "python scripts/ci/check_plugin_auth_contract.py"
+    assert commands == [command + (" --require-e2e-pass" if strict else "")]
+    summary = tmp_path / "summary.txt"
+    if strict:
+        assert not summary.exists()
+    else:
+        assert "no plugin E2E PASS is asserted" in result.stdout
+        assert "Existing audit results remain unchanged" in summary.read_text("utf-8")
+
+
+@pytest.mark.parametrize("ref", ["refs/tags/v2.9.0", "refs/tags/v2.9.1"])
+def test_plugin_exception_never_ignores_a_failing_auth_contract(tmp_path, ref):
+    result, _commands = _exercise(
+        tmp_path,
+        ["Qualify plugin auth with the v2.9.0 exception"],
+        workflow_name="ci.yml",
+        job_id="release-qualification",
+        RELEASE_REF=ref,
+        ADMIT_EXIT="1",
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / "summary.txt").exists()
 
 
 @pytest.mark.parametrize(
