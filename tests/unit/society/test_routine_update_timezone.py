@@ -1,6 +1,8 @@
 """Routine edits share the creation route's per-turn timezone contract."""
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -16,7 +18,9 @@ from jarvis.ui.web.society_routes import router
 @pytest.fixture
 async def routine(tmp_path, monkeypatch):
     monkeypatch.setattr(context, "_reported_ui_timezone", None)
-    token = context.client_timezone.set(None)
+    monkeypatch.setattr(
+        context, "client_timezone", ContextVar("test_routine_client_timezone", default=None),
+    )
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     store = TaskStore(tmp_path / "tasks.db")
     await store.init()
@@ -43,7 +47,6 @@ async def routine(tmp_path, monkeypatch):
         await scheduler.shutdown()
         await store.close()
         await runtime.close()
-        context.client_timezone.reset(token)
 
 
 @pytest.mark.parametrize("schedule", [
