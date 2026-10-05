@@ -138,7 +138,6 @@ class SocietyScheduler:
         self._delivery_lock = asyncio.Lock()
         #: Admission locks close check→await→append races in the scheduler.
         self._dispatch_locks: dict[str, asyncio.Lock] = {}
-        from weakref import WeakValueDictionary
         self._trace_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         #: run_id → agent_id of work the scheduler started and has not seen end.
         self._running: dict[str, str] = {}
