@@ -778,6 +778,8 @@ def _account_id_for_root(agent: str, root: Path) -> str:
         from jarvis import agent_accounts
 
         target = _key_of(root)
+        if target == _key_of(agent_accounts.native_dir(platform)):
+            return agent_accounts.builtin_id(platform)
         for account in agent_accounts.list_accounts(platform):
             if _key_of(Path(account.config_dir)) == target:
                 return str(account.id)
