@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
-import type { ReasoningBlock, TextBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import type { ReasoningBlock, TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
 import { readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
@@ -124,11 +124,45 @@ function inputText(input: unknown): string {
   try { return JSON.stringify(input, null, 2); } catch { return String(input); }
 }
 
-/** What a call opened to: the diff it made, else what ran and what came back. */
+/** Pictures a tool call brought back, by call id, and the text blocks that carried them. */
+interface CallPictures {
+  byCall: ReadonlyMap<string, string[]>;
+  moved: ReadonlySet<string>;
+}
+
+const CallMedia = createContext<ReadonlyMap<string, string[]>>(new Map());
+
+/**
+ * The server posts each picture a tool returned (an image the agent viewed)
+ * as its own `media-…` text right after that call. In a thread the picture
+ * belongs to the call: it shows once the call's line is opened, never in the
+ * answer. A picture after the agent's own prose stays where it is.
+ */
+export function callPictures(blocks: TurnBlock[]): CallPictures {
+  const byCall = new Map<string, string[]>();
+  const moved = new Set<string>();
+  let call: string | null = null;
+  for (const block of blocks) {
+    if (block.kind === "tool") call = block.callId;
+    else if (block.kind === "text" && block.id.startsWith("media-") && call) {
+      byCall.set(call, [...(byCall.get(call) ?? []), block.text]);
+      moved.add(block.id);
+    } else if (block.kind === "text") call = null;
+  }
+  return { byCall, moved };
+}
+
+/** What a call opened to: its pictures, the diff it made, else what ran and what came back. */
 function CallDetails({ call }: { call: Call }) {
   const block = call.block;
+  const pictures = useContext(CallMedia).get(block.callId);
   const diff = useMemo(() => toolDiff(block.name, block.input, block.output), [block.name, block.input, block.output]);
   const output = readableOutput(block).trim();
+  if (pictures?.length) {
+    return <div className={cn("mb-1.5 ml-7 mt-0.5", PROSE, THREAD_MEDIA)}>
+      {pictures.map((text, index) => <ChatMarkdown key={index} text={text} />)}
+    </div>;
+  }
   if (diff && diff.length > 0 && !block.isError) return <div className="mb-1.5 ml-7 mt-0.5"><DiffView files={diff} /></div>;
   const input = call.kind === "command" ? "" : inputText(block.input);
   return <div className="mb-1.5 ml-7 mt-0.5 space-y-1.5 select-text">
@@ -529,7 +563,11 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
   const t = useT();
   const lang = t("trace_report.locale");
   const running = turn.status === "running";
-  const rows = useMemo(() => buildThreadRows(turn.blocks, { t, lang, status: turn.status }), [turn.blocks, t, lang, turn.status]);
+  const pictures = useMemo(() => callPictures(turn.blocks), [turn.blocks]);
+  const rows = useMemo(
+    () => buildThreadRows(turn.blocks, { t, lang, status: turn.status }).filter((row) => !(row.kind === "text" && pictures.moved.has(row.block.id))),
+    [turn.blocks, t, lang, turn.status, pictures],
+  );
   const answer = answerText(turn);
   const [workOpen, setWorkOpen] = useState(false);
   // Finished: every step and thought folds behind one "Worked for …" line; the answer stays.
@@ -545,7 +583,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
     const pending = pendingLabel(row.block);
     return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
   };
-  return <div className="space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
+  return <CallMedia.Provider value={pictures.byCall}><div className="space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
     {folded && <div>
       <button type="button" aria-expanded={workOpen} onClick={() => setWorkOpen((value) => !value)} data-testid="thread-worked-for"
         className="flex h-7 items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -572,7 +610,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
           {answer && <CopyButton text={answer} label="Copy answer" />}
         </div>
       </>}
-  </div>;
+  </div></CallMedia.Provider>;
 });
 
 function ErrorLine({ text }: { text: string }) {
