@@ -23,12 +23,34 @@ def test_p010_frame_keeps_every_code_and_is_tagged_hdr10(pixel_format: str) -> N
     y, uv = _planes()
     frame = hdr_recording.p010_frame(av, pixel_format, y, uv)
     assert (frame.width, frame.height, frame.format.name) == (8, 4, pixel_format)
-    assert (frame.color_primaries, frame.color_trc, frame.colorspace, frame.color_range) == (
-        9, 16, 9, 1
-    )
+    # PyAV before 16 (Apple Silicon pin) has no frame colour properties; the
+    # frame is still built and the encoder carries the tags.
+    if hasattr(av.VideoFrame, "color_primaries"):
+        assert (frame.color_primaries, frame.color_trc, frame.colorspace, frame.color_range) == (
+            9, 16, 9, 1
+        )
     back = frame.reformat(format="p010le")
     luma = np.frombuffer(back.planes[0], np.uint16).reshape(4, -1)[:, :8]
     assert np.array_equal(luma >> 6, y >> 6)
+
+
+def test_a_pyav_without_frame_colour_tags_still_builds_the_frame() -> None:
+    """PyAV 15 (pinned on Apple Silicon) cannot tag a VideoFrame; that is no crash."""
+
+    class Plane(bytearray):
+        line_size = 16  # 8 pixels x 2 bytes
+
+    class OldFrame:
+        __slots__ = ("planes",)  # no colour properties, like PyAV 15
+
+        def __init__(self, width: int, height: int, _format: str) -> None:
+            self.planes = [Plane(height * 16), Plane(height // 2 * 16)]
+
+    y, uv = _planes()
+    frame = hdr_recording.p010_frame(type("av", (), {"VideoFrame": OldFrame}), "p010le", y, uv)
+
+    luma = np.frombuffer(frame.planes[0], np.uint16).reshape(4, 8)
+    assert np.array_equal(luma, y)
 
 
 def test_sdr_monitors_and_other_platforms_keep_the_8_bit_path(monkeypatch) -> None:
