@@ -1,10 +1,10 @@
 """Fail-closed contract for figure recipes that may enter a shared catalog.
 
-A local imported GLB is trusted only on the machine that validated it. Marketplace
+A local imported GLB is trusted only on the machine that validated it. Shared
 figures have a narrower boundary: a JSON recipe may reference reviewed built-in
-catalog assets, but it may never carry a model URL or other opaque payload. This
-is the foundation for the M6 report/delist catalog; publishing itself remains a
-separate concern.
+catalog assets, but it may never carry a model URL or other opaque payload. The
+local M6 catalog publishes only this normalized recipe metadata; reports and
+delisting stay local and no model is uploaded to a remote marketplace.
 """
 
 from __future__ import annotations
