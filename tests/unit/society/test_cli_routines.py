@@ -279,5 +279,16 @@ def test_routine_approval_delegation_is_only_for_society(monkeypatch):
     )
     for session_id in (None, "ordinary-chat"):
         assert not any(
-            "approval_mode" in arg for arg in jarvis_harness.codex_config_args(session_id)
+            "default_tools_approval_mode" in arg
+            for arg in jarvis_harness.codex_config_args(session_id)
         )
+    # Browser actions still use Jarvis' executor and approval UI in root chat.
+    assert 'mcp_servers.jarvis.tools.society_browser.approval_mode="approve"' in (
+        jarvis_harness.codex_config_args("ordinary-chat")
+    )
+    assert not any(
+        "approval_mode" in arg for arg in jarvis_harness.codex_config_args(None)
+    )
+    assert 'mcp_servers.jarvis.default_tools_approval_mode="approve"' in (
+        jarvis_harness.codex_config_args("society:scout")
+    )
