@@ -1,22 +1,22 @@
 /**
- * The reward road: every level that brings something — pieces to wear and
- * new titles — from the first unlock to the cap, as one horizontal road with
- * the subject's own position on it. Choosing a step shows it below: the
- * subject in the preview wearing that piece, how rare it is, at which level
- * it opens and how much XP is still missing, and a button to put it on once
- * it is open.
+ * The promotion road: every level that brings something — a new rank, a
+ * uniform piece, or both — from the first promotion to the cap, as one
+ * horizontal road with the subject's own position on it. Choosing a step
+ * shows it below: the figure in the preview as it will look at that rank
+ * wearing that piece, the rank's insignia, name and grade, the level it
+ * opens at and the XP still missing, and a button to put an open piece on.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "@/i18n";
 import { equippedFor, rewardRoad, type SlotChoice } from "../cosmetics";
-import { slotOf, type RewardId, type Slot } from "../levelCatalog";
+import { RANK_INFO, rankAt, slotOf, type RankId, type RewardId, type Slot } from "../levelCatalog";
+import { RankInsignia } from "../insignia/RankInsignia";
 import type { RewardRow } from "../progressionApi";
 import { useProgression } from "../progressionStore";
 import { RewardIcon } from "../RewardIcon";
-import { rarityOf, xpToReach } from "./hallModel";
-import { LockGlyph, TabIcon, type HallWho } from "./hallParts";
+import { xpToReach } from "./hallModel";
+import { LockGlyph, type HallWho } from "./hallParts";
 import { LoadoutPreview } from "./LoadoutPreview";
-import { FramePlate } from "./StudioTab";
 
 const NO_REWARDS: RewardRow[] = [];
 const NO_TITLES: { level: number; title: string }[] = [];
@@ -25,7 +25,7 @@ const NO_CHOICES: Partial<Record<Slot, SlotChoice>> = {};
 
 interface Step { level: number; rewards: RewardRow[]; title?: string }
 
-/** The road's steps: each level with a reward or a new title, lowest first. */
+/** The road's steps: each level with a reward or a new rank, lowest first. */
 export function roadSteps(road: readonly RewardRow[], titles: readonly { level: number; title: string }[], kind: "person" | "pet"): Step[] {
   const byLevel = new Map<number, Step>();
   for (const reward of road) {
@@ -56,9 +56,10 @@ export function RewardsTab({ who }: { who: HallWho }) {
   const road = useMemo(() => rewardRoad(rewards, who.kind), [rewards, who.kind]);
   const steps = useMemo(() => roadSteps(road, titles, who.kind), [road, titles, who.kind]);
   const nextStep = steps.find((s) => s.level > level);
-  const initial = (focus && road.find((r) => r.rewardId === focus)) || nextStep?.rewards[0] || road[road.length - 1];
+  const focusRow = focus ? road.find((r) => r.rewardId === focus) : undefined;
   const [selected, setSelected] = useState<{ level: number; reward: RewardId | null }>(() => ({
-    level: initial ? initial.levels[who.kind] ?? 1 : nextStep?.level ?? 1, reward: initial?.rewardId ?? null,
+    level: focusRow?.levels[who.kind] ?? nextStep?.level ?? steps[steps.length - 1]?.level ?? 1,
+    reward: focusRow?.rewardId ?? nextStep?.rewards[0]?.rewardId ?? null,
   }));
   const step = steps.find((s) => s.level === selected.level) ?? nextStep ?? steps[0];
   const reward = step?.rewards.find((r) => r.rewardId === selected.reward) ?? step?.rewards[0];
@@ -73,6 +74,8 @@ export function RewardsTab({ who }: { who: HallWho }) {
   const open = level >= step.level;
   const missing = xpToReach(curve, subject?.xp ?? 0, step.level);
   const worn = reward ? equipped[reward.slot] === reward.rewardId : false;
+  const stepRank: RankId = rankAt(titles, step.level);
+  const info = RANK_INFO[stepRank];
   return (
     <div className="hall-rewards">
       <p className="hall-lead">{t("society.hall.road_body")}</p>
@@ -80,6 +83,7 @@ export function RewardsTab({ who }: { who: HallWho }) {
         {steps.map((s, i) => {
           const done = level >= s.level;
           const here = s === nextStep;
+          const rank = rankAt(titles, s.level);
           return (
             <li key={s.level} data-done={done || undefined} data-here={here || undefined}>
               {here && <span className="hall-road-here">{t("society.hall.road_here").replace("{0}", String(level))}</span>}
@@ -87,10 +91,10 @@ export function RewardsTab({ who }: { who: HallWho }) {
                 onClick={() => setSelected({ level: s.level, reward: s.rewards[0]?.rewardId ?? null })}>
                 <span className="hall-road-level">{t("society.level.lv").replace("{0}", String(s.level))}</span>
                 <span className="hall-road-icons">
-                  {s.rewards.map((r) => <RewardIcon key={r.rewardId} reward={r.rewardId} size={28} />)}
-                  {s.title && <span className="hall-road-title-mark" aria-hidden><TabIcon path="M7 3.5h10v17l-5-3.6-5 3.6z" size={16} /></span>}
+                  {s.title && <RankInsignia rank={rank} size={30} dim={!done} />}
+                  {s.rewards.map((r) => <RewardIcon key={r.rewardId} reward={r.rewardId} size={30} locked={!done} />)}
                 </span>
-                {s.title && <span className="hall-road-title">{t(`society.level.title.${s.title}`)}</span>}
+                {s.title && <span className="hall-road-title">{t(`society.level.title.${rank}`)}</span>}
                 {!done && <LockGlyph />}
               </button>
               {i < steps.length - 1 && <span className="hall-road-link" aria-hidden />}
@@ -101,40 +105,40 @@ export function RewardsTab({ who }: { who: HallWho }) {
 
       <div className="hall-detail">
         <div className="hall-stage hall-stage-small">
-          <LoadoutPreview subject={who.preview} loadout={loadout} label={t("society.hall.preview_label").replace("{0}", who.name)} />
-          {reward?.slot === "frame" && (
-            <div className="hall-stage-bottom"><FramePlate name={who.name} level={step.level} frame={reward.rewardId} /></div>
-          )}
+          <LoadoutPreview subject={who.preview} loadout={loadout} rank={stepRank}
+            label={t("society.hall.preview_label").replace("{0}", who.name)} />
         </div>
         <div className="hall-detail-info">
           <span className="hall-detail-kicker" data-open={open || undefined}>
             {open ? t("society.hall.reward_open").replace("{0}", String(step.level)) : t("society.hall.reward_locked").replace("{0}", String(step.level))}
           </span>
+          <div className="hall-detail-rank" data-tier={info.tier}>
+            <RankInsignia rank={stepRank} size={72} dim={!open} />
+            <span>
+              <strong>{t(`society.level.title.${stepRank}`)}</strong>
+              <em>{info.grade} · {t(`society.hall.tier.${info.tier}`)}</em>
+            </span>
+          </div>
           {step.rewards.length > 1 && (
             <div className="hall-detail-pick" role="group" aria-label={t("society.level.lv").replace("{0}", String(step.level))}>
               {step.rewards.map((r) => (
                 <button key={r.rewardId} type="button" aria-pressed={r.rewardId === reward?.rewardId}
                   onClick={() => setSelected({ level: step.level, reward: r.rewardId })}>
-                  <RewardIcon reward={r.rewardId} size={22} />
+                  <RewardIcon reward={r.rewardId} size={24} />
                   {t(`society.level.reward.${r.rewardId}`)}
                 </button>
               ))}
             </div>
           )}
           {reward && (
-            <>
-              <h3>{t(`society.level.reward.${reward.rewardId}`)}</h3>
-              <span className="hall-card-meta">
-                <span className="hall-rarity" data-rarity={rarityOf(step.level)}>{t(`society.hall.rarity.${rarityOf(step.level)}`)}</span>
-                <span>{t(`society.level.slot.${reward.slot}`)}</span>
+            <div className="hall-detail-piece">
+              <RewardIcon reward={reward.rewardId} size={56} locked={!open} />
+              <span>
+                <h3>{t(`society.level.reward.${reward.rewardId}`)}</h3>
+                <span className="hall-card-meta">{t(`society.level.slot.${reward.slot}`)}</span>
+                <p>{t(`society.hall.slot_hint.${reward.slot}`)}</p>
               </span>
-              <p>{t(`society.hall.slot_hint.${reward.slot}`)}</p>
-            </>
-          )}
-          {step.title && (
-            <p className="hall-detail-title">
-              {t("society.level.title_line").replace("{0}", t(`society.level.title.${step.title}`))}
-            </p>
+            </div>
           )}
           {!open && <p className="hall-detail-missing">{t("society.hall.reward_missing").replace("{0}", missing.toLocaleString())}</p>}
           {reward && open && (

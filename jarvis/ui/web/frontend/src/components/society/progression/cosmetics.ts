@@ -61,7 +61,8 @@ export function levelFraction(subject: Pick<SubjectLevel, "xpIntoLevel" | "xpFor
   return Math.max(0, Math.min(1, subject.xpIntoLevel / subject.xpForNext));
 }
 
-const CHOICES_KEY = "jarvis.verse.cosmetics.v1";
+// v2: the rank uniforms replaced the trails, auras and gadgets of v1; old choices name ids that no longer exist.
+const CHOICES_KEY = "jarvis.verse.cosmetics.v2";
 
 export type ChoiceBook = Partial<Record<"person" | "pet", Partial<Record<Slot, SlotChoice>>>>;
 

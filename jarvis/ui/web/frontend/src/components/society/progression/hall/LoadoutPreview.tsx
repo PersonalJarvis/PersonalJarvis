@@ -1,9 +1,9 @@
 /**
- * The Upgrade Studio's live preview: the person's own figure or their pet on
- * the hall's stage, wearing a loadout — the one they wear, or one with a
- * locked piece put on to try. Trails only show in motion, so with a trail on
- * the figure walks a slow circle round the stage; otherwise it stands while
- * the stage turns. Drag turns it by hand.
+ * The studio's live preview: the person's own figure on the hall's stage in
+ * the uniform, cap and decorations of a loadout — the one they wear, or one
+ * with a locked piece put on to try — and the insignia of their rank; or the
+ * pet, which wears its rank on its name plate. The stage turns slowly; a
+ * drag turns it by hand.
  *
  * One canvas through `useWebglSurface` (AP-32: the context is handed back on
  * unmount and rebuilt when the browser takes it), rendering only while on
@@ -28,14 +28,10 @@ import { OFFICE_FIGURE_HEIGHT_M } from "../../office/OfficeAgents";
 import { ToyFigure } from "../../office/ToyFigure";
 import type { ToyLook } from "../../office/toyFigureModel";
 import type { Loadout } from "../cosmetics";
-import { figureGadgetSlots } from "../wornGadget";
-import { CosmeticTrail, type FlairSource, type TrailKind } from "../effects/CosmeticTrail";
-import { CosmeticAura, CosmeticGadget, type AuraKind, type GadgetKind } from "../effects/CosmeticWear";
+import type { RankId } from "../levelCatalog";
+import { dressedLook, regaliaFor, type UniformId } from "../regalia/dress";
 
-/** The walk round the stage: radius in metres and speed in m/s. */
-const WALK_R = 0.95;
-const WALK_SPEED = 0.85;
-/** How fast the stage turns while the figure stands, rad/s. */
+/** How fast the stage turns, rad/s. */
 const TURN_SPEED = 0.35;
 /** Flying pets hover this high over the stage. */
 const HOVER_M = 0.32;
@@ -44,14 +40,9 @@ const PET_SHOWN_M = 0.78;
 
 export type PreviewSubject = { kind: "person"; look: ToyLook } | { kind: "pet"; pet: CompanionPet };
 
-/** Where the figure stands this frame, shared by the figure and every flair that follows it. */
-interface Pose { x: number; z: number; heading: number; moving: boolean }
-
-function PreviewScene({ subject, loadout, paused, reduced, spin }: {
-  subject: PreviewSubject; loadout: Loadout; paused: boolean; reduced: boolean; spin: { current: number };
+function PreviewScene({ subject, loadout, rank, paused, reduced, spin }: {
+  subject: PreviewSubject; loadout: Loadout; rank: RankId; paused: boolean; reduced: boolean; spin: { current: number };
 }) {
-  const walking = !!loadout.trail && !reduced;
-  const pose = useRef<Pose>({ x: 0, z: 0, heading: 0, moving: false });
   const clock = useRef(0);
   const body = useRef<Group>(null);
   const turntable = useRef<Group>(null);
@@ -59,49 +50,26 @@ function PreviewScene({ subject, loadout, paused, reduced, spin }: {
   const petDrive = useRef<PetDrive>({ speed: 0, mood: "idle" });
   const pet = subject.kind === "pet" ? subject.pet : null;
   const flies = pet ? companionFlies(pet) : false;
-  // A pet stands on the same stage, drawn larger (its own group scales; the stage does not), so its walk shrinks to match.
+  // A pet stands on the same stage, drawn larger (its own group scales; the stage does not).
   const grow = pet ? PET_SHOWN_M / pet.heightM : 1;
   const lift = flies ? HOVER_M / grow : 0;
-  const top = pet ? lift + pet.heightM + 0.04 : OFFICE_FIGURE_HEIGHT_M + 0.02;
-  const walkR = WALK_R / grow;
-  const scale = pet ? 0.5 : 1;
   const gigi = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
-  const worn = figureGadgetSlots(pet ? null : (loadout.gadget as GadgetKind | undefined), { drive: figureDrive, top, paused, reduced });
+  const person = subject.kind === "person" ? subject.look : null;
+  const dressed = useMemo(() => (person ? {
+    look: dressedLook(person, loadout.uniform as UniformId | undefined, rank), regalia: regaliaFor(rank, loadout),
+  } : null), [person, loadout, rank]);
 
   useFrame((_, rawDt) => {
     const dt = paused ? 0 : Math.min(rawDt, 0.1);
     clock.current += dt;
-    const p = pose.current;
-    if (walking) {
-      const angle = (clock.current * WALK_SPEED) / WALK_R;
-      p.x = Math.cos(angle) * walkR;
-      p.z = Math.sin(angle) * walkR;
-      // Heading along the circle (counter-clockwise seen from above).
-      p.heading = Math.atan2(-Math.sin(angle), Math.cos(angle));
-      p.moving = true;
-    } else {
-      p.x = 0;
-      p.z = 0;
-      p.heading = 0;
-      p.moving = false;
-    }
-    figureDrive.current.mode = p.moving ? "walk" : "idle";
-    figureDrive.current.speed = p.moving ? WALK_SPEED : 0;
-    petDrive.current.speed = p.moving ? WALK_SPEED : 0;
-    if (body.current) {
-      body.current.position.set(p.x, lift + (flies && !reduced ? Math.sin(clock.current * 2.2) * 0.04 : 0), p.z);
-      body.current.rotation.y = p.heading;
-    }
-    // The stage turns while the figure stands; a drag adds its own turn.
+    if (body.current) body.current.position.set(0, lift + (flies && !reduced ? Math.sin(clock.current * 2.2) * 0.04 : 0), 0);
+    // The stage turns slowly; a drag adds its own turn.
     if (turntable.current) {
-      if (!walking && !reduced) spin.current += dt * TURN_SPEED;
+      if (!reduced) spin.current += dt * TURN_SPEED;
       turntable.current.rotation.y = spin.current;
     }
   });
 
-  // Flair reads the pose in the turntable's frame, so it turns with the figure.
-  const ground: FlairSource = () => ({ x: pose.current.x, z: pose.current.z, heading: pose.current.heading });
-  const head: FlairSource = () => ({ x: pose.current.x, z: pose.current.z, y: top });
   return (
     <>
       <hemisphereLight args={["#dfe8ff", "#1a1f3a", 0.9]} />
@@ -118,19 +86,10 @@ function PreviewScene({ subject, loadout, paused, reduced, spin }: {
                 <CompanionBody pet={pet} drive={petDrive} reduced={reduced} paused={paused} gigi={<CompanionModel appearance={gigi} lead />} />
               </Suspense>
             </ModelBoundary>
-          ) : (
-            <>
-              <ToyFigure look={(subject as Extract<PreviewSubject, { kind: "person" }>).look} drive={figureDrive} paused={paused} heightM={OFFICE_FIGURE_HEIGHT_M}
-                back={worn.back} headwear={worn.headwear} />
-              {worn.beside}
-            </>
+          ) : dressed && (
+            <ToyFigure look={dressed.look} drive={figureDrive} paused={paused} heightM={OFFICE_FIGURE_HEIGHT_M} regalia={dressed.regalia} />
           )}
         </group>
-        {loadout.aura && <CosmeticAura key={loadout.aura} kind={loadout.aura as AuraKind} source={ground} scale={scale} paused={paused} reduced={reduced} />}
-        {walking && <CosmeticTrail key={loadout.trail} kind={loadout.trail as TrailKind} source={ground} scale={scale} paused={paused} />}
-        {loadout.gadget && pet && (
-          <CosmeticGadget key={loadout.gadget} kind={loadout.gadget as GadgetKind} source={head} top={top} scale={scale} paused={paused} reduced={reduced} />
-        )}
         </group>
       </group>
       <CameraFrame />
@@ -138,21 +97,24 @@ function PreviewScene({ subject, loadout, paused, reduced, spin }: {
   );
 }
 
-/** Frames the whole stage with the walk circle on it; a tall, narrow box stands further back. */
+/** Frames the figure from the knees up; a tall, narrow box stands further back. */
 function CameraFrame() {
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
   useLayoutEffect(() => {
     const narrow = size.width / Math.max(1, size.height) < 0.9;
-    const distance = 4.9 * (narrow ? 1.22 : 1);
-    camera.position.set(0, 2.0, distance);
-    camera.lookAt(0, 0.5, 0);
+    // Close on the figure: the insignia, ribbons and cap are what the studio shows off.
+    const distance = 3.6 * (narrow ? 1.25 : 1);
+    camera.position.set(0, 1.45, distance);
+    camera.lookAt(0, 0.78, 0);
     camera.updateProjectionMatrix();
   }, [camera, size]);
   return null;
 }
 
-export function LoadoutPreview({ subject, loadout, label }: { subject: PreviewSubject; loadout: Loadout; label: string }) {
+export function LoadoutPreview({ subject, loadout, rank, label }: {
+  subject: PreviewSubject; loadout: Loadout; rank: RankId; label: string;
+}) {
   const t = useT();
   const host = useRef<HTMLDivElement>(null);
   const { generation } = useWebglSurface(host);
@@ -180,12 +142,10 @@ export function LoadoutPreview({ subject, loadout, label }: { subject: PreviewSu
           gl={{ antialias: true, alpha: true, powerPreference: "low-power" }} camera={{ fov: 30, near: 0.1, far: 40, position: [0, 1.75, 4.1] }}
           onCreated={({ gl }) => gl.setClearColor(0x000000, 0)}>
           <Suspense fallback={null}>
-            <PreviewScene subject={subject} loadout={loadout} paused={!awake} reduced={reduced} spin={spin} />
+            <PreviewScene subject={subject} loadout={loadout} rank={rank} paused={!awake} reduced={reduced} spin={spin} />
           </Suspense>
         </Canvas>
       </PreviewBoundary>
-      {/* A trail only shows in motion; with reduced motion the figure stands, so say why the try-on looks the same. */}
-      {reduced && loadout.trail && <p className="hall-preview-note">{t("society.hall.trail_reduced")}</p>}
     </div>
   );
 }

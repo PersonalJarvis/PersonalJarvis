@@ -32,7 +32,7 @@ def test_the_first_read_carries_the_whole_rulebook(client: TestClient):
     assert len(body["level_xp"]) == MAX_LEVEL and body["level_xp"][0] == 0
     assert {r["source"] for r in body["rules"]} == {r.source for r in RULES}
     assert {r["reward_id"] for r in body["rewards"]} == {r.reward_id for r in REWARDS}
-    assert body["titles"]["person"][0] == {"level": 1, "title": "newcomer"}
+    assert body["titles"]["person"][0] == {"level": 1, "title": "private"}
 
 
 def test_a_world_action_pays_and_shows_up_in_the_next_read(client: TestClient):

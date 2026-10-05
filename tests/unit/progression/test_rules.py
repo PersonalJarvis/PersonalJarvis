@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jarvis.progression.rules import (
     MAX_LEVEL,
+    RANKS,
     REWARDS,
     RULES,
     SLOTS,
@@ -66,7 +67,7 @@ def test_rules_have_unique_sources_and_pay_a_known_kind():
     assert "daily_visit" in WORLD_ACTIONS and "chat_turn" not in WORLD_ACTIONS
 
 
-def test_rewards_are_unique_and_every_kind_gets_one_per_slot_family():
+def test_rewards_are_unique_and_unlock_on_a_promotion():
     ids = [reward.reward_id for reward in REWARDS]
     assert len(ids) == len(set(ids))
     for reward in REWARDS:
@@ -75,15 +76,21 @@ def test_rewards_are_unique_and_every_kind_gets_one_per_slot_family():
         for kind in SUBJECT_KINDS:
             level = reward.level_for(kind)
             assert level is None or 2 <= level <= MAX_LEVEL
-    for kind in SUBJECT_KINDS:
-        slots = {r.slot for r in unlocked_rewards(kind, MAX_LEVEL)}
-        assert {"frame", "trail", "aura"} <= slots
+    # The person can dress in every slot; agents earn decorations; the pet wears its rank only.
+    assert {r.slot for r in unlocked_rewards("person", MAX_LEVEL)} == set(SLOTS)
+    assert {r.slot for r in unlocked_rewards("agent", MAX_LEVEL)} == {"decoration"}
+    assert unlocked_rewards("pet", MAX_LEVEL) == []
+    # A person's piece unlocks exactly on a promotion, so the banner can name the new rank with it.
+    promotions = {level for level, _, _ in RANKS}
+    for reward in REWARDS:
+        assert reward.person in promotions, reward.reward_id
 
 
 def test_rewards_between_names_only_what_the_climb_crossed():
-    assert [r.reward_id for r in rewards_between("person", 1, 2)] == ["trail_footprints"]
-    at_ten = {r.reward_id for r in rewards_between("person", 9, 10)}
-    assert at_ten == {"frame_silver", "gadget_drone"}
+    assert rewards_between("person", 1, 2) == []
+    assert [r.reward_id for r in rewards_between("person", 3, 4)] == ["uniform_service_shirt"]
+    at_ten = {r.reward_id for r in rewards_between("person", 7, 10)}
+    assert at_ten == {"uniform_field_jacket", "decoration_ribbon_bar"}
     assert rewards_between("person", 10, 10) == []
 
 
@@ -92,9 +99,24 @@ def test_titles_start_at_level_one_and_climb():
         bands = TITLES[kind]
         assert bands[0][0] == 1
         assert [lvl for lvl, _ in bands] == sorted(lvl for lvl, _ in bands)
-    assert title_for("person", 1) == "newcomer"
-    assert title_for("person", 12) == "operator"
-    assert title_for("pet", MAX_LEVEL) == "mythic"
+    assert title_for("person", 1) == "private"
+    assert title_for("person", 11) == "sergeant"
+    assert title_for("agent", 26) == "second_lieutenant"
+    assert title_for("pet", MAX_LEVEL) == "general_of_the_army"
+
+
+def test_the_rank_ladder_climbs_from_enlisted_to_general():
+    levels = [level for level, _, _ in RANKS]
+    assert levels[0] == 1 and levels[-1] == MAX_LEVEL
+    assert levels == sorted(set(levels))
+    grades = [grade for _, _, grade in RANKS]
+    assert grades[0] == "E-1" and grades[-1] == "O-11"
+    # Enlisted first, then commissioned: no officer grade before the last enlisted one.
+    first_officer = next(i for i, g in enumerate(grades) if g.startswith("O-"))
+    assert all(g.startswith("E-") for g in grades[:first_officer])
+    assert all(g.startswith("O-") for g in grades[first_officer:])
+    for kind in SUBJECT_KINDS:
+        assert [rank for _, rank in TITLES[kind]] == [rank for _, rank, _ in RANKS]
 
 
 def test_subject_ids_name_their_kind():

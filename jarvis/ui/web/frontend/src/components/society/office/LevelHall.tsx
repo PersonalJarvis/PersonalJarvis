@@ -1,100 +1,88 @@
 /**
- * The Level Hall: the agents floor's east wing, built like the trophy hall of
- * a game. Midnight stone and brass, lit from within.
+ * The Level Hall: the agents floor's east wing, a hall of honour. Cream and
+ * charcoal marble underfoot, walnut and brass, a red runner up the middle,
+ * and every piece on show is the real one — the same geometry the figures
+ * wear.
  *
- * - The Level Wall on the north wall: a live screen with the person's level,
- *   title, XP bar and the next reward, between two lit brass pillars.
- * - The Upgrade Studio's stage in front of it: a round disc with a glowing
- *   rim and a slowly turning ring of marks. Stepping on it opens the studio.
- * - The Level Road down the middle: a lit runway whose chevrons point up the
- *   levels, lined with a pedestal per reward. Each pedestal shows its reward
- *   as a small hologram in a glass case: lit once unlocked, a dark silhouette
- *   while locked, and the next unlock under a pulsing gold beam. A click on a
- *   pedestal opens that reward on the reward road.
- * - The level guide at the road's start: a free-standing screen, the same on
- *   both faces, listing how XP is earned.
+ * - The rank wall on the north wall: a walnut-framed shadow box holding all
+ *   24 rank insignia on navy velvet, in two rows like a service chart —
+ *   enlisted and NCO ranks above, officers and generals below. Ranks the
+ *   person holds or held are struck in gold and silver, the current one is
+ *   framed in brass, the ones ahead are pewter silhouettes. A brass plaque
+ *   below reads the person's rank, level, XP and next promotion.
+ * - The studio dais in front of it: a round walnut platform with a brass
+ *   ring and star inlay. Stepping on it opens the studio.
+ * - Display cases along the runner, one per uniform piece, lowest unlock at
+ *   the south end: a mannequin in the uniform (wearing the person's own rank
+ *   insignia), a cap on a velvet head form, or ribbons and medals on a slanted
+ *   velvet board — exactly the pieces the figure wears. An unlocked case is
+ *   lit; a locked one stays dim behind smoked glass. A brass plaque on each
+ *   names the piece and the rank that brings it. A click opens it on the
+ *   promotion road.
+ * - The service guide at the runner's start: a framed, double-sided board
+ *   listing how XP is earned.
  *
  * Same rules as OfficeProps: every piece is built in local space centred on
- * the origin, front facing +z, inside its `FURNITURE_SIZE` box; the light
- * shaft and the lamps over the stage live in `LevelHallFittings`. The world
- * keeps one palette in light and dark mode (office-map.md §2).
+ * the origin, front facing +z, inside its `FURNITURE_SIZE` box; the lights
+ * over the dais live in `LevelHallFittings`. The world keeps one palette in
+ * light and dark mode (office-map.md §2).
  */
 import { memo, useEffect, useMemo, useRef } from "react";
-import { useFrame, type ThreeEvent } from "@react-three/fiber";
+import { type ThreeEvent } from "@react-three/fiber";
 import {
-  AdditiveBlending, CanvasTexture, ConeGeometry, CylinderGeometry, DoubleSide, MeshBasicMaterial, MeshStandardMaterial,
-  RepeatWrapping, SphereGeometry, SRGBColorSpace, TorusGeometry, type Group, type Mesh, type Texture,
+  CanvasTexture, CylinderGeometry, DoubleSide, MeshStandardMaterial, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace, Vector2,
+  type Texture,
 } from "three";
 import { useT } from "@/i18n";
 import { Box, matte, Rounded } from "./OfficeFurniture";
 import { cachedCanvasTexture, redrawWhenFontsLoad } from "./canvasMaterials";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
-import { levelFraction, nextUnlock, rewardRoad } from "../progression/cosmetics";
-import { EFFECT_COLOURS, FRAME_STYLE, slotOf, type RewardId } from "../progression/levelCatalog";
-import { useFrameStyle } from "../progression/LevelHud";
+import { ToyFigure } from "./ToyFigure";
+import { TOY, toyLookFor, type ToyLook } from "./toyFigureModel";
+import { equippedFor, levelFraction, rewardRoad } from "../progression/cosmetics";
+import { RANK_INFO, rankAt, slotOf, TITLE_IDS, type RankId, type RewardId } from "../progression/levelCatalog";
 import { PERSON_SUBJECT, type XpRuleRow } from "../progression/progressionApi";
 import { useProgression } from "../progression/progressionStore";
-import { glowTexture } from "../progression/effects/flairTextures";
+import { insigniaHeight, RankInsignia3D } from "../progression/regalia/insignia3d";
+import { Aiguillette, BreastDecoration } from "../progression/regalia/decorations3d";
+import { dressedLook, regaliaFor, type UniformId } from "../progression/regalia/dress";
+import { Headwear, type HeadwearId } from "../progression/regalia/headwear3d";
 
-type Vec3 = [number, number, number];
 type Ctx = CanvasRenderingContext2D;
 
 // ---------------------------------------------------------------------------
-// Materials: midnight stone, brass, cream marble and light.
+// Materials: walnut, brass, navy velvet, glass.
 // ---------------------------------------------------------------------------
 
 const C = {
-  midnight: "#141b36",
-  navy: "#1d2b52",
-  ink: "#0d1228",
-  brass: "#d9b25c",
-  gold: "#ffd76e",
-  marble: "#efe8da",
-  marbleVein: "#d8cfbf",
-  cyan: "#8fe3ff",
-  locked: "#3a4570",
+  walnut: "#4a2f1f",
+  walnutDark: "#2c1b12",
+  brass: "#c9a24a",
+  velvet: "#1a2240",
+  ink: "#141a2e",
+  cream: "#efe8d8",
 } as const;
 
 const HM = {
-  midnight: matte(C.midnight, { roughness: 0.35, metalness: 0.25 }),
-  navy: matte(C.navy, { roughness: 0.5 }),
-  ink: matte(C.ink, { roughness: 0.3, metalness: 0.3 }),
-  brass: matte(C.brass, { roughness: 0.28, metalness: 0.75 }),
-  marble: matte(C.marble, { roughness: 0.32 }),
-  marbleVein: matte(C.marbleVein, { roughness: 0.4 }),
-  // Light strips and rings: lit from within, so they read as light in any scene lighting.
-  gold: new MeshStandardMaterial({ color: C.gold, emissive: C.gold, emissiveIntensity: 1.5, toneMapped: false }),
-  cyan: new MeshStandardMaterial({ color: C.cyan, emissive: C.cyan, emissiveIntensity: 1.3, toneMapped: false }),
-  glass: new MeshStandardMaterial({ color: "#d6ecff", transparent: true, opacity: 0.16, roughness: 0.04, depthWrite: false, side: DoubleSide }),
-  locked: new MeshStandardMaterial({ color: C.locked, roughness: 0.6, transparent: true, opacity: 0.75 }),
-};
-
-const GEO = {
-  disc: new CylinderGeometry(1, 1, 1, 48),
-  hex: new CylinderGeometry(1, 1, 1, 6),
-  ring: new TorusGeometry(1, 0.016, 8, 64),
-  ball: new SphereGeometry(1, 14, 10),
-  cone: new ConeGeometry(1, 1, 5),
-  rotor: new CylinderGeometry(1, 1, 1, 12),
-  shaft: new CylinderGeometry(0.55, 1.6, 2.9, 32, 1, true),
-  beam: new CylinderGeometry(0.2, 0.26, 1.5, 20, 1, true),
+  walnut: matte(C.walnut, { roughness: 0.45 }),
+  walnutDark: matte(C.walnutDark, { roughness: 0.4 }),
+  brass: matte(C.brass, { roughness: 0.3, metalness: 0.7 }),
+  velvet: matte(C.velvet, { roughness: 1 }),
+  cream: matte(C.cream, { roughness: 0.5 }),
+  ink: matte(C.ink, { roughness: 0.5 }),
+  glass: new MeshStandardMaterial({ color: "#e4f0ff", transparent: true, opacity: 0.12, roughness: 0.05, metalness: 0.1, depthWrite: false, side: DoubleSide }),
+  /** A locked case: smoked glass. */
+  smoked: new MeshStandardMaterial({ color: "#20242e", transparent: true, opacity: 0.42, roughness: 0.1, depthWrite: false, side: DoubleSide }),
+  /** The light panel inside the top of a lit case. */
+  caseLight: new MeshStandardMaterial({ color: "#fff4dc", emissive: "#fff1d0", emissiveIntensity: 1.6, toneMapped: false }),
+  caseDark: matte("#191b22", { roughness: 0.8 }),
 };
 
 const FONT = '"Inter Variable", "Inter", system-ui, sans-serif';
-
-/** Lit material per colour, shared by every hologram. */
-const litCache = new Map<string, MeshStandardMaterial>();
-function lit(colour: string): MeshStandardMaterial {
-  let material = litCache.get(colour);
-  if (!material) {
-    material = new MeshStandardMaterial({ color: colour, emissive: colour, emissiveIntensity: 0.9, roughness: 0.3, metalness: 0.2, toneMapped: false });
-    litCache.set(colour, material);
-  }
-  return material;
-}
+const SERIF = 'Georgia, "Times New Roman", serif';
 
 // ---------------------------------------------------------------------------
-// Live canvas faces
+// Canvas faces
 // ---------------------------------------------------------------------------
 
 /**
@@ -125,7 +113,7 @@ function useLiveTexture(w: number, h: number, signature: string, draw: (ctx: Ctx
     try {
       ctx = canvas?.getContext("2d") ?? null;
     } catch {
-      // jsdom without the canvas package throws "not implemented": the screen keeps its dark glass, which is honest.
+      // jsdom without the canvas package throws "not implemented": the plaque keeps its plain face, which is honest.
       ctx = null;
     }
     if (!ctx || !texture) return;
@@ -148,379 +136,277 @@ function fitText(ctx: Ctx, text: string, maxWidth: number): string {
   return `${cut}…`;
 }
 
-function hexPath(ctx: Ctx, cx: number, cy: number, r: number): void {
-  ctx.beginPath();
-  for (let i = 0; i < 6; i += 1) {
-    const a = Math.PI / 6 + (i * Math.PI) / 3;
-    const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-}
-
-/** The screen's dark glass: a deep gradient, a faint grid and a soft vignette. */
-function screenGround(ctx: Ctx, w: number, h: number): void {
-  const bg = ctx.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, "#1b2552");
-  bg.addColorStop(1, "#0b1030");
-  ctx.fillStyle = bg;
+/** Polished brass: a vertical sheen, a bevelled edge and engraved (dark, inset) text. */
+function brassGround(ctx: Ctx, w: number, h: number): void {
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, "#e6c97f");
+  g.addColorStop(0.45, "#c9a24a");
+  g.addColorStop(1, "#9c7a2e");
+  ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
-  ctx.strokeStyle = "rgba(143,227,255,0.06)";
-  ctx.lineWidth = 1;
-  for (let x = 0; x < w; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-  for (let y = 0; y < h; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-  const glow = ctx.createRadialGradient(w * 0.3, h * 0.45, 10, w * 0.3, h * 0.45, w * 0.6);
-  glow.addColorStop(0, "rgba(255,215,110,0.16)");
-  glow.addColorStop(1, "rgba(255,215,110,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "rgba(60,40,8,0.55)";
+  ctx.lineWidth = Math.max(2, h * 0.04);
+  ctx.strokeRect(ctx.lineWidth, ctx.lineWidth, w - ctx.lineWidth * 2, h - ctx.lineWidth * 2);
 }
 
-interface WallLines {
-  level: number;
-  levelWord: string;
-  title: string;
-  xp: string;
-  toNext: string;
-  nextLabel: string;
-  nextName: string;
-  nextAt: string;
-  nextColours: [string, string];
-  hall: string;
+function engrave(ctx: Ctx, text: string, x: number, y: number): void {
+  ctx.fillStyle = "rgba(255,240,200,0.45)";
+  ctx.fillText(text, x, y + 1.5);
+  ctx.fillStyle = "#3a2a0c";
+  ctx.fillText(text, x, y);
 }
 
-function drawWall(ctx: Ctx, w: number, h: number, lines: WallLines, fraction: number, frame: { ring: string; fill: string; ink: string }): void {
-  screenGround(ctx, w, h);
-  ctx.textBaseline = "middle";
-  // The hall's name across the top.
-  ctx.fillStyle = "rgba(255,215,110,0.85)";
-  ctx.font = `700 34px ${FONT}`;
-  ctx.textAlign = "center";
-  ctx.fillText(fitText(ctx, lines.hall.toUpperCase(), w - 120), w / 2, 52);
-  ctx.textAlign = "left";
-  // The level badge: a hexagon in the person's frame colours.
-  const bx = 250, by = 330, br = 170;
-  ctx.save();
-  ctx.shadowColor = frame.ring;
-  ctx.shadowBlur = 40;
-  hexPath(ctx, bx, by, br);
-  ctx.fillStyle = frame.fill;
-  ctx.fill();
-  ctx.restore();
-  hexPath(ctx, bx, by, br);
-  ctx.lineWidth = 14;
-  ctx.strokeStyle = frame.ring;
-  ctx.stroke();
-  ctx.fillStyle = frame.ink;
-  ctx.textAlign = "center";
-  ctx.font = `600 34px ${FONT}`;
-  ctx.fillText(lines.levelWord.toUpperCase(), bx, by - 78);
-  ctx.font = `800 150px ${FONT}`;
-  ctx.fillText(String(lines.level), bx, by + 22);
-  ctx.textAlign = "left";
-  // Title, XP bar and what is missing.
-  const x0 = 480, barW = 600;
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `800 76px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.title, w - x0 - 60), x0, 230);
-  const barY = 318, barH = 34;
-  ctx.fillStyle = "rgba(255,255,255,0.12)";
-  ctx.beginPath(); ctx.roundRect(x0, barY, barW, barH, barH / 2); ctx.fill();
-  const grad = ctx.createLinearGradient(x0, 0, x0 + barW, 0);
-  grad.addColorStop(0, "#ffb347");
-  grad.addColorStop(1, "#ffe08a");
-  ctx.fillStyle = grad;
-  ctx.beginPath(); ctx.roundRect(x0, barY, Math.max(barH, barW * fraction), barH, barH / 2); ctx.fill();
-  ctx.fillStyle = "#ffe9b0";
-  ctx.font = `700 38px ${FONT}`;
-  ctx.fillText(lines.xp, x0 + barW + 30, barY + barH / 2);
-  ctx.fillStyle = "rgba(255,255,255,0.78)";
-  ctx.font = `500 36px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.toNext, w - x0 - 60), x0, 400);
-  // The next reward.
-  const cardY = 460, cardH = 120, cardW = w - x0 - 60;
-  ctx.fillStyle = "rgba(255,255,255,0.07)";
-  ctx.beginPath(); ctx.roundRect(x0, cardY, cardW, cardH, 22); ctx.fill();
-  ctx.strokeStyle = "rgba(255,215,110,0.45)";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  const tile = ctx.createLinearGradient(x0 + 24, cardY + 20, x0 + 104, cardY + 100);
-  tile.addColorStop(0, lines.nextColours[0]);
-  tile.addColorStop(1, lines.nextColours[1]);
-  ctx.fillStyle = tile;
-  ctx.beginPath(); ctx.roundRect(x0 + 24, cardY + 20, 80, 80, 18); ctx.fill();
-  ctx.fillStyle = "rgba(255,215,110,0.95)";
-  ctx.font = `700 28px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.nextLabel.toUpperCase(), cardW - 160), x0 + 130, cardY + 38);
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `700 40px ${FONT}`;
-  const name = fitText(ctx, lines.nextName, cardW - 160 - (lines.nextAt ? 220 : 0));
-  ctx.fillText(name, x0 + 130, cardY + 82);
-  if (lines.nextAt) {
-    ctx.textAlign = "right";
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.font = `600 32px ${FONT}`;
-    ctx.fillText(lines.nextAt, x0 + cardW - 28, cardY + 82);
-    ctx.textAlign = "left";
-  }
-}
+const plateCache = new Map<string, MeshStandardMaterial>();
 
-/** A reward's two tile colours: its frame ring and fill, or its effect's first and last colour. */
-export function rewardColours(reward: RewardId): [string, string] {
-  if (slotOf(reward) === "frame") {
-    const style = FRAME_STYLE[reward as keyof typeof FRAME_STYLE];
-    return [style.ring, style.fill];
-  }
-  const colours = EFFECT_COLOURS[reward as keyof typeof EFFECT_COLOURS];
-  return [colours[0], colours[colours.length - 1]];
-}
-
-// ---------------------------------------------------------------------------
-// The Level Wall
-// ---------------------------------------------------------------------------
-
-const WALL = { w: FURNITURE_SIZE.levelWall.w, h: FURNITURE_SIZE.levelWall.h, d: FURNITURE_SIZE.levelWall.d, screenW: 5.0, screenH: 2.08, screenY: 1.72 };
-
-function LevelWall() {
-  const t = useT();
-  const person = useProgression((s) => s.subjects[PERSON_SUBJECT]);
-  const rewards = useProgression((s) => s.snapshot?.rewards);
-  const level = person?.level ?? 1;
-  const frame = useFrameStyle("person", level);
-  const fraction = levelFraction(person);
-  const next = rewards ? nextUnlock(rewards, "person", level) : undefined;
-  const lines: WallLines = {
-    level,
-    levelWord: t("society.level.level_n").replace("{0}", "").trim(),
-    title: t(`society.level.title.${person?.title || "newcomer"}`),
-    xp: person && person.xpForNext > 0 ? t("society.level.xp_of").replace("{0}", String(person.xpIntoLevel)).replace("{1}", String(person.xpForNext)) : "",
-    toNext: person && person.xpForNext <= 0 ? t("society.level.max")
-      : t("society.level.to_next").replace("{0}", String(person ? person.xpForNext - person.xpIntoLevel : 40)).replace("{1}", String(level + 1)),
-    nextLabel: t("society.hall.next_reward"),
-    nextName: next ? t(`society.level.reward.${next.rewardId}`) : t("society.hall.all_unlocked"),
-    nextAt: next ? t("society.level.locked_at").replace("{0}", String(next.levels.person)) : "",
-    nextColours: next ? rewardColours(next.rewardId) : [C.gold, C.brass],
-    hall: t("society.office.room_levels"),
-  };
-  const signature = JSON.stringify([lines, Math.round(fraction * 200), frame]);
-  const face = useLiveTexture(1536, 640, signature, (ctx, w, h) => drawWall(ctx, w, h, lines, fraction, frame));
-  return (
-    <group>
-      {/* Backing panel with a brass frame round the screen. */}
-      <Box size={[WALL.w, WALL.h, 0.2]} position={[0, WALL.h / 2, -WALL.d / 2 + 0.1]} material={HM.midnight} />
-      <Box size={[WALL.screenW + 0.24, WALL.screenH + 0.24, 0.06]} position={[0, WALL.screenY, 0.03]} material={HM.brass} />
-      <mesh position={[0, WALL.screenY, 0.065]}>
-        <planeGeometry args={[WALL.screenW, WALL.screenH]} />
-        {face
-          ? <meshStandardMaterial map={face} emissiveMap={face} emissive="#ffffff" emissiveIntensity={0.85} roughness={0.4} />
-          : <meshStandardMaterial color={C.ink} roughness={0.3} />}
-      </mesh>
-      {/* Two lit brass pillars either side, a gold strip along the top and the bottom. */}
-      {[-1, 1].map((side) => (
-        <group key={side} position={[side * (WALL.w / 2 - 0.3), 0, 0]}>
-          <Box size={[0.4, WALL.h, 0.3]} position={[0, WALL.h / 2, -0.02]} material={HM.navy} />
-          <Box size={[0.07, WALL.h - 0.4, 0.04]} position={[0, WALL.h / 2, 0.14]} material={HM.gold} cast={false} />
-          <Box size={[0.46, 0.08, 0.34]} position={[0, WALL.h - 0.04, -0.02]} material={HM.brass} />
-          <Box size={[0.46, 0.12, 0.34]} position={[0, 0.06, -0.02]} material={HM.brass} />
-        </group>
-      ))}
-      <Box size={[WALL.screenW, 0.04, 0.04]} position={[0, WALL.screenY + WALL.screenH / 2 + 0.22, 0.05]} material={HM.gold} cast={false} />
-      <Box size={[WALL.screenW, 0.04, 0.04]} position={[0, WALL.screenY - WALL.screenH / 2 - 0.22, 0.05]} material={HM.gold} cast={false} />
-    </group>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// The Upgrade Studio's stage
-// ---------------------------------------------------------------------------
-
-const STAGE_R = FURNITURE_SIZE.studioStage.w / 2 - 0.04;
-
-/** The stage disc; the Upgrade Studio's preview stands its figure on the same one. */
-export function StudioStage() {
-  const marks = useRef<Group>(null);
-  useFrame((_, dt) => { if (marks.current) marks.current.rotation.y += Math.min(dt, 0.1) * 0.22; });
-  const glow = useMemo(() => new MeshBasicMaterial({
-    map: glowTexture(), color: C.gold, transparent: true, opacity: 0.35, blending: AdditiveBlending, depthWrite: false,
-  }), []);
-  useEffect(() => () => glow.dispose(), [glow]);
-  return (
-    <group>
-      {/* Flat on purpose: figures stand at y 0 and auras glow at 0.018 m, so nothing here rises above ~0.015 m. */}
-      <mesh geometry={GEO.disc} material={HM.midnight} position={[0, 0.004, 0]} scale={[STAGE_R, 0.008, STAGE_R]} receiveShadow />
-      <mesh geometry={GEO.disc} material={HM.brass} position={[0, 0.009, 0]} scale={[STAGE_R * 0.98, 0.002, STAGE_R * 0.98]} />
-      <mesh geometry={GEO.disc} material={HM.navy} position={[0, 0.011, 0]} scale={[STAGE_R * 0.9, 0.002, STAGE_R * 0.9]} receiveShadow />
-      <mesh geometry={GEO.ring} material={HM.gold} position={[0, 0.013, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[STAGE_R * 0.95, STAGE_R * 0.95, 0.5]} />
-      <mesh geometry={GEO.ring} material={HM.brass} position={[0, 0.012, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[STAGE_R * 0.55, STAGE_R * 0.55, 0.4]} />
-      <mesh material={glow} position={[0, 0.014, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[STAGE_R * 0.75, 40]} />
-      </mesh>
-      <group ref={marks} position={[0, 0.013, 0]}>
-        {Array.from({ length: 16 }, (_, i) => {
-          const a = (i / 16) * Math.PI * 2, r = STAGE_R * 0.74;
-          return <Box key={i} size={[0.14, 0.008, 0.035]} position={[Math.cos(a) * r, 0, Math.sin(a) * r]} material={i % 4 === 0 ? HM.gold : HM.cyan} cast={false} />;
-        })}
-      </group>
-    </group>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Reward pedestals and their holograms
-// ---------------------------------------------------------------------------
-
-/** A reward as a small model, about 0.36 m across: lit in its own colours, or a dark silhouette while locked. */
-function RewardMini({ reward, open }: { reward: RewardId; open: boolean }) {
-  const slot = slotOf(reward);
-  const [a, b] = rewardColours(reward);
-  const effect = slot === "frame" ? [a, b] : EFFECT_COLOURS[reward as keyof typeof EFFECT_COLOURS];
-  const m = (colour: string) => (open ? lit(colour) : HM.locked);
-  if (slot === "frame") {
-    return (
-      <group rotation={[Math.PI / 2, 0, 0]}>
-        <mesh geometry={GEO.hex} material={m(a)} scale={[0.17, 0.05, 0.17]} />
-        <mesh geometry={GEO.hex} material={m(b)} position={[0, 0.03, 0]} scale={[0.12, 0.02, 0.12]} />
-        <mesh geometry={GEO.hex} material={m(b)} position={[0, -0.03, 0]} scale={[0.12, 0.02, 0.12]} />
-      </group>
-    );
-  }
-  if (slot === "trail") {
-    // A rising spiral of beads, each in the trail's colours.
-    return (
-      <group>
-        {Array.from({ length: 7 }, (_, i) => {
-          const angle = i * 0.95, r = 0.05 + i * 0.018;
-          return <mesh key={i} geometry={GEO.ball} material={m(effect[i % effect.length])}
-            position={[Math.cos(angle) * r, -0.15 + i * 0.05, Math.sin(angle) * r]} scale={0.022 + i * 0.006} />;
-        })}
-      </group>
-    );
-  }
-  if (slot === "aura") {
-    return (
-      <group position={[0, -0.1, 0]}>
-        <mesh geometry={GEO.ring} material={m(effect[0])} rotation={[Math.PI / 2, 0, 0]} scale={[0.17, 0.17, 2.4]} />
-        <mesh geometry={GEO.ring} material={m(effect[effect.length - 1])} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.03, 0]} scale={[0.11, 0.11, 2]} />
-        <mesh geometry={GEO.disc} material={m(effect[0])} scale={[0.07, 0.012, 0.07]} />
-      </group>
-    );
-  }
-  if (reward === "gadget_halo") {
-    return <mesh geometry={GEO.ring} material={m(effect[0])} rotation={[Math.PI / 2.4, 0, 0]} scale={[0.14, 0.14, 3]} />;
-  }
-  if (reward === "gadget_crown") {
-    return (
-      <group position={[0, -0.06, 0]}>
-        <mesh geometry={GEO.disc} material={m(effect[0])} position={[0, 0.04, 0]} scale={[0.13, 0.08, 0.13]} />
-        {[0, 1, 2, 3, 4].map((i) => {
-          const ang = (i / 5) * Math.PI * 2;
-          return <mesh key={i} geometry={GEO.cone} material={m(effect[0])} position={[Math.sin(ang) * 0.11, 0.12, Math.cos(ang) * 0.11]} scale={[0.028, 0.08, 0.028]} />;
-        })}
-        <mesh geometry={GEO.ball} material={m(effect[1] ?? effect[0])} position={[0, 0.05, 0.13]} scale={0.022} />
-      </group>
-    );
-  }
-  if (reward === "gadget_wings") {
-    // Two fans of long feathers.
-    return (
-      <group>
-        {[-1, 1].map((side) => (
-          <group key={side} scale={[side, 1, 1]}>
-            {[0, 1, 2, 3].map((i) => (
-              <mesh key={i} geometry={GEO.ball} material={m(i % 2 === 0 ? effect[0] : effect[1] ?? effect[0])}
-                position={[0.06 + i * 0.035, 0.02 + i * 0.02, 0]} rotation={[0, 0, -0.5 + i * 0.35]} scale={[0.11, 0.022, 0.012]} />
-            ))}
-          </group>
-        ))}
-      </group>
-    );
-  }
-  // The helper drone: a body, four rotors and a lens.
-  return (
-    <group>
-      <mesh geometry={GEO.disc} material={m(effect[0])} scale={[0.07, 0.035, 0.07]} />
-      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => (
-        <group key={`${sx}${sz}`} position={[sx * 0.09, 0.02, sz * 0.09]}>
-          <Box size={[0.012, 0.012, 0.012]} position={[-sx * 0.04, 0, -sz * 0.04]} material={m(effect[0])} cast={false} />
-          <mesh geometry={GEO.rotor} material={m(effect[1] ?? effect[0])} scale={[0.04, 0.006, 0.04]} />
-        </group>
-      ))}
-      <mesh geometry={GEO.ball} material={m(effect[1] ?? effect[0])} position={[0, -0.02, 0.06]} scale={0.016} />
-    </group>
-  );
-}
-
-const PEDESTAL = { holoY: 1.32, caseY: 1.31, caseH: 0.62, caseW: 0.56 };
-
-/** The level plate on a pedestal's front: the unlock level, the reward's name, a padlock while locked. */
-function plateMaterial(at: number, name: string, open: boolean, next: boolean, levelWord: string): MeshStandardMaterial {
-  const key = `level-plate:${at}:${name}:${open}:${next}:${levelWord}`;
-  const draw = (ctx: Ctx, w: number, h: number) => {
-    ctx.fillStyle = open ? "#1d2b52" : "#151b33";
-    ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = next ? C.gold : open ? C.brass : "#4a5480";
-    ctx.lineWidth = 8;
-    ctx.strokeRect(4, 4, w - 8, h - 8);
+/** A brass plaque material with up to two engraved lines, cached by its text. */
+function plaqueMaterial(lines: readonly string[], w = 512, h = 128): MeshStandardMaterial {
+  const key = `hall-plaque:${w}x${h}:${lines.join("|")}`;
+  const draw = (ctx: Ctx, cw: number, ch: number) => {
+    brassGround(ctx, cw, ch);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillStyle = next ? C.gold : open ? "#ffe9b0" : "#9aa3c7";
-    ctx.font = `800 54px ${FONT}`;
-    ctx.fillText(`${levelWord} ${at}`.trim(), w / 2, 56);
-    ctx.fillStyle = open ? "#ffffff" : "#aab2d4";
-    ctx.font = `600 30px ${FONT}`;
-    ctx.fillText(fitText(ctx, name, w - 40), w / 2, 120);
-    if (!open) {
-      // A small padlock in the corner.
-      ctx.strokeStyle = "#9aa3c7";
-      ctx.lineWidth = 5;
-      ctx.beginPath(); ctx.arc(w - 40, 34, 11, Math.PI, 0); ctx.stroke();
-      ctx.fillStyle = "#9aa3c7";
-      ctx.fillRect(w - 56, 34, 32, 24);
+    if (lines.length === 1) {
+      ctx.font = `700 ${Math.round(ch * 0.42)}px ${SERIF}`;
+      engrave(ctx, fitText(ctx, lines[0], cw - 40), cw / 2, ch / 2);
+    } else {
+      ctx.font = `700 ${Math.round(ch * 0.3)}px ${SERIF}`;
+      engrave(ctx, fitText(ctx, lines[0], cw - 36), cw / 2, ch * 0.36);
+      ctx.font = `600 ${Math.round(ch * 0.2)}px ${FONT}`;
+      engrave(ctx, fitText(ctx, lines[1], cw - 36), cw / 2, ch * 0.72);
     }
   };
-  const map = cachedCanvasTexture(key, 384, 168, draw);
-  redrawWhenFontsLoad(key, map, [`800 54px ${FONT}`, `600 30px ${FONT}`], draw);
   let material = plateCache.get(key);
   if (!material) {
-    material = new MeshStandardMaterial({ color: map ? "#ffffff" : "#1d2b52", map, emissive: "#ffffff", emissiveMap: map, emissiveIntensity: map ? 0.55 : 0, roughness: 0.5 });
+    const map = cachedCanvasTexture(key, w, h, draw);
+    redrawWhenFontsLoad(key, map, [`700 40px ${FONT}`], draw);
+    material = new MeshStandardMaterial({ color: map ? "#ffffff" : C.brass, map, roughness: 0.35, metalness: 0.45 });
     plateCache.set(key, material);
   }
   return material;
 }
-const plateCache = new Map<string, MeshStandardMaterial>();
 
-function RewardPedestal({ item }: { item: Furniture }) {
+// ---------------------------------------------------------------------------
+// The rank wall
+// ---------------------------------------------------------------------------
+
+const WALL = { w: FURNITURE_SIZE.levelWall.w, h: FURNITURE_SIZE.levelWall.h, d: FURNITURE_SIZE.levelWall.d };
+/** The velvet field inside the frame, and the two rows of ranks in it. */
+const FIELD = { w: 6.0, h: 1.72, y: 1.83 };
+const ROWS: readonly (readonly RankId[])[] = [TITLE_IDS.slice(0, 13), TITLE_IDS.slice(13)];
+const CELL = FIELD.w / 13;
+
+function RankCell({ rank, reached, current, x, y, levelAt }: { rank: RankId; reached: boolean; current: boolean; x: number; y: number; levelAt: number }) {
+  const t = useT();
+  // As wide as the cell allows, unless that would make a tall chevron set overrun the row.
+  const fitW = CELL * 0.64, maxH = 0.36;
+  const width = Math.min(fitW, (fitW * maxH) / insigniaHeight(rank, fitW));
+  const label = plaqueMaterial([t(`society.level.title.${rank}`), `${RANK_INFO[rank].grade} · ${t("society.level.lv").replace("{0}", String(levelAt))}`], 320, 112);
+  return (
+    <group position={[x, y, 0]}>
+      {current && (
+        <group>
+          <Box size={[CELL - 0.03, 0.8, 0.012]} position={[0, -0.02, 0.006]} material={HM.brass} cast={false} />
+          <Box size={[CELL - 0.07, 0.76, 0.014]} position={[0, -0.02, 0.008]} material={HM.velvet} cast={false} />
+        </group>
+      )}
+      <group position={[0, 0.12, 0.02]}>
+        {rank === "private"
+          ? <mesh material={reached ? HM.brass : HM.ink}><torusGeometry args={[0.07, 0.006, 6, 32]} /></mesh>
+          : <RankInsignia3D rank={rank} width={width} muted={!reached} />}
+      </group>
+      <mesh material={label} position={[0, -0.27, 0.018]}>
+        <planeGeometry args={[CELL - 0.06, (CELL - 0.06) * (112 / 320)]} />
+      </mesh>
+    </group>
+  );
+}
+
+interface StatusLines { hall: string; rank: string; grade: string; level: string; xp: string; next: string }
+
+function drawStatus(ctx: Ctx, w: number, h: number, lines: StatusLines, fraction: number): void {
+  brassGround(ctx, w, h);
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.font = `700 ${Math.round(h * 0.2)}px ${SERIF}`;
+  engrave(ctx, fitText(ctx, lines.rank, w * 0.5), 40, h * 0.32);
+  ctx.font = `600 ${Math.round(h * 0.12)}px ${FONT}`;
+  engrave(ctx, fitText(ctx, `${lines.grade}  ·  ${lines.level}`, w * 0.5), 40, h * 0.62);
+  // The XP bar: an engraved channel filled with dark enamel.
+  const bx = w * 0.56, bw = w * 0.4, by = h * 0.26, bh = h * 0.13;
+  ctx.fillStyle = "rgba(60,40,8,0.35)";
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.fillStyle = "#1a2240";
+  ctx.fillRect(bx + 3, by + 3, Math.max(0, (bw - 6) * fraction), bh - 6);
+  ctx.textAlign = "right";
+  ctx.font = `600 ${Math.round(h * 0.12)}px ${FONT}`;
+  engrave(ctx, fitText(ctx, lines.xp, bw), bx + bw, h * 0.56);
+  engrave(ctx, fitText(ctx, lines.next, bw), bx + bw, h * 0.78);
+}
+
+function RankWall() {
+  const t = useT();
+  const person = useProgression((s) => s.subjects[PERSON_SUBJECT]);
+  const bands = useProgression((s) => s.snapshot?.titles.person);
+  const level = person?.level ?? 1;
+  const held = rankAt(bands, level);
+  const heldIndex = TITLE_IDS.indexOf(held);
+  const startOf = (rank: RankId) => bands?.find((b) => b.title === rank)?.level ?? 1;
+  const next = bands?.find((band) => band.level > level);
+  const fraction = levelFraction(person);
+  const lines: StatusLines = {
+    hall: t("society.office.room_levels"),
+    rank: t(`society.level.title.${held}`),
+    grade: RANK_INFO[held].grade,
+    level: t("society.level.level_n").replace("{0}", String(level)),
+    xp: person && person.xpForNext > 0
+      ? t("society.level.xp_of").replace("{0}", String(person.xpIntoLevel)).replace("{1}", String(person.xpForNext)) : t("society.level.max"),
+    next: next ? t("society.level.next_promotion").replace("{0}", t(`society.level.title.${next.title}`)).replace("{1}", String(next.level))
+      : t("society.hall.top_title"),
+  };
+  const status = useLiveTexture(1024, 220, JSON.stringify([lines, Math.round(fraction * 200)]), (ctx, w, h) => drawStatus(ctx, w, h, lines, fraction));
+  const header = plaqueMaterial([t("society.office.room_levels").toUpperCase()], 768, 112);
+  return (
+    <group>
+      {/* Walnut panelling, then the brass-framed velvet field. */}
+      <Box size={[WALL.w, WALL.h, 0.18]} position={[0, WALL.h / 2, -WALL.d / 2 + 0.09]} material={HM.walnut} />
+      <Box size={[WALL.w, 0.12, 0.24]} position={[0, WALL.h - 0.06, -WALL.d / 2 + 0.12]} material={HM.walnutDark} />
+      <Box size={[WALL.w, 0.16, 0.22]} position={[0, 0.08, -WALL.d / 2 + 0.11]} material={HM.walnutDark} />
+      <Box size={[FIELD.w + 0.16, FIELD.h + 0.16, 0.08]} position={[0, FIELD.y, 0.0]} material={HM.walnutDark} />
+      <Box size={[FIELD.w + 0.06, FIELD.h + 0.06, 0.084]} position={[0, FIELD.y, 0.002]} material={HM.brass} />
+      <Box size={[FIELD.w, FIELD.h, 0.088]} position={[0, FIELD.y, 0.004]} material={HM.velvet} />
+      <group position={[0, 0, 0.05]}>
+        {ROWS.map((row, r) => row.map((rank, i) => {
+          const index = TITLE_IDS.indexOf(rank);
+          const x = (i - (row.length - 1) / 2) * CELL;
+          const y = FIELD.y + (r === 0 ? 0.43 : -0.43);
+          return <RankCell key={rank} rank={rank} reached={index <= heldIndex} current={index === heldIndex} x={x} y={y} levelAt={startOf(rank)} />;
+        }))}
+      </group>
+      {/* The hall's name above, the person's record below. */}
+      <mesh material={header} position={[0, 2.88, 0.05]}>
+        <planeGeometry args={[2.2, 2.2 * (112 / 768)]} />
+      </mesh>
+      <Box size={[3.0, 0.62, 0.05]} position={[0, 0.56, -0.02]} material={HM.walnutDark} />
+      <mesh position={[0, 0.56, 0.008]}>
+        <planeGeometry args={[2.84, 2.84 * (220 / 1024)]} />
+        {status ? <meshStandardMaterial map={status} roughness={0.35} metalness={0.4} /> : <meshStandardMaterial color={C.brass} roughness={0.35} metalness={0.5} />}
+      </mesh>
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The studio dais
+// ---------------------------------------------------------------------------
+
+const STAGE_R = FURNITURE_SIZE.studioStage.w / 2 - 0.04;
+const GEO = { disc: new CylinderGeometry(1, 1, 1, 64) };
+
+/** The dais's inlaid star, its points `r` from the centre. */
+function starShape(r: number): Shape {
+  return new Shape(Array.from({ length: 10 }, (_, i) => {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const rr = i % 2 === 0 ? r : r * 0.4;
+    return new Vector2(Math.cos(a) * rr, Math.sin(a) * rr);
+  }));
+}
+
+const STAR = new ShapeGeometry(starShape(STAGE_R * 0.32));
+
+/** The studio dais; the studio's preview stands its figure on the same one. */
+export function StudioStage() {
+  return (
+    <group>
+      {/* Flat on purpose: figures stand at y 0, so nothing here rises above ~0.016 m. */}
+      <mesh geometry={GEO.disc} material={HM.walnutDark} position={[0, 0.005, 0]} scale={[STAGE_R, 0.01, STAGE_R]} receiveShadow />
+      <mesh geometry={GEO.disc} material={HM.brass} position={[0, 0.0105, 0]} scale={[STAGE_R * 0.97, 0.001, STAGE_R * 0.97]} />
+      <mesh geometry={GEO.disc} material={HM.walnut} position={[0, 0.0115, 0]} scale={[STAGE_R * 0.94, 0.002, STAGE_R * 0.94]} receiveShadow />
+      <mesh geometry={GEO.disc} material={HM.brass} position={[0, 0.0128, 0]} scale={[STAGE_R * 0.56, 0.001, STAGE_R * 0.56]} />
+      <mesh geometry={GEO.disc} material={HM.walnut} position={[0, 0.0136, 0]} scale={[STAGE_R * 0.54, 0.0012, STAGE_R * 0.54]} receiveShadow />
+      <mesh geometry={STAR} material={HM.brass} position={[0, 0.0146, 0]} rotation={[-Math.PI / 2, 0, 0]} />
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Display cases
+// ---------------------------------------------------------------------------
+
+const CASE = { w: 0.7, d: 0.7 };
+
+/** A neutral display mannequin: stone-grey, no hair, no face. */
+const MANNEQUIN: ToyLook = { ...toyLookFor(null, "hall-mannequin"), skin: "#cfc9bd", hairStyle: "bald", blush: false, eyewear: "none" };
+const STILL = { current: { mode: "idle" as const, speed: 0 } };
+
+/** What a case shows: the piece as the person would wear it at their own rank. */
+function CaseContent({ reward, rank, open }: { reward: RewardId; rank: RankId; open: boolean }) {
+  const slot = slotOf(reward);
+  if (slot === "uniform") {
+    const regalia = regaliaFor(rank, {});
+    return (
+      <group position={[0, 0.3, 0]}>
+        <ToyFigure look={dressedLook(MANNEQUIN, reward as UniformId, rank)} drive={STILL} paused heightM={1.2} regalia={regalia} mannequin />
+        {/* The mannequin's stand under its feet. */}
+        <mesh geometry={GEO.disc} material={HM.walnutDark} position={[0, -0.005, 0]} scale={[0.2, 0.01, 0.2]} />
+      </group>
+    );
+  }
+  if (slot === "headwear") {
+    const k = 0.55;
+    return (
+      <group position={[0, 0.98, 0]}>
+        {/* A velvet head form on a turned walnut neck. */}
+        <mesh material={HM.walnut} position={[0, 0.06, 0]}>
+          <cylinderGeometry args={[0.035, 0.06, 0.12, 20]} />
+        </mesh>
+        <group position={[0, 0.12 - (TOY.head.y - TOY.head.ry) * k, 0]} scale={k}>
+          <mesh material={HM.velvet} position={[0, TOY.head.y, 0]} scale={[TOY.head.rx, TOY.head.ry, TOY.head.rz]}>
+            <sphereGeometry args={[1, 32, 20]} />
+          </mesh>
+          <Headwear kind={reward as HeadwearId} rank={rank} />
+        </group>
+      </group>
+    );
+  }
+  // Decorations lie on a slanted velvet board, three times life size so they read through the glass.
+  const corded = reward === "decoration_aiguillette" || reward === "decoration_medals";
+  return (
+    <group position={[0, 1.2, -0.04]} rotation={[-0.38, 0, 0]}>
+      <Box size={[0.56, 0.42, 0.03]} position={[0, 0, -0.015]} material={HM.velvet} cast={false} />
+      <group scale={3} position={[0.02, 0.12, 0.002]}>
+        <group position={[0.02, 0, 0]}><BreastDecoration decoration={reward} /></group>
+        {corded && <group position={[-0.085, 0.02, 0]}><Aiguillette span={0.08} /></group>}
+      </group>
+      {!open && <Box size={[0.56, 0.42, 0.002]} position={[0, 0, 0.02]} material={HM.smoked} cast={false} />}
+    </group>
+  );
+}
+
+/** Heights of each case kind: the plinth's top and the glass above it. */
+function caseShape(reward: RewardId): { plinth: number; glass: number } {
+  const slot = slotOf(reward);
+  if (slot === "uniform") return { plinth: 0.28, glass: 1.42 };
+  return { plinth: 0.92, glass: 0.72 };
+}
+
+function DisplayCase({ item }: { item: Furniture }) {
   const t = useT();
   const index = Number(item.id.slice("level-pedestal-".length));
   const rewards = useProgression((s) => s.snapshot?.rewards);
   const level = useProgression((s) => s.subjects[PERSON_SUBJECT]?.level ?? 1);
+  const bands = useProgression((s) => s.snapshot?.titles.person);
+  const choices = useProgression((s) => s.choices.person);
   const road = useMemo(() => (rewards ? rewardRoad(rewards, "person") : []), [rewards]);
-  const reward = road[index];
-  const at = reward?.levels.person ?? 0;
-  const open = !!reward && level >= at;
-  const next = !!reward && !!rewards && nextUnlock(rewards, "person", level)?.rewardId === reward.rewardId;
-  const holo = useRef<Group>(null);
-  const beam = useRef<Mesh>(null);
-  useFrame((state, dt) => {
-    const step = Math.min(dt, 0.1);
-    if (holo.current) {
-      holo.current.rotation.y += step * (open ? 0.9 : 0.3);
-      holo.current.position.y = PEDESTAL.holoY + (open ? Math.sin(state.clock.elapsedTime * 1.6 + index) * 0.025 : 0);
-    }
-    if (beam.current) (beam.current.material as MeshBasicMaterial).opacity = 0.18 + 0.14 * Math.sin(state.clock.elapsedTime * 2.6);
-  });
-  const glow = useMemo(() => new MeshBasicMaterial({
-    map: glowTexture(), color: next ? C.gold : open && reward ? rewardColours(reward.rewardId)[0] : "#6b78b0",
-    transparent: true, opacity: open || next ? 0.55 : 0.2, blending: AdditiveBlending, depthWrite: false,
-  }), [next, open, reward]);
-  const beamMaterial = useMemo(() => new MeshBasicMaterial({
-    color: C.gold, transparent: true, opacity: 0.25, blending: AdditiveBlending, depthWrite: false, side: DoubleSide,
-  }), []);
-  useEffect(() => () => { glow.dispose(); beamMaterial.dispose(); }, [glow, beamMaterial]);
+  const row = road[index];
+  const reward = row?.rewardId;
+  const at = row?.levels.person ?? 0;
+  const open = !!row && level >= at;
+  const worn = !!row && !!rewards && equippedFor(rewards, "person", level, choices)[row.slot] === reward;
+  const rank = rankAt(bands, level);
   const onClick = (event: ThreeEvent<MouseEvent>) => {
     if (event.delta > 6 || !reward) return;
     event.stopPropagation();
-    useProgression.getState().openPanel("rewards", { subject: "person", reward: reward.rewardId });
+    useProgression.getState().openPanel("rewards", { subject: "person", reward });
   };
   const hover = (on: boolean) => (event: ThreeEvent<PointerEvent>) => {
     if (!reward) return;
@@ -528,120 +414,126 @@ function RewardPedestal({ item }: { item: Furniture }) {
     document.body.style.cursor = on ? "pointer" : "";
   };
   useEffect(() => () => { document.body.style.cursor = ""; }, []);
-  const name = reward ? t(`society.level.reward.${reward.rewardId}`) : "";
-  const levelWord = t("society.level.lv").replace("{0}", "").trim();
+  if (!reward) return null;
+  const { plinth, glass } = caseShape(reward);
+  const top = plinth + glass;
+  const state = worn ? t("society.hall.equipped") : open ? t("society.hall.unlocked")
+    : `${t(`society.level.title.${rankAt(bands, at)}`)} · ${t("society.level.lv").replace("{0}", String(at))}`;
+  const plaque = plaqueMaterial([t(`society.level.reward.${reward}`), state], 448, 128);
   return (
     <group onClick={onClick} onPointerOver={hover(true)} onPointerOut={hover(false)}>
-      {/* Plinth: a brass-banded cream marble column on a midnight base. */}
-      <Rounded size={[0.74, 0.12, 0.74]} radius={0.03} position={[0, 0.06, 0]} material={HM.midnight} />
-      <Rounded size={[0.56, 0.82, 0.56]} radius={0.04} position={[0, 0.53, 0]} material={HM.marble} />
-      <Box size={[0.585, 0.05, 0.585]} position={[0, 0.2, 0]} material={HM.brass} />
-      <Box size={[0.585, 0.05, 0.585]} position={[0, 0.86, 0]} material={HM.brass} />
-      <Rounded size={[0.68, 0.07, 0.68]} radius={0.02} position={[0, 0.975, 0]} material={HM.midnight} />
-      {reward && (
-        <mesh position={[0, 0.56, 0.282]} material={plateMaterial(at, name, open, next, levelWord)}>
-          <planeGeometry args={[0.46, 0.2]} />
-        </mesh>
-      )}
-      {/* The glass case, its brass cap and the light under the reward. */}
-      <mesh position={[0, PEDESTAL.caseY, 0]} material={HM.glass} renderOrder={2}>
-        <boxGeometry args={[PEDESTAL.caseW, PEDESTAL.caseH, PEDESTAL.caseW]} />
+      {/* The walnut plinth with a brass band, a black base and a moulded top. */}
+      <Rounded size={[CASE.w + 0.06, 0.08, CASE.d + 0.06]} radius={0.02} position={[0, 0.04, 0]} material={HM.walnutDark} />
+      <Box size={[CASE.w, plinth - 0.1, CASE.d]} position={[0, 0.08 + (plinth - 0.1) / 2, 0]} material={HM.walnut} />
+      <Box size={[CASE.w + 0.02, 0.025, CASE.d + 0.02]} position={[0, plinth - 0.03, 0]} material={HM.brass} />
+      <Box size={[CASE.w + 0.04, 0.03, CASE.d + 0.04]} position={[0, plinth - 0.005, 0]} material={HM.walnutDark} />
+      <mesh material={plaque} position={[0, plinth * 0.55, CASE.d / 2 + 0.002]}>
+        <planeGeometry args={[0.5, 0.5 * (128 / 448)]} />
       </mesh>
-      <Box size={[0.6, 0.04, 0.6]} position={[0, PEDESTAL.caseY + PEDESTAL.caseH / 2 + 0.02, 0]} material={HM.brass} />
-      <mesh material={glow} position={[0, 1.02, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={1}>
-        <circleGeometry args={[0.3, 24]} />
+      {/* The glass, its four brass posts and the lid with its light. */}
+      <mesh position={[0, plinth + glass / 2, 0]} material={open ? HM.glass : HM.smoked} renderOrder={2}>
+        <boxGeometry args={[CASE.w - 0.02, glass, CASE.d - 0.02]} />
       </mesh>
-      {reward && <group ref={holo} position={[0, PEDESTAL.holoY, 0]}><RewardMini reward={reward.rewardId} open={open} /></group>}
-      {next && <mesh ref={beam} geometry={GEO.beam} material={beamMaterial} position={[0, 1.02 + 0.75, 0]} renderOrder={3} />}
+      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => (
+        <Box key={`${sx}${sz}`} size={[0.018, glass, 0.018]} position={[sx * (CASE.w / 2 - 0.01), plinth + glass / 2, sz * (CASE.d / 2 - 0.01)]} material={HM.brass} cast={false} />
+      ))}
+      <Box size={[CASE.w + 0.02, 0.05, CASE.d + 0.02]} position={[0, top + 0.025, 0]} material={HM.walnutDark} />
+      <mesh material={open ? HM.caseLight : HM.caseDark} position={[0, top - 0.002, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[CASE.w * 0.6, CASE.d * 0.6]} />
+      </mesh>
+      <CaseContent reward={reward} rank={rank} open={open} />
     </group>
   );
 }
 
 // ---------------------------------------------------------------------------
-// The Level Road and the level guide
+// The runner and the service guide
 // ---------------------------------------------------------------------------
 
-function roadTexture(): Texture | null {
-  return cachedCanvasTexture("level-road", 256, 512, (ctx, w, h) => {
-    ctx.fillStyle = "#24336a";
+function runnerTexture(): Texture | null {
+  return cachedCanvasTexture("hall-runner", 256, 256, (ctx, w, h) => {
+    ctx.fillStyle = "#7a1d25";
     ctx.fillRect(0, 0, w, h);
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
-    ctx.fillRect(w * 0.1, 0, w * 0.8, h);
-    // Brass edges.
-    ctx.fillStyle = "#d9b25c";
-    ctx.fillRect(0, 0, 10, h);
-    ctx.fillRect(w - 10, 0, 10, h);
-    // Chevrons pointing up the levels (north).
-    ctx.strokeStyle = "rgba(255,215,110,0.75)";
-    ctx.lineWidth = 12;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (const y of [140, 380]) {
-      ctx.beginPath();
-      ctx.moveTo(w * 0.28, y + 50);
-      ctx.lineTo(w * 0.5, y);
-      ctx.lineTo(w * 0.72, y + 50);
-      ctx.stroke();
-    }
+    // A fine woven grain.
+    ctx.fillStyle = "rgba(0,0,0,0.08)";
+    for (let y = 0; y < h; y += 4) ctx.fillRect(0, y, w, 1);
+    ctx.fillStyle = "rgba(255,255,255,0.03)";
+    for (let x = 0; x < w; x += 6) ctx.fillRect(x, 0, 1, h);
+    // Gold borders with a thin inner line.
+    ctx.fillStyle = "#c9a24a";
+    ctx.fillRect(0, 0, 14, h);
+    ctx.fillRect(w - 14, 0, 14, h);
+    ctx.fillRect(22, 0, 3, h);
+    ctx.fillRect(w - 25, 0, 3, h);
   });
 }
 
-function LevelRoad({ w, d }: { w: number; d: number }) {
+function Runner({ w, d }: { w: number; d: number }) {
   const material = useMemo(() => {
-    const base = roadTexture();
+    const base = runnerTexture();
     const map = base ? base.clone() : null;
     if (map) {
       map.wrapS = RepeatWrapping;
       map.wrapT = RepeatWrapping;
-      map.repeat.set(1, Math.max(1, Math.round(d / 2.2)));
+      map.repeat.set(1, Math.max(1, Math.round(d / w)));
       map.needsUpdate = true;
     }
-    return new MeshStandardMaterial({
-      color: map ? "#ffffff" : "#24336a", map, emissive: "#ffffff", emissiveMap: map, emissiveIntensity: map ? 0.35 : 0, roughness: 0.35,
-    });
-  }, [d]);
+    return new MeshStandardMaterial({ color: map ? "#ffffff" : "#7a1d25", map, roughness: 0.95 });
+  }, [d, w]);
   useEffect(() => () => { material.map?.dispose(); material.dispose(); }, [material]);
   return (
     <mesh material={material} position={[0, 0.008, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[w, d]} />
+      <planeGeometry args={[w * 0.8, d]} />
     </mesh>
   );
 }
 
 interface GuideLines { title: string; subtitle: string; rows: { xp: string; text: string }[]; footer: string }
 
+/** The guide's face: cream card stock, a navy rule, rows set like a printed order of service. */
 function drawGuide(ctx: Ctx, w: number, h: number, lines: GuideLines): void {
-  screenGround(ctx, w, h);
+  ctx.fillStyle = "#f2ecdd";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#1a2240";
+  ctx.lineWidth = 6;
+  ctx.strokeRect(24, 24, w - 48, h - 48);
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(36, 36, w - 72, h - 72);
   ctx.textBaseline = "middle";
-  ctx.fillStyle = C.gold;
-  ctx.font = `800 64px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.title, w - 100), 56, 74);
-  ctx.fillStyle = "rgba(255,255,255,0.72)";
-  ctx.font = `500 32px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.subtitle, w - 100), 56, 128);
-  const rowH = 70;
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#1a2240";
+  ctx.font = `700 58px ${SERIF}`;
+  ctx.fillText(fitText(ctx, lines.title, w - 140), w / 2, 100);
+  ctx.fillStyle = "#5b5345";
+  ctx.font = `500 28px ${FONT}`;
+  ctx.fillText(fitText(ctx, lines.subtitle, w - 140), w / 2, 150);
+  ctx.fillStyle = "#b8964f";
+  ctx.fillRect(w / 2 - 90, 180, 180, 3);
+  const rowH = 62;
+  ctx.textAlign = "left";
   lines.rows.forEach((row, i) => {
-    const y = 200 + i * rowH;
-    ctx.fillStyle = "rgba(255,255,255,0.06)";
-    ctx.beginPath(); ctx.roundRect(48, y - rowH / 2 + 6, w - 96, rowH - 12, 14); ctx.fill();
-    ctx.fillStyle = "#ffd76e";
-    ctx.font = `800 36px ${FONT}`;
-    ctx.fillText(row.xp, 72, y);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `500 34px ${FONT}`;
-    ctx.fillText(fitText(ctx, row.text, w - 330), 230, y);
+    const y = 236 + i * rowH;
+    ctx.fillStyle = "#1a2240";
+    ctx.font = `800 32px ${FONT}`;
+    ctx.fillText(row.xp, 90, y);
+    ctx.fillStyle = "#2b2a26";
+    ctx.font = `500 31px ${FONT}`;
+    ctx.fillText(fitText(ctx, row.text, w - 380), 260, y);
+    ctx.fillStyle = "rgba(26,34,64,0.12)";
+    ctx.fillRect(90, y + rowH / 2 - 2, w - 180, 1.5);
   });
-  ctx.fillStyle = "rgba(143,227,255,0.85)";
-  ctx.font = `600 30px ${FONT}`;
-  ctx.fillText(fitText(ctx, lines.footer, w - 100), 56, h - 46);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#5b5345";
+  ctx.font = `600 26px ${FONT}`;
+  ctx.fillText(fitText(ctx, lines.footer, w - 140), w / 2, h - 72);
 }
 
-const GUIDE = { w: FURNITURE_SIZE.levelGuide.w, h: FURNITURE_SIZE.levelGuide.h, screenW: 3.08, screenH: 1.7, screenY: 1.5 };
+const GUIDE = { w: FURNITURE_SIZE.levelGuide.w, h: FURNITURE_SIZE.levelGuide.h, screenW: 3.0, screenH: 1.66, screenY: 1.5 };
 /** The guide lists the person's best-paying rules, at most this many. */
 const GUIDE_ROWS = 6;
 const NO_RULES: XpRuleRow[] = [];
 
-function LevelGuide() {
+function ServiceGuide() {
   const t = useT();
   const rules = useProgression((s) => s.snapshot?.rules ?? NO_RULES);
   const rows = useMemo(() => rules.filter((r) => r.kind === "person").sort((a, b) => b.xp - a.xp).slice(0, GUIDE_ROWS)
@@ -650,58 +542,64 @@ function LevelGuide() {
     title: t("society.hall.guide_title"), subtitle: t("society.hall.guide_subtitle"), rows, footer: t("society.hall.guide_footer"),
   };
   const face = useLiveTexture(1280, 704, JSON.stringify(lines), (ctx, w, h) => drawGuide(ctx, w, h, lines));
-  const screen = face
-    ? <meshStandardMaterial map={face} emissiveMap={face} emissive="#ffffff" emissiveIntensity={0.85} roughness={0.4} />
-    : <meshStandardMaterial color={C.ink} roughness={0.3} />;
+  const card = face
+    ? <meshStandardMaterial map={face} roughness={0.8} />
+    : <meshStandardMaterial color={C.cream} roughness={0.8} />;
   return (
     <group>
       {[-1, 1].map((side) => (
-        <group key={side} position={[side * (GUIDE.w / 2 - 0.1), 0, 0]}>
-          <Box size={[0.1, GUIDE.h - 0.05, 0.12]} position={[0, (GUIDE.h - 0.05) / 2, 0]} material={HM.brass} />
-          <Rounded size={[0.2, 0.06, 0.34]} radius={0.02} position={[0, 0.03, 0]} material={HM.midnight} />
+        <group key={side} position={[side * (GUIDE.w / 2 - 0.12), 0, 0]}>
+          <Box size={[0.09, GUIDE.h - 0.05, 0.09]} position={[0, (GUIDE.h - 0.05) / 2, 0]} material={HM.walnutDark} />
+          <Box size={[0.13, 0.03, 0.13]} position={[0, GUIDE.h - 0.03, 0]} material={HM.brass} />
+          <Rounded size={[0.24, 0.06, 0.34]} radius={0.02} position={[0, 0.03, 0]} material={HM.walnutDark} />
         </group>
       ))}
-      <Rounded size={[GUIDE.screenW + 0.18, GUIDE.screenH + 0.18, 0.16]} radius={0.04} position={[0, GUIDE.screenY, 0]} material={HM.midnight} />
-      <Box size={[GUIDE.screenW + 0.18, 0.03, 0.17]} position={[0, GUIDE.screenY + GUIDE.screenH / 2 + 0.105, 0]} material={HM.gold} cast={false} />
-      {/* The same screen on both faces. */}
-      <mesh position={[0, GUIDE.screenY, 0.085]}><planeGeometry args={[GUIDE.screenW, GUIDE.screenH]} />{screen}</mesh>
-      <mesh position={[0, GUIDE.screenY, -0.085]} rotation={[0, Math.PI, 0]}><planeGeometry args={[GUIDE.screenW, GUIDE.screenH]} />{screen}</mesh>
+      <Box size={[GUIDE.screenW + 0.16, GUIDE.screenH + 0.16, 0.1]} position={[0, GUIDE.screenY, 0]} material={HM.walnut} />
+      <Box size={[GUIDE.screenW + 0.06, GUIDE.screenH + 0.06, 0.104]} position={[0, GUIDE.screenY, 0]} material={HM.brass} />
+      {/* The same card on both faces. */}
+      <mesh position={[0, GUIDE.screenY, 0.054]}><planeGeometry args={[GUIDE.screenW, GUIDE.screenH]} />{card}</mesh>
+      <mesh position={[0, GUIDE.screenY, -0.054]} rotation={[0, Math.PI, 0]}><planeGeometry args={[GUIDE.screenW, GUIDE.screenH]} />{card}</mesh>
     </group>
   );
 }
 
 /** Renderers of the Level Hall's furniture kinds; merged into OfficeProps' exhaustive table. */
 export const LEVEL_HALL_RENDERERS = {
-  levelWall: () => <LevelWall />,
+  levelWall: () => <RankWall />,
   studioStage: () => <StudioStage />,
-  rewardPedestal: ({ item }: { item: Furniture }) => <RewardPedestal item={item} />,
+  rewardPedestal: ({ item }: { item: Furniture }) => <DisplayCase item={item} />,
   levelRoad: ({ item }: { item: Furniture }) => {
     const size = item.size ?? FURNITURE_SIZE.levelRoad;
-    return <LevelRoad w={size.w} d={size.d} />;
+    return <Runner w={size.w} d={size.d} />;
   },
-  levelGuide: () => <LevelGuide />,
+  levelGuide: () => <ServiceGuide />,
 } satisfies Partial<Record<FurnitureKind, (props: { item: Furniture }) => JSX.Element>>;
 
 /**
- * What hangs over the hall rather than stands in it: a brass ring lamp over
- * the stage with a soft shaft of light down to it, and warm lights over the
- * stage and the guide.
+ * What hangs over the hall rather than stands in it: a brass canopy over the
+ * dais with four spotlights aimed down at it, and warm light on the rank wall
+ * and the guide.
  */
 export const LevelHallFittings = memo(function LevelHallFittings({ stage, guide }: { stage: Pick<Furniture, "x" | "z">; guide: Pick<Furniture, "x" | "z"> | null }) {
-  const shaft = useMemo(() => new MeshBasicMaterial({
-    color: "#ffe2a0", transparent: true, opacity: 0.09, blending: AdditiveBlending, depthWrite: false, side: DoubleSide,
-  }), []);
-  useEffect(() => () => shaft.dispose(), [shaft]);
-  const at: Vec3 = [stage.x, 0, stage.z];
   return (
     <>
-      <group position={at}>
-        <mesh geometry={GEO.ring} material={HM.brass} position={[0, 3.05, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[1.05, 1.05, 3]} />
-        <mesh geometry={GEO.ring} material={HM.gold} position={[0, 3.0, 0]} rotation={[Math.PI / 2, 0, 0]} scale={[0.95, 0.95, 2]} />
-        <mesh geometry={GEO.shaft} material={shaft} position={[0, 1.5, 0]} renderOrder={1} />
-        <pointLight position={[0, 2.6, 0.4]} color="#ffdca0" intensity={6} distance={7} decay={2} />
+      <group position={[stage.x, 0, stage.z]}>
+        <mesh material={HM.brass} position={[0, 3.12, 0]}>
+          <cylinderGeometry args={[0.5, 0.5, 0.04, 40]} />
+        </mesh>
+        {[0, 1, 2, 3].map((i) => {
+          const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+          return (
+            <group key={i} position={[Math.cos(a) * 0.4, 3.0, Math.sin(a) * 0.4]} rotation={[Math.sin(a) * -0.35, 0, Math.cos(a) * 0.35]}>
+              <mesh material={HM.walnutDark}><cylinderGeometry args={[0.05, 0.065, 0.16, 16]} /></mesh>
+              <mesh material={HM.caseLight} position={[0, -0.081, 0]} rotation={[Math.PI / 2, 0, 0]}><circleGeometry args={[0.05, 16]} /></mesh>
+            </group>
+          );
+        })}
+        <pointLight position={[0, 2.6, 0.4]} color="#ffe6bf" intensity={6} distance={7} decay={2} />
       </group>
-      {guide && <pointLight position={[guide.x, 2.8, guide.z - 1.4]} color="#cfe3ff" intensity={3.5} distance={6} decay={2} />}
+      <pointLight position={[stage.x, 2.9, stage.z - 2.6]} color="#ffe2b0" intensity={4} distance={6} decay={2} />
+      {guide && <pointLight position={[guide.x, 2.8, guide.z - 1.4]} color="#fff1da" intensity={3} distance={6} decay={2} />}
     </>
   );
 });

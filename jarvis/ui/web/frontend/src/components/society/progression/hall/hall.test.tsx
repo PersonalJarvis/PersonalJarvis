@@ -5,17 +5,18 @@ import { nextUnlock, rewardRoad } from "../cosmetics";
 import type { ProgressionSnapshot, RewardRow, XpRuleRow } from "../progressionApi";
 import { useProgression } from "../progressionStore";
 import type { ToyLook } from "../../office/toyFigureModel";
-import { groupRules, nextTitle, quickWins, rarityOf, upcomingLevelCosts, xpToReach } from "./hallModel";
+import { groupRules, nextTitle, quickWins, rankLadder, upcomingLevelCosts, xpToReach } from "./hallModel";
 import { LevelHallScreen } from "./LevelHallScreen";
 import { roadSteps } from "./RewardsTab";
 
 const REWARDS: RewardRow[] = [
-  { rewardId: "gadget_drone", slot: "gadget", levels: { person: 10, agent: 12, pet: 9 } },
-  { rewardId: "frame_bronze", slot: "frame", levels: { person: 3, agent: 3, pet: 3 } },
-  { rewardId: "frame_silver", slot: "frame", levels: { person: 10, agent: 10, pet: 10 } },
-  { rewardId: "trail_footprints", slot: "trail", levels: { person: 2, agent: null, pet: null } },
-  { rewardId: "gadget_wings", slot: "gadget", levels: { person: 40, agent: 45, pet: null } },
+  { rewardId: "headwear_patrol_cap", slot: "headwear", levels: { person: 10, agent: null, pet: null } },
+  { rewardId: "decoration_ribbon_bar", slot: "decoration", levels: { person: 3, agent: 3, pet: null } },
+  { rewardId: "uniform_field_jacket", slot: "uniform", levels: { person: 10, agent: null, pet: null } },
+  { rewardId: "uniform_service_shirt", slot: "uniform", levels: { person: 2, agent: null, pet: null } },
+  { rewardId: "decoration_medals", slot: "decoration", levels: { person: 40, agent: 44, pet: null } },
 ];
+const BANDS = [{ level: 1, title: "private" }, { level: 5, title: "private_second_class" }, { level: 10, title: "sergeant" }];
 const CURVE = [0, 40, 105, 195, 310, 450, 615, 805, 1020, 1260];
 const rule = (source: XpRuleRow["source"], kind: XpRuleRow["kind"], xp: number): XpRuleRow =>
   ({ source, kind, xp, trigger: "server", cooldownS: 0, dailyCap: 0 });
@@ -26,15 +27,16 @@ const RULES: XpRuleRow[] = [
 
 function snapshot(): ProgressionSnapshot {
   return {
-    subjects: [{ subjectId: "person", kind: "person", xp: 130, level: 3, xpIntoLevel: 25, xpForNext: 90, title: "newcomer" }],
+    subjects: [{ subjectId: "person", kind: "person", xp: 130, level: 3, xpIntoLevel: 25, xpForNext: 90, title: "private" }],
     petId: "gigi", recent: [], latestSeq: 0, maxLevel: 50, levelXp: CURVE, rules: RULES, rewards: REWARDS,
-    titles: { person: [{ level: 1, title: "newcomer" }, { level: 5, title: "apprentice" }], agent: [], pet: [] },
+    titles: { person: BANDS, agent: BANDS, pet: BANDS },
   };
 }
 
 describe("hall model", () => {
-  it("grades rewards by the level they open at", () => {
-    expect([2, 5, 6, 15, 16, 30, 31, 50].map(rarityOf)).toEqual(["common", "common", "rare", "rare", "epic", "epic", "legendary", "legendary"]);
+  it("reads the server's bands as the rank ladder, skipping unknown ranks", () => {
+    expect(rankLadder([...BANDS, { level: 12, title: "admiral" }]).map((r) => [r.level, r.rank, r.grade, r.tier]))
+      .toEqual([[1, "private", "E-1", "enlisted"], [5, "private_second_class", "E-2", "enlisted"], [10, "sergeant", "E-5", "nco"]]);
   });
 
   it("measures what is missing on the server's curve", () => {
@@ -47,19 +49,19 @@ describe("hall model", () => {
 
   it("orders the road by unlock level, slot order within a level, and skips what a kind never wears", () => {
     expect(rewardRoad(REWARDS, "person").map((r) => r.rewardId))
-      .toEqual(["trail_footprints", "frame_bronze", "frame_silver", "gadget_drone", "gadget_wings"]);
-    expect(rewardRoad(REWARDS, "pet").map((r) => r.rewardId)).toEqual(["frame_bronze", "gadget_drone", "frame_silver"]);
-    expect(nextUnlock(REWARDS, "person", 3)?.rewardId).toBe("frame_silver");
+      .toEqual(["uniform_service_shirt", "decoration_ribbon_bar", "uniform_field_jacket", "headwear_patrol_cap", "decoration_medals"]);
+    expect(rewardRoad(REWARDS, "pet")).toEqual([]);
+    expect(nextUnlock(REWARDS, "person", 3)?.rewardId).toBe("uniform_field_jacket");
     expect(nextUnlock(REWARDS, "person", 40)).toBeUndefined();
   });
 
-  it("builds road steps from rewards and title bands", () => {
-    const steps = roadSteps(rewardRoad(REWARDS, "person"), [{ level: 1, title: "newcomer" }, { level: 5, title: "apprentice" }, { level: 10, title: "operator" }], "person");
+  it("builds road steps from rewards and promotions", () => {
+    const steps = roadSteps(rewardRoad(REWARDS, "person"), BANDS, "person");
     expect(steps.map((s) => s.level)).toEqual([2, 3, 5, 10, 40]);
-    expect(steps.find((s) => s.level === 10)).toMatchObject({ title: "operator" });
-    expect(steps.find((s) => s.level === 10)!.rewards.map((r) => r.rewardId)).toEqual(["frame_silver", "gadget_drone"]);
-    expect(nextTitle([{ level: 5, title: "apprentice" }, { level: 1, title: "newcomer" }], 3)).toEqual({ level: 5, title: "apprentice" });
-    expect(nextTitle([{ level: 5, title: "apprentice" }], 5)).toBeUndefined();
+    expect(steps.find((s) => s.level === 10)).toMatchObject({ title: "sergeant" });
+    expect(steps.find((s) => s.level === 10)!.rewards.map((r) => r.rewardId)).toEqual(["uniform_field_jacket", "headwear_patrol_cap"]);
+    expect(nextTitle([BANDS[1], BANDS[0]], 3)).toEqual(BANDS[1]);
+    expect(nextTitle([BANDS[1]], 5)).toBeUndefined();
   });
 
   it("groups the rules for the guide and picks repeatable quick wins", () => {
@@ -88,19 +90,29 @@ describe("Level Hall screen", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("opens on the overview with five pages and the next unlocks", () => {
+  it("opens on the overview with six pages, the next promotion and the next unlocks", () => {
     useProgression.getState().openPanel("overview");
     mount();
     const dialog = screen.getByRole("dialog");
     const tabs = within(dialog).getAllByRole("tab");
-    expect(tabs).toHaveLength(5);
+    expect(tabs).toHaveLength(6);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(within(dialog).getByText("Ruby")).toBeTruthy();
-    // The next unlock (silver frame at level 10) opens in the studio, ready to try on.
+    expect(dialog.querySelector(".hall-promotion")).toBeTruthy();
+    // The next unlock (the field jacket at level 10) opens in the studio, ready to try on.
     const cards = dialog.querySelectorAll(".hall-card");
     expect(cards.length).toBe(3);
     fireEvent.click(cards[0]);
-    expect(useProgression.getState()).toMatchObject({ panel: "studio", focusReward: "frame_silver" });
+    expect(useProgression.getState()).toMatchObject({ panel: "studio", focusReward: "uniform_field_jacket" });
+  });
+
+  it("charts every rank on the ranks page and marks the one held", () => {
+    useProgression.getState().openPanel("ranks");
+    mount();
+    const cells = document.querySelectorAll(".hall-rank-cell");
+    expect(cells).toHaveLength(BANDS.length);
+    expect(document.querySelectorAll(".hall-rank-cell[data-current]")).toHaveLength(1);
+    expect(cells[0].hasAttribute("data-current")).toBe(true);
   });
 
   it("switches between the person and the pet, and lists every way to earn on the guide", () => {
@@ -122,8 +134,8 @@ describe("Level Hall screen", () => {
 
   it("forgets a focused reward when another page opens without one", () => {
     const store = useProgression.getState();
-    store.openPanel("rewards", { reward: "gadget_drone", subject: "pet" });
-    expect(useProgression.getState()).toMatchObject({ panel: "rewards", focusReward: "gadget_drone", hallSubject: "pet" });
+    store.openPanel("rewards", { reward: "headwear_patrol_cap", subject: "pet" });
+    expect(useProgression.getState()).toMatchObject({ panel: "rewards", focusReward: "headwear_patrol_cap", hallSubject: "pet" });
     useProgression.getState().openPanel("guide");
     expect(useProgression.getState()).toMatchObject({ focusReward: null, hallSubject: "pet" });
   });

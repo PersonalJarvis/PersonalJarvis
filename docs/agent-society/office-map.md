@@ -324,26 +324,33 @@ which follows like on the coding floor).
   where a game aims with it, and a touch pad on coarse pointers. Escape or E
   leaves.
 
-## 5f. Levels (2026-10-03)
+## 5f. Levels (2026-10-03, ranks 2026-10-05)
 
 The person, their pet and every agent level up from real work: finished
 Jarvis turns, agent results, quests, missions, new agents, plus small metered
 actions in the Verse (daily visit, floors, the office dog, arcade rounds, team
-meetings, walks with the pet). A level card sits under the floor title, every
-name plate wears a level chip, `L` opens the progress panel, and a level-up
-plays a light column, shockwaves and sparks in the world plus a banner on
-screen. Unlocked trails, auras, gadgets and frames are worn in the world.
+meetings, walks with the pet). Levels climb a military rank ladder from
+private to a five-star general. A level card sits under the floor title,
+every name plate wears a rank chip, `L` opens the Level Hall screen, and a
+promotion plays a gold ring and a rising insignia plate in the world plus the
+promotion card on screen. Figures wear their insignia on the sleeves or
+shoulder boards, and the person their unlocked uniform, cap and decorations.
 The whole contract lives in [level-system.md](level-system.md).
 
-The Level Hall is the levels' own room on the agents floor, dressed as a
-trophy hall in midnight stone and brass: the Level Wall (a live screen with the
-person's level, title, XP bar and next reward) over the Upgrade Studio's round
-stage in the north, the Level Road down the middle lined with a pedestal per
-reward (lowest unlock in the south, highest by the stage; lit once unlocked, a
-dark silhouette while locked, the next unlock under a pulsing gold beam; a
-click opens it on the reward road), and the double-sided level guide at the
-road's start. Its two checkpoints, the stage (`studio`) and the guide
-(`levels`), open the Level Hall screen (level-system.md §6).
+The Level Hall is the levels' own room on the agents floor, dressed as a hall
+of honour: cream and charcoal marble underfoot, walnut and brass, a red
+runner up the middle. The rank wall in the north holds all 24 insignia in a
+walnut-framed velvet shadow box (held ranks struck in metal, the current one
+framed in brass, the ones ahead as pewter silhouettes) above a brass plaque
+with the person's rank, level, XP and next promotion; the studio dais stands
+in front of it. Display cases line the runner, one per uniform piece (lowest
+unlock in the south): a mannequin in the uniform with the person's own
+insignia, a cap on a velvet head form, or the decoration on a slanted velvet
+board — the same geometry the figures wear. Unlocked cases are lit, locked
+ones stay dim behind smoked glass; a brass plaque names the piece and its
+rank, and a click opens it on the promotion road. The framed service guide
+stands at the runner's start. Its two checkpoints, the dais (`studio`) and the
+guide (`levels`), open the Level Hall screen (level-system.md §6).
 
 ## 6. Plan
 

@@ -2,16 +2,21 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { equippedFor, levelFraction, progressFor, unlockedFor } from "./cosmetics";
 import { parseAwardEvent, parseSnapshot, type ProgressionSnapshot, type RewardRow } from "./progressionApi";
 import { awayCelebrations, useProgression } from "./progressionStore";
-import { footprintAt, pruneSamples, pushSample, rainbowHue, RIBBON_MAX_SAMPLES, writeRibbon, type TrailSample } from "./effects/trailModel";
-import { REWARD_IDS, slotOf } from "./levelCatalog";
+import { RANK_INFO, rankAt, REWARD_IDS, slotOf, TITLE_IDS } from "./levelCatalog";
+import { rankArt } from "./insignia/rankArt";
+import { rackRows, ribbonsFor } from "./regalia/decorations3d";
+import { dressedLook, regaliaFor, uniformStyle } from "./regalia/dress";
+import type { ToyLook } from "../office/toyFigureModel";
 
 const REWARDS: RewardRow[] = [
-  { rewardId: "frame_bronze", slot: "frame", levels: { person: 3, agent: 3, pet: 3 } },
-  { rewardId: "frame_silver", slot: "frame", levels: { person: 10, agent: 10, pet: 10 } },
-  { rewardId: "trail_footprints", slot: "trail", levels: { person: 2, agent: null, pet: null } },
-  { rewardId: "trail_sparkle", slot: "trail", levels: { person: 5, agent: 5, pet: 2 } },
-  { rewardId: "aura_glow", slot: "aura", levels: { person: 7, agent: 8, pet: 5 } },
+  { rewardId: "decoration_ribbon_bar", slot: "decoration", levels: { person: 3, agent: 3, pet: null } },
+  { rewardId: "decoration_ribbon_rack", slot: "decoration", levels: { person: 10, agent: 10, pet: null } },
+  { rewardId: "uniform_service_shirt", slot: "uniform", levels: { person: 2, agent: null, pet: null } },
+  { rewardId: "uniform_field_jacket", slot: "uniform", levels: { person: 5, agent: null, pet: null } },
+  { rewardId: "headwear_patrol_cap", slot: "headwear", levels: { person: 7, agent: null, pet: null } },
 ];
+
+const BANDS = [{ level: 1, title: "private" }, { level: 2, title: "private_second_class" }, { level: 4, title: "private_first_class" }];
 
 /** Total XP at which each level starts, the server's `level_xp` for the first few levels. */
 const CURVE = [0, 40, 105, 195, 310, 450];
@@ -19,26 +24,28 @@ const CURVE = [0, 40, 105, 195, 310, 450];
 function snapshot(overrides: Partial<ProgressionSnapshot> = {}): ProgressionSnapshot {
   return {
     subjects: [], petId: "ember", recent: [], latestSeq: 0, maxLevel: 50, levelXp: CURVE, rules: [], rewards: REWARDS,
-    titles: { person: [{ level: 1, title: "newcomer" }, { level: 5, title: "apprentice" }], agent: [], pet: [] },
+    titles: { person: BANDS, agent: BANDS, pet: BANDS },
     ...overrides,
   };
 }
 
 describe("cosmetics", () => {
   it("unlocks by the subject kind's own level", () => {
-    expect(unlockedFor(REWARDS, "person", 2).map((r) => r.rewardId)).toEqual(["trail_footprints"]);
-    expect(unlockedFor(REWARDS, "pet", 2).map((r) => r.rewardId)).toEqual(["trail_sparkle"]);
-    expect(unlockedFor(REWARDS, "agent", 4).map((r) => r.rewardId)).toEqual(["frame_bronze"]);
+    expect(unlockedFor(REWARDS, "person", 2).map((r) => r.rewardId)).toEqual(["uniform_service_shirt"]);
+    expect(unlockedFor(REWARDS, "pet", 50)).toEqual([]);
+    expect(unlockedFor(REWARDS, "agent", 4).map((r) => r.rewardId)).toEqual(["decoration_ribbon_bar"]);
   });
 
   it("wears the latest unlock per slot unless the person chose", () => {
-    expect(equippedFor(REWARDS, "person", 7)).toEqual({ frame: "frame_bronze", trail: "trail_sparkle", aura: "aura_glow" });
-    expect(equippedFor(REWARDS, "person", 7, { trail: "trail_footprints", aura: "none" }))
-      .toEqual({ frame: "frame_bronze", trail: "trail_footprints" });
+    expect(equippedFor(REWARDS, "person", 7))
+      .toEqual({ decoration: "decoration_ribbon_bar", uniform: "uniform_field_jacket", headwear: "headwear_patrol_cap" });
+    expect(equippedFor(REWARDS, "person", 7, { uniform: "uniform_service_shirt", headwear: "none" }))
+      .toEqual({ decoration: "decoration_ribbon_bar", uniform: "uniform_service_shirt" });
   });
 
   it("ignores a chosen piece that is not unlocked (any more)", () => {
-    expect(equippedFor(REWARDS, "person", 4, { frame: "frame_silver" })).toEqual({ frame: "frame_bronze", trail: "trail_footprints" });
+    expect(equippedFor(REWARDS, "person", 4, { decoration: "decoration_ribbon_rack" }))
+      .toEqual({ decoration: "decoration_ribbon_bar", uniform: "uniform_service_shirt" });
   });
 
   it("measures progress inside a level from the server's curve", () => {
@@ -56,19 +63,19 @@ describe("progressionApi", () => {
       subjects: [{ subject_id: "person", kind: "person", xp: 50, level: 2, xp_into_level: 10, xp_for_next: 65, title: "newcomer" }],
       pet_id: "miso", recent: [], latest_seq: 7, max_level: 50, level_xp: [0, 40],
       rules: [{ source: "chat_turn", kind: "person", xp: 5, trigger: "server", cooldown_s: 0, daily_cap: 100 }],
-      rewards: [{ reward_id: "aura_glow", slot: "aura", levels: { person: 7, agent: 8, pet: null } }, { reward_id: "hat_tall", slot: "gadget", levels: {} }],
+      rewards: [{ reward_id: "headwear_beret", slot: "headwear", levels: { person: 24, agent: null, pet: null } }, { reward_id: "trail_rainbow", slot: "trail", levels: {} }],
       titles: { person: [{ level: 1, title: "newcomer" }] },
     });
     expect(parsed.subjects[0]).toMatchObject({ subjectId: "person", level: 2, xpIntoLevel: 10, xpForNext: 65 });
     expect(parsed.petId).toBe("miso");
-    expect(parsed.rewards.map((r) => r.rewardId)).toEqual(["aura_glow"]);
+    expect(parsed.rewards.map((r) => r.rewardId)).toEqual(["headwear_beret"]);
     expect(parsed.rewards[0].levels.pet).toBeNull();
     expect(parsed.rules[0]).toMatchObject({ source: "chat_turn", dailyCap: 100 });
   });
 
   it("parses an award push and refuses one without a subject", () => {
-    expect(parseAwardEvent({ subject_id: "agent:scout", subject_kind: "agent", xp: 40, total_xp: 108, level: 3, previous_level: 2, unlocked: ["frame_bronze", "nope"] }))
-      .toMatchObject({ subjectId: "agent:scout", kind: "agent", level: 3, unlocked: ["frame_bronze"] });
+    expect(parseAwardEvent({ subject_id: "agent:scout", subject_kind: "agent", xp: 40, total_xp: 108, level: 3, previous_level: 2, unlocked: ["decoration_ribbon_bar", "gadget_crown"] }))
+      .toMatchObject({ subjectId: "agent:scout", kind: "agent", level: 3, unlocked: ["decoration_ribbon_bar"] });
     expect(parseAwardEvent({ xp: 5 })).toBeNull();
     expect(parseAwardEvent(null)).toBeNull();
   });
@@ -90,12 +97,14 @@ describe("progressionStore", () => {
   });
 
   it("celebrates the person with a banner, a burst and a cheer; an agent with a toast", () => {
-    useProgression.getState().apply({ seq: 2, subjectId: "person", kind: "person", source: "agent_hired", xp: 50, totalXp: 50, level: 2, previousLevel: 1, title: "newcomer", unlocked: ["trail_footprints"] }, 1000);
+    useProgression.getState().apply({ seq: 2, subjectId: "person", kind: "person", source: "agent_hired", xp: 50, totalXp: 50, level: 2, previousLevel: 1, title: "newcomer", unlocked: ["uniform_service_shirt"] }, 1000);
     useProgression.getState().apply({ seq: 3, subjectId: "agent:scout", kind: "agent", source: "task_done", xp: 40, totalXp: 40, level: 2, previousLevel: 1, title: "rookie", unlocked: [] }, 1000);
     const s = useProgression.getState();
     expect(s.banners.map((b) => b.subjectId)).toEqual(["person"]);
     expect(s.toasts.map((b) => b.subjectId)).toEqual(["agent:scout"]);
     expect(s.bursts).toHaveLength(2);
+    // The burst carries the climb, so the world can tell a promotion from a level.
+    expect(s.bursts[0]).toMatchObject({ level: 2, previousLevel: 1, title: "newcomer" });
     expect(s.cheerUntil).toBeGreaterThan(1000);
   });
 
@@ -130,52 +139,89 @@ describe("progressionStore", () => {
     });
     const away = awayCelebrations(missed, 2);
     expect(away).toHaveLength(1);
-    expect(away[0]).toMatchObject({ subjectId: "agent:scout", level: 4, previousLevel: 1, away: true, unlocked: ["frame_bronze"] });
+    expect(away[0]).toMatchObject({ subjectId: "agent:scout", level: 4, previousLevel: 1, away: true, unlocked: ["decoration_ribbon_bar"] });
     expect(awayCelebrations(missed, null)).toEqual([]);
     expect(awayCelebrations(missed, 4)).toEqual([]);
   });
 });
 
-describe("trail model", () => {
-  it("samples a ribbon by distance, caps it and restarts after a teleport", () => {
-    const samples: TrailSample[] = [];
-    expect(pushSample(samples, 0, 0, 0)).toBe(true);
-    expect(pushSample(samples, 0.05, 0, 0.1)).toBe(false);
-    for (let i = 1; i <= 40; i++) pushSample(samples, i * 0.2, 0, i);
-    expect(samples).toHaveLength(RIBBON_MAX_SAMPLES);
-    pushSample(samples, 100, 100, 50);
-    expect(samples).toHaveLength(1);
+describe("rank insignia", () => {
+  it("climbs from no insignia to five stars, sleeve first, shoulder for officers", () => {
+    expect(rankArt("private").parts).toEqual([]);
+    expect(rankArt("private").mount).toBe("none");
+    expect(rankArt("sergeant").mount).toBe("sleeve");
+    expect(rankArt("second_lieutenant").mount).toBe("shoulder");
+    expect(rankArt("general_of_the_army").mount).toBe("shoulder");
+    // Chevrons and rockers count up: one chevron, then three, then three with three rockers.
+    const gold = (rank: Parameters<typeof rankArt>[0]) => rankArt(rank).parts.filter((p) => p.finish === "gold" && !p.detail).length;
+    expect(gold("private_second_class")).toBe(1);
+    expect(gold("sergeant")).toBe(3);
+    expect(gold("master_sergeant")).toBe(6);
+    expect(gold("first_sergeant")).toBe(7);
+    // Generals: one star per grade, five at the cap.
+    expect(rankArt("brigadier_general").parts).toHaveLength(1);
+    expect(rankArt("general").parts).toHaveLength(4);
+    expect(rankArt("general_of_the_army").parts).toHaveLength(5);
   });
 
-  it("ages samples out", () => {
-    const samples: TrailSample[] = [{ x: 0, z: 0, t: 0 }, { x: 1, z: 0, t: 1 }];
-    pruneSamples(samples, 1.5, 1);
-    expect(samples).toEqual([{ x: 1, z: 0, t: 1 }]);
+  it("draws every polygon inside its own box", () => {
+    for (const rank of TITLE_IDS) {
+      const art = rankArt(rank);
+      for (const part of art.parts) {
+        for (const [x, y] of part.pts) {
+          expect(x).toBeGreaterThanOrEqual(-1);
+          expect(x).toBeLessThanOrEqual(art.w + 1);
+          expect(y).toBeGreaterThanOrEqual(-1);
+          expect(y).toBeLessThanOrEqual(art.h + 1);
+        }
+      }
+    }
   });
 
-  it("writes a strip that is widest and brightest at the head", () => {
-    const samples: TrailSample[] = [{ x: 0, z: 0, t: 1 }, { x: 0, z: 1, t: 1 }, { x: 0, z: 2, t: 1 }];
-    const positions = new Float32Array(samples.length * 6);
-    const bright = writeRibbon(samples, 1, 1, 0.4, 0.02, positions);
-    expect(bright[0]).toBe(0);
-    expect(bright[2]).toBe(1);
-    const width = (i: number) => Math.hypot(positions[i * 6] - positions[i * 6 + 3], positions[i * 6 + 2] - positions[i * 6 + 5]);
-    expect(width(2)).toBeCloseTo(0.4);
-    expect(width(0)).toBeCloseTo(0);
-    expect(positions[1]).toBeCloseTo(0.02);
+  it("reads the rank off the server's bands, private before any arrive", () => {
+    expect(rankAt(BANDS, 3)).toBe("private_second_class");
+    expect(rankAt(BANDS, 50)).toBe("private_first_class");
+    expect(rankAt(undefined, 30)).toBe("private");
+    expect(RANK_INFO.colonel).toEqual({ grade: "O-6", tier: "officer" });
+  });
+});
+
+describe("regalia", () => {
+  const look = { skin: "#f1c4a0", hair: "#2a1d15", hairStyle: "short", shirt: "#3f7fd6", shirtAccent: "#e5674f", inner: "#ffffff",
+    pants: "#2f4a7a", shoes: "#f4f4f2", blush: false, outfit: "hoodie", eyewear: "none" } as ToyLook;
+
+  it("dresses the figure in the uniform's colours and keeps its own face", () => {
+    expect(dressedLook(look, undefined, "sergeant")).toBe(look);
+    const blues = dressedLook(look, "uniform_dress_blues", "captain");
+    expect(blues).toMatchObject({ skin: look.skin, hair: look.hair, shirt: "#1c2541", outfit: "suit" });
+    // Officers wear gold braid on the cuffs; a private's blues have no trouser stripe.
+    expect(blues.uniform?.cuffBraid).toBeTruthy();
+    expect(uniformStyle("uniform_dress_blues", "private").stripe).toBeUndefined();
+    expect(uniformStyle("uniform_mess_dress", "private").tieKind).toBe("bow");
   });
 
-  it("places footprints left and right of the heading", () => {
-    const left = footprintAt(0, 0, 0, true);
-    const right = footprintAt(0, 0, 0, false);
-    expect(left.x).toBeGreaterThan(0);
-    expect(right.x).toBeLessThan(0);
-    expect(rainbowHue(0.5, 0)).toBeGreaterThanOrEqual(0);
+  it("wears enlisted rank on the sleeves, officer rank on the shoulders, and nothing else unworn", () => {
+    expect(regaliaFor("sergeant", {})).toMatchObject({ shoulder: undefined, chest: undefined, hat: undefined });
+    expect(regaliaFor("sergeant", {}).sleeve).toBeTruthy();
+    expect(regaliaFor("colonel", {}).sleeve).toBeUndefined();
+    expect(regaliaFor("colonel", {}).shoulder).toBeTruthy();
+    expect(regaliaFor("private", {}).sleeve).toBeUndefined();
+    const full = regaliaFor("major", { headwear: "headwear_service_cap", decoration: "decoration_medals" });
+    expect(full.hat).toBeTruthy();
+    expect(full.chest).toBeTruthy();
+  });
+
+  it("grows the ribbon rack with the decoration, rows of three", () => {
+    expect(ribbonsFor("decoration_ribbon_bar")).toHaveLength(3);
+    expect(ribbonsFor("decoration_ribbon_rack")).toHaveLength(9);
+    expect(ribbonsFor("decoration_medals")).toHaveLength(5);
+    expect(rackRows(9)).toEqual([3, 3, 3]);
+    expect(rackRows(5)).toEqual([2, 3]);
   });
 });
 
 describe("level catalog", () => {
   it("names every reward after its slot", () => {
-    for (const id of REWARD_IDS) expect(["frame", "trail", "aura", "gadget"]).toContain(slotOf(id));
+    for (const id of REWARD_IDS) expect(["uniform", "headwear", "decoration"]).toContain(slotOf(id));
   });
 });

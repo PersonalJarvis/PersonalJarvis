@@ -65,73 +65,96 @@ level 50. Level 2 arrives after a handful of actions, level 10 after about a
 week of ordinary use (~200 XP a day), level 50 after several months. The
 server sends the whole curve (`level_xp`), so the client never re-derives it.
 
-## 4. Titles and rewards
+## 4. Ranks and rewards
 
-Titles change at bands: the person goes Newcomer → Apprentice (5) → Operator
-(10) → Specialist (15) → Strategist (20) → Architect (25) → Commander (30) →
-Visionary (40) → Legend (50); agents Rookie → … → Grandmaster; pets
-Hatchling → … → Mythic.
+Every subject climbs one military rank ladder; the rank is its title. A
+promotion comes every two or three levels (`RANKS` in rules.py):
 
-Rewards are cosmetic and fill four slots. Each reward names the level at which
-each subject kind unlocks it (or never):
+| Tier | Ranks (first level) | Insignia |
+|---|---|---|
+| Enlisted | Private (1, no insignia), Private Second Class (2), Private First Class (4), Specialist (6) | Gold chevrons on navy, worn on the upper sleeves |
+| Non-commissioned officers | Corporal (8), Sergeant (10), Staff Sergeant (12), Sergeant First Class (14), Master Sergeant (16), First Sergeant (18), Sergeant Major (20), Command Sergeant Major (22), Sergeant Major of the Army (24) | Chevrons, rockers and their device (diamond, star, wreath, eagle), on the sleeves |
+| Officers | Second Lieutenant (26), First Lieutenant (28), Captain (30), Major (32), Lieutenant Colonel (34), Colonel (36) | Gold and silver bars, oak leaves, the eagle, on navy shoulder boards |
+| General officers | Brigadier General (38), Major General (41), Lieutenant General (44), General (47), General of the Army (50) | One to five silver stars on black boards edged in gold |
 
-| Slot | Rewards (person level) |
+The insignia are vector art (`progression/insignia/rankArt.ts`): one set of
+polygons drives the SVG icons, the Level Wall's canvas and the extruded 3D
+pieces on figures and in the hall's cases.
+
+Rewards are real uniform pieces in three slots, each unlocking on a
+promotion. The person wears them; agents keep the outfit their owner dressed
+them in and earn decorations only; the pet wears its rank on its name plate.
+
+| Slot | Pieces (person level · agent level) |
 |---|---|
-| Frame (level chip and HUD ring) | bronze 3, silver 10, gold 20, diamond 50 |
-| Trail (left while moving) | footprints 2, sparkle 5, comet 12, neon 20, rainbow 30, star dust 45 |
-| Aura (on the floor) | glow 7, runes 15, storm 35, legend 50 |
-| Gadget (on or around the figure) | drone 10, halo 18, crown 25, light wings 40 |
+| Uniform | service shirt and tie 4, field jacket 10, green service uniform 20, blue dress uniform 26, blue mess dress 41 |
+| Headwear | patrol cap 6, garrison cap 14, black beret 24, service cap 32 |
+| Decoration | service ribbons 8 · 3, full ribbon rack 18 · 16, gold aiguillette 36 · 32, full-size medals 47 · 44 |
 
-The person chooses per slot for themself and their pet (automatic = the
-latest unlock, none, or any unlocked piece; stored per browser profile).
-Agents always wear their best unlocks.
+Trims follow the rank: officers' dress uniforms carry gold cuff braid,
+non-commissioned officers and up a trouser stripe; the patrol cap carries
+the sewn rank, the garrison cap and beret an officer's pin (a unit crest for
+enlisted ranks), and the service cap's visor one row of gold oak leaves for
+field-grade officers and two for generals.
+
+The person chooses per slot (automatic = the finest unlock, own clothes, or
+any unlocked piece; stored per browser profile). Agents always wear their
+best unlocks.
 
 ## 5. The level-up moment
 
-- **In the world:** a column of light from the floor, two shockwave rings,
-  a fountain of sparks that rains back down and a rising "LEVEL n" tag, in
-  gold (person), teal (pet) or green (agent). The person's figure hops and
-  waves.
-- **On screen:** person and pet get a banner — light rays and a flash, the
-  word stamps in, the old number rolls out and the new one in, then the new
-  title and each unlocked reward slide up one after another. Agents get a
-  quiet toast in the corner. Level-ups that happened while the map was closed
-  are told once per subject ("While you were away").
+- **In the world:** a single gold ring runs out across the floor and a soft
+  light fades under the figure, while a plate rises over its head with the
+  new insignia — "Promoted · Sergeant" on a promotion, "Level 7" between
+  two. The person's figure hops and waves.
+- **On screen:** person and pet get the promotion card — midnight blue with a
+  fine gold rule. On a promotion the old insignia stands, steps aside and
+  dims while the new one is laid on piece by piece and catches the light;
+  then the rank name, its grade and the rolling level number, the next
+  promotion between two, and each unlocked uniform piece. Agents get a quiet
+  toast in the corner. Level-ups that happened while the map was closed are
+  told once per subject ("While you were away").
 - **Sound:** a synthesised fanfare (Web Audio, no files), a short chime for an
-  agent, a soft tick for "+XP"; switchable in the progress panel.
+  agent, a soft tick for "+XP"; switchable in the Level Hall screen.
 - **Every gain:** a floating "+n XP" over whoever earned it; the HUD bar lights
   the gain first and fills a beat later.
 
-Reduced motion keeps the information (banner, tag, toast) and drops the motion.
+Reduced motion keeps the information (card, plate, toast) and drops the motion.
 
 ## 6. Surfaces
 
-- Level card under the floor title (click or `L` opens the Level Hall screen).
-- Level chip on every name plate; the lead's chip shows the pet's level.
-- **The Level Hall** on the agents floor (office-map.md §5f): the Level Wall,
-  the Upgrade Studio's stage, a pedestal per reward along the Level Road and the
-  level guide. Stepping on the stage opens the screen's Studio page, the guide
-  its Overview, a pedestal its reward on the Rewards page.
+- Level card under the floor title: the rank insignia in a ring that fills
+  with XP, the rank and the bar (click or `L` opens the Level Hall screen).
+- A rank chip (insignia and level) on every name plate; the lead's chip shows
+  the pet's.
+- On the figures: enlisted insignia on both upper sleeves, officer and
+  general insignia on shoulder boards, the decoration over the left breast
+  pocket (the aiguillette from the right shoulder), the cap on the head.
+- **The Level Hall** on the agents floor (office-map.md §5f): the rank wall,
+  the studio dais, a display case per uniform piece along the runner and the
+  service guide. Stepping on the dais opens the screen's Studio page, the
+  guide its Overview, a case its piece on the promotion road.
 - **The Level Hall screen**, for the person or their pet (switch in the head):
-  - *Overview:* level, title, XP bar with what is missing, the next title, the
-    next three unlocks (each opens in the Studio to try on) and the quickest
-    repeatable ways to earn.
-  - *Studio:* the dressing room. A live 3D preview of the person's figure or
-    the pet on the hall's stage wearing the loadout; per slot "automatic",
-    "nothing" and every piece as a card with its rarity. An unlocked piece is
-    put on with one click; a locked piece is tried on in the preview, marked
-    "Try-on" with the level and XP it still needs. A trail makes the figure
-    walk a circle; the frame shows on a name plate.
-  - *Rewards:* the reward road from the first unlock to the cap with the
-    subject's position on it; the chosen step in the preview with its rarity,
-    unlock level, missing XP and "Put it on" once open.
-  - *How to level:* three steps (earn, level up, unlock), the cost of the next
-    levels from the server's curve, and every rule for the person, the pet and
-    agents, grouped.
-  - *Team:* every agent's level, best first.
-
-  Rarity is a reading of the unlock level only (≤ 5 common, ≤ 15 rare, ≤ 30
-  epic, above legendary); it changes nothing in the rulebook.
+  - *Overview:* rank, level, XP bar with what is missing, the next promotion,
+    the next three uniform pieces (each opens in the Studio to try on) and the
+    quickest repeatable ways to earn.
+  - *Ranks:* the whole ladder as one chart, grouped by tier; ranks held in
+    full colour, the current one framed, the ones ahead as silhouettes with
+    the XP still missing.
+  - *Studio:* the dressing room. A live 3D preview of the person's figure on
+    the dais in the loadout and the insignia of their rank; per slot
+    "automatic", "own clothes" and every piece as a card with the rank it
+    comes with. An unlocked piece is put on with one click; a locked piece is
+    tried on in the preview, marked "Try-on" with the level and XP it still
+    needs. The pet's studio shows its rank.
+  - *Promotions:* the road from the first promotion to the cap with the
+    subject's position on it; the chosen step in the preview at that rank,
+    with its insignia, grade, tier, piece, missing XP and "Put it on" once
+    open.
+  - *How to level:* three steps (earn, level up, get promoted), the cost of
+    the next levels from the server's curve, and every rule for the person,
+    the pet and agents, grouped.
+  - *Team:* every agent's level and rank, best first.
 
 ## 7. Contracts
 
@@ -140,7 +163,8 @@ Reduced motion keeps the information (banner, tag, toast) and drops the motion.
   `title`, `unlocked`.
 - `SocietyResultPosted` is new: `WorldFeed` forwards a board RESULT (id,
   agent, status; never its text).
-- `levelCatalog.ts` mirrors the ids (kinds, slots, rewards, titles, sources);
+- `levelCatalog.ts` mirrors the ids (kinds, slots, rewards, ranks, sources) and
+  each rank's grade and tier;
   `tests/unit/progression/test_frontend_parity.py` pins it and the three
   locale files to the rulebook.
 - The ledger is `<data_dir>/progression.db`, opened on the first award, never

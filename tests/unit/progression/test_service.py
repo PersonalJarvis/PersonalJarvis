@@ -116,7 +116,8 @@ async def test_agents_level_from_finished_work_and_quests(setup):
     assert levels["person"] == (15 + 20, 1)
     up = [e for e in seen if e.subject_id == "agent:scout" and e.level > e.previous_level]
     assert up and up[-1].level == 3
-    assert "frame_bronze" in up[-1].unlocked
+    assert "decoration_ribbon_bar" in up[-1].unlocked
+    assert up[-1].title == "private_second_class"
 
 
 async def test_the_lead_is_the_pet_never_an_agent(setup):

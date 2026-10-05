@@ -1,21 +1,22 @@
 /**
  * The Level Hall screen: the game menu behind the hall's checkpoints, the
- * level card and `L`. Five pages for the person or their pet (the pet IS
+ * level card and `L`. Six pages for the person or their pet (the pet IS
  * Jarvis in the Verse):
  *
- * - Overview: the level, title and XP bar, the next unlocks and the quickest
- *   ways to earn.
+ * - Overview: the rank, level and XP bar, the next promotion, the next
+ *   uniform pieces and the quickest ways to earn.
+ * - Ranks: the whole rank ladder as one chart, from private to five stars.
  * - Studio: the dressing room. Every slot's pieces as cards; an unlocked
  *   piece is put on with one click, a locked one is tried on in the live
  *   preview with the level it needs.
- * - Rewards: the reward road from level 1 to the cap, every step's pieces and
- *   titles, and the chosen step in the preview.
+ * - Rewards: the promotion road from level 1 to the cap, every step's rank
+ *   and pieces, and the chosen step in the preview.
  * - Guide: how levelling works — three steps, what the next levels cost, and
  *   every rule that pays XP for you, your pet and your agents.
  * - Team: every agent's level, best first.
  *
- * The chrome uses theme tokens (light and dark); the stage, the level badge
- * and the rarity colours are the game's own and read in both modes.
+ * The chrome uses theme tokens (light and dark); the stage and the insignia
+ * are the game's own and read in both modes.
  */
 import { useEffect, useMemo, useRef } from "react";
 import { useT } from "@/i18n";
@@ -23,12 +24,15 @@ import { useCompanionPet } from "../../companion/companionPetStore";
 import type { SocietyAgent } from "../../data";
 import type { ToyLook } from "../../office/toyFigureModel";
 import { levelFraction, rewardRoad } from "../cosmetics";
+import { RANK_INFO, rankAt } from "../levelCatalog";
+import { RankInsignia } from "../insignia/RankInsignia";
 import { LevelChip, XpBar } from "../LevelHud";
 import { useLevelSound } from "../levelSounds";
 import { agentSubject, PERSON_SUBJECT, petSubject, type RewardRow, type XpRuleRow } from "../progressionApi";
 import { HALL_TABS, useProgression, type HallTab } from "../progressionStore";
-import { groupRules, quickWins, upcomingLevelCosts, xpToReach } from "./hallModel";
+import { groupRules, nextTitle, quickWins, upcomingLevelCosts, xpToReach } from "./hallModel";
 import { LevelHero, RewardCard, RuleRow, Section, TabIcon, type HallWho } from "./hallParts";
+import { RanksTab } from "./RanksTab";
 import { RewardsTab } from "./RewardsTab";
 import { StudioTab } from "./StudioTab";
 import "./hall.css";
@@ -38,10 +42,12 @@ const LEAD_AGENT_ID = "jarvis";
 const NO_RULES: XpRuleRow[] = [];
 const NO_REWARDS: RewardRow[] = [];
 const NO_CURVE: number[] = [0];
+const NO_TITLES: { level: number; title: string }[] = [];
 
 /** Stroke icons in a 24 × 24 box for the page tabs. */
 const TAB_ICON: Record<HallTab, string> = {
   overview: "M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4zM12 8v4l3 2",
+  ranks: "M5 10l7-4.5 7 4.5M5 15l7-4.5 7 4.5M5 20l7-4.5 7 4.5",
   studio: "M10 3l1.6 5.4L17 10l-5.4 1.6L10 17l-1.6-5.4L3 10l5.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z",
   rewards: "M4 10h16v10H4zM2.5 6.5h19V10h-19zM12 6.5V20M12 6.5C10 3 6.5 3 6.5 5s3 1.5 5.5 1.5M12 6.5C14 3 17.5 3 17.5 5s-3 1.5-5.5 1.5",
   guide: "M4 4.5h6a2 2 0 0 1 2 2V20a2 2 0 0 0-2-2H4zM20 4.5h-6a2 2 0 0 0-2 2V20a2 2 0 0 1 2-2h6z",
@@ -54,8 +60,11 @@ function OverviewTab({ who }: { who: HallWho }) {
   const rewards = useProgression((s) => s.snapshot?.rewards ?? NO_REWARDS);
   const rules = useProgression((s) => s.snapshot?.rules ?? NO_RULES);
   const curve = useProgression((s) => s.snapshot?.levelXp ?? NO_CURVE);
+  const titles = useProgression((s) => s.snapshot?.titles[who.kind] ?? NO_TITLES);
   const subject = useProgression((s) => s.subjects[who.subjectId]);
   const level = subject?.level ?? 1;
+  const promotion = nextTitle(titles, level);
+  const promoRank = promotion ? rankAt(titles, promotion.level) : null;
   const road = useMemo(() => rewardRoad(rewards, who.kind), [rewards, who.kind]);
   const upcoming = road.filter((r) => (r.levels[who.kind] ?? 0) > level).slice(0, 3);
   // With everything open, the page shows the three best pieces instead.
@@ -65,7 +74,20 @@ function OverviewTab({ who }: { who: HallWho }) {
     <div className="hall-overview">
       <LevelHero who={who} />
       {who.kind === "pet" && <p className="hall-hint hall-wide">{t("society.level.pet_intro")}</p>}
-      <Section title={t(upcoming.length > 0 ? "society.hall.next_rewards" : "society.hall.best_pieces")} aside={
+      <Section title={t("society.hall.next_promotion_title")} aside={
+        <button type="button" className="hall-link" onClick={() => open("ranks")}>{t("society.hall.ranks_all")}</button>}>
+        {promotion && promoRank ? (
+          <button type="button" className="hall-promotion" data-tier={RANK_INFO[promoRank].tier} onClick={() => open("ranks")}>
+            <RankInsignia rank={promoRank} size={64} />
+            <span>
+              <strong>{t(`society.level.title.${promoRank}`)}</strong>
+              <em>{RANK_INFO[promoRank].grade} · {t("society.level.locked_at").replace("{0}", String(promotion.level))}</em>
+              <span className="hall-promotion-xp">{t("society.hall.xp_needed").replace("{0}", xpToReach(curve, subject?.xp ?? 0, promotion.level).toLocaleString())}</span>
+            </span>
+          </button>
+        ) : <p className="hall-hint">{t("society.hall.top_title")}</p>}
+      </Section>
+      {road.length > 0 && <Section title={t(upcoming.length > 0 ? "society.hall.next_rewards" : "society.hall.best_pieces")} aside={
         <button type="button" className="hall-link" onClick={() => open("rewards")}>{t("society.hall.road_all")}</button>}>
         {upcoming.length === 0 && <p className="hall-hint">{t("society.hall.all_unlocked")}</p>}
         {upcoming.length + best.length > 0 && (
@@ -78,7 +100,7 @@ function OverviewTab({ who }: { who: HallWho }) {
           </div>
         )}
         {upcoming.length > 0 && <p className="hall-hint">{t("society.hall.try_hint")}</p>}
-      </Section>
+      </Section>}
       <Section title={t("society.hall.quick_title")} aside={
         <button type="button" className="hall-link" onClick={() => open("guide")}>{t("society.hall.quick_all")}</button>}>
         <ul className="hall-rules">{wins.map((rule) => <RuleRow key={rule.source} rule={rule} />)}</ul>
@@ -147,7 +169,7 @@ function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
                 <span className="hall-rank">{i + 1}</span>
                 <LevelChip kind="agent" level={subject?.level ?? 1} />
                 <span className="hall-rank-body">
-                  <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${subject?.title || "rookie"}`)}</em></span>
+                  <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${subject?.title || "private"}`)}</em></span>
                   <XpBar fraction={levelFraction(subject)} kind="agent" label={t("society.level.agent_xp_label").replace("{0}", agent.name)} />
                 </span>
                 <span className="hall-rank-xp">{t("society.level.total").replace("{0}", String(subject?.xp ?? 0))}</span>
@@ -201,7 +223,7 @@ export function LevelHallScreen({ agents, playerName, petName, playerLook }: {
       <div ref={panel} className="hall" role="dialog" data-state="open" aria-modal="true" aria-labelledby="hall-title" tabIndex={-1}>
         <header className="hall-head">
           <div className="hall-brand">
-            <span className="hall-brand-mark" aria-hidden><TabIcon path="M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.6M17 6h2.5a2.5 2.5 0 0 1-2.6 3.6M12 14v3M8 20h8M9.5 17h5" size={20} /></span>
+            <span className="hall-brand-mark" aria-hidden><TabIcon path={TAB_ICON.ranks} size={20} /></span>
             <span>
               <h2 id="hall-title">{t("society.hall.title")}</h2>
               <small>{t("society.hall.subtitle")}</small>
@@ -231,6 +253,7 @@ export function LevelHallScreen({ agents, playerName, petName, playerLook }: {
         <div className="hall-body" role="tabpanel" data-tab={tab}>
           {!loaded ? <p className="hall-empty">{t("society.hall.loading")}</p> : <>
             {tab === "overview" && <OverviewTab who={who} />}
+            {tab === "ranks" && <RanksTab who={who} />}
             {tab === "studio" && <StudioTab key={who.who} who={who} />}
             {tab === "rewards" && <RewardsTab key={who.who} who={who} />}
             {tab === "guide" && <GuideTab who={who} petName={petName} />}

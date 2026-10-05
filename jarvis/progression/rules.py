@@ -16,9 +16,10 @@ system works with any single key and costs no tokens (AP-21).
 
 The level curve is front-loaded the way long-running progression usually is:
 level 2 arrives within the first few actions, level 10 after about a week of
-ordinary use, level 50 after several months. Every level pays a cosmetic,
-a frame or a new title band at a fixed milestone (:data:`REWARDS`,
-:data:`TITLES`). ``docs/agent-society/level-system.md`` is the readable
+ordinary use, level 50 after several months. Levels climb a military rank
+ladder (:data:`RANKS`): a promotion every two or three levels, from private
+to the five-star general at the cap, and promotions unlock real uniform
+pieces (:data:`REWARDS`). ``docs/agent-society/level-system.md`` is the readable
 version of this file; the parity test pins the frontend's copy of the ids.
 """
 
@@ -142,10 +143,45 @@ RULES_BY_SOURCE: Final[dict[str, XpRule]] = {rule.source: rule for rule in RULES
 WORLD_ACTIONS: Final[frozenset[str]] = frozenset(r.source for r in RULES if r.trigger == "world")
 
 
+# ------------------------------------------------------------------ ranks
+
+#: The rank ladder every subject climbs, lowest first: (first level, rank id,
+#: pay grade). The person, every agent and the pet share it, so a rank means
+#: the same thing on every name plate. Enlisted grades come first, then the
+#: commissioned grades up to the five-star general at the cap. The frontend
+#: draws each rank's insignia and translates ``society.level.title.<id>``.
+RANKS: Final[tuple[tuple[int, str, str], ...]] = (
+    (1, "private", "E-1"),
+    (2, "private_second_class", "E-2"),
+    (4, "private_first_class", "E-3"),
+    (6, "specialist", "E-4"),
+    (8, "corporal", "E-4"),
+    (10, "sergeant", "E-5"),
+    (12, "staff_sergeant", "E-6"),
+    (14, "sergeant_first_class", "E-7"),
+    (16, "master_sergeant", "E-8"),
+    (18, "first_sergeant", "E-8"),
+    (20, "sergeant_major", "E-9"),
+    (22, "command_sergeant_major", "E-9"),
+    (24, "sergeant_major_of_the_army", "E-9"),
+    (26, "second_lieutenant", "O-1"),
+    (28, "first_lieutenant", "O-2"),
+    (30, "captain", "O-3"),
+    (32, "major", "O-4"),
+    (34, "lieutenant_colonel", "O-5"),
+    (36, "colonel", "O-6"),
+    (38, "brigadier_general", "O-7"),
+    (41, "major_general", "O-8"),
+    (44, "lieutenant_general", "O-9"),
+    (47, "general", "O-10"),
+    (50, "general_of_the_army", "O-11"),
+)
+
+
 # ------------------------------------------------------------------ rewards
 
-Slot = Literal["frame", "trail", "aura", "gadget"]
-SLOTS: Final[tuple[Slot, ...]] = ("frame", "trail", "aura", "gadget")
+Slot = Literal["uniform", "headwear", "decoration"]
+SLOTS: Final[tuple[Slot, ...]] = ("uniform", "headwear", "decoration")
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,25 +197,23 @@ class Reward:
         return {"person": self.person, "agent": self.agent, "pet": self.pet}[kind]
 
 
+#: Real uniform pieces, each unlocking on a promotion. Agents keep the outfit
+#: their owner dressed them in, so they earn decorations only; the pet has no
+#: body to dress and shows its rank on its name plate.
 REWARDS: Final[tuple[Reward, ...]] = (
-    Reward("frame_bronze", "frame", person=3, agent=3, pet=3),
-    Reward("frame_silver", "frame", person=10, agent=10, pet=10),
-    Reward("frame_gold", "frame", person=20, agent=20, pet=20),
-    Reward("frame_diamond", "frame", person=50, agent=40, pet=40),
-    Reward("trail_footprints", "trail", person=2, agent=None, pet=None),
-    Reward("trail_sparkle", "trail", person=5, agent=5, pet=2),
-    Reward("trail_comet", "trail", person=12, agent=15, pet=12),
-    Reward("trail_neon", "trail", person=20, agent=25, pet=None),
-    Reward("trail_rainbow", "trail", person=30, agent=35, pet=25),
-    Reward("trail_stardust", "trail", person=45, agent=None, pet=35),
-    Reward("aura_glow", "aura", person=7, agent=8, pet=5),
-    Reward("aura_runes", "aura", person=15, agent=18, pet=15),
-    Reward("aura_storm", "aura", person=35, agent=30, pet=None),
-    Reward("aura_legend", "aura", person=50, agent=50, pet=50),
-    Reward("gadget_drone", "gadget", person=10, agent=12, pet=None),
-    Reward("gadget_halo", "gadget", person=18, agent=20, pet=8),
-    Reward("gadget_crown", "gadget", person=25, agent=None, pet=20),
-    Reward("gadget_wings", "gadget", person=40, agent=45, pet=None),
+    Reward("uniform_service_shirt", "uniform", person=4, agent=None, pet=None),
+    Reward("uniform_field_jacket", "uniform", person=10, agent=None, pet=None),
+    Reward("uniform_service_greens", "uniform", person=20, agent=None, pet=None),
+    Reward("uniform_dress_blues", "uniform", person=26, agent=None, pet=None),
+    Reward("uniform_mess_dress", "uniform", person=41, agent=None, pet=None),
+    Reward("headwear_patrol_cap", "headwear", person=6, agent=None, pet=None),
+    Reward("headwear_garrison_cap", "headwear", person=14, agent=None, pet=None),
+    Reward("headwear_beret", "headwear", person=24, agent=None, pet=None),
+    Reward("headwear_service_cap", "headwear", person=32, agent=None, pet=None),
+    Reward("decoration_ribbon_bar", "decoration", person=8, agent=3, pet=None),
+    Reward("decoration_ribbon_rack", "decoration", person=18, agent=16, pet=None),
+    Reward("decoration_aiguillette", "decoration", person=36, agent=32, pet=None),
+    Reward("decoration_medals", "decoration", person=47, agent=44, pet=None),
 )
 
 
@@ -197,22 +231,15 @@ def rewards_between(kind: SubjectKind, before: int, after: int) -> list[Reward]:
 
 # ------------------------------------------------------------------ titles
 
-#: Title bands per kind: (first level of the band, title id). The frontend
-#: translates ``society.level.title.<id>``.
+_RANK_BANDS: Final[tuple[tuple[int, str], ...]] = tuple((level, rank) for level, rank, _ in RANKS)
+
+#: Title bands per kind: (first level of the band, title id). Every kind wears
+#: the rank ladder, so the bands are the same; the per-kind shape stays so the
+#: API can give a kind its own ladder later without a contract change.
 TITLES: Final[dict[SubjectKind, tuple[tuple[int, str], ...]]] = {
-    "person": (
-        (1, "newcomer"), (5, "apprentice"), (10, "operator"), (15, "specialist"),
-        (20, "strategist"), (25, "architect"), (30, "commander"), (40, "visionary"),
-        (50, "legend"),
-    ),
-    "agent": (
-        (1, "rookie"), (5, "trainee"), (10, "associate"), (15, "professional"),
-        (20, "expert"), (30, "veteran"), (40, "elite"), (50, "grandmaster"),
-    ),
-    "pet": (
-        (1, "hatchling"), (5, "buddy"), (10, "sidekick"), (20, "partner"),
-        (30, "guardian"), (40, "champion"), (50, "mythic"),
-    ),
+    "person": _RANK_BANDS,
+    "agent": _RANK_BANDS,
+    "pet": _RANK_BANDS,
 }
 
 

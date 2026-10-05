@@ -160,7 +160,7 @@ export function OfficeScene(props: OfficeSceneProps) {
       {/* Upstairs the person's pet comes along: to the coding floor and to play in the arcade. */}
       {floor !== "agents" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
       {/* Levels: what everyone wears, level-up bursts and "+XP"; after the walkers, so it reads this frame's positions. */}
-      <ProgressionLayer agents={agents} awake={awake} reduced={reduced} />
+      <ProgressionLayer awake={awake} reduced={reduced} />
       <OfficeCameraRig layout={layout} overview={overview} />
     </>
   );

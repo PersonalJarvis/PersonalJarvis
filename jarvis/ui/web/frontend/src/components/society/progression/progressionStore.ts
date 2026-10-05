@@ -3,8 +3,8 @@
  *
  * The first read hydrates it; every `ProgressionAwarded` push applies one
  * award, queues a floating "+XP" over whoever earned it and, on a level-up,
- * a celebration: the big banner for the person and their pet, a toast for an
- * agent, and a burst of light in the world for all three.
+ * a celebration: the promotion card for the person and their pet, a toast for
+ * an agent, and the moment in the world for all three.
  */
 import { create } from "zustand";
 import type { AwardEvent, ProgressionSnapshot, SubjectLevel } from "./progressionApi";
@@ -25,23 +25,25 @@ export interface Celebration {
 }
 
 export interface XpPopup { id: number; subjectId: string; xp: number; bornMs: number }
-export interface Burst { id: number; subjectId: string; kind: SubjectKind; level: number; bornMs: number }
+/** A level-up shown in the world; `title` is the rank held after it, `previousLevel` tells a promotion from a level. */
+export interface Burst { id: number; subjectId: string; kind: SubjectKind; level: number; previousLevel: number; title: string; bornMs: number }
 
 /** How long a floating "+XP" and a level-up burst live, in ms. */
 export const POPUP_MS = 1600;
-export const BURST_MS = 2600;
+export const BURST_MS = 3200;
 /** How long the person's figure cheers after their own level-up. */
 export const CHEER_MS = 2200;
 const MAX_POPUPS = 12;
 const MAX_TOASTS = 4;
 
 /**
- * The Level Hall screen's pages: where you stand, the Upgrade Studio (what you
- * and your pet wear, with a live preview), the reward road, how XP is earned,
- * and the team ranking. The hall's checkpoints, the level card and `L` open it.
+ * The Level Hall screen's pages: where you stand, the rank ladder, the studio
+ * (the uniform you wear, with a live preview), the promotion road, how XP is
+ * earned, and the team ranking. The hall's checkpoints, the level card and
+ * `L` open it.
  */
-export type HallTab = "overview" | "studio" | "rewards" | "guide" | "team";
-export const HALL_TABS: readonly HallTab[] = ["overview", "studio", "rewards", "guide", "team"];
+export type HallTab = "overview" | "ranks" | "studio" | "rewards" | "guide" | "team";
+export const HALL_TABS: readonly HallTab[] = ["overview", "ranks", "studio", "rewards", "guide", "team"];
 /** Whose level the screen shows: the person's own, or their pet's (the pet IS Jarvis in the Verse). */
 export type HallSubject = "person" | "pet";
 
@@ -120,7 +122,7 @@ export const useProgression = create<ProgressionState>((set, get) => ({
     const popups = [...s.popups, { id: nextId++, subjectId: award.subjectId, xp: award.xp, bornMs: nowMs }].slice(-MAX_POPUPS);
     if (award.level <= award.previousLevel) return { subjects: { ...s.subjects, [award.subjectId]: subject }, popups };
     const party = celebrationOf(award);
-    const bursts = [...s.bursts, { id: nextId++, subjectId: award.subjectId, kind: award.kind, level: award.level, bornMs: nowMs }];
+    const bursts = [...s.bursts, { id: nextId++, subjectId: award.subjectId, kind: award.kind, level: award.level, previousLevel: award.previousLevel, title: award.title, bornMs: nowMs }];
     return {
       subjects: { ...s.subjects, [award.subjectId]: subject },
       popups,

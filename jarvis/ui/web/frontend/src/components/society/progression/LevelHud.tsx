@@ -1,36 +1,34 @@
 /**
- * The level system's HUD pieces over the Verse: the person's level card (a
- * ring that fills with XP, the title, a bar with a trailing "ghost" that
- * catches up after each gain), the pet's line under it, the level chip worn
- * on name plates, and the toasts for agents that levelled up.
+ * The level system's HUD pieces over the Verse: the person's level card (the
+ * rank insignia in a ring that fills with XP, the rank, a bar with a trailing
+ * "ghost" that catches up after each gain), the pet's line under it, the rank
+ * chip worn on name plates, and the toasts for agents that were promoted.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "@/i18n";
-import { equippedFor, levelFraction } from "./cosmetics";
-import { FRAME_STYLE, type SubjectKind } from "./levelCatalog";
+import { levelFraction } from "./cosmetics";
+import { RANK_INFO, rankAt, type RankId, type SubjectKind } from "./levelCatalog";
+import { RankInsignia } from "./insignia/RankInsignia";
 import { PERSON_SUBJECT, petSubject } from "./progressionApi";
 import { useProgression, type Celebration } from "./progressionStore";
 
 const TOAST_MS = 6500;
 
-/** The frame a subject's chip wears: its chosen or best unlocked frame. */
-export function useFrameStyle(kind: SubjectKind, level: number) {
-  const rewards = useProgression((s) => s.snapshot?.rewards);
-  const choice = useProgression((s) => (kind === "agent" ? undefined : s.choices[kind]?.frame));
-  return useMemo(() => {
-    const frame = rewards ? equippedFor(rewards, kind, level, choice ? { frame: choice } : {}).frame : undefined;
-    return FRAME_STYLE[(frame ?? "frame_none") as keyof typeof FRAME_STYLE];
-  }, [rewards, kind, level, choice]);
+/** The rank a subject kind holds at `level`, from the server's ladder. */
+export function useRankAt(kind: SubjectKind, level: number): RankId {
+  const bands = useProgression((s) => s.snapshot?.titles[kind]);
+  return rankAt(bands, level);
 }
 
-/** The small hexagon level number on a name plate. */
+/** The rank chip on a name plate: the insignia and the level number on a dark plate. */
 export function LevelChip({ kind, level }: { kind: SubjectKind; level: number }) {
   const t = useT();
-  const style = useFrameStyle(kind, level);
+  const rank = useRankAt(kind, level);
   return (
-    <span className="level-chip" title={t("society.level.level_n").replace("{0}", String(level))}
-      style={{ background: style.fill, color: style.ink, boxShadow: `inset 0 0 0 1.5px ${style.ring}` }}>
-      {level}
+    <span className="level-chip" data-tier={RANK_INFO[rank].tier}
+      title={`${t(`society.level.title.${rank}`)} · ${t("society.level.level_n").replace("{0}", String(level))}`}>
+      <RankInsignia rank={rank} size={14} className="level-chip-insignia" />
+      <b>{level}</b>
     </span>
   );
 }
@@ -56,17 +54,19 @@ export function XpBar({ fraction, kind, label }: { fraction: number; kind: Subje
   );
 }
 
+/** The rank insignia on a dark medallion inside a ring that fills with XP; the level sits on a tab below. */
 export function LevelRing({ kind, level, fraction, size = 44 }: { kind: SubjectKind; level: number; fraction: number; size?: number }) {
-  const style = useFrameStyle(kind, level);
-  const r = 18, c = 2 * Math.PI * r;
+  const rank = useRankAt(kind, level);
+  const r = 20, c = 2 * Math.PI * r;
   return (
-    <span className="level-ring" style={{ width: size, height: size }} data-kind={kind}>
-      <svg viewBox="0 0 44 44" width={size} height={size} aria-hidden>
-        <circle cx="22" cy="22" r={r} className="level-ring-track" />
-        <circle cx="22" cy="22" r={r} className="level-ring-fill" strokeDasharray={`${c * fraction} ${c}`} transform="rotate(-90 22 22)" />
-        <circle cx="22" cy="22" r="14" fill={style.fill} stroke={style.ring} strokeWidth="2" />
+    <span className="level-ring" style={{ width: size, height: size }} data-kind={kind} data-tier={RANK_INFO[rank].tier}>
+      <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden>
+        <circle cx="24" cy="24" r={r} className="level-ring-track" />
+        <circle cx="24" cy="24" r={r} className="level-ring-fill" strokeDasharray={`${c * fraction} ${c}`} transform="rotate(-90 24 24)" />
+        <circle cx="24" cy="24" r="16.5" className="level-ring-medal" />
       </svg>
-      <b style={{ color: style.ink }}>{level}</b>
+      <RankInsignia rank={rank} size={size * 0.46} className="level-ring-insignia" />
+      <b>{level}</b>
     </span>
   );
 }
@@ -89,11 +89,11 @@ export function LevelHud({ playerName, petName, compact }: { playerName: string;
   return (
     <button type="button" className="office-card level-hud" data-compact={compact || undefined} onClick={openHall}
       aria-label={t("society.level.open_panel")} aria-keyshortcuts="L">
-      <LevelRing kind="person" level={level} fraction={fraction} size={compact ? 34 : 44} />
+      <LevelRing kind="person" level={level} fraction={fraction} size={compact ? 38 : 54} />
       <span className="level-hud-body">
         <span className="level-hud-name">
           <strong>{playerName}</strong>
-          <em>{t(`society.level.title.${person?.title || "newcomer"}`)}</em>
+          <em>{t(`society.level.title.${person?.title || "private"}`)}</em>
         </span>
         <XpBar fraction={fraction} kind="person" label={t("society.level.xp_label")} />
         {!compact && <span className="level-hud-xp">{xpText}</span>}
@@ -133,7 +133,7 @@ function LevelToast({ toast, name, onClose, label }: { toast: Celebration; name:
       <LevelChip kind="agent" level={toast.level} />
       <span>
         <strong>{label("society.level.agent_up").replace("{0}", name).replace("{1}", String(toast.level))}</strong>
-        <em>{toast.away ? label("society.level.while_away") : label(`society.level.title.${toast.title || "rookie"}`)}</em>
+        <em>{toast.away ? label("society.level.while_away") : label(`society.level.title.${toast.title || "private"}`)}</em>
       </span>
     </button>
   );

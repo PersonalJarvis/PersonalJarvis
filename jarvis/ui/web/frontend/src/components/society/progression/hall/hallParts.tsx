@@ -1,15 +1,17 @@
 /**
  * Pieces the Level Hall screen's pages share: the tab icons, the level hero,
- * reward cards, the padlock and the XP rule rows.
+ * reward cards, the rank tag, the padlock and the XP rule rows.
  */
 import type { ReactNode } from "react";
 import { useT } from "@/i18n";
 import { levelFraction } from "../cosmetics";
 import { LevelRing, XpBar } from "../LevelHud";
+import { RANK_INFO, rankAt, type RankId } from "../levelCatalog";
+import { RankInsignia } from "../insignia/RankInsignia";
 import type { RewardRow, XpRuleRow } from "../progressionApi";
 import { useProgression } from "../progressionStore";
 import { RewardIcon } from "../RewardIcon";
-import { nextTitle, rarityOf } from "./hallModel";
+import { nextTitle } from "./hallModel";
 import type { PreviewSubject } from "./LoadoutPreview";
 import { ruleLimit } from "./ruleLimit";
 
@@ -55,7 +57,10 @@ export function LevelHero({ who, compact = false }: { who: HallWho; compact?: bo
       <LevelRing kind={who.kind} level={level} fraction={fraction} size={compact ? 76 : 120} />
       <div className="hall-hero-body">
         <span className="hall-hero-name">{who.name}</span>
-        <span className="hall-hero-title">{t(`society.level.title.${subject?.title || (who.kind === "pet" ? "hatchling" : "newcomer")}`)}</span>
+        <span className="hall-hero-title">
+          <span>{t(`society.level.title.${rankAt(titles, level)}`)}</span>
+          <small>{RANK_INFO[rankAt(titles, level)].grade}</small>
+        </span>
         <XpBar fraction={fraction} kind={who.kind} label={t("society.level.xp_label")} />
         <span className="hall-hero-xp">
           <b>{atCap ? t("society.level.max") : t("society.level.xp_of").replace("{0}", String(subject?.xpIntoLevel ?? 0)).replace("{1}", String(subject?.xpForNext ?? 40))}</b>
@@ -74,22 +79,33 @@ export function LevelHero({ who, compact = false }: { who: HallWho; compact?: bo
   );
 }
 
-/** A reward as a card: its tile, name, slot and rarity, and whether it is open. */
+/** The rank a level brings, as a small tag: its insignia and name. */
+export function RankTag({ rank }: { rank: RankId }) {
+  const t = useT();
+  return (
+    <span className="hall-rank-tag" data-tier={RANK_INFO[rank].tier}>
+      <RankInsignia rank={rank} size={13} />
+      {t(`society.level.title.${rank}`)}
+    </span>
+  );
+}
+
+/** A reward as a card: its picture, name, slot, the rank it comes with, and whether it is open. */
 export function RewardCard({ reward, kind, level, onClick, pressed, badge, xpMissing }: {
   reward: RewardRow; kind: "person" | "pet"; level: number; onClick?: () => void; pressed?: boolean; badge?: string; xpMissing?: number;
 }) {
   const t = useT();
+  const titles = useProgression((s) => s.snapshot?.titles[kind] ?? NO_TITLES);
   const at = reward.levels[kind] ?? 0;
   const open = level >= at;
-  const rarity = rarityOf(at);
   const body = (
     <>
-      <RewardIcon reward={reward.rewardId} size={44} />
+      <RewardIcon reward={reward.rewardId} size={48} locked={!open} />
       <span className="hall-card-text">
         <strong>{t(`society.level.reward.${reward.rewardId}`)}</strong>
         <span className="hall-card-meta">
-          <span className="hall-rarity" data-rarity={rarity}>{t(`society.hall.rarity.${rarity}`)}</span>
           <span>{t(`society.level.slot.${reward.slot}`)}</span>
+          <RankTag rank={rankAt(titles, at)} />
         </span>
         <span className="hall-card-state" data-open={open || undefined}>
           {badge ?? (open ? t("society.hall.unlocked") : xpMissing !== undefined
@@ -101,8 +117,8 @@ export function RewardCard({ reward, kind, level, onClick, pressed, badge, xpMis
     </>
   );
   return onClick
-    ? <button type="button" className="hall-card" data-rarity={rarity} data-open={open || undefined} aria-pressed={pressed} onClick={onClick}>{body}</button>
-    : <div className="hall-card" data-rarity={rarity} data-open={open || undefined}>{body}</div>;
+    ? <button type="button" className="hall-card" data-open={open || undefined} aria-pressed={pressed} onClick={onClick}>{body}</button>
+    : <div className="hall-card" data-open={open || undefined}>{body}</div>;
 }
 
 export function LockGlyph() {

@@ -3,17 +3,17 @@
  * curve, the rules and the reward levels all come from the snapshot; nothing
  * here re-derives the rulebook.
  */
-import type { SubjectKind, XpSource } from "../levelCatalog";
+import { isRankId, RANK_INFO, type RankId, type RankTier, type SubjectKind, type XpSource } from "../levelCatalog";
 import type { XpRuleRow } from "../progressionApi";
 
-/** How rare a reward feels, by the level it unlocks at: the colour of its card. */
-export type Rarity = "common" | "rare" | "epic" | "legendary";
+/** One rung of the rank ladder: the rank, the level it starts at, its grade and tier. */
+export interface Rung { level: number; rank: RankId; grade: string; tier: RankTier }
 
-export function rarityOf(unlockLevel: number): Rarity {
-  if (unlockLevel <= 5) return "common";
-  if (unlockLevel <= 15) return "rare";
-  if (unlockLevel <= 30) return "epic";
-  return "legendary";
+/** The server's title bands as the rank ladder, lowest first; a band naming no known rank is skipped. */
+export function rankLadder(bands: readonly { level: number; title: string }[]): Rung[] {
+  return [...bands].sort((a, b) => a.level - b.level)
+    .filter((band): band is { level: number; title: RankId } => isRankId(band.title))
+    .map((band) => ({ level: band.level, rank: band.title, ...RANK_INFO[band.title] }));
 }
 
 /** XP still missing until `target` is reached (0 once it is); `levelXp[i]` is the total at which level i + 1 starts. */

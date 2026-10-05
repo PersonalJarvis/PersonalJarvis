@@ -1,138 +1,83 @@
 /**
- * The level-up moment in the world, in three beats that overlap:
- *
- * 1. a column of light shoots up from the floor around the figure (0–0.3 s),
- * 2. two shockwave rings race out across the floor (0.05–1.1 s),
- * 3. a fountain of sparks bursts up and rains back down (0.1–2.2 s),
- *
- * while a "LEVEL n" tag rises over the head. The column and sparks follow
- * the figure if it keeps walking. Reduced motion keeps only the tag.
+ * The level-up moment in the world, kept quiet the way a ceremony is: a
+ * single gold ring runs out across the floor under the figure and a soft
+ * light fades beneath it, while a plate rises over the head with the new
+ * insignia — "Promoted · Sergeant" on a promotion, "Level 7" between two.
+ * The ring and the plate follow the figure if it keeps walking. Reduced
+ * motion keeps the plate and drops the ring.
  */
 import { useEffect, useMemo, useRef } from "react";
 import { Html } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, DoubleSide, type Group, type Mesh, type MeshBasicMaterial, type Points } from "three";
-import { beamTexture, glowTexture } from "./flairTextures";
-import type { FlairSource } from "./CosmeticTrail";
-import type { SubjectKind } from "../levelCatalog";
+import { AdditiveBlending, DoubleSide, MeshBasicMaterial, type Group, type Mesh } from "three";
+import { useT } from "@/i18n";
+import { glowTexture } from "./flairTextures";
+import type { RankId, SubjectKind } from "../levelCatalog";
+import { RankInsignia } from "../insignia/RankInsignia";
 import { BURST_MS } from "../progressionStore";
 
-/** Gold for the person, the pet's teal, an agent's green: the same three as the HUD. */
-export const BURST_COLOURS: Record<SubjectKind, [string, string]> = {
-  person: ["#ffd25e", "#fff3c4"],
-  pet: ["#5eead4", "#e0fffa"],
-  agent: ["#86efac", "#f0fff4"],
-};
+/** Where something stands this frame (and how high its top is), or null while it is not drawn. */
+export type FlairSource = () => { x: number; z: number; y?: number; heading?: number } | null;
 
-const SPARKS = 90;
-const GRAVITY = 5.5;
+const GOLD = "#e3b94f";
 
 /** 0..1 ease-out (cubic). */
 const easeOut = (x: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
 
-export function LevelUpBurst({ source, kind, level, label, height, scale = 1, reduced }: {
-  source: FlairSource; kind: SubjectKind; level: number; label: string; height: number; scale?: number; reduced: boolean;
+export function LevelUpBurst({ source, kind, level, rank, promoted, height, scale = 1, reduced }: {
+  source: FlairSource; kind: SubjectKind; level: number; rank: RankId; promoted: boolean; height: number; scale?: number; reduced: boolean;
 }) {
+  const t = useT();
   const group = useRef<Group>(null);
-  const column = useRef<Mesh>(null);
-  const ring1 = useRef<Mesh>(null);
-  const ring2 = useRef<Mesh>(null);
-  const flash = useRef<Mesh>(null);
-  const sparks = useRef<Points>(null);
-  const t = useRef(0);
-  const [main, light] = BURST_COLOURS[kind];
-  const pool = useMemo(() => {
-    const geometry = new BufferGeometry();
-    const positions = new Float32Array(SPARKS * 3);
-    const colours = new Float32Array(SPARKS * 3);
-    const velocity = new Float32Array(SPARKS * 3);
-    const a = new Color(main), b = new Color(light);
-    for (let i = 0; i < SPARKS; i++) {
-      const angle = (i / SPARKS) * Math.PI * 2 * 7.3;
-      const out = (0.8 + ((i * 37) % 11) / 11 * 1.6) * scale;
-      velocity[i * 3] = Math.cos(angle) * out;
-      velocity[i * 3 + 1] = (2.6 + ((i * 53) % 13) / 13 * 2.8) * scale;
-      velocity[i * 3 + 2] = Math.sin(angle) * out;
-      const c = i % 3 === 0 ? b : a;
-      colours[i * 3] = c.r; colours[i * 3 + 1] = c.g; colours[i * 3 + 2] = c.b;
-    }
-    geometry.setAttribute("position", new BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new BufferAttribute(colours.slice(), 3));
-    return { geometry, positions, base: colours, velocity };
-  }, [main, light, scale]);
-  useEffect(() => () => pool.geometry.dispose(), [pool]);
+  const ring = useRef<Mesh>(null);
+  const glow = useRef<Mesh>(null);
+  const clock = useRef(0);
+  const materials = useMemo(() => ({
+    ring: new MeshBasicMaterial({ color: GOLD, transparent: true, opacity: 0.8, blending: AdditiveBlending, depthWrite: false, side: DoubleSide }),
+    glow: new MeshBasicMaterial({ map: glowTexture(), color: GOLD, transparent: true, opacity: 0.5, blending: AdditiveBlending, depthWrite: false }),
+  }), []);
+  useEffect(() => () => { materials.ring.dispose(); materials.glow.dispose(); }, [materials]);
 
   useFrame((_, rawDt) => {
     const g = group.current;
     if (!g) return;
     const at = source();
     if (at) g.position.set(at.x, 0, at.z);
-    t.current += Math.min(rawDt, 0.1);
-    const s = t.current;
+    clock.current += Math.min(rawDt, 0.1);
+    const s = clock.current;
     if (reduced) return;
-    if (column.current) {
-      const grow = easeOut(s / 0.3);
-      const fade = s < 0.9 ? 1 : Math.max(0, 1 - (s - 0.9) / 1.2);
-      column.current.scale.set(1 - 0.35 * easeOut((s - 0.9) / 1.2), grow, 1 - 0.35 * easeOut((s - 0.9) / 1.2));
-      (column.current.material as MeshBasicMaterial).opacity = 0.75 * fade;
-      column.current.rotation.y = s * 1.5;
+    if (ring.current) {
+      const k = s / 1.2;
+      ring.current.visible = k < 1;
+      ring.current.scale.setScalar((0.35 + easeOut(k) * 1.5) * scale);
+      materials.ring.opacity = 0.8 * (1 - k);
     }
-    for (const [ring, delay, span] of [[ring1.current, 0.05, 1.0], [ring2.current, 0.25, 1.1]] as const) {
-      if (!ring) continue;
-      const k = (s - delay) / span;
-      ring.visible = k > 0 && k < 1;
-      ring.scale.setScalar(0.3 + easeOut(k) * 3.4 * scale);
-      (ring.material as MeshBasicMaterial).opacity = 0.9 * (1 - Math.min(1, Math.max(0, k)));
-    }
-    if (flash.current) {
-      const k = s / 0.5;
-      flash.current.visible = k < 1;
-      flash.current.scale.setScalar((0.6 + k * 2.4) * scale);
-      (flash.current.material as MeshBasicMaterial).opacity = 0.85 * (1 - k);
-    }
-    const st = s - 0.1;
-    if (sparks.current) sparks.current.visible = st > 0 && st < 2.1;
-    if (st > 0) {
-      const { positions, velocity, base } = pool;
-      const colours = pool.geometry.attributes.color.array as Float32Array;
-      const fade = Math.max(0, 1 - st / 2.1);
-      for (let i = 0; i < SPARKS; i++) {
-        positions[i * 3] = velocity[i * 3] * st;
-        positions[i * 3 + 1] = Math.max(0.02, 0.4 * scale + velocity[i * 3 + 1] * st - 0.5 * GRAVITY * scale * st * st);
-        positions[i * 3 + 2] = velocity[i * 3 + 2] * st;
-        const twinkle = 0.6 + 0.4 * Math.sin(st * 20 + i);
-        colours[i * 3] = base[i * 3] * fade * twinkle; colours[i * 3 + 1] = base[i * 3 + 1] * fade * twinkle; colours[i * 3 + 2] = base[i * 3 + 2] * fade * twinkle;
-      }
-      pool.geometry.attributes.position.needsUpdate = true;
-      pool.geometry.attributes.color.needsUpdate = true;
+    if (glow.current) {
+      const k = s / 1.6;
+      glow.current.visible = k < 1;
+      materials.glow.opacity = 0.5 * (1 - easeOut(k));
     }
   });
 
   const flat: [number, number, number] = [-Math.PI / 2, 0, 0];
+  const word = promoted ? t("society.level.promoted") : t("society.level.level_n").replace("{0}", String(level));
   return (
     <group ref={group}>
       {!reduced && <>
-        <mesh ref={column} position={[0, 3 * scale, 0]} renderOrder={3}>
-          <cylinderGeometry args={[0.55 * scale, 0.7 * scale, 6 * scale, 28, 1, true]} />
-          <meshBasicMaterial map={beamTexture()} color={main} transparent opacity={0.7} blending={AdditiveBlending} depthWrite={false} side={DoubleSide} />
+        <mesh ref={glow} material={materials.glow} rotation={flat} position={[0, 0.03, 0]} scale={1.1 * scale} renderOrder={3}>
+          <circleGeometry args={[0.8, 32]} />
         </mesh>
-        <mesh ref={flash} rotation={flat} position={[0, 0.03, 0]} renderOrder={3}>
-          <circleGeometry args={[0.6, 32]} />
-          <meshBasicMaterial map={glowTexture()} color={light} transparent opacity={0.8} blending={AdditiveBlending} depthWrite={false} />
+        <mesh ref={ring} material={materials.ring} rotation={flat} position={[0, 0.035, 0]} visible={false} renderOrder={3}>
+          <ringGeometry args={[0.95, 1, 64]} />
         </mesh>
-        {[ring1, ring2].map((ref, i) => (
-          <mesh key={i} ref={ref} rotation={flat} position={[0, 0.035, 0]} visible={false} renderOrder={3}>
-            <ringGeometry args={[0.86, 1, 48]} />
-            <meshBasicMaterial color={i === 0 ? main : light} transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} side={DoubleSide} />
-          </mesh>
-        ))}
-        <points ref={sparks} geometry={pool.geometry} frustumCulled={false} visible={false} renderOrder={3}>
-          <pointsMaterial map={glowTexture()} size={0.14 * scale} sizeAttenuation vertexColors transparent blending={AdditiveBlending} depthWrite={false} />
-        </points>
       </>}
-      <Html center position={[0, height + 0.55, 0]} zIndexRange={[45, 40]}>
-        <span className="level-burst-tag" data-kind={kind} style={{ animationDuration: `${BURST_MS}ms` }} aria-hidden>
-          <small>{label}</small><b>{level}</b>
+      <Html center position={[0, height + 0.6, 0]} zIndexRange={[45, 40]}>
+        <span className="promo-tag" data-kind={kind} style={{ animationDuration: `${BURST_MS}ms` }} aria-hidden>
+          <RankInsignia rank={rank} size={30} className="promo-tag-insignia" />
+          <span>
+            <small>{word}</small>
+            <b>{t(`society.level.title.${rank}`)}</b>
+          </span>
         </span>
       </Html>
     </group>
