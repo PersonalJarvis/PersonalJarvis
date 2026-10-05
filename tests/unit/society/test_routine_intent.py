@@ -12,6 +12,8 @@ from jarvis.society.routine_intent import requests_routine_creation
         "Kannst du mir eine Routine erstellen?",  # i18n-allow: input fixture
         "Erstelle die Routine.",  # i18n-allow: input fixture
         "Create a daily routine that checks GitHub issues.",
+        "Give me a briefing every morning at eight.",
+        "When a PR merges, ask Scout to summarize it.",
     ],
 )
 def test_explicit_routine_creation_is_recognized(utterance: str) -> None:
@@ -25,6 +27,8 @@ def test_explicit_routine_creation_is_recognized(utterance: str) -> None:
         "Die Routine wurde erstellt.",  # i18n-allow: input fixture
         "Show my routines.",
         "Create a skill for daily checks.",
+        "Create a skill that checks my inbox every morning.",
+        "When a PR merges, the deployment starts.",
     ],
 )
 def test_non_creation_turns_do_not_trigger_a_write(utterance: str) -> None:

@@ -30,10 +30,18 @@ _PAST_REPORT = re.compile(
     r"\b(?:wurde|war|was|were|had|habe|hatte)\s+\w*",  # i18n-allow: input vocabulary
     re.IGNORECASE,
 )
+_SKILL_WORD = re.compile(r"\bskills?\b", re.IGNORECASE)
 
 
 def requests_routine_creation(text: str) -> bool:
-    """Require a routine noun and creation intent; ignore how-to questions."""
+    """Recognize an explicit request to persist triggered agent work."""
+    if _SKILL_WORD.search(text):
+        return False
+    # The helpers are defined below but resolved after module initialization.
+    # Agent chats use this guard to mandate their proposal write just as lead
+    # chat mandates its app-command write.
+    if requests_recurring_work(text) or requests_event_triggered_work(text):
+        return True
     if not _ROUTINE_NOUN.search(text) or _HOW_TO.search(text):
         return False
     if _CONFIRMED_CREATE.search(text):
@@ -110,9 +118,6 @@ def requests_event_triggered_work(text: str) -> bool:
     integration event, or loaded internal event after this routing decision.
     """
     return bool(_EVENT_TRIGGER_REQUEST.search(text)) and not _HOW_TO.search(text)
-
-
-_SKILL_WORD = re.compile(r"\bskills?\b", re.IGNORECASE)
 
 
 def wants_agent_routine(text: str) -> bool:
