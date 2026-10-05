@@ -27,6 +27,7 @@ import { levelFraction, rewardRoad } from "../cosmetics";
 import { RANK_INFO, rankAt, rankOf } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
 import { LevelChip, XpBar } from "../LevelHud";
+import { RewardTileTone } from "../RewardIcon";
 import { useLevelSound } from "../levelSounds";
 import { agentSubject, PERSON_SUBJECT, petSubject, type RewardRow, type XpRuleRow } from "../progressionApi";
 import { HALL_TABS, useProgression, type HallTab } from "../progressionStore";
@@ -250,6 +251,7 @@ export function LevelHallScreen({ agents, playerName, petName, playerLook }: {
             </button>
           ))}
         </nav>
+        <RewardTileTone.Provider value="light">
         <div className="hall-body" role="tabpanel" data-tab={tab}>
           {!loaded ? <p className="hall-empty">{t("society.hall.loading")}</p> : <>
             {tab === "overview" && <OverviewTab who={who} />}
@@ -260,6 +262,7 @@ export function LevelHallScreen({ agents, playerName, petName, playerLook }: {
             {tab === "team" && <TeamTab agents={agents} />}
           </>}
         </div>
+        </RewardTileTone.Provider>
         <footer className="hall-foot">
           <label className="hall-sound">
             <input type="checkbox" checked={sound.on} onChange={(e) => sound.set(e.target.checked)} />

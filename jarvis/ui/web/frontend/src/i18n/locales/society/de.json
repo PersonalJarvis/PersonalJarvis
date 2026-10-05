@@ -1557,6 +1557,7 @@
       "subtitle": "Dein Rang, deine Uniform und deine nächste Beförderung",
       "ranks_body": "Alle steigen dieselbe Leiter hinauf: erst die Mannschafts- und Unteroffiziersränge, dann die Offiziere, bis zu fünf Sternen auf Level 50.",
       "rank_held": "Dein Rang",
+      "rank_position": "Rang {0} von {1}",
       "rank_from": "Ab Level {0}",
       "subject_label": "Wessen Fortschritt",
       "subject_you": "Du",

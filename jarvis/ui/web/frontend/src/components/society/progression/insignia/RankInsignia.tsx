@@ -50,7 +50,7 @@ export function RankInsignia({ rank, size = 32, dim = false, reveal = false, cla
           );
         })}
       </defs>
-      <g opacity={dim ? 0.32 : 1} style={dim ? { filter: "grayscale(1)" } : undefined}>
+      <g opacity={dim ? 0.45 : 1} style={dim ? { filter: "grayscale(1)" } : undefined}>
         {art.parts.map((part, i) => {
           const tone = FINISH_TONES[part.finish];
           const order = reveal ? { className: "rank-part", style: { "--i": i } as CSSProperties } : {};

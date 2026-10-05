@@ -1557,6 +1557,7 @@
       "subtitle": "Your rank, your uniform and your next promotion",
       "ranks_body": "Every subject climbs the same ladder: enlisted ranks first, then the commission, up to five stars at level 50.",
       "rank_held": "Your rank",
+      "rank_position": "Rank {0} of {1}",
       "rank_from": "From level {0}",
       "subject_label": "Whose progress",
       "subject_you": "You",

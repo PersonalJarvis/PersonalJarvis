@@ -1557,6 +1557,7 @@
       "subtitle": "Tu rango, tu uniforme y tu próximo ascenso",
       "ranks_body": "Todos suben la misma escala: primero tropa y suboficiales, luego oficiales, hasta cinco estrellas en el nivel 50.",
       "rank_held": "Tu rango",
+      "rank_position": "Rango {0} de {1}",
       "rank_from": "Desde el nivel {0}",
       "subject_label": "Progreso de quién",
       "subject_you": "Tú",

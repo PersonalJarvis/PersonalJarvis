@@ -26,8 +26,18 @@ export function RanksTab({ who }: { who: HallWho }) {
   const level = subject?.level ?? 1;
   const held = rankAt(titles, level);
   const ladder = useMemo(() => rankLadder(titles), [titles]);
+  const position = Math.max(0, ladder.findIndex((rung) => rung.rank === held));
   return (
     <div className="hall-ranks">
+      <div className="hall-rank-summary">
+        <RankInsignia rank={held} size={84} />
+        <div>
+          <span className="hall-hero-name">{t("society.hall.rank_held")}</span>
+          <strong className="hall-hero-title">{t(`society.level.title.${held}`)}</strong>
+          <span className="hall-rank-track" aria-hidden><i style={{ width: `${(position / Math.max(1, ladder.length - 1)) * 100}%` }} /></span>
+          <span className="hall-hint">{t("society.hall.rank_position").replace("{0}", String(position + 1)).replace("{1}", String(ladder.length))}</span>
+        </div>
+      </div>
       <p className="hall-lead">{t("society.hall.ranks_body")}</p>
       {TIERS.map((tier) => {
         const rungs = ladder.filter((rung) => rung.tier === tier);

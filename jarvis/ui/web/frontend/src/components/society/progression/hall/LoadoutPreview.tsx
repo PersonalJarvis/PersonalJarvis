@@ -32,7 +32,7 @@ import type { RankId } from "../levelCatalog";
 import { dressedLook, regaliaFor, type UniformId } from "../regalia/dress";
 
 /** How fast the stage turns, rad/s. */
-const TURN_SPEED = 0.35;
+const TURN_SPEED = 0.18;
 /** Flying pets hover this high over the stage. */
 const HOVER_M = 0.32;
 /** A pet is drawn this tall on the stage, so a 0.3 m teapot reads as well as the person does. */
@@ -72,10 +72,10 @@ function PreviewScene({ subject, loadout, rank, paused, reduced, spin }: {
 
   return (
     <>
-      <hemisphereLight args={["#dfe8ff", "#1a1f3a", 0.9]} />
-      <directionalLight position={[2.5, 4, 3]} intensity={1.4} color="#fff4e2" />
-      <pointLight position={[0, 2.6, 0.6]} intensity={5} distance={6} decay={2} color="#ffdca0" />
-      <pointLight position={[-2, 1.4, -2]} intensity={3} distance={6} decay={2} color="#8fb8ff" />
+      <hemisphereLight args={["#ffffff", "#d9d2c3", 1.25]} />
+      <directionalLight position={[2.2, 4, 3.2]} intensity={1.6} color="#fff6e8" />
+      <directionalLight position={[-3, 2.2, 1.5]} intensity={0.55} color="#e6eeff" />
+      <pointLight position={[0, 1.6, -2]} intensity={2.2} distance={6} decay={2} color="#ffffff" />
       <group ref={turntable}>
         <StudioStage />
         <group scale={grow}>
@@ -104,9 +104,9 @@ function CameraFrame() {
   useLayoutEffect(() => {
     const narrow = size.width / Math.max(1, size.height) < 0.9;
     // Close on the figure: the insignia, ribbons and cap are what the studio shows off.
-    const distance = 3.6 * (narrow ? 1.25 : 1);
+    const distance = 4.1 * (narrow ? 1.2 : 1);
     camera.position.set(0, 1.45, distance);
-    camera.lookAt(0, 0.78, 0);
+    camera.lookAt(0, 0.62, 0);
     camera.updateProjectionMatrix();
   }, [camera, size]);
   return null;
@@ -120,7 +120,7 @@ export function LoadoutPreview({ subject, loadout, rank, label }: {
   const { generation } = useWebglSurface(host);
   const awake = useCanvasAwake(host);
   const reduced = useReducedMotion() ?? false;
-  const spin = useRef(0.4);
+  const spin = useRef(-0.3);
   const drag = useRef<{ x: number; id: number } | null>(null);
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;

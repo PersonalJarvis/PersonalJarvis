@@ -12,7 +12,7 @@
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
 import { equippedFor, rewardRoad, type SlotChoice } from "../cosmetics";
-import { rankAt, SLOTS, slotOf, type RankId, type RewardId, type Slot } from "../levelCatalog";
+import { RANK_INFO, rankAt, SLOTS, slotOf, type RankId, type RewardId, type Slot } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
 import type { RewardRow } from "../progressionApi";
 import { useProgression } from "../progressionStore";
@@ -66,9 +66,6 @@ export function StudioTab({ who }: { who: HallWho }) {
       <div className="hall-stage">
         <LoadoutPreview subject={who.preview} loadout={loadout} rank={rank}
           label={t("society.hall.preview_label").replace("{0}", who.name)} />
-        <div className="hall-stage-top">
-          <LevelHero who={who} compact />
-        </div>
         <div className="hall-stage-bottom">
           {tryRow ? (
             <div className="hall-tryon" role="status">
@@ -85,9 +82,16 @@ export function StudioTab({ who }: { who: HallWho }) {
           )}
           <span className="hall-stage-hint">{t("society.hall.drag_hint")}</span>
         </div>
+        {rank !== "private" && (
+          <div className="hall-stage-rank" aria-hidden>
+            <RankInsignia rank={rank} size={46} />
+            <span>{RANK_INFO[rank].grade}</span>
+          </div>
+        )}
       </div>
 
       <div className="hall-wardrobe">
+        <LevelHero who={who} compact />
         {slots.length === 0 ? (
           <div className="hall-insignia-card">
             <RankInsignia rank={rank} size={120} />

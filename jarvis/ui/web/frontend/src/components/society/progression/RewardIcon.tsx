@@ -5,7 +5,7 @@
  * or the medals — on a dark display tile. Decorative: the name always sits
  * next to it.
  */
-import { useId } from "react";
+import { createContext, useContext, useId } from "react";
 import type { RewardId } from "./levelCatalog";
 import { uniformStyle, type UniformId } from "./regalia/dress";
 import { MEDAL_METALS, RIBBONS, ribbonSpans, type RibbonSpec } from "./regalia/ribbons";
@@ -138,19 +138,28 @@ function Decoration({ id }: { id: RewardId }) {
   );
 }
 
+/** The tile a picture sits on: dark display velvet (HUD, promotion card) or light card stock (the white hall screen). */
+export const RewardTileTone = createContext<"dark" | "light">("dark");
+
+const TILES = {
+  dark: { top: "#2a3456", bottom: "#121831", edge: "#c9a24a55" },
+  light: { top: "#ffffff", bottom: "#ece7dc", edge: "#cfc7b5" },
+} as const;
+
 export function RewardIcon({ reward, locked = false, size = 30 }: { reward: RewardId; locked?: boolean; size?: number }) {
   const id = useId().replace(/:/g, "");
+  const tile = TILES[useContext(RewardTileTone)];
   return (
     <span className="level-reward-icon" data-locked={locked || undefined} aria-hidden style={{ width: size, height: size }}>
       <svg viewBox="0 0 48 48" width={size} height={size}>
         <defs>
           <radialGradient id={`${id}-tile`} cx="0.5" cy="0.3" r="0.8">
-            <stop offset="0" stopColor="#2a3456" />
-            <stop offset="1" stopColor="#121831" />
+            <stop offset="0" stopColor={tile.top} />
+            <stop offset="1" stopColor={tile.bottom} />
           </radialGradient>
         </defs>
-        <rect x={0.5} y={0.5} width={47} height={47} rx={9} fill={`url(#${id}-tile)`} stroke="#c9a24a55" strokeWidth={1} />
-        <g opacity={locked ? 0.35 : 1} style={locked ? { filter: "grayscale(1)" } : undefined}>
+        <rect x={0.5} y={0.5} width={47} height={47} rx={9} fill={`url(#${id}-tile)`} stroke={tile.edge} strokeWidth={1} />
+        <g opacity={locked ? 0.6 : 1} style={locked ? { filter: "grayscale(.75)" } : undefined}>
           {reward.startsWith("uniform_") && <Uniform id={reward as UniformId} />}
           {reward.startsWith("headwear_") && <Headwear id={reward} />}
           {reward.startsWith("decoration_") && <Decoration id={reward} />}
