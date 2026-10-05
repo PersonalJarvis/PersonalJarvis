@@ -354,6 +354,20 @@ it("has the editors ready the moment the menu opens", async () => {
   expect(screen.getByRole("menuitem", { name: "Open in VS Code" })).toBeDefined();
 });
 
+it("says at once that the editor is opening, and when it could not start", async () => {
+  const pushToast = vi.fn();
+  const { useEventStore } = await import("@/store/events");
+  useEventStore.setState({ pushToast } as never);
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open in VS Code" }));
+  expect(pushToast).toHaveBeenCalledWith("info", "Opening VS Code…");
+  openProjectIn.mockResolvedValueOnce(false);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open in VS Code" }));
+  await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "VS Code could not be started"));
+});
+
 it("hides launchers the backend cannot offer", async () => {
   fetchProjectLaunchers.mockRejectedValue(new Error("Not Found"));
   render(<IdeProjectTree />);

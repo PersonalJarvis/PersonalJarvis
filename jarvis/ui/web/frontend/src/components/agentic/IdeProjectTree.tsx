@@ -290,11 +290,11 @@ export function IdeProjectTree() {
   const menuWorkspaceId = contextMenu?.kind === "workspace" ? contextMenu.workspaceId : null;
   // Fetched ahead, one project after another, so the menu is complete the
   // moment it opens; opening it refreshes that project in the background.
-  const visibleProjectKey = visible.map((project) => project.id).join(" ");
+  const visibleProjectKey = visible.map((project) => project.id).join("\u0000");
   useEffect(() => {
     let live = true;
     void (async () => {
-      for (const id of visibleProjectKey ? visibleProjectKey.split(" ") : []) {
+      for (const id of visibleProjectKey ? visibleProjectKey.split("\u0000") : []) {
         if (!live) return;
         if (launcherCache.has(id)) continue;
         const found = await loadLaunchers(id);
@@ -322,9 +322,13 @@ export function IdeProjectTree() {
     return () => { live = false; };
   }, [menuWorkspaceId]);
 
-  const openIn = async (projectId: string, target: string) => {
-    try { await openProjectIn(projectId, target); }
-    catch (error) { pushToast("error", revealErrorMessage(error)); }
+  const openIn = async (projectId: string, target: string, label: string) => {
+    // A cold editor can take seconds to draw its first window; say at once
+    // that the click landed instead of leaving the user guessing.
+    pushToast("info", `Opening ${label}…`);
+    try {
+      if (!(await openProjectIn(projectId, target))) pushToast("error", `${label} could not be started`);
+    } catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
   /** One more pane of the workspace's own agent, then bring the workspace to the front. */
@@ -719,14 +723,14 @@ export function IdeProjectTree() {
       return {
         id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, image: EDITOR_LOGOS[editor.id],
         testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : "Not installed",
-        onSelect: run(() => void openIn(project.id, editor.id)),
+        onSelect: run(() => void openIn(project.id, editor.id, editor.label)),
       };
     });
     if (scope === "project" && found.file_manager) {
       items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
     }
     if (scope === "project" && found.remote_url) {
-      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote")) });
+      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote", found.remote_label ?? "the web page")) });
     }
     return items;
   };
