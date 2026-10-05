@@ -83,6 +83,9 @@ class _Family:
     id: str
     label: str
     specs: list[ProviderSpec] = field(default_factory=list)
+    # Withdrawn cards still running an existing selection: no row on the page,
+    # but health and "in use" reports name them, so they map to the company.
+    hidden: list[str] = field(default_factory=list)
 
 
 def family_of(spec: ProviderSpec) -> str:
@@ -101,14 +104,20 @@ def family_of(spec: ProviderSpec) -> str:
 
 def _group() -> list[_Family]:
     families: dict[str, _Family] = {}
+    hidden: list[ProviderSpec] = []
     for spec in PROVIDERS:
         if spec.hidden:
+            hidden.append(spec)
             continue
         fid = family_of(spec)
         family = families.get(fid)
         if family is None:
             family = families[fid] = _Family(id=fid, label=_FAMILY_LABELS.get(fid, spec.label))
         family.specs.append(spec)
+    for spec in hidden:
+        owner = families.get(family_of(spec))
+        if owner is not None:
+            owner.hidden.append(spec.id)
 
     def rank(family: _Family) -> tuple[int, int]:
         if family.id == LOCAL_FAMILY:
@@ -211,6 +220,7 @@ def build_families(
                 "signup_url": _first(family, "signup_url", None),
                 "subscription": _subscription(family),
                 "provider_ids": provider_ids,
+                "hidden_ids": list(family.hidden),
                 "agent_ids": list(dict.fromkeys(agent_ids)),
             }
         )

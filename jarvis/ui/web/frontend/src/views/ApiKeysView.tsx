@@ -1,60 +1,48 @@
 import { useEffect, useState } from "react";
-import { Bot, KeyRound, Phone, Radio, SlidersHorizontal } from "lucide-react";
+import { Bot, KeyRound, Loader2, Phone, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { JarvisAgentSection } from "@/components/JarvisAgentSection";
+import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
+import { SubagentModelCard, type SubagentStatus } from "@/components/SubagentModelCard";
+import { PromptWriterCard } from "@/components/PromptWriterCard";
+import { useTierHealth } from "@/components/providers/ProviderTierSection";
+import { Button } from "@/components/ui/button";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
-import { RealtimeTab } from "@/views/apikeys/RealtimeTab";
-import { useTierHealth, type LucideIcon } from "@/components/providers/ProviderTierSection";
-import { type SectionHealth, useProviders } from "@/hooks/useProviders";
-import {
-  APIKEYS_TAB_EVENT,
-  API_KEYS_TABS,
-  type ApiKeysTab,
-  clearApiKeysTabRequest,
-  requestedApiKeysTab,
-} from "@/lib/apiKeysTab";
-import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
-
-/** A tab another part of the app asked for, or the page's first tab. */
-function resolveTab(wanted: string | null): ApiKeysTab {
-  return API_KEYS_TABS.includes(wanted as ApiKeysTab) ? (wanted as ApiKeysTab) : "realtime";
-}
+import { ProvidersPanel } from "@/views/apikeys/ProvidersPanel";
+import { useProviders, useSectionHealth } from "@/hooks/useProviders";
+import { useProviderFamilies } from "@/lib/providerFamilies";
+import { useLocaleChunk, useT } from "@/i18n";
 
 /**
- * API Keys — the realtime voice, the agents, the install's own key and the
- * optional integrations, one tab each.
+ * API Keys — every AI company once, each with one way to sign in and one key.
  *
- * Realtime is the only voice engine this page sets up. The Pipeline|Realtime
- * switch, the Brain / Voice Output / Voice Input / Wording tabs and the Local
- * Mode toggle are gone: speech-to-text and the dictation wording pass are
- * configured in the voice section, where dictation lives.
+ * The page used to be split by feature (live voice, agents, the install key,
+ * advanced), so one company appeared on several tabs with several keys. Now
+ * a company is connected once — its subscription login or a single key that
+ * every feature reads — and its settings say what the assistant uses it for,
+ * with each job switchable where it is shown. Below the providers sit the
+ * settings that belong to no single company: the agents' model and accounts,
+ * the install's own key, and the optional integrations.
  */
 export function ApiKeysView() {
   const t = useT();
+  // The page's own strings load with it; nothing paints raw keys meanwhile.
+  const stringsReady = useLocaleChunk("providers");
   const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
-  // Per-tab health (amber = still to set up, red = set up but failing a live
-  // check), re-bound to the provider that is actually active.
-  const health = useTierHealth(providers);
-  const [active, setActive] = useState<ApiKeysTab>(() => resolveTab(requestedApiKeysTab()));
+  const families = useProviderFamilies();
+  const { health } = useSectionHealth();
+  const tierHealth = useTierHealth(providers);
+  const refreshing = families.loading;
 
-  // The first-run guide may ask for a tab after the page mounted (it loads
-  // lazily); a request stays in force until the user picks a tab themselves.
-  useEffect(() => {
-    const onRequest = (event: Event) => {
-      setActive(resolveTab((event as CustomEvent<string | null>).detail));
-    };
-    window.addEventListener(APIKEYS_TAB_EVENT, onRequest);
-    return () => window.removeEventListener(APIKEYS_TAB_EVENT, onRequest);
-  }, []);
-
-  const selectTab = (key: ApiKeysTab) => {
-    clearApiKeysTabRequest();
-    setActive(key);
-  };
+  if (!stringsReady) {
+    return (
+      <div role="status" aria-busy="true" className="flex h-full items-center justify-center">
+        <Loader2 aria-hidden="true" className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-tour="apikeys-page">
@@ -62,155 +50,86 @@ export function ApiKeysView() {
         <PageHeader
           icon={<KeyRound />}
           title={t("apikeys_view.title")}
-          description={t("apikeys_view.subtitle")}
-          tabs={<CategoryTabs active={active} onSelect={selectTab} health={health} />}
+          description={t("providers_page.subtitle")}
+          actions={
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-muted-foreground"
+              data-testid="providers-refresh"
+              disabled={refreshing}
+              onClick={() => {
+                refetch();
+                void families.reload();
+              }}
+            >
+              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              <CheckedAgo at={families.checkedAt} />
+            </Button>
+          }
         />
       </div>
 
       <div
         data-testid="api-keys-provider-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-6"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-2"
       >
-        {/* The key re-runs the rise animation on a tab change. */}
-        <div
-          key={active}
-          role="tabpanel"
-          id="apikeys-panel"
-          aria-labelledby={`apikeys-tab-${active}`}
-          className="profile-rise w-full max-w-page"
-        >
-          {active === "realtime" && (
-            <RealtimeTab
-              providers={providers}
-              loading={loading}
-              error={error}
-              onChanged={refetch}
-              onActivateOptimistic={setActiveOptimistic}
-              health={health.realtime}
-            />
-          )}
-          {active === "subagents" && <SubagentCategory />}
-          {active === "jarvis-key" && <JarvisKeyCategory />}
-          {active === "advanced" && <AdvancedCategory />}
+        <div className="profile-rise flex w-full flex-col gap-12">
+          <ProvidersPanel
+            data={families}
+            providers={providers}
+            providersLoading={loading}
+            providersError={error}
+            health={health}
+            realtimeHealth={tierHealth.realtime}
+            onProvidersChanged={refetch}
+            onActivateOptimistic={setActiveOptimistic}
+          />
+          <AgentSettings />
+          <section className="flex flex-col gap-3">
+            <SectionTitle title={t("apikeys_view.jarvis_key_title")} description={t("apikeys_view.jarvis_key_desc")} />
+            <JarvisApiGroup />
+          </section>
+          <section className="flex flex-col gap-3">
+            <SectionTitle title={t("apikeys_view.advanced_title")} description={t("apikeys_view.advanced_desc")} />
+            <div className="space-y-4">
+              <TeamProxyGroup />
+              <TelephonySection />
+              <WikiProviderCard />
+            </div>
+            {/* Nominative-use trademark notice: provider and integration names
+                and logos belong to their owners and only identify what you
+                connect to (see TRADEMARK.md). */}
+            <p className="px-1 pt-2 text-sm text-muted-foreground">{t("apikeys_view.trademark_notice")}</p>
+          </section>
         </div>
       </div>
     </div>
   );
 }
 
-/**
- * Underline tabs on the header's rule, in the shared tab-bar look. A tab whose
- * section needs attention swaps its icon for a status dot: red for "set up but
- * not working", amber for "still to set up". Healthy tabs stay silent, so a
- * dot always means "look here".
- */
-function CategoryTabs({
-  active,
-  onSelect,
-  health,
-}: {
-  active: ApiKeysTab;
-  onSelect: (key: ApiKeysTab) => void;
-  /** Per-tab health rollup keyed by tab; absent keys render no dot. */
-  health: Record<string, SectionHealth>;
-}) {
+/** "Checked 2 min ago", re-rendered every half minute. */
+function CheckedAgo({ at }: { at: number | null }) {
   const t = useT();
-  const meta: Record<ApiKeysTab, { label: string; icon: LucideIcon }> = {
-    realtime: { label: t("apikeys_view.tab_realtime"), icon: Radio },
-    subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
-    "jarvis-key": { label: t("apikeys_view.tab_jarvis_key"), icon: KeyRound },
-    advanced: { label: t("apikeys_view.tab_advanced"), icon: SlidersHorizontal },
-  };
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (at === null) return <>{t("providers_page.checking")}</>;
+  const minutes = Math.floor(Math.max(0, now - at) / 60_000);
   return (
-    <div
-      role="tablist"
-      data-testid="api-keys-category-tabs"
-      className="flex items-center gap-6 overflow-x-auto border-b border-border scrollbar-jarvis"
-    >
-      {API_KEYS_TABS.map((key) => (
-        <TabButton
-          key={key}
-          id={`apikeys-tab-${key}`}
-          icon={meta[key].icon}
-          label={meta[key].label}
-          selected={active === key}
-          onClick={() => onSelect(key)}
-          health={health[key]}
-        />
-      ))}
-    </div>
+    <>
+      {minutes < 1
+        ? t("providers_page.checked_now")
+        : t("providers_page.checked_minutes").replace("{0}", String(minutes))}
+    </>
   );
 }
 
-function TabButton({
-  id,
-  icon: Icon,
-  label,
-  selected,
-  onClick,
-  health,
-}: {
-  id: string;
-  icon: LucideIcon;
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-  health?: SectionHealth;
-}) {
-  const t = useT();
-  const indicator =
-    health?.status === "error"
-      ? "error"
-      : health?.status === "needs_setup"
-        ? "needs_setup"
-        : null;
-  const statusLabel =
-    indicator === "error"
-      ? t("apikeys_view.health_error")
-      : indicator === "needs_setup"
-        ? t("apikeys_view.health_needs_setup")
-        : "";
-  // Tooltip: the plain-language status plus the backend's one-line detail
-  // (e.g. "OpenAI GPT-Live: out of credit"), so hovering says what is wrong.
-  const title = indicator ? [statusLabel, health?.detail].filter(Boolean).join(" — ") : undefined;
+function SectionTitle({ title, description }: { title: string; description: string }) {
   return (
-    <button
-      type="button"
-      role="tab"
-      id={id}
-      aria-selected={selected}
-      aria-controls="apikeys-panel"
-      onClick={onClick}
-      title={title}
-      className={cn(
-        "relative -mb-px inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap border-b-2 text-base font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        selected
-          ? "border-accent text-foreground-strong"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {indicator ? (
-        <span
-          aria-hidden="true"
-          className={cn(
-            "h-2 w-2 shrink-0 rounded-full",
-            indicator === "error" ? "bg-destructive" : "bg-warning",
-          )}
-        />
-      ) : (
-        <Icon aria-hidden="true" className="h-4 w-4 opacity-80" />
-      )}
-      {label}
-      {indicator && <span className="sr-only">{` (${statusLabel})`}</span>}
-    </button>
-  );
-}
-
-/** The heading every non-voice tab opens with, in the settings-group grammar. */
-function TabIntro({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="mb-4 px-1">
+    <div className="px-1">
       <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
       <p className="mt-0.5 text-base text-muted-foreground">{description}</p>
     </div>
@@ -218,59 +137,43 @@ function TabIntro({ title, description }: { title: string; description: string }
 }
 
 /**
- * The agents tab — the heavy-task worker selection. `JarvisAgentSection` owns
- * its own data source (/api/jarvis-agent/status) and rows.
+ * Settings that belong to the agents rather than to one company: the model a
+ * worker runs, who writes the task briefs, and the several logins a person
+ * can hold per command-line tool.
  */
-function SubagentCategory() {
+function AgentSettings() {
   const t = useT();
-  return (
-    <div>
-      <TabIntro
-        title={t("apikeys_view.cat_subagents_title")}
-        description={t("apikeys_view.cat_subagents_desc")}
-      />
-      <JarvisAgentSection hideHeader />
-    </div>
-  );
-}
+  const [status, setStatus] = useState<SubagentStatus | null>(null);
+  const reload = async () => {
+    try {
+      const res = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
+      if (res.ok) setStatus((await res.json()) as SubagentStatus);
+    } catch (cause) {
+      // The model card simply stays hidden; the provider list above reports
+      // the same endpoint's failure.
+      console.debug("agent status unavailable", cause);
+    }
+  };
+  useEffect(() => {
+    void reload();
+    const onChange = () => void reload();
+    window.addEventListener("jarvis:agent-switched", onChange);
+    return () => window.removeEventListener("jarvis:agent-switched", onChange);
+  }, []);
 
-/**
- * The "<Name> Key" tab — the per-install Control Key that unlocks the browser
- * UI and authenticates local agents, named after the configured wake word via
- * the i18n `{name}` token, so the tab the lock screen points at carries the
- * name the user knows their assistant by.
- */
-function JarvisKeyCategory() {
-  const t = useT();
   return (
-    <div>
-      <TabIntro title={t("apikeys_view.jarvis_key_title")} description={t("apikeys_view.jarvis_key_desc")} />
-      <JarvisApiGroup />
-    </div>
-  );
-}
-
-/**
- * Optional integrations: the team key proxy, telephony and the knowledge-Wiki
- * provider. Each block keeps its own labelled header.
- */
-function AdvancedCategory() {
-  const t = useT();
-  return (
-    <div>
-      <TabIntro title={t("apikeys_view.advanced_title")} description={t("apikeys_view.advanced_desc")} />
-      <div className="space-y-4">
-        <TeamProxyGroup />
-        <TelephonySection />
-        <WikiProviderCard />
-        {/* Nominative-use trademark notice: provider and integration names and
-            logos belong to their owners and only identify what you connect to
-            (see TRADEMARK.md). */}
-        <p className="pt-2 text-sm text-muted-foreground">
-          {t("apikeys_view.trademark_notice")}
-        </p>
+    <section data-testid="provider-agent-settings" className="flex flex-col gap-3">
+      <SectionTitle title={t("providers_page.agent_settings_title")} description={t("providers_page.agent_settings_desc")} />
+      <div className="grid gap-4 xl:grid-cols-2">
+        {status && <SubagentModelCard status={status} onSaved={() => void reload()} />}
+        <PromptWriterCard />
       </div>
-    </div>
+      <div className="flex items-center gap-2 px-1 pt-2 text-sm font-medium text-muted-foreground">
+        <Bot aria-hidden="true" className="h-4 w-4" />
+        {t("providers_page.accounts_title")}
+      </div>
+      <AgentAccountsPanel />
+    </section>
   );
 }
 

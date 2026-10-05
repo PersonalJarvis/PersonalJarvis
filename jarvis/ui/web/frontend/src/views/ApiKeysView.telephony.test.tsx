@@ -2,8 +2,8 @@
  * Component tests for the Telephony tier section embedded in ApiKeysView.
  *
  * Design (2026-06-09): the former standalone "Telephony" sidebar screen was
- * folded into the API-Keys view as another tier section (header + the existing
- * status/credentials/scripts/calls cards), shown after the Subagent tier. These
+ * folded into the API-Keys view as another section (header + the existing
+ * status/credentials/scripts/calls cards), shown below the providers. These
  * tests pin that the section header renders and that the embedded TelephonyPanel
  * loads and shows live telephony data from /api/telephony/*.
  */
@@ -131,6 +131,7 @@ const TELEPHONY_CONFIG_LIVE = {
 function routes(): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [GEMINI_BRAIN] } }),
+    "/api/providers/families": () => ({ body: { families: [] } }),
     "/api/jarvis-agent/status": () => ({ body: JARVIS_AGENT_EMPTY }),
     "/api/telephony/status": () => ({ body: TELEPHONY_STATUS_LIVE }),
     "/api/telephony/config": () => ({ body: TELEPHONY_CONFIG_LIVE }),
@@ -148,8 +149,6 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("renders the Telephony tier header inside the API-Keys view", async () => {
     installFetchMock(routes());
     renderView();
-    // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 
     // English is the test-default locale; tier_telephony => "Telephony".
     await waitFor(() => expect(screen.getByText("Telephony")).toBeTruthy());
@@ -158,8 +157,6 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("loads live telephony status (Charon voice) from /api/telephony", async () => {
     installFetchMock(routes());
     renderView();
-    // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 
     await waitFor(() => {
       expect(screen.getByTestId("status-tts-voice").textContent).toBe("Charon");
@@ -172,8 +169,6 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("offers a 'Setup script' button that navigates to the telephony-setup page", async () => {
     installFetchMock(routes());
     renderView();
-    // Telephony now lives in the de-emphasized "Advanced" tab; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /advanced/i }));
 
     const btn = await waitFor(() =>
       screen.getByRole("button", { name: /Setup script/i }),

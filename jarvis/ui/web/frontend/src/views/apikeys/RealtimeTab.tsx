@@ -68,6 +68,7 @@ export function RealtimeTab({
   onChanged,
   onActivateOptimistic,
   health,
+  embedded = false,
 }: {
   providers: ProviderDescriptor[];
   loading: boolean;
@@ -76,6 +77,14 @@ export function RealtimeTab({
   onActivateOptimistic: (tier: ProviderTier, id: string) => void;
   /** Live health of the realtime tier's ACTIVE provider. */
   health?: SectionHealth;
+  /**
+   * Shown inside one company's settings on the provider page: `providers` is
+   * that company's share of the realtime tier, the page above already says
+   * what the voice runs on, and the company key is edited once, above this
+   * section — so the "voice now" card, the list heading and the per-card key
+   * fields are left out.
+   */
+  embedded?: boolean;
 }) {
   const t = useT();
   const voice = useVoiceMode();
@@ -231,8 +240,8 @@ export function RealtimeTab({
       data-testid="realtime-tab"
       className="flex flex-col gap-group"
     >
-      <VoiceNow active={currentProvider} activeHealth={currentProvider
-        ? sectionHealthForSubject(health, currentProvider.id) : undefined} voice={voice} />
+      {!embedded && <VoiceNow active={currentProvider} activeHealth={currentProvider
+        ? sectionHealthForSubject(health, currentProvider.id) : undefined} voice={voice} />}
 
       {error && (
         <div
@@ -252,8 +261,8 @@ export function RealtimeTab({
       )}
 
       <ProfileGroup
-        title={t("apikeys_realtime.providers_title")}
-        description={t("apikeys_realtime.providers_desc")}
+        title={embedded ? t("providers_page.voice_choice_title") : t("apikeys_realtime.providers_title")}
+        description={embedded ? t("providers_page.voice_choice_desc") : t("apikeys_realtime.providers_desc")}
         testId="realtime-provider-list"
       >
         {loading && !choices.length ? (
@@ -284,6 +293,7 @@ export function RealtimeTab({
             health={selected.active ? activeHealth : undefined}
             activating={activatingId === selected.id}
             canSwitch={canSwitchTo(selected)}
+            hideKeyFields={embedded}
             onActivate={() => void activate(selected)}
             // The first provider set up becomes the voice by itself; once one
             // holds the voice, a new key never takes it over unasked.
@@ -575,6 +585,7 @@ function ProviderSettings({
   health,
   activating,
   canSwitch,
+  hideKeyFields = false,
   onActivate,
   onKeySaved,
   onChanged,
@@ -583,6 +594,8 @@ function ProviderSettings({
   health?: SectionHealth;
   activating: boolean;
   canSwitch: boolean;
+  /** The company key is edited above (provider page); keep only local setup here. */
+  hideKeyFields?: boolean;
   onActivate: () => void;
   /** Called once a key was saved for a provider that had none. */
   onKeySaved?: () => void;
@@ -591,7 +604,10 @@ function ProviderSettings({
   const t = useT();
   const isLive = provider.configuration_surface === "live";
   const selectedAuthMode = liveMode(provider);
-  const showCredentials = !isLive || selectedAuthMode === "api_key";
+  // The test and the key both belong to the API-key route; the key field
+  // alone moves up to the company section when this tab is embedded.
+  const showTest = !isLive || selectedAuthMode === "api_key";
+  const showCredentials = showTest && !(hideKeyFields && provider.auth_mode === "api_key");
   const broken = provider.active && health?.status === "error";
   const brokenDetail = health?.detail?.trim() || "";
   const showOptions =
@@ -603,7 +619,7 @@ function ProviderSettings({
 
   return (
     <div data-testid={`realtime-settings-${provider.id}`} className="flex flex-col gap-group">
-      {(showCredentials || broken) && <ProfileGroup
+      {(showTest || broken) && <ProfileGroup
         title={provider.label}
         description={
           isLive
@@ -651,7 +667,7 @@ function ProviderSettings({
             </div>
           </SettingRow>
         )}
-        {showCredentials && <SettingRow
+        {showTest && <SettingRow
           label={t("apikeys_realtime.test_label")}
           hint={t("apikeys_realtime.test_hint")}
           control={
