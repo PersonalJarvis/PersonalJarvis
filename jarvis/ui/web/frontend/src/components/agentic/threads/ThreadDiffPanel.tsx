@@ -12,6 +12,9 @@ const STATUS_MARK: Record<FolderChange["status"], { letter: string; className: s
   conflicted: { letter: "!", className: "text-destructive" },
 };
 
+/** Rows drawn at once; a tree with thousands of changes stays responsive. */
+const SHOWN_FILES = 300;
+
 function splitPath(path: string): { name: string; dir: string } {
   const parts = path.split("/");
   const name = parts.pop() ?? path;
@@ -32,6 +35,7 @@ export function ThreadDiffPanel({ folder, version, onClose }: { folder: string; 
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [diff, setDiff] = useState<FolderDiff | null>(null);
   const [diffError, setDiffError] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,7 +76,7 @@ export function ThreadDiffPanel({ folder, version, onClose }: { folder: string; 
       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground-strong" title={openPath ?? undefined}>
         {openPath ? splitPath(openPath).name : "Changes"}
       </span>
-      {!openPath && files.length > 0 && <span className="shrink-0 font-mono text-xs tabular-nums">
+      {!openPath && (added > 0 || removed > 0) && <span className="shrink-0 font-mono text-xs tabular-nums">
         <span className="text-success">+{added}</span> <span className="text-destructive">−{removed}</span>
       </span>}
       <button type="button" aria-label="Read the changes again" title="Refresh" onClick={() => setNonce((value) => value + 1)}
@@ -92,7 +96,7 @@ export function ThreadDiffPanel({ folder, version, onClose }: { folder: string; 
           : changes && !changes.available ? <p className="px-4 py-3 text-sm text-muted-foreground">{changes.reason || "This folder is not a git repository."}</p>
             : files.length === 0 ? <p className="px-4 py-3 text-sm text-muted-foreground">{loading ? "Reading the changes…" : "No changes yet."}</p>
               : <ul className="py-1">
-                {files.map((file) => {
+                {(showAll ? files : files.slice(0, SHOWN_FILES)).map((file) => {
                   const { name, dir } = splitPath(file.path);
                   const mark = STATUS_MARK[file.status] ?? STATUS_MARK.modified;
                   return <li key={file.path}>
@@ -107,6 +111,11 @@ export function ThreadDiffPanel({ folder, version, onClose }: { folder: string; 
                     </button>
                   </li>;
                 })}
+                {!showAll && files.length > SHOWN_FILES && <li>
+                  <button type="button" onClick={() => setShowAll(true)} className="px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
+                    Show {files.length - SHOWN_FILES} more files
+                  </button>
+                </li>}
               </ul>}
     </div>
   </aside>;

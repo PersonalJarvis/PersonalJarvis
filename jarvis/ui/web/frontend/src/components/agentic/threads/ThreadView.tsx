@@ -182,7 +182,10 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     </div>;
   }
 
-  const title = isDraft ? "New thread" : threadTitle(session);
+  // The list row carries the newest title (the CLI's own, or the first
+  // message's); the open session was read before its first message named it.
+  const listed = sessions.find((row) => row.session_id === selection.sessionId);
+  const title = isDraft ? "New thread" : threadTitle(listed ?? session);
   const threadKey = selection.sessionId ?? `draft:${project.id}`;
   const empty = isDraft && timeline.items.length === 0;
 
