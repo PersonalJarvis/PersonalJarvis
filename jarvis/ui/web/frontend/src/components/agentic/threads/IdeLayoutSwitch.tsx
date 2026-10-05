@@ -1,6 +1,10 @@
 import { useRef } from "react";
 import { Building2, LayoutGrid, MessagesSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  CAPTION_ICON_CLASS, CAPTION_ICON_STROKE, CAPTION_SEGMENT, CAPTION_SEGMENT_OFF, CAPTION_SEGMENT_ON,
+  CAPTION_SEGMENT_PX as SEGMENT_PX, CAPTION_THUMB, CAPTION_TRACK,
+} from "@/components/layout/captionSwitch";
 import { useIdeSidePanelStore, type SidePanelTabId } from "@/store/ideSidePanel";
 import { useIdeThreadsStore, type IdeLayout } from "@/store/ideThreads";
 
@@ -11,9 +15,6 @@ const CHOICES: { choice: Choice; label: string; Icon: typeof LayoutGrid }[] = [
   { choice: "threads", label: "Threads", Icon: MessagesSquare },
   { choice: "verse", label: "Jarvis Verse", Icon: Building2 },
 ];
-
-/** Width of one segment; the sliding thumb moves by exactly this much. */
-const SEGMENT_PX = 40;
 
 /** How the side panel stood before the Verse took the whole view. */
 interface PanelBefore {
@@ -70,19 +71,16 @@ export function IdeLayoutSwitch({ className }: { className?: string }) {
   };
 
   return <div role="radiogroup" aria-label="IDE layout" data-testid="ide-layout-switch"
-    className={cn("relative flex h-7 items-center rounded-full border border-border bg-secondary/70 p-[3px] shadow-rim dark:bg-card", className)}>
+    className={cn(CAPTION_TRACK, className)}>
     <span aria-hidden
       style={{ width: SEGMENT_PX, transform: `translateX(${index * SEGMENT_PX}px)` }}
-      className="absolute inset-y-[3px] left-[3px] rounded-full border border-border-strong/60 bg-background shadow-[0_1px_2px_rgb(var(--scrim-rgb)/0.25)] dark:border-border-strong dark:bg-surface-raised transition-transform duration-200 ease-out motion-reduce:transition-none" />
+      className={CAPTION_THUMB} />
     {CHOICES.map(({ choice, label, Icon }) => <button key={choice} type="button" role="radio"
       data-testid={`ide-layout-${choice}`} aria-checked={current === choice} aria-label={label} title={label}
       onClick={() => pick(choice)}
       style={{ width: SEGMENT_PX }}
-      className={cn(
-        "relative z-[1] flex h-full items-center justify-center rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        current === choice ? "text-foreground-strong" : "text-muted-foreground hover:text-foreground",
-      )}>
-      <Icon aria-hidden className="h-4 w-4" strokeWidth={1.9} />
+      className={cn(CAPTION_SEGMENT, current === choice ? CAPTION_SEGMENT_ON : CAPTION_SEGMENT_OFF)}>
+      <Icon aria-hidden className={CAPTION_ICON_CLASS} strokeWidth={CAPTION_ICON_STROKE} />
     </button>)}
   </div>;
 }
