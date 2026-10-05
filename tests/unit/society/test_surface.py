@@ -355,7 +355,9 @@ async def test_in_flight_tool_rechecks_live_grants(rt: SocietyRuntime):
     assert calls == [{"action": "list"}]
 
 
-async def test_in_flight_tool_rechecks_live_session_mode(rt: SocietyRuntime, monkeypatch: pytest.MonkeyPatch):
+async def test_in_flight_tool_rechecks_live_session_mode(
+    rt: SocietyRuntime, monkeypatch: pytest.MonkeyPatch
+):
     agent, _ = await rt.roster.create(name="Mailbox", approval_mode="bypass")
     session = SimpleNamespace(
         session_id="society:mailbox",
@@ -465,13 +467,18 @@ async def test_browser_gate_restores_writable_state_after_read_only_session(
 
     from jarvis.society.surface import _GatedTool
 
-    monkeypatch = pytest.MonkeyPatch()
+    from jarvis.society.surface import _GatedTool
+
+    runtime_chat = SimpleNamespace(store=Store())
+    session_service = rt._get_chat  # noqa: SLF001 - preserve existing service accessor
+    rt._get_chat = lambda: runtime_chat
     try:
-        monkeypatch.setattr(rt, "_get_chat", lambda: SimpleNamespace(store=Store()))
         await society_system_extra(None, None, session)
+        agent = await rt.roster.get("scout")
+        assert agent is not None
         gated = _GatedTool(
             BrowserLike(),
-            await rt.roster.get("scout"),
+            agent,
             "core:browser",
             "bypass",
             rt,
@@ -492,7 +499,7 @@ async def test_browser_gate_restores_writable_state_after_read_only_session(
         assert gated._inner.is_action_tool is True
         assert gated._inner._read_only is False
     finally:
-        monkeypatch.undo()
+        rt._get_chat = session_service
 
 
 async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime):
