@@ -225,6 +225,14 @@ def check_text_clipboard(report: Report) -> None:
     report.add("text copy accepted by the OS", ok)
     report.add("text copy returns promptly", took < 3.0, f"{took:.2f}s")
     report.add("text reads back unchanged", read_text() == text)
+    if _session() == "macos":
+        # An app started from Finder or the Dock has no locale variables.
+        saved = {k: os.environ.pop(k) for k in ("LANG", "LC_ALL", "LC_CTYPE") if k in os.environ}
+        try:
+            write_text(text)
+            report.add("text survives an app started without a locale", read_text() == text)
+        finally:
+            os.environ.update(saved)
 
 
 def check_jarvisx_copy(report: Report) -> None:
