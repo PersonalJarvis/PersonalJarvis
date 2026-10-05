@@ -191,10 +191,9 @@ COST_READER_FOR_HARNESS: dict[str, str] = {
     "antigravity": AGENT_AGY,
     "grok-build": AGENT_GROK,
     "opencode": AGENT_OPENCODE,
-    # GLM runs the Claude Code binary against z.ai with the same config
-    # directory, so its sessions land in ~/.claude and are read — and priced —
-    # as Claude Code. Attributing them to z.ai needs a config dir of their own
-    # at spawn (docs/BUGS.md BUG-178, still open).
+    # GLM runs the Claude Code binary against z.ai in its dedicated
+    # config root, so its sessions are indexed and priced under a distinct
+    # runner identity rather than the user's real Claude Code account.
     "glm": AGENT_GLM,
 }
 HARNESSES_WITHOUT_LOCAL_TRANSCRIPT: dict[str, str] = {
