@@ -208,7 +208,8 @@ class CreateQuestBody(BaseModel):
 class OpenRoomBody(BaseModel):
     members: list[str] = Field(min_length=2, max_length=6)
     topic: str = ""
-    opened_by: str = "user"
+    # Internal lead/agent provenance is assigned by trusted runtime callers.
+    opened_by: Literal["user"] = "user"
     live: bool = False
 
 
