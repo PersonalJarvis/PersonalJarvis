@@ -23,6 +23,10 @@ afterEach(cleanup);
 describe("thread work log", () => {
   it("folds a finished stretch to one counted line that opens to its steps", () => {
     show(turn([thought("r1", "**Checking the build**"), tool("c1", "npm run build"), tool("c2", "npm test"), { kind: "text", id: "n1", text: "All green." }]));
+    // A finished turn folds its work behind one "Worked for" line; the answer stays.
+    expect(screen.getByText("All green.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Ran 2 commands/ })).toBeNull();
+    fireEvent.click(screen.getByTestId("thread-worked-for"));
     const header = screen.getByRole("button", { name: /Ran 2 commands/ });
     expect(screen.queryByText("npm test")).toBeNull();
     fireEvent.click(header);
@@ -34,6 +38,7 @@ describe("thread work log", () => {
 
   it("opens a thought to its full text under a timed heading", () => {
     show(turn([thought("r1", "First idea.\n\nSecond idea.")]));
+    fireEvent.click(screen.getByTestId("thread-worked-for"));
     fireEvent.click(screen.getByRole("button", { name: /First idea\. Second idea\./ }));
     expect(screen.getByText("Thought for 4.2s")).toBeTruthy();
     expect(screen.getByText("Second idea.")).toBeTruthy();

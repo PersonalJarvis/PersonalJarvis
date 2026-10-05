@@ -145,8 +145,12 @@ describe("ThreadView", () => {
     expect(screen.getByText("The test passes now.")).toBeTruthy();
     expect(screen.getByTestId("thread-turn").getAttribute("data-status")).toBe("done");
     expect(screen.getByText(/Worked for/)).toBeTruthy();
-    // Two calls fold to one line until opened.
+    // A finished turn folds every step behind one line; the answer stays in view.
+    expect(screen.getByTestId("thread-worked-for").textContent).toContain("Worked for 3.0s");
+    expect(screen.queryByTestId("thread-worked-steps")).toBeNull();
     expect(screen.queryByText("npm test")).toBeNull();
+    fireEvent.click(screen.getByTestId("thread-worked-for"));
+    expect(screen.getByTestId("thread-worked-steps")).toBeTruthy();
   });
 });
 

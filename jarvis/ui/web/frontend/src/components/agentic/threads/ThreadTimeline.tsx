@@ -8,7 +8,7 @@ import { readableOutput, traceDuration, type Call } from "@/components/agentchat
 import { useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { buildThreadRows, isFailed, liveItem, thoughtPreview, type WorkGroup, type WorkItem } from "./threadWork";
+import { buildThreadRows, isFailed, liveItem, thoughtPreview, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
 
 /**
  * A thread's conversation: the person's messages on the right, the agent's
@@ -505,19 +505,48 @@ function pendingLabel(block: ToolBlock): { icon: ReactNode; text: string } | nul
   return null;
 }
 
+/**
+ * A finished turn read the short way: everything up to its last step folds
+ * behind one "Worked for …" line, and the text written after that step — the
+ * answer — stays in view. A turn with no step at all has nothing to fold.
+ */
+export function foldFinished(rows: ThreadRow[]): { work: ThreadRow[]; answer: ThreadRow[] } {
+  let last = -1;
+  rows.forEach((row, index) => { if (row.kind !== "text") last = index; });
+  return { work: rows.slice(0, last + 1), answer: rows.slice(last + 1) };
+}
+
 const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
   const t = useT();
   const lang = t("trace_report.locale");
   const running = turn.status === "running";
   const rows = useMemo(() => buildThreadRows(turn.blocks, { t, lang, status: turn.status }), [turn.blocks, t, lang, turn.status]);
   const answer = answerText(turn);
+  const [workOpen, setWorkOpen] = useState(false);
+  // Finished: every step and thought folds behind one "Worked for …" line; the answer stays.
+  const { work, answer: tail } = useMemo(() => (running ? { work: rows, answer: [] } : foldFinished(rows)), [rows, running]);
+  const folded = !running && work.length > 0;
+  const duration = turn.durationMs != null ? traceDuration(turn.durationMs) : "";
+  const foldLabel = turn.status === "cancelled" ? `Stopped${duration ? ` after ${duration}` : ""}`
+    : turn.status === "error" ? `Failed${duration ? ` after ${duration}` : ""}`
+      : `Worked${duration ? ` for ${duration}` : ""}`;
+  const renderRow = (row: ThreadRow) => {
+    if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
+    if (row.kind === "text") return <div key={row.id} className={PROSE}><ChatMarkdown text={row.text} /></div>;
+    const pending = pendingLabel(row.block);
+    return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
+  };
   return <div className="space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
-    {rows.map((row) => {
-      if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
-      if (row.kind === "text") return <div key={row.id} className={PROSE}><ChatMarkdown text={row.text} /></div>;
-      const pending = pendingLabel(row.block);
-      return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
-    })}
+    {folded && <div>
+      <button type="button" aria-expanded={workOpen} onClick={() => setWorkOpen((value) => !value)} data-testid="thread-worked-for"
+        className="flex h-7 items-center gap-1 rounded-md px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="tabular-nums">{foldLabel}</span>
+        <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 transition-transform duration-150", workOpen && "rotate-90")} />
+      </button>
+      {workOpen && <div className="space-y-1.5 pb-2 pt-1" data-testid="thread-worked-steps">{work.map(renderRow)}</div>}
+      <div aria-hidden className="mt-1 border-b border-border/70" />
+    </div>}
+    {(folded ? tail : rows).map(renderRow)}
     {running
       ? <div className="flex h-6 min-w-0 items-center px-1 text-sm leading-relaxed text-muted-foreground" data-testid="thread-working">
         <span className="whitespace-nowrap">Working for <Elapsed since={turn.startedMs} /></span>
@@ -526,10 +555,11 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
         {turn.status === "error" && turn.error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{turn.error}</p>}
         <ChangedFiles turn={turn} />
         <div className="flex items-center gap-1.5 pt-1 text-xs text-muted-foreground">
-          <span>
+          {!folded && <span>
             {turn.status === "cancelled" ? "Stopped" : turn.status === "error" ? "Failed" : answer ? "" : "Finished without an answer"}
-            {turn.durationMs != null && <>{turn.status === "done" && answer ? "Worked for " : " after "}{traceDuration(turn.durationMs)}</>}
-          </span>
+            {duration && <>{turn.status === "done" && answer ? "Worked for " : " after "}{duration}</>}
+          </span>}
+          {folded && !answer && <span>Finished without an answer</span>}
           {answer && <CopyButton text={answer} label="Copy answer" />}
         </div>
       </>}
