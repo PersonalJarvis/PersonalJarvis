@@ -155,28 +155,16 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
   `tests/unit/harness/test_computer_use_loop.py` (18 tests) covers both the
   production ToolExecutor path and the test-double path.
 
-## Bug #5: Frontier model IDs hallucinated (MEDIUM, latent)
+## Bug #5: Frontier model IDs hallucinated (MEDIUM, resolved implementation)
 
-- **File**: `jarvis/brain/manager.py:130-152` (TIER_DEFAULTS_BY_PROVIDER)
-- **Symptom**: Brain calls with models like `gemini-3-flash`, `gpt-5.5`,
-  `grok-4.20`, `claude-opus-4-7-20251022` produce 404 errors at the
-  provider APIs. Status: not yet verified whether all IDs are valid.
-- **Root cause**: The `claude-opus-4-7-20251022` snapshot no longer
-  exists (fixed 2026-04-28: now the `claude-opus-4-7` stable alias).
-  The other Frontier-2026-Q2 IDs are marked verifiable in `frontier_resolver.py`,
-  but there is no automatic health check before use.
-- **Fix status (2026-10-05)**: Partial and still open. The claude-opus-4-7
-  stable alias is already set. `frontier_resolver.py` and the opt-in
-  `frontier_autoswitch.py` exist, but a repository audit did not find a
-  verified boot-path call to `apply_frontier_resolution()` on `jarvis-lab`.
-  `BrainManager` still resolves missing provider models from the static
-  `TIER_DEFAULTS_BY_PROVIDER` table, so stale IDs remain a latent risk when
-  no explicit model is configured.
-- **Regression guard (2026-10-05)**: focused picker/cache tests exist, but the
-  stronger guard requested here is still outstanding: prove the active boot
-  path refreshes defaults before they are used, or replace that path with an
-  equivalent verified live-catalog mechanism. Do not mark Bug #5 closed until
-  that behavior is demonstrated by code plus CI.
+- **File**: `jarvis/brain/manager.py`, `jarvis/brain/frontier_resolver.py`, `jarvis/brain/frontier_autoswitch.py`
+- **Symptom**: Static frontier defaults could age into provider-404s when no explicit model was configured.
+- **Root cause**: The resolver/autoswitch code existed, but the real first-turn path did not invoke it; additionally an unpinned fallback provider could have its model slot overwritten by a static tier default during manager construction.
+- **Fix (2026-10-05)**:
+  1. `BrainManager.generate()` now invokes the opt-in lazy frontier refresh exactly once before the first real turn, guarded by an async lock and skipped for explicit per-turn overrides.
+  2. `BrainManager.from_tier_config()` no longer writes a static fallback model into an alternate provider unless `fallback_model` is an explicit user pin; the provider's live/current model remains authoritative otherwise.
+  3. The refresh and precedence behavior have focused regression coverage in `tests/unit/brain/test_manager_frontier_autoswitch.py` and `tests/unit/brain/test_tier_model_resolution.py`.
+- **Qualification status**: implementation is verified in the current `jarvis-lab` source and the relevant tests exist. Final remote qualification is pending the active GitHub CI run on the latest branch HEAD; do not report Bug #5 as CI-green until that run completes.
 
 ## Bug #6: pyautogui dependency missing (MEDIUM, dependent)
 
