@@ -14,6 +14,8 @@ Signed routine receipt contracts now cover active and paused ownership, owner-se
 
 The owner runner now fails closed when the saved task or its model seat cannot be read, instead of silently substituting the owner's live seat. Focused contracts require zero new run chats and no main-chat mutation on missing or unreadable storage. Runner qualification is pending for this change and the signed-receipt additions.
 
-The next remote-safe step is qualification of the latest complete CI, fixing any newly introduced failure without weakening the existing contracts. Then continue measured continuity and handoff gaps from the integration matrix. Preserve existing approval, routine, scheduler, policy and memory boundaries. Do not introduce parallel infrastructure or claim an external provider is connected merely because a local credential was saved.
+CI #226 (37288552623) is now complete: every portable, Windows, frontend, contracts, static, installer, updater and browser job passed; the three native Mac lanes remain the documented skips. The owner seat and signed-delivery changes are therefore qualified by the full portable run. The SocietyScheduler now logs a deferred busy-recipient receipt while retaining the durable queue retry (35a416c).
+
+The next remote-safe step is to continue the continuity and handoff audit from the integration matrix, starting with durable queued-delivery observability and exact retry receipts. Any new behavior must use the existing scheduler, approval, policy and memory boundaries. Do not introduce parallel infrastructure or claim an external provider is connected merely because a local credential was saved.
 
 Native MacAgentBench qualification remains explicitly deferred to a physical Mac with user-granted permissions and must not be represented as remotely complete.
