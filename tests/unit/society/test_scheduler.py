@@ -369,6 +369,27 @@ def test_validate_result_rules():
     assert validate_result({"done": "x", "output": ["a"], "status": "weird"}) is not None
 
 
+async def test_invalid_result_releases_its_owned_run_slot(world):
+    store, _, scheduler, dispatcher, _ = world
+    await store.append_and_publish(_assign("jarvis", "scout", trace="invalid"))
+
+    assert scheduler.running == {"run-1": "scout"}
+
+    await store.append_and_publish(
+        SocietyEnvelope(
+            msg_type=MsgType.RESULT,
+            from_agent="scout",
+            to_agent="jarvis",
+            trace_id="invalid",
+            payload={"run_id": "run-1"},
+        )
+    )
+
+    assert scheduler.running == {}
+    assert await _vetoes(store, "invalid") == [str(FailureReason.INVALID_RESULT)]
+    assert dispatcher.calls == [("scout", "invalid")]
+
+
 async def test_result_with_next_owner_is_delivered(world):
     store, _, _, _, deliverer = world
     await store.append_and_publish(
