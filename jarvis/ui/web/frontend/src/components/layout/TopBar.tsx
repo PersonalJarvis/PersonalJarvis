@@ -87,9 +87,12 @@ export function TopBar({ navToggle }: {
     // One title strip for the whole window. The empty middle is the drag
     // handle (pywebview only starts a drag on this class, not on a child
     // button — so the buttons sit beside it, never inside it).
+    // `pointer-events-auto` keeps the strip live while a modal dialog has set
+    // `pointer-events: none` on <body>: the full-window Settings hub leaves
+    // the caption visible, and its window controls must still work.
     <div
       data-testid="window-caption"
-      className="fixed inset-x-0 top-0 z-[120] flex h-8 items-stretch bg-transparent"
+      className="pointer-events-auto fixed inset-x-0 top-0 z-[120] flex h-8 items-stretch bg-transparent"
     >
       {controls === "leading" && (
         <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
