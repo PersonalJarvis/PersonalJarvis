@@ -89,47 +89,6 @@ working file-store fallback logs at INFO. A previously available vault failing
 still logs a warning. Credential storage and recovery behavior remain covered
 by the headless-keyring, locked-keyring, and backend-recovery tests.
 
-## Remote agents retain Jarvis tools (2026-10-01, T3)
-
-Remote coding turns carry their Jarvis MCP tools over a reverse forward on
-the existing pinned SSH connection. Both listeners bind to loopback. The
-remote credential belongs to one active chat turn; the Control API key stays
-on the main computer. Session headers cannot change the owner, and stale
-requests cannot acquire the next turn's user context. The existing session
-catalog and ToolExecutor still enforce grants, approvals and cancellation.
-Routine execution chats retain their owner's computer placement.
-
-The transport uses portable AsyncSSH and asyncio/uvicorn, with no native OS
-imports or boot-time initialization. Windows remote launchers and POSIX argv
-receive the remote endpoint through their existing launch paths. Claude,
-Codex, Antigravity, Grok, OpenCode, Kimi and Cursor have MCP configuration
-adapters; other runners fail before starting model work. Project-discovered
-configurations are restored after the turn and cannot overlap in one
-workspace. Native files and society_shell remain remote; Jarvis's browser,
-memory and file-tool workspace remain on the main computer.
-
-Verification: real in-process SSH forwarding tests cover authentication,
-session isolation, expired and revoked credentials, connection refusal,
-cleanup, configuration adapters, and routine creation/readback through MCP
-with a real SQLite store and scheduler. Reopening the store preserves the
-calendar schedule. Existing Windows launcher tests cover the launch path.
-Native macOS/Linux hosts and all seven real vendor CLIs are not qualified
-by those tests; SSH servers must permit TCP forwarding. No browser is
-started by this transport.
-
-Live qualification on Windows: a resumed Claude subscription chat on a
-connected Windows computer discovered the Jarvis tools, created a temporary
-daily 09:00 Europe/Berlin routine, read back its persisted ID and next run,
-deleted it and verified the empty routine list. The final CLI configuration
-uses an explicit HTTP transport type; omitting it hid the server from the
-actual Claude tool catalog despite successful protocol-level tests. Browser
-actions were not executed in this qualification.
-
-Protocol references: [AsyncSSH port forwarding](https://asyncssh.readthedocs.io/en/latest/),
-[OpenCode MCP](https://opencode.ai/docs/mcp-servers/),
-[Kimi MCP configuration](https://github.com/MoonshotAI/kimi-cli/blob/main/README.md),
-[Cursor MCP](https://docs.cursor.com/en/cli/mcp).
-
 ## Connected computers on Linux, macOS and Windows (2026-10-01, T3)
 
 This one is about the REMOTE side: the machine Jarvis connects to under
