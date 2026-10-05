@@ -367,6 +367,58 @@ def check_shift_digit_shortcut(report: Report) -> None:
         report.add(f"Ctrl+Shift+9 fires on X11 ({layout} layout)", bool(fired))
 
 
+def check_both_shift_gesture(report: Report) -> None:
+    """X11 only: pressing both Shift keys (the area shortcut) fires the watcher."""
+    if _session() != "x11" or not shutil.which("xdotool"):
+        return
+    from jarvis.appshot.gesture import BothKeysWatcher, make_probe, together_window
+
+    probe, reason = make_probe("shift")
+    if probe is None:
+        report.add("both-Shift shortcut fires on X11", False, reason)
+        return
+    fired: list[int] = []
+    watcher = BothKeysWatcher(
+        lambda: fired.append(1), probe=probe, together_s=together_window("shift")
+    )
+    watcher.start()
+    time.sleep(0.5)
+    _run(["xdotool", "keydown", "Shift_L", "keydown", "Shift_R"])
+    time.sleep(0.5)
+    _run(["xdotool", "keyup", "Shift_R", "keyup", "Shift_L"])
+    time.sleep(0.3)
+    watcher.stop()
+    report.add("both-Shift shortcut fires on X11", fired == [1], f"fired {len(fired)}x")
+
+
+def check_gtk_shadow_trim(report: Report) -> None:
+    """X11 only: a window publishing GTK shadow margins is captured without them."""
+    if _session() != "x11" or not shutil.which("xdotool"):
+        return
+    try:
+        from Xlib import X, Xatom, display
+    except ImportError as exc:
+        report.add("GTK shadow margins are trimmed", False, f"python-xlib missing: {exc}")
+        return
+    from jarvis.platform.window_state import WindowInfo, window_frame_rect
+
+    conn = display.Display()
+    root = conn.screen().root
+    window = root.create_window(200, 150, 846, 646, 0, conn.screen().root_depth, X.InputOutput)
+    window.change_property(
+        conn.intern_atom("_GTK_FRAME_EXTENTS"), Xatom.CARDINAL, 32, [23, 23, 15, 31]
+    )
+    window.map()
+    conn.sync()
+    time.sleep(0.3)
+    try:
+        rect = window_frame_rect(WindowInfo(title="csd", handle=window.id))
+    finally:
+        window.destroy()
+        conn.close()
+    report.add("GTK shadow margins are trimmed", rect == (223, 165, 800, 600), f"rect {rect}")
+
+
 def check_macos_gesture_permission(report: Report) -> None:
     """macOS: a both-keys shortcut never reports armed without Input Monitoring."""
     if _session() != "macos":
@@ -424,7 +476,7 @@ def main() -> int:
         check_jarvisx_copy,
     ]
     steps += [check_markup_burn, check_library_and_downloads, check_shift_digit_shortcut]
-    steps += [check_macos_gesture_permission]
+    steps += [check_macos_gesture_permission, check_both_shift_gesture, check_gtk_shadow_trim]
     for step in steps:
         try:
             step(report)
