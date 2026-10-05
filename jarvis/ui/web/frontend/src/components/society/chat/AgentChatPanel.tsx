@@ -62,7 +62,13 @@ import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
-import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
+import {
+  useResolveProposal,
+  useRestoreIdentity,
+  useSocietyCapabilities,
+  type PreviousIdentity,
+  type SocietyAgent,
+} from "../data";
 import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
 import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
@@ -758,6 +764,9 @@ function TimeStamp({ ms }: { ms: number }) {
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
+  if (item.kind === "proposal_resolved" && item.data.proposal_kind === "identity") {
+    return <IdentityNotice item={item} />;
+  }
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
@@ -770,6 +779,68 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     <ChatActivity label={headline || item.text.split("\n")[0]} failed={item.status === "blocked" || item.resolved === "failed"}>
       {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed" /> : null}
     </ChatActivity>
+  );
+}
+
+function previousIdentity(data: Record<string, unknown>): PreviousIdentity | null {
+  const raw = data.previous;
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.name !== "string" || !value.name) return null;
+  return {
+    name: value.name,
+    title: typeof value.title === "string" ? value.title : "",
+    description: typeof value.description === "string" ? value.description : "",
+    focus: Array.isArray(value.focus) ? value.focus.map(String) : [],
+  };
+}
+
+/**
+ * The agent took a name and role from the conversation. A fresh agent does
+ * this without asking first, so the line offers the way back: Undo restores
+ * the name, title, description and focus it had before.
+ */
+export function IdentityNotice({ item }: { item: NoticeItem }) {
+  const t = useT();
+  const restore = useRestoreIdentity();
+  const previous = previousIdentity(item.data);
+  const [state, setState] = useState<"idle" | "busy" | "undone">("idle");
+  const [error, setError] = useState("");
+  const agentId = item.agentId || String(item.data.agent_id ?? "");
+  const outcome = item.text.split("\n").pop() ?? "";
+  const undo = async () => {
+    if (!previous || !agentId) return;
+    setState("busy");
+    setError("");
+    try {
+      await restore(agentId, previous);
+      setState("undone");
+    } catch (err) {
+      setState("idle");
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const label =
+    state === "undone" && previous
+      ? t("society.chat.identity_undone").replace("{0}", previous.name)
+      : t("society.chat.identity_now").replace("{0}", item.agentName || outcome);
+  return (
+    <div className="flex flex-wrap items-center gap-2 self-start py-1 text-xs text-muted-foreground" data-testid="identity-notice">
+      <span className="font-medium text-foreground">{label}</span>
+      {state !== "undone" && outcome ? <span>{outcome}</span> : null}
+      {previous && agentId && state !== "undone" ? (
+        <button
+          type="button"
+          disabled={state === "busy"}
+          onClick={() => void undo()}
+          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+        >
+          <RotateCcw size={12} aria-hidden />
+          {t("society.chat.identity_undo")}
+        </button>
+      ) : null}
+      {error ? <span className="text-destructive">{error}</span> : null}
+    </div>
   );
 }
 
@@ -798,6 +869,11 @@ function proposalDetail(kind: string, payload: Record<string, unknown>): string 
       return list(payload.focus);
     case "team":
       return list(payload.names);
+    case "identity":
+      return [payload.name, payload.title, payload.description]
+        .filter((part) => typeof part === "string" && part)
+        .map(String)
+        .join(" — ");
     default:
       return "";
   }
@@ -848,6 +924,7 @@ function ProposalCard({ item }: { item: NoticeItem }) {
         : item.resolved
           ? t("society.chat.proposal_failed")
           : "";
+  if (item.resolved === "applied" && kind === "identity") return <IdentityNotice item={item} />;
   if (item.resolved && item.resolved !== "failed") return <ChatActivity
     label={<>{resolvedLabel} · {kind ? t(`society.chat.proposal_kind_${kind}`) : ""} · {summary}</>}>
     <p className="whitespace-pre-wrap">{detail || summary}</p>

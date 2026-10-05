@@ -439,6 +439,35 @@ export function useUpdateAgentDescription() {
   );
 }
 
+/** The identity an `identity` proposal replaced, as its outcome card carries it. */
+export interface PreviousIdentity {
+  name: string;
+  title: string;
+  description: string;
+  focus: string[];
+}
+
+/**
+ * Undo an applied `identity` proposal: write the previous name, title,
+ * description and focus back. The explicit focus keeps the route from
+ * re-deriving one from the restored text.
+ */
+export function useRestoreIdentity() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agentId: string, previous: PreviousIdentity): Promise<void> => {
+      const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(previous),
+      });
+      if (!res.ok) throw new Error(`identity ${res.status}`);
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Persist the roster choice and re-seat its canonical chat without losing history. */
 export function useUpdateAgentModel() {
   const client = useQueryClient();

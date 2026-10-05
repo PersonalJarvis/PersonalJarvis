@@ -5,7 +5,6 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 #: Mirrors ``COMPANION_SHAPES`` / ``COMPANION_COLORS`` in the frontend's
 #: ``components/society/companion/appearance.ts`` (parity test pins both).
 COMPANION_SHAPES: Final[tuple[str, ...]] = (

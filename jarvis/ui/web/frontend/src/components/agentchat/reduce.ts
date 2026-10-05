@@ -813,6 +813,8 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               resolved: str(p.status) || "applied",
               status: str(p.status),
               text: text ? `${card.text}\n${text}` : card.text,
+              // An applied identity carries what an undo restores.
+              data: p.previous ? { ...card.data, previous: p.previous } : card.data,
             }),
           };
         }

@@ -15,7 +15,11 @@ Kinds (agent-definition §3.5):
 * ``routine`` — recurring work as a tagged Automations task;
 * ``approval_rule`` — patterns for ``require_approval`` / ``always_allow``;
 * ``focus`` — the full ordered list of tools the agent reaches for first;
-* ``team`` — teammates proposed at onboarding (the lead only).
+* ``team`` — teammates proposed at onboarding (the lead only);
+* ``identity`` — the agent's own name, title and role description. A fresh
+  agent (one-click creation, no title or description yet) applies its first
+  identity at once from its person's turn; the outcome card carries the
+  previous identity so the person can undo it (MASTERPLAN §2.10).
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ from .approvals import Approval
 from .capabilities import CapabilityRow
 from .events import ApprovalState
 from .failure_reasons import FailureReason
-from .roster import AgentRecord
+from .roster import AgentRecord, RosterError, _validate_name
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +51,7 @@ __all__ = [
 ]
 
 PROPOSAL_KINDS: Final[frozenset[str]] = frozenset(
-    {"rule", "skill", "routine", "approval_rule", "focus", "team"}
+    {"rule", "skill", "routine", "approval_rule", "focus", "team", "identity"}
 )
 CAPABILITY_PREFIX: Final[str] = "core:config:"
 #: Schedule kinds the Automations scheduler can keep (``jarvis/tasks/schema.py``).
@@ -69,6 +73,8 @@ _MAX_RULE: Final[int] = 600
 _MAX_TEXT: Final[int] = 2_000
 _MAX_LIST: Final[int] = 24
 _MAX_SUMMARY: Final[int] = 200
+_MAX_TITLE: Final[int] = 120
+_MAX_ROLE: Final[int] = 4_000
 
 
 class ProposalRefused(Exception):
@@ -238,6 +244,25 @@ def validate(kind: str, payload: Any, *, catalog: list[CapabilityRow]) -> dict[s
             raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "a focus change needs the list")
         _check_capabilities(focus, catalog)
         return {"focus": focus}
+    if kind == "identity":
+        out_identity: dict[str, Any] = {}
+        if str(payload.get("name") or "").strip():
+            try:
+                out_identity["name"] = _validate_name(str(payload["name"]))
+            except RosterError as exc:
+                raise ProposalRefused(exc.reason, str(exc)) from exc
+        title = _text(payload.get("title"), limit=_MAX_TITLE)
+        if title:
+            out_identity["title"] = title
+        description = _text(payload.get("description"), limit=_MAX_ROLE)
+        if description:
+            out_identity["description"] = description
+        if not out_identity:
+            raise ProposalRefused(
+                FailureReason.BLOCKED_BY_POLICY,
+                "an identity needs a name, a title or a description",
+            )
+        return out_identity
     names = _strings(payload.get("names"))
     if not names:
         raise ProposalRefused(FailureReason.BLOCKED_BY_POLICY, "a team proposal needs names")
@@ -273,6 +298,9 @@ def summarize(kind: str, payload: dict[str, Any]) -> str:
         line = "Approval rules — " + "; ".join(parts)
     elif kind == "focus":
         line = "Reach first for: " + ", ".join(payload.get("focus", []))
+    elif kind == "identity":
+        bits = [str(payload[k]) for k in ("name", "title") if payload.get(k)]
+        line = "Become " + " - ".join(bits) if bits else "Update my role description"
     else:
         line = "Create teammates: " + ", ".join(payload.get("names", []))
     return line[:_MAX_SUMMARY]
@@ -296,9 +324,14 @@ def proposal_notice(agent: AgentRecord, item: Approval) -> dict[str, Any]:
 
 
 def resolved_notice(
-    agent: AgentRecord, item: Approval, *, status: str, text: str
+    agent: AgentRecord,
+    item: Approval,
+    *,
+    status: str,
+    text: str,
+    previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    notice: dict[str, Any] = {
         "kind": "proposal_resolved",
         "proposal_id": item.id,
         "proposal_kind": str(item.action.get("kind") or kind_of(item.capability) or ""),
@@ -307,6 +340,10 @@ def resolved_notice(
         "agent_id": agent.agent_id,
         "agent_name": agent.name,
     }
+    if previous is not None:
+        # What an undo restores (identity only): the fields as they were.
+        notice["previous"] = previous
+    return notice
 
 
 async def propose(
@@ -363,9 +400,19 @@ def _merge_rules(current: dict[str, list[str]], add: dict[str, Any]) -> dict[str
     return merged
 
 
-async def _notify(rt: Any, agent: AgentRecord, item: Approval, *, status: str, text: str) -> None:
+async def _notify(
+    rt: Any,
+    agent: AgentRecord,
+    item: Approval,
+    *,
+    status: str,
+    text: str,
+    previous: dict[str, Any] | None = None,
+) -> None:
     try:
-        await rt.post_chat_notice(agent, resolved_notice(agent, item, status=status, text=text))
+        await rt.post_chat_notice(
+            agent, resolved_notice(agent, item, status=status, text=text, previous=previous)
+        )
     except Exception:  # noqa: BLE001 — the change is applied; the card is a projection
         log.warning("society: proposal outcome not posted for %s", agent.agent_id, exc_info=True)
 
@@ -397,6 +444,45 @@ async def _apply_skill_later(rt: Any, agent: AgentRecord, item: Approval, payloa
             status="failed",
             text=f"Skill '{name}' could not be authored (no brain, or the daily cap is reached).",
         )
+
+
+async def _apply_identity(rt: Any, agent: AgentRecord, payload: dict[str, Any]) -> dict[str, Any]:
+    """Write name/title/description and grow the focus from the new role.
+
+    The derived focus is appended to what the agent already reaches for (the
+    same merge ``PATCH /agents/{id}`` uses), and derived approval rules are
+    written only when the agent has none.
+    """
+    fields: dict[str, Any] = {
+        k: str(payload[k]) for k in ("name", "title", "description") if payload.get(k)
+    }
+    previous: dict[str, Any] = {
+        k: str(getattr(agent, k) or "") for k in ("name", "title", "description")
+    }
+    previous["focus"] = list(agent.focus)
+    derived_focus, derived_rules = rt.derive(
+        fields.get("title", agent.title), fields.get("description", agent.description)
+    )
+    focus = list(agent.focus)
+    for cap_id in derived_focus:
+        if cap_id not in focus:
+            focus.append(cap_id)
+    if focus != list(agent.focus):
+        fields["focus"] = focus
+    has_rules = any(agent.approval_rules.get(k) for k in ("require_approval", "always_allow"))
+    if not has_rules and derived_rules.get("require_approval"):
+        fields["approval_rules"] = derived_rules
+    try:
+        updated = await rt.roster.update(agent.agent_id, fields)
+    except RosterError as exc:
+        return {"applied": False, "detail": str(exc), "kind": "identity"}
+    label = updated.name + (f" - {updated.title}" if updated.title else "")
+    return {
+        "applied": True,
+        "detail": f"I am now {label}.",
+        "kind": "identity",
+        "previous": previous,
+    }
 
 
 async def apply(
@@ -446,6 +532,8 @@ async def apply(
         focus = _strings(payload.get("focus"))
         await rt.roster.update(agent.agent_id, {"focus": focus})
         return {"applied": True, "detail": "focus order updated", "kind": kind}
+    if kind == "identity":
+        return await _apply_identity(rt, agent, payload)
     if kind == "routine":
         from .routines import (
             MAX_ROUTINES_PER_AGENT,
@@ -526,11 +614,13 @@ async def resolve(
         return {"proposal": item.to_dict(), "applied": False, "detail": "rejected"}
     outcome = await apply(rt, item, task_store=task_store, scheduler=scheduler)
     if agent is not None and outcome["kind"] != "skill":
+        refreshed = await rt.roster.get(agent.agent_id) or agent
         await _notify(
             rt,
-            agent,
+            refreshed,
             item,
             status="applied" if outcome["applied"] else "failed",
             text=str(outcome["detail"]),
+            previous=outcome.get("previous") if outcome["applied"] else None,
         )
     return {"proposal": item.to_dict(), **outcome}
