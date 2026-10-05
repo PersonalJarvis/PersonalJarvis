@@ -528,7 +528,11 @@ describe("BrowserRealtimeControl", () => {
       });
 
       await waitFor(() => expect(useEventStore.getState().voiceState).toBe("idle"));
-      expect(useEventStore.getState().toasts.map((toast) => toast.kind)).toEqual(["error"]);
+      // A classic call has no realtime provider to blame; the line points at
+      // the chain it actually runs on.
+      expect(
+        useEventStore.getState().toasts.map(({ kind, message }) => ({ kind, message })),
+      ).toEqual([{ kind: "error", message: "sidebar.browser_voice_error" }]);
       expect(screen.queryByRole("alert")).toBeNull();
       expect(browserVoiceCallLive()).toBe(false);
     });

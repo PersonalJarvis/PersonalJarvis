@@ -715,6 +715,7 @@
     "realtime_pipeline_fallback": "Klassische Pipeline als Fallback",
     "realtime_unavailable": "Realtime-Anbieter verbinden oder einrichten",
     "realtime_error": "Die Sprachverbindung konnte nicht gestartet werden. Teste den aktiven Realtime-Anbieter unter API Keys und versuche es erneut.",
+    "browser_voice_error": "Die Sprachverbindung konnte nicht gestartet werden. Prüfe Sprache zu Text, das Brain und Text zu Sprache unter API Keys und versuche es erneut.",
     "realtime_provider_fallback": "{0} war nicht mehr verfügbar, deshalb läuft das Gespräch jetzt über einen anderen Anbieter — die Abrechnung kann abweichen. {1}",
     "realtime_provider_fallback_short": "Das Gespräch hat {0} verlassen und läuft über einen anderen Anbieter.",
     "realtime_provider_warning": "Der Realtime-Anbieter meldet ein behebbares Problem; das Gespräch läuft weiter.",

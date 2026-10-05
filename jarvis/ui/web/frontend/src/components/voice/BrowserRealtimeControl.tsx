@@ -218,6 +218,11 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     // call the desktop hands over keeps exactly the options it always had.
     const realtimeTransport = !local || mode === "realtime";
     const callBrowserAudio = realtimeTransport && browserAudio;
+    // A classic call has no realtime provider to test, so its fallback line
+    // points at the three providers that chain runs on instead.
+    const startFailed = t(
+      realtimeTransport ? "sidebar.realtime_error" : "sidebar.browser_voice_error",
+    );
     // A call the person started here reports a failure as a toast and frees
     // the controls again; there is no card on the page to hold an error line.
     const endLocalCall = (message: string) => {
@@ -350,7 +355,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             void stop();
           } else if (status === "provider_error" || status === "disconnected") {
             if (local) {
-              endLocalCall(backendDetail || t("sidebar.realtime_error"));
+              endLocalCall(backendDetail || startFailed);
               return;
             }
             clientRef.current = null;
@@ -394,7 +399,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             ? t("sidebar.realtime_microphone_denied_desktop")
             : micDenied
               ? t("sidebar.realtime_microphone_denied")
-              : t("sidebar.realtime_error");
+              : startFailed;
       if (local) {
         endLocalCall(message);
         return;
