@@ -1270,8 +1270,24 @@ class SocietyRuntime:
                         )
                         if read_failures < 3:
                             continue
-                        await self.rooms.fail(room_id, reason="turn_recovery_failed")
-                        return
+                        try:
+                            await svc.cancel(session_id, expected_turn_id=turn_id)
+                        except Exception:  # noqa: BLE001 — fail the owned claim even if cancellation fails
+                            log.warning("society room recovery cancellation failed for %s", run_id, exc_info=True)
+                        try:
+                            recovered = await asyncio.to_thread(
+                                svc.store.turn_terminal, session_id, turn_id,
+                            )
+                        except Exception:  # noqa: BLE001 — unavailable accounting is never invented
+                            log.warning("society room recovery cost unavailable for %s", run_id, exc_info=True)
+                            recovered = None
+                        terminal = {"payload": {
+                            "turn_id": turn_id,
+                            "status": "failed",
+                            "error": "turn_recovery_failed",
+                            "cost_usd": self._terminal_cost(recovered),
+                        }}
+                        break
                 else:
                     read_failures = 0
                 for event in events:
@@ -1290,6 +1306,7 @@ class SocietyRuntime:
             return
         finally:
             svc.unsubscribe(session_id, queue)
+            self.scheduler.note_run_ended(run_id)
         await self._finish_room_turn(
             room_id,
             claim_id,

@@ -833,6 +833,53 @@ async def test_room_dispatch_failure_releases_subscription_before_watcher(
         svc.store.close()
 
 
+async def test_room_recovery_read_failure_cancels_owner_and_releases_slot(tmp_path, monkeypatch):
+    import asyncio
+
+    import jarvis.society.runtime as runtime_module
+    from jarvis.society.events import RoomState
+
+    monkeypatch.setattr(runtime_module, "_WATCH_EVENT_POLL_SECONDS", 0.005)
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg,
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis", members=["scout", "archivist"], live=True,
+        )
+        svc.queues["society:scout"].clear()
+        await svc.finish("society:scout", "", status="cancelled", cost_usd=0.23)
+        failures = []
+
+        def unreadable_events(*args, **kwargs):
+            failures.append(args)
+            raise OSError("event reader unavailable")
+
+        monkeypatch.setattr(svc.store, "list_events", unreadable_events)
+        await asyncio.wait_for(asyncio.gather(*tuple(rt._watchers)), timeout=2)
+        assert len(failures) == 3
+        assert svc.cancelled_turns == ["turn-1"]
+        assert rt.scheduler.running == {}
+        failed = await rt.rooms.get(room.room_id)
+        assert failed.state is RoomState.FAILED
+        assert failed.settle_reason == "turn_recovery_failed"
+        assert not failed.inflight_claim_id
+        events = await rt.store.events_for_trace(room.trace_id)
+        says = [event for event in events if event.msg_type is MsgType.SAY]
+        assert len(says) == 1
+        assert says[0].cost_usd == pytest.approx(0.23)
+        assert events[-1].msg_type is MsgType.ROOM_SETTLE
+        assert events[-1].payload["failed"] is True
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
 async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path: Path):
     import asyncio
 
