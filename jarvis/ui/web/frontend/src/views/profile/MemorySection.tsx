@@ -74,11 +74,14 @@ export function MemorySection({
   raw,
   fileUpdatedMs,
   onOpenSource,
+  bare = false,
 }: {
   name: string | null;
   raw: string | null;
   fileUpdatedMs: number | null;
   onOpenSource: () => void;
+  /** Rendered inside a panel that already carries the section's title. */
+  bare?: boolean;
 }) {
   const t = useT();
   const setActiveSection = useEventStore((s) => s.setActiveSection);
@@ -132,6 +135,7 @@ export function MemorySection({
       testId="memory"
       title={t("profile_view.memory_title")}
       description={t("profile_view.memory_description")}
+      bare={bare}
     >
       <SettingRow
         testId="rules-row"

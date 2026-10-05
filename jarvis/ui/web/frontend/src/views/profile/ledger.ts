@@ -29,6 +29,7 @@ export const CLUSTER_FIELD_KEYS: Record<ClusterId, string[]> = {
     "languages",
     "timezone",
     "devices",
+    "about",
   ],
   communication: ["directness", "formality", "verbosity", "humor_types", "emoji_ok"],
   work_style: ["focus_mode", "planning_horizon"],
@@ -195,7 +196,13 @@ export interface FieldRef {
  * with how you work; a section with one row reads as an accident.
  */
 export const PAGE_GROUPS: readonly { id: GroupId; fields: readonly FieldRef[] }[] = [
-  { id: "about", fields: CLUSTER_FIELD_KEYS.identity.map((field) => ({ cid: "identity", field })) },
+  {
+    id: "about",
+    // The self-description is edited under the name at the top of the page.
+    fields: CLUSTER_FIELD_KEYS.identity
+      .filter((field) => field !== "about")
+      .map((field) => ({ cid: "identity", field })),
+  },
   {
     id: "talk",
     fields: CLUSTER_FIELD_KEYS.communication.map((field) => ({ cid: "communication", field })),

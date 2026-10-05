@@ -93,6 +93,17 @@ def test_set_scalar_overwrites_chef_to_koenig(ctx) -> None:
     assert meta["identity"]["preferred_address"] == "König"  # i18n-allow
 
 
+def test_set_self_description_round_trips(ctx) -> None:
+    res = _patch(ctx.client, cluster="identity", field="about",
+                 operation="set", value="Builds in public. Short answers.")
+    assert res.status_code == 200, res.text
+    meta = ctx.client.get("/api/profile").json()["user"]["meta"]
+    assert meta["identity"]["about"] == "Builds in public. Short answers."
+    res = _patch(ctx.client, cluster="identity", field="about", operation="clear")
+    assert res.status_code == 200, res.text
+    assert ctx.profile.get("identity", "about") is None
+
+
 def test_set_scalar_persists_to_disk(ctx) -> None:
     _patch(ctx.client, cluster="identity", field="name", operation="set", value="Paul")
     # A fresh load from disk sees the write (atomic persist happened).

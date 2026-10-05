@@ -1,65 +1,49 @@
 /**
- * ProfileView — what the assistant knows about you, and how to change it.
+ * ProfileView — who you are to the assistant, on one screen.
  *
- * Read top to bottom like any settings page (the detail groups sit two to a
- * row on a wide window):
+ *   ┌──────────────────────────────────────────────┐
+ *   │            photo · name · facts              │
+ *   │        a sentence or two about you           │
+ *   │ Conversations │ Agent runs │ Streaks         │
+ *   │ Activity: figures │ one bar per week         │
+ *   │ [What {name} knows ›] [Memory and privacy ›] │
+ *   └──────────────────────────────────────────────┘
  *
- *   ┌────────────────────────────────────────────────────────────┐
- *   │ Photo · name · language · timezone                         │
- *   │ Since │ Conversations │ Details known │ Last change         │
- *   ├────────────────────────────────────────────────────────────┤
- *   │ About you · How {name} talks to you · How you work ·       │
- *   │ What matters to you — known details as rows, missing ones  │
- *   │ as one line of "add" chips per group                       │
- *   ├────────────────────────────────────────────────────────────┤
- *   │ How {name} sees you — the written portrait + feedback      │
- *   ├────────────────────────────────────────────────────────────┤
- *   │ Memory and privacy — rules, wiki page, the file, and what  │
- *   │ is never recorded                                          │
- *   └────────────────────────────────────────────────────────────┘
- *
- * The raw file (USER.md) opens in place as a sub-page with a back link,
- * rather than as a tab: it is the source behind the page, not a peer of it.
+ * The page fits one window; nothing on it scrolls. Everything that does not
+ * fit — the detail groups, the portrait, memory and privacy, the raw file —
+ * opens in a side panel from the two rows at the foot.
  *
  * The raw-file query and its live WS subscription are held HERE because both
- * views need it: the sub-page renders it, and the main page parses its audit
- * trail for provenance and its Do Not Record list.
+ * panels need it: the details panel parses its audit trail for provenance,
+ * the memory panel renders it and reads its Do Not Record list.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, RefreshCw, UserCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronRight, Lock, RefreshCw, UserCircle2, UserRound } from "lucide-react";
 
-import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { useT } from "@/i18n";
-import { cn } from "@/lib/utils";
+import { fill, useT } from "@/i18n";
+import { ActivityChart } from "@/views/profile/ActivityChart";
 import { FieldGroup } from "@/views/profile/FieldGroup";
 import { MemorySection } from "@/views/profile/MemorySection";
 import { PortraitSection } from "@/views/profile/PortraitSection";
+import { ProfileDrawer } from "@/views/profile/ProfileDrawer";
 import { ProfileHero } from "@/views/profile/ProfileHero";
+import { ProfileStats } from "@/views/profile/ProfileStats";
 import { SourceCard, useSourceDocument } from "@/views/profile/SourceCard";
 import { fetchJson, statusOf, type ProfileResponse } from "@/views/profile/api";
-import { PAGE_GROUPS } from "@/views/profile/ledger";
+import { PAGE_GROUPS, TOTAL_FIELDS, countFilled } from "@/views/profile/ledger";
 import { parseObservations } from "@/views/profile/provenance";
 
-/**
- * The page runs the Settings hub column (which owns the measure); the detail
- * groups pair up two to a row once the window is wide enough.
- */
-const COLUMN = "w-full";
+type Panel = "details" | "memory" | null;
 
 export function ProfileView() {
   const t = useT();
+  const [panel, setPanel] = useState<Panel>(null);
   const [showSource, setShowSource] = useState(false);
-  // Switching between the page and the file sub-page starts at the top; the
-  // scroll position of a long page would otherwise hide the back link.
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    scrollRef.current?.scrollTo?.({ top: 0 });
-  }, [showSource]);
 
-  const { data, isLoading, error, refetch, isRefetching } = useQuery<ProfileResponse, Error>({
+  const { data, isLoading, error, refetch } = useQuery<ProfileResponse, Error>({
     queryKey: ["profile"],
     queryFn: () => fetchJson<ProfileResponse>("/api/profile"),
     retry: false,
@@ -70,86 +54,142 @@ export function ProfileView() {
   const raw = source.data?.content ?? null;
   const observations = useMemo(() => parseObservations(raw), [raw]);
 
-  const meta = (data?.user.meta ?? {}) as Record<string, unknown>;
+  const meta = useMemo(() => (data?.user.meta ?? {}) as Record<string, unknown>, [data]);
+  const filled = useMemo(() => countFilled(meta), [meta]);
+
+  const closePanel = useCallback(() => {
+    source.cancelEditing();
+    setShowSource(false);
+    setPanel(null);
+  }, [source]);
 
   return (
-    <div
-      ref={scrollRef}
-      className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis"
-    >
-      <div className={COLUMN}>
-        <PageHeader
-          icon={<UserCircle2 />}
-          title={t("profile_view.title")}
-          description={t("profile_view.subtitle")}
-          actions={
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              className="text-muted-foreground"
-              onClick={() => {
-                void refetch();
-                source.refetch();
-              }}
-              disabled={isRefetching}
-              title={t("profile_view.reload_tooltip")}
-              aria-label={t("profile_view.reload_tooltip")}
-            >
-              <RefreshCw className={cn(isRefetching && "animate-spin")} />
-            </Button>
-          }
-        />
+    <div className="relative h-full overflow-hidden bg-background">
+      <div className="h-full overflow-y-auto px-8 scrollbar-jarvis">
+        <h1 className="sr-only">{t("profile_view.title")}</h1>
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-5 py-5 [@media(min-height:860px)]:gap-7 [@media(min-height:860px)]:py-8 [@media(min-height:1000px)]:gap-9">
+          {isLoading && <ProfileSkeleton label={t("common.loading")} />}
 
-        {isLoading && <ProfileSkeleton label={t("common.loading")} />}
+          {error && <ProfileErrorState error={error} onRetry={() => refetch()} />}
 
-        {error && <ProfileErrorState error={error} onRetry={() => refetch()} />}
-
-        {data && showSource && (
-          <div className="flex flex-col gap-4">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="self-start text-muted-foreground"
-              onClick={() => {
-                source.cancelEditing();
-                setShowSource(false);
-              }}
-              data-testid="source-back"
-            >
-              <ArrowLeft aria-hidden />
-              {t("profile_view.back_to_profile")}
-            </Button>
-            <SourceCard doc={source} />
-          </div>
-        )}
-
-        {data && !showSource && (
-          <div className="flex flex-col gap-10">
-            <ProfileHero data={data} meta={meta} />
-            <div className="grid grid-cols-1 items-start gap-10 xl:grid-cols-2 xl:gap-x-8">
-              {PAGE_GROUPS.map((g) => (
-                <FieldGroup
-                  key={g.id}
-                  id={g.id}
-                  fields={g.fields}
-                  meta={meta}
-                  observations={observations}
+          {data && (
+            <>
+              <ProfileHero data={data} meta={meta} />
+              <ProfileStats />
+              <ActivityChart />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <PanelDoor
+                  testId="open-details"
+                  icon={<UserRound />}
+                  title={t("profile_view.door_details_title")}
+                  sub={fill(t("profile_view.door_details_sub"), { 0: filled, 1: TOTAL_FIELDS })}
+                  onClick={() => setPanel("details")}
                 />
-              ))}
-            </div>
+                <PanelDoor
+                  testId="open-memory"
+                  icon={<Lock />}
+                  title={t("profile_view.memory_title")}
+                  sub={t("profile_view.door_memory_sub")}
+                  onClick={() => setPanel("memory")}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {data && panel === "details" && (
+        <ProfileDrawer
+          testId="details-panel"
+          title={t("profile_view.door_details_title")}
+          description={fill(t("profile_view.door_details_sub"), { 0: filled, 1: TOTAL_FIELDS })}
+          onClose={closePanel}
+        >
+          <div className="flex flex-col gap-8">
+            {PAGE_GROUPS.map((g) => (
+              <FieldGroup
+                key={g.id}
+                id={g.id}
+                fields={g.fields}
+                meta={meta}
+                observations={observations}
+              />
+            ))}
             <PortraitSection />
+          </div>
+        </ProfileDrawer>
+      )}
+
+      {data && panel === "memory" && (
+        <ProfileDrawer
+          testId="memory-panel"
+          title={t("profile_view.memory_title")}
+          description={t("profile_view.memory_description")}
+          onClose={closePanel}
+        >
+          {showSource ? (
+            <div className="flex flex-col gap-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="self-start text-muted-foreground"
+                onClick={() => {
+                  source.cancelEditing();
+                  setShowSource(false);
+                }}
+                data-testid="source-back"
+              >
+                <ArrowLeft aria-hidden />
+                {t("profile_view.back_to_profile")}
+              </Button>
+              <SourceCard doc={source} />
+            </div>
+          ) : (
             <MemorySection
+              bare
               name={data.user.name?.trim() || null}
               raw={raw}
               fileUpdatedMs={source.data?.mtime_ms ?? null}
               onOpenSource={() => setShowSource(true)}
             />
-          </div>
-        )}
-      </div>
+          )}
+        </ProfileDrawer>
+      )}
     </div>
+  );
+}
+
+/** One of the two rows at the foot of the page; each opens a side panel. */
+function PanelDoor({
+  icon,
+  title,
+  sub,
+  onClick,
+  testId,
+}: {
+  icon: ReactNode;
+  title: string;
+  sub: string;
+  onClick: () => void;
+  testId: string;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      className="group flex min-h-11 items-center gap-3.5 rounded-xl border border-border bg-card px-4 py-3.5 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary transition-colors group-hover:bg-background [&>svg]:h-4 [&>svg]:w-4">
+        {icon}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-base font-medium text-foreground-strong">{title}</span>
+        <span className="truncate text-sm text-muted-foreground">{sub}</span>
+      </span>
+      <ChevronRight aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+    </button>
   );
 }
 
@@ -163,37 +203,15 @@ export function ProfileView() {
  */
 function ProfileSkeleton({ label }: { label: string }) {
   return (
-    <div role="status" aria-busy="true" aria-label={label} className="flex flex-col gap-10">
-      <div className="rounded-xl border border-border bg-card">
-        <div className="flex items-center gap-5 p-6">
-          <div className="h-20 w-20 shrink-0 animate-pulse rounded-full bg-secondary" />
-          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
-            <div className="h-6 w-48 max-w-full animate-pulse rounded-md bg-secondary" />
-            <div className="h-3.5 w-64 max-w-full animate-pulse rounded-full bg-secondary" />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 border-t border-border sm:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="px-5 py-4">
-              <div className="h-3 w-16 animate-pulse rounded-full bg-secondary" />
-              <div className="mt-2 h-5 w-20 animate-pulse rounded-md bg-secondary" />
-            </div>
-          ))}
-        </div>
+    <div role="status" aria-busy="true" aria-label={label} className="flex flex-col gap-9">
+      <div className="flex flex-col items-center gap-4">
+        <div className="h-20 w-20 animate-pulse rounded-3xl bg-secondary" />
+        <div className="h-7 w-40 animate-pulse rounded-md bg-secondary" />
+        <div className="h-3.5 w-72 max-w-full animate-pulse rounded-full bg-secondary" />
+        <div className="h-16 w-full max-w-lg animate-pulse rounded-xl bg-secondary" />
       </div>
-      {[0, 1].map((i) => (
-        <div key={i} className="flex flex-col gap-3">
-          <div className="h-5 w-40 animate-pulse rounded-md bg-secondary" />
-          <div className="divide-y divide-border rounded-xl border border-border bg-card">
-            {[0, 1, 2].map((j) => (
-              <div key={j} className="flex items-center justify-between px-5 py-4">
-                <div className="h-3.5 w-28 animate-pulse rounded-full bg-secondary" />
-                <div className="h-3.5 w-24 animate-pulse rounded-full bg-secondary" />
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      <div className="h-20 animate-pulse rounded-xl bg-secondary" />
+      <div className="h-48 animate-pulse rounded-xl bg-secondary" />
     </div>
   );
 }
