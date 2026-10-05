@@ -459,7 +459,7 @@ def main():
                 ),
             )
             for p in item["parts"]
-            if p["t"] not in ("region", "rim") and p.get("only") != "2d"
+            if p["t"] not in ("region", "rim", "smoke") and p.get("only") != "2d"
         ]
         if pieces:
             assemble(f"acc_{item['id']}", pieces)

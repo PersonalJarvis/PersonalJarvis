@@ -59,6 +59,16 @@ describe("agent symbol accessories", () => {
     expect(hat.parts.some(part => part.only === "2d")).toBe(true);
   });
 
+  it("gives the cigar living smoke and an ember, and the sunglasses gradient lenses with a glint", () => {
+    const { container } = render(<AgentSymbol shape="circle" color="#7ab6ef" size={40} accessories={{ mouth: "cigar", face: "sunglasses" }} />);
+    expect(container.querySelectorAll(".agent-acc-smoke circle")).toHaveLength(4);
+    expect(container.querySelector(".agent-acc-ember")).not.toBeNull();
+    expect(container.querySelector("linearGradient")).not.toBeNull();
+    expect(container.querySelector(".agent-acc-twinkle")).not.toBeNull();
+    const cigar = ACCESSORY_ITEMS.find(item => item.id === "cigar")!;
+    expect(cigar.parts.filter(part => part.t === "smoke")).toHaveLength(1);
+  });
+
   it("stores accessories with the companion and recovers older looks", () => {
     expect(companionSchema.safeParse({ shape: "drop", color: "#112233", accessories: { held: "coffee" } }).success).toBe(true);
     expect(companionSchema.safeParse({ shape: "drop", color: "#112233", accessories: { tail: "coffee" } }).success).toBe(false);

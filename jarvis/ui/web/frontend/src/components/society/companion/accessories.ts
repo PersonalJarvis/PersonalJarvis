@@ -24,6 +24,10 @@ interface PartBase {
   opacity?: number;
   /** 3D finish: polished metal or a glossy surface. */
   metal?: boolean; gloss?: boolean;
+  /** Flat vertical gradient, top to bottom. */
+  gradient?: [string, string];
+  /** A looping flat animation (agentSymbol.css). */
+  anim?: "twinkle" | "twinkle-late" | "ember";
 }
 export type AccessoryPart = PartBase & (
   | { t: "sphere" | "dome"; c: Vec3; r: Vec3 }
@@ -35,6 +39,8 @@ export type AccessoryPart = PartBase & (
   | { t: "region"; pts: Vec2[]; mode: "wrap" | "front" }
   /** The body silhouette grown by w symbol units, behind the body (a hood). */
   | { t: "rim"; w: number; maxY?: number }
+  /** Animated smoke rising from c (flat puffs; particles in the 3D world). */
+  | { t: "smoke"; c: Vec3; size: number }
 );
 export interface AccessoryItem {
   id: string;

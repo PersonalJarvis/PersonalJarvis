@@ -66,9 +66,19 @@ export function SymbolThinkingDots({ color }: { color: string }) {
   </g>;
 }
 
+/** Drifting smoke puffs; CSS staggers them, reduced motion leaves only the still wisps. */
+function SmokePuffs({ c, size, fill, id }: { c: [number, number, number]; size: number; fill: string; id: string }) {
+  return <g data-smoke>
+    <defs><filter id={id} x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation={0.45 * size} /></filter></defs>
+    <g className="agent-acc-smoke" fill={fill} filter={`url(#${id})`}>
+      {[0, 1, 2, 3].map(i => <circle key={i} cx={c[0]} cy={c[1]} r={1.35 * size} style={{ animationDelay: `${-i * 0.8}s` }} />)}
+    </g>
+  </g>;
+}
+
 /** The front projection of one accessory part in symbol units. */
-function AccessoryPartShape({ part, color }: { part: AccessoryPart; color: string }): ReactNode {
-  const fill = resolveFill(part.fill, color);
+function AccessoryPartShape({ part, color, gradientId }: { part: AccessoryPart; color: string; gradientId: string }): ReactNode {
+  const fill = part.gradient ? `url(#${gradientId})` : resolveFill(part.fill, color);
   const spin = "c" in part && part.rot ? `rotate(${part.rot} ${part.c[0]} ${part.c[1]})` : undefined;
   switch (part.t) {
     case "sphere":
@@ -98,11 +108,27 @@ function AccessoryPartShape({ part, color }: { part: AccessoryPart; color: strin
       return <polygon points={part.pts.map(p => p.join(",")).join(" ")} fill={fill} />;
     case "rim":
       return null; // Drawn behind the body by AgentSymbol itself.
+    case "smoke":
+      return <SmokePuffs c={part.c} size={part.size} fill={fill} id={`${gradientId}-blur`} />;
   }
 }
 
+/** A part with its flat extras: a vertical gradient, an opacity, a looping animation. */
+function DecoratedPart({ part, color, gradientId }: { part: AccessoryPart; color: string; gradientId: string }) {
+  let node: ReactNode = <AccessoryPartShape part={part} color={color} gradientId={gradientId} />;
+  if (part.gradient) node = <>
+    <defs><linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stopColor={part.gradient[0]} /><stop offset="1" stopColor={part.gradient[1]} />
+    </linearGradient></defs>
+    {node}
+  </>;
+  if (part.anim) node = <g className={`agent-acc-${part.anim}`}>{node}</g>;
+  if (part.opacity !== undefined) node = <g opacity={part.opacity}>{node}</g>;
+  return node;
+}
+
 /** One worn item at its slot anchor: either its body patches or its free parts. */
-function AccessoryItemShapes({ item, shape, color, regions }: { item: AccessoryItem; shape: SymbolShape; color: string; regions: boolean }) {
+function AccessoryItemShapes({ item, shape, color, regions, uid }: { item: AccessoryItem; shape: SymbolShape; color: string; regions: boolean; uid: string }) {
   const parts = item.parts.filter(part => part.t !== "rim" && part.only !== "3d" && (part.t === "region") === regions);
   if (!parts.length) return null;
   const [anchorX, y, anchorK] = ACCESSORY_CATALOG.shapes[shape].anchors[item.slot];
@@ -111,9 +137,7 @@ function AccessoryItemShapes({ item, shape, color, regions }: { item: AccessoryI
   // Paint back to front; body patches keep their authored layering.
   const ordered = regions ? parts : [...parts].sort((a, b) => partDepth(a) - partDepth(b));
   return <g data-accessory={item.id} transform={`translate(${x} ${y}) scale(${k})`}>
-    {ordered.map((part, index) => part.opacity === undefined
-      ? <AccessoryPartShape key={index} part={part} color={color} />
-      : <g key={index} opacity={part.opacity}><AccessoryPartShape part={part} color={color} /></g>)}
+    {ordered.map((part, index) => <DecoratedPart key={index} part={part} color={color} gradientId={`${uid}-${item.id}-${index}`} />)}
   </g>;
 }
 
@@ -124,7 +148,7 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
   const maskId = `agent-body-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const worn = useMemo(() => wornAccessories(accessories), [accessories]);
   const viewBox = useMemo(() => symbolViewBox(shape, worn), [shape, worn]);
-  const draw = (items: AccessoryItem[], regions = false) => items.map(item => <AccessoryItemShapes key={item.id} item={item} shape={shape} color={color} regions={regions} />);
+  const draw = (items: AccessoryItem[], regions = false) => items.map(item => <AccessoryItemShapes key={item.id} item={item} shape={shape} color={color} regions={regions} uid={maskId} />);
   const faceTransform = `translate(2 -0.6) rotate(-14 20 ${eyeY})`;
   const onFace = worn.filter(item => FACE_SLOTS.has(item.slot));
   return (

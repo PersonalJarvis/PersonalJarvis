@@ -339,32 +339,79 @@ def head_items():
     return items
 
 
+def smoke(c, size=1.0):
+    """Animated smoke rising from c: drifting puffs in the flat symbol and the 3D world."""
+    return {"t": "smoke", "c": list(c), "size": size, "fill": "#e4e6ec"}
+
+
 def face_items():
-    lens = [(-8.6, -2.7), (-1.4, -2.7), (-1.6, 1.2), (-3.0, 2.9), (-7.0, 2.9), (-8.4, 1.2)]
+    """Glossy wayfarers: a gradient lens, a heavy brow bar, metal rivets and a glint."""
+    frame_ink, lens_top, lens_bottom = "#0b0c10", "#151925", "#3d4f78"
+    lens = [(-9.0, -2.9), (-1.2, -2.9), (-1.3, 0.4), (-1.9, 2.2), (-3.2, 3.0), (-6.6, 3.1), (-8.1, 2.3),
+            (-8.8, 0.6)]
+    cx = sum(x for x, _ in lens) / len(lens)
+    cy = sum(y for _, y in lens) / len(lens)
+    rim = [(x + (x - cx) * 0.16, y + (y - cy) * 0.2) for x, y in lens]
+    mirror = lambda pts: [(-x, y) for x, y in reversed(pts)]  # noqa: E731
+    glass = dict(z=1.0, d=0.7, gloss=True, gradient=[lens_top, lens_bottom])
+    reflections = []
+    for shift in (0.0, 10.0):
+        reflections += [
+            poly([(-7.0 + shift, -2.5), (-5.9 + shift, -2.5), (-7.7 + shift, 1.9), (-8.4 + shift, 1.0)], "#ffffff",
+                 z=1.5, d=0.1, opacity=0.16, only="2d"),
+            poly([(-5.2 + shift, -2.5), (-4.75 + shift, -2.5), (-6.5 + shift, 2.7), (-7.0 + shift, 2.5)], "#ffffff",
+                 z=1.5, d=0.1, opacity=0.1, only="2d"),
+        ]
     return {"sunglasses": [
-        poly(lens, "#14151a", z=0.9, d=1.0, smooth=False),
-        poly([(-x, y) for x, y in reversed(lens)], "#14151a", z=0.9, d=1.0),
-        tube([(-9.2, -2.7, 1.2), (9.2, -2.7, 1.2)], 1.3, "#14151a"),
-        tube([(-1.5, -1.4, 1.1), (0, -2.0, 1.1), (1.5, -1.4, 1.1)], 0.9, "#14151a", smooth=True),
-        *both_sides([tube([(-9.0, -2.4, 0.8), (-10.6, -2.2, 0)], 0.9, "#14151a")], 0),
-        tube([(-7.0, -1.4, 1.6), (-5.6, 0.9, 1.6)], 0.7, "#5b5f6e", only="2d"),
-        tube([(-5.4, -1.6, 1.6), (-4.8, -0.6, 1.6)], 0.5, "#5b5f6e", only="2d"),
-        tube([(2.2, -1.4, 1.6), (3.6, 0.9, 1.6)], 0.7, "#5b5f6e", only="2d"),
+        poly(rim, frame_ink, z=0.7, d=1.2, gloss=True), poly(mirror(rim), frame_ink, z=0.7, d=1.2, gloss=True),
+        # The 3D lens takes the gradient's middle tone; gloss gives it the sheen.
+        poly(lens, "#243049", **glass), poly(mirror(lens), "#243049", **glass),
+        *reflections,
+        tube([(-9.7, -3.2, 1.3), (9.7, -3.2, 1.3)], 1.7, frame_ink, gloss=True),
+        tube([(-8.9, -3.7, 1.6), (8.9, -3.7, 1.6)], 0.35, "#626a7e", opacity=0.9, only="2d"),
+        tube([(-1.4, -1.7, 1.1), (0, -2.4, 1.1), (1.4, -1.7, 1.1)], 1.0, frame_ink, smooth=True, gloss=True),
+        *both_sides([tube([(-0.2, -2.7, 0.8), (-1.9, -2.4, -1.2)], 1.0, frame_ink, gloss=True)], -9.4),
+        sphere((-8.9, -2.9, 1.9), [0.5, 0.5, 0.3], "#d5d9e2", metal=True),
+        sphere((8.9, -2.9, 1.9), [0.5, 0.5, 0.3], "#d5d9e2", metal=True),
+        poly(star(6.9, -1.5, 1.7, 0.32, 4), "#ffffff", z=1.8, d=0.1, only="2d", anim="twinkle"),
+        poly(star(-3.6, -1.9, 1.0, 0.22, 4), "#ffffff", z=1.8, d=0.1, only="2d", anim="twinkle-late"),
     ]}
 
 
 def mouth_items():
-    return {"cigar": [
-        tube([(0.4, 0, 0.8), (9.6, 2.2, 1.4)], 2.8, "#7b4a28"),
-        tube([(0.4, 0, 0.82), (1.5, 0.27, 0.86)], 2.85, "#5a3519"),
-        tube([(2.6, 0.52, 0.9), (3.8, 0.82, 0.95)], 3.0, GOLD),
-        tube([(3.0, 0.62, 0.92), (3.4, 0.72, 0.94)], 3.05, BURGUNDY),
-        tube([(9.6, 2.2, 1.4), (10.9, 2.5, 1.45)], 2.75, "#a3a3a3"),
-        tube([(10.9, 2.5, 1.45), (11.3, 2.6, 1.47)], 2.55, "#ff6a1a", glow=True),
-        sphere((11.2, 2.6, 1.3), [2.6, 2.6, 0.1], "#ff8a3d", opacity=0.28, only="2d"),
-        tube([(11.8, 1.3, 1.5), (13.4, -1.4, 1.6), (11.9, -4.4, 1.7), (13.8, -7.6, 1.8)], 0.8, "#d6d8de", smooth=True),
-        tube([(12.8, -0.6, 1.5), (14.6, -2.4, 1.6), (14.0, -4.8, 1.7)], 0.55, "#d6d8de", smooth=True),
-    ]}
+    """A Churchill cigar: veined wrapper, gold band with crest, ash rings, a breathing ember."""
+    wrapper, wrapper_light, wrapper_dark = "#6f3f1f", "#a8693a", "#3d2110"
+    body = [
+        tube([(0.8, 0, 0.8), (10.6, 0, 0.8)], 3.2, wrapper),
+        tube([(1.2, -0.65, 1.4), (10.6, -0.65, 1.4)], 1.0, wrapper_light, opacity=0.55, only="2d"),
+        tube([(2.0, -1.05, 1.6), (9.6, -1.05, 1.6)], 0.32, "#e6ab72", opacity=0.45, only="2d"),
+        tube([(1.0, 0.95, 1.4), (10.8, 0.95, 1.4)], 0.9, wrapper_dark, opacity=0.5, only="2d"),
+        # The wrapper meets the ash in a clean cut, not a rounded cap.
+        tube([(10.6, 0, 0.8), (11.0, 0, 0.8)], 3.2, wrapper),
+        *[tube([(x, -1.45, 1.6), (x + 0.8, 1.4, 1.6)], 0.22, "#4a2812", opacity=0.5, only="2d")
+          for x in (5.0, 7.4, 9.5)],
+        tube([(0.6, 0, 0.82), (1.5, 0, 0.84)], 3.25, "#5a3519"),
+        # The band: a gold ring with a burgundy stripe and a small crest.
+        cyl((3.4, 0, 0.8), 1.74, 1.74, 1.8, GOLD, rot=90, metal=True),
+        cyl((3.4, 0, 0.8), 1.77, 1.77, 0.55, BURGUNDY, rot=90),
+        sphere((3.4, 0, 2.6), [0.62, 0.62, 0.3], "#ffe08a", metal=True),
+        *[tube([(x, -1.7, 1.7), (x, 1.7, 1.7)], 0.2, GOLD_DARK, opacity=0.9, only="2d") for x in (2.55, 4.25)],
+        cyl((11.65, 0, 0.8), 1.55, 1.52, 1.3, "#9a9a9a", rot=90),
+        *[tube([(x, -1.5, 1.6), (x, 1.5, 1.6)], 0.25, "#d0d0d0", opacity=0.75, only="2d") for x in (11.4, 11.9)],
+        cyl((12.5, 0, 0.8), 1.5, 1.35, 0.45, "#ff5a14", rot=90, glow=True),
+        sphere((12.8, 0, 1.0), [3.0, 3.0, 0.1], "#ff7a2a", opacity=0.2, only="2d", anim="ember"),
+        sphere((12.8, 0, 1.1), [1.7, 1.9, 0.1], "#ff9a3c", opacity=0.35, only="2d", anim="ember"),
+        sphere((12.85, 0, 1.2), [0.45, 1.2, 0.4], "#ffd25a", glow=True, anim="ember"),
+    ]
+    placed = place(body, rot=12)
+    tip_x, tip_y = rotate_xy(12.9, 0, 12)
+    wisps = [
+        tube([(tip_x + 0.4, tip_y - 1.0, 1.4), (tip_x + 1.9, tip_y - 3.6, 1.5), (tip_x + 0.5, tip_y - 6.4, 1.6),
+              (tip_x + 2.2, tip_y - 9.4, 1.7)], 0.85, "#d9dbe2", smooth=True, opacity=0.55, only="2d"),
+        tube([(tip_x + 1.2, tip_y - 2.2, 1.4), (tip_x + 3.0, tip_y - 4.0, 1.5), (tip_x + 2.4, tip_y - 6.2, 1.6)],
+             0.55, "#d9dbe2", smooth=True, opacity=0.4, only="2d"),
+    ]
+    return {"cigar": [*placed, *wisps, smoke((tip_x + 0.6, tip_y - 1.2, 1.5))]}
 
 
 # --- bounds -------------------------------------------------------------------
@@ -374,6 +421,10 @@ def outline_2d(part):
     t = part["t"]
     if t in ("region", "rim"):
         return []
+    if t == "smoke":
+        # Puffs drift up and a little right while they grow.
+        cx, cy = part["c"][0], part["c"][1]
+        return [(cx - 2.5, cy - 12.0), (cx + 6.0, cy + 1.0)]
     if t in ("poly",):
         return [tuple(p) for p in part["pts"]]
     if t == "tube":

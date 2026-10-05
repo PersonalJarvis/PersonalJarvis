@@ -1,7 +1,7 @@
 import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { useGLTF } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Group, Mesh, MeshStandardMaterial, Vector3, type Material } from "three";
+import { Group, Mesh, MeshBasicMaterial, MeshStandardMaterial, SphereGeometry, Vector3, type Material } from "three";
 import { useReducedMotion } from "framer-motion";
 import companionModels from "@/assets/society/companions/companions.glb";
 import gigiModel from "@/assets/society/companions/gigi.glb";
@@ -52,6 +52,38 @@ export function CompanionModel({ appearance, lead = false }: { appearance: Compa
   </group>;
 }
 
+const PUFFS = 7;
+const PUFF_GEOMETRY = new SphereGeometry(1, 12, 8);
+
+/**
+ * Cigar smoke: a few soft puffs that leave the ember, swell, drift and fade
+ * on a loop. Plain meshes on the shared clock; the Verse renders every frame
+ * while it is awake, so the plume adds no extra frames. Reduced motion shows
+ * no plume (the cigar keeps its glowing ember).
+ */
+function SmokePlume({ position, scale, color }: { position: [number, number, number]; scale: number; color: string }) {
+  const puffs = useRef<(Mesh | null)[]>([]);
+  const reduced = useReducedMotion() ?? false;
+  const materials = useMemo(() => Array.from({ length: PUFFS }, () =>
+    new MeshBasicMaterial({ color, transparent: true, opacity: 0, depthWrite: false })), [color]);
+  useEffect(() => () => { materials.forEach(material => material.dispose()); }, [materials]);
+  useFrame(({ clock }) => {
+    const t = clock.getElapsedTime();
+    puffs.current.forEach((puff, i) => {
+      if (!puff) return;
+      const phase = (t / 3.4 + i / PUFFS) % 1;
+      const wobble = Math.sin((t * 1.3 + i * 1.7)) * 0.05;
+      puff.position.set(phase * 0.12 + wobble * phase, phase * 0.62, phase * 0.04);
+      puff.scale.setScalar(0.035 + phase * 0.13);
+      materials[i]!.opacity = Math.sin(Math.min(1, phase * 1.25) * Math.PI) * 0.42;
+    });
+  });
+  if (reduced) return null;
+  return <group position={position} scale={scale}>
+    {materials.map((material, i) => <mesh key={i} ref={node => { puffs.current[i] = node; }} geometry={PUFF_GEOMETRY} material={material} />)}
+  </group>;
+}
+
 /** Worn items from the shared catalog, placed on the 1 m symbol master. */
 function CompanionAccessories({ appearance }: { appearance: CompanionAppearance }) {
   const { scene } = useGLTF(accessoryModels);
@@ -88,10 +120,27 @@ function CompanionAccessories({ appearance }: { appearance: CompanionAppearance 
       mesh.material = own;
       materials.push(own);
     });
-    return { group, materials };
+    // Smoke sources, placed exactly like the free parts they belong to.
+    const plumes: { key: string; position: [number, number, number]; scale: number; color: string }[] = [];
+    for (const item of wornAccessories(appearance.accessories)) {
+      const [x, y, k] = meta.anchors[item.slot];
+      const size = k * (item.scale ?? 1) * unit;
+      const depth = ACCESSORY_CATALOG.slotDepth[item.slot] * ACCESSORY_CATALOG.frontDepthM;
+      item.parts.forEach((part, index) => {
+        if (part.t !== "smoke") return;
+        plumes.push({
+          key: `${item.id}-${index}`, color: part.fill, scale: part.size,
+          position: [(x - 20) * unit + part.c[0] * size, (meta.bottom - y) * unit - part.c[1] * size, depth + part.c[2] * size],
+        });
+      });
+    }
+    return { group, materials, plumes };
   }, [scene, reflective, appearance.shape, appearance.color, appearance.accessories]);
   useEffect(() => () => { instance.materials.forEach(material => material.dispose()); }, [instance]);
-  return <primitive object={instance.group} dispose={null} />;
+  return <>
+    <primitive object={instance.group} dispose={null} />
+    {instance.plumes.map(plume => <SmokePlume key={plume.key} position={plume.position} scale={plume.scale} color={plume.color} />)}
+  </>;
 }
 
 /** Sibling of the character: world-space footsteps never inherit its rotation. */
