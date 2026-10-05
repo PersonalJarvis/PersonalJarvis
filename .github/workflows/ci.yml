@@ -251,20 +251,15 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e . --no-deps
       - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
-      - name: Qualify plugin auth with the v2.9.0 exception
+      - name: Qualify plugin auth and disclose preview plugins
         shell: bash
-        env:
-          RELEASE_REF: ${{ github.ref }}
         run: |
-          # Maintainer-approved on 2026-10-04 for this immutable release only.
-          # Keep structural/security checks and the audit's BLOCKED results intact.
-          if [ "$RELEASE_REF" = "refs/tags/v2.9.0" ]; then
-            python scripts/ci/check_plugin_auth_contract.py
-            echo "::warning::Full plugin acceptance is waived for v2.9.0 only; no plugin E2E PASS is asserted."
-            echo "Plugin E2E acceptance: maintainer-approved exception for v2.9.0 only. Existing audit results remain unchanged. All other release checks remain required." >> "$GITHUB_STEP_SUMMARY"
-          else
-            python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass
-          fi
+          # A plugin ships as "verified" only with a completed browser journey;
+          # every other one ships labeled "preview" in the app (AGENTS.md section 3).
+          report="$(python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass)"
+          printf '%s\n' "$report"
+          # The last line counts verified and preview plugins for the release.
+          printf '%s\n' "${report##*$'\n'}" >> "$GITHUB_STEP_SUMMARY"
 
   python-fast:
     name: python contracts (fast)

@@ -26,7 +26,7 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Proves the six Linux shards cover every discovered file exactly once, enforces the min-passed floor, and on main refreshes the duration cache. Detection freezes one shared duration snapshot for all shards, including partial reruns. | `scripts/ci/ratchet_tests.py` |
 | Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
-| `release qualification` | Tag CI requires a full run with macOS and the real browser-auth E2E evidence gate. Ordinary branch/PR/nightly CI skips this release-only requirement. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
+| `release qualification` | Tag CI requires a full run with macOS and the browser-auth E2E evidence gate: a plugin labeled verified needs a completed journey, every completed journey ships as verified, and every other plugin ships labeled preview. The step summary counts both. Ordinary branch/PR/nightly CI skips this release-only job. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
 | `CI gate` | Aggregates every job. **The only required check.** A missing or skipped selected lane fails. Unselected lanes may skip; nightly is strict except event-specific jobs. | `scripts/ci/required_results.py` |
 
 The realtime lane runs the subscription authentication, direct reasoning,

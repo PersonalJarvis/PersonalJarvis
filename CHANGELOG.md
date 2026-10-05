@@ -9,6 +9,10 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Built-in plugins that have not yet passed a full end-to-end sign-in test now show a Preview badge, and releases no longer wait for every plugin to pass that test. A plugin is marked verified only after its complete journey was observed.
+
 ---
 
 ## [2.9.0] — 2026-10-05

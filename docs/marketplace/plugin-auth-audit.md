@@ -81,7 +81,7 @@ Shopify (added 2026-09-21, after the RUB-94 observation) has one observed UI att
 
 ## Release and maintenance gate
 
-Run `python scripts/ci/check_plugin_auth_contract.py` for configuration, matrix coverage and attestation integrity. Historical BLOCKED rows may pass this structural check only with concrete blocker evidence; that does not make them standard-ready. An unresolved FAIL is deliberately rejected. Run `python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` for strict release qualification; current evidence must fail qualification.
+Run `python scripts/ci/check_plugin_auth_contract.py` for configuration, matrix coverage and attestation integrity. Historical BLOCKED rows may pass this structural check only with concrete blocker evidence; that does not make them standard-ready. An unresolved FAIL is deliberately rejected. A plugin may carry `acceptance: "verified"` in the seed catalog only with a completed PASS row; every other plugin ships as "preview" and shows a Preview badge in the app. Run `python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` for release qualification; it additionally requires every PASS to ship as verified and prints how many plugins ship as preview.
 
 A new built-in plugin must carry a complete real journey PASS before release. Record a genuine functional action for smoke evidence; discovery or listing available tools is insufficient. An auth/execution configuration change invalidates the fingerprint and requires renewed relevant observations. Never refresh a fingerprint to disguise stale successful evidence.
 

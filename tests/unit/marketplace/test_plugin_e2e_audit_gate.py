@@ -37,6 +37,7 @@ def journey():
 
 def test_complete_journey_passes(journey):
     plugin, audit = journey
+    plugin["acceptance"] = "verified"
     assert gate.validate_e2e_audit([plugin], audit, strict=True) == []
 
 
@@ -79,13 +80,39 @@ def blocked(audit):
         row["evidence"][stage]["status"] = "BLOCKED"
 
 
-def test_legacy_blocker_is_honest_but_not_release_qualification(journey):
+def test_legacy_blocker_ships_as_preview_without_blocking_the_release(journey):
     plugin, audit = journey
     blocked(audit)
     assert gate.validate_e2e_audit([plugin], audit) == []
+    assert gate.validate_e2e_audit([plugin], audit, strict=True) == []
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_verified_label_requires_a_completed_journey(journey, strict):
+    plugin, audit = journey
+    blocked(audit)
+    plugin["acceptance"] = "verified"
     assert any(
-        "PASS required" in item for item in gate.validate_e2e_audit([plugin], audit, strict=True)
+        "acceptance 'verified' needs" in item
+        for item in gate.validate_e2e_audit([plugin], audit, strict=strict)
     )
+
+
+def test_release_ships_a_completed_journey_as_verified(journey):
+    plugin, audit = journey
+    assert gate.validate_e2e_audit([plugin], audit) == []
+    assert any(
+        "must ship as acceptance 'verified'" in item
+        for item in gate.validate_e2e_audit([plugin], audit, strict=True)
+    )
+    plugin["acceptance"] = "verified"
+    assert gate.validate_e2e_audit([plugin], audit, strict=True) == []
+
+
+def test_unknown_acceptance_label_is_rejected(journey):
+    plugin, audit = journey
+    plugin["acceptance"] = "beta"
+    assert any("unknown acceptance" in item for item in gate.validate_e2e_audit([plugin], audit))
 
 
 def test_new_plugin_cannot_bypass_with_blocked_row(journey):
