@@ -246,7 +246,7 @@
       "blocker": {
         "reason": "The shared Slack app registration is pending, and the Slack plugin moved on 2026-10-05 from Slack's hosted MCP server to the native Slack Web API tool. The new configuration has contract tests only; no live sign-in, connected state, smoke action, reconnect or restart has been observed.",
         "owner": "Project publisher",
-        "next_action": "Finish provisioning the shared Slack app (catalog user scopes, HTTPS redirect through the publisher token broker), then run the full clean browser journey with a real read-only slack action (search_messages or read_history), reconnect and restart.",
+        "next_action": "The shared Slack app (PKCE, token rotation, catalog user scopes) and its token broker are wired with an HTTPS redirect via token.personaljarvis.ai/oauth/slack/callback, but the broker's SLACK_CLIENT_SECRET is not set yet, so the exchange answers 503. Set the secret, register the broker callback in the Slack app and activate public distribution, then run the full clean browser journey with a real read-only slack action (search_messages or read_history), reconnect and restart.",
         "evidence": "Earlier observation: Connect Slack showed 'Browser sign-in is pending publisher setup. No developer account or client registration is required from you.' The native tool is covered by tests/unit/plugins/tool/test_slack_rest.py only."
       }
     },
@@ -600,7 +600,7 @@
       "blocker": {
         "reason": "Full clean-state authorization, disconnect/reconnect, restart persistence and fresh-install validation remain unverified. A real read-only action succeeded with the existing grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Drive\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -650,7 +650,7 @@
       "blocker": {
         "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -700,7 +700,7 @@
       "blocker": {
         "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -1185,7 +1185,7 @@
       "blocker": {
         "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect YouTube Music\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -1675,7 +1675,7 @@
       "blocker": {
         "reason": "Provider account sign-in has not been completed.",
         "owner": "Provider account holder",
-        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed."
       }
     },
@@ -1973,7 +1973,7 @@
       "blocker": {
         "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect YouTube Studio\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
