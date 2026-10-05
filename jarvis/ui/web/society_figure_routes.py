@@ -150,6 +150,8 @@ def _validate_shared_assets(body: SharedFigureDraft) -> None:
     recipe_parts = recipe.get("parts") or {}
     if not isinstance(recipe_parts, dict):
         raise HTTPException(422, "shared figure parts must be a slot map")
+    base_family = base.get("family")
+    base_fit_size = base.get("fitSize")
     for slot, part_id in recipe_parts.items():
         match = next(
             (
@@ -167,6 +169,18 @@ def _validate_shared_assets(body: SharedFigureDraft) -> None:
             raise HTTPException(
                 422,
                 f"shared figure part {part_id!r} is not a reviewed {archetype} {slot!r} asset",
+            )
+        fits_family = match.get("fits_family")
+        fits_size = match.get("fits_size")
+        if fits_family and fits_family != base_family:
+            raise HTTPException(
+                422,
+                f"shared figure part {part_id!r} does not fit base family {base_family!r}",
+            )
+        if fits_size and fits_size != base_fit_size:
+            raise HTTPException(
+                422,
+                f"shared figure part {part_id!r} does not fit base size {base_fit_size!r}",
             )
 
 
