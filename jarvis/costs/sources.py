@@ -527,7 +527,7 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
             str(r["id"]): _clip(r["prompt"])
             for r in conn.execute("SELECT id, prompt FROM missions")
         }
-        spawned: dict[str, tuple[str, str]] = {}
+        spawned: dict[str, tuple[str, str, str]] = {}
         for r in conn.execute(
             "SELECT worker_id, payload_json FROM mission_events WHERE event_type = 'WorkerSpawned'"
         ):
@@ -541,7 +541,8 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
             step: dict[str, Any] = raw_step if isinstance(raw_step, dict) else {}
             cli = str(meta.get("cli") or step.get("worker_cli") or "")
             model = str(meta.get("model") or step.get("model") or "")
-            spawned[str(r["worker_id"] or "")] = (cli, model)
+            session_id = str(meta.get("session_id") or "")
+            spawned[str(r["worker_id"] or "")] = (cli, model, session_id)
         for row in conn.execute(
             "SELECT mission_id, worker_id, ts_ms, payload_json FROM mission_events "
             "WHERE event_type = 'WorkerDraftReady' AND ts_ms BETWEEN ? AND ?",
@@ -558,9 +559,12 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
             recorded = _float(payload.get("cost_usd"))
             if tokens <= 0 and recorded <= 0:
                 continue
-            cli, spawned_model = spawned.get(str(row["worker_id"] or ""), ("", ""))
+            cli, spawned_model, spawned_session = spawned.get(
+                str(row["worker_id"] or ""), ("", "", "")
+            )
             provider = str(payload.get("provider") or (f"{cli}-cli" if cli else "mission-worker"))
             model = str(payload.get("model") or spawned_model)
+            session_id = str(payload.get("session_id") or spawned_session or "")
             # A turn count masquerading as tokens: no model call costs more
             # than a cent per token. Keep the money, drop the fake quantity.
             if recorded > 0 and tokens > 0 and recorded / tokens > 0.01:
@@ -587,8 +591,9 @@ def _mission_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterato
                 tokens_cached=0,
                 cost_usd=cost,
                 price_source=source,
-                ref_id=mission_id,
+                ref_id=session_id or mission_id,
                 label=prompts.get(mission_id, ""),
+                runner=f"{cli}-cli" if cli else "",
             )
     except sqlite3.Error as exc:
         log.warning("cost read model: mission source failed (%s)", exc)
