@@ -14,8 +14,8 @@ from fastapi import FastAPI
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import RoutineDeferred
 from jarvis.plugins.tool.app_command import AppCommandTool
-from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.routine_runner import guard_owned_routine
+from jarvis.society.runtime import SocietyRuntime
 from jarvis.tasks import external_auth, webhook_auth
 from jarvis.tasks.runner import TaskRunner
 from jarvis.tasks.scheduler import TaskScheduler
@@ -205,6 +205,9 @@ async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
             routine = listed.json()["routines"][0]
             assert routine["connection_required"] is True
             assert routine["connection_configured"] is True
+            assert routine["last_run_state"] == receipt["last_run_state"]
+            assert routine["last_result"] == receipt["last_result"]
+            assert routine["last_error"] == receipt["last_error"]
             assert "connected" not in routine
             assert token not in detail.text
             assert token not in listed.text

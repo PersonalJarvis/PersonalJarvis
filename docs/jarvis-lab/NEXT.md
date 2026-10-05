@@ -18,6 +18,8 @@ CI #226 (37288552623) is now complete: every portable, Windows, frontend, contra
 
 CI #230 (37291147213) is complete and green across all portable, Windows, frontend, contracts, static, installer, updater and browser lanes; the three native Mac lanes remain documented skips. Busy Society deliveries now log both the primary and same-recipient retry deferral paths while retaining the durable queued state, covered by test_busy_delivery_stays_queued_and_is_logged. This closes the remote observability slice.
 
+CI #232 on `5657fcd` is complete and green. Owner-facing routine readback now includes the latest execution outcome, error and a result bounded to 400 characters from the existing TaskStore. An older success is withheld during a running or failed execution. Contracts exercise signed delivery outcomes, database reopen, result bounds and owner isolation. Qualification of this new slice is pending its own CI.
+
 The next remote-safe step is an audit of durable handoff receipts around scheduler recovery and room result projection. Preserve exact event IDs, retry state and owner accounting through the existing scheduler; add only a focused regression when a real gap is found. Native Mac qualification remains blocked on physical Accessibility and input permissions.
 
 Native MacAgentBench qualification remains explicitly deferred to a physical Mac with user-granted permissions and must not be represented as remotely complete.

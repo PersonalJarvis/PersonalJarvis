@@ -20,6 +20,7 @@ from uuid import UUID
 
 from jarvis.brain.artifact_gate import wants_artifact
 from jarvis.tasks.schema import (
+    TERMINAL_STATES,
     AgentAction,
     PluginGrant,
     TaskSpec,
@@ -339,7 +340,17 @@ def is_agent_routine(row: dict[str, Any], agent_id: str) -> bool:
     return agent_tag(agent_id) in _tags_of(row)
 
 
-def _summary(row: dict[str, Any]) -> dict[str, Any]:
+def _last_run_state(row: dict[str, Any]) -> str | None:
+    """Separate the latest execution outcome from the recurring schedule state."""
+    state = row.get("state")
+    if state == "running" or state in TERMINAL_STATES:
+        return str(state)
+    if row.get("finished_at_ns") is None:
+        return None
+    return "failed" if row.get("last_error") else "completed"
+
+
+def _summary(row: dict[str, Any], *, last_result: str | None = None) -> dict[str, Any]:
     raw = row.get("spec_json")
     spec: dict[str, Any] = {}
     if raw:
@@ -366,6 +377,9 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         "announce_on_success": spec.get("announce_on_success"),
         "due_at_ns": row.get("due_at_ns"),
         "last_run_ns": row.get("started_at_ns") or row.get("last_run_ns"),
+        "last_run_state": _last_run_state(row),
+        "last_result": last_result if _last_run_state(row) == "completed" else None,
+        "last_error": row.get("last_error"),
         "tags": list(_tags_of(row)),
         "provider": str(action.get("provider") or ""),
         "model": str(action.get("model") or ""),
@@ -377,7 +391,13 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
 async def list_routines(task_store: Any, agent_id: str) -> list[dict[str, Any]]:
     rows = await task_store.list(limit=1000)
     owned = [row for row in rows if is_agent_routine(row, agent_id)]
-    summaries = [_summary(row) for row in owned]
+    result_reader = getattr(task_store, "latest_agent_results", None)
+    results = (
+        await result_reader([str(row["id"]) for row in owned], max_chars=400)
+        if owned and callable(result_reader)
+        else {}
+    )
+    summaries = [_summary(row, last_result=results.get(str(row["id"]))) for row in owned]
     from jarvis.tasks.webhook_auth import connection_configured
 
     for row, summary in zip(owned, summaries, strict=True):
