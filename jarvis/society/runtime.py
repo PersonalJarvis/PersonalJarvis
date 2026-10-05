@@ -1202,6 +1202,7 @@ class SocietyRuntime:
                         if getattr(svc, "supports_turn_completion", False)
                         else {}
                     ),
+                    read_only=True,
                 )
             except (Exception, asyncio.CancelledError):
                 svc.unsubscribe(session.session_id, queue)
