@@ -74,6 +74,21 @@ def test_wide_gamut_red_stays_inside_bt2020() -> None:
     assert nits[0, 0, 0] > nits[0, 0, 1] > 0
 
 
+def test_sdr_white_lands_on_pq_reference_white() -> None:
+    # A white web page on a monitor with SDR white at 284 nits must reach
+    # viewers at PQ reference white, not 284 nits (which they show 1.4x
+    # brighter than their own SDR white).
+    white = 284.0 / hdr_image.SCRGB_NITS
+    scrgb = np.array([[[white, white, white, 1.0], [2 * white, 2 * white, 2 * white, 1.0]]])
+    pq = hdr_image.scrgb_to_pq16(scrgb, 284.0)
+    nits = hdr_image.pq_decode(pq / 65535.0)
+    assert nits[0, 0].tolist() == pytest.approx([203.0] * 3, rel=2e-3)
+    assert nits[0, 1].tolist() == pytest.approx([406.0] * 3, rel=2e-3)
+    max_cll, max_fall = hdr_image.light_levels(scrgb, 284.0)
+    assert max_cll == pytest.approx(406.0, rel=1e-3)
+    assert max_fall == pytest.approx(304.5, rel=1e-3)
+
+
 def test_png16_carries_cicp_light_levels_and_exact_pixels() -> None:
     rng = np.random.default_rng(7)
     pixels = rng.integers(0, 65536, size=(5, 7, 3), dtype=np.uint16)

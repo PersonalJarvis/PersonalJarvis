@@ -6,8 +6,11 @@ sRGB. Two things are made from it:
 
 * the **master**, lossless: a 16-bit PNG in BT.2020 primaries with the PQ
   transfer (HDR10's signal), tagged with a ``cICP`` chunk (PNG, third
-  edition) and a ``cLLi`` chunk with the content's light levels. Viewers that
-  read ``cICP`` show it exactly as the monitor did.
+  edition) and a ``cLLi`` chunk with the content's light levels. SDR white
+  is placed at PQ's reference white, 203 nits (ITU-R BT.2408), because that
+  is the level every PQ viewer shows at the viewing screen's own SDR white;
+  highlights keep their ratio to it. Writing the monitor's absolute SDR white
+  instead (e.g. 284 nits) makes white pages glare 1.4x above SDR white.
 * the **SDR stand-in**, 8-bit sRGB, for everything that cannot take HDR — the
   model's image, the clipboard, chat. SDR white maps to sRGB white, so normal
   UI looks the same as on screen; only highlights above SDR white clip.
@@ -34,6 +37,8 @@ _PQ_M1, _PQ_M2 = 0.1593017578125, 78.84375
 _PQ_C1, _PQ_C2, _PQ_C3 = 0.8359375, 18.8515625, 18.6875
 #: scRGB 1.0 in nits.
 SCRGB_NITS = 80.0
+#: Where SDR white sits in a PQ signal (ITU-R BT.2408 "graphics white").
+PQ_REFERENCE_WHITE_NITS = 203.0
 #: cICP: BT.2020 primaries, PQ transfer, RGB (identity matrix), full range.
 CICP_BT2100_PQ = (9, 16, 0, 1)
 
@@ -66,17 +71,31 @@ def scrgb_to_bt2020_nits(scrgb: Any) -> Any:
     return out
 
 
-def scrgb_to_pq16(scrgb: Any) -> Any:
-    """scRGB -> BT.2020 PQ, ``uint16 (h, w, 3)`` full range — the PNG master's pixels."""
+def _reference_scale(sdr_white_nits: float) -> float:
+    """Factor that moves the capture's SDR white onto PQ reference white."""
+    return PQ_REFERENCE_WHITE_NITS / max(1.0, float(sdr_white_nits))
+
+
+def scrgb_to_pq16(scrgb: Any, sdr_white_nits: float = PQ_REFERENCE_WHITE_NITS) -> Any:
+    """scRGB -> BT.2020 PQ, ``uint16 (h, w, 3)`` full range — the PNG master's pixels.
+
+    ``sdr_white_nits`` is the monitor's SDR white when the capture was taken;
+    it lands at :data:`PQ_REFERENCE_WHITE_NITS`.
+    """
     import numpy as np  # noqa: PLC0415
 
-    signal = pq_encode(scrgb_to_bt2020_nits(scrgb))
+    nits = scrgb_to_bt2020_nits(scrgb)
+    nits *= _reference_scale(sdr_white_nits)
+    signal = pq_encode(nits)
     return np.rint(signal * 65535.0).astype(np.uint16)
 
 
-def light_levels(scrgb: Any) -> tuple[float, float]:
-    """``(MaxCLL, MaxFALL)`` in nits: the brightest pixel and the average frame light."""
+def light_levels(
+    scrgb: Any, sdr_white_nits: float = PQ_REFERENCE_WHITE_NITS
+) -> tuple[float, float]:
+    """``(MaxCLL, MaxFALL)`` in nits of the PQ master (see :func:`scrgb_to_pq16`)."""
     nits = scrgb_to_bt2020_nits(scrgb)
+    nits *= _reference_scale(sdr_white_nits)
     peak = nits.max(axis=-1)
     return float(peak.max(initial=0.0)), float(peak.mean()) if peak.size else 0.0
 

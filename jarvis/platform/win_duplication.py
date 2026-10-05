@@ -92,8 +92,11 @@ static const float3x3 To2020 = {
     0.016391, 0.088013, 0.895595 };
 static const float3 Luma = float3(0.2627, 0.6780, 0.0593);
 
+// SDR white (Scales.x) lands on PQ reference white, 203 nits (BT.2408):
+// players show that level at their screen's SDR white, so white UI does not
+// glare above it; highlights keep their ratio to SDR white.
 float3 Pq(float3 l) {
-    float3 y = saturate(max(l, 0.0) * (80.0 / 10000.0));
+    float3 y = saturate(max(l, 0.0) * (203.0 / 10000.0) / Scales.x);
     float3 p = pow(y, 0.1593017578125);
     return pow((0.8359375 + 18.8515625 * p) / (1.0 + 18.6875 * p), 78.84375);
 }
@@ -632,7 +635,8 @@ class DesktopDuplication:
 
         Returns ``(y, uv)``: ``uint16`` arrays of shape ``(h, w)`` and
         ``(h/2, w/2, 2)``, 10-bit codes in the high bits as P010 stores them.
-        ``sdr_white`` is the scRGB value of SDR white, used for the pointer.
+        ``sdr_white`` is the scRGB value of SDR white: the pointer is drawn
+        at it, and it is encoded at PQ reference white (203 nits).
         """
         import numpy as np  # noqa: PLC0415
 
@@ -649,7 +653,7 @@ class DesktopDuplication:
                 float(self._pointer_pos[0]), float(self._pointer_pos[1]),
                 float(self._pointer_size[0]), float(self._pointer_size[1]),
             ]
-        params.scales[0] = float(sdr_white)
+        params.scales[0] = max(float(sdr_white), 1e-3)
         ctx = self._context
         ctx.call(
             _CTX_UPDATE_SUBRESOURCE, ctypes.c_void_p(planes["cbuffer"].ptr), ctypes.c_uint(0),

@@ -35,6 +35,10 @@ desktop holds more than 8-bit sRGB (`jarvis/platform/display_color.py`).
     plus a 16-bit BT.2020 PQ PNG with `cICP`/`cLLi`
     (`jarvis/appshot/master.py`, `jarvis/platform/hdr_image.py`); Save writes
     both (`appshot-….png`, `appshot-…-hdr.png`), the library keeps both.
+  - Both PQ outputs place the monitor's SDR white at PQ reference white
+    (203 nits, ITU-R BT.2408), the level HDR viewers and players show at
+    their screen's SDR white; highlights keep their ratio to it. Encoding
+    the absolute SDR white (e.g. 284 nits) made white pages glare.
   - A rotated monitor, a rectangle across two monitors, or any duplication
     failure falls back to the 8-bit path; a still desktop gets one repaint
     nudge before that fallback.

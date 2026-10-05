@@ -10,7 +10,8 @@ way — and is encoded here once the markings are known:
   the clipboard, chat and every SDR viewer get.
 * ``hdr_png`` — only from an HDR or wide-gamut monitor: 16-bit BT.2020 PQ
   with ``cICP``/``cLLi`` (:mod:`jarvis.platform.hdr_image`), which keeps the
-  highlights and the gamut the monitor showed.
+  highlights and the gamut the monitor showed. SDR white sits at PQ reference
+  white, so HDR viewers show white pages no brighter than the screen did.
 """
 
 from __future__ import annotations
@@ -46,8 +47,10 @@ def encode_master(master: Any, markup: Any = None) -> MasterFiles:
 
             scrgb = apply_to_scrgb(scrgb, markup, master.sdr_white_nits)
         sdr = hdr_image.scrgb_to_srgb8(scrgb, master.sdr_white_nits)
+        white = master.sdr_white_nits
         hdr_png = hdr_image.encode_png16(
-            hdr_image.scrgb_to_pq16(scrgb), light=hdr_image.light_levels(scrgb)
+            hdr_image.scrgb_to_pq16(scrgb, white),
+            light=hdr_image.light_levels(scrgb, white),
         )
         height, width = sdr.shape[:2]
         return MasterFiles(hdr_image.encode_png8(sdr), width, height, hdr_png)
