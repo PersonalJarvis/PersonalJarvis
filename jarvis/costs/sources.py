@@ -339,6 +339,7 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
             return
         sessions: dict[str, sqlite3.Row] = {}
         session_has_surface = False
+        session_has_vendor_session = False
         if _has_table(conn, "agent_chat_sessions"):
             try:
                 session_has_surface = any(
@@ -352,8 +353,21 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 )
                 session_has_surface = False
             columns = "session_id, title, provider, model"
+            try:
+                session_has_vendor_session = any(
+                    str(row["name"]) == "vendor_session"
+                    for row in conn.execute("PRAGMA table_info(agent_chat_sessions)")
+                )
+            except sqlite3.Error as exc:
+                log.debug(
+                    "cost read model: cannot inspect agent chat vendor-session column (%s)",
+                    exc,
+                )
+                session_has_vendor_session = False
             if session_has_surface:
                 columns += ", surface"
+            if session_has_vendor_session:
+                columns += ", vendor_session"
             for row in conn.execute(f"SELECT {columns} FROM agent_chat_sessions"):
                 sessions[str(row["session_id"])] = row
 
@@ -431,6 +445,17 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 if session is not None and session_has_surface
                 else ""
             )
+            vendor_session = (
+                str(session["vendor_session"] or "")
+                if session is not None and session_has_vendor_session
+                else ""
+            )
+            runner = start.get("runner", "")
+            ref_id = (
+                vendor_session
+                if runner in SUBSCRIPTION_RUNNERS and vendor_session
+                else str(row["session_id"] or "")
+            )
             yield CostEntry(
                 ts_ms=_int(row["ts_ms"]),
                 surface=SURFACE_SOCIETY if chat_surface == "society" else SURFACE_AGENT_CHAT,
@@ -442,8 +467,9 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 tokens_cached=tokens_cached,
                 cost_usd=cost,
                 price_source=source,
-                ref_id=str(row["session_id"] or ""),
+                ref_id=ref_id,
                 label=_clip(session["title"] if session is not None else ""),
+                runner=runner,
             )
     except sqlite3.Error as exc:
         log.warning("cost read model: agent chat source failed (%s)", exc)
@@ -710,6 +736,7 @@ def _cli_entries(
             price_source=source,
             ref_id=turn.session_id,
             label=_clip(turn.label or turn.cwd),
+            runner=turn.agent,
         )
 
 
@@ -761,12 +788,40 @@ def collect_entries(
     """Every priced line item across all sources, newest last."""
     entries: list[CostEntry] = []
     entries.extend(_voice_entries(sources.sessions_db, since_ms, until_ms))
-    entries.extend(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
+    agent_chat_entries = list(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
     entries.extend(_mission_entries(sources.missions_db, since_ms, until_ms))
     entries.extend(_speech_entries(sources.sessions_db, since_ms, until_ms))
+    cli_entries = list(_cli_entries(sources.cli_index_dir, since_ms, until_ms, bucket_ms))
+
+    # Subscription CLI transcripts are the authoritative usage source. A
+    # canonical agent-chat turn already represents the same provider call and
+    # used to be counted a second time. Only suppress chat rows when the CLI
+    # index has accumulated at least as many tokens for that vendor session;
+    # this keeps partial background indexing from making the report dip below
+    # the known chat total while a catch-up is still running.
+    chat_totals: dict[tuple[str, str], int] = {}
+    cli_totals: dict[tuple[str, str], int] = {}
+    for entry in agent_chat_entries:
+        if entry.runner in SUBSCRIPTION_RUNNERS and entry.ref_id:
+            key = (entry.runner, entry.ref_id)
+            chat_totals[key] = chat_totals.get(key, 0) + entry.tokens_total
+    for entry in cli_entries:
+        if entry.runner in SUBSCRIPTION_RUNNERS and entry.ref_id:
+            key = (entry.runner, entry.ref_id)
+            cli_totals[key] = cli_totals.get(key, 0) + entry.tokens_total
+    indexed_keys = {
+        key for key, total in chat_totals.items() if total > 0 and cli_totals.get(key, 0) >= total
+    }
     entries.extend(
-        _cli_entries(sources.cli_index_dir, since_ms, until_ms, bucket_ms)
+        entry
+        for entry in agent_chat_entries
+        if not (
+            entry.runner in SUBSCRIPTION_RUNNERS
+            and entry.ref_id
+            and (entry.runner, entry.ref_id) in indexed_keys
+        )
     )
+    entries.extend(cli_entries)
     entries.extend(_ledger_entries(sources.ledger_db, since_ms, until_ms))
     entries.sort(key=lambda e: e.ts_ms)
     return entries
