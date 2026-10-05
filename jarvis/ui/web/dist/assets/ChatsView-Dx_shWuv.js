@@ -1,1 +1,0 @@
-import{j as s}from"./index-7G5E6vuh.js";import{P as o}from"./PageHeader-B6TWwoHy.js";function p({icon:a,title:i,titleBadge:r,subtitle:n,right:e}){return s.jsx("div",{className:"shrink-0 px-8",children:s.jsx(o,{icon:a,title:i,description:n,className:"pb-4",actions:r||e?s.jsxs(s.Fragment,{children:[r,e]}):void 0})})}export{p as V};

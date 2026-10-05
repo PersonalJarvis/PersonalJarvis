@@ -103,6 +103,15 @@
         --jbs-sub: #7a7a7a;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
+      /* The editor window is created hidden. Laid out that way, `100vh` can
+         stay 0 after the window is shown, and a shell sized with it collapses
+         to nothing — the window is only this ground colour, with no toolbar.
+         The editor fills the viewport with `fixed inset-0`. `#root` is a real
+         box too, so anything still sized in percent has a height to fill. */
+      html.jarvis-quiet-boot, html.jarvis-quiet-boot body, html.jarvis-quiet-boot #root {
+        height: 100%;
+        min-height: 100%;
+      }
       .jarvis-quiet-boot #jarvis-boot-splash { display: none !important; }
       #jarvis-boot-splash {
         position: fixed; inset: 0; z-index: 2147483000;
@@ -214,8 +223,8 @@
         #jarvis-boot-splash .name { margin-top: 16px; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-CwF6Y0In.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Vw4wheZN.css">
+    <script type="module" crossorigin src="/assets/index-DL0veJbN.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Bi9tWDue.css">
   </head>
   <body>
     <div id="root">
