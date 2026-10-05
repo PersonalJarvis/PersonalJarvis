@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Shuffle, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,22 @@ import {
   stylesWithBases,
 } from "../figures/figureRegistry";
 
+interface SharedFigureCatalogEntry {
+  id: string;
+  name: string;
+  license: string;
+  source: string;
+  recipe: FigureRecipe;
+  report_count: number;
+}
+
+async function fetchSharedFigures(): Promise<SharedFigureCatalogEntry[]> {
+  const response = await fetch("/api/society/figures/share");
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const payload = (await response.json()) as { figures?: SharedFigureCatalogEntry[] };
+  return Array.isArray(payload.figures) ? payload.figures : [];
+}
+
 function currentStyle(recipe: FigureRecipe): string {
   if (recipe.model) return "custom";
   const live = stylesWithBases();
@@ -40,6 +56,12 @@ export function AgentAvatarEditor({ agent, sample }: { agent: SocietyAgent; samp
   const [importing, setImporting] = useState(false);
   const [importProblems, setImportProblems] = useState<string[] | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const sharedFigures = useQuery({
+    queryKey: ["society", "shared-figure-catalog"],
+    queryFn: fetchSharedFigures,
+    enabled: !sample,
+    staleTime: 30_000,
+  });
 
   const bases = useMemo(() => (style === "custom" ? [] : basesForStyle(style)), [style]);
   const palette = useMemo(() => resolvePalette(recipe), [recipe]);
@@ -65,6 +87,12 @@ export function AgentAvatarEditor({ agent, sample }: { agent: SocietyAgent; samp
         entry.fitSize ?? null,
       ),
     }));
+  };
+
+  const selectSharedFigure = (entry: SharedFigureCatalogEntry) => {
+    const next = { ...entry.recipe, model: undefined, companion: undefined };
+    setRecipe(next);
+    setStyle(currentStyle(next));
   };
 
   const importFigure = async (file: File) => {
@@ -216,6 +244,28 @@ export function AgentAvatarEditor({ agent, sample }: { agent: SocietyAgent; samp
         </div>
         <p className="sr-only">{palette.primary} {palette.secondary} {palette.accent}</p>
       </div>
+
+      {sharedFigures.data?.length ? (
+        <div className="rounded-xl border border-border p-4">
+          <p className="mb-2 text-xs text-muted-foreground">{t("society.card.shared_figures")}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {sharedFigures.data.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                disabled={sample || save.isPending}
+                onClick={() => selectSharedFigure(entry)}
+                className="rounded-lg border border-border p-3 text-left hover:bg-secondary disabled:opacity-50"
+              >
+                <span className="block text-sm font-medium text-foreground">{entry.name}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {entry.license} · {entry.source}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div>
         <input
