@@ -103,8 +103,9 @@ _EVENT_TRIGGER_REQUEST = re.compile(
     r"[^?\n]{1,240}?[,;:]\s*"
     r"(?:(?:please|bitte|por\s+favor)\s+)?"
     r"(?:ask|have|tell|notify|send|summari[sz]e|check|run|create|make|remind|"
-    r"can\s+you|could\s+you|lass|sag|benachrichtig|schick|fass|prüf|starte|"
-    r"erstell|erinner|kannst\s+du|pide|haz|dile|notifica|env[ií]a|resume|"
+    r"can\s+you|could\s+you|lass|sag|benachrichtig|"  # i18n-allow: input vocabulary
+    r"schick|fass|prüf|starte|erstell|erinner|kannst\s+du|"  # i18n-allow: input vocabulary
+    r"pide|haz|dile|notifica|env[ií]a|resume|"
     r"comprueba|ejecuta|crea|recu[eé]rda|puedes)\w*\b",
     re.IGNORECASE,
 )

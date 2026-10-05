@@ -81,9 +81,9 @@ List one agent's scheduled routines with ids, schedules, state and next run.
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "which routines does Scout have"
 
-## `society-create-routine` — Schedule a routine for an agent
+## `society-create-routine` — Schedule or trigger a routine for an agent
 
-The ONLY way to make an agent do something on a schedule (daily briefing, weekly report, every morning at 8). Never use create-skill for this. The prompt is the complete task the agent runs each time: sources, steps, output. Speak the returned next_run; on timezone_required ask the user.
+The ONLY way to make an agent do something on a schedule or event (daily briefing, weekly report, a merged PR webhook). Never use create-skill for this. The prompt is the complete task the agent runs each time: sources, steps, output. For webhooks, report that Connect webhook must configure the sender. For timed work speak next_run; on timezone_required ask the user.
 
 - **Endpoint:** `POST /api/society/agents/{agent_id}/routines`
 - **Arguments:** `agent_id` (string; required); `title` (string; required); `prompt` (string; required); `schedule` (object; required); `announce_on_success` (string; optional)
@@ -476,7 +476,7 @@ Give ONE task to coding terminals — existing ones, brand-new ones, or both —
 Open one or more additional coding terminals in the open workspace, WITHOUT giving them work. Use this only when the user asks for bare panes ('spawn five new Claude Code terminals', 'open two more Codex terminals') — that is a request for workspace panes, never for a background worker. When the new panes are also meant to DO something, use 'agentic-ide-fanout' instead, which opens and briefs them in one step. Pass count, and agent only when the user named one — the accepted ids are listed on the parameter itself, and it is the only list that is right for this install. Omitted, the new panes run whatever the last pane runs. Their call-signs are their positions in the grid (T1, T2, …), assigned by the workspace — the reply's names are the only way to address them, and calling this again never produces a name you picked. CHECK THE REPLY: 'capped' true means the workspace maximum cut the request short — say how many actually opened and name them, never report the full number as done.
 
 - **Endpoint:** `POST /api/agentic-ide/terminals/batch`
-- **Arguments:** `count` (integer; required); `agent` (one of: antigravity, claude, codex, cursor, deepseek-harness, glm, grok-build, kimi, opencode; optional)
+- **Arguments:** `count` (integer; required); `agent` (string; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "spawn five new claude code terminals"
@@ -506,7 +506,7 @@ Rearrange the open workspace: put one terminal at another one's place. Nothing i
 Stop and remove every terminal of one coding CLI in the front workspace. Use only when the user explicitly asks to close all Claude Code or all Codex terminals; this is destructive and requires confirmation.
 
 - **Endpoint:** `DELETE /api/agentic-ide/terminals/agent/{agent}`
-- **Arguments:** `agent` (one of: antigravity, claude, codex, cursor, deepseek-harness, glm, grok-build, kimi, opencode; required)
+- **Arguments:** `agent` (string; required)
 - **Requires confirmation:** yes
 - **Desktop UI section:** `agentic-ide`
 - **Voice example (EN):** "close all codex terminals"
