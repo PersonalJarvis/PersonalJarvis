@@ -3127,7 +3127,13 @@ class BrainManager:
             resolved_fallback = _resolve_tier_model(
                 tier, tier_cfg.fallback_provider, tier_cfg.fallback_model
             )
-            configured_fallbacks.append((tier_cfg.fallback_provider, resolved_fallback))
+            # Keep only an explicit user pin here. A value produced solely by
+            # the static tier default becomes stale when frontier_auto_apply
+            # refreshes the provider config after manager construction; the
+            # runtime chain will then read the provider's current model.
+            configured_fallbacks.append(
+                (tier_cfg.fallback_provider, tier_cfg.fallback_model or None)
+            )
         # BUG-LATENCY (2026-05-24): only mutate the fallback provider's `model`
         # when it is a DIFFERENT provider than the primary. When primary ==
         # fallback (e.g. [brain.router] provider="gemini" + fallback_provider=
@@ -3151,7 +3157,9 @@ class BrainManager:
             resolved_fallback_2 = _resolve_tier_model(
                 tier, tier_cfg.fallback_provider_2, tier_cfg.fallback_model_2
             )
-            configured_fallbacks.append((tier_cfg.fallback_provider_2, resolved_fallback_2))
+            configured_fallbacks.append(
+                (tier_cfg.fallback_provider_2, tier_cfg.fallback_model_2 or None)
+            )
             if (
                 resolved_fallback_2
                 and tier_cfg.fallback_provider_2 != effective_provider
