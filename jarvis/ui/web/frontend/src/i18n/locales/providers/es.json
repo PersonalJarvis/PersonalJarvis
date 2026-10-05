@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "La voz en directo funciona con OpenAI. Los agentes funcionan con cualquier suscripción o clave que conectes aquí.",
+    "subtitle": "Las llamadas en directo funcionan con OpenAI GPT-Live. Los agentes funcionan con cada suscripción o clave que actives aquí.",
     "checking": "Comprobando…",
     "checked_now": "Comprobado ahora",
     "checked_minutes": "Comprobado hace {0} min",
@@ -96,9 +96,8 @@
     "restart_title": "Reinicia para terminar la actualización",
     "restart_desc": "La nueva página de proveedores necesita reiniciar una vez el servicio de la app. Tarda unos diez segundos.",
     "restart_action": "Reiniciar ahora",
-    "tab_voice": "Voz",
+    "tab_voice": "Llamadas en directo",
     "tab_agents": "Agentes",
-    "tab_more": "Más",
     "subscriptions_title": "Suscripciones",
     "keys_title": "Claves API",
     "authenticated": "Sesión iniciada",
@@ -117,6 +116,31 @@
     "key_missing_short": "Sin clave",
     "key_desc_short": "Una clave para todo lo que hace este proveedor. Se cobra por uso.",
     "separate_title": "Claves propias",
-    "accounts_title": "Varias sesiones por herramienta"
+    "accounts_title": "Varias sesiones por herramienta",
+    "agent_providers_title": "Proveedores",
+    "access_title": "Acceso",
+    "access_desc": "Usa tu suscripción o una clave API. Los agentes solo funcionan con el acceso elegido aquí.",
+    "access_subscription": "Suscripción",
+    "access_api_key": "Clave API",
+    "access_local": "Este ordenador",
+    "agents_needs_access": "Conecta primero la suscripción o guarda una clave.",
+    "local_title": "En este ordenador",
+    "local_desc": "Los agentes funcionan con modelos locales. Sin cuenta, sin clave, nada sale de este ordenador.",
+    "default_title": "Predeterminado para tareas nuevas",
+    "default_desc": "Las tareas que {name} delega por su cuenta van aquí. Cada proveedor activado puede ejecutar un agente.",
+    "default_on": "Predeterminado",
+    "default_make": "Hacer predeterminado",
+    "default_switched": "Las tareas nuevas ahora van a {0}.",
+    "default_switched_restart": "Las tareas nuevas irán a {0} tras el próximo reinicio.",
+    "models_title": "Modelos",
+    "models_count": "{0} de {1} modelos para los agentes",
+    "models_hide_all": "Desactivar todos",
+    "models_show_all": "Activar todos",
+    "models_loading": "Cargando modelos…",
+    "models_none": "Este proveedor no lista modelos. Los agentes usan su modelo predeterminado.",
+    "models_reasoning": "Razonamiento",
+    "thinking_pick": "Responde y usa herramientas durante una llamada",
+    "voice_ready": "Listo",
+    "voice_not_ready": "Sin configurar"
   }
 }

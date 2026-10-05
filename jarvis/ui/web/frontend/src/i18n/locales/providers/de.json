@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "Die Live-Stimme läuft über OpenAI. Die Agenten laufen über jedes Abo oder jeden Schlüssel, den du hier verbindest.",
+    "subtitle": "Live-Gespräche laufen über OpenAI GPT-Live. Die Agenten laufen über jedes Abo und jeden Schlüssel, den du hier einschaltest.",
     "checking": "Wird geprüft…",
     "checked_now": "Gerade geprüft",
     "checked_minutes": "Vor {0} Min. geprüft",
@@ -96,9 +96,8 @@
     "restart_title": "Neu starten, um das Update abzuschließen",
     "restart_desc": "Die neue Anbieter-Seite braucht einen Neustart des App-Hintergrunddienstes. Das dauert etwa zehn Sekunden.",
     "restart_action": "Jetzt neu starten",
-    "tab_voice": "Stimme",
+    "tab_voice": "Live-Gespräche",
     "tab_agents": "Agenten",
-    "tab_more": "Mehr",
     "subscriptions_title": "Abos",
     "keys_title": "API-Keys",
     "authenticated": "Angemeldet",
@@ -117,6 +116,31 @@
     "key_missing_short": "Kein Schlüssel",
     "key_desc_short": "Ein Schlüssel für alles, was dieser Anbieter macht. Abrechnung pro Nutzung.",
     "separate_title": "Eigene Schlüssel",
-    "accounts_title": "Mehrere Anmeldungen pro Tool"
+    "accounts_title": "Mehrere Anmeldungen pro Tool",
+    "agent_providers_title": "Anbieter",
+    "access_title": "Zugang",
+    "access_desc": "Nutze dein Abo oder einen API-Schlüssel. Die Agenten laufen nur über den hier gewählten Zugang.",
+    "access_subscription": "Abo",
+    "access_api_key": "API-Schlüssel",
+    "access_local": "Dieser Computer",
+    "agents_needs_access": "Verbinde zuerst das Abo oder speichere einen Schlüssel.",
+    "local_title": "Auf diesem Computer",
+    "local_desc": "Die Agenten laufen mit lokalen Modellen. Kein Konto, kein Schlüssel, nichts verlässt diesen Computer.",
+    "default_title": "Standard für neue Aufgaben",
+    "default_desc": "Aufgaben, die {name} selbst abgibt, laufen hier. Jeder eingeschaltete Anbieter kann einen Agenten ausführen.",
+    "default_on": "Standard",
+    "default_make": "Als Standard",
+    "default_switched": "Neue Aufgaben laufen jetzt über {0}.",
+    "default_switched_restart": "Neue Aufgaben laufen nach dem nächsten Neustart über {0}.",
+    "models_title": "Modelle",
+    "models_count": "{0} von {1} Modellen für die Agenten",
+    "models_hide_all": "Alle aus",
+    "models_show_all": "Alle an",
+    "models_loading": "Modelle werden geladen…",
+    "models_none": "Dieser Anbieter nennt keine Modelle. Die Agenten nutzen sein Standardmodell.",
+    "models_reasoning": "Mit Denkstufen",
+    "thinking_pick": "Antwortet und nutzt Werkzeuge während eines Gesprächs",
+    "voice_ready": "Bereit",
+    "voice_not_ready": "Nicht eingerichtet"
   }
 }

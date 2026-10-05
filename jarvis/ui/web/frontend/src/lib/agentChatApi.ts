@@ -61,6 +61,13 @@ export interface AgentChatProvider {
    * Absent on an older backend: then nothing opens.
    */
   typeahead?: string[];
+  /**
+   * The agents' surface only (`surface=society`): whether the API Keys page
+   * has this provider on for the agents, and the models it hid there.
+   * Absent elsewhere and on an older backend: on, nothing hidden.
+   */
+  enabled?: boolean;
+  hidden_models?: string[];
 }
 
 export interface AgentChatCatalog {

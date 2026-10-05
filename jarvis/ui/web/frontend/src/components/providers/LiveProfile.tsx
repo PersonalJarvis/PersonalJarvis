@@ -7,7 +7,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { SettingsRow, SettingsSection } from "@/views/apikeys/settingsUi";
+import { ModelList, ModelListRow, Segmented, SettingsRow, SettingsSection } from "@/views/apikeys/settingsUi";
 import { fetchAgentAccounts } from "@/lib/agentAccountsApi";
 import { LiveSubscriptionAccount } from "./LiveSubscriptionAccount";
 import { useRestartApp } from "@/hooks/useRestartApp";
@@ -269,16 +269,17 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
           ) : undefined}
       >
         <SettingsRow
-          title={t("live.billing_method")}
+          title={t("providers_page.access_title")}
           description={t(subscription ? "live.subscription_billing" : "live.billing")}
           control={selectedAuthMode
             ? <span className="text-sm font-medium text-foreground">{subscription ? "GPT Subscription" : t("live.api_key_mode")}</span>
-            : <BrandedSelect className="w-56" value={authMode} disabled={saving}
-                ariaLabel={t("live.billing_method")}
-                onValueChange={(mode) => update({ auth_mode: mode as LiveAuthMode })}
+            : <Segmented<LiveAuthMode> value={authMode} disabled={saving}
+                label={t("live.billing_method")}
+                testId="live-access"
+                onChange={(mode) => update({ auth_mode: mode })}
                 options={[
-                  { value: "chatgpt_subscription", label: t("live.subscription_mode") },
-                  { value: "api_key", label: t("live.api_key_mode") },
+                  { value: "chatgpt_subscription", label: t("providers_page.access_subscription") },
+                  { value: "api_key", label: t("providers_page.access_api_key") },
                 ]} />}
         />
         {!subscription && keyField}
@@ -330,23 +331,38 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
         />
       </SettingsSection>
 
+      <SettingsSection title={t("live.thinking_model")} plain>
+        <div className="space-y-2.5">
+          <p className="px-1 text-xs text-muted-foreground/80">
+            {t(subscription ? "live.subscription_thinking_help" : "live.thinking_help")}
+          </p>
+          {modelOptions.length === 0 ? (
+            <div className="rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-xs text-muted-foreground">
+              {options.isPending && options.fetchStatus !== "idle" ? t("live.loading") : t("live.choose_model")}
+            </div>
+          ) : (
+            <div role="radiogroup" aria-label={t("live.thinking_model")} data-testid="live-thinking-models">
+              <ModelList header={t("providers_page.thinking_pick")}>
+                {modelOptions.map((model) => (
+                  <ModelListRow
+                    key={model.value}
+                    name={model.label}
+                    id={model.hint || undefined}
+                    selected={model.value === backendModel}
+                    disabled={saving || (subscription && !options.data)}
+                    onClick={() => chooseModel(model.value)}
+                    control={model.value === backendModel
+                      ? <Check aria-hidden="true" className="h-4 w-4 text-accent" />
+                      : <span aria-hidden="true" className="h-4 w-4" />}
+                  />
+                ))}
+              </ModelList>
+            </div>
+          )}
+        </div>
+      </SettingsSection>
+
       <SettingsSection title={t("live.thinking_heading")}>
-        <SettingsRow
-          title={t("live.thinking_model")}
-          description={t(subscription ? "live.subscription_thinking_help" : "live.thinking_help")}
-          control={
-            <BrandedSelect
-              className="w-56"
-              value={backendModel}
-              disabled={saving || (subscription && !options.data)}
-              onValueChange={chooseModel}
-              ariaLabel={t("live.thinking_model")}
-              placeholder={t("live.choose_model")}
-              searchPlaceholder={t("live.search_models")}
-              options={modelOptions}
-            />
-          }
-        />
         <SettingsRow
           title={t("live.reasoning")}
           control={

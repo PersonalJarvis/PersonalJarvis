@@ -1,22 +1,20 @@
 import { useEffect, useState } from "react";
-import { Loader2, Phone, RefreshCw } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Check, Loader2, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { LiveProfile } from "@/components/providers/LiveProfile";
+import { LiveProfile, liveProfileQuery, liveProfileReady } from "@/components/providers/LiveProfile";
+import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
-import { TelephonyPanel } from "@/views/TelephonyView";
-import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
-import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
-import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
 import { AgentsTab } from "@/views/apikeys/AgentsTab";
 import { KeyField } from "@/views/apikeys/KeyField";
-import { SettingsSection } from "@/views/apikeys/settingsUi";
+import { DetailHeader, ListRow, MasterDetail } from "@/views/apikeys/settingsUi";
 import { useProviders, useSectionHealth } from "@/hooks/useProviders";
 import { useProviderFamilies } from "@/lib/providerFamilies";
 import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
-const TABS = ["voice", "agents", "more"] as const;
+const TABS = ["voice", "agents"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_STORAGE_KEY = "jarvis.apikeys.tab";
 
@@ -31,13 +29,14 @@ function initialTab(): Tab {
 }
 
 /**
- * API Keys, in three parts behind one switch:
+ * API Keys, in two parts behind one centred switch, both as a provider list
+ * beside the selected provider's settings:
  *
- * - Voice: the live voice runs on OpenAI GPT-Live — paid with the ChatGPT
- *   subscription or one OpenAI key — with only its essential settings;
- * - Agents: the subscription logins and the API keys the background agents
- *   can run on, each as a list beside the selected entry's settings;
- * - More: the install's own key and the optional integrations.
+ * - Live calls: the live voice runs on OpenAI GPT-Live — paid with the
+ *   ChatGPT subscription or one OpenAI key — with its voice and the thinking
+ *   model that answers with tools;
+ * - Agents: every company the assistant's agents can run on, any number of
+ *   them on at once, each reached by its subscription or its API key.
  */
 export function ApiKeysView() {
   const t = useT();
@@ -87,7 +86,9 @@ export function ApiKeysView() {
             </Button>
           }
         />
-        <TabSwitch value={tab} onChange={choose} />
+        <div className="flex justify-center">
+          <TabSwitch value={tab} onChange={choose} />
+        </div>
       </div>
 
       <div
@@ -102,7 +103,6 @@ export function ApiKeysView() {
             ) : (
               <AgentsTab data={families} providers={providers} health={health} onProvidersChanged={refetch} />
             ))}
-          {tab === "more" && <MoreTab />}
         </div>
       </div>
     </div>
@@ -142,56 +142,61 @@ function TabSwitch({ value, onChange }: { value: Tab; onChange: (tab: Tab) => vo
 }
 
 /**
- * The live voice is OpenAI GPT-Live — the one live speech-to-speech model the
- * assistant runs — so this tab is that one provider: how it is paid for and
- * its essential settings.
+ * Live calls run on OpenAI GPT-Live — the one live speech-to-speech model the
+ * assistant runs — so the list holds that one provider, in the same list and
+ * detail layout as the Agents tab: how it is paid for, its voice and the
+ * thinking model that answers with tools.
  */
 function VoiceTab({ data, onSaved }: { data: ReturnType<typeof useProviderFamilies>; onSaved: () => void }) {
+  const t = useT();
   const openai = data.families?.find((family) => family.id === "openai");
   const slot = openai?.key_slot ?? "openai_api_key";
+  const live = useQuery(liveProfileQuery);
+  const subscription = live.data?.profile.auth_mode === "chatgpt_subscription";
+  const ready = liveProfileReady(live.data);
+  const status = !live.data
+    ? t("live.loading")
+    : `${t(subscription ? "providers_page.access_subscription" : "providers_page.access_api_key")} · ${t(
+        ready ? "providers_page.voice_ready" : "providers_page.voice_not_ready",
+      )}`;
   return (
-    <div data-testid="apikeys-voice" className="max-w-4xl">
-      <LiveProfile
-        onSaved={onSaved}
-        keyField={
-          <KeyField
-            slot={slot}
-            present={openai?.key_present ?? false}
-            providerLabel="OpenAI"
-            dashboardUrl={openai?.dashboard_url}
-            onChanged={() => void data.reload()}
-            testId="voice-key"
+    <div data-testid="apikeys-voice">
+      <MasterDetail
+        testId="voice-provider-list"
+        list={
+          <ListRow
+            testId="voice-provider-gpt-live"
+            icon={<ProviderLogo providerId={openai?.logo_id ?? "openai"} label="OpenAI" size="sm" className="h-5 w-5" />}
+            name="GPT-Live"
+            status={status}
+            selected
+            dimmed={false}
+            onSelect={() => undefined}
+            trailing={ready ? <Check aria-label={t("providers_page.voice_ready")} className="h-4 w-4 text-accent" /> : null}
           />
         }
+        detail={
+          <div className="space-y-2.5">
+            <DetailHeader
+              icon={<ProviderLogo providerId={openai?.logo_id ?? "openai"} label="OpenAI" size="sm" className="h-5 w-5" />}
+              name="GPT-Live · OpenAI"
+            />
+            <LiveProfile
+              onSaved={onSaved}
+              keyField={
+                <KeyField
+                  slot={slot}
+                  present={openai?.key_present ?? false}
+                  providerLabel="OpenAI"
+                  dashboardUrl={openai?.dashboard_url}
+                  onChanged={() => void data.reload()}
+                  testId="voice-key"
+                />
+              }
+            />
+          </div>
+        }
       />
-    </div>
-  );
-}
-
-/** The install's own key and the optional integrations. */
-function MoreTab() {
-  const t = useT();
-  return (
-    <div className="flex max-w-4xl flex-col gap-10">
-      <SettingsSection title={t("apikeys_view.jarvis_key_title")} plain>
-        <JarvisApiGroup />
-      </SettingsSection>
-      <SettingsSection title={t("apikeys_view.advanced_title")} plain>
-        <div className="space-y-4">
-          <TeamProxyGroup />
-          <section>
-            <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Phone aria-hidden="true" className="h-4 w-4" /> {t("apikeys_view.tier_telephony")}
-            </h3>
-            <TelephonyPanel />
-          </section>
-          <WikiProviderCard />
-        </div>
-      </SettingsSection>
-      {/* Nominative-use trademark notice: provider and integration names and
-          logos belong to their owners and only identify what you connect to
-          (see TRADEMARK.md). */}
-      <p className="px-1 text-xs text-muted-foreground">{t("apikeys_view.trademark_notice")}</p>
     </div>
   );
 }

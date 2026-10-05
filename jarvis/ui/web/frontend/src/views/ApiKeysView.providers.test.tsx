@@ -1,6 +1,7 @@
 /**
- * The provider page: a Voice tab on OpenAI GPT-Live, and an Agents tab with the
- * subscription logins and the API keys as lists beside their settings.
+ * The provider page: a Live calls tab on OpenAI GPT-Live, and an Agents tab
+ * with one entry per company — any number on at once, each reached by its
+ * subscription or its key — beside the selected company's settings.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -20,15 +21,12 @@ vi.mock("@/hooks/useVoiceMode", () => ({
 
 // The sections below the providers own their data sources and have their own
 // tests; here they only need to stay out of the way.
-vi.mock("@/views/settings/WikiProviderCard", () => ({ WikiProviderCard: () => null }));
-vi.mock("@/views/settings/JarvisApiGroup", () => ({ JarvisApiGroup: () => null }));
-vi.mock("@/views/settings/TeamProxyGroup", () => ({ TeamProxyGroup: () => null }));
-vi.mock("@/views/TelephonyView", () => ({ TelephonyPanel: () => null }));
 vi.mock("@/components/AgentAccountsPanel", () => ({ AgentAccountsPanel: () => null }));
 vi.mock("@/components/PromptWriterCard", () => ({ PromptWriterCard: () => null }));
 vi.mock("@/components/SubagentModelCard", () => ({ SubagentModelCard: () => null }));
 // GPT-Live's own form has its own tests; here it only has to place the key row.
-vi.mock("@/components/providers/LiveProfile", () => ({
+vi.mock("@/components/providers/LiveProfile", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/providers/LiveProfile")>()),
   LiveProfile: ({ keyField }: { keyField?: React.ReactNode }) => <div data-testid="live-profile">{keyField}</div>,
 }));
 
@@ -76,10 +74,33 @@ const CLAUDE_STATUS = {
   version: "2.1.0", binary_path: "/usr/bin/claude",
 };
 
+const CATALOG = {
+  providers: [
+    {
+      id: "claude-api", label: "Claude", family: "claude", runner: "claude-cli", models_source: "curated",
+      curated_models: [{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }],
+      default_model: "", keyless: false, native_resume: true, effort_levels: [], default_effort: "",
+      permission_modes: [], default_permission_mode: "", cli_installed: true, enabled: true, hidden_models: [],
+    },
+  ],
+  default_cwd: "",
+  shell: "",
+};
+
+const LIVE = {
+  profile: {
+    auth_mode: "api_key", model: "gpt-live-1", voice: "gleam", backend_model: "", reasoning_effort: "medium",
+    web_search: true, instructions: "", backend_instructions: "", configured: false,
+  },
+  key_ready: false, active: false, agent_configured: false,
+};
+
 let calls: { url: string; method: string; body: unknown }[] = [];
+let prefs: { disabled: string[]; api_only: string[]; hidden_models: Record<string, string[]> };
 
 beforeEach(() => {
   calls = [];
+  prefs = { disabled: [], api_only: [], hidden_models: {} };
   _resetProvidersCacheForTests();
   const routes: Record<string, unknown> = {
     "/api/providers/families": { families: FAMILIES },
@@ -90,6 +111,9 @@ beforeEach(() => {
     "/api/claude/status": CLAUDE_STATUS,
     "/api/codex/status": null,
     "/api/secrets/": { ok: true, key: "x", written: ["anthropic_api_key"] },
+    "/api/society/provider-prefs": prefs,
+    "/api/agent-chat/catalog": CATALOG,
+    "/api/live/profile": LIVE,
   };
   vi.stubGlobal(
     "fetch",
@@ -133,31 +157,74 @@ beforeEach(() => {
   }
 });
 
-describe("ApiKeysView — Voice", () => {
-  it("opens on the voice tab with one OpenAI key row", async () => {
+describe("ApiKeysView — Live calls", () => {
+  it("opens on live calls with GPT-Live in the list and one OpenAI key row", async () => {
     renderPage();
     const voice = await screen.findByTestId("apikeys-voice");
-    expect(within(voice).getByTestId("voice-key")).toBeTruthy();
+    expect(within(voice).getByTestId("voice-provider-gpt-live").textContent).toContain("GPT-Live");
+    expect(await within(voice).findByTestId("voice-key")).toBeTruthy();
+  });
+
+  it("has only the two tabs", async () => {
+    renderPage();
+    await screen.findByTestId("apikeys-voice");
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Live calls", "Agents"]);
   });
 });
 
 describe("ApiKeysView — Agents", () => {
-  it("lists the subscription logins with account and version", async () => {
+  it("lists each company once with its subscription account", async () => {
     renderPage();
     await screen.findByTestId("apikeys-voice");
     openAgents();
-    const claude = await screen.findByTestId("subscription-claude_cli");
-    expect(claude.textContent).toContain("Claude");
+    const claude = await screen.findByTestId("agent-provider-claude-api");
+    expect(claude.textContent).toContain("Anthropic");
     expect(claude.textContent).toContain("me@example.com · Claude Max");
     expect(claude.textContent).toContain("v2.1.0");
+    expect(await screen.findByTestId("agent-provider-gemini")).toBeTruthy();
+  });
+
+  it("turns several companies on at once instead of switching between them", async () => {
+    Object.assign(prefs, { disabled: ["claude-api"], api_only: [] });
+    renderPage();
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const claude = await screen.findByTestId("agent-provider-claude-api");
+    const gemini = await screen.findByTestId("agent-provider-gemini");
+    await waitFor(() => expect(within(gemini).getByRole("switch").getAttribute("aria-checked")).toBe("true"));
+    await waitFor(() => expect((within(claude).getByRole("switch") as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(claude).getByRole("switch"));
+    await waitFor(() => {
+      const put = calls.find((c) => c.method === "PUT" && c.url === "/api/society/provider-prefs");
+      expect(put?.body).toEqual({ disabled: [] });
+    });
+    // Gemini stays the default worker; turning Claude on never turns it off.
+    expect(calls.some((c) => c.url === "/api/jarvis-agent/switch")).toBe(false);
+  });
+
+  it("switches a company between its subscription and its key in one place", async () => {
+    renderPage();
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    fireEvent.click(await screen.findByRole("button", { name: "Anthropic" }));
+    const access = await screen.findByTestId("agent-provider-access");
+    await waitFor(() =>
+      expect(within(access).getByRole("radio", { name: "Subscription" }).getAttribute("aria-checked")).toBe("true"),
+    );
+    expect(screen.queryByTestId("provider-key-input")).toBeNull();
+    fireEvent.click(within(access).getByRole("radio", { name: "API key" }));
+    await waitFor(() => {
+      const put = calls.find((c) => c.method === "PUT" && c.url === "/api/society/provider-prefs");
+      expect(put?.body).toEqual({ api_only: ["claude-api"], disabled: [] });
+    });
   });
 
   it("saves one key for the whole company", async () => {
+    Object.assign(prefs, { disabled: [], api_only: ["claude-api"] });
     renderPage();
     await screen.findByTestId("apikeys-voice");
     openAgents();
-    const list = await screen.findByTestId("api-key-list");
-    fireEvent.click(within(list).getByRole("button", { name: "Anthropic" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Anthropic" }));
     const input = await screen.findByTestId("provider-key-input");
     fireEvent.change(input, { target: { value: "sk-ant-api03-test" } });
     fireEvent.click(screen.getByTestId("provider-key-save"));
@@ -171,8 +238,7 @@ describe("ApiKeysView — Agents", () => {
     renderPage();
     await screen.findByTestId("apikeys-voice");
     openAgents();
-    const list = await screen.findByTestId("api-key-list");
-    fireEvent.click(within(list).getByRole("button", { name: "Google Gemini" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Google Gemini" }));
     const row = await screen.findByTestId("provider-separate-key-realtime_gemini_api_key");
     fireEvent.click(within(row).getByRole("button"));
     await waitFor(() =>
@@ -180,15 +246,19 @@ describe("ApiKeysView — Agents", () => {
     );
   });
 
-  it("runs the agents on a subscription with its switch", async () => {
+  it("hides a model from the agents with its switch", async () => {
     renderPage();
     await screen.findByTestId("apikeys-voice");
     openAgents();
-    const claude = await screen.findByTestId("subscription-claude_cli");
-    fireEvent.click(within(claude).getByRole("switch"));
+    fireEvent.click(await screen.findByRole("button", { name: "Anthropic" }));
+    const models = await screen.findByTestId("agent-models-claude-api");
+    await waitFor(() =>
+      expect((within(models).getByRole("switch", { name: "Sonnet" }) as HTMLButtonElement).disabled).toBe(false),
+    );
+    fireEvent.click(within(models).getByRole("switch", { name: "Sonnet" }));
     await waitFor(() => {
-      const post = calls.find((c) => c.url === "/api/jarvis-agent/switch");
-      expect(post?.body).toMatchObject({ provider: "claude-api" });
+      const put = calls.find((c) => c.method === "PUT" && c.url === "/api/society/provider-prefs");
+      expect(put?.body).toEqual({ hidden_models: { "claude-api": ["sonnet"] } });
     });
   });
 
@@ -196,8 +266,9 @@ describe("ApiKeysView — Agents", () => {
     renderPage();
     await screen.findByTestId("apikeys-voice");
     openAgents();
-    const detail = await screen.findByTestId("subscription-detail-claude_cli");
-    expect(detail.textContent).toContain("me@example.com");
+    fireEvent.click(await screen.findByRole("button", { name: "Anthropic" }));
+    const detail = await screen.findByTestId("agent-provider-detail-claude-api");
+    await waitFor(() => expect(detail.textContent).toContain("me@example.com"));
     expect(within(detail).getByTestId("subscription-disconnect")).toBeTruthy();
     expect((within(detail).getByLabelText("Binary path") as HTMLInputElement).value).toBe("/usr/bin/claude");
   });

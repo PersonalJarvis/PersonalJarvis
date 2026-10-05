@@ -105,6 +105,12 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
         # is only reachable through a stale session or a hand-made request.
         return api_runner if supports_api_runner(row.id) else "unknown"
     if row.id == "claude-api":
+        # The API Keys page can set the agents' Claude to its key instead of
+        # the subscription; that choice narrows the agents' surface only.
+        from jarvis.agent_chat.agent_provider_prefs import forces_api
+
+        if forces_api(row.id, surface):
+            return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner

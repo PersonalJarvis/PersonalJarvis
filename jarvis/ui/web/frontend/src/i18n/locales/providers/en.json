@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "The live voice runs on OpenAI. The agents run on any subscription or key you connect here.",
+    "subtitle": "Live calls run on OpenAI GPT-Live. Agents run on every subscription or key you turn on here.",
     "checking": "Checking…",
     "checked_now": "Checked just now",
     "checked_minutes": "Checked {0} min ago",
@@ -96,9 +96,8 @@
     "restart_title": "Restart to finish the update",
     "restart_desc": "The new provider page needs the app's background service to restart once. It takes about ten seconds.",
     "restart_action": "Restart now",
-    "tab_voice": "Voice",
+    "tab_voice": "Live calls",
     "tab_agents": "Agents",
-    "tab_more": "More",
     "subscriptions_title": "Subscriptions",
     "keys_title": "API keys",
     "authenticated": "Authenticated",
@@ -117,6 +116,31 @@
     "key_missing_short": "No key",
     "key_desc_short": "One key for everything this provider does. Billed per use.",
     "separate_title": "Separate keys",
-    "accounts_title": "Several sign-ins per tool"
+    "accounts_title": "Several sign-ins per tool",
+    "agent_providers_title": "Providers",
+    "access_title": "Access",
+    "access_desc": "Use your subscription or an API key. The agents run only on the one picked here.",
+    "access_subscription": "Subscription",
+    "access_api_key": "API key",
+    "access_local": "This computer",
+    "agents_needs_access": "Connect the subscription or save a key first.",
+    "local_title": "On this computer",
+    "local_desc": "Agents run on local models. No account, no key, nothing leaves this computer.",
+    "default_title": "Default for new tasks",
+    "default_desc": "Tasks {name} hands off on its own go here. Every provider that is on can run an agent.",
+    "default_on": "Default",
+    "default_make": "Make default",
+    "default_switched": "New tasks now go to {0}.",
+    "default_switched_restart": "New tasks go to {0} after the next restart.",
+    "models_title": "Models",
+    "models_count": "{0} of {1} models offered to agents",
+    "models_hide_all": "Turn all off",
+    "models_show_all": "Turn all on",
+    "models_loading": "Loading models…",
+    "models_none": "This provider lists no models. Agents use its default model.",
+    "models_reasoning": "Reasoning",
+    "thinking_pick": "Answers and uses tools during a call",
+    "voice_ready": "Ready",
+    "voice_not_ready": "Not set up"
   }
 }

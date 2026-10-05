@@ -195,6 +195,135 @@ export function ListRow({
   );
 }
 
+/**
+ * A small segmented choice ("Subscription | API key"). Each option is a radio:
+ * exactly one is picked, and arrow keys are not needed for two or three.
+ */
+export function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+  disabled,
+  testId,
+}: {
+  value: T;
+  options: { value: T; label: string; disabled?: boolean }[];
+  onChange: (value: T) => void;
+  label: string;
+  disabled?: boolean;
+  testId?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      data-testid={testId}
+      className="inline-flex shrink-0 rounded-lg border border-border/60 bg-card/40 p-0.5"
+    >
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          role="radio"
+          aria-checked={value === option.value}
+          disabled={disabled || option.disabled}
+          onClick={() => value !== option.value && onChange(option.value)}
+          className={cn(
+            "h-7 rounded-md px-3 text-sm font-medium transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+            value === option.value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A list of models inside a section card: name, id, a short note, and one
+ * control per row (a visibility switch, or the pick mark of a single choice).
+ * The header line carries a count and an optional bulk action.
+ */
+export function ModelList({
+  header,
+  action,
+  children,
+  testId,
+}: {
+  header: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <SettingsGroup divided={false} data-testid={testId}>
+      <div className="flex min-h-10 items-center justify-between gap-4 border-b border-border/50 px-4 py-2 text-xs text-muted-foreground">
+        <span>{header}</span>
+        {action}
+      </div>
+      <ul className="max-h-[22rem] overflow-y-auto py-1 scrollbar-jarvis">{children}</ul>
+    </SettingsGroup>
+  );
+}
+
+export function ModelListRow({
+  name,
+  id,
+  note,
+  control,
+  muted,
+  onClick,
+  selected,
+  disabled,
+}: {
+  name: string;
+  id?: string;
+  note?: string | null;
+  control: ReactNode;
+  muted?: boolean;
+  /** A single-choice list makes the whole row the hit target. */
+  onClick?: () => void;
+  selected?: boolean;
+  disabled?: boolean;
+}) {
+  const body = (
+    <>
+      <span className={cn("flex min-w-0 flex-1 items-baseline gap-2", muted && "opacity-60")}>
+        <span className="truncate text-sm text-foreground">{name}</span>
+        {id && id !== name ? <code className="truncate text-xs text-muted-foreground">{id}</code> : null}
+      </span>
+      {note ? <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{note}</span> : null}
+      <span className="flex h-5 shrink-0 items-center">{control}</span>
+    </>
+  );
+  return (
+    <li>
+      {onClick ? (
+        <button
+          type="button"
+          role="radio"
+          aria-checked={Boolean(selected)}
+          aria-label={name}
+          disabled={disabled}
+          onClick={onClick}
+          className={cn(
+            "flex w-full items-center gap-3 px-4 py-2 text-left transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-not-allowed",
+            selected ? "bg-secondary/70" : "hover:bg-secondary/40",
+          )}
+        >
+          {body}
+        </button>
+      ) : (
+        <div className="flex items-center gap-3 px-4 py-2">{body}</div>
+      )}
+    </li>
+  );
+}
+
 /** The detail pane's title line: mark and name, and the version on the right. */
 export function DetailHeader({ icon, name, version }: { icon: ReactNode; name: string; version?: string | null }) {
   return (
