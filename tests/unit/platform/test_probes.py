@@ -76,9 +76,29 @@ def test_has_hotkey_false_on_wayland(monkeypatch):
 
 def test_has_hotkey_true_on_x11_with_pynput(monkeypatch):
     _force_platform(monkeypatch, "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(probes, "is_wayland", lambda: False)
     monkeypatch.setattr(probes, "_has_module", lambda n: n == "pynput")
     assert probes.has_hotkey() is True
+
+
+def test_has_hotkey_false_on_a_headless_box_with_pynput(monkeypatch):
+    """No display, no keyboard: the shortcut must not report itself armed."""
+    _force_platform(monkeypatch, "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(probes, "is_wayland", lambda: False)
+    monkeypatch.setattr(probes, "_has_module", lambda n: n == "pynput")
+    assert probes.has_hotkey() is False
+    assert "no desktop" in probes.hotkey_unavailable_reason()
+
+
+def test_a_missing_pynput_names_the_extra(monkeypatch):
+    _force_platform(monkeypatch, "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(probes, "is_wayland", lambda: False)
+    monkeypatch.setattr(probes, "_has_module", lambda _n: False)
+    assert "personal-jarvis[desktop-linux]" in probes.hotkey_unavailable_reason()
 
 
 def test_has_hotkey_windows_uses_global_hotkeys(monkeypatch):
