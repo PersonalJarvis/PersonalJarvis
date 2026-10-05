@@ -9,6 +9,7 @@ reasons, and stores + serves a good one under the data dir.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -136,6 +137,66 @@ def test_shared_recipe_validation_is_recipe_only_and_fail_closed(client: TestCli
     unreviewed_license = {**safe, "license": "commercial-use-claimed"}
     unreviewed = client.post("/api/society/figures/share/validate", json=unreviewed_license)
     assert unreviewed.status_code == 422
+
+
+
+
+def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: Path):
+    safe = {
+        "name": "Scout olive",
+        "license": "CC0-1.0",
+        "source": "KayKit Character Pack / reviewed recipe",
+        "recipe": {
+            "contract": 1,
+            "archetype": "biped",
+            "base": "rogue",
+            "parts": {},
+            "palette": {"primary": "#315d45"},
+            "style": "fantasy",
+        },
+    }
+
+    published = client.post("/api/society/figures/share", json=safe)
+    assert published.status_code == 200, published.text
+    body = published.json()
+    assert body["published"] is True
+    figure_id = body["figure"]["id"]
+    assert body["figure"]["status"] == "active"
+
+    duplicate = client.post("/api/society/figures/share", json=safe)
+    assert duplicate.status_code == 200
+    assert duplicate.json()["published"] is False
+
+    listed = client.get("/api/society/figures/share")
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 1
+    assert listed.json()["figures"][0]["id"] == figure_id
+
+    assert client.post(
+        f"/api/society/figures/share/{figure_id}/report",
+        json={"reason": "   "},
+    ).status_code == 422
+    reported = client.post(
+        f"/api/society/figures/share/{figure_id}/report",
+        json={"reason": "Misleading preview"},
+    )
+    assert reported.status_code == 200
+    assert reported.json() == {"reported": figure_id, "reports": 1}
+
+    delisted = client.delete(f"/api/society/figures/share/{figure_id}")
+    assert delisted.status_code == 200
+    assert delisted.json() == {"delisted": figure_id}
+    assert client.get("/api/society/figures/share").json()["total"] == 0
+    assert client.post(
+        f"/api/society/figures/share/{figure_id}/report",
+        json={"reason": "late report"},
+    ).status_code == 404
+    assert client.post("/api/society/figures/share", json=safe).status_code == 409
+
+    persisted = json.loads((tmp_path / "shared-figures.json").read_text(encoding="utf-8"))
+    row = persisted["figures"][figure_id]
+    assert row["status"] == "delisted"
+    assert row["reports"][0]["reason"] == "Misleading preview"
 
 
 def test_serving_never_leaves_the_figures_folder(client: TestClient):
