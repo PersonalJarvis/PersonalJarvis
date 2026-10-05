@@ -6840,6 +6840,9 @@
       },
       "ember": {
         "description": "A baby dragon: blows smoke rings while thinking, breathes fire on success."
+      },
+      "cocoa": {
+        "description": "A chocolate Labrador puppy: tilts its head to listen, digs while it works, does zoomies on success."
       }
     },
     "create_dialog": {

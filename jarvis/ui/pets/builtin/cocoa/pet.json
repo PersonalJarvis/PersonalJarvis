@@ -1,0 +1,123 @@
+{
+  "format": "jarvis-pet/1",
+  "id": "cocoa",
+  "name": "Cocoa",
+  "description": "A chocolate Labrador puppy who tilts its head to listen, digs while it works and does zoomies when something goes right.",
+  "frame_size": 48,
+  "sheet": "sheet.png",
+  "animations": {
+    "idle": {
+      "row": 0,
+      "frames": 8,
+      "fps": 6,
+      "loop": true,
+      "accent_frames": 1,
+      "accent_every": 3
+    },
+    "listening": {
+      "row": 1,
+      "frames": 6,
+      "fps": 8,
+      "loop": true
+    },
+    "thinking": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "talking": {
+      "row": 3,
+      "frames": 4,
+      "fps": 10,
+      "loop": true
+    },
+    "success": {
+      "row": 4,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "error": {
+      "row": 5,
+      "frames": 6,
+      "fps": 9,
+      "loop": false
+    },
+    "sleeping": {
+      "row": 6,
+      "frames": 6,
+      "fps": 3,
+      "loop": true
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "searching": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "held": {
+      "row": 9,
+      "frames": 6,
+      "fps": 10,
+      "loop": true
+    }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "chase_tail": {
+      "row": 0,
+      "frames": 8,
+      "fps": 10,
+      "loop": false
+    },
+    "ball_catch": {
+      "row": 1,
+      "frames": 8,
+      "fps": 9,
+      "loop": false
+    },
+    "ear_scratch": {
+      "row": 2,
+      "frames": 8,
+      "fps": 12,
+      "loop": false
+    },
+    "shake_off": {
+      "row": 3,
+      "frames": 8,
+      "fps": 12,
+      "loop": false
+    },
+    "belly_roll": {
+      "row": 4,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    },
+    "play_bow": {
+      "row": 5,
+      "frames": 8,
+      "fps": 9,
+      "loop": false
+    },
+    "howl": {
+      "row": 6,
+      "frames": 8,
+      "fps": 6,
+      "loop": false
+    },
+    "butterfly": {
+      "row": 7,
+      "frames": 8,
+      "fps": 7,
+      "loop": false
+    }
+  }
+}

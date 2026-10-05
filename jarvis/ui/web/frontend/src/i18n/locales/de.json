@@ -6807,6 +6807,9 @@
       },
       "ember": {
         "description": "Ein Babydrache: bläst beim Nachdenken Rauchringe, speit bei Erfolg Feuer."
+      },
+      "cocoa": {
+        "description": "Ein schokobrauner Labrador-Welpe: legt beim Zuhören den Kopf schief, buddelt beim Arbeiten, flitzt bei Erfolg im Kreis."
       }
     },
     "create_dialog": {

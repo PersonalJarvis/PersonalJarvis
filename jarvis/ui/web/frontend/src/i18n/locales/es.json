@@ -6807,6 +6807,9 @@
       },
       "ember": {
         "description": "Un bebé dragón: hace anillos de humo al pensar y escupe fuego al acertar."
+      },
+      "cocoa": {
+        "description": "Un cachorro de labrador chocolate: ladea la cabeza al escuchar, escarba al trabajar y corre en círculos al acertar."
       }
     },
     "create_dialog": {
