@@ -166,15 +166,33 @@ port. The tunnel is simpler and is what most people should use.
 
 The server has no microphone. The browser voice bridge is how you talk to it:
 your browser captures the audio, streams it to `/ws/audio` over the WebSocket,
-and the server runs speech-to-text, the brain and text-to-speech.
+and the server answers according to your voice mode:
 
-It is on by default (`[browser_voice] enabled`). Open the UI, allow the
-microphone when the browser asks, and talk.
+- **Realtime mode** (the default): a realtime provider answers when one is set
+  up. Without one, the same speech-to-text → brain → text-to-speech chain as
+  pipeline mode does.
+- **Pipeline mode** (`[voice] mode = "pipeline"`): the server runs your
+  configured speech-to-text, the brain and text-to-speech.
+
+It is on by default. Open the UI, switch the front page to voice mode, press
+**Start**, allow the microphone when the browser asks, and talk. **Stop** ends
+the call. The browser that pressed Start holds the call, so close that tab and
+the call ends with it.
+
+To switch the pipeline-mode bridge off, add this to `jarvis.toml`:
+
+```toml
+[browser_voice]
+enabled = false
+```
+
+Realtime mode keeps the socket open either way, because the realtime call runs
+over it.
 
 **The one thing that will trip you up:** browsers only hand out a microphone in
 a *secure context* — HTTPS, or `localhost`. Over `http://your-vps-ip:47821`
-your browser will silently refuse, and the UI will look like the microphone is
-broken when the browser never granted it.
+your browser refuses the microphone, and Jarvis shows "Browser voice requires
+HTTPS (or localhost)" instead of starting the call.
 
 Two ways out, and the first is easier:
 
