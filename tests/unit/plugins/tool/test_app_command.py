@@ -296,6 +296,69 @@ def test_validator_covers_types_and_ranges() -> None:
     assert _validate_args(schema, {})  # missing required
 
 
+async def test_society_webhook_routine_readback_requires_external_connection(tmp_path) -> None:
+    """Lead-chat app command saves the routine but never claims the sender is connected."""
+    from jarvis.society.runtime import SocietyRuntime
+    from jarvis.ui.web.society_routes import router as society_router
+    from tests.unit.society.test_routines import FakeScheduler, FakeTaskStore
+
+    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    app = FastAPI()
+    app.include_router(society_router)
+    app.state.society = None
+    app.state.society_factory = lambda: runtime
+    store = FakeTaskStore()
+    app.state.task_store = store
+    app.state.task_scheduler = FakeScheduler(store)
+    transport = httpx.ASGITransport(app=app)
+
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            created = await client.post("/api/society/agents", json={"name": "Scout"})
+            assert created.status_code == 200, created.text
+
+        loader = AppCommandTool(
+            transport=transport,
+            control_key_resolver=lambda: None,
+            config_resolver=_config,
+        )
+        tools = {tool.name: tool for tool in loader.expand()}
+        result = await tools["society-create-routine"].execute(
+            {
+                "agent_id": "Scout",
+                "title": "Merged PR review",
+                "prompt": "Review each merged pull request and summarize the change.",
+                "schedule": {
+                    "kind": "webhook",
+                    "provider": "github",
+                    "conditions": {
+                        "action": "closed",
+                        "pull_request.merged": True,
+                    },
+                },
+            },
+            None,
+        )
+
+        assert result.success is True, result.error
+        response = result.output["response"]
+        task_id = response["id"]
+        assert response["connection_required"] is True
+        assert response["webhook_path"] == f"/api/tasks/hooks/{task_id}"
+        assert response["connection_path"] == f"/api/tasks/{task_id}/webhook-connection"
+        assert "connected" not in response
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            listed = await client.get("/api/society/agents/scout/routines")
+        assert listed.status_code == 200, listed.text
+        routine = listed.json()["routines"][0]
+        assert routine["trigger"]["type"] == "webhook"
+        assert routine["trigger"]["provider"] == "github"
+        assert routine["webhook_path"] == response["webhook_path"]
+    finally:
+        await runtime.close()
+
+
 async def test_end_to_end_against_real_webserver_app(monkeypatch) -> None:
     """The full chain: flat tool -> ASGI -> the REAL /api/brain/switch route
     (shared app_control validation) -> readback from the route's response."""
