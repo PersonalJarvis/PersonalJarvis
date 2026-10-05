@@ -1,5 +1,5 @@
 # Appshots on real desktops: macOS (Apple Silicon + Intel), Linux (X11 under
-# Xvfb, Wayland under headless Weston, and a bare headless box) and Windows.
+# Xvfb, Wayland under headless sway, and a bare headless box) and Windows.
 #
 # Unit tests fake the OS. scripts/ci/appshot_desktop_smoke.py does not: it
 # copies pictures and text to the runner's real clipboard and reads them back
@@ -53,7 +53,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends xvfb xauth xclip xsel \
-            wl-clipboard weston libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            wl-clipboard sway libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 \
             libxcb-render-util0 libxcb-image0 libportaudio2 ffmpeg
       - name: Install
@@ -66,13 +66,18 @@ jobs:
         run: env -u DISPLAY -u WAYLAND_DISPLAY python scripts/ci/appshot_desktop_smoke.py --headless --report out/smoke-headless.json
       - name: Smoke — X11 (Xvfb)
         run: xvfb-run -a -s "-screen 0 1920x1080x24" python scripts/ci/appshot_desktop_smoke.py --expect-capture --report out/smoke-x11.json
-      - name: Smoke — Wayland (headless Weston)
+      # Headless sway, not weston: wlroots offers a seat (and the data-control
+      # protocol wl-copy uses) even with no input device; weston's headless
+      # backend has no seat, so wl-copy fails there with "Missing a seat".
+      - name: Smoke — Wayland (headless sway)
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
           mkdir -p -m 700 "$XDG_RUNTIME_DIR"
-          weston --backend=headless-backend.so --socket=wayland-ci --idle-time=0 > out/weston.log 2>&1 &
-          for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/wayland-ci" ] && break; sleep 0.1; done
-          WAYLAND_DISPLAY=wayland-ci env -u DISPLAY python scripts/ci/appshot_desktop_smoke.py --report out/smoke-wayland.json
+          WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 WLR_RENDERER=pixman \
+            sway -c /dev/null > out/sway.log 2>&1 &
+          for _ in $(seq 1 100); do ls "$XDG_RUNTIME_DIR"/wayland-* >/dev/null 2>&1 && break; sleep 0.1; done
+          SOCKET=$(basename "$(ls "$XDG_RUNTIME_DIR"/wayland-* | grep -v lock | head -1)")
+          WAYLAND_DISPLAY="$SOCKET" env -u DISPLAY python scripts/ci/appshot_desktop_smoke.py --report out/smoke-wayland.json
       - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         if: always()
         with:
