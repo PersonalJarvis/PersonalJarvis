@@ -125,8 +125,41 @@ const BASE_ROUTES: Record<string, () => RouteResult> = {
     },
   }),
   "/api/board/bio": () => ({ body: { text: null, generated_at: null } }),
+  "/api/society/agents": () => ({
+    body: {
+      agents: [
+        { agent_id: "lead", name: "Jarvis", tier: "lead", state: "active", stats: { runs: 3 } },
+        { agent_id: "scout", name: "Scout", tier: "specialist", state: "active", stats: { runs: 40 } },
+        { agent_id: "mail", name: "E-Mail-Agent", tier: "specialist", state: "active", stats: { runs: 90 } },
+        { agent_id: "old", name: "Retired", tier: "specialist", state: "archived", stats: { runs: 500 } },
+      ],
+    },
+  }),
   "/api/board/insights": () => ({
-    body: { agents: { available: true, sessions: 3795, turns: 0, tokens: 0, items: [] }, days: insightsDays() },
+    body: {
+      agents: {
+        available: true,
+        sessions: 3795,
+        turns: 0,
+        tokens: 1_655_054_844,
+        items: [
+          { agent: "codex-cli", sessions: 1760, sessions_30d: 0, turns: 0, turns_30d: 0, tokens: 0, last_ms: 0 },
+          { agent: "claude-cli", sessions: 1668, sessions_30d: 0, turns: 0, turns_30d: 0, tokens: 0, last_ms: 0 },
+        ],
+      },
+      voice: { available: true, sessions: 753, turns: 0, user_words: 22160, jarvis_words: 0, seconds: 81006 },
+      dictation: { available: true, words: 4531, dictations: 142, seconds: 0 },
+      chats: {
+        available: true,
+        sessions: 0,
+        messages: 0,
+        providers: [{ provider: "claude-api", sessions: 1, messages: 175, jarvis_sessions: 0 }],
+      },
+      streak: { current_days: 11, longest_days: 24, active_days: 117, first_day: "2026-01-29" },
+      records: { best_words_day: null, best_agent_day: { date: "2026-08-11", value: 372 } },
+      punch_card: Array.from({ length: 7 }, (_, d) => Array.from({ length: 24 }, (_, h) => (d === 2 && h === 10 ? 9 : 0))),
+      days: insightsDays(),
+    },
   }),
   "/api/settings/agent-instructions": () => ({
     body: { content: "", exists: false, filename: "George.md", template: "", char_count: 0 },
@@ -204,10 +237,34 @@ describe("details", () => {
 
     const hero = await screen.findByTestId("profile-hero");
     expect(hero.textContent).toContain("Ruben");
-    expect((await screen.findByTestId("open-details")).textContent).toContain("3 of 19 details");
+    expect((await screen.findByTestId("open-details")).textContent).toContain("3/19");
     const stats = screen.getByTestId("profile-stats");
     await waitFor(() => expect(stats.textContent).toContain("491"));
     await waitFor(() => expect(stats.textContent).toContain("3,795"));
+  });
+
+  it("shows the Jarvis agents, lead first, then by runs, without archived ones", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const agents = await screen.findByTestId("profile-agents");
+    await waitFor(() => expect(within(agents).getAllByRole("listitem")).toHaveLength(3));
+    const names = within(agents).getAllByRole("listitem").map((li) => li.textContent);
+    expect(names[1]).toBe("E-Mail-Agent");
+    expect(names[2]).toBe("Scout");
+    expect(agents.textContent).not.toContain("Retired");
+  });
+
+  it("lists the insight facts", async () => {
+    installFetchMock(BASE_ROUTES);
+    renderWithClient(<ProfileView />);
+
+    const insights = await screen.findByTestId("profile-insights");
+    await waitFor(() => expect(insights.textContent).toContain("117"));
+    expect(insights.textContent).toContain("9 actions");
+    expect(insights.textContent).toContain("26,691");
+    expect(insights.textContent).toContain("22 h 30 min");
+    expect(insights.textContent).toContain("Codex");
   });
 
   it("keeps the detail groups off the page until the panel opens", async () => {
@@ -384,17 +441,19 @@ describe("a profile the backend is not serving", () => {
 });
 
 describe("activity", () => {
-  it("shows the last seven days and switches series by tab", async () => {
+  it("draws one bar per week and switches series by tab", async () => {
     installFetchMock(BASE_ROUTES);
     renderWithClient(<ProfileView />);
 
-    const last7 = await screen.findByTestId("activity-last7");
-    // Seven chat messages plus two agent runs on the newest day.
-    expect(last7.textContent).toBe("9");
-    expect(screen.getByTestId("activity-bars").children).toHaveLength(3);
+    const bars = await screen.findByTestId("activity-bars");
+    // Two whole weeks and the Monday still running.
+    expect(bars.children).toHaveLength(3);
+    const lastBar = () => (screen.getByTestId("activity-bars").lastElementChild?.firstElementChild as HTMLElement).style.height;
+    const before = lastBar();
 
     fireEvent.click(screen.getByRole("tab", { name: "Chats" }));
-    await waitFor(() => expect(screen.getByTestId("activity-last7").textContent).toBe("7"));
     expect(screen.getByRole("tab", { name: "Chats" }).getAttribute("aria-selected")).toBe("true");
+    // The Monday held one chat and two agent runs; the chat series keeps one.
+    await waitFor(() => expect(lastBar()).not.toBe(before));
   });
 });

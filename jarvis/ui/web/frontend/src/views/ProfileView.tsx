@@ -1,17 +1,21 @@
 /**
  * ProfileView — who you are to the assistant, on one screen.
  *
- *   ┌──────────────────────────────────────────────┐
- *   │            photo · name · facts              │
- *   │        a sentence or two about you           │
- *   │ Conversations │ Agent runs │ Streaks         │
- *   │ Activity: figures │ one bar per week         │
- *   │ [What {name} knows ›] [Memory and privacy ›] │
- *   └──────────────────────────────────────────────┘
+ *                               [Details 4/19] [Memory and privacy]
+ *          ┌──────────────────────────────────────┐
+ *          │        photo · name · facts          │
+ *          │     a sentence or two about you      │
+ *          │ Conversations │ Agent runs │ … │ … │ │
+ *          │ Activity           All Voice Chats … │
+ *          │ ▁▂▃▅▇ one bar per week               │
+ *          │ Favorite agents: the roster figures  │
+ *          │ Insights: label ……………… figure        │
+ *          └──────────────────────────────────────┘
  *
- * The page fits one window; nothing on it scrolls. Everything that does not
- * fit — the detail groups, the portrait, memory and privacy, the raw file —
- * opens in a side panel from the two rows at the foot.
+ * One centred column, top to bottom. It scrolls only when the window is too
+ * short for it. Everything else — the detail groups, the portrait, memory and
+ * privacy, the raw file — opens in a side panel from the two quiet links at
+ * the top right.
  *
  * The raw-file query and its live WS subscription are held HERE because both
  * panels need it: the details panel parses its audit trail for provenance,
@@ -19,7 +23,7 @@
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, ChevronRight, Lock, RefreshCw, UserCircle2, UserRound } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Lock, RefreshCw, UserCircle2, UserRound } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -30,6 +34,7 @@ import { MemorySection } from "@/views/profile/MemorySection";
 import { PortraitSection } from "@/views/profile/PortraitSection";
 import { ProfileDrawer } from "@/views/profile/ProfileDrawer";
 import { ProfileHero } from "@/views/profile/ProfileHero";
+import { FavoriteAgents, InsightList } from "@/views/profile/ProfileInsights";
 import { ProfileStats } from "@/views/profile/ProfileStats";
 import { SourceCard, useSourceDocument } from "@/views/profile/SourceCard";
 import { fetchJson, statusOf, type ProfileResponse } from "@/views/profile/api";
@@ -65,9 +70,28 @@ export function ProfileView() {
 
   return (
     <div className="relative h-full overflow-hidden bg-background">
-      <div className="h-full overflow-y-auto px-8 scrollbar-jarvis">
+      <div className="relative h-full overflow-y-auto px-8 scrollbar-jarvis">
         <h1 className="sr-only">{t("profile_view.title")}</h1>
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-5 py-5 [@media(min-height:860px)]:gap-7 [@media(min-height:860px)]:py-8 [@media(min-height:1000px)]:gap-9">
+        {/* Inside the scroller, so the links scroll away with the page
+            instead of floating over it. */}
+        {data && (
+          <div className="absolute right-6 top-3 z-10 flex items-center gap-1">
+            <PanelLink
+              testId="open-details"
+              icon={<UserRound />}
+              label={t("profile_view.door_details_title")}
+              count={`${filled}/${TOTAL_FIELDS}`}
+              onClick={() => setPanel("details")}
+            />
+            <PanelLink
+              testId="open-memory"
+              icon={<Lock />}
+              label={t("profile_view.memory_title")}
+              onClick={() => setPanel("memory")}
+            />
+          </div>
+        )}
+        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center gap-8 py-14">
           {isLoading && <ProfileSkeleton label={t("common.loading")} />}
 
           {error && <ProfileErrorState error={error} onRetry={() => refetch()} />}
@@ -77,26 +101,13 @@ export function ProfileView() {
               <ProfileHero data={data} meta={meta} />
               <ProfileStats />
               <ActivityChart />
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <PanelDoor
-                  testId="open-details"
-                  icon={<UserRound />}
-                  title={t("profile_view.door_details_title")}
-                  sub={fill(t("profile_view.door_details_sub"), { 0: filled, 1: TOTAL_FIELDS })}
-                  onClick={() => setPanel("details")}
-                />
-                <PanelDoor
-                  testId="open-memory"
-                  icon={<Lock />}
-                  title={t("profile_view.memory_title")}
-                  sub={t("profile_view.door_memory_sub")}
-                  onClick={() => setPanel("memory")}
-                />
-              </div>
+              <FavoriteAgents />
+              <InsightList />
             </>
           )}
         </div>
       </div>
+
 
       {data && panel === "details" && (
         <ProfileDrawer
@@ -160,17 +171,17 @@ export function ProfileView() {
   );
 }
 
-/** One of the two rows at the foot of the page; each opens a side panel. */
-function PanelDoor({
+/** A quiet text link at the top right; each opens a side panel. */
+function PanelLink({
   icon,
-  title,
-  sub,
+  label,
+  count,
   onClick,
   testId,
 }: {
   icon: ReactNode;
-  title: string;
-  sub: string;
+  label: string;
+  count?: string;
   onClick: () => void;
   testId: string;
 }) {
@@ -179,16 +190,11 @@ function PanelDoor({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="group flex min-h-11 items-center gap-3.5 rounded-xl border border-border bg-card px-4 py-3.5 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex h-9 items-center gap-2 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&>svg]:h-4 [&>svg]:w-4"
     >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary transition-colors group-hover:bg-background [&>svg]:h-4 [&>svg]:w-4">
-        {icon}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-base font-medium text-foreground-strong">{title}</span>
-        <span className="truncate text-sm text-muted-foreground">{sub}</span>
-      </span>
-      <ChevronRight aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+      {icon}
+      <span>{label}</span>
+      {count && <span className="tabular-nums text-muted-foreground">{count}</span>}
     </button>
   );
 }
