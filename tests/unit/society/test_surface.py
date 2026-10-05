@@ -392,6 +392,52 @@ async def test_in_flight_tool_rechecks_live_session_mode(rt: SocietyRuntime, mon
     assert calls == [{"action": "list"}]
 
 
+async def test_in_flight_tool_rejects_session_provenance_change(rt: SocietyRuntime) -> None:
+    await rt.roster.create(name="Scout", approval_mode="bypass")
+    session = SimpleNamespace(
+        session_id="society:scout",
+        surface="society",
+        permission_mode="bypass",
+    )
+
+    class Store:
+        current = session
+
+        def get_session(self, session_id: str):
+            return self.current if session_id == "society:scout" else None
+
+    class Inner:
+        name = "gmail"
+        description = "mail"
+        schema = {}
+        risk_tier = "monitor"
+
+        async def execute(self, _args: dict, _ctx: object) -> ToolResult:
+            return ToolResult(True, "ok", None)
+
+    from jarvis.society.surface import _GatedTool
+
+    service = SimpleNamespace(store=Store())
+    rt._get_chat = lambda: service
+    await society_system_extra(None, None, session)
+    agent = await rt.roster.get("scout")
+    assert agent is not None
+    gated = _GatedTool(
+        Inner(),
+        agent,
+        "plugin:gmail",
+        "bypass",
+        rt,
+        session_id=session.session_id,
+    )
+
+    session.surface = "agent"
+    result = await gated.execute({}, SimpleNamespace(approved_by="auto"))
+
+    assert not result.success
+    assert result.output["reason"] == "blocked_by_policy"
+
+
 async def test_browser_gate_restores_writable_state_after_read_only_session(
     rt: SocietyRuntime,
 ) -> None:
