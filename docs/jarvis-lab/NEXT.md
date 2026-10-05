@@ -31,3 +31,20 @@ Integration review excluded the unrelated provider-default change from patch 13,
 The originating agent reported 4,225 passing tests and an exact-base comparison of VM-specific failures. Those are transferred reports, not independently verified results here; its final full shard rerun had not completed. Independent validation in this workspace: 2,404 passed, 26 skipped, zero failures across Society, agent-chat, commands, contracts and the affected icon, route and desktop-start suites on Linux/Python 3.12. The first pass exposed a missing `socksio` dependency in this proxy-enabled environment; the rerun passed after installing it, without code or baseline changes. Changed Python files pass Ruff. The concurrent routine-readback commits `c3b3574` and `57d9355` are retained. GitHub CI will qualify the published integration commit; native Mac evidence remains separate.
 
 Native MacAgentBench qualification remains explicitly deferred to a physical Mac with user-granted permissions and must not be represented as remotely complete.
+
+## 2026-10-05 continuous reliability checkpoints
+
+The current `jarvis-lab` line includes these verified code-level checkpoints:
+- `1a13210` forces Society room turns through the chat `read_only` contract.
+- `0720563` adds a focused room-dispatch regression test.
+- `145a617` authenticates the installer smoke GitHub `/releases/latest` lookup while preserving the 404/no-release skip.
+- `fc62663` updates custom-CLI tests to avoid the now built-in `antigravity` id collision.
+- `f374ac1` + `c39d0cb` recheck live Society grants, session provenance and permission policy at tool execution time; a selected tool is no longer trusted indefinitely after the turn starts.
+- `d86ac89` restores BrowserTool writability after a temporary `plan`/`read-only` session instead of leaving a reused browser tool permanently restricted.
+- `04186f2`, `95c80c2` and `a0b0b8b` cover live grant revocation, live session-mode changes, browser state restoration and canonical Society session provenance.
+- `77644d6` fixes the Ollama dictation test to patch the actual provider-endpoint resolver rather than replacing the entire config loader.
+- `01965ef` cleans the live-policy test fixtures and keeps the regression suite compatible with the restricted-room contract.
+
+The unresolved Frontier item from `docs/BUGS.md` remains deliberately open: `frontier_autoswitch.py` exists and is opt-in, but no verified boot call into `apply_frontier_resolution()` was found on `jarvis-lab`. Do not claim automatic frontier qualification until the real bootstrap path is identified and tested.
+
+Native macOS qualification remains separate and requires physical Accessibility/input permission; remote CI must not be described as MacAgentBench evidence.
