@@ -59,7 +59,8 @@ CREATE TABLE mission_events (
 _AGENT_CHAT_DDL = """
 CREATE TABLE agent_chat_sessions (
     session_id TEXT PRIMARY KEY, title TEXT, provider TEXT, model TEXT,
-    created_ms INTEGER, updated_ms INTEGER, surface TEXT NOT NULL DEFAULT 'agent'
+    created_ms INTEGER, updated_ms INTEGER, surface TEXT NOT NULL DEFAULT 'agent',
+    vendor_session TEXT
 );
 CREATE TABLE agent_chat_events (
     session_id TEXT, seq INTEGER, ts_ms INTEGER, kind TEXT, payload TEXT
@@ -184,6 +185,137 @@ def sources(tmp_path: Path) -> CostSources:
 # ---------------------------------------------------------------------------
 # Collection
 # ---------------------------------------------------------------------------
+
+
+def _subscription_chat_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_AGENT_CHAT_DDL)
+    conn.execute(
+        "INSERT INTO agent_chat_sessions "
+        "(session_id, title, provider, model, created_ms, updated_ms, surface, vendor_session) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (
+            "chat-sub",
+            "Claude pane",
+            "claude-api",
+            "claude-opus-5",
+            T0,
+            T0,
+            "agent",
+            "vendor-session-1",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "chat-sub",
+            1,
+            T0,
+            "turn_started",
+            json.dumps(
+                {
+                    "turn_id": "turn-sub",
+                    "runner": "claude-cli",
+                    "provider": "claude-api",
+                    "model": "claude-opus-5",
+                }
+            ),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "chat-sub",
+            2,
+            T0 + 1_000,
+            "turn_finished",
+            json.dumps(
+                {
+                    "turn_id": "turn-sub",
+                    "status": "done",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _cli_cost_entry(*, tokens_in: int, tokens_out: int):
+    from jarvis.costs.model import CostEntry
+
+    return CostEntry(
+        ts_ms=T0 + 2_000,
+        surface="agentic-ide",
+        role="agent",
+        provider="claude-cli",
+        model="claude-opus-5",
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_cached=0,
+        cost_usd=0.0,
+        price_source="subscription",
+        ref_id="vendor-session-1",
+        label="Claude pane",
+        runner="claude-cli",
+    )
+
+
+def test_subscription_chat_entry_uses_vendor_session_identity(tmp_path: Path) -> None:
+    path = tmp_path / "agent-chat.db"
+    _subscription_chat_db(path)
+
+    from jarvis.costs.sources import _agent_chat_entries
+
+    (entry,) = list(_agent_chat_entries(path, 0, _FAR_FUTURE))
+
+    assert entry.runner == "claude-cli"
+    assert entry.ref_id == "vendor-session-1"
+    assert entry.surface == "agent-chat"
+    assert entry.tokens_total == 120
+
+
+def test_complete_cli_index_suppresses_subscription_chat_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "agent-chat.db"
+    _subscription_chat_db(path)
+
+    monkeypatch.setattr(
+        "jarvis.costs.sources._cli_entries",
+        lambda *args, **kwargs: iter([_cli_cost_entry(tokens_in=100, tokens_out=20)]),
+    )
+
+    rows = collect_entries(
+        CostSources(agent_chat_db=path, cli_index_dir=tmp_path / "unused")
+    )
+
+    assert len(rows) == 1
+    assert rows[0].surface == "agentic-ide"
+    assert rows[0].runner == "claude-cli"
+    assert rows[0].ref_id == "vendor-session-1"
+
+
+def test_partial_cli_index_keeps_subscription_chat_until_catchup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "agent-chat.db"
+    _subscription_chat_db(path)
+
+    monkeypatch.setattr(
+        "jarvis.costs.sources._cli_entries",
+        lambda *args, **kwargs: iter([_cli_cost_entry(tokens_in=10, tokens_out=2)]),
+    )
+
+    rows = collect_entries(
+        CostSources(agent_chat_db=path, cli_index_dir=tmp_path / "unused")
+    )
+
+    assert {row.surface for row in rows} == {"agent-chat", "agentic-ide"}
+    assert sum(row.tokens_total for row in rows if row.surface == "agent-chat") == 120
 
 
 def test_collects_every_source(sources: CostSources) -> None:
