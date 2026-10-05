@@ -6417,6 +6417,7 @@
     "shortcut_recording": "Neue Tasten drücken…",
     "shortcut_recording_hint": "Tasten halten, dann loslassen. Beide Alt-, beide Shift- oder beide Strg-Tasten zusammen gehen auch. Esc bricht ab.",
     "shortcut_modifier_only": "Eine Sondertaste allein ist kein Kürzel. Nimm einen Buchstaben dazu oder drücke dieselbe Taste auf beiden Seiten der Tastatur.",
+    "shortcut_unmapped": "Diese Taste kann kein Kürzel sein. Nimm einen Buchstaben, eine Zahl oder eine Funktionstaste.",
     "shortcut_both_keys_hint": "Drücke beide {0}-Tasten gleichzeitig",
     "region_shortcut_both_keys_hint": "Drücke beide {0}-Tasten zusammen und ziehe dann über den Teil des Bildschirms, den du zeigen willst.",
     "target_label": "Appshot-Ziel",

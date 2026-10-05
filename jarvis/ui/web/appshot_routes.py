@@ -140,6 +140,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         get_shortcut,
         is_gesture,
         normalize_hotkey,
+        shortcuts_conflict,
     )
     from jarvis.core.config import load_config  # noqa: PLC0415
     from jarvis.core.config_writer import (  # noqa: PLC0415
@@ -166,8 +167,13 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         window = changes.get("hotkey", current["window"])
         region = changes.get("region_hotkey", current["region"])
         recording = changes.get("recording_hotkey", current["recording"])
-        assigned = [key for key in (window, region, recording) if key]
-        if len(assigned) != len(set(assigned)):
+        chosen = [key for key in (window, region, recording) if key]
+        overlaps = any(
+            shortcuts_conflict(key, earlier)
+            for index, key in enumerate(chosen)
+            for earlier in chosen[:index]
+        )
+        if overlaps:
             raise HTTPException(
                 status_code=400,
                 detail="Each AppShot action needs a different shortcut.",
@@ -190,7 +196,9 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
 
         reset_service()
     shortcut = get_shortcut()
-    if shortcut is not None and any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")):
+    if shortcut is not None and any(
+        key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
+    ):
         await shortcut.reload()
     return await asyncio.to_thread(_settings_payload)
 

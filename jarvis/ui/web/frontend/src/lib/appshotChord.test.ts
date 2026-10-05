@@ -22,6 +22,14 @@ describe("chordFromCodes", () => {
     expect(chordFromCodes(["Escape"])).toEqual({ problem: "empty" });
   });
 
+  it("treats AltGraph as the right Alt key, and names a key it cannot bind", () => {
+    expect(chordFromCodes(["AltLeft", "AltGraph"])).toEqual({ combo: "alt+alt" });
+    expect(chordFromCodes(["BracketLeft"], new Map([["BracketLeft", "\u00fc"]]))).toEqual({
+      combo: "\u00fc",
+    });
+    expect(chordFromCodes(["PrintScreen"])).toEqual({ problem: "unmapped" });
+  });
+
   it("uses the typed letter on QWERTZ while preserving modifier sides", () => {
     expect(chordFromCodes(["ControlLeft", "KeyY"], new Map([["KeyY", "z"]])))
       .toEqual({ combo: "ctrl+z" });

@@ -20,7 +20,10 @@ def test_a_press_and_release_without_a_poll_interval_fires_once():
     assert events == ["recording"]
 
 
-def test_control_characters_and_release_order_keep_the_same_letter():
+def test_control_characters_and_release_order_keep_the_same_letter(monkeypatch):
+    # The test presses keys the real keyboard does not hold. Trusting the OS
+    # here would drop the simulated Ctrl before Z arrives.
+    monkeypatch.setattr("jarvis.appshot.key_events.key_is_down", lambda *_args: None)
     events = []
     listener = AppshotKeyEvents()
     listener.register([["control + z", None, lambda: events.append("recording")]])
@@ -31,6 +34,41 @@ def test_control_characters_and_release_order_keep_the_same_letter():
     listener._on_release_key(SimpleNamespace(vk=0x5A, char="z"))
     assert events == ["recording"]
     assert not listener._held
+
+
+def test_a_shorter_chord_does_not_fire_with_the_longer_one(monkeypatch):
+    monkeypatch.setattr("jarvis.appshot.key_events.key_is_down", lambda *_args: None)
+    events = []
+    listener = AppshotKeyEvents()
+    listener.register([
+        ["control + z", None, lambda: events.append("long")],
+        ["z", None, lambda: events.append("short")],
+    ])
+    ctrl = SimpleNamespace(name="ctrl_l", char=None)
+    key = SimpleNamespace(vk=0x5A, char="z")
+    listener._on_press_key(ctrl)
+    listener._on_press_key(key)
+    listener._on_release_key(ctrl)
+    listener._on_release_key(key)
+    assert events == ["long"]
+
+
+def test_a_stuck_modifier_does_not_turn_the_next_letter_into_the_chord(monkeypatch):
+    # The OS says every leftover key is up. Z itself is the key this event
+    # is about, so the sweep must leave it for the press and release edges.
+    monkeypatch.setattr(
+        "jarvis.appshot.key_events.key_is_down",
+        lambda name, _vk=None: False if name != "z" else None,
+    )
+    events = []
+    listener = AppshotKeyEvents()
+    listener.register([["control + z", None, lambda: events.append("go")]])
+    listener._held.add("ctrl_l")
+    key = SimpleNamespace(vk=0x5A, char="z")
+    listener._on_press_key(key)
+    listener._on_release_key(key)
+    assert events == []
+    assert "ctrl_l" not in listener._held
 
 
 def test_numpad_keys_keep_the_shared_binding_vocabulary():
@@ -65,14 +103,36 @@ async def test_cancellation_stops_and_unregisters_the_event_listener(monkeypatch
 
     monkeypatch.setattr(key_events, "AppshotKeyEvents", Listener)
     owner = AppshotShortcut(object())
-    task = asyncio.create_task(owner._run_combos({"recording": "ctrl+z"}))
-    # Test this Windows-only dispatch without touching a real hook.
-    monkeypatch.setattr("jarvis.appshot.hotkey.sys.platform", "win32")
+    task = asyncio.create_task(owner._run_key_events({"recording": "ctrl+z"}))
     await asyncio.wait_for(started.wait(), 1)
     task.cancel()
     result = await asyncio.gather(task, return_exceptions=True)
     assert isinstance(result[0], asyncio.CancelledError)
     assert calls == ["register", "start", "stop", "unregister"]
+
+
+async def test_a_press_during_a_recording_toggle_runs_once_it_finishes():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+    owner = AppshotShortcut(object())
+
+    async def take(scope: str) -> None:
+        calls.append(scope)
+        started.set()
+        await release.wait()
+
+    owner._take = take  # type: ignore[method-assign]
+    owner._fire("recording")
+    await asyncio.wait_for(started.wait(), 1)
+    owner._fire("recording")
+    assert calls == ["recording"]
+    release.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+        if len(calls) == 2:
+            break
+    assert calls == ["recording", "recording"]
 
 
 async def test_missing_listener_is_reported_as_unarmed(monkeypatch):
