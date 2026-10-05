@@ -21,7 +21,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { fill, useT } from "@/i18n";
+import { fill, useT, useUiLanguage } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { QuickTooltip } from "@/components/ui/tooltip";
@@ -270,35 +270,65 @@ function MergedChips({ row }: { row: BranchRow }) {
   );
 }
 
-type BranchLocation = "local" | "github" | "github_only";
+type BranchLocation = "local" | "both" | "github_only";
 
 function branchLocation(row: BranchRow): BranchLocation {
   if (row.remote_only) return "github_only";
-  return row.upstream || row.on_github ? "github" : "local";
+  return row.upstream || row.on_github ? "both" : "local";
 }
 
-// Where the branch lives, readable at a glance: a laptop while it exists only
-// on this computer (amber — nothing backs it up yet), a globe once it is on GitHub.
-const LOCATION_STYLE: Record<BranchLocation, { icon: typeof Globe; tone: string; label: string; tip: string }> = {
-  local: { icon: Laptop, tone: "border-warning/40 bg-warning/10 text-warning", label: "local_only", tip: "not_pushed" },
-  github: { icon: Globe, tone: "border-info/35 bg-info/10 text-info", label: "on_github", tip: "on_github_tip" },
-  github_only: { icon: Globe, tone: "border-info/35 bg-info/10 text-info", label: "github_only", tip: "github_only_tip" },
+// Where the branch lives, one icon per place: a laptop for this computer, a
+// globe for GitHub. Amber while it is only here — nothing backs it up yet.
+const LOCATION_STYLE: Record<BranchLocation, { local: boolean; github: boolean; text: string; chip: string }> = {
+  local: { local: true, github: false, text: "text-warning", chip: "border-warning/40 bg-warning/10" },
+  both: { local: true, github: true, text: "text-info", chip: "border-info/35 bg-info/10" },
+  github_only: { local: false, github: true, text: "text-muted-foreground", chip: "border-border bg-muted/40" },
 };
+
+const LOCATION_LABEL: Record<BranchLocation, string> = { local: "local_only", both: "both", github_only: "github_only" };
 
 function LocationChip({ row }: { row: BranchRow }) {
   const t = useT();
   const location = branchLocation(row);
   const style = LOCATION_STYLE[location];
-  const Icon = style.icon;
+  const label = LOCATION_LABEL[location];
   return (
-    <QuickTooltip content={t(`ide_side_panel.git.${style.tip}`)} side="bottom" className="inline-flex shrink-0">
+    <QuickTooltip content={t(`ide_side_panel.git.${label}_tip`)} side="bottom" className="inline-flex shrink-0">
       <span
         data-testid="git-location"
         data-location={location}
-        className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium leading-none", style.tone)}
+        className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium leading-none", style.chip, style.text)}
       >
-        <Icon className="h-3 w-3 shrink-0" aria-hidden />
-        {t(`ide_side_panel.git.${style.label}`)}
+        {style.local && <Laptop className="h-3 w-3 shrink-0" aria-hidden />}
+        {style.github && <Globe className="h-3 w-3 shrink-0" aria-hidden />}
+        {t(`ide_side_panel.git.${label}`)}
+      </span>
+    </QuickTooltip>
+  );
+}
+
+/** Today's commits read "3 hours ago"; older ones show the day ("3 Oct", plus the year when it differs). */
+function commitDateLabel(seconds: number, lang: string, now = Date.now()): string {
+  const date = new Date(seconds * 1000);
+  const elapsed = Math.max(0, now - date.getTime());
+  if (elapsed < 24 * 3_600_000) {
+    const relative = new Intl.RelativeTimeFormat(lang, { numeric: "auto", style: "short" });
+    if (elapsed < 3_600_000) return relative.format(-Math.max(1, Math.round(elapsed / 60_000)), "minute");
+    return relative.format(-Math.round(elapsed / 3_600_000), "hour");
+  }
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return new Intl.DateTimeFormat(lang, { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) }).format(date);
+}
+
+function CommitDate({ seconds }: { seconds: number }) {
+  const t = useT();
+  const lang = useUiLanguage();
+  if (!seconds) return null;
+  const full = new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(seconds * 1000));
+  return (
+    <QuickTooltip content={fill(t("ide_side_panel.git.last_commit"), { date: full })} side="bottom" className="inline-flex shrink-0">
+      <span data-testid="git-commit-date" className="tabular-nums">
+        {commitDateLabel(seconds, lang)}
       </span>
     </QuickTooltip>
   );
@@ -363,6 +393,7 @@ function BranchLine({
         </QuickTooltip>
         <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10.5px] text-muted-foreground">
           <LocationChip row={row} />
+          <CommitDate seconds={row.committed_at} />
           <MergedChips row={row} />
           {meta.length > 0 && <span className="shrink-0 tabular-nums">{meta.join(" · ")}</span>}
           {row.worktree && <span className="shrink-0">{t("ide_side_panel.git.worktree_badge")}</span>}
@@ -508,14 +539,15 @@ function Legend() {
           <GitMerge className="h-3.5 w-3.5 text-[hsl(var(--gh-merged))]" aria-hidden />
           {t("ide_side_panel.git.legend_merged")}
         </li>
-        <li className="flex items-center gap-1.5">
-          <Laptop className="h-3.5 w-3.5 text-warning" aria-hidden />
-          {t("ide_side_panel.git.not_pushed")}
-        </li>
-        <li className="flex items-center gap-1.5">
-          <Globe className="h-3.5 w-3.5 text-info" aria-hidden />
-          {t("ide_side_panel.git.on_github_tip")}
-        </li>
+        {(["local", "both", "github_only"] as const).map((location) => (
+          <li key={location} className="flex items-center gap-1.5">
+            <span className={cn("inline-flex items-center gap-0.5", LOCATION_STYLE[location].text)}>
+              {LOCATION_STYLE[location].local && <Laptop className="h-3.5 w-3.5" aria-hidden />}
+              {LOCATION_STYLE[location].github && <Globe className="h-3.5 w-3.5" aria-hidden />}
+            </span>
+            {t(`ide_side_panel.git.${LOCATION_LABEL[location]}_tip`)}
+          </li>
+        ))}
       </ul>
     </div>
   );

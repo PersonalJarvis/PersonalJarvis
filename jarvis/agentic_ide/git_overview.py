@@ -33,6 +33,7 @@ import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -341,6 +342,8 @@ class _GitHubSnapshot:
     prs: list[PullRequest] = field(default_factory=list)
     #: Branch name → (tip oid, CI of that tip).
     refs: dict[str, tuple[str, CiStatus]] = field(default_factory=dict)
+    #: Branch name → its tip's commit time (unix seconds), for remote-only rows.
+    ref_dates: dict[str, int] = field(default_factory=dict)
 
     @property
     def busy(self) -> bool:
@@ -387,7 +390,21 @@ def parse_github(payload: dict[str, Any], fetched_at: float = 0.0) -> _GitHubSna
             oid[:12],
             ci_from_rollup(target.get("statusCheckRollup"), oid),
         )
+        stamp = _iso_to_unix(str(target.get("committedDate") or ""))
+        if stamp:
+            snap.ref_dates[str(node["name"])] = stamp
     return snap
+
+
+def _iso_to_unix(value: str) -> int:
+    """GitHub's ISO-8601 timestamp as unix seconds; 0 when it is missing or malformed."""
+    if not value:
+        return 0
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        # An unreadable date only hides the row's date; the row itself stays.
+        return 0
 
 
 def _fetch_github(repo: str, token: str) -> _GitHubSnapshot:
@@ -650,7 +667,9 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
         for name, (oid, _ci) in snap.refs.items():
             if name in known:
                 continue
-            row = BranchRow(name=name, remote_only=True, head=oid)
+            row = BranchRow(
+                name=name, remote_only=True, head=oid, committed_at=snap.ref_dates.get(name, 0)
+            )
             _attach_github(row, name, snap)
             info.remote_branches.append(row)
             if len(info.remote_branches) >= MAX_REMOTE_ONLY:

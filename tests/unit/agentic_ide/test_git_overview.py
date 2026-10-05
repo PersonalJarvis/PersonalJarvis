@@ -264,7 +264,14 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
                 ],
                 refs=[
                     {"name": "main", "target": {"oid": "0" * 40, "statusCheckRollup": None}},
-                    {"name": "only-remote", "target": {"oid": "1" * 40, "statusCheckRollup": None}},
+                    {
+                        "name": "only-remote",
+                        "target": {
+                            "oid": "1" * 40,
+                            "committedDate": "2026-10-01T12:00:00Z",
+                            "statusCheckRollup": None,
+                        },
+                    },
                 ],
             ),
             fetched_at=git_overview.time.time(),
@@ -289,6 +296,8 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
     assert by_name["main"].on_github
     assert [row.name for row in info.remote_branches] == ["only-remote"]
     assert info.remote_branches[0].pull_requests[0].state == "closed"
+    # Remote-only rows carry the tip commit date GitHub reports.
+    assert info.remote_branches[0].committed_at == 1_790_856_000
     assert info.github.available and info.github.repo_url == "https://github.com/o/r"
 
     # A second read inside the TTL reuses the answer instead of calling GitHub again.

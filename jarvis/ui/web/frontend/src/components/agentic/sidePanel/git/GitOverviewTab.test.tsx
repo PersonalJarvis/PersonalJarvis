@@ -275,17 +275,35 @@ describe("GitOverviewTab", () => {
     expect(within(row("wip/local")).getByTestId("git-branch-link").tagName).toBe("SPAN");
   });
 
-  it("marks every branch as local only, on GitHub, or only on GitHub", async () => {
+  it("marks every branch as local only, local and on GitHub, or GitHub only", async () => {
     answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
     render(<GitOverviewTab />);
     await screen.findAllByTestId("git-branch-row");
     const location = (name: string) => within(row(name)).getByTestId("git-location");
     expect(location("wip/local").dataset.location).toBe("local");
     expect(location("wip/local").textContent).toBe("local only");
-    expect(location("main").dataset.location).toBe("github");
-    expect(location("main").textContent).toBe("on GitHub");
+    expect(location("main").dataset.location).toBe("both");
+    expect(location("main").textContent).toBe("local + GitHub");
     fireEvent.click(screen.getByTestId("git-remote-toggle"));
     expect(location("only-remote").dataset.location).toBe("github_only");
+  });
+
+  it("shows when each branch last changed", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    answer = {
+      ...OVERVIEW,
+      branches: [
+        branch("fresh", { committed_at: now - 2 * 3600 }),
+        branch("old", { committed_at: Date.UTC(2024, 2, 3, 12) / 1000 }),
+        branch("undated"),
+      ],
+    };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    const date = (name: string) => within(row(name)).queryByTestId("git-commit-date")?.textContent;
+    expect(date("fresh")).toBe("2 hr. ago");
+    expect(date("old")).toBe("Mar 3, 2024");
+    expect(date("undated")).toBeUndefined();
   });
 
   it("offers GitHub pages and copies from a branch's menu", async () => {
