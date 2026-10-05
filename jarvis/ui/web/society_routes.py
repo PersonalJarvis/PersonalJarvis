@@ -1212,6 +1212,7 @@ async def _create_routine_for(
     )
     row = await store.get(task_id) or {}
     zone = getattr(spec.trigger, "timezone", None) or turn_timezone()
+    webhook = spec.trigger.type == "webhook"
     return {
         "id": task_id,
         "title": spec.title,
@@ -1219,6 +1220,11 @@ async def _create_routine_for(
         "seat": seat,
         "state": row.get("state"),
         "next_run": next_run_readback(row.get("due_at_ns"), zone),
+        "connection_required": webhook,
+        "webhook_path": f"/api/tasks/hooks/{task_id}" if webhook else None,
+        "connection_path": (
+            f"/api/tasks/{task_id}/webhook-connection" if webhook else None
+        ),
     }
 
 
