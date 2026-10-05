@@ -33,7 +33,15 @@ class FakeChat:
     def unsubscribe(self, session_id: str, q) -> None:
         pass
 
-    async def send(self, session_id: str, text: str, attachments=None) -> str:
+    async def send(
+        self,
+        session_id: str,
+        text: str,
+        attachments=None,
+        *,
+        incoming=None,
+        read_only=False,
+    ) -> str:
         self.sent.append((session_id, text))
         return "turn-1"
 
