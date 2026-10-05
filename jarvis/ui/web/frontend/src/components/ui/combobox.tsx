@@ -420,8 +420,11 @@ export function Combobox({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // A typed query starts on its first hit. Only a query: on open the effect
+  // above already put the highlight on the current value, and resetting it
+  // here as well left every list opening on its first row.
   useEffect(() => {
-    if (!open) return;
+    if (!open || !query) return;
     setActiveIndex(0);
   }, [query, open]);
 

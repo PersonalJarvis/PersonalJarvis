@@ -106,7 +106,10 @@ describe("Combobox non-search listbox accessibility", () => {
     });
 
     expect(commonEnglish.id).not.toBe(allEnglish.id);
-    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    // The list opens on the current value, not on its first row.
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(
+      screen.getByRole("option", { name: "Baseline" }).id,
+    );
     fireEvent.keyDown(listbox, { key: "ArrowDown" });
     expect(listbox.getAttribute("aria-activedescendant")).toBe(allEnglish.id);
     expect(document.querySelectorAll('[data-active="true"]')).toHaveLength(1);
