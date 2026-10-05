@@ -43,10 +43,13 @@ from jarvis.agentic_ide import github_link
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 _GIT_TIMEOUT_S = 8.0
-#: Most local branches listed; the newest by commit date win.
-MAX_BRANCHES = 60
+#: Most local branches listed; the newest by commit date win. High enough that
+#: a busy repository shows every branch; the cap only guards a pathological one.
+MAX_BRANCHES = 1000
 #: Most GitHub-only branches listed beside the local ones.
-MAX_REMOTE_ONLY = 30
+MAX_REMOTE_ONLY = 1000
+#: GitHub branch pages (100 names each) read beyond the first CI-bearing page.
+MAX_REF_PAGES = 10
 #: Most target branches a "merged into" check runs against (one git call each).
 MAX_MERGE_TARGETS = 4
 #: Pull requests kept per branch (the most relevant first).
@@ -94,6 +97,19 @@ fragment Rollup on StatusCheckRollup {
         checkSuite { workflowRun { url } }
       }
       ... on StatusContext { context state targetUrl }
+    }
+  }
+}
+"""
+
+# Every branch name on GitHub, without CI: the main query carries CI for the
+# newest branches only, so older ones would otherwise never show up.
+_REFS_QUERY = """
+query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: "refs/heads/", first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { name target { ... on Commit { oid committedDate } } }
     }
   }
 }
@@ -414,7 +430,40 @@ def _fetch_github(repo: str, token: str) -> _GitHubSnapshot:
         payload = github_link.graphql(token, _QUERY, {"owner": owner, "name": name})
     except github_link.GitHubError as exc:  # shown in the tab as github.reason/code
         return _GitHubSnapshot(ok=False, reason=str(exc), code=exc.code, fetched_at=now)
-    return parse_github(payload, fetched_at=now)
+    snap = parse_github(payload, fetched_at=now)
+    if snap.ok:
+        _add_all_refs(snap, token, owner, name)
+    return snap
+
+
+def _add_all_refs(snap: _GitHubSnapshot, token: str, owner: str, name: str) -> None:
+    """Add every other GitHub branch (without CI) to ``snap``, page by page."""
+    after: str | None = None
+    for _ in range(MAX_REF_PAGES):
+        try:
+            payload = github_link.graphql(
+                token, _REFS_QUERY, {"owner": owner, "name": name, "after": after}
+            )
+        except github_link.GitHubError as exc:
+            # The CI-bearing first page already landed; older branches just stay hidden.
+            logger.debug("Git overview: branch list page failed: {}", exc.code)
+            return
+        repo = ((payload or {}).get("data") or {}).get("repository") or {}
+        refs = repo.get("refs") or {}
+        for node in refs.get("nodes") or []:
+            if not isinstance(node, dict) or not node.get("name"):
+                continue
+            ref_name = str(node["name"])
+            target = node.get("target") or {}
+            if ref_name not in snap.refs:
+                snap.refs[ref_name] = (str(target.get("oid") or "")[:12], CiStatus())
+            stamp = _iso_to_unix(str(target.get("committedDate") or ""))
+            if stamp:
+                snap.ref_dates.setdefault(ref_name, stamp)
+        page = refs.get("pageInfo") or {}
+        after = page.get("endCursor")
+        if not page.get("hasNextPage") or not after:
+            return
 
 
 class _GitHubCache:
@@ -674,4 +723,6 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
             info.remote_branches.append(row)
             if len(info.remote_branches) >= MAX_REMOTE_ONLY:
                 break
+        # Newest first, like the local list; the later pages arrive in name order.
+        info.remote_branches.sort(key=lambda row: row.committed_at, reverse=True)
     return info

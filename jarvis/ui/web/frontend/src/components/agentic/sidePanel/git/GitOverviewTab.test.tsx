@@ -149,6 +149,7 @@ describe("GitOverviewTab", () => {
       "feature/queued",
       "feature/draft",
       "feature/dropped",
+      "only-remote",
     ]);
     expect(row("feature/wip").dataset.current).toBe("true");
     expect(row("main").dataset.current).toBeUndefined();
@@ -199,12 +200,12 @@ describe("GitOverviewTab", () => {
     expect(tip.textContent).toContain("lint");
   });
 
-  it("folds GitHub-only branches away until asked, and forces a GitHub read on refresh", async () => {
+  it("lists GitHub-only branches, folds them on request, and forces a GitHub read on refresh", async () => {
     render(<GitOverviewTab />);
     await screen.findAllByTestId("git-branch-row");
-    expect(screen.queryAllByTestId("git-branch-row").some((el) => el.dataset.branch === "only-remote")).toBe(false);
-    fireEvent.click(screen.getByTestId("git-remote-toggle"));
     expect(row("only-remote")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("git-remote-toggle"));
+    expect(screen.queryAllByTestId("git-branch-row").some((el) => el.dataset.branch === "only-remote")).toBe(false);
     fireEvent.click(screen.getByTestId("git-refresh"));
     await vi.waitFor(() => expect(calls.some((url) => url.includes("refresh=true"))).toBe(true));
   });
@@ -226,7 +227,7 @@ describe("GitOverviewTab", () => {
     expect(screen.getByTestId("git-repo-picker").textContent).toContain("Connect a GitHub repository");
     fireEvent.click(choices[0]);
     await vi.waitFor(() => expect(puts).toEqual([JSON.stringify({ workspace_id: "w1", repo: "o/r" })]));
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
     expect(screen.queryByTestId("git-repo-picker")).toBeNull();
   });
 
@@ -240,7 +241,7 @@ describe("GitOverviewTab", () => {
     });
     fireEvent.click(screen.getAllByTestId("git-repo-choice")[0]);
     // The local branches and the choice show before GitHub has answered.
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
     expect(screen.queryByTestId("git-repo-picker")).toBeNull();
     const state = screen.getByTestId("git-github-state");
     expect(state.textContent).toContain("o/r");
@@ -254,14 +255,14 @@ describe("GitOverviewTab", () => {
     fireEvent.click(await screen.findByTestId("git-bound-repo"));
     await vi.waitFor(() => expect(screen.getAllByTestId("git-repo-choice")).toHaveLength(2));
     fireEvent.click(screen.getByLabelText("Keep the current repository"));
-    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(await screen.findAllByTestId("git-branch-row")).toHaveLength(7);
   });
 
   it("offers to connect GitHub and still lists the local branches", async () => {
     answer = { ...OVERVIEW, github: { ...OVERVIEW.github, available: false, code: "not_connected", repo: "" } };
     render(<GitOverviewTab />);
     expect(await screen.findByTestId("git-connect-github")).toBeTruthy();
-    expect(screen.getAllByTestId("git-branch-row")).toHaveLength(6);
+    expect(screen.getAllByTestId("git-branch-row")).toHaveLength(7);
     fireEvent.click(screen.getByText("Connect GitHub"));
     expect(useEventStore.getState().activeSection).toBe("plugins");
   });
@@ -284,7 +285,6 @@ describe("GitOverviewTab", () => {
     expect(location("wip/local").textContent).toBe("local only");
     expect(location("main").dataset.location).toBe("both");
     expect(location("main").textContent).toBe("local + GitHub");
-    fireEvent.click(screen.getByTestId("git-remote-toggle"));
     expect(location("only-remote").dataset.location).toBe("github_only");
   });
 

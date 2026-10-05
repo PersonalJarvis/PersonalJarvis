@@ -613,7 +613,8 @@ export function GitOverviewTab() {
   const workspace = useIdeChatStore((state) => state.workspace);
   const workspaceId = workspace?.id ?? null;
   const { data, error, routeMissing, loading, refresh } = useGitOverview(workspaceId);
-  const [showRemote, setShowRemote] = useState(false);
+  // GitHub-only branches show by default; the header still folds them away.
+  const [showRemote, setShowRemote] = useState(true);
   const [showLegend, setShowLegend] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BranchFilter>("all");

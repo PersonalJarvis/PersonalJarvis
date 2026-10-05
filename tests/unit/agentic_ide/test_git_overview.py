@@ -203,6 +203,38 @@ def test_a_github_failure_becomes_a_coded_sentence(monkeypatch: pytest.MonkeyPat
     )
 
 
+def test_fetch_lists_every_github_branch_beyond_the_ci_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages = {
+        None: {"hasNextPage": True, "endCursor": "c1"},
+        "c1": {"hasNextPage": False, "endCursor": "c2"},
+    }
+    seen: list[str | None] = []
+
+    def fake_graphql(token: str, query: str, variables: dict | None = None) -> dict:
+        variables = variables or {}
+        if "pageInfo" not in query:
+            return _payload(
+                [], refs=[{"name": "main", "target": {"oid": "0" * 40, "statusCheckRollup": None}}]
+            )
+        after = variables.get("after")
+        seen.append(after)
+        name = "old-a" if after is None else "old-b"
+        nodes = [
+            {"name": "main", "target": {"oid": "0" * 40, "committedDate": "2026-10-02T00:00:00Z"}},
+            {"name": name, "target": {"oid": "2" * 40, "committedDate": "2026-01-01T00:00:00Z"}},
+        ]
+        return {"data": {"repository": {"refs": {"pageInfo": pages[after], "nodes": nodes}}}}
+
+    monkeypatch.setattr(github_link, "graphql", fake_graphql)
+    snap = git_overview._fetch_github("o/r", "t")
+    assert seen == [None, "c1"]
+    assert set(snap.refs) == {"main", "old-a", "old-b"}
+    assert snap.refs["old-b"][1].state == "none"
+    assert snap.ref_dates["old-a"] == 1_767_225_600
+
+
 # ------------------------------------------------------------------ local git
 
 
