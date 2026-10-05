@@ -80,11 +80,24 @@ def read_text() -> str | None:
     return raw.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _utf8_env() -> dict[str, str] | None:
+    """The environment for a clipboard command: UTF-8 text on macOS.
+
+    ``pbcopy``/``pbpaste`` encode in the locale's charset. An app started from
+    Finder or the Dock has no locale, so they fell back to MacRoman and turned
+    umlauts and emoji into mojibake. Linux tools take bytes as given.
+    """
+    if detect_platform() != "darwin":
+        return None
+    return {**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
+
+
 def _read_command(command: Sequence[str]) -> str | None:
     """Read clipboard text from a fixed OS command's stdout."""
     try:
         completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
             list(command),
+            env=_utf8_env(),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -221,6 +234,7 @@ def _run_command(command: Sequence[str], text: str) -> bool:
             completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
                 list(command),
                 input=text.encode("utf-8"),
+                env=_utf8_env(),
                 stdout=subprocess.DEVNULL,
                 stderr=err,
                 timeout=_COMMAND_TIMEOUT_S,
