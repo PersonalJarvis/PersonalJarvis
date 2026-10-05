@@ -254,6 +254,19 @@ def test_overview_marks_current_default_and_merged_branches(repo: Path) -> None:
 
 
 @needs_git
+def test_branch_checkout_finds_this_folder_and_linked_worktrees(repo: Path, tmp_path: Path) -> None:
+    tree = tmp_path / "fresh-tree"
+    _git(repo, "worktree", "add", "-q", str(tree), "feature/fresh")
+    assert git_overview.branch_checkout(repo, "feature/wip") == repo
+    found = git_overview.branch_checkout(repo, "feature/fresh")
+    assert found is not None and found.resolve() == tree.resolve()
+    # Checked out nowhere, unknown, or a name git never saw: nothing to open.
+    assert git_overview.branch_checkout(repo, "feature/done") is None
+    assert git_overview.branch_checkout(repo, "no/such") is None
+    assert git_overview.branch_checkout(repo, "") is None
+
+
+@needs_git
 def test_overview_of_a_plain_folder_is_unavailable(tmp_path: Path) -> None:
     info = git_overview.overview(tmp_path, github=False)
     assert not info.available

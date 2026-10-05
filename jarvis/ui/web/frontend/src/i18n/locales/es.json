@@ -6233,6 +6233,18 @@
       "github_only": "solo GitHub",
       "github_only_tip": "Solo en GitHub, no está en este ordenador.",
       "last_commit": "Último commit: {date}",
+      "details": {
+        "local_title": "Este ordenador",
+        "github_title": "GitHub",
+        "local_absent": "No está en este ordenador.",
+        "local_worktree": "Activa en otra carpeta:",
+        "local_branch_only": "En este ordenador, pero no está activa en ninguna carpeta.",
+        "github_present": "En GitHub.",
+        "open_folder": "Abrir carpeta",
+        "open_in": "Abrir en {editor}",
+        "open_github": "Abrir en GitHub",
+        "open_failed": "No se pudo abrir la carpeta."
+      },
       "merged_short": "en {target}",
       "merged_git": "Fusionada en {target}: todos los commits de esta rama están en {target}.",
       "merged_pr": "Fusionada en {target} mediante el pull request #{number}.",

@@ -6,6 +6,8 @@ Endpoints (all under ``/api/agentic-ide/git``)::
     GET  /changes             Changed files under a folder, with line counts
     GET  /diff                One file's change against the last commit
     GET  /overview            A workspace's branches with merged-into, PR and CI state
+    GET  /branch/editors      Where a branch's checkout can be opened on this computer
+    POST /branch/open         Open a branch's checkout in the file manager or an editor
     GET  /github/repos        The person's GitHub repositories, for the one-time pick
     PUT  /github/binding      Remember which GitHub repository a workspace folder is
     POST /prepare             Git half of opening a workspace or an agent
@@ -30,7 +32,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import git_changes, git_ops, git_overview, github_link, github_status
@@ -38,6 +40,7 @@ from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import account_home, get_registry
 from jarvis.agentic_ide.session_branches import PaneBranchRecord
 from jarvis.agentic_ide.thread_folders import allowed_thread_folder
+from jarvis.ui.web.surface_security import is_loopback_request
 
 router = APIRouter(prefix="/api/agentic-ide/git", tags=["agentic-ide-git"])
 
@@ -151,6 +154,71 @@ def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
         if not pane.computer_id
     ]
     return {"panes": github_status.statuses(records)}
+
+
+# The editors a branch's checkout is offered in, when installed.
+_BRANCH_EDITORS = ("code", "cursor")
+
+
+def _native_actions(request: Request) -> bool:
+    """Opening a folder acts on the screen of the computer running Jarvis."""
+    return is_loopback_request(request.scope) and bool(
+        getattr(request.app.state, "native_file_actions", False)
+    )
+
+
+@router.get("/branch/editors", summary="Where a branch's checkout can be opened")
+def branch_editors(request: Request) -> dict:
+    """The file manager and the installed editors; empty on a headless host."""
+    if not _native_actions(request):
+        return {"file_manager": False, "editors": []}
+    from jarvis.ui.web import outputs_routes
+
+    labels = dict(outputs_routes._OPENER_EDITORS)
+    installed = {entry["id"] for entry in outputs_routes._available_openers()}
+    editors = [{"id": oid, "label": labels[oid]} for oid in _BRANCH_EDITORS if oid in installed]
+    return {"file_manager": True, "editors": editors}
+
+
+class OpenBranchRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+    branch: str = Field(..., min_length=1, max_length=300)
+    target: str = Field(
+        "folder", min_length=1, max_length=40, description='"folder" or an editor id'
+    )
+
+
+@router.post("/branch/open", summary="Open a branch's checkout in the file manager or an editor")
+def open_branch(request: Request, req: OpenBranchRequest) -> dict:
+    """Open the folder a branch is checked out in.
+
+    The folder comes from git's own worktree list for the open workspace, never
+    from the client, and ``target`` is a closed id — this cannot open an
+    arbitrary path or launch an arbitrary program.
+    """
+    if not _native_actions(request):
+        raise HTTPException(status_code=404, detail="Folders can only be opened on this computer.")
+    session = get_registry().get(req.workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    folder = git_overview.branch_checkout(session.folder, req.branch)
+    if folder is None:
+        raise HTTPException(
+            status_code=404, detail="This branch is not checked out on this computer."
+        )
+    from jarvis.platform import open_path
+
+    if req.target == "folder":
+        return {"opened": bool(open_path.open_file(folder)), "path": str(folder)}
+    if req.target not in _BRANCH_EDITORS:
+        raise HTTPException(status_code=400, detail="Unknown editor.")
+    from jarvis.ui.web import outputs_routes
+
+    resolved = outputs_routes._resolve_opener(req.target)
+    if resolved is None:
+        raise HTTPException(status_code=409, detail="That editor is not installed.")
+    kind, value = resolved
+    return {"opened": bool(open_path.open_file_with(folder, kind, value)), "path": str(folder)}
 
 
 class BindingRequest(BaseModel):

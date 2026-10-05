@@ -6266,6 +6266,18 @@
       "github_only": "GitHub only",
       "github_only_tip": "Only on GitHub, not on this computer.",
       "last_commit": "Last commit: {date}",
+      "details": {
+        "local_title": "This computer",
+        "github_title": "GitHub",
+        "local_absent": "Not on this computer.",
+        "local_worktree": "Checked out in another folder:",
+        "local_branch_only": "On this computer, but not checked out in any folder.",
+        "github_present": "On GitHub.",
+        "open_folder": "Open folder",
+        "open_in": "Open in {editor}",
+        "open_github": "Open on GitHub",
+        "open_failed": "The folder could not be opened."
+      },
       "merged_short": "in {target}",
       "merged_git": "Merged into {target}: every commit of this branch is in {target}.",
       "merged_pr": "Merged into {target} through pull request #{number}.",

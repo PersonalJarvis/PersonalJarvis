@@ -92,6 +92,7 @@ let status = 200;
 let gate: Promise<void> | null = null;
 const calls: string[] = [];
 const puts: string[] = [];
+const opens: string[] = [];
 const REPOS = {
   connected: true,
   source: "app",
@@ -109,6 +110,7 @@ beforeEach(() => {
   gate = null;
   calls.length = 0;
   puts.length = 0;
+  opens.length = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -117,6 +119,11 @@ beforeEach(() => {
       const json = (body: unknown, code = 200) =>
         new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
       if (url.includes("/github/repos")) return json(REPOS);
+      if (url.includes("/branch/editors")) return json({ file_manager: true, editors: [{ id: "code", label: "VS Code" }] });
+      if (url.includes("/branch/open")) {
+        opens.push(String(init?.body));
+        return json({ opened: true, path: "/code/app" });
+      }
       if (url.includes("/github/binding")) {
         puts.push(String(init?.body));
         answer = OVERVIEW;
@@ -304,6 +311,36 @@ describe("GitOverviewTab", () => {
     expect(date("fresh")).toBe("2 hr. ago");
     expect(date("old")).toBe("Mar 3, 2024");
     expect(date("undated")).toBeUndefined();
+  });
+
+  it("folds a clicked branch open with its local folder and its GitHub page", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    expect(screen.queryByTestId("git-branch-details")).toBeNull();
+
+    fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));
+    const details = within(row("feature/wip")).getByTestId("git-branch-details");
+    fireEvent.click(await within(details).findByTestId("git-open-folder"));
+    await vi.waitFor(() => expect(opens).toHaveLength(1));
+    expect(JSON.parse(opens[0])).toEqual({ workspace_id: "w1", branch: "feature/wip", target: "folder" });
+    fireEvent.click(within(details).getByTestId("git-open-code"));
+    await vi.waitFor(() => expect(JSON.parse(opens[1]).target).toBe("code"));
+    fireEvent.click(within(details).getByTestId("git-open-github"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/tree/feature/wip");
+    fireEvent.click(within(details).getByTestId("git-open-pr"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/pull/7");
+
+    // Not checked out anywhere: nothing local to open, the switch command instead; not on GitHub either.
+    fireEvent.click(within(row("wip/local")).getByTestId("git-branch-toggle"));
+    const local = within(row("wip/local")).getByTestId("git-branch-details");
+    expect(within(local).queryByTestId("git-open-folder")).toBeNull();
+    expect(within(local).getByTestId("git-copy-switch")).toBeTruthy();
+    expect(within(local).queryByTestId("git-open-github")).toBeNull();
+
+    // A second click folds it away again.
+    fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));
+    expect(within(row("feature/wip")).queryByTestId("git-branch-details")).toBeNull();
   });
 
   it("offers GitHub pages and copies from a branch's menu", async () => {

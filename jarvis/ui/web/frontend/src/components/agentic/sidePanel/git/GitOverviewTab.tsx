@@ -1,15 +1,20 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from "react";
 import {
+  ChevronDown,
   ChevronRight,
   CircleCheck,
   CircleDashed,
   CircleDot,
   CircleHelp,
   CircleX,
+  CirclePlay,
+  Copy,
   Ellipsis,
   ExternalLink,
   FolderGit2,
+  FolderOpen,
   GitBranch,
+  GitCompareArrows,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -19,19 +24,25 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  SquareTerminal,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { fill, useT, useUiLanguage } from "@/i18n";
+import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
-import { BranchMenu, branchUrl } from "./BranchMenu";
+import { BranchMenu, branchPath, branchUrl } from "./BranchMenu";
 import { ConnectGitHubCard, GitHubRepoPicker } from "./GitHubRepoPicker";
 import {
+  fetchBranchEditors,
   fetchGitOverview,
   GitOverviewError,
+  openBranchCheckout,
+  type BranchEditors,
   type BranchRow,
   type CiState,
   type CiStatus,
@@ -334,18 +345,192 @@ function CommitDate({ seconds }: { seconds: number }) {
   );
 }
 
+function DetailButton({
+  icon: Icon,
+  label,
+  testId,
+  primary,
+  onClick,
+}: {
+  icon: LucideIcon | ((props: SVGProps<SVGSVGElement>) => ReactNode);
+  label: string;
+  testId: string;
+  primary?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border px-2 text-[11.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        primary
+          ? "border-primary/40 bg-primary/10 text-foreground hover:bg-primary/15"
+          : "border-border/70 text-foreground/90 hover:bg-secondary",
+      )}
+    >
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{label}</span>
+    </button>
+  );
+}
+
+function DetailSection({ icon: Icon, title, testId, children }: { icon: LucideIcon; title: string; testId: string; children: ReactNode }) {
+  return (
+    <section data-testid={testId} className="space-y-1.5">
+      <h4 className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" aria-hidden />
+        {title}
+      </h4>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * What a clicked branch row folds open: where the branch lives on this
+ * computer (with a way to open that folder) and on GitHub (with a way there).
+ */
+function BranchDetails({
+  row,
+  repoUrl,
+  defaultBranch,
+  workspaceId,
+  editors,
+}: {
+  row: BranchRow;
+  repoUrl: string;
+  defaultBranch: string;
+  workspaceId: string;
+  editors: BranchEditors | null;
+}) {
+  const t = useT();
+  const lang = useUiLanguage();
+  const pushToast = useEventStore((state) => state.pushToast);
+  const url = branchUrl(repoUrl, row);
+  const checkedOut = !row.remote_only && (row.current || Boolean(row.worktree));
+  const pr = row.pull_requests[0];
+  const canOpen = checkedOut && Boolean(editors?.file_manager);
+
+  const openLocal = (target: string) => {
+    void openBranchCheckout(workspaceId, row.name, target)
+      .then((result) => {
+        if (!result.opened) pushToast("error", t("ide_side_panel.git.details.open_failed"));
+      })
+      .catch((err: Error) => pushToast("error", err.message || t("ide_side_panel.git.details.open_failed")));
+  };
+  const copy = (text: string) => {
+    void robustCopy(text).then((ok) =>
+      pushToast(ok ? "success" : "error", ok ? fill(t("ide_side_panel.git.menu.copied"), { text }) : t("ide_side_panel.git.menu.copy_failed")),
+    );
+  };
+
+  const localState = row.remote_only
+    ? t("ide_side_panel.git.details.local_absent")
+    : row.current
+      ? t("ide_side_panel.git.current")
+      : row.worktree
+        ? t("ide_side_panel.git.details.local_worktree")
+        : t("ide_side_panel.git.details.local_branch_only");
+  const commitLine =
+    row.head && row.committed_at
+      ? `${row.head.slice(0, 7)} · ${new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(row.committed_at * 1000))}`
+      : row.head.slice(0, 7);
+
+  return (
+    <div data-testid="git-branch-details" className="grid gap-3 border-t border-border/50 pb-3 pl-9 pr-3 pt-2.5 text-[11.5px]">
+      <DetailSection icon={Laptop} title={t("ide_side_panel.git.details.local_title")} testId="git-details-local">
+        <p className="text-foreground">{localState}</p>
+        {row.worktree && <p className="break-all font-mono text-[10.5px] text-muted-foreground">{row.worktree}</p>}
+        {!row.remote_only && commitLine && (
+          <p className="font-mono text-[10.5px] text-muted-foreground">{fill(t("ide_side_panel.git.last_commit"), { date: commitLine })}</p>
+        )}
+        {row.upstream && (
+          <p className="text-[10.5px] text-muted-foreground">
+            {fill(t("ide_side_panel.git.tracks"), { upstream: row.upstream, ahead: row.ahead, behind: row.behind })}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {canOpen && (
+            <>
+              <DetailButton icon={FolderOpen} label={t("ide_side_panel.git.details.open_folder")} testId="git-open-folder" primary onClick={() => openLocal("folder")} />
+              {editors?.editors.map((editor) => (
+                <DetailButton
+                  key={editor.id}
+                  icon={SquareTerminal}
+                  label={fill(t("ide_side_panel.git.details.open_in"), { editor: editor.label })}
+                  testId={`git-open-${editor.id}`}
+                  onClick={() => openLocal(editor.id)}
+                />
+              ))}
+            </>
+          )}
+          {!checkedOut && (
+            <DetailButton icon={Copy} label={t("ide_side_panel.git.menu.copy_switch")} testId="git-copy-switch" onClick={() => copy(`git switch ${row.name}`)} />
+          )}
+        </div>
+      </DetailSection>
+      <DetailSection icon={Globe} title={t("ide_side_panel.git.details.github_title")} testId="git-details-github">
+        <p className="text-foreground">
+          {url ? t("ide_side_panel.git.details.github_present") : repoUrl ? t("ide_side_panel.git.not_pushed") : t("ide_side_panel.git.menu.no_repo")}
+        </p>
+        {pr && (
+          <p className="truncate text-[10.5px] text-muted-foreground">
+            #{pr.number} · {prStateLabel(t, pr)} · {pr.title}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {url && (
+            <DetailButton icon={ExternalLink} label={t("ide_side_panel.git.details.open_github")} testId="git-open-github" primary onClick={() => void openExternalUrl(url)} />
+          )}
+          {pr && (
+            <DetailButton
+              icon={PR_ICON[pr.state]}
+              label={fill(t("ide_side_panel.git.menu.open_pr"), { number: pr.number })}
+              testId="git-open-pr"
+              onClick={() => void openExternalUrl(pr.url)}
+            />
+          )}
+          {url && !pr && defaultBranch && row.name !== defaultBranch && (
+            <DetailButton
+              icon={GitCompareArrows}
+              label={fill(t("ide_side_panel.git.menu.compare"), { target: defaultBranch })}
+              testId="git-open-compare"
+              onClick={() => void openExternalUrl(`${repoUrl}/compare/${branchPath(defaultBranch)}...${branchPath(row.name)}`)}
+            />
+          )}
+          {row.ci.url && (
+            <DetailButton icon={CirclePlay} label={t("ide_side_panel.git.menu.open_ci")} testId="git-open-ci" onClick={() => void openExternalUrl(row.ci.url)} />
+          )}
+        </div>
+      </DetailSection>
+    </div>
+  );
+}
+
 function BranchLine({
   row,
   isDefault,
   repoUrl,
+  defaultBranch,
+  workspaceId,
+  editors,
   menuOpen,
   onMenu,
+  expanded,
+  onToggle,
 }: {
   row: BranchRow;
   isDefault: boolean;
   repoUrl: string;
+  defaultBranch: string;
+  workspaceId: string;
+  editors: BranchEditors | null;
   menuOpen: boolean;
   onMenu: (row: BranchRow, x: number, y: number) => void;
+  expanded: boolean;
+  onToggle: (name: string) => void;
 }) {
   const t = useT();
   const meta: string[] = [];
@@ -371,16 +556,24 @@ function BranchLine({
       data-testid="git-branch-row"
       data-branch={row.name}
       data-current={row.current || undefined}
+      data-expanded={expanded || undefined}
       onContextMenu={(event) => {
         event.preventDefault();
         onMenu(row, event.clientX, event.clientY);
       }}
-      className={cn("group/row flex min-h-9 items-center gap-1 py-1 pl-2 pr-1", row.current && "bg-accent/10", menuOpen && "bg-secondary/60")}
+      className={cn(row.current && "bg-accent/10", expanded && "bg-secondary/30")}
     >
+      <div className={cn("group/row flex min-h-9 items-center gap-1 py-1 pl-2 pr-1", menuOpen && "bg-secondary/60")}>
       <LinkIcon url={url} tip={url ? openTip : nameTip} label={url ? openTip : row.name} testId="git-branch-link">
         <BranchIcon className={cn("h-4 w-4 shrink-0", row.current ? "text-accent" : "text-muted-foreground")} aria-hidden />
       </LinkIcon>
-      <span className="flex min-w-0 flex-1 flex-col leading-tight">
+      <button
+        type="button"
+        data-testid="git-branch-toggle"
+        aria-expanded={expanded}
+        onClick={() => onToggle(row.name)}
+        className="flex min-w-0 flex-1 flex-col rounded-md text-left leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <QuickTooltip content={nameTip} side="bottom" className="flex min-w-0 items-center gap-1.5">
           <span className={cn("truncate font-mono text-[12.5px]", row.current ? "font-semibold text-foreground" : "text-foreground")}>
             {row.name}
@@ -398,7 +591,7 @@ function BranchLine({
           {meta.length > 0 && <span className="shrink-0 tabular-nums">{meta.join(" · ")}</span>}
           {row.worktree && <span className="shrink-0">{t("ide_side_panel.git.worktree_badge")}</span>}
         </span>
-      </span>
+      </button>
       <PullRequestBadge prs={row.pull_requests} />
       <CiBadge ci={row.ci} stale={row.ci_stale} />
       <QuickTooltip content={t("ide_side_panel.git.more")} side="bottom" className="inline-flex shrink-0">
@@ -421,6 +614,14 @@ function BranchLine({
           <Ellipsis className="h-4 w-4" aria-hidden />
         </button>
       </QuickTooltip>
+      <ChevronDown
+        className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", expanded && "rotate-180")}
+        aria-hidden
+      />
+      </div>
+      {expanded && (
+        <BranchDetails row={row} repoUrl={repoUrl} defaultBranch={defaultBranch} workspaceId={workspaceId} editors={editors} />
+      )}
     </li>
   );
 }
@@ -619,6 +820,25 @@ export function GitOverviewTab() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<BranchFilter>("all");
   const [menu, setMenu] = useState<{ row: BranchRow; x: number; y: number } | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [editors, setEditors] = useState<BranchEditors | null>(null);
+  const toggleRow = useCallback((name: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    fetchBranchEditors()
+      .then((answer) => alive && setEditors(answer))
+      // An older backend has no such route: rows then offer GitHub and copy only.
+      .catch(() => alive && setEditors({ file_manager: false, editors: [] }));
+    return () => {
+      alive = false;
+    };
+  }, []);
   const openMenu = useCallback((row: BranchRow, x: number, y: number) => {
     setMenu((current) => (current?.row.name === row.name ? null : { row, x, y }));
   }, []);
@@ -636,6 +856,7 @@ export function GitOverviewTab() {
     setQuery("");
     setFilter("all");
     setMenu(null);
+    setExpanded(new Set());
   }, [workspaceId]);
   const allRows = useMemo(() => [...(data?.branches ?? []), ...(data?.remote_branches ?? [])], [data]);
   const trimmed = query.trim();
@@ -782,8 +1003,13 @@ export function GitOverviewTab() {
                   row={row}
                   isDefault={row.name === data.default_branch}
                   repoUrl={github?.repo_url ?? ""}
+                  defaultBranch={data.default_branch}
+                  workspaceId={workspace.id}
+                  editors={editors}
                   menuOpen={menu?.row.name === row.name}
                   onMenu={openMenu}
+                  expanded={expanded.has(row.name)}
+                  onToggle={toggleRow}
                 />
               ))}
             </ul>
@@ -817,8 +1043,13 @@ export function GitOverviewTab() {
                         row={row}
                         isDefault={false}
                         repoUrl={github?.repo_url ?? ""}
+                        defaultBranch={data.default_branch}
+                        workspaceId={workspace.id}
+                        editors={editors}
                         menuOpen={menu?.row.name === row.name}
                         onMenu={openMenu}
+                        expanded={expanded.has(`remote:${row.name}`)}
+                        onToggle={() => toggleRow(`remote:${row.name}`)}
                       />
                     ))}
                   </ul>

@@ -6233,6 +6233,18 @@
       "github_only": "nur GitHub",
       "github_only_tip": "Nur auf GitHub, nicht auf diesem Rechner.",
       "last_commit": "Letzter Commit: {date}",
+      "details": {
+        "local_title": "Dieser Rechner",
+        "github_title": "GitHub",
+        "local_absent": "Nicht auf diesem Rechner.",
+        "local_worktree": "In einem anderen Ordner ausgecheckt:",
+        "local_branch_only": "Auf diesem Rechner, aber in keinem Ordner ausgecheckt.",
+        "github_present": "Auf GitHub.",
+        "open_folder": "Ordner öffnen",
+        "open_in": "In {editor} öffnen",
+        "open_github": "Auf GitHub öffnen",
+        "open_failed": "Der Ordner konnte nicht geöffnet werden."
+      },
       "merged_short": "in {target}",
       "merged_git": "In {target} gemergt: Jeder Commit dieses Branches ist in {target} enthalten.",
       "merged_pr": "Über Pull Request #{number} in {target} gemergt.",

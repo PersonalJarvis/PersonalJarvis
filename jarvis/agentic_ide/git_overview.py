@@ -667,6 +667,27 @@ def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapsho
     return snap if snap.ok else None
 
 
+def branch_checkout(folder: str | Path, branch: str) -> Path | None:
+    """The folder ``branch`` is checked out in — this one or a linked worktree.
+
+    None when no checkout of that branch exists on this computer (or the folder
+    is gone): the caller then has nothing local to open.
+    """
+    if not branch:
+        return None
+    path = Path(folder).expanduser()
+    text = _out(["worktree", "list", "--porcelain"], path) if path.is_dir() else None
+    tree = ""
+    for line in (text or "").splitlines():
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            tree = value.strip()
+        elif key == "branch" and value.strip() == f"refs/heads/{branch}" and tree:
+            found = Path(tree)
+            return found if found.is_dir() else None
+    return None
+
+
 def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) -> RepoOverview:
     """Branches of the repository ``folder`` is in, with merge, PR and CI state."""
     path = Path(folder).expanduser()
