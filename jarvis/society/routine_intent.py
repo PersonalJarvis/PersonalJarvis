@@ -1,4 +1,4 @@
-"""Recognize requests to create an agent routine or other recurring work."""
+"""Recognize requests to create an agent routine or triggered work."""
 
 from __future__ import annotations
 
@@ -85,11 +85,38 @@ def requests_recurring_work(text: str) -> bool:
     return bool(_REQUEST_CUE.search(text)) and not _PAST_REPORT.search(text)
 
 
+# Event-first commands are deliberately narrower than general conditional
+# prose.  Requiring both the trigger at the start and an imperative after a
+# clause boundary keeps descriptions ("when X happens, Y happens") out while
+# covering the natural M6 surface ("when a PR merges, ask Scout to ...").
+_EVENT_TRIGGER_REQUEST = re.compile(
+    r"^\s*(?:(?:please|bitte|por\s+favor)\s+)?"
+    r"(?:when(?:ever)?|once|as\s+soon\s+as|wenn|sobald|cuando|en\s+cuanto)\b"
+    r"[^?\n]{1,240}?[,;:]\s*"
+    r"(?:(?:please|bitte|por\s+favor)\s+)?"
+    r"(?:ask|have|tell|notify|send|summari[sz]e|check|run|create|make|remind|"
+    r"can\s+you|could\s+you|lass|sag|benachrichtig|schick|fass|prüf|starte|"
+    r"erstell|erinner|kannst\s+du|pide|haz|dile|notifica|env[ií]a|resume|"
+    r"comprueba|ejecuta|crea|recu[eé]rda|puedes)\w*\b",
+    re.IGNORECASE,
+)
+
+
+def requests_event_triggered_work(text: str) -> bool:
+    """Return whether ``text`` asks for work when a named event occurs.
+
+    This recognizes explicit event-first commands, not arbitrary conditional
+    statements or questions.  The routine tool resolves the concrete webhook,
+    integration event, or loaded internal event after this routing decision.
+    """
+    return bool(_EVENT_TRIGGER_REQUEST.search(text)) and not _HOW_TO.search(text)
+
+
 _SKILL_WORD = re.compile(r"\bskills?\b", re.IGNORECASE)
 
 
 def wants_agent_routine(text: str) -> bool:
-    """Scheduled work for an agent, not a request to author a skill.
+    """Scheduled or event-triggered work, not a request to author a skill.
 
     "Routine" is also a spoken synonym for a skill; the user saying "skill"
     keeps that meaning. Everything else that asks for recurring work or
@@ -97,7 +124,7 @@ def wants_agent_routine(text: str) -> bool:
     """
     if _SKILL_WORD.search(text):
         return False
-    if requests_recurring_work(text):
+    if requests_recurring_work(text) or requests_event_triggered_work(text):
         return True
     return bool(
         _ROUTINE_NOUN.search(text)

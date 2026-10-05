@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-from jarvis.society.routine_intent import requests_recurring_work, wants_agent_routine
+from jarvis.society.routine_intent import (
+    requests_event_triggered_work,
+    requests_recurring_work,
+    wants_agent_routine,
+)
 
 ROUTINE_REQUESTS = [
     "Erstelle einen Agenten, der mir jeden Tag um 8 Uhr ein Morgenbriefing gibt",  # i18n-allow
@@ -16,6 +20,9 @@ ROUTINE_REQUESTS = [
     "Remind me every Monday to pay rent",
     "dame un resumen cada mañana a las ocho",  # i18n-allow
     "Erstelle eine Routine für den Gmail Agenten",  # i18n-allow
+    "When a PR merges, ask Scout to summarize it",
+    "Wenn eine PR gemergt wird, lass Scout sie zusammenfassen",  # i18n-allow
+    "Cuando se cierre una PR, pide a Scout que la resuma",  # i18n-allow
 ]
 
 NOT_ROUTINE = [
@@ -24,6 +31,8 @@ NOT_ROUTINE = [
     "Wie kann ich jeden Tag um 8 ein Briefing bekommen?",  # i18n-allow
     "Was steht heute im Kalender?",  # i18n-allow
     "Erstelle einen Skill, der mir jeden Morgen um 6 die Mails vorliest",  # i18n-allow
+    "When a PR merges, the deployment starts",
+    "How do I notify Scout when a PR merges?",
 ]
 
 
@@ -40,3 +49,12 @@ def test_habits_questions_and_skill_requests_are_not_routines(text: str) -> None
 def test_recurrence_needs_a_request_not_a_description() -> None:
     assert requests_recurring_work("Please send me the news every evening")
     assert not requests_recurring_work("The newsletter arrives every evening")
+
+
+def test_event_trigger_needs_an_event_first_command() -> None:
+    assert requests_event_triggered_work(
+        "When a PR merges, ask Scout to summarize it"
+    )
+    assert not requests_event_triggered_work(
+        "When a PR merges, the deployment starts"
+    )

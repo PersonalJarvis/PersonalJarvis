@@ -237,17 +237,50 @@ def _routine_schedule_param(*, examples: bool = True) -> dict[str, Any]:
             'When it runs. "every day at 8" = {"kind":"calendar","local_time":"08:00"}; '
             'weekdays add "days":["mon","tue","wed","thu","fri"]; '
             '"every 2 hours" = {"kind":"every","interval_seconds":7200}; '
-            'once = {"kind":"at_time","iso_timestamp":"2026-10-01T08:00:00"}. '
+            'once = {"kind":"at_time","iso_timestamp":"2026-10-01T08:00:00"}; '
+            'GitHub callback = {"kind":"webhook","provider":"github",'
+            '"conditions":{"action":"closed","pull_request.merged":true}}; '
+            'named integration event = {"kind":"event_hook","event_name":"crm.created"}. '
             "timezone is filled from the user's device; pass it only when they name one."
         ),
         "properties": {
-            "kind": {"type": "string", "enum": ["calendar", "cron", "every", "at_time"]},
+            "kind": {
+                "type": "string",
+                "enum": [
+                    "calendar", "cron", "every", "at_time", "on_event", "webhook",
+                    "event_hook",
+                ],
+            },
             "local_time": {"type": "string", "description": "HH:MM on the user's clock."},
             "days": _str_list("Weekdays mon..sun; omit for every day."),
             "interval_seconds": {"type": "number", "minimum": 60},
             "expression": {"type": "string", "description": "Five-field cron."},
             "iso_timestamp": {"type": "string"},
             "timezone": {"type": "string", "description": "IANA zone, e.g. Europe/Berlin."},
+            "event_name": _str_param(
+                "Loaded internal event class or named integration event.", max_length=100,
+            ),
+            "filter_expr": _str_param(
+                "Optional safe field comparison for an internal event.", max_length=256,
+            ),
+            "provider": _str_param(
+                "Webhook sender.",
+                enum=["generic", "github", "linear", "gmail", "slack", "stripe"],
+            ),
+            "conditions": {
+                "type": "object",
+                "description": "Optional scalar JSON equality filters; dotted paths are allowed.",
+                "additionalProperties": {
+                    "type": ["string", "boolean", "integer", "number", "null"],
+                },
+            },
+            "max_firings": {
+                "type": ["integer", "null"], "minimum": 1, "maximum": 1000,
+                "description": "Delivery limit; null keeps the trigger active.",
+            },
+            "cooldown_seconds": {
+                "type": "number", "minimum": 0, "maximum": 86400,
+            },
         },
         "required": ["kind"],
     }
@@ -406,12 +439,14 @@ def _build_registry() -> tuple[AppCommand, ...]:
         ),
         AppCommand(
             id="society-create-routine",
-            title="Schedule a routine for an agent",
+            title="Schedule or trigger a routine for an agent",
             description=(
-                "The ONLY way to make an agent do something on a schedule (daily briefing, "
-                "weekly report, every morning at 8). Never use create-skill for this. The "
+                "The ONLY way to make an agent do something on a schedule or event (daily "
+                "briefing, weekly report, a merged PR webhook). Never use create-skill for "
+                "this. The "
                 "prompt is the complete task the agent runs each time: sources, steps, "
-                "output. Speak the returned next_run; on timezone_required ask the user."
+                "output. For webhooks, report that Connect webhook must configure the sender. "
+                "For timed work speak next_run; on timezone_required ask the user."
             ),
             method="POST", path="/api/society/agents/{agent_id}/routines",
             path_params=("agent_id",), ui_section="agents", dangerous=True,

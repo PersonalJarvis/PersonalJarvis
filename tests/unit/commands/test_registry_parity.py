@@ -153,6 +153,19 @@ def test_realtime_switch_exposes_experimental_acknowledgement() -> None:
     }
 
 
+def test_agent_routine_command_exposes_event_triggers() -> None:
+    """The lead-chat tool must expose trigger kinds supported by its endpoint."""
+    command = get_command("society-create-routine")
+    assert command is not None
+    schedule = command.params["properties"]["schedule"]
+    kinds = schedule["properties"]["kind"]["enum"]
+    assert {"on_event", "webhook", "event_hook"}.issubset(kinds)
+    assert schedule["properties"]["provider"]["enum"] == [
+        "generic", "github", "linear", "gmail", "slack", "stripe",
+    ]
+    assert "conditions" in schedule["properties"]
+
+
 def test_spawn_agent_enum_follows_the_agent_registry() -> None:
     """A newly registered coding CLI must be spawnable by voice the same day.
 
