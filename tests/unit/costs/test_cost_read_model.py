@@ -318,6 +318,115 @@ def test_partial_cli_index_keeps_subscription_chat_until_catchup(
     assert sum(row.tokens_total for row in rows if row.surface == "agent-chat") == 120
 
 
+def _mission_subscription_db(path: Path, *, tokens: int = 120) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_MISSIONS_DDL)
+    conn.execute(
+        "INSERT INTO missions (id, prompt, state, created_ms, cost_usd) VALUES (?,?,?,?,?)",
+        ("m-sub", "Run the subscription worker", "done", T0, 0.0),
+    )
+    conn.execute(
+        "INSERT INTO mission_events (mission_id, worker_id, event_type, ts_ms, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "m-sub",
+            "w-sub",
+            "WorkerSpawned",
+            T0,
+            json.dumps(
+                {
+                    "worker_id": "w-sub",
+                    "cli": "claude",
+                    "model": "claude-opus-5",
+                    "session_id": "vendor-session-mission",
+                }
+            ),
+        ),
+    )
+    conn.execute(
+        "INSERT INTO mission_events (mission_id, worker_id, event_type, ts_ms, payload_json) "
+        "VALUES (?,?,?,?,?)",
+        (
+            "m-sub",
+            "w-sub",
+            "WorkerDraftReady",
+            T0 + 1_000,
+            json.dumps(
+                {
+                    "tokens_used": tokens,
+                    "cost_usd": 0.0,
+                    "session_id": "vendor-session-mission",
+                }
+            ),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _mission_cli_entry(tokens_in: int, tokens_out: int):
+    from jarvis.costs.model import CostEntry
+
+    return CostEntry(
+        ts_ms=T0 + 2_000,
+        surface="agentic-ide",
+        role="agent",
+        provider="claude-cli",
+        model="claude-opus-5",
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_cached=0,
+        cost_usd=0.0,
+        price_source="subscription",
+        ref_id="vendor-session-mission",
+        label="Run the subscription worker",
+        runner="claude-cli",
+    )
+
+
+def test_complete_cli_index_suppresses_mission_worker_duplicate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_db = tmp_path / "missions.db"
+    _mission_subscription_db(mission_db)
+
+    monkeypatch.setattr(
+        "jarvis.costs.sources._cli_entries",
+        lambda *args, **kwargs: iter([_mission_cli_entry(100, 20)]),
+    )
+
+    rows = collect_entries(
+        CostSources(missions_db=mission_db, cli_index_dir=tmp_path / "unused")
+    )
+
+    assert len(rows) == 1
+    assert rows[0].surface == "agentic-ide"
+    assert rows[0].runner == "claude-cli"
+    assert rows[0].ref_id == "vendor-session-mission"
+
+
+def test_partial_cli_index_keeps_mission_receipt_until_catchup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mission_db = tmp_path / "missions.db"
+    _mission_subscription_db(mission_db)
+
+    monkeypatch.setattr(
+        "jarvis.costs.sources._cli_entries",
+        lambda *args, **kwargs: iter([_mission_cli_entry(10, 2)]),
+    )
+
+    rows = collect_entries(
+        CostSources(missions_db=mission_db, cli_index_dir=tmp_path / "unused")
+    )
+
+    assert {row.surface for row in rows} == {"mission", "agentic-ide"}
+    mission = next(row for row in rows if row.surface == "mission")
+    assert mission.runner == "claude-cli"
+    assert mission.ref_id == "vendor-session-mission"
+    assert mission.tokens_total == 120
+
+
 def test_collects_every_source(sources: CostSources) -> None:
     entries = collect_entries(sources)
     surfaces = {e.surface for e in entries}
