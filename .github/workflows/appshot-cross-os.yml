@@ -1,0 +1,166 @@
+# Appshots on real desktops: macOS (Apple Silicon + Intel), Linux (X11 under
+# Xvfb, Wayland under headless Weston, and a bare headless box) and Windows.
+#
+# Unit tests fake the OS. scripts/ci/appshot_desktop_smoke.py does not: it
+# copies pictures and text to the runner's real clipboard and reads them back
+# with the OS's own tools, burns markings, keeps a gallery entry, saves a PNG
+# and takes a real appshot through the shortcut service. Free on public repos.
+
+name: Appshots cross-OS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["test/appshot-**", "claude/appshot-**"]
+  pull_request:
+    paths:
+      - "jarvis/appshot/**"
+      - "jarvis/jarvisx/**"
+      - "jarvis/platform/clipboard*.py"
+      - "jarvis/ui/web/appshot_routes.py"
+      - "scripts/ci/appshot_desktop_smoke.py"
+      - "tests/unit/appshot/**"
+      - ".github/workflows/appshot-cross-os.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appshot-cross-os-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  APPSHOT_TESTS: >-
+    tests/unit/appshot tests/unit/jarvisx tests/unit/platform/test_clipboard.py
+    tests/unit/platform/test_clipboard_image.py tests/unit/platform/test_clipboard_reader.py
+
+jobs:
+  linux:
+    name: Linux (X11 + Wayland)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Desktop packages
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends xvfb xauth xclip xsel \
+            wl-clipboard weston libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
+            libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 \
+            libxcb-render-util0 libxcb-image0 libportaudio2 ffmpeg
+      - name: Install
+        run: python -m pip install -e ".[dev,desktop]"
+      - name: Unit tests (no display, Qt offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -p no:cacheprovider $APPSHOT_TESTS --junitxml=out/junit-linux.xml
+      - name: Smoke — no display
+        run: env -u DISPLAY -u WAYLAND_DISPLAY python scripts/ci/appshot_desktop_smoke.py --headless --report out/smoke-headless.json
+      - name: Smoke — X11 (Xvfb)
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" python scripts/ci/appshot_desktop_smoke.py --expect-capture --report out/smoke-x11.json
+      - name: Smoke — Wayland (headless Weston)
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"
+          mkdir -p -m 700 "$XDG_RUNTIME_DIR"
+          weston --backend=headless-backend.so --socket=wayland-ci --idle-time=0 > out/weston.log 2>&1 &
+          for _ in $(seq 1 50); do [ -S "$XDG_RUNTIME_DIR/wayland-ci" ] && break; sleep 0.1; done
+          WAYLAND_DISPLAY=wayland-ci env -u DISPLAY python scripts/ci/appshot_desktop_smoke.py --report out/smoke-wayland.json
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: appshot-linux
+          path: out/
+          retention-days: 14
+
+  linux-base-install:
+    name: Linux headless (base install, python:3.11-slim)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: python:3.11-slim
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Base install only (no desktop extras)
+        run: python -m pip install -e .
+      - name: Smoke — the appshot code degrades without a display or extras
+        run: python scripts/ci/appshot_desktop_smoke.py --headless --report out/smoke-base.json
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: appshot-linux-base
+          path: out/
+          retention-days: 14
+
+  macos:
+    name: macOS ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            runner: macos-15
+          - name: Intel
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev,desktop,desktop-macos]"
+      - name: Unit tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q -p no:cacheprovider $APPSHOT_TESTS --junitxml=out/junit-macos.xml
+      # Screen Recording is a TCC grant CI cannot give, so a real capture may be
+      # refused here; the clipboard, markings, gallery and Save must all work.
+      - name: Smoke — real pasteboard
+        run: python scripts/ci/appshot_desktop_smoke.py --report out/smoke-macos.json
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: appshot-macos-${{ matrix.runner }}
+          path: out/
+          retention-days: 14
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev,desktop]"
+      - name: Unit tests
+        shell: bash
+        run: python -m pytest -q -p no:cacheprovider $APPSHOT_TESTS --junitxml=out/junit-windows.xml
+      - name: Smoke — real clipboard and capture
+        run: python scripts/ci/appshot_desktop_smoke.py --expect-capture --report out/smoke-windows.json
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: appshot-windows
+          path: out/
+          retention-days: 14
