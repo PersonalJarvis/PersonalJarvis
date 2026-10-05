@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, Loader2, MessageCircleQuestion, Paperclip, ShieldAlert, Square, X } from "lucide-react";
+import { ArrowUp, Loader2, MessageCircleQuestion, ShieldAlert, Square, X } from "lucide-react";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
+import { DictationButton } from "@/components/agentchat/DictationButton";
 import { runningTurn, type QuestionState, type Timeline, type ToolBlock } from "@/components/agentchat/reduce";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
+import { useT } from "@/i18n";
 import type { ChatAttachment } from "@/lib/agentChatApi";
 import { joinProviderOptions, type ComposerDraft } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
@@ -113,7 +116,8 @@ function QuestionPanel({ timeline }: { timeline: Timeline }) {
 /**
  * The thread's composer: a rounded card with the text box, the files that
  * will go with the message, and one row of picks — agent and model, effort,
- * access — beside the paperclip and the send button. An approval or a
+ * access — beside the dictation mic and the send button. Files still come in
+ * by paste or drop onto the card. An approval or a
  * question the agent is waiting on opens at the top of the card, where the
  * person's eyes already are.
  *
@@ -163,8 +167,8 @@ export function ThreadComposer({
   const [starting, setStarting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
-  const fileInput = useRef<HTMLInputElement | null>(null);
   const queueId = useRef(0);
+  const t = useT();
 
   const providers = useMemo(
     () => threadAgents(catalog ? joinProviderOptions(catalog.providers, connections) : []),
@@ -190,6 +194,12 @@ export function ThreadComposer({
     setValueState(next);
     drafts.set(threadKey, next);
   }, [threadKey]);
+
+  // The dictated words append to whatever the box holds when they land.
+  const setDictated = useCallback((next: string | ((current: string) => string)) => {
+    setValue(typeof next === "function" ? next(drafts.get(threadKey) ?? "") : next);
+  }, [setValue, threadKey]);
+  const dictation = useComposerDictation(setDictated, () => void submit());
 
   // Another thread: its own half-written text, its own queue.
   useEffect(() => {
@@ -260,6 +270,11 @@ export function ThreadComposer({
   }, [paused, running, busy, starting, queue, activeSessionId, dispatch, setQueue, threadKey]);
 
   const submit = async () => {
+    // Send during a dictation ends it first; the message goes once the words land.
+    if (dictation.dictating) {
+      dictation.stopAndSend();
+      return;
+    }
     const text = value.trim();
     if (!text && files.attachments.length === 0) return;
     if (files.analyzing > 0 || starting) return;
@@ -302,7 +317,7 @@ export function ThreadComposer({
     void useThreadChatStore.getState().decide(approvalId, decision);
   };
 
-  const canSend = (value.trim().length > 0 || files.attachments.length > 0) && files.analyzing === 0 && !starting;
+  const canSend = (value.trim().length > 0 || files.attachments.length > 0 || dictation.dictating) && files.analyzing === 0 && !starting;
   const error = problem || lastError || "";
 
   return <div className="mx-auto w-full max-w-3xl">
@@ -351,15 +366,8 @@ export function ThreadComposer({
           onPick={(permissionMode) => void pick({ permissionMode })} />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
-            const picked = Array.from(event.target.files ?? []);
-            if (picked.length) files.attachFiles(picked);
-            event.target.value = "";
-          }} />
-          <button type="button" aria-label="Attach files" title="Attach files or images" onClick={() => fileInput.current?.click()}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Paperclip className="h-[18px] w-[18px]" />
-          </button>
+          <DictationButton dictating={dictation.dictating} onToggle={dictation.toggle}
+            startLabel={t("chats_view.dictation_start")} stopLabel={t("chats_view.dictation_stop")} shape="round" />
           {running && !canSend
             ? <button type="button" aria-label="Stop the agent" title="Stop" data-testid="thread-stop"
               onClick={() => { setPaused(true); void useThreadChatStore.getState().cancel(); }}
