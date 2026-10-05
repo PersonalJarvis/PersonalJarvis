@@ -104,6 +104,12 @@ export const useProgression = create<ProgressionState>((set, get) => ({
       const known = subjects[row.subjectId];
       if (!known || known.xp <= row.xp) subjects[row.subjectId] = row;
     }
+    // A push applied before the first read had no curve to measure the level by: measure it now.
+    for (const [id, subject] of Object.entries(subjects)) {
+      const atCap = subject.level >= snapshot.maxLevel;
+      const { into, size } = progressFor(snapshot.levelXp, subject.xp, subject.level);
+      if (!atCap && subject.xpForNext <= 0) subjects[id] = { ...subject, xpIntoLevel: into, xpForNext: size };
+    }
     const banners = [...s.banners, ...away.filter((c) => c.kind !== "agent")];
     const toasts = [...s.toasts, ...away.filter((c) => c.kind === "agent")].slice(-MAX_TOASTS);
     return { snapshot, subjects, petId: snapshot.petId, banners, toasts };

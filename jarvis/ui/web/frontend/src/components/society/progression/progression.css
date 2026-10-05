@@ -20,7 +20,7 @@
 
 /* ---------- ring and bar ---------- */
 .level-ring { position:relative; display:inline-flex; flex:none; align-items:center; justify-content:center; }
-.level-ring svg { position:absolute; inset:0; }
+.level-ring-gauge { position:absolute; inset:0; }
 .level-ring-track { fill:none; stroke:hsl(var(--border)); stroke-width:3; }
 .level-ring-fill { fill:none; stroke-width:3; stroke-linecap:round; stroke:#d9ab47; transition:stroke-dasharray .7s cubic-bezier(.2,.8,.2,1); }
 .level-ring[data-kind="pet"] .level-ring-fill { stroke:#2dd4bf; }

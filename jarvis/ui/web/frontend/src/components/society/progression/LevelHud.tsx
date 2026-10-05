@@ -60,7 +60,7 @@ export function LevelRing({ kind, level, fraction, size = 44 }: { kind: SubjectK
   const r = 20, c = 2 * Math.PI * r;
   return (
     <span className="level-ring" style={{ width: size, height: size }} data-kind={kind} data-tier={RANK_INFO[rank].tier}>
-      <svg viewBox="0 0 48 48" width={size} height={size} aria-hidden>
+      <svg className="level-ring-gauge" viewBox="0 0 48 48" width={size} height={size} aria-hidden>
         <circle cx="24" cy="24" r={r} className="level-ring-track" />
         <circle cx="24" cy="24" r={r} className="level-ring-fill" strokeDasharray={`${c * fraction} ${c}`} transform="rotate(-90 24 24)" />
         <circle cx="24" cy="24" r="16.5" className="level-ring-medal" />

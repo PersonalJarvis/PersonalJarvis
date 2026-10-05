@@ -114,6 +114,16 @@ describe("progressionStore", () => {
     expect(useProgression.getState().subjects.person.xp).toBe(50);
   });
 
+  it("measures a push that arrived before the first read once the curve is there", () => {
+    useProgression.setState({ snapshot: null, subjects: {} });
+    // No curve yet: the level is known, the distance to the next one is not.
+    useProgression.getState().apply({ seq: 6, subjectId: "person", kind: "person", source: "daily_visit", xp: 25, totalXp: 130, level: 3, previousLevel: 3, title: "private_second_class", unlocked: [] }, 0);
+    expect(useProgression.getState().subjects.person.xpForNext).toBe(0);
+    // The read is older than the push (105 XP), so the push stays — measured on the curve now.
+    useProgression.getState().hydrate(snapshot({ subjects: [{ subjectId: "person", kind: "person", xp: 105, level: 3, xpIntoLevel: 0, xpForNext: 90, title: "private_second_class" }] }), []);
+    expect(useProgression.getState().subjects.person).toMatchObject({ xp: 130, xpIntoLevel: 25, xpForNext: 90 });
+  });
+
   it("ignores a late duplicate push", () => {
     const award = { seq: 4, subjectId: "person", kind: "person" as const, source: "chat_turn", xp: 5, totalXp: 5, level: 1, previousLevel: 1, title: "newcomer", unlocked: [] };
     useProgression.getState().apply(award, 1000);
