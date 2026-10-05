@@ -1,24 +1,29 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import {
-  ArrowDown, Brain, Check, ChevronRight, Copy, Eye, FilePlus2, FileText, FolderOpen, Globe, Image as ImageIcon,
-  MessageCircleQuestion, Search, ShieldAlert, SquarePen, SquareTerminal, Wrench, X,
-} from "lucide-react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, Brain, Check, ChevronRight, Copy, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import type { ReasoningBlock, TextBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
-import { buildTimeline, readableOutput, traceDuration, type ActivityEntry, type Call } from "@/components/agentchat/traceEntries";
+import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
+import { readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
 import { useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
+import { buildThreadRows, isFailed, liveItem, thoughtPreview, type WorkGroup, type WorkItem } from "./threadWork";
 
 /**
  * A thread's conversation: the person's messages on the right, the agent's
- * answer as plain reading text on the left, and the work in between as quiet
- * rows — one line per stretch of tool calls ("Ran 3 commands, read 2 files")
- * that opens to the single calls, and a call that opens to what it ran, the
- * diff it made or what came back. A running turn always ends in a live
- * "Working for 12s" line; a finished one says how long it worked and which
- * files it changed.
+ * answer as plain reading text on the left, and the work in between as a
+ * quiet log. Each stretch of thinking and tool calls is one line — "Ran 3
+ * commands and read 2 files" once it is done, the newest step with a moving
+ * shine while it runs — that opens to the single steps. A thought shows as
+ * one line of its own words and opens to all of them; a call opens to what
+ * it ran, the diff it made or what came back. A running turn ends in
+ * "Working for 12s"; a finished one says how long it worked and which files
+ * it changed.
+ *
+ * The work-log geometry and the live shine are adapted from pingdotgg/t3code
+ * @ e22c880 (apps/web/src/components/chat/WorkLog.tsx, MessagesTimeline.tsx),
+ * MIT License, Copyright (c) 2026 T3 Tools Inc. — third_party/t3code/LICENSE.
  */
 
 const PROSE = cn(
@@ -34,51 +39,54 @@ const PROSE = cn(
   "prose-table:my-3 prose-table:text-sm prose-th:text-foreground-strong prose-td:text-foreground",
 );
 
-const KIND_ICONS: Record<Call["kind"], typeof SquareTerminal> = {
-  command: SquareTerminal,
-  read: Eye,
-  list: FolderOpen,
-  search: Search,
-  edit: SquarePen,
-  write: FilePlus2,
-  image: ImageIcon,
-  web: Globe,
-  family: Wrench,
-  service: Wrench,
-  tool: Wrench,
-};
-
-/** One row of the work log: a 24 px line with an icon, words and a trailing note. */
+/**
+ * One row of the work log: a 24 px line — a 16 px mark centred in a 24 px
+ * box, the words, then a trailing note. Rows inside an opened group sit
+ * tight; a row on its own gets a little air. The words of a live row carry
+ * the shine; a row that opens shows its chevron.
+ */
 function WorkRow({
   icon,
   label,
+  labelTone = "muted",
   trailing,
   expanded,
   onToggle,
+  grouped = false,
   live = false,
-  failed = false,
+  stamp,
+  ariaLabel,
   children,
 }: {
   icon: ReactNode;
   label: ReactNode;
+  /** Thoughts read a step brighter than tool calls. */
+  labelTone?: "muted" | "thought";
   trailing?: ReactNode;
   expanded?: boolean;
   onToggle?: () => void;
+  grouped?: boolean;
   live?: boolean;
-  failed?: boolean;
+  /** When the step began; shown while the row is hovered. */
+  stamp?: number;
+  ariaLabel?: string;
   children?: ReactNode;
 }) {
-  const line = <span className="flex min-h-6 min-w-0 items-center gap-2 text-sm">
-    <span className={cn("flex h-5 w-5 shrink-0 items-center justify-center", failed ? "text-destructive" : "text-muted-foreground")}>{icon}</span>
-    <span className={cn("min-w-0 flex-1 truncate", failed ? "text-destructive" : "text-muted-foreground", live && "thinking-shimmer")}>{label}</span>
+  const line = <span className="flex min-h-6 min-w-0 items-center gap-1.5 text-sm leading-relaxed">
+    <span aria-hidden className="flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
+    <span className={cn("min-w-0 flex-1 truncate", labelTone === "thought" ? "text-foreground-secondary" : "text-muted-foreground", live && "live-tool-shine")}>{label}</span>
     {trailing}
-    {onToggle && <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition group-hover/row:opacity-100", expanded && "rotate-90 opacity-100")} />}
+    {stamp ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/row:opacity-100">{clock(stamp)}</span> : null}
+    {onToggle && <span aria-hidden className="flex h-4 w-4 shrink-0 items-center justify-center">
+      <ChevronRight className={cn("h-3 w-3 text-muted-foreground opacity-70 transition-transform duration-200", expanded && "rotate-90")} />
+    </span>}
   </span>;
+  const row = cn("group/row relative block w-full min-w-0 rounded-md px-0.5 text-left", grouped ? "py-0" : "py-0.5");
   return <div className="min-w-0">
     {onToggle
-      ? <button type="button" aria-expanded={expanded} onClick={onToggle}
-        className="group/row w-full rounded-md px-0.5 py-px text-left hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">{line}</button>
-      : <div className="px-0.5 py-px">{line}</div>}
+      ? <button type="button" aria-expanded={expanded} aria-label={ariaLabel} onClick={onToggle}
+        className={cn(row, "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring")}>{line}</button>
+      : <div className={row}>{line}</div>}
     {expanded && children}
   </div>;
 }
@@ -121,9 +129,9 @@ function CallDetails({ call }: { call: Call }) {
   const block = call.block;
   const diff = useMemo(() => toolDiff(block.name, block.input, block.output), [block.name, block.input, block.output]);
   const output = readableOutput(block).trim();
-  if (diff && diff.length > 0 && !block.isError) return <div className="mb-2 ml-7 mt-1"><DiffView files={diff} /></div>;
+  if (diff && diff.length > 0 && !block.isError) return <div className="mb-1.5 ml-7 mt-0.5"><DiffView files={diff} /></div>;
   const input = call.kind === "command" ? "" : inputText(block.input);
-  return <div className="mb-2 ml-7 mt-1 space-y-1.5">
+  return <div className="mb-1.5 ml-7 mt-0.5 space-y-1.5 select-text">
     {call.kind === "command" && <pre className="m-0 overflow-x-auto rounded-lg bg-secondary px-3 py-2 font-mono text-xs leading-5 text-foreground scrollbar-jarvis">$ {inputText((block.input as Record<string, unknown> | null)?.command ?? call.text)}</pre>}
     {input && input !== "{}" && <pre className="m-0 max-h-48 overflow-auto rounded-lg bg-secondary px-3 py-2 font-mono text-xs leading-5 text-muted-foreground scrollbar-jarvis">{input}</pre>}
     {output
@@ -132,77 +140,203 @@ function CallDetails({ call }: { call: Call }) {
   </div>;
 }
 
-function CallRow({ call, nested }: { call: Call; nested: boolean }) {
+/** Opening a step inside a group lifts the group's height cap. */
+type OpenChange = (open: boolean) => void;
+
+function useDisclosure(onOpenChange?: OpenChange): [boolean, () => void] {
   const [open, setOpen] = useState(false);
-  const Icon = KIND_ICONS[call.kind] ?? Wrench;
-  const failed = call.status === "failed" || call.status === "blocked" || call.status === "declined";
+  const toggle = useCallback(() => {
+    setOpen(!open);
+    onOpenChange?.(!open);
+  }, [open, onOpenChange]);
+  return [open, toggle];
+}
+
+function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; stamp?: number; grouped?: boolean; onOpenChange?: OpenChange }) {
+  const [open, toggle] = useDisclosure(onOpenChange);
+  const failed = isFailed(call);
   const running = call.status === "running";
   const detail = call.detail || call.result;
+  const tail = failed && call.reason ? call.reason : call.status === "interrupted" ? "interrupted" : "";
+  // The shine paints the label's own text, so a running row is one run of words.
+  const label = running
+    ? [call.text, detail].filter(Boolean).join("  ")
+    : <>
+      <span className={cn(call.kind === "command" && "font-mono text-[0.8125rem]")}>{call.text}</span>
+      {detail && <span className="ml-1.5 text-muted-foreground/70">{detail}</span>}
+      {tail && <span className="ml-1.5 text-muted-foreground/70">— {tail}</span>}
+    </>;
   return <WorkRow
-    icon={running ? <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-jarvis-pulse" /> : failed ? <X className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
-    label={<>
-      <span className={cn(call.kind === "command" && "font-mono text-xs", !nested && call.kind !== "command" && "text-muted-foreground")}>{call.text}</span>
-      {detail && <span className="ml-2 text-faint-foreground">{detail}</span>}
-      {failed && call.reason && <span className="ml-2">— {call.reason}</span>}
-      {call.status === "interrupted" && <span className="ml-2 text-faint-foreground">interrupted</span>}
+    icon={<span className={cn("flex items-center justify-center", failed && "text-destructive/70")}><CallMark call={call} /></span>}
+    label={label}
+    ariaLabel={failed ? `${call.text}, failed` : undefined}
+    trailing={<>
+      <DiffStat added={call.added} removed={call.removed} />
+      {failed && <X aria-hidden className="h-3 w-3 shrink-0 text-destructive/70" />}
     </>}
-    trailing={<DiffStat added={call.added} removed={call.removed} />}
+    stamp={stamp}
+    grouped={grouped}
     live={running}
-    failed={failed}
     expanded={open}
-    onToggle={() => setOpen((value) => !value)}>
+    onToggle={toggle}>
     <CallDetails call={call} />
   </WorkRow>;
 }
 
-function ActivityGroup({ entry, live }: { entry: ActivityEntry; live: boolean }) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const failed = entry.calls.some((call) => call.status === "failed" || call.status === "blocked" || call.status === "declined");
-  if (entry.calls.length === 1) return <CallRow call={entry.calls[0]} nested={false} />;
-  // A stretch the turn is still in stays open; a finished one folds to its line.
-  const expanded = open ?? live;
-  const added = entry.calls.reduce((sum, call) => sum + call.added, 0);
-  const removed = entry.calls.reduce((sum, call) => sum + call.removed, 0);
-  const running = entry.calls.some((call) => call.status === "running");
+/** The newest paragraph of a thought, for a live line that follows the thinking. */
+function latestThought(text: string): string {
+  const paragraphs = text.split(/\n\s*\n/).map((part) => thoughtPreview(part)).filter(Boolean);
+  return paragraphs[paragraphs.length - 1] ?? "";
+}
+
+const THOUGHT_PROSE = cn(PROSE, "text-sm leading-6 text-foreground-secondary prose-p:my-1.5 prose-p:text-foreground-secondary prose-li:text-foreground-secondary");
+
+/**
+ * A thought folded to one line of its own words; opened, the line names it
+ * ("Thought for 4.2s") and the whole text reads below.
+ */
+function ThoughtRow({ block, live, stamp, grouped = false, onOpenChange }: {
+  block: ReasoningBlock; live: boolean; stamp?: number; grouped?: boolean; onOpenChange?: OpenChange;
+}) {
+  const [open, toggle] = useDisclosure(onOpenChange);
+  const text = block.text.trim();
+  const heading = live ? "Thinking" : block.durationMs ? `Thought for ${traceDuration(block.durationMs)}` : "Thought";
+  const preview = useMemo(() => thoughtPreview(text), [text]);
   return <WorkRow
-    icon={<Wrench className="h-3.5 w-3.5" />}
-    label={entry.summary}
-    trailing={<DiffStat added={added} removed={removed} />}
-    live={running}
-    failed={failed && !expanded}
-    expanded={expanded}
-    onToggle={() => setOpen(!expanded)}>
-    <div className="ml-2.5 border-l border-border pl-3">
-      {entry.calls.map((call) => <CallRow key={call.id} call={call} nested />)}
+    icon={<Brain strokeWidth={1.75} />}
+    label={open ? heading : preview || heading}
+    labelTone="thought"
+    stamp={stamp}
+    grouped={grouped}
+    live={live}
+    expanded={open}
+    onToggle={text ? toggle : undefined}>
+    <div className="ml-7 flex max-h-96 flex-col overflow-auto px-0.5 py-1 select-text scrollbar-jarvis">
+      <div className={THOUGHT_PROSE}><ChatMarkdown text={text} /></div>
     </div>
   </WorkRow>;
 }
 
-function ThoughtRow({ block }: { block: ReasoningBlock }) {
-  const [open, setOpen] = useState(false);
-  const seconds = block.durationMs ? traceDuration(block.durationMs) : "";
-  return <WorkRow icon={<Brain className="h-3.5 w-3.5" />} label={seconds ? `Thought for ${seconds}` : "Thought"}
-    expanded={open} onToggle={() => setOpen((value) => !value)}>
-    <div className="mb-2 ml-7 mt-1 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{block.text}</div>
-  </WorkRow>;
+function StepRow({ item, running, grouped, onOpenChange }: { item: WorkItem; running: boolean; grouped?: boolean; onOpenChange?: OpenChange }) {
+  if (item.kind === "call") return <CallRow call={item.call} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
+  return <ThoughtRow block={item.block} live={running && item.block.live} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
 }
 
-function LiveThinking({ block }: { block: ReasoningBlock }) {
-  const tail = block.text.trim().split(/\r?\n/).filter((line) => line.trim()).slice(-3).join("\n");
-  return <div>
-    <WorkRow icon={<Brain className="h-3.5 w-3.5" />} label="Thinking" live />
-    {tail && <div className="ml-7 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-faint-foreground">{tail}</div>}
+const FADE = "1.5rem";
+
+/**
+ * An opened group's steps: a short scrolling list that fades at an edge with
+ * more behind it. A live list follows its newest step while the reader is at
+ * its end; opening a step lifts the height cap so its detail reads in full.
+ */
+function StepList({ items, running, follow }: { items: WorkItem[]; running: boolean; follow: boolean }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const atEnd = useRef(true);
+  const [edges, setEdges] = useState({ top: false, bottom: false });
+  const [openSteps, setOpenSteps] = useState(0);
+  const onOpenChange = useCallback((open: boolean) => setOpenSteps((count) => Math.max(0, count + (open ? 1 : -1))), []);
+
+  const measure = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const rest = el.scrollHeight - el.clientHeight - el.scrollTop;
+    atEnd.current = rest <= 1;
+    const next = { top: el.scrollTop > 1, bottom: rest > 1 };
+    setEdges((prev) => prev.top === next.top && prev.bottom === next.bottom ? prev : next);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && follow && atEnd.current) el.scrollTop = el.scrollHeight;
+    measure();
+  }, [items.length, follow, measure]);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, [measure]);
+
+  const mask = edges.top || edges.bottom
+    ? `linear-gradient(to bottom, ${edges.top ? "transparent" : "black"} 0, black ${FADE}, black calc(100% - ${FADE}), ${edges.bottom ? "transparent" : "black"} 100%)`
+    : undefined;
+  return <div ref={box} role="region" aria-label="Steps" tabIndex={-1} onScroll={measure}
+    className="overflow-y-auto overflow-x-hidden rounded-md scrollbar-jarvis"
+    style={{ maxHeight: openSteps > 0 ? undefined : "min(18rem, 50dvh)", maskImage: mask, WebkitMaskImage: mask }}>
+    <div className="flex min-w-0 flex-col">
+      {items.map((item) => <StepRow key={item.id} item={item} running={running} grouped onOpenChange={onOpenChange} />)}
+    </div>
   </div>;
 }
 
-/** Ticks once a second while a turn runs; the text alone changes, nothing re-lays out. */
+function hasBrand(call: Call): boolean {
+  return Boolean(call.brand) && (call.kind === "command" || call.kind === "service");
+}
+
+/** A group's mark: the logos it touched, else its one kind of work, else a hammer for mixed work. */
+function GroupMark({ group }: { group: WorkGroup }) {
+  if (group.sole === "thought") return <Brain strokeWidth={1.75} />;
+  const calls = group.items.flatMap((item) => item.kind === "call" ? [item.call] : []);
+  if (calls.some(hasBrand)) return <StretchMark calls={calls} />;
+  if (group.sole) return <CallMark call={calls[0]} />;
+  return <Hammer strokeWidth={1.75} />;
+}
+
+/**
+ * The stretch the running turn is in: one line naming its newest step with
+ * the shine — the command it runs, the thought it is having — that opens to
+ * every step so far.
+ */
+function LiveGroup({ group }: { group: WorkGroup }) {
+  const [open, toggle] = useDisclosure();
+  const item = liveItem(group);
+  const label = item.kind === "call"
+    ? [item.call.text, item.call.detail].filter(Boolean).join("  ")
+    : latestThought(item.block.text) || "Thinking";
+  return <WorkRow
+    icon={item.kind === "call" ? <CallMark call={item.call} /> : <Brain strokeWidth={1.75} />}
+    label={label}
+    labelTone={item.kind === "thought" ? "thought" : "muted"}
+    ariaLabel={group.items.length > 1 ? `${label}, ${group.items.length} steps so far` : undefined}
+    live
+    expanded={open}
+    onToggle={toggle}>
+    <StepList items={group.items} running follow />
+  </WorkRow>;
+}
+
+/** A finished stretch: its one step on its own, or one counted line that opens to them. */
+function WorkGroupView({ group, running }: { group: WorkGroup; running: boolean }) {
+  const [open, toggle] = useDisclosure();
+  if (group.live) return <LiveGroup group={group} />;
+  if (group.items.length === 1) return <StepRow item={group.items[0]} running={running} />;
+  return <WorkRow
+    icon={<GroupMark group={group} />}
+    label={group.summary}
+    trailing={<DiffStat added={group.added} removed={group.removed} />}
+    stamp={group.startedMs}
+    expanded={open}
+    onToggle={toggle}>
+    <StepList items={group.items} running={running} follow={false} />
+  </WorkRow>;
+}
+
+/**
+ * The running turn's clock. It writes its own text once a second, so the
+ * timeline never re-renders to tick.
+ */
 function Elapsed({ since }: { since: number }) {
-  const [now, setNow] = useState(() => Date.now());
+  const ref = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    const tick = () => { if (ref.current) ref.current.textContent = traceDuration(Math.max(0, Date.now() - since)); };
+    tick();
+    const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, []);
-  return <span className="tabular-nums">{traceDuration(Math.max(0, now - since))}</span>;
+  }, [since]);
+  return <span ref={ref} className="tabular-nums">{traceDuration(Math.max(0, Date.now() - since))}</span>;
 }
 
 function CopyButton({ text, label }: { text: string; label: string }) {
@@ -300,26 +434,19 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
   const t = useT();
   const lang = t("trace_report.locale");
   const running = turn.status === "running";
-  const timeline = useMemo(() => buildTimeline(turn.blocks, { t, lang, status: turn.status, live: true }), [turn.blocks, t, lang, turn.status]);
-  const lastActivity = [...timeline.entries].reverse().find((entry) => entry.kind === "activity")?.id;
+  const rows = useMemo(() => buildThreadRows(turn.blocks, { t, lang, status: turn.status }), [turn.blocks, t, lang, turn.status]);
   const answer = answerText(turn);
   return <div className="space-y-1.5" data-testid="thread-turn" data-status={turn.status}>
-    {timeline.entries.map((entry) => {
-      if (entry.kind === "activity") return <ActivityGroup key={entry.id} entry={entry} live={running && entry.id === lastActivity} />;
-      if (entry.kind === "prose") {
-        if (entry.tone === "reasoning") return <ThoughtRow key={entry.id} block={entry.block as ReasoningBlock} />;
-        return <div key={entry.id} className={PROSE}><ChatMarkdown text={entry.text} /></div>;
-      }
-      const block = entry.block;
-      if (block.kind === "text") return <div key={entry.id} className={PROSE}><ChatMarkdown text={block.text} /></div>;
-      if (block.kind === "reasoning") {
-        return block.live && running ? <LiveThinking key={entry.id} block={block} /> : block.text.trim() ? <ThoughtRow key={entry.id} block={block} /> : null;
-      }
-      const pending = pendingLabel(block);
-      return pending ? <WorkRow key={entry.id} icon={pending.icon} label={pending.text} live /> : null;
+    {rows.map((row) => {
+      if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
+      if (row.kind === "text") return <div key={row.id} className={PROSE}><ChatMarkdown text={row.text} /></div>;
+      const pending = pendingLabel(row.block);
+      return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
     })}
     {running
-      ? <WorkRow icon={<span className="h-1.5 w-1.5 rounded-full bg-accent animate-jarvis-pulse" />} label={<>Working for <Elapsed since={turn.startedMs} /></>} live />
+      ? <div className="flex h-6 min-w-0 items-center px-1 text-sm leading-relaxed text-muted-foreground" data-testid="thread-working">
+        <span className="whitespace-nowrap">Working for <Elapsed since={turn.startedMs} /></span>
+      </div>
       : <>
         {turn.status === "error" && turn.error && <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{turn.error}</p>}
         <ChangedFiles turn={turn} />

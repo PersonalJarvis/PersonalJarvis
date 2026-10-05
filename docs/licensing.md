@@ -69,6 +69,12 @@ The bundled Silero VAD model (`jarvis/assets/vad/`) carries its own MIT license
 from its own authors and keeps it — the switch does not touch it, and no
 dependency's terms change either. Nothing is relicensed by being included here.
 
+The Agentic IDE thread work log contains portions adapted from
+[T3 Code](https://github.com/pingdotgg/t3code) @ `e22c880`, MIT License,
+Copyright (c) 2026 T3 Tools Inc. The full text ships in
+[`third_party/t3code/LICENSE`](../third_party/t3code/LICENSE), and every adapted
+file names its source in a header comment.
+
 ## Still to do at the 2.0 release
 
 - [ ] `homebrew-tap/Formula/personal-jarvis-installer.rb` and

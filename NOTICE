@@ -11,3 +11,9 @@ License, Version 2.0.
 Bundled third-party components keep their own licenses and notices - see
 docs/licensing.md and the license files shipped beside them, for example
 jarvis/assets/vad/LICENSE for the Silero VAD model.
+
+The Agentic IDE thread work log (jarvis/ui/web/frontend/src/components/agentic/threads/
+threadWork.ts, ThreadTimeline.tsx and the live-tool-shine rule in src/index.css)
+contains portions adapted from T3 Code (https://github.com/pingdotgg/t3code),
+Copyright (c) 2026 T3 Tools Inc., used under the MIT License - see
+third_party/t3code/LICENSE.
