@@ -348,14 +348,18 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
             # A corrupt stored spec shows as an empty routine, not a crash.
             spec = {}
     action = spec.get("action") or {}
+    webhook = (spec.get("trigger") or {}).get("type") == "webhook"
+    task_id = row.get("id")
     return {
-        "id": row.get("id"),
+        "id": task_id,
         "title": row.get("title") or spec.get("title"),
         "state": row.get("state"),
         "trigger": spec.get("trigger"),
-        "webhook_path": f"/api/tasks/hooks/{row.get('id')}"
-        if (spec.get("trigger") or {}).get("type") == "webhook"
-        else None,
+        "connection_required": webhook,
+        "webhook_path": f"/api/tasks/hooks/{task_id}" if webhook else None,
+        "connection_path": (
+            f"/api/tasks/{task_id}/webhook-connection" if webhook else None
+        ),
         "prompt": str(action.get("prompt") or "").partition("\nRoutine:\n")[2],
         "announce_on_success": spec.get("announce_on_success"),
         "due_at_ns": row.get("due_at_ns"),
