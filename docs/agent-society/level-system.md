@@ -106,15 +106,9 @@ best unlocks.
 Agents also unlock the wearable looks of their profile symbol
 (`LOOK_UNLOCKS` in `rules.py`, ids from `companion/accessories.json`):
 
-| Agent level | Looks |
-|---|---|
-| 1 | sunglasses, cap, headphones, coder hoodie |
-| 2 | lab coat |
-| 3 | cigar |
-| 4 | suit and tie |
-| 6 | top hat |
-| 8 | tuxedo |
-| 10 | crown |
+All ten looks are open from level 1 (the maintainer's choice); raising a
+value in `LOOK_UNLOCKS` turns that look back into a level-up reward, and
+every surface below follows on its own.
 
 The snapshot carries them as `looks` and a level-up's `ProgressionAwarded`
 names them in `unlocked_looks`. The agent's level-up toast shows the agent

@@ -129,9 +129,6 @@ def test_subject_ids_name_their_kind():
     assert subject_kind("robot:x") is None
 
 
-def test_agent_looks_start_open_and_climb_as_rewards():
-    assert sum(1 for level in LOOK_UNLOCKS.values() if level == 1) >= 3
-    assert max(LOOK_UNLOCKS.values()) <= 10
-    assert looks_between(1, 1) == []
-    assert looks_between(3, 4) == ["suit"]
-    assert set(looks_between(1, 50)) == {k for k, v in LOOK_UNLOCKS.items() if v > 1}
+def test_every_agent_look_is_open_from_the_start():
+    assert LOOK_UNLOCKS and all(level == 1 for level in LOOK_UNLOCKS.values())
+    assert looks_between(1, 50) == []
