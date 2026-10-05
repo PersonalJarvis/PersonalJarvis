@@ -41,17 +41,17 @@ def isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_a_stored_cli_is_offered_like_a_built_in() -> None:
     """The whole point: one form, and every surface offers it."""
     entry = custom_clis.create_custom_cli(
-        "Antigravity", "agy", description="Google's terminal coding CLI."
+        "Acme Coding", "agy", description="Google's terminal coding CLI."
     )
     registry.refresh_custom_agents()
 
-    assert entry.id == "antigravity"
+    assert entry.id == "acme-coding"
     assert entry.id in registry.coding_agent_names()
     assert entry.id in registry.agent_names()
 
     agent = registry.get_agent(entry.id)
     assert agent is not None
-    assert agent.display_name == "Antigravity"
+    assert agent.display_name == "Acme Coding"
     assert agent.is_coding_agent
     assert agent.custom is True
     assert agent.executable == "agy"
@@ -63,25 +63,25 @@ def test_a_stored_cli_is_offered_like_a_built_in() -> None:
 
 def test_the_plain_terminal_stays_last_in_the_menu() -> None:
     """A "no agent at all" choice buried among CLIs reads as one of them."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("Acme Coding", "agy")
     registry.refresh_custom_agents()
     assert registry.agent_names()[-1] == registry.PLAIN_TERMINAL
 
 
 def test_a_rename_keeps_the_id() -> None:
     """Panes, saved workspaces and resume offers all recorded the old id."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
-    renamed = custom_clis.update_custom_cli(entry.id, display_name="Antigravity CLI")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
+    renamed = custom_clis.update_custom_cli(entry.id, display_name="Acme Coding CLI")
     assert renamed.id == entry.id
-    assert renamed.display_name == "Antigravity CLI"
+    assert renamed.display_name == "Acme Coding CLI"
 
 
 def test_a_name_that_is_taken_gets_its_own_id() -> None:
     """Two entries answering to one name is a pane running the wrong tool."""
-    first = custom_clis.create_custom_cli("Antigravity", "agy")
-    second = custom_clis.create_custom_cli("Antigravity", "agy2")
+    first = custom_clis.create_custom_cli("Acme Coding", "agy")
+    second = custom_clis.create_custom_cli("Acme Coding", "agy2")
     assert first.id != second.id
-    assert second.id.startswith("antigravity")
+    assert second.id.startswith("acme-coding")
 
 
 def test_a_built_in_name_cannot_be_claimed() -> None:
@@ -99,7 +99,7 @@ def test_accents_survive_into_the_id() -> None:
 
 @pytest.mark.parametrize(
     ("name", "command"),
-    [("", "agy"), ("  ", "agy"), ("Antigravity", ""), ("Antigravity", "  ")],
+    [("", "agy"), ("  ", "agy"), ("Acme Coding", ""), ("Acme Coding", "  ")],
 )
 def test_a_blank_name_or_command_is_refused(name: str, command: str) -> None:
     with pytest.raises(custom_clis.CustomCliError):
@@ -113,7 +113,7 @@ def test_a_multi_line_command_is_refused() -> None:
 
 
 def test_deleting_removes_it_from_the_registry() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     registry.refresh_custom_agents()
     assert entry.id in registry.coding_agent_names()
 
@@ -235,7 +235,7 @@ async def test_detection_never_runs_a_strangers_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The sweep shares the event loop the wake microphone is delivered on."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("Acme Coding", "agy")
     registry.refresh_custom_agents()
 
     probed: list[str] = []
@@ -250,12 +250,12 @@ async def test_detection_never_runs_a_strangers_binary(
     monkeypatch.setattr(registry, "_on_path", lambda binary: binary == "agy")
     infos = {i.name: i for i in await registry.detect_agents(RecordingProber())}
 
-    assert "antigravity" not in probed
-    assert infos["antigravity"].installed is True
+    assert "acme-coding" not in probed
+    assert infos["acme-coding"].installed is True
     # No version, ever: asking would be the subprocess this path avoids.
-    assert infos["antigravity"].version is None
-    assert infos["antigravity"].install_command is None
-    assert infos["antigravity"].custom is True
+    assert infos["acme-coding"].version is None
+    assert infos["acme-coding"].install_command is None
+    assert infos["acme-coding"].custom is True
 
 
 @pytest.mark.asyncio
@@ -286,10 +286,10 @@ PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
 def test_a_logo_is_stored_and_served() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     updated = custom_clis.set_logo(entry.id, SVG, "mark.svg")
-    assert updated.logo == "antigravity.svg"
-    assert custom_clis.logo_url(updated) == "/api/workspace-clis/antigravity/logo"
+    assert updated.logo == "acme-coding.svg"
+    assert custom_clis.logo_url(updated) == "/api/workspace-clis/acme-coding/logo"
 
     found = custom_clis.logo_file(entry.id)
     assert found is not None
@@ -300,16 +300,16 @@ def test_a_logo_is_stored_and_served() -> None:
 
 def test_replacing_a_logo_leaves_no_stale_sibling() -> None:
     """A later lookup keyed on the id would otherwise pick up the old file."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
     updated = custom_clis.set_logo(entry.id, PNG, "mark.png")
-    assert updated.logo == "antigravity.png"
-    assert not (custom_clis.logo_dir() / "antigravity.svg").exists()
+    assert updated.logo == "acme-coding.png"
+    assert not (custom_clis.logo_dir() / "acme-coding.svg").exists()
 
 
 def test_a_file_that_is_not_what_it_claims_is_refused() -> None:
     """These bytes get handed back out over HTTP."""
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, b"PK\x03\x04 a zip file", "mark.svg")
     with pytest.raises(custom_clis.CustomCliError):
@@ -317,13 +317,13 @@ def test_a_file_that_is_not_what_it_claims_is_refused() -> None:
 
 
 def test_an_unknown_extension_is_refused() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, b"MZ binary", "mark.exe")
 
 
 def test_an_oversized_logo_is_refused() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     huge = SVG + b" " * custom_clis.MAX_LOGO_BYTES
     with pytest.raises(custom_clis.CustomCliError):
         custom_clis.set_logo(entry.id, huge, "mark.svg")
@@ -379,9 +379,9 @@ def test_a_hand_edited_id_cannot_write_or_read_outside_the_logo_directory(
 
 
 def test_deleting_an_entry_takes_its_logo_with_it() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
-    stored = custom_clis.logo_dir() / "antigravity.svg"
+    stored = custom_clis.logo_dir() / "acme-coding.svg"
     assert stored.exists()
 
     custom_clis.delete_custom_cli(entry.id)
@@ -389,7 +389,7 @@ def test_deleting_an_entry_takes_its_logo_with_it() -> None:
 
 
 def test_clearing_a_logo_falls_back_to_the_monogram() -> None:
-    entry = custom_clis.create_custom_cli("Antigravity", "agy")
+    entry = custom_clis.create_custom_cli("Acme Coding", "agy")
     custom_clis.set_logo(entry.id, SVG, "mark.svg")
     cleared = custom_clis.clear_logo(entry.id)
     assert cleared.logo == ""
@@ -410,13 +410,13 @@ def test_a_short_one_word_name_claims_no_spoken_alias() -> None:
 
 
 def test_a_real_name_is_addressable_by_voice() -> None:
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    custom_clis.create_custom_cli("Acme Coding", "agy")
     registry.refresh_custom_agents()
-    assert registry.spoken_aliases().get("antigravity") == "antigravity"
+    assert registry.spoken_aliases().get("acme-coding") == "acme-coding"
 
 
 def test_a_custom_name_is_reserved_against_pane_call_signs() -> None:
-    """Saying "Antigravity" must not be a coin flip between a pane and a CLI."""
-    custom_clis.create_custom_cli("Antigravity", "agy")
+    """Saying "Acme Coding" must not be a coin flip between a pane and a CLI."""
+    custom_clis.create_custom_cli("Acme Coding", "agy")
     registry.refresh_custom_agents()
-    assert "antigravity" in registry.reserved_call_signs()
+    assert "acme-coding" in registry.reserved_call_signs()
