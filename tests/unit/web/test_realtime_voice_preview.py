@@ -21,6 +21,26 @@ from jarvis.ui.web import provider_routes
 from jarvis.ui.web.provider_routes import router
 
 
+# Snapshot the catalog at collection time. The Windows full-suite runner loads
+# provider tests in one process, and tests that deliberately rebuild the
+# provider registry must not make this route suite order-dependent.
+_TEST_SPECS = {
+    provider_id: provider_routes.get_spec(provider_id)
+    for provider_id in (
+        "openai",
+        "openai-realtime",
+        "gemini-live",
+        "vertex-live",
+        "local-realtime",
+    )
+}
+
+
+@pytest.fixture(autouse=True)
+def _stable_provider_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(provider_routes, "get_spec", _TEST_SPECS.get)
+
+
 def _app() -> FastAPI:
     app = FastAPI()
     app.include_router(router)
