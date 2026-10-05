@@ -35,6 +35,11 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { DictationButton } from "@/components/agentchat/DictationButton";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import {
+  COMPOSER_CONTROL_CLASS,
+  ComposerBrainPicker,
+  type BrainSection,
+} from "@/components/agentchat/ComposerBrainPicker";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
 import { readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
@@ -84,14 +89,15 @@ import { cn } from "@/lib/utils";
  * A pick applies to the open session at once (the backend patches it and
  * the next turn runs on it); with no session open it seeds the next one.
  *
- * The front page (`jarvis` surface) draws the same controls the quiet way
- * (2026-10-01, judged against the Claude app's composer): the text on top,
- * and one row under it — a round "+" and the permission glyph on the left;
- * on the right ONE brain pick (provider and model in one list), the effort
- * as a muted word, dictation, and one round button that is voice mode while
- * the box is empty, Send once there is something to send, and Stop while a
- * turn runs. The IDE keeps the labelled pills: there a folder, a stance and
- * a model are things a person checks before every run.
+ * The front page (`jarvis` surface) draws the same controls as one quiet
+ * row under the text (2026-10-05): a round "+", then three labelled picks
+ * split by hairlines — the brain (provider mark and model, one menu with a
+ * provider rail and favourites), the effort word, the permission stance as
+ * glyph and word — and on the right dictation and one round blue button
+ * that is voice mode while the box is empty, Send once there is something
+ * to send, and Stop while a turn runs. The IDE keeps the labelled pills:
+ * there a folder, a stance and a model are things a person checks before
+ * every run.
  */
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
@@ -317,6 +323,19 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // pick here is its own thing: what you choose here is what the chat runs.
   // A provider's mark plus its live health dot — the same face in the IDE's
   // provider list and in the front page's brain pick.
+  // A coding CLI installed on this machine wears its own mark; a catalog row
+  // wears its provider family's. Both are real brand files — the fallback
+  // either would otherwise take is a letter in a box, and a letter is not a
+  // logo.
+  const providerMark = useCallback(
+    (p: ProviderOption) =>
+      p.agentMark ? (
+        <AgentMark agent={p.agentMark} label={p.label} logoUrl={p.logoUrl} variant="plain" size="sm" />
+      ) : (
+        <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+      ),
+    [],
+  );
   const providerIcon = useCallback(
     (p: ProviderOption) => {
       const live = liveHealthFor(p, health[p.id]);
@@ -324,21 +343,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       const working = p.connected && live?.status === "ok";
       return (
         <span className="relative inline-flex shrink-0">
-          {/* A coding CLI installed on this machine wears its own mark; a
-              catalog row wears its provider family's. Both are real brand
-              files — the fallback either would otherwise take is a letter
-              in a box, and a letter is not a logo. */}
-          {p.agentMark ? (
-            <AgentMark
-              agent={p.agentMark}
-              label={p.label}
-              logoUrl={p.logoUrl}
-              variant="plain"
-              size="sm"
-            />
-          ) : (
-            <ProviderLogo providerId={p.id} label={p.label} size="sm" />
-          )}
+          {providerMark(p)}
           {(broken || working) && (
             <span
               data-testid={`provider-health-${p.id}`}
@@ -358,7 +363,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         </span>
       );
     },
-    [health, t],
+    [health, providerMark, t],
   );
 
   const providerGroups = useMemo<ComboboxGroup[]>(() => {
@@ -411,46 +416,62 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   // The front page's single brain pick: every offered provider as a group,
   // its default first, then its models (live when loaded, else curated).
-  const brainGroups = useMemo<ComboboxGroup[]>(() => {
+  // Each row says whose model it is on a quiet second line; the rail on the
+  // panel's left picks which provider's rows are listed.
+  const brainProviders = useMemo<ProviderOption[]>(() => {
     if (!minimal) return [];
     const anyConnected = providers.some((p) => p.connected);
-    const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
-    return shown.map((p) => {
+    return anyConnected ? providers.filter((p) => p.connected) : providers;
+  }, [minimal, providers]);
+
+  const brainSections = useMemo<BrainSection[]>(
+    () => brainProviders.map((p) => ({ id: p.id, label: p.label, icon: providerIcon(p), muted: !p.connected })),
+    [brainProviders, providerIcon],
+  );
+
+  const brainGroups = useMemo<ComboboxGroup[]>(() => {
+    return brainProviders.map((p) => {
       const live = liveModels[p.id];
       const models = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
-      const icon = providerIcon(p);
       const disabled = !p.connected;
       const hint = disabled
         ? p.cli_installed === false
           ? t("agent_chat.provider_not_installed")
           : t("agent_chat.provider_connect")
         : undefined;
+      const owner = (note?: string) => (
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <span className="inline-flex shrink-0 scale-[0.86]">{providerMark(p)}</span>
+          <span className="truncate">{note ? `${p.label} · ${note}` : p.label}</span>
+        </span>
+      );
       return {
         id: p.id,
         label: p.label,
         options: [
           {
             value: brainValue(p.id, ""),
-            label: p.label,
-            hint: hint ?? t("agent_chat.model_default"),
-            icon,
+            label: t("agent_chat.model_default"),
+            triggerLabel: p.label,
+            description: owner(),
+            hint,
             disabled,
-            searchText: p.family,
+            searchText: `${p.label} ${p.family}`,
           },
           ...models
             .filter((m) => m.id)
             .map((m) => ({
               value: brainValue(p.id, m.id),
               label: m.label || m.id,
-              hint: hint ?? m.note,
-              icon,
+              description: owner(m.note),
+              hint,
               disabled,
               searchText: `${p.label} ${m.id}`,
             })),
         ],
       };
     });
-  }, [minimal, providers, liveModels, providerIcon, t]);
+  }, [brainProviders, liveModels, providerMark, t]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -499,6 +520,23 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const showEffort = Boolean(provider) && effortLevels.length > 1;
 
+  // The front page's effort menu: a heading over the ladder, and the
+  // provider's own default marked so a person can find their way back.
+  const effortMenuGroups = useMemo<ComboboxGroup[]>(
+    () => [
+      {
+        id: "effort",
+        label: t("agent_chat.effort_heading"),
+        options: effortLevels.map((lvl) => ({
+          value: lvl,
+          label: effortLabel(lvl, t),
+          badge: lvl === provider?.default_effort ? t("agent_chat.default_badge") : undefined,
+        })),
+      },
+    ],
+    [effortLevels, provider, t],
+  );
+
   const effortGroups = useMemo<ComboboxGroup[]>(
     () => [
       {
@@ -533,6 +571,26 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             label: m.label,
             searchText: m.description,
             icon: <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />,
+          };
+        }),
+      },
+    ],
+    [permissionModes],
+  );
+  // The front page's permission menu: each stance with its glyph, its name
+  // and one quiet line on what it lets through.
+  const permissionMenuGroups = useMemo<ComboboxGroup[]>(
+    () => [
+      {
+        id: "permission",
+        options: permissionModes.map((m) => {
+          const Icon = permissionModeIcon(m.id);
+          return {
+            value: m.id,
+            label: m.label,
+            description: m.description || undefined,
+            searchText: m.description,
+            icon: <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />,
           };
         }),
       },
@@ -576,7 +634,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       className={cn(
         "relative flex flex-col transition-[border-color,box-shadow]",
         minimal
-          ? "gap-2 rounded-[22px] border border-border bg-card px-3 pb-2.5 pt-3 shadow-rim focus-within:border-border-strong"
+          ? "gap-2 rounded-3xl border border-border bg-card px-3 pb-3 pt-3.5 shadow-rim focus-within:border-border-strong"
           : "gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}
@@ -595,6 +653,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         attachments={files.attachments}
         analyzing={files.analyzing}
         onRemove={files.remove}
+        previews={files.previews}
       />
       <ComposerTypeahead
         anchorRef={cardRef}
@@ -625,10 +684,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[48px] px-1.5 text-base" : "text-reading")}
+        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[64px] px-2 text-base" : "text-reading")}
       />
       {minimal ? (
-        <div className="flex items-center gap-1" data-testid="composer-row">
+        <div className="flex min-w-0 items-center gap-0.5" data-testid="composer-row">
           <ComposerAddMenu
             key={activeSessionId ?? "new"}
             compact
@@ -649,33 +708,85 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             }
             disabled={!connected || busy}
           />
-          {/* The stance as its glyph alone (maintainer, 2026-10-03): the
-              front page runs on Bypass by default, and its shield in the
-              warning hue already says "nothing asks" — spelling it out took
-              half the row. The name stays in the tooltip and the list. */}
+          {/* Who answers, how hard it thinks, what it may do — three labelled
+              picks in one line, split by hairlines. Each opens its own menu:
+              the models with a provider rail, the effort ladder with the
+              provider's default marked, the stances with one line each. */}
+          <span className="flex min-w-0 items-center" data-testid="composer-brain">
+            <ComposerBrainPicker
+              value={brainValue(draft.provider, draft.model)}
+              groups={brainGroups}
+              sections={brainSections}
+              currentSection={draft.provider}
+              onChange={(v) => {
+                const [nextProvider, nextModel] = splitBrainValue(v);
+                void setDraft(
+                  nextProvider !== draft.provider ? { provider: nextProvider, model: nextModel } : { model: nextModel },
+                );
+              }}
+              ariaLabel={t("agent_chat.pick_model")}
+              fallbackLabel={
+                catalogError
+                  ? t("agent_chat.catalog_unavailable")
+                  : provider
+                    ? draft.model || provider.label
+                    : t("agent_chat.pick_provider")
+              }
+              searchPlaceholder={t("agent_chat.search_models")}
+              triggerPrefix={provider ? providerIcon(provider) : undefined}
+              disabled={!catalog || (Boolean(locks?.provider) && Boolean(locks?.model))}
+              title={locks?.model ?? locks?.provider}
+              className="min-w-0"
+            />
+            {showEffort && (
+              <>
+                <ControlSeparator />
+                <span className="inline-flex shrink-0" title={locks?.effort}>
+                  <Combobox
+                    value={draft.effort}
+                    groups={effortMenuGroups}
+                    onChange={(v) => void setDraft({ effort: v })}
+                    ariaLabel={t("agent_chat.pick_effort")}
+                    fallbackLabel={effortLabel(draft.effort, t)}
+                    disabled={Boolean(locks?.effort)}
+                    testId="composer-effort"
+                    triggerHint={false}
+                    panelMinWidth={220}
+                    className={COMPOSER_CONTROL_CLASS}
+                  />
+                </span>
+              </>
+            )}
+          </span>
           {provider && permissionModes.length > 0 && (
-            <span
-              title={locks?.permissionMode ?? [permissionLabel, permissionDescription].filter(Boolean).join(" — ")}
-              className="inline-flex"
-            >
-              <Combobox
-                value={permissionValue}
-                groups={permissionGroups}
-                onChange={(v) => void setDraft({ permissionMode: v })}
-                ariaLabel={permissionLabel ? `${t("agent_chat.pick_permission")}: ${permissionLabel}` : t("agent_chat.pick_permission")}
-                fallbackLabel={t("agent_chat.pick_permission")}
-                disabled={Boolean(locks?.permissionMode)}
-                testId="composer-permission"
-                triggerHint={false}
-                iconOnly
-                className={cn(
-                  "h-8 w-8 justify-center gap-0 rounded-full bg-transparent p-0 shadow-none hover:bg-secondary focus-visible:ring-1 [&_svg]:h-4 [&_svg]:w-4",
-                  permissionModeIcon(permissionValue) === ShieldOff
-                    ? "text-warning [&_svg]:text-warning"
-                    : "text-muted-foreground",
-                )}
-              />
-            </span>
+            <>
+              <ControlSeparator />
+              {/* The stance as glyph and word. Full access wears the warning
+                  hue, so "nothing asks" reads before anyone opens the menu. */}
+              <span
+                title={locks?.permissionMode ?? [permissionLabel, permissionDescription].filter(Boolean).join(" — ")}
+                className="inline-flex min-w-0 shrink"
+              >
+                <Combobox
+                  value={permissionValue}
+                  groups={permissionMenuGroups}
+                  onChange={(v) => void setDraft({ permissionMode: v })}
+                  ariaLabel={permissionLabel ? `${t("agent_chat.pick_permission")}: ${permissionLabel}` : t("agent_chat.pick_permission")}
+                  fallbackLabel={t("agent_chat.pick_permission")}
+                  disabled={Boolean(locks?.permissionMode)}
+                  testId="composer-permission"
+                  triggerHint={false}
+                  panelMinWidth={320}
+                  className={cn(
+                    COMPOSER_CONTROL_CLASS,
+                    "max-w-[200px] max-md:[&>span.truncate]:sr-only",
+                    permissionModeIcon(permissionValue) === ShieldOff
+                      ? "text-warning hover:text-warning [&_svg]:text-warning"
+                      : undefined,
+                  )}
+                />
+              </span>
+            </>
           )}
           {hasPlan && (
             <button
@@ -688,9 +799,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               disabled={Boolean(locks?.permissionMode)}
               title={locks?.permissionMode ?? (planOn ? t("agent_chat.plan_hint") : t("agent_chat.build_hint"))}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-full text-xs font-medium transition-colors disabled:opacity-50",
+                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
                 planOn
-                  ? "bg-accent-soft px-3 text-accent"
+                  ? "bg-accent-soft px-2.5 text-accent"
                   : "w-8 justify-center text-muted-foreground hover:bg-secondary hover:text-foreground",
               )}
             >
@@ -698,54 +809,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               {planOn && t("agent_chat.mode_plan")}
             </button>
           )}
-          <span className="flex-1" />
-          {/* Model and effort read as one label — "Sonnet 5.5 High ⌄" — the
-              way the Codex app draws its brain pick; each half still opens
-              its own list. */}
-          <span className="inline-flex min-w-0 items-center" data-testid="composer-brain">
-          <Pick
-            testId="composer-model"
-            ariaLabel={t("agent_chat.pick_model")}
-            value={brainValue(draft.provider, draft.model)}
-            groups={brainGroups}
-            onChange={(v) => {
-              const [nextProvider, nextModel] = splitBrainValue(v);
-              void setDraft(
-                nextProvider !== draft.provider ? { provider: nextProvider, model: nextModel } : { model: nextModel },
-              );
-            }}
-            fallbackLabel={
-              catalogError
-                ? t("agent_chat.catalog_unavailable")
-                : provider
-                  ? draft.model || provider.label
-                  : t("agent_chat.pick_provider")
-            }
-            searchPlaceholder={t("agent_chat.search_models")}
-            disabled={!catalog || (Boolean(locks?.provider) && Boolean(locks?.model))}
-            title={locks?.model ?? locks?.provider}
-            className="max-w-[240px]"
-            // The model reads as a word; the provider's mark (with its red
-            // dot) only joins it when that seat is failing.
-            triggerIcon={Boolean(provider?.connected && liveHealthFor(provider, health[provider.id])?.status === "error")}
-            chevron={!showEffort}
-            compact
-          />
-          {showEffort && (
-            <Pick
-              testId="composer-effort"
-              ariaLabel={t("agent_chat.pick_effort")}
-              value={draft.effort}
-              groups={effortGroups}
-              onChange={(v) => void setDraft({ effort: v })}
-              fallbackLabel={effortLabel(draft.effort, t)}
-              disabled={Boolean(locks?.effort)}
-              title={locks?.effort}
-              muted
-              compact
-            />
-          )}
-          </span>
+          <span className="min-w-2 flex-1" />
           <input
             ref={fileInputRef}
             type="file"
@@ -766,6 +830,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             stopLabel={t("chats_view.dictation_stop")}
             shape="round"
           />
+          {/* One round action in the signal blue: voice mode while the box is
+              empty, Send once there is something to send, Stop while a turn
+              runs. */}
           {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
             <button
               type="button"
@@ -773,7 +840,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               aria-label={t("agent_chat.stop")}
               title={t("agent_chat.stop")}
               data-testid="composer-stop"
-              className="ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/85"
+              className={cn(ROUND_ACTION_CLASS, "bg-accent text-accent-foreground hover:bg-accent/85")}
             >
               <Square className="h-3 w-3 fill-current" />
             </button>
@@ -785,9 +852,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               aria-label={t("agent_chat.send")}
               data-testid="composer-send"
               className={cn(
-                "ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                ROUND_ACTION_CLASS,
                 canSend || canFinishDictation
-                  ? "bg-foreground text-background hover:bg-foreground/85"
+                  ? "bg-accent text-accent-foreground hover:bg-accent/85"
                   : "bg-secondary text-muted-foreground",
               )}
             >
@@ -801,7 +868,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
               aria-label={t("assistant_chat.voice_enter")}
               title={fill(t("assistant_chat.voice_enter_hint"), { name: assistantName })}
               data-testid="composer-voice-mode"
-              className="ml-0.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/85 disabled:opacity-60"
+              className={cn(ROUND_ACTION_CLASS, "bg-accent text-accent-foreground hover:bg-accent/85 disabled:opacity-60")}
             >
               <AudioLines className="h-4 w-4" />
             </button>
@@ -1141,7 +1208,7 @@ function liveHealthFor(
   return live;
 }
 
-/** One compact pick on the composer's bottom row — a pill-sized Combobox. */
+/** One pick on the IDE composer's bottom row — a pill-sized Combobox. */
 function Pick({
   testId,
   ariaLabel,
@@ -1154,10 +1221,6 @@ function Pick({
   disabled,
   title,
   className,
-  muted = false,
-  triggerIcon = true,
-  chevron = true,
-  compact = false,
 }: {
   testId: string;
   ariaLabel: string;
@@ -1170,12 +1233,6 @@ function Pick({
   disabled?: boolean;
   title?: string;
   className?: string;
-  /** Muted ink — a secondary pick beside a primary one (the effort word). */
-  muted?: boolean;
-  triggerIcon?: boolean;
-  chevron?: boolean;
-  /** Half of a joined label (the front page's model + effort): no side padding between the halves. */
-  compact?: boolean;
 }) {
   // The Combobox draws the selected option's own icon; the leading glyph here
   // is the column's, shown when the option has none (model, effort, permission).
@@ -1197,22 +1254,26 @@ function Pick({
         disabled={disabled}
         testId={testId}
         triggerHint={false}
-        triggerIcon={triggerIcon}
-        chevron={chevron}
         className={cn(
-          compact
-            ? "h-8 w-auto max-w-[200px] gap-1 rounded-lg border-transparent bg-transparent px-1 py-0 text-sm font-medium shadow-none [&>svg:last-child]:h-3.5 [&>svg:last-child]:w-3.5"
-            : "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium shadow-none",
-          muted ? "text-muted-foreground" : "text-foreground",
+          "h-7 w-auto max-w-[200px] gap-1.5 rounded-lg border-transparent bg-transparent py-0 pr-1.5 text-xs font-medium text-foreground shadow-none",
           "hover:border-transparent hover:bg-secondary focus-visible:ring-1",
-          compact ? undefined : icon && !selectedHasIcon ? "pl-7" : "pl-1.5",
+          icon && !selectedHasIcon ? "pl-7" : "pl-1.5",
         )}
       />
     </span>
   );
 }
 
-const BRAIN_SEP = "\u0001";
+/** The thin upright line between two picks on the front page's row. */
+function ControlSeparator() {
+  return <span aria-hidden className="mx-0.5 hidden h-4 w-px shrink-0 bg-border-strong sm:block" />;
+}
+
+/** The front page's one round action — voice mode, Send or Stop. */
+const ROUND_ACTION_CLASS =
+  "ml-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors";
+
+const BRAIN_SEP ="\u0001";
 
 /** One value for a provider + model pair in the front page's brain pick. */
 export function brainValue(provider: string, model: string): string {

@@ -56,6 +56,14 @@ export interface ComboboxOption {
   icon?: ReactNode;
   /** Listed for context, but cannot be selected. */
   disabled?: boolean;
+  /** A second, quieter line under the label — what the option does. Not searched. */
+  description?: ReactNode;
+  /** A small outlined word beside the label ("Default"). */
+  badge?: string;
+  /** Drawn at the row's end, before the check — a per-row action such as a star. */
+  trailing?: ReactNode;
+  /** What the closed trigger says when this option is picked, if not the label. */
+  triggerLabel?: string;
 }
 
 export interface ComboboxGroup {
@@ -101,6 +109,20 @@ export interface ComboboxProps {
   triggerIcon?: boolean;
   /** Draw the open/close chevron on the trigger (default). */
   chevron?: boolean;
+  /** Drawn on the trigger before the label, whatever is picked (a provider mark). */
+  triggerPrefix?: ReactNode;
+  /**
+   * What the list shows while the search box is empty. Searching always runs
+   * over every `groups` entry, so a picker can browse one section at a time
+   * and still find anything by typing.
+   */
+  browseGroups?: ComboboxGroup[];
+  /** A column drawn left of the search and the list (a rail of sections). */
+  aside?: ReactNode;
+  /** Told whenever the panel opens or closes. */
+  onOpenChange?: (open: boolean) => void;
+  /** The panel's narrowest width; defaults to 288 px. */
+  panelMinWidth?: number;
 }
 
 /** Panel height cap — roughly nine rows, enough to show that more exist. */
@@ -224,6 +246,11 @@ export function Combobox({
   iconOnly = false,
   triggerIcon = true,
   chevron = true,
+  triggerPrefix,
+  browseGroups,
+  aside,
+  onOpenChange,
+  panelMinWidth = MIN_PANEL_WIDTH,
 }: ComboboxProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -249,7 +276,7 @@ export function Combobox({
   }, [groups, value]);
 
   const visibleGroups = useMemo(() => {
-    if (!query.trim()) return groups;
+    if (!query.trim()) return browseGroups ?? groups;
     // Searching collapses the bands into one flat result list. Groups are a
     // browsing aid, and a shortlist band deliberately repeats entries that are
     // also in the full list below it — which is fine while browsing and reads
@@ -266,7 +293,7 @@ export function Combobox({
       }
     }
     return hits.length ? [{ id: "results", options: hits }] : [];
-  }, [groups, matches, query]);
+  }, [groups, browseGroups, matches, query]);
 
   // Flat order of concrete rendered occurrences — arrow keys walk this, not
   // merely option values. A shortlist may repeat the same logical value in the
@@ -309,7 +336,7 @@ export function Combobox({
         };
     const rect = trigger.getBoundingClientRect();
     const maxWidth = Math.max(MIN_PANEL_WIDTH, box.width - 2 * VIEWPORT_MARGIN);
-    const width = Math.min(Math.max(rect.width, MIN_PANEL_WIDTH), maxWidth);
+    const width = Math.min(Math.max(rect.width, panelMinWidth), maxWidth);
     const spaceBelow = box.bottom - rect.bottom - VIEWPORT_MARGIN;
     const spaceAbove = rect.top - box.top - VIEWPORT_MARGIN;
     // Flip upwards only when below is genuinely too cramped AND above is
@@ -338,7 +365,7 @@ export function Combobox({
             maxHeight,
           },
     );
-  }, []);
+  }, [panelMinWidth]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -397,6 +424,25 @@ export function Combobox({
     if (!open) return;
     setActiveIndex(0);
   }, [query, open]);
+
+  // Another section picked in the aside: start on the current value when that
+  // section holds it, else on its first row.
+  useEffect(() => {
+    if (!open || !browseGroups) return;
+    const index = enabled.findIndex(({ option }) => option.value === value);
+    setActiveIndex(index >= 0 ? index : 0);
+    // Keyed on the section only; `enabled` and `value` are read as they are now.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browseGroups]);
+
+  const openChangeRef = useRef(onOpenChange);
+  openChangeRef.current = onOpenChange;
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current === open) return;
+    wasOpen.current = open;
+    openChangeRef.current?.(open);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -473,7 +519,7 @@ export function Combobox({
     }
   }
 
-  const triggerLabel = selected?.label ?? fallbackLabel ?? value;
+  const triggerLabel = selected?.triggerLabel ?? selected?.label ?? fallbackLabel ?? value;
   const activeOption = enabled[activeIndex];
   const trapped = trapsPanel(panelHost(triggerRef.current));
 
@@ -508,6 +554,7 @@ export function Combobox({
           className,
         )}
       >
+        {triggerPrefix}
         {triggerIcon && selected?.icon}
         <span className={iconOnly ? "sr-only" : "min-w-0 flex-1 truncate"}>{triggerLabel}</span>
         {!iconOnly && triggerHint && selected?.hint && (
@@ -550,10 +597,12 @@ export function Combobox({
             // absolute inside a transformed/fixed dialog: that dialog is the
             // containing block, and the measured left/top are in its box.
             className={cn(
-              "pointer-events-auto z-[70] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float",
+              "pointer-events-auto z-[70] flex overflow-hidden rounded-lg border border-border-strong bg-popover shadow-float",
               trapped ? "absolute" : "fixed",
             )}
           >
+            {aside}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {searchable && (
               <div className="flex items-center gap-2 border-b border-border px-3 py-2">
                 <Search
@@ -645,32 +694,45 @@ export function Combobox({
                         // overlay on a floating layer lifts on black and
                         // deepens on paper, which is right in both themes.
                         className={cn(
-                          "relative flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors",
+                          "relative flex cursor-pointer flex-col rounded-md px-3 py-1.5 text-sm transition-colors",
                           isActive && "bg-sheen/[0.08] text-foreground",
                           isSelected && "font-medium text-foreground-strong",
                           option.disabled && "cursor-not-allowed text-faint-foreground",
                         )}
                       >
-                        {option.icon}
-                        <span className="min-w-0 flex-1 truncate">
-                          {option.label}
+                        <span className="flex min-w-0 items-center gap-2">
+                          {option.icon}
+                          <span className="min-w-0 truncate">{option.label}</span>
+                          {option.badge && (
+                            <span className="shrink-0 rounded-md border border-border-strong px-1.5 text-micro font-medium leading-5 text-muted-foreground">
+                              {option.badge}
+                            </span>
+                          )}
+                          <span className="flex-1" />
+                          {option.hint && (
+                            <span className="shrink-0 truncate text-sm font-normal text-muted-foreground">
+                              {option.hint}
+                            </span>
+                          )}
+                          {option.trailing}
+                          {isSelected && (
+                            <Check
+                              aria-hidden="true"
+                              className="h-3.5 w-3.5 shrink-0 text-foreground-strong"
+                            />
+                          )}
                         </span>
-                        {option.hint && (
-                          <span className="shrink-0 truncate text-sm text-muted-foreground">
-                            {option.hint}
+                        {option.description && (
+                          <span className="mt-0.5 line-clamp-2 text-xs font-normal text-muted-foreground">
+                            {option.description}
                           </span>
-                        )}
-                        {isSelected && (
-                          <Check
-                            aria-hidden="true"
-                            className="h-3.5 w-3.5 shrink-0 text-foreground-strong"
-                          />
                         )}
                       </div>
                     );
                   })}
                 </div>
               ))}
+            </div>
             </div>
           </div>,
           panelHost(triggerRef.current),

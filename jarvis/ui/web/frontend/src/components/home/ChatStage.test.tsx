@@ -517,6 +517,29 @@ describe("ChatStage (agent chat)", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
+  it("marks the provider's default effort and explains each stance in its menu", async () => {
+    useAgentChatStore.setState({
+      catalog: {
+        ...CATALOG,
+        providers: CATALOG.providers.map((p) => ({
+          ...p,
+          permission_modes: p.permission_modes.map((m) => ({ ...m, description: `What ${m.label} lets through.` })),
+        })),
+      },
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-effort"));
+    const effort = await screen.findByTestId("composer-effort-panel");
+    expect(effort.textContent).toContain("Reasoning");
+    const high = within(effort).getAllByRole("option").find((el) => el.getAttribute("data-value") === "high");
+    expect(high?.textContent).toContain("Default");
+    fireEvent.keyDown(effort, { key: "Escape" });
+
+    fireEvent.click(screen.getByTestId("composer-permission"));
+    const stances = await screen.findByTestId("composer-permission-panel");
+    expect(stances.textContent).toContain("What Auto-accept edits lets through.");
+  });
+
   it("wears one glyph per stance on the unified ladder", async () => {
     // The front page's catalog hands every provider the same four-step ladder
     // (jarvis/agent_chat/permissions.py, surface=jarvis); the composer draws

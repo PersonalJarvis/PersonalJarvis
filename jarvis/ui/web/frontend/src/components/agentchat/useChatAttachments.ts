@@ -17,7 +17,7 @@
  * differs: a chat has no pane to type a path into, so the files are HELD here
  * and travel with the sentence when it is sent.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   extractPaneDrop,
@@ -33,6 +33,13 @@ import { attachChatFiles, type AgentChatSurface, type ChatAttachment } from "@/l
 export interface ChatAttachments {
   /** What will travel with the next message. */
   attachments: ChatAttachment[];
+  /**
+   * A local picture for each held image whose bytes passed through this
+   * window (a paste, the file picker, a claimed appshot), keyed by the
+   * attachment's name. A file the desktop shell handed over by path has no
+   * bytes here and simply has no entry.
+   */
+  previews: Record<string, string>;
   /** How many files are being read right now — 0 when nothing is in flight. */
   analyzing: number;
   /** True while a file drag hovers the composer; drives the drop styling. */
@@ -67,7 +74,17 @@ export function useChatAttachments(
 ): ChatAttachments {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [analyzing, setAnalyzing] = useState(0);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const previewsRef = useRef(previews);
+  previewsRef.current = previews;
   const { sessionId, cwd, provider, surface } = target;
+
+  // Object URLs hold the picture in memory until revoked; let them go with
+  // the composer.
+  useEffect(
+    () => () => Object.values(previewsRef.current).forEach((url) => URL.revokeObjectURL(url)),
+    [],
+  );
 
   const attach = useCallback(
     async (payload: PaneDropPayload) => {
@@ -92,6 +109,17 @@ export function useChatAttachments(
           ...prev,
           ...found.filter((item) => !prev.some((held) => held.name === item.name)),
         ]);
+        const pictures = matchPreviews(found, payload.files);
+        if (Object.keys(pictures).length > 0) {
+          setPreviews((prev) => {
+            const next = { ...prev };
+            for (const [name, url] of Object.entries(pictures)) {
+              if (next[name]) URL.revokeObjectURL(next[name]);
+              next[name] = url;
+            }
+            return next;
+          });
+        }
       } catch (e) {
         onProblem((e as Error).message, "error");
       } finally {
@@ -149,12 +177,26 @@ export function useChatAttachments(
 
   const remove = useCallback((name: string) => {
     setAttachments((prev) => prev.filter((a) => a.name !== name));
+    setPreviews((prev) => {
+      if (!prev[name]) return prev;
+      URL.revokeObjectURL(prev[name]);
+      const rest = { ...prev };
+      delete rest[name];
+      return rest;
+    });
   }, []);
 
-  const clear = useCallback(() => setAttachments([]), []);
+  const clear = useCallback(() => {
+    setAttachments([]);
+    setPreviews((prev) => {
+      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+      return {};
+    });
+  }, []);
 
   return {
     attachments,
+    previews,
     analyzing,
     dragging,
     dragHandlers,
@@ -163,4 +205,30 @@ export function useChatAttachments(
     remove,
     clear,
   };
+}
+
+/**
+ * Pair the images the backend read with the bytes that went up, for a
+ * picture in the composer. The backend may store a file under another name
+ * (a clipboard image gets one, a clash gets a suffix), so an exact name match
+ * comes first and a lone image on both sides pairs by being alone. Anything
+ * still unpaired gets no picture rather than the wrong one.
+ */
+export function matchPreviews(found: ChatAttachment[], files: File[]): Record<string, string> {
+  if (typeof URL.createObjectURL !== "function") return {};
+  const images = files.filter((f) => f.type.startsWith("image/"));
+  const read = found.filter((item) => item.kind === "image");
+  const out: Record<string, string> = {};
+  const used = new Set<File>();
+  for (const item of read) {
+    const file = images.find((f) => f.name === item.name && !used.has(f));
+    if (file) {
+      used.add(file);
+      out[item.name] = URL.createObjectURL(file);
+    }
+  }
+  if (Object.keys(out).length === 0 && images.length === 1 && read.length === 1) {
+    out[read[0].name] = URL.createObjectURL(images[0]);
+  }
+  return out;
 }
