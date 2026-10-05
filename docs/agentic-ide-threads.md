@@ -55,7 +55,6 @@ for an approval and a blue dot for news since it was last opened.
 ## Platforms
 
 Nothing in the thread layout is OS-specific: paths are compared
-case-insensitively only for Windows drive paths, the drawer opens the
-platform's default shell, and the git routes run the same `git` everywhere.
-Project actions and the layout choice are kept in the browser's storage and
-fall back to defaults when storage is blocked.
+case-insensitively only for Windows drive paths and the git calls run the same
+`git` everywhere. The layout choice and the last agent pick are kept in the
+browser's storage and fall back to defaults when storage is blocked.
