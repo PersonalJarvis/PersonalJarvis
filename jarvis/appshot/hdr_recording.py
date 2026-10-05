@@ -37,8 +37,10 @@ HDR_CANDIDATES: tuple[tuple[str, str, dict[str, str]], ...] = (
 )
 #: AVCOL_PRI_BT2020, AVCOL_TRC_SMPTE2084, AVCOL_SPC_BT2020_NCL, AVCOL_RANGE_MPEG.
 HDR10_TAGS = (9, 16, 9, 1)
-#: Stop after this many lost-and-reopened desktops in a row.
-_MAX_REOPENS = 5
+#: How long a recording waits for the desktop to come back (UAC prompt,
+#: Win+L) before it stops, and how often it looks.
+_REOPEN_PATIENCE_S = 60.0
+_REOPEN_STEP_S = 0.25
 
 
 def hdr_capture_available() -> bool:
@@ -116,7 +118,7 @@ class HdrCapture:
         from jarvis.platform.win_duplication import DesktopDuplication  # noqa: PLC0415
 
         self._dup = DesktopDuplication(self.device_name)
-        self._dup.wait_first_frame(1500)
+        self._dup.wait_first_frame(600)
         width, height = self._dup.size
         x, y, w, h = self.frac
         left, top = round(x * width), round(y * height)
@@ -144,14 +146,10 @@ class HdrCapture:
             self._dup = None
 
     def _run(self, encoder: Any, epoch: float) -> None:
-        from jarvis.platform.win_duplication import (  # noqa: PLC0415
-            AccessLost,
-            DesktopDuplication,
-        )
+        from jarvis.platform.win_duplication import AccessLost  # noqa: PLC0415
 
         interval = 1.0 / self.fps
         due = time.perf_counter()
-        reopens = 0
         try:
             while not self._stop.is_set():
                 try:
@@ -163,19 +161,16 @@ class HdrCapture:
                     y, uv = self._dup.read_p010(self.crop, self.out_size, sdr_white=self.sdr_white)
                     encoder.submit((y, uv), now - epoch)
                     self.frames += 1
-                    reopens = 0
                     due += interval
                     if due < now:  # fell behind: skip, keep real timestamps
                         due = now + interval
                     if self.poster is None:
                         self.poster = self._make_poster()
                 except AccessLost:
-                    reopens += 1
-                    if reopens > _MAX_REOPENS:
-                        raise
+                    # The last frame keeps playing while the desktop is away.
                     self._dup.close()
-                    time.sleep(0.2)  # the desktop is switching; let it settle
-                    self._dup = DesktopDuplication(self.device_name)
+                    self._reopen()
+                    due = time.perf_counter()
         except Exception as exc:  # noqa: BLE001 - reported to the user via the sidecar
             log.exception("appshot: HDR capture failed")
             self.error = (
@@ -187,6 +182,35 @@ class HdrCapture:
             if self._dup is not None:
                 self._dup.close()
                 self._dup = None
+
+    def _reopen(self) -> None:
+        """Wait for the desktop to return; raise when it changed or never came back."""
+        from jarvis.platform.display_color import display_color  # noqa: PLC0415
+        from jarvis.platform.win_duplication import (  # noqa: PLC0415
+            DesktopDuplication,
+            DuplicationUnavailable,
+        )
+
+        size = self._dup.size
+        deadline = time.monotonic() + _REOPEN_PATIENCE_S
+        while not self._stop.is_set():
+            try:
+                self._dup = DesktopDuplication(self.device_name)
+                break
+            except DuplicationUnavailable:
+                # Secure desktop: duplication is refused until it closes.
+                if time.monotonic() > deadline:
+                    raise
+                self._stop.wait(_REOPEN_STEP_S)
+        else:
+            return
+        if self._dup.size != size:
+            raise DuplicationUnavailable("The screen resolution changed during recording.")
+        colour = display_color(self.device_name)
+        if not colour.extended:
+            raise DuplicationUnavailable("HDR was switched off during recording.")
+        self.sdr_white_nits = colour.sdr_white_nits
+        self.sdr_white = max(1.0, colour.sdr_white_nits) / 80.0
 
     def _make_poster(self) -> Any:
         """A small SDR picture of the first frame for the corner card."""

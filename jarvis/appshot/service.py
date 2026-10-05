@@ -244,7 +244,10 @@ async def _encode_master(shot: Appshot, markup: Any, config: Any) -> Appshot:
     except Exception:  # noqa: BLE001 - the model's picture is still kept and shown
         log.warning("appshot: the lossless copy could not be made", exc_info=True)
         shot = replace(shot, master=None)
-    get_store().update(shot)
+    store = get_store()
+    store.attach_originals(shot)
+    # A picture edited meanwhile keeps its edit; the library gets what is held.
+    shot = store.get(shot.id) or shot
     await _keep_in_library(shot, config)
     return shot
 

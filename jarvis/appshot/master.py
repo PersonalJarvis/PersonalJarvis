@@ -53,7 +53,7 @@ def encode_master(master: Any, markup: Any = None) -> MasterFiles:
         return MasterFiles(hdr_image.encode_png8(sdr), width, height, hdr_png)
     from PIL import Image  # noqa: PLC0415
 
-    picture = Image.fromarray(np.asarray(master.pixels, dtype=np.uint8), "RGB")
+    picture = Image.fromarray(np.ascontiguousarray(master.pixels, dtype=np.uint8))
     if marked:
         from jarvis.appshot.markup import apply_to_image  # noqa: PLC0415
 

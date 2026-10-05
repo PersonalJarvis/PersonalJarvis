@@ -83,12 +83,20 @@ def test_a_background_frame_surrounds_the_hdr_picture() -> None:
 
 
 def test_hdr_master_gets_the_same_black_boxes_as_the_model_picture() -> None:
+    from jarvis.screen_context.redaction import apply_image_redactions
+
+    region = (2, 3, 4, 2)
+    model, _hits = apply_image_redactions(
+        Image.new("RGB", (10, 10), (255, 255, 255)),
+        ((region, RedactionRule.SENSITIVE_PATTERN, "card"),),
+    )
+    model_black = (np.asarray(model) == 0).all(axis=-1)
     master = MasterImage(pixels=np.full((10, 10, 4), 1.0, np.float16), hdr=True)
-    hit = RedactionHit(rule=RedactionRule.SENSITIVE_PATTERN, label="card", region=(2, 3, 4, 2))
+    hit = RedactionHit(rule=RedactionRule.SENSITIVE_PATTERN, label="card", region=region)
     redacted = _redacted_master(master, None, (hit,))
-    pixels = redacted.pixels.astype(np.float32)
-    assert pixels[3:5, 2:6, :3].max() == 0.0
-    assert pixels[0, 0, 0] == 1.0
+    master_black = (redacted.pixels[..., :3].astype(np.float32) == 0).all(axis=-1)
+    assert model_black.any()
+    assert np.array_equal(master_black, model_black)
     assert np.asarray(master.pixels)[3, 2, 0] == 1.0  # the input is not changed
 
 
@@ -105,13 +113,23 @@ def test_an_edit_drops_the_lossless_copies_of_the_unedited_picture() -> None:
     assert edited.original_png == b"" and edited.hdr_png == b""
 
 
-def test_update_swaps_in_the_finished_copy_without_moving_it() -> None:
+def test_finished_copies_attach_without_moving_the_appshot() -> None:
     store = AppshotStore()
     store.remember(_shot(), keep_s=60)
     store.remember(_shot(id="b" * 32), keep_s=60)
-    store.update(_shot(original_png=b"orig"))
+    store.attach_originals(_shot(original_png=b"orig"))
     assert store.get("a" * 32).original_png == b"orig"
     assert store.latest().id == "b" * 32
+
+
+def test_copies_finishing_after_an_edit_never_undo_it() -> None:
+    store = AppshotStore()
+    store.remember(_shot(), keep_s=60)
+    store.replace_image("a" * 32, b"edited", "image/png", 4, 2)
+    store.attach_originals(_shot(original_png=b"orig", hdr_png=b"hdr"))
+    held = store.get("a" * 32)
+    assert held.image == b"edited"
+    assert held.original_png == b"" and held.hdr_png == b""
 
 
 def test_save_writes_the_lossless_png_and_the_hdr_one_beside_it(tmp_path) -> None:

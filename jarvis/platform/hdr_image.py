@@ -180,7 +180,7 @@ def encode_png8(rgb8: Any, icc_profile: bytes | None = None) -> bytes:
 
     from PIL import Image  # noqa: PLC0415
 
-    image = Image.fromarray(rgb8, "RGB") if not isinstance(rgb8, Image.Image) else rgb8
+    image = rgb8 if isinstance(rgb8, Image.Image) else Image.fromarray(rgb8)
     buffer = io.BytesIO()
     options: dict[str, Any] = {"format": "PNG", "compress_level": 6}
     if icc_profile:

@@ -42,8 +42,9 @@ def grab_extended(bbox: tuple[int, int, int, int]) -> ExtendedFrame | None:
         return None
     try:
         return _grab_windows(bbox)
-    except Exception:  # noqa: BLE001 - the 8-bit grab is always the fallback
-        log.info("full-depth capture unavailable; using the 8-bit grab", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - the 8-bit grab is always the fallback
+        log.info("full-depth capture unavailable (%s); using the 8-bit grab", exc)
+        log.debug("full-depth capture failure", exc_info=True)
         return None
 
 
@@ -92,6 +93,7 @@ def _nudge_repaint() -> None:
     user32 = ctypes.WinDLL("user32")
     hwnd = user32.GetForegroundWindow()
     if hwnd:
-        # RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW
-        user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0400 | 0x0080 | 0x0100)
+        # RDW_INVALIDATE | RDW_ALLCHILDREN: posts a repaint, never waits for
+        # it, so a hung foreground app cannot hold the shutter.
+        user32.RedrawWindow(hwnd, None, None, 0x0001 | 0x0080)
     time.sleep(0.016)

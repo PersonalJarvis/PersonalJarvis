@@ -127,8 +127,8 @@ float3 Fetch(float2 px) {
 
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
-    uint2 half = uint2(Sizes.zw) / 2;
-    if (id.x >= half.x || id.y >= half.y) return;
+    uint2 halfSize = uint2(Sizes.zw) / 2;
+    if (id.x >= halfSize.x || id.y >= halfSize.y) return;
     float3 acc = 0.0;
     [unroll] for (uint i = 0; i < 4; i++) {
         uint2 p = id.xy * 2 + uint2(i & 1, i >> 1);

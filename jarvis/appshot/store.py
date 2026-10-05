@@ -150,19 +150,26 @@ class AppshotStore:
                 )
             return edited
 
-    def update(self, shot: Appshot) -> None:
-        """Swap in a newer version of a held appshot, keeping its place and expiry."""
+    def attach_originals(self, shot: Appshot) -> None:
+        """Give a held appshot its finished lossless copies, keeping place and expiry.
+
+        Only the copies move over. When the picture was edited meanwhile, the
+        copies describe the unedited picture and are dropped instead.
+        """
+
+        def merged(held: Appshot) -> Appshot:
+            if held.image != shot.image:
+                return replace(held, master=None)
+            return replace(
+                held, original_png=shot.original_png, hdr_png=shot.hdr_png, master=None
+            )
+
         with self._lock:
             for index, (held, until) in enumerate(self._recent):
                 if held.id == shot.id:
-                    self._recent[index] = (
-                        replace(shot, delivered_to=held.delivered_to or shot.delivered_to),
-                        until,
-                    )
+                    self._recent[index] = (merged(held), until)
             if self._pending is not None and self._pending.id == shot.id:
-                self._pending = replace(
-                    shot, delivered_to=self._pending.delivered_to or shot.delivered_to
-                )
+                self._pending = merged(self._pending)
 
     def mark_delivered(self, shot_id: str, delivered_to: str) -> None:
         with self._lock:

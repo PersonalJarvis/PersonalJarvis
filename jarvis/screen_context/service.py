@@ -1273,7 +1273,9 @@ def _redacted_master(master: MasterImage, redacted: Any, hits: Any) -> MasterIma
 
     An SDR master IS the redacted raw frame. An HDR master gets every hit's
     region filled with black (scRGB 0) — the boxes were found on the frame
-    derived from it, so they cover the same content.
+    derived from it, so they cover the same content. Like PIL's
+    ``rectangle([x, y, x + w, y + h])`` in :mod:`redaction`, the box includes
+    its end row and column.
     """
     import numpy as np  # noqa: PLC0415
 
@@ -1286,7 +1288,7 @@ def _redacted_master(master: MasterImage, redacted: Any, hits: Any) -> MasterIma
             continue
         left, top, w, h = hit.region
         x0, y0 = max(0, int(left)), max(0, int(top))
-        x1, y1 = min(width, int(left + w)), min(height, int(top + h))
+        x1, y1 = min(width, int(left + w) + 1), min(height, int(top + h) + 1)
         if x1 > x0 and y1 > y0:
             pixels[y0:y1, x0:x1, :3] = 0
     return replace(master, pixels=pixels)
