@@ -1,25 +1,25 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
-import type { ReasoningBlock, TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
 import { readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
 import { useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { buildThreadRows, isFailed, liveItem, thoughtPreview, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
+import { buildThreadRows, isFailed, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
 
 /**
  * A thread's conversation: the person's messages on the right, the agent's
  * answer as plain reading text on the left, and the work in between as a
- * quiet log. Each stretch of thinking and tool calls is one line — "Ran 3
- * commands and read 2 files" once it is done, the newest step with a moving
- * shine while it runs — that opens to the single steps. A thought shows as
- * one line of its own words and opens to all of them; a call opens to what
- * it ran, the diff it made or what came back. A running turn ends in
- * "Working for 12s"; a finished one says how long it worked and which files
- * it changed.
+ * quiet log. Every thought the agent put into words reads as a paragraph of
+ * its own, a step quieter than the answer. The tool calls between two
+ * paragraphs are one group — "Edited files, ran commands" — that opens to a
+ * short scrolling list of the single steps; the group the running turn is in
+ * stays open and follows its newest step. A call opens to what it ran, the
+ * diff it made or what came back. A running turn ends in "Working for 12s";
+ * a finished one says how long it worked and which files it changed.
  *
  * The work-log geometry and the live shine are adapted from pingdotgg/t3code
  * @ e22c880 (apps/web/src/components/chat/WorkLog.tsx, MessagesTimeline.tsx),
@@ -27,7 +27,7 @@ import { buildThreadRows, isFailed, liveItem, thoughtPreview, type ThreadRow, ty
  */
 
 const PROSE = cn(
-  "prose prose-neutral max-w-none text-base leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
+  "py-1 prose prose-neutral max-w-none text-base leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
   "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
   "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
   "prose-headings:mb-1.5 prose-headings:mt-4 prose-headings:font-semibold prose-headings:tracking-normal prose-headings:text-foreground-strong",
@@ -40,15 +40,16 @@ const PROSE = cn(
 );
 
 /**
- * One row of the work log: a 24 px line — a 16 px mark centred in a 24 px
- * box, the words, then a trailing note. Rows inside an opened group sit
- * tight; a row on its own gets a little air. The words of a live row carry
- * the shine; a row that opens shows its chevron.
+ * One row of the work log, set like a line of the answer: body size, a 16 px
+ * mark flush with the text's left edge, the words in the quiet tone, then a
+ * trailing note. A row on its own gets the air of a paragraph; rows inside an
+ * opened group sit tight. The words of a live row carry the shine. The
+ * chevron of a row that opens shows only on hover, focus or while open, so a
+ * finished log reads as plain grey lines between the agent's words.
  */
 function WorkRow({
   icon,
   label,
-  labelTone = "muted",
   trailing,
   expanded,
   onToggle,
@@ -60,8 +61,6 @@ function WorkRow({
 }: {
   icon: ReactNode;
   label: ReactNode;
-  /** Thoughts read a step brighter than tool calls. */
-  labelTone?: "muted" | "thought";
   trailing?: ReactNode;
   expanded?: boolean;
   onToggle?: () => void;
@@ -72,16 +71,24 @@ function WorkRow({
   ariaLabel?: string;
   children?: ReactNode;
 }) {
-  const line = <span className="flex min-h-6 min-w-0 items-center gap-1.5 text-sm leading-relaxed">
-    <span aria-hidden className="flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
-    <span className={cn("min-w-0 flex-1 truncate", labelTone === "thought" ? "text-foreground-secondary" : "text-muted-foreground", live && "live-tool-shine")}>{label}</span>
+  const line = <span className={cn("flex min-h-6 min-w-0 items-center gap-2.5 leading-6", grouped ? "text-sm" : "text-base")}>
+    <span aria-hidden className="flex h-6 w-4 shrink-0 items-center justify-center text-muted-foreground [&_svg]:h-4 [&_svg]:w-4">{icon}</span>
+    <span className={cn(
+      "min-w-0 truncate transition-colors",
+      "text-muted-foreground",
+      onToggle && !live && "group-hover/row:text-foreground",
+      live && "live-tool-shine",
+    )}>{label}</span>
     {trailing}
-    {stamp ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/row:opacity-100">{clock(stamp)}</span> : null}
     {onToggle && <span aria-hidden className="flex h-4 w-4 shrink-0 items-center justify-center">
-      <ChevronRight className={cn("h-3 w-3 text-muted-foreground opacity-70 transition-transform duration-200", expanded && "rotate-90")} />
+      <ChevronRight className={cn(
+        "h-3.5 w-3.5 text-muted-foreground opacity-0 transition duration-200 group-hover/row:opacity-70 group-focus-visible/row:opacity-70",
+        expanded && "rotate-90 opacity-70",
+      )} />
     </span>}
+    {stamp ? <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 group-focus-visible/row:opacity-100">{clock(stamp)}</span> : null}
   </span>;
-  const row = cn("group/row relative block w-full min-w-0 rounded-md px-0.5 text-left", grouped ? "py-0" : "py-0.5");
+  const row = cn("group/row relative block w-full min-w-0 rounded-md text-left", grouped ? "py-0" : "py-1.5");
   return <div className="min-w-0">
     {onToggle
       ? <button type="button" aria-expanded={expanded} aria-label={ariaLabel} onClick={onToggle}
@@ -196,7 +203,7 @@ function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; s
   const label = running
     ? [call.text, detail].filter(Boolean).join("  ")
     : <>
-      <span className={cn(call.kind === "command" && "font-mono text-[0.8125rem]")}>{call.text}</span>
+      <span>{call.text}</span>
       {detail && <span className="ml-1.5 text-muted-foreground/70">{detail}</span>}
       {tail && <span className="ml-1.5 text-muted-foreground/70">— {tail}</span>}
     </>;
@@ -217,38 +224,16 @@ function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; s
   </WorkRow>;
 }
 
-/** The newest paragraph of a thought, for a live line that follows the thinking. */
-function latestThought(text: string): string {
-  const paragraphs = text.split(/\n\s*\n/).map((part) => thoughtPreview(part)).filter(Boolean);
-  return paragraphs[paragraphs.length - 1] ?? "";
+const THOUGHT_PROSE = cn(PROSE, "text-foreground-secondary dark:text-foreground-secondary prose-p:text-foreground-secondary prose-li:text-foreground-secondary");
+
+/** A thought in the agent's own words: a paragraph between its work, a step quieter than the answer. */
+function ThoughtView({ text }: { text: string }) {
+  return <div className={THOUGHT_PROSE} data-testid="thread-thought"><ChatMarkdown text={text} /></div>;
 }
 
-const THOUGHT_PROSE = cn(PROSE, "text-sm leading-6 text-foreground-secondary prose-p:my-1.5 prose-p:text-foreground-secondary prose-li:text-foreground-secondary");
-
-/**
- * A thought folded to one line of its own words; opened, the line names it
- * ("Thought for 4.2s") and the whole text reads below.
- */
-function ThoughtRow({ block, live, stamp, grouped = false, onOpenChange }: {
-  block: ReasoningBlock; live: boolean; stamp?: number; grouped?: boolean; onOpenChange?: OpenChange;
-}) {
-  const [open, toggle] = useDisclosure(onOpenChange);
-  const text = block.text.trim();
-  const heading = live ? "Thinking" : block.durationMs ? `Thought for ${traceDuration(block.durationMs)}` : "Thought";
-  const preview = useMemo(() => thoughtPreview(text), [text]);
-  return <WorkRow
-    icon={<Brain strokeWidth={1.75} />}
-    label={open ? heading : preview || heading}
-    labelTone="thought"
-    stamp={stamp}
-    grouped={grouped}
-    live={live}
-    expanded={open}
-    onToggle={text ? toggle : undefined}>
-    <div className="ml-7 flex max-h-96 flex-col overflow-auto px-0.5 py-1 select-text scrollbar-jarvis">
-      <div className={THOUGHT_PROSE}><ChatMarkdown text={text} /></div>
-    </div>
-  </WorkRow>;
+/** The wordless thought the running turn is having: one live "Thinking" step. */
+function ThinkingRow({ grouped = false }: { grouped?: boolean }) {
+  return <WorkRow icon={<Brain strokeWidth={1.75} />} label="Thinking" grouped={grouped} live />;
 }
 
 /**
@@ -259,7 +244,7 @@ const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_im
 
 function StepRow({ item, running, grouped, onOpenChange }: { item: WorkItem; running: boolean; grouped?: boolean; onOpenChange?: OpenChange }) {
   if (item.kind === "call") return <CallRow call={item.call} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
-  return <ThoughtRow block={item.block} live={running && item.block.live} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
+  return running ? <ThinkingRow grouped={grouped} /> : null;
 }
 
 const FADE = "1.5rem";
@@ -326,41 +311,24 @@ function GroupMark({ group }: { group: WorkGroup }) {
 }
 
 /**
- * The stretch the running turn is in: one line naming its newest step with
- * the shine — the command it runs, the thought it is having — that opens to
- * every step so far.
+ * The calls between two paragraphs: a lone step on its own line, else one
+ * line naming what they did that opens to every step. The group the running
+ * turn is in opens by itself and follows its newest step; the reader can
+ * still close it.
  */
-function LiveGroup({ group }: { group: WorkGroup }) {
-  const [open, toggle] = useDisclosure();
-  const item = liveItem(group);
-  const label = item.kind === "call"
-    ? [item.call.text, item.call.detail].filter(Boolean).join("  ")
-    : latestThought(item.block.text) || "Thinking";
-  return <WorkRow
-    icon={item.kind === "call" ? <CallMark call={item.call} /> : <Brain strokeWidth={1.75} />}
-    label={label}
-    labelTone={item.kind === "thought" ? "thought" : "muted"}
-    ariaLabel={group.items.length > 1 ? `${label}, ${group.items.length} steps so far` : undefined}
-    live
-    expanded={open}
-    onToggle={toggle}>
-    <StepList items={group.items} running follow />
-  </WorkRow>;
-}
-
-/** A finished stretch: its one step on its own, or one counted line that opens to them. */
 function WorkGroupView({ group, running }: { group: WorkGroup; running: boolean }) {
-  const [open, toggle] = useDisclosure();
-  if (group.live) return <LiveGroup group={group} />;
+  const [open, setOpen] = useState(group.live);
   if (group.items.length === 1) return <StepRow item={group.items[0]} running={running} />;
   return <WorkRow
     icon={<GroupMark group={group} />}
     label={group.summary}
+    ariaLabel={group.live ? `${group.summary}, ${group.items.length} steps so far` : undefined}
     trailing={<DiffStat added={group.added} removed={group.removed} />}
     stamp={group.startedMs}
+    live={group.live}
     expanded={open}
-    onToggle={toggle}>
-    <StepList items={group.items} running={running} follow={false} />
+    onToggle={() => setOpen((value) => !value)}>
+    <StepList items={group.items} running={running} follow={group.live} />
   </WorkRow>;
 }
 
@@ -557,7 +525,7 @@ function pendingLabel(block: ToolBlock): { icon: ReactNode; text: string } | nul
  */
 export function foldFinished(rows: ThreadRow[]): { work: ThreadRow[]; answer: ThreadRow[] } {
   let last = -1;
-  rows.forEach((row, index) => { if (row.kind === "work") last = index; });
+  rows.forEach((row, index) => { if (row.kind === "work" || row.kind === "thought") last = index; });
   return { work: rows.slice(0, last + 1), answer: rows.slice(last + 1) };
 }
 
@@ -581,6 +549,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
       : `Worked${duration ? ` for ${duration}` : ""}`;
   const renderRow = (row: ThreadRow) => {
     if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
+    if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
     if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     const pending = pendingLabel(row.block);
     return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
