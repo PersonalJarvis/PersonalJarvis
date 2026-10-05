@@ -2,7 +2,6 @@ import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
@@ -121,12 +120,9 @@ export function SocietyView() {
   }, []);
 
   useEffect(() => {
-    const reset = useSocietyShell.getState().reset;
-    reset();
     // A reload starts in Agents; restore a native window left fullscreen by it.
     if (inDesktopShell()) void setMapFullscreen(false).catch(() => setFullscreenError(true));
     return () => {
-      reset();
       void setMapFullscreen(false).catch((error) => console.warn("Fullscreen exit failed", error));
     };
   }, []);

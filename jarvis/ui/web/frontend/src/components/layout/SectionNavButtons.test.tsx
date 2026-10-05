@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SectionNavButtons } from "./SectionNavButtons";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
@@ -21,7 +21,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("SectionNavButtons", () => {
-  it("renders back and forward with no sidebar toggle unless one is offered", () => {
+  it("renders back and forward with no sidebar toggle", () => {
     render(<SectionNavButtons />);
 
     expect(screen.getByTestId("section-nav-buttons")).toBeTruthy();
@@ -71,36 +71,6 @@ describe("SectionNavButtons", () => {
     fireEvent.click(forwardButton());
     expect(useEventStore.getState().activeSection).toBe("dictation");
     expect(forwardButton().disabled).toBe(true);
-  });
-
-  it("offers the sidebar toggle with its state and hands the click to the shell", () => {
-    const onToggle = vi.fn();
-    const { rerender } = render(
-      <SectionNavButtons sidebarToggle={{ collapsed: false, onToggle }} />,
-    );
-
-    const toggle = screen.getByTestId("section-nav-sidebar");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.getAttribute("aria-label")).toBeTruthy();
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-
-    rerender(
-      <SectionNavButtons sidebarToggle={{ collapsed: true, onToggle }} />,
-    );
-    expect(
-      screen.getByTestId("section-nav-sidebar").getAttribute("aria-expanded"),
-    ).toBe("false");
-  });
-
-  it("keeps a caller-provided test id for the sidebar toggle", () => {
-    render(
-      <SectionNavButtons
-        sidebarToggle={{ collapsed: true, onToggle: () => {}, testId: "settings-sidebar-toggle" }}
-      />,
-    );
-
-    expect(screen.getByTestId("settings-sidebar-toggle")).toBeTruthy();
   });
 
   it("stays out of a detached solo window", () => {
