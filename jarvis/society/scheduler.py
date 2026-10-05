@@ -417,7 +417,22 @@ class SocietyScheduler:
             return
         run_id = env.payload.get("run_id")
         if isinstance(run_id, str):
-            self._running.pop(run_id, None)
+            owner = self._running.get(run_id)
+            if owner == env.from_agent:
+                self._running.pop(run_id, None)
+            elif owner is not None:
+                # A durable RESULT must never release another agent's live slot.
+                # This can happen after a stale/forged handoff carries a foreign
+                # run_id; keep the real owner accounting intact and continue the
+                # RESULT projection itself.
+                log.warning(
+                    "society: RESULT %s from %s referenced run %s owned by %s; "
+                    "preserving the live run slot",
+                    env.event_id,
+                    env.from_agent,
+                    run_id,
+                    owner,
+                )
         else:
             # No run id: release one slot of the sender, oldest first.
             for rid, agent in list(self._running.items()):
