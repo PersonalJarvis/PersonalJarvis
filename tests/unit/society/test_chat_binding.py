@@ -696,7 +696,7 @@ class FakeTurnService(FakeService):
         if q in subscribers:
             subscribers.remove(q)
 
-    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None) -> str:
+    async def send(self, session_id: str, text: str, attachments=None, *, incoming=None, read_only=False) -> str:
         self.sent.append((session_id, text))
         turn_id = f"turn-{len(self.sent)}"
         if incoming is not None:
