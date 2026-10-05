@@ -2802,6 +2802,12 @@ class BrainManager:
         # no effect on the dispatch path.
         self._cost_meter = cost_meter
         self._curator = curator
+        # Frontier auto-apply is opt-in and lazy: it must not add provider
+        # round-trips to process boot, and concurrent first turns must share one
+        # resolver pass. A completed attempt is remembered for this manager
+        # instance, including a no-op/failure with cache fallback.
+        self._frontier_auto_apply_lock = asyncio.Lock()
+        self._frontier_auto_apply_done = False
         self._vision_provider = None
         # Drag-drop: ad-hoc images attached to ONE upcoming turn, keyed by that
         # turn's trace_id (see jarvis/brain/drop_context.py). Popped + cleared in
@@ -10850,6 +10856,40 @@ class BrainManager:
     # Generate — Haupt-Entrypoint
     # ------------------------------------------------------------------
 
+    async def _maybe_apply_frontier_auto_switch(self) -> None:
+        """Apply the opt-in frontier refresh once before the first real turn."""
+        brain_cfg = getattr(self._config, "brain", None)
+        if not bool(getattr(brain_cfg, "frontier_auto_apply", False)):
+            return
+        if self._frontier_auto_apply_done:
+            return
+        # An explicit per-turn model/provider override is already the user's
+        # deliberate choice. Do not mutate the shared config underneath it.
+        if _TURN_OVERRIDE.get() is not None:
+            return
+        async with self._frontier_auto_apply_lock:
+            if self._frontier_auto_apply_done:
+                return
+            try:
+                from jarvis.brain.frontier_autoswitch import apply_frontier_resolution
+                from jarvis.brain.frontier_resolver import FrontierResolver
+
+                switches = await apply_frontier_resolution(
+                    self._config,
+                    FrontierResolver(),
+                    self._bus,
+                )
+                if switches:
+                    log.info(
+                        "Frontier auto-refresh applied %d model switch(es) before first turn",
+                        len(switches),
+                    )
+            except Exception:  # noqa: BLE001 - frontier refresh must never block a turn
+                log.warning("Frontier auto-refresh failed; keeping configured models", exc_info=True)
+            finally:
+                self._frontier_auto_apply_done = True
+
+
     async def generate(
         self,
         user_text: str,
@@ -10959,6 +10999,11 @@ class BrainManager:
         # fallback loop (wiki-delta base) does not carry a stale provider name.
         self._active_turn_identity = None
         turn_trace_id = trace_id or uuid4()
+
+        # Frontier refresh is deliberately on the first real turn, not process
+        # boot: providers may need network access, and the user chose this
+        # behavior explicitly with frontier_auto_apply.
+        await self._maybe_apply_frontier_auto_switch()
 
         # Tool-surface self-heal (live 2026-07-13): a source that connects
         # AFTER the boot's last BrainToolsChanged — or whose event is lost to a
