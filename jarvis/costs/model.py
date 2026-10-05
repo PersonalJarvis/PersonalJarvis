@@ -180,6 +180,8 @@ class CostEntry:
     audio_ms: int = 0
     # Internal runner identity for source reconciliation; not exposed in to_dict().
     runner: str = ""
+    # Owning CLI account when the source can identify it.
+    account_id: str = ""
 
     @property
     def tokens_total(self) -> int:
@@ -211,6 +213,7 @@ class CostEntry:
             "label": self.label,
             "chars": self.chars,
             "audio_ms": self.audio_ms,
+            "account_id": self.account_id,
         }
 
 
