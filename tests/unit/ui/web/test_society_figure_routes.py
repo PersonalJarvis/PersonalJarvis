@@ -206,6 +206,17 @@ def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: 
     assert row["reports"][0]["reason"] == "Misleading preview"
 
 
+def test_shared_catalog_rejects_malformed_ids_without_touching_storage(
+    client: TestClient,
+):
+    for share_id in ("nope", "A" * 16, "f" * 17, "../" + "a" * 16):
+        assert client.post(
+            f"/api/society/figures/share/{share_id}/report",
+            json={"reason": "probe"},
+        ).status_code == 404
+        assert client.delete(f"/api/society/figures/share/{share_id}").status_code == 404
+
+
 def test_serving_never_leaves_the_figures_folder(client: TestClient):
     assert client.get("/api/society/figures/..%2F..%2Fjarvis.toml").status_code == 404
     assert client.get("/api/society/figures/nope.glb").status_code == 404
