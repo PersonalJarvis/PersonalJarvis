@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { useT } from "@/i18n";
 import { levelFraction } from "../cosmetics";
 import { LevelRing, XpBar } from "../LevelHud";
-import { RANK_INFO, rankAt, type RankId } from "../levelCatalog";
+import { RANK_INFO, rankAt, rankOf, type RankId } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
 import type { RewardRow, XpRuleRow } from "../progressionApi";
 import { useProgression } from "../progressionStore";
@@ -70,7 +70,7 @@ export function LevelHero({ who, compact = false }: { who: HallWho; compact?: bo
           <span className="hall-hero-meta">
             <span>{t("society.level.total").replace("{0}", String(subject?.xp ?? 0))}</span>
             <span>{upcoming
-              ? t("society.hall.next_title").replace("{0}", t(`society.level.title.${upcoming.title}`)).replace("{1}", String(upcoming.level))
+              ? t("society.hall.next_title").replace("{0}", t(`society.level.title.${rankOf(upcoming.title)}`)).replace("{1}", String(upcoming.level))
               : t("society.hall.top_title")}</span>
           </span>
         )}

@@ -63,6 +63,11 @@ export function isRankId(value: unknown): value is RankId {
   return typeof value === "string" && value in RANK_INFO;
 }
 
+/** A title from the server as a rank; an id this build does not know (an older backend's) reads as private. */
+export function rankOf(title: string | undefined): RankId {
+  return isRankId(title) ? title : "private";
+}
+
 /** The rank held at `level`, from the server's bands (lowest first); private before the snapshot arrives. */
 export function rankAt(bands: readonly { level: number; title: string }[] | undefined, level: number): RankId {
   let rank: RankId = "private";

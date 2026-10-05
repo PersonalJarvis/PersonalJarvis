@@ -16,7 +16,7 @@
  */
 import { useEffect } from "react";
 import { useT } from "@/i18n";
-import { RANK_INFO, rankAt } from "./levelCatalog";
+import { RANK_INFO, rankAt, rankOf } from "./levelCatalog";
 import { RankInsignia } from "./insignia/RankInsignia";
 import { useProgression } from "./progressionStore";
 import { RewardIcon } from "./RewardIcon";
@@ -73,7 +73,7 @@ export function LevelUpBanner({ playerName, petName }: { playerName: string; pet
         </span>
         {!promoted && next && (
           <span className="promo-next">
-            {t("society.level.next_promotion").replace("{0}", t(`society.level.title.${next.title}`)).replace("{1}", String(next.level))}
+            {t("society.level.next_promotion").replace("{0}", t(`society.level.title.${rankOf(next.title)}`)).replace("{1}", String(next.level))}
           </span>
         )}
         {banner.unlocked.length > 0 && (

@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "@/i18n";
 import { levelFraction } from "./cosmetics";
-import { RANK_INFO, rankAt, type RankId, type SubjectKind } from "./levelCatalog";
+import { RANK_INFO, rankAt, rankOf, type RankId, type SubjectKind } from "./levelCatalog";
 import { RankInsignia } from "./insignia/RankInsignia";
 import { PERSON_SUBJECT, petSubject } from "./progressionApi";
 import { useProgression, type Celebration } from "./progressionStore";
@@ -93,7 +93,7 @@ export function LevelHud({ playerName, petName, compact }: { playerName: string;
       <span className="level-hud-body">
         <span className="level-hud-name">
           <strong>{playerName}</strong>
-          <em>{t(`society.level.title.${person?.title || "private"}`)}</em>
+          <em>{t(`society.level.title.${rankOf(person?.title)}`)}</em>
         </span>
         <XpBar fraction={fraction} kind="person" label={t("society.level.xp_label")} />
         {!compact && <span className="level-hud-xp">{xpText}</span>}
@@ -133,7 +133,7 @@ function LevelToast({ toast, name, onClose, label }: { toast: Celebration; name:
       <LevelChip kind="agent" level={toast.level} />
       <span>
         <strong>{label("society.level.agent_up").replace("{0}", name).replace("{1}", String(toast.level))}</strong>
-        <em>{toast.away ? label("society.level.while_away") : label(`society.level.title.${toast.title || "private"}`)}</em>
+        <em>{toast.away ? label("society.level.while_away") : label(`society.level.title.${rankOf(toast.title)}`)}</em>
       </span>
     </button>
   );

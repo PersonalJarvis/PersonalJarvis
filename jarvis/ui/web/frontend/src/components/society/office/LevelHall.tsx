@@ -40,7 +40,7 @@ import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayo
 import { ToyFigure } from "./ToyFigure";
 import { TOY, toyLookFor, type ToyLook } from "./toyFigureModel";
 import { equippedFor, levelFraction, rewardRoad } from "../progression/cosmetics";
-import { RANK_INFO, rankAt, slotOf, TITLE_IDS, type RankId, type RewardId } from "../progression/levelCatalog";
+import { RANK_INFO, rankAt, rankOf, slotOf, TITLE_IDS, type RankId, type RewardId } from "../progression/levelCatalog";
 import { PERSON_SUBJECT, type XpRuleRow } from "../progression/progressionApi";
 import { useProgression } from "../progression/progressionStore";
 import { insigniaHeight, RankInsignia3D } from "../progression/regalia/insignia3d";
@@ -260,7 +260,7 @@ function RankWall() {
     level: t("society.level.level_n").replace("{0}", String(level)),
     xp: person && person.xpForNext > 0
       ? t("society.level.xp_of").replace("{0}", String(person.xpIntoLevel)).replace("{1}", String(person.xpForNext)) : t("society.level.max"),
-    next: next ? t("society.level.next_promotion").replace("{0}", t(`society.level.title.${next.title}`)).replace("{1}", String(next.level))
+    next: next ? t("society.level.next_promotion").replace("{0}", t(`society.level.title.${rankOf(next.title)}`)).replace("{1}", String(next.level))
       : t("society.hall.top_title"),
   };
   const status = useLiveTexture(1024, 220, JSON.stringify([lines, Math.round(fraction * 200)]), (ctx, w, h) => drawStatus(ctx, w, h, lines, fraction));

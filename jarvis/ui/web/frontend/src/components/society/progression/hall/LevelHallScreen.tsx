@@ -24,7 +24,7 @@ import { useCompanionPet } from "../../companion/companionPetStore";
 import type { SocietyAgent } from "../../data";
 import type { ToyLook } from "../../office/toyFigureModel";
 import { levelFraction, rewardRoad } from "../cosmetics";
-import { RANK_INFO, rankAt } from "../levelCatalog";
+import { RANK_INFO, rankAt, rankOf } from "../levelCatalog";
 import { RankInsignia } from "../insignia/RankInsignia";
 import { LevelChip, XpBar } from "../LevelHud";
 import { useLevelSound } from "../levelSounds";
@@ -169,7 +169,7 @@ function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
                 <span className="hall-rank">{i + 1}</span>
                 <LevelChip kind="agent" level={subject?.level ?? 1} />
                 <span className="hall-rank-body">
-                  <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${subject?.title || "private"}`)}</em></span>
+                  <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${rankOf(subject?.title)}`)}</em></span>
                   <XpBar fraction={levelFraction(subject)} kind="agent" label={t("society.level.agent_xp_label").replace("{0}", agent.name)} />
                 </span>
                 <span className="hall-rank-xp">{t("society.level.total").replace("{0}", String(subject?.xp ?? 0))}</span>
