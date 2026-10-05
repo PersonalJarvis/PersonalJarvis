@@ -501,6 +501,30 @@ def compact_identity(text: str, *, max_chars: int = COMPACT_MAX_CHARS) -> str:
     return f"{body}\n\n…\n\n{SYSTEM_PREAMBLE}"
 
 
+#: A created agent's chat never ends (MASTERPLAN §2.10), but a vendor CLI's own
+#: conversation cannot grow forever. Once the chat has grown this much since the
+#: CLI conversation began (roughly 120k tokens), the next turn starts a fresh
+#: CLI conversation from the agent's briefing, memory and recent transcript.
+SOCIETY_ROLLOVER_CHARS: Final[int] = 480_000
+#: The notice kind that marks where a fresh CLI conversation began.
+ROLLOVER_NOTICE_KIND: Final[str] = "context_rollover"
+
+
+def society_rollover_due(history: list[dict[str, Any]]) -> bool:
+    """Whether the chat outgrew its CLI conversation since the last rollover."""
+    start = 0
+    for index, event in enumerate(history):
+        payload = event.get("payload") or {}
+        if event.get("kind") == "notice" and payload.get("kind") == ROLLOVER_NOTICE_KIND:
+            start = index + 1
+    size = 0
+    for event in history[start:]:
+        size += len(json.dumps(event.get("payload") or {}, ensure_ascii=False))
+        if size > SOCIETY_ROLLOVER_CHARS:
+            return True
+    return False
+
+
 def society_memory_refresh(text: str, *, compact: bool = False) -> str:
     """Refresh mutable guidance on resumed CLI turns without replaying the transcript."""
     headings = (

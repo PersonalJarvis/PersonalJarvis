@@ -745,16 +745,9 @@ class SocietyRuntime:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
         from .chat_binding import ensure_session, frame_assignment
 
-        sender = await self.roster.get(env.from_agent) if env.from_agent != "user" else None
-        # Work Jarvis or a teammate hands out runs in the target's own
-        # conversation with that sender, never in the person's chat with it.
-        session = ensure_session(
-            svc,
-            self._get_cfg(),
-            target,
-            counterpart=env.from_agent,
-            counterpart_name=sender.name if sender is not None else env.from_agent,
-        )
+        # Work Jarvis or a teammate hands out runs in the agent's one chat; the
+        # chat shows the framed assignment as a delegation card from its sender.
+        session = ensure_session(svc, self._get_cfg(), target)
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)

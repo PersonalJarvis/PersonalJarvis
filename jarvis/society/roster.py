@@ -109,27 +109,27 @@ def canonical_session_id(agent_id: str) -> str:
 #: Marks the receiver's own chat for one counterpart:
 #: ``society:<receiver>:with:<sender>``.
 PAIR_SESSION_MARKER: Final[str] = ":with:"
-_SLUG_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def pair_session_id(agent_id: str, counterpart_id: str) -> str:
-    """The chat ``agent_id`` works in on messages from ``counterpart_id``.
+    """The id of an older conversation chat with ``counterpart_id``.
 
-    Jarvis and the teammates talk in their own conversation, never in the
-    chat a person has with the agent: that chat stays the person's.
+    Before 2026-10-05 Jarvis and teammates talked to an agent in such a side
+    chat. None is created any more; the id only names the ones that exist so
+    they stay readable in the archive.
     """
     return f"{canonical_session_id(agent_id)}{PAIR_SESSION_MARKER}{counterpart_id}"
 
 
 def conversation_session_id(agent_id: str, sender_id: str) -> str:
-    """Where a message from ``sender_id`` to ``agent_id`` runs.
+    """Where a message from ``sender_id`` to ``agent_id`` runs: its one chat.
 
-    The person (``user``) speaks in the agent's canonical chat; Jarvis and
-    every other agent get the pair chat of that sender.
+    A created agent has one endless chat (MASTERPLAN §2.10). Messages from
+    Jarvis and teammates run there too and render as delegation cards; the
+    sender rides on the message itself, not in the session id.
     """
-    if sender_id == "user" or sender_id == agent_id or not _SLUG_RE.fullmatch(sender_id):
-        return canonical_session_id(agent_id)
-    return pair_session_id(agent_id, sender_id)
+    del sender_id  # every sender reaches the same chat
+    return canonical_session_id(agent_id)
 
 
 def _loads(value: Any, default: Any) -> Any:

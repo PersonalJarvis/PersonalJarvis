@@ -78,9 +78,10 @@ async def test_lead_message_is_an_internal_chat_receipt(world):
     await drain(rt)
     assert result.success and tool.risk_tier == "safe"
     target = await rt.roster.resolve("Gmail agent")
-    # Jarvis' message lands in the agent's conversation with Jarvis, not the person's chat.
-    assert svc.store.get_session(target.session_id) is None
-    events = svc.store.list_events(f"{target.session_id}:with:jarvis")
+    # Jarvis' message lands in the agent's one chat as a delegation receipt.
+    assert svc.store.get_session(target.session_id) is not None
+    assert svc.store.get_session(f"{target.session_id}:with:jarvis") is None
+    events = svc.store.list_events(target.session_id)
     receipt = next(e["payload"] for e in events if e["kind"] == "agent_message")
     assert receipt["sender_name"] == "Jarvis" and receipt["sender_kind"] == "jarvis"
     assert receipt["text"] == "A test message"
@@ -97,16 +98,16 @@ async def test_busy_recipient_keeps_fifo_receipts_then_resumes_once(world):
     third = await rt.say(from_agent=rt.lead_id, to_agent="scout", text="third")
     await drain(rt)
     assert await rt.store.delivery_status(second.event_id) == "queued"
-    receipt = svc.store.incoming_message("society:scout:with:jarvis", second.event_id)
+    receipt = svc.store.incoming_message("society:scout", second.event_id)
     assert receipt["status"] == "queued"
-    await svc.cancel("society:scout:with:jarvis")
+    await svc.cancel("society:scout")
     await drain(rt)
     assert await rt.store.delivery_status(second.event_id) == "delivered"
     assert await rt.store.delivery_status(third.event_id) == "queued"
     await rt.scheduler.on_envelope(first)
-    await svc.cancel("society:scout:with:jarvis")
+    await svc.cancel("society:scout")
     await drain(rt)
-    events = svc.store.list_events("society:scout:with:jarvis")
+    events = svc.store.list_events("society:scout")
     assert [e["payload"]["text"] for e in events if e["kind"] == "agent_message"] == [
         "first",
         "second",
@@ -122,9 +123,9 @@ async def test_replay_after_chat_acceptance_does_not_start_another_turn(world):
     # Simulate interruption after chat accepted the turn but before the board
     # stored the receipt. The receiving chat is the idempotency boundary.
     await rt.store.mark_delivery(env.event_id, "queued")
-    await svc.cancel("society:scout:with:jarvis")
+    await svc.cancel("society:scout")
     await drain(rt)
-    events = svc.store.list_events("society:scout:with:jarvis")
+    events = svc.store.list_events("society:scout")
     assert sum(e["kind"] == "turn_started" for e in events) == 1
     assert sum(e["kind"] == "agent_message" for e in events) == 1
 
@@ -158,7 +159,7 @@ async def test_failure_updates_a_visible_queued_message(world):
     await rt.store.set_kill_switch(True)
     await drain(rt)
     assert await rt.store.delivery_status(env.event_id) == "failed"
-    receipt = svc.store.incoming_message("society:scout:with:jarvis", env.event_id)
+    receipt = svc.store.incoming_message("society:scout", env.event_id)
     assert receipt["status"] == "failed"
 
 

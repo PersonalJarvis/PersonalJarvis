@@ -32,7 +32,6 @@ from .roster import (
     PAIR_SESSION_MARKER,
     AgentRecord,
     PermissionCeiling,
-    conversation_session_id,
 )
 from .scheduler import DeliverHook
 
@@ -90,16 +89,11 @@ def ensure_session(
     svc: Any,
     cfg: Any,
     agent: AgentRecord,
-    *,
-    counterpart: str = "",
-    counterpart_name: str = "",
 ) -> Any:
-    """The agent's session, created or re-seated to the roster row.
+    """The agent's one chat, created or re-seated to the roster row.
 
-    Without ``counterpart`` this is the canonical chat, the one a person has
-    with the agent. With it, it is the agent's own conversation with Jarvis or
-    a teammate (``society:<agent>:with:<counterpart>``): same seat, workspace,
-    approvals, tools and memory, but its turns never land in the person's chat.
+    The person, Jarvis and teammates all reach the agent here (MASTERPLAN
+    §2.10); work from others renders as delegation cards in the same chat.
     """
     from jarvis.agent_chat.effort import default_effort
     from jarvis.agent_chat.permissions import (
@@ -129,7 +123,7 @@ def ensure_session(
         raise PermissionError(
             f"{runner} cannot provide an actionable approval for {agent.approval_mode}"
         )
-    session_id = conversation_session_id(agent.agent_id, counterpart)
+    session_id = agent.session_id
     existing = svc.store.get_session(session_id)
     if existing is None:
         ladder = ladder_key(SURFACE, runner)
@@ -144,11 +138,7 @@ def ensure_session(
             effort=effort or default_effort(provider),
             cwd=_workspace(cfg, agent),
             permission_mode=mode,
-            title=(
-                agent.name
-                if session_id == agent.session_id
-                else f"{agent.name} · {counterpart_name or counterpart}"
-            ),
+            title=agent.name,
             session_id=session_id,
             surface=SURFACE,
             account_id=agent.account_id,
@@ -195,9 +185,7 @@ def ensure_session(
         updates["effort"] = effort
     if existing.permission_mode != mode:
         updates["permission_mode"] = mode
-    # Only the canonical chat follows the card name; a conversation chat keeps
-    # its "<agent> · <counterpart>" title.
-    if session_id == agent.session_id and existing.title != agent.name:
+    if existing.title != agent.name:
         updates["title"] = agent.name
     workspace = _workspace(cfg, agent)
     if existing.cwd != workspace:
@@ -239,17 +227,17 @@ async def bind_society_session(svc: Any, session_id: str, *, routine_run: bool =
         # Each scheduled run has its own explicitly pinned seat and permission
         # contract. The internal caller has revalidated its live owner.
         return session
-    counterpart = ""
-    pair_prefix = agent.session_id + PAIR_SESSION_MARKER
-    if session_id.startswith(pair_prefix):
-        counterpart = session_id[len(pair_prefix):]
-        if conversation_session_id(agent.agent_id, counterpart) != session_id:
-            raise PermissionError("Society agent is unavailable")
-    elif agent.session_id != session_id:
+    if session_id.startswith(agent.session_id + PAIR_SESSION_MARKER):
+        # An older conversation chat stays readable; new work runs in the
+        # agent's one chat.
+        raise PermissionError(
+            "This older conversation is read-only. Continue in the agent's chat."
+        )
+    if agent.session_id != session_id:
         raise PermissionError("Society agent is unavailable")
     if inactive:
         raise PermissionError("Society agent is paused or disabled")
-    return ensure_session(svc, runtime.config(), agent, counterpart=counterpart)
+    return ensure_session(svc, runtime.config(), agent)
 
 
 def _agent_busy(svc: Any, agent: AgentRecord) -> bool:
@@ -299,11 +287,16 @@ def frame_incoming(env: SocietyEnvelope, sender_name: str) -> str:
     return "\n".join(lines)
 
 
+#: The first line of a framed assignment: ``[assignment from <sender>]``.
+#: The agent chat renders a message that starts with it as a delegation card.
+ASSIGNMENT_HEADER = "[assignment from "
+
+
 def frame_assignment(env: SocietyEnvelope) -> str:
     """An ASSIGN as the receiving agent's chat turn — with the handoff ask."""
     sender = env.from_agent if env.from_agent != "user" else "the user"
     task = env.text or str(env.payload.get("task") or "")
-    lines = [f"[assignment from {sender}]", task.strip()]
+    lines = [f"{ASSIGNMENT_HEADER}{sender}]", task.strip()]
     refs = env.payload.get("refs")
     if isinstance(refs, list) and refs:
         lines.append("Refs: " + ", ".join(str(r) for r in refs))
@@ -358,11 +351,9 @@ def make_deliver_hook(
                 raise DeliveryBusy("Jarvis chat is not open yet")
             session = sessions[0]
         else:
-            # Jarvis and teammates talk in their own conversation chat; only the
-            # person's own messages belong in the agent's canonical chat.
-            session = ensure_session(
-                svc, get_cfg(), target, counterpart=env.from_agent, counterpart_name=sender
-            )
+            # Everyone reaches a created agent in its one chat; the incoming
+            # message carries its sender and renders as a delegation card.
+            session = ensure_session(svc, get_cfg(), target)
         await svc.receive_message(session.session_id, incoming)
         return svc, session, incoming
 

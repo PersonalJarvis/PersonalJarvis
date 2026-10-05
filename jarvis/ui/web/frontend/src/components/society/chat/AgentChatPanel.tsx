@@ -1,5 +1,12 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
-import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
+import {
+  AgentMessageActivity,
+  ChatActivity,
+  DelegationActivity,
+  RoutineActivity,
+  assignmentOf,
+  routineTask,
+} from "./ChatActivity";
 import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { foldMemoryNotices } from "./memoryNotices";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
@@ -724,6 +731,8 @@ export function Transcript({
               {stamp ? <TimeStamp ms={stamp} /> : null}
               {item.type === "internal" ? (
                 <AgentMessageActivity item={item} roster={roster} />
+              ) : item.type === "user" && assignmentOf(item.text) ? (
+                <DelegationActivity {...assignmentOf(item.text)!} roster={roster} />
               ) : item.type === "user" ? (
                 <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
@@ -766,6 +775,27 @@ function NoticeLine({ item }: { item: NoticeItem }) {
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
   if (item.kind === "proposal_resolved" && item.data.proposal_kind === "identity") {
     return <IdentityNotice item={item} />;
+  }
+  if (item.kind === "message_queued") {
+    return <p className="self-end py-1 text-xs text-muted-foreground" data-testid="message-queued">
+      {t("society.chat.message_waiting")} · {item.text}
+    </p>;
+  }
+  if (item.kind === "message_dequeued") {
+    return <p role="alert" className="self-end py-1 text-xs text-destructive">
+      {t("society.chat.message_not_sent").replace("{0}", item.text)}
+    </p>;
+  }
+  if (item.kind === "context_rollover") {
+    return <p className="py-1 text-center text-[11px] text-muted-foreground">{t("society.chat.context_rollover")}</p>;
+  }
+  if (item.kind === "routine_run") {
+    const sessionId = String(item.data.session_id ?? "");
+    const agentId = item.agentId || String(item.data.agent_id ?? "");
+    return <RoutineActivity task={item.text} original={item.text}
+      onOpen={sessionId && agentId ? () => useRoutineNavigation.getState().open({
+        agentId, sessionId, title: item.text, timestamp: item.tsMs,
+      }) : undefined} />;
   }
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
@@ -1150,6 +1180,9 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   // `busy` on this composer also covers "session not open yet". Stop is only
   // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
   const live = runningTurn(timeline) !== null || sending;
+  // A created agent's one chat never refuses its person: a message written
+  // while it works waits and starts as its next turn (MASTERPLAN §2.10).
+  const canQueue = surface === "society" && agent.tier !== "lead" && !sending && runningTurn(timeline) !== null;
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1224,7 +1257,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const sentAttachments = attachments.attachments;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer || modelSaving || attachments.analyzing > 0) return;
+    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1429,7 +1462,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
-        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && !commands.isCommand && !((commands.canSteer || canQueue) && value.trim()) ? (
           <button
             type="button"
             onClick={() => void onCancel()}

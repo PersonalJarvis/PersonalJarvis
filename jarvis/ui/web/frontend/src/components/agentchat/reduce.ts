@@ -798,6 +798,20 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const text = str(p.text);
       const kind = str(p.kind);
       if (!text && !kind) return base;
+      if (kind === "message_dequeued") {
+        // A waiting message started (or could not): its waiting line goes.
+        const queueId = str(p.queue_id);
+        const items = base.items.filter(
+          (item) => !(item.type === "notice" && item.kind === "message_queued" && str(item.data.queue_id) === queueId),
+        );
+        if (str(p.status) !== "failed") return { ...base, items };
+        const failed: NoticeItem = {
+          type: "notice", id: `n-${seq || ev.ts_ms}`, kind, text, agentName: str(p.agent_name),
+          agentId: str(p.agent_id), status: "failed", tsMs: ev.ts_ms,
+          data: p as Record<string, unknown>, resolved: "",
+        };
+        return { ...base, items: [...items, failed] };
+      }
       if (kind === "proposal_resolved") {
         // The outcome of a proposal patches the card it answers, never a second row.
         const proposalId = str(p.proposal_id);

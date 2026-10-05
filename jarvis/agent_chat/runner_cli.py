@@ -2709,6 +2709,24 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    if (
+        resume
+        and identity
+        and session.surface == "society"
+        and jarvis_harness.society_rollover_due(handle.history)
+    ):
+        # One endless chat, bounded CLI conversations: start fresh from the
+        # briefing, memory and recent transcript, and mark where it began.
+        resume = None
+        await handle.emit(
+            make_event(
+                "notice",
+                {
+                    "kind": jarvis_harness.ROLLOVER_NOTICE_KIND,
+                    "text": "Started a fresh working context from memory and recent messages.",
+                },
+            )
+        )
     from jarvis.agent_chat.task_recovery import ToolRecovery, blocks_automatic_recovery
 
     recovery = ToolRecovery()
