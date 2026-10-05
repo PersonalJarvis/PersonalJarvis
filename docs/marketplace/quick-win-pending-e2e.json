@@ -1,0 +1,1279 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "plugin_id": "atlassian",
+      "result": "BLOCKED",
+      "config_fingerprint": "14541d4f308e6784af5bb1ccf9d5a2fd624d876de62e18a2b00f7e0eac4b335e",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Atlassian (Jira & Confluence) account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Atlassian (Jira & Confluence) account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "sentry",
+      "result": "BLOCKED",
+      "config_fingerprint": "7eb13c5422dfd2cadd18f54b3422ba4056c512e59b64bbf43f57e474a815cc40",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Sentry account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Sentry account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "intercom",
+      "result": "BLOCKED",
+      "config_fingerprint": "da4c3b580a055e55828921a97324e1003cf7c50a03c7216b6d8255cb66c24162",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Intercom account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Intercom account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "paypal",
+      "result": "BLOCKED",
+      "config_fingerprint": "00382ac3eb4a77780eeb96ea700907615a57792a8d7ac28e3992260b3c43b2f6",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No PayPal account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "PayPal account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "square",
+      "result": "BLOCKED",
+      "config_fingerprint": "14204771118efca67aa5231de2ceaa0ab361b07311d5b3092e90a418449b6075",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Square account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Square account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "webflow",
+      "result": "BLOCKED",
+      "config_fingerprint": "d44c10e38b4dceb97a1ea27552e65fffe181541f95053ffc098b0bf2df1fca5f",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Webflow account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Webflow account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "wix",
+      "result": "BLOCKED",
+      "config_fingerprint": "d3c0bde447fb4beabad8600380abb5bee13e6387ae4c575a158ed7558f57ca89",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Wix account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Wix account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "neon",
+      "result": "BLOCKED",
+      "config_fingerprint": "1b270f2c5502130dbbbbba3e7146e1b956ffdb776e2d9eb4389c3bfa0acce610",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Neon account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Neon account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "netlify",
+      "result": "BLOCKED",
+      "config_fingerprint": "d646c61db86d8a32fda4e3598df259fa35b2b7fa02db8773b9ee0412f81910d8",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Netlify account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Netlify account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "miro",
+      "result": "BLOCKED",
+      "config_fingerprint": "946811faa2fc348f20896b59ac72357082b5660857d7751743cc1056a0efe782",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Miro account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Miro account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "attio",
+      "result": "BLOCKED",
+      "config_fingerprint": "ae28d5b185f4eccad3ef965b295f472c8c375fa9493a918bfec955166ced0c5b",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Attio account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Attio account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "fireflies",
+      "result": "BLOCKED",
+      "config_fingerprint": "c5d023f72d7b1eef7c2d13edd0ea7486b3ff572b11709356816f932e9c956383",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Fireflies account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Fireflies account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "zapier",
+      "result": "BLOCKED",
+      "config_fingerprint": "1f9a3266335858dc3d51b99fd21af9afa7d7264dc9f475548b3ce21612dcc851",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Zapier account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Zapier account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "pipedream",
+      "result": "BLOCKED",
+      "config_fingerprint": "e89c4550af629bf0767b56d78029654159c72be7ebff8e73199264c3feb79805",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Pipedream account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Pipedream account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "jam",
+      "result": "BLOCKED",
+      "config_fingerprint": "6bfd2c0e95a0dfcfdfae84e22fed7c75567591ab5c4d186ac3108788d4164401",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Jam account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Jam account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "ramp",
+      "result": "BLOCKED",
+      "config_fingerprint": "eb93b7170e2d71326aa33ac32b9236b8310bc326932345735eeb92ab26f0bc45",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Ramp account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Ramp account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "mercury",
+      "result": "BLOCKED",
+      "config_fingerprint": "157473515cdf1e477f64d251710f208cdb9e8191c2d958503370a4994fc4759d",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Mercury account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Mercury account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "vimeo",
+      "result": "BLOCKED",
+      "config_fingerprint": "3308913e849ccd78efffacc2a7f91cc6b2ea8b5c8c76491065b9995b507bf503",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Vimeo account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Vimeo account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "amplitude",
+      "result": "BLOCKED",
+      "config_fingerprint": "7154f10150b7a298c0626ba5a0720e8165ae6e5e3389ccd5678c35150f06e368",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Amplitude account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Amplitude account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "mixpanel",
+      "result": "BLOCKED",
+      "config_fingerprint": "0d0071afec4f7e8b9539b4ec4fb6dd65acce953f6904ea21b85dfcee4f24c166",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Mixpanel account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Mixpanel account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "klaviyo",
+      "result": "BLOCKED",
+      "config_fingerprint": "5d3bbb71a8b2ebd3fe3b9e7fe78d759171442093133832fe41f4ac6e83ab7f80",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Klaviyo account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Klaviyo account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "railway",
+      "result": "BLOCKED",
+      "config_fingerprint": "4f21a17e3a69dde5285622ef9ff8140d01e5d8232433ad89fc612ecdd414bf0d",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Railway account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Railway account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "prisma",
+      "result": "BLOCKED",
+      "config_fingerprint": "bf65327dcc2da647eff5cd57f10a905aeaf1f1393fd06bfd770cf5a291492f7e",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Prisma Postgres account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Prisma Postgres account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "datadog",
+      "result": "BLOCKED",
+      "config_fingerprint": "b4b5f10905b967d217791b5652332ee04501aca596fe1db97fd5457a02a4b207",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Datadog account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Datadog account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "grafana",
+      "result": "BLOCKED",
+      "config_fingerprint": "a0b6a9681323fcde390c3b090b57bcb8556aa0004b445d28877cf301efb6fe35",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Grafana Cloud account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Grafana Cloud account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    },
+    {
+      "plugin_id": "buildkite",
+      "result": "BLOCKED",
+      "config_fingerprint": "41341e51f7fa193d59f0046e18388615ba13da1a921d82475a80bbfc2d1bfe01",
+      "initial_state": "draft_not_listed",
+      "evidence": {
+        "ui": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "browser": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "callback": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "connected": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "smoke": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "reconnect": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        },
+        "restart": {
+          "status": "BLOCKED",
+          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
+          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
+        }
+      },
+      "blocker": {
+        "reason": "No Buildkite account is signed in on the test machine, so no consent, connection or real action could be observed.",
+        "owner": "Buildkite account holder",
+        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
+        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
+      }
+    }
+  ]
+}

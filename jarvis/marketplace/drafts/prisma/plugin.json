@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "prisma",
+  "version": "1.0.0",
+  "description": "Prisma Postgres databases, backups and connection details",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Prisma Postgres",
+      "category": "Developer",
+      "logo_slug": "prisma",
+      "logo_color": "2D3748",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.prisma.io/mcp",
+        "discovery_url": "https://mcp.prisma.io/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.prisma.io/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_prisma_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with your Prisma Data Platform account. Creating or deleting databases asks for approval first."
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "paypal",
+  "version": "1.0.0",
+  "description": "Invoices, orders, transactions and disputes",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "PayPal",
+      "category": "Knowledge & Reading",
+      "logo_slug": "paypal",
+      "logo_color": "003087",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.paypal.com/mcp",
+        "discovery_url": "https://mcp.paypal.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.paypal.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_paypal_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with a PayPal business account. Every write, such as an invoice or a refund, asks for approval first."
+    }
+  }
+}
