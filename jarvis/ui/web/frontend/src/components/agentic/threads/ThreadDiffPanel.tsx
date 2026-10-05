@@ -48,8 +48,11 @@ export function ThreadDiffPanel({ folder, version, onClose }: { folder: string; 
     return () => controller.abort();
   }, [folder, version, nonce]);
 
+  // Another thread's folder: nothing of the last one may show under its name.
   useEffect(() => {
     setOpenPath(null);
+    setChanges(null);
+    setShowAll(false);
   }, [folder]);
 
   useEffect(() => {

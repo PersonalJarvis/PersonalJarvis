@@ -274,15 +274,14 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
 
 
 def _terminal_folder(raw: str | None) -> Path | None:
-    """An existing directory named by ``?folder=``, or None."""
+    """The thread folder named by ``?folder=``: an existing directory inside a
+    connected project or an open workspace, else None."""
     text = (raw or "").strip()
     if not text:
         return None
-    try:
-        path = Path(text).expanduser()
-        return path.resolve() if path.is_absolute() and path.is_dir() else None
-    except (OSError, ValueError):
-        return None
+    from jarvis.agentic_ide.thread_folders import allowed_thread_folder
+
+    return allowed_thread_folder(text)
 
 
 def _safe_int(value: object, default: int) -> int:

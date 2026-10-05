@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,7 @@ from fastapi.testclient import TestClient
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.service import AgentChatService
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.agentic_ide import cli_title
+from jarvis.agentic_ide import cli_title, thread_folders
 from jarvis.ui.web import workspace_routes
 from jarvis.ui.web.agent_chat_routes import router as chat_router
 from jarvis.ui.web.agentic_ide_git_routes import router as git_router
@@ -41,6 +42,16 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
             handle.write(json.dumps(row) + "\n")
 
 
+def _settled(agent: str, sid: str, expected: str) -> str:
+    """The thread title once the background read caught up (it never blocks the list)."""
+    deadline = time.monotonic() + 3.0
+    title = cli_title.session_title(agent, sid)
+    while title != expected and time.monotonic() < deadline:
+        time.sleep(0.02)
+        title = cli_title.session_title(agent, sid)
+    return title
+
+
 # ------------------------------------------------------------ CLI titles
 
 
@@ -49,13 +60,13 @@ def test_a_thread_takes_claude_s_own_title_from_its_seat_s_folder(tmp_path, monk
     sid = "6f1c2d1e-0000-4000-8000-000000000001"
     transcript = tmp_path / "projects" / "C--repo" / f"{sid}.jsonl"
     _write_jsonl(transcript, [{"type": "user", "message": "fix the login test"}])
-    assert cli_title.session_title("claude", sid) == ""
+    assert _settled("claude", sid, "") == ""
 
     _write_jsonl(transcript, [{"type": "ai-title", "aiTitle": "Fix login test"}])
-    assert cli_title.session_title("claude", sid) == "Fix login test"
+    assert _settled("claude", sid, "Fix login test") == "Fix login test"
 
     _write_jsonl(transcript, [{"type": "custom-title", "customTitle": "Login fix"}])
-    assert cli_title.session_title("claude", sid) == "Login fix"
+    assert _settled("claude", sid, "Login fix") == "Login fix"
 
 
 def test_a_thread_takes_codex_s_thread_name(tmp_path, monkeypatch) -> None:
@@ -63,7 +74,8 @@ def test_a_thread_takes_codex_s_thread_name(tmp_path, monkeypatch) -> None:
     _write_jsonl(
         tmp_path / "session_index.jsonl", [{"id": "thread-1", "thread_name": "Speed up the build"}]
     )
-    assert cli_title.session_title("codex", "thread-1") == "Speed up the build"
+    # The first read answers from the (empty) cache at once; the record lands next.
+    assert _settled("codex", "thread-1", "Speed up the build") == "Speed up the build"
 
 
 def test_no_title_for_other_clis_or_unsafe_ids(tmp_path, monkeypatch) -> None:
@@ -161,7 +173,8 @@ def repo(tmp_path: Path) -> Path:
     return folder
 
 
-def test_a_thread_s_diff_panel_reads_its_own_folder(repo: Path) -> None:
+def test_a_thread_s_diff_panel_reads_its_own_folder(repo: Path, monkeypatch) -> None:
+    monkeypatch.setattr(thread_folders, "_known_roots", lambda: [repo.resolve()])
     (repo / "app.py").write_text("one\nthree\n", encoding="utf-8")
     (repo / "new.txt").write_text("hello\n", encoding="utf-8")
     app = FastAPI()
@@ -186,11 +199,32 @@ def test_a_thread_s_diff_panel_reads_its_own_folder(repo: Path) -> None:
         assert outside.status_code == 400
 
 
+def test_the_folder_routes_read_only_connected_projects(repo: Path, tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr(thread_folders, "_known_roots", lambda: [project.resolve()])
+    app = FastAPI()
+    app.include_router(git_router)
+    with TestClient(app) as client:
+        changes = client.get("/api/agentic-ide/git/changes", params={"folder": str(repo)})
+        assert changes.status_code == 403
+        diff = client.get(
+            "/api/agentic-ide/git/diff", params={"folder": str(repo), "path": "app.py"}
+        )
+        assert diff.status_code == 403
+
+
 # ------------------------------------------------------------ terminal drawer
 
 
-def test_the_drawer_terminal_folder_must_be_an_existing_absolute_directory(tmp_path: Path) -> None:
-    assert workspace_routes._terminal_folder(str(tmp_path)) == tmp_path.resolve()
+def test_the_drawer_terminal_opens_only_inside_a_connected_project(tmp_path: Path, monkeypatch):
+    project = tmp_path / "project"
+    (project / ".worktrees" / "fix").mkdir(parents=True)
+    monkeypatch.setattr(thread_folders, "_known_roots", lambda: [project.resolve()])
+    assert workspace_routes._terminal_folder(str(project)) == project.resolve()
+    worktree = project / ".worktrees" / "fix"
+    assert workspace_routes._terminal_folder(str(worktree)) == worktree.resolve()
+    assert workspace_routes._terminal_folder(str(tmp_path)) is None
     assert workspace_routes._terminal_folder("relative/path") is None
     assert workspace_routes._terminal_folder(str(tmp_path / "missing")) is None
     assert workspace_routes._terminal_folder("") is None

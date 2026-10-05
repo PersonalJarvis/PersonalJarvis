@@ -19,6 +19,8 @@ interface QueuedMessage {
 
 /** Draft text per thread, so switching threads never loses a half-written message. */
 const drafts = new Map<string, string>();
+/** Queued follow-ups per thread, so switching threads never drops one. */
+const queues = new Map<string, QueuedMessage[]>();
 
 /** The open question card of the newest turn, if any. */
 function openQuestion(timeline: Timeline): { block: ToolBlock; question: QuestionState } | null {
@@ -140,7 +142,19 @@ export function ThreadComposer({
   const busy = useThreadChatStore((state) => state.busy);
   const lastError = useThreadChatStore((state) => state.lastError);
   const [value, setValueState] = useState(() => drafts.get(threadKey) ?? "");
-  const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [queue, setQueueState] = useState<QueuedMessage[]>(() => queues.get(threadKey) ?? []);
+  // After Stop the queue waits: the person halted the agent, it must not start the next job.
+  const [paused, setPaused] = useState(false);
+  const queueKey = useRef(threadKey);
+  queueKey.current = threadKey;
+  const setQueue = useCallback((update: (current: QueuedMessage[]) => QueuedMessage[]) => {
+    setQueueState((current) => {
+      const next = update(current);
+      if (next.length) queues.set(queueKey.current, next);
+      else queues.delete(queueKey.current);
+      return next;
+    });
+  }, []);
   const [problem, setProblem] = useState("");
   const [starting, setStarting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -173,7 +187,8 @@ export function ThreadComposer({
   // Another thread: its own half-written text, its own queue.
   useEffect(() => {
     setValueState(drafts.get(threadKey) ?? "");
-    setQueue([]);
+    setQueueState(queues.get(threadKey) ?? []);
+    setPaused(false);
     setProblem("");
   }, [threadKey]);
 
@@ -222,11 +237,20 @@ export function ThreadComposer({
 
   // A queued message goes out the moment the agent is free again.
   useEffect(() => {
-    if (running || busy || starting || queue.length === 0 || !activeSessionId) return;
-    const [next, ...rest] = queue;
-    setQueue(rest);
-    void dispatch(next.text, next.attachments);
-  }, [running, busy, starting, queue, activeSessionId, dispatch]);
+    if (paused || running || busy || starting || queue.length === 0 || !activeSessionId) return;
+    const [next] = queue;
+    const key = threadKey;
+    setQueue((current) => current.filter((row) => row.id !== next.id));
+    void dispatch(next.text, next.attachments).then((sent) => {
+      if (sent) return;
+      // Not delivered: back to the front of ITS thread's line, and wait for the person.
+      queues.set(key, [next, ...(queues.get(key) ?? [])]);
+      if (queueKey.current === key) {
+        setQueueState(queues.get(key) ?? []);
+        setPaused(true);
+      }
+    });
+  }, [paused, running, busy, starting, queue, activeSessionId, dispatch, setQueue, threadKey]);
 
   const submit = async () => {
     const text = value.trim();
@@ -240,6 +264,7 @@ export function ThreadComposer({
     setValue("");
     files.clear();
     setProblem("");
+    setPaused(false);
     if (running || busy) {
       setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
       return;
@@ -268,6 +293,10 @@ export function ThreadComposer({
 
   return <div className="mx-auto w-full max-w-3xl">
     {queue.length > 0 && <div className="mb-2 flex flex-col gap-1 px-2" data-testid="thread-queue">
+      {paused && !running && <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
+        <span>Queue paused after the agent stopped.</span>
+        <button type="button" onClick={() => setPaused(false)} className="rounded px-1.5 py-0.5 text-foreground hover:bg-secondary">Send next</button>
+      </div>}
       {queue.map((entry) => <div key={entry.id} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm">
         <span className="shrink-0 text-xs text-muted-foreground">Queued</span>
         <span className="min-w-0 flex-1 truncate text-foreground">{entry.text || `${entry.attachments.length} file(s)`}</span>
@@ -323,7 +352,7 @@ export function ThreadComposer({
           </button>
           {running && !canSend
             ? <button type="button" aria-label="Stop the agent" title="Stop" data-testid="thread-stop"
-              onClick={() => void useThreadChatStore.getState().cancel()}
+              onClick={() => { setPaused(true); void useThreadChatStore.getState().cancel(); }}
               className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Square className="h-3 w-3 fill-current" />
             </button>

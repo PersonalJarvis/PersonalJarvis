@@ -98,6 +98,8 @@ interface IdeThreadsState {
   newThread: (projectId: string) => void;
   /** The draft became a session: remember where it belongs and show it. */
   adoptThread: (sessionId: string, projectId: string) => void;
+  /** A session started in `projectId` while another thread was picked: file it, show nothing new. */
+  rememberProject: (sessionId: string, projectId: string) => void;
   markSeen: (sessionId: string, updatedMs: number) => void;
   /** A thread was deleted: forget everything kept about it. */
   forgetThread: (sessionId: string) => void;
@@ -131,6 +133,11 @@ export const useIdeThreadsStore = create<IdeThreadsState>((set, get) => ({
     write(SELECTION_KEY, selection);
     write(PROJECT_OF_KEY, projectOf);
     set({ selection, projectOf });
+  },
+  rememberProject: (sessionId, projectId) => {
+    const projectOf = bounded({ ...get().projectOf, [sessionId]: projectId });
+    write(PROJECT_OF_KEY, projectOf);
+    set({ projectOf });
   },
   markSeen: (sessionId, updatedMs) => {
     if ((get().seen[sessionId] ?? 0) >= updatedMs) return;

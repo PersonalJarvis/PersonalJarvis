@@ -81,32 +81,43 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   const folder = session?.cwd || project?.path || "";
   const isDraft = selection.sessionId === null;
 
-  // Open the picked thread, or a blank draft in the picked project.
+  // Keep the store on what the sidebar picked. A draft's first message
+  // creates its session: that is this project's thread now — unless the
+  // person moved on while it was being created; then it only remembers where
+  // it belongs, and the thread they picked is what shows.
   useEffect(() => {
     const store = useThreadChatStore.getState();
+    const threads = useIdeThreadsStore.getState();
+    const pending = startingIn.current;
+    const created = pending && store.activeSessionId && store.activeSessionId !== selection.sessionId ? store.activeSessionId : null;
+    if (pending && created) {
+      startingIn.current = null;
+      if (!selection.sessionId && selection.projectId === pending) {
+        threads.adoptThread(created, pending);
+        return;
+      }
+      threads.rememberProject(created, pending);
+    }
     if (selection.sessionId) {
       if (store.activeSessionId !== selection.sessionId) store.openSession(selection.sessionId);
       return;
     }
-    if (startingIn.current) return; // the draft is becoming a session right now
-    store.newChat();
+    if (startingIn.current) return; // the draft's first message is on its way
+    if (store.activeSessionId || store.timeline.items.length > 0) store.newChat();
+  }, [selection.sessionId, selection.projectId, activeSessionId]);
+
+  // A new draft starts in its project's own checkout.
+  useEffect(() => {
+    if (!isDraft) return;
     setCheckout("current");
     setBase("");
-  }, [selection.sessionId]);
+  }, [isDraft, selection.projectId]);
 
   // A draft runs in its project's folder.
   useEffect(() => {
     if (!isDraft || !project || activeSessionId || startingIn.current) return;
     if (useThreadChatStore.getState().draft.cwd !== project.path) void useThreadChatStore.getState().setDraft({ cwd: project.path });
   }, [isDraft, project, activeSessionId, draft.cwd]);
-
-  // The first message created the session: it is this project's thread now.
-  useEffect(() => {
-    if (!activeSessionId || !isDraft || !startingIn.current) return;
-    const projectId = startingIn.current;
-    startingIn.current = null;
-    useIdeThreadsStore.getState().adoptThread(activeSessionId, projectId);
-  }, [activeSessionId, isDraft]);
 
   // Keep the open thread marked as read.
   useEffect(() => {
@@ -158,7 +169,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
 
   const toggleTerminal = () => {
     if (drawerOpen) { setDrawerOpen(false); return; }
-    if (terminals.length === 0) addTerminal("Terminal");
+    if (!terminals.some((terminal) => terminal.folder === folder)) addTerminal("Terminal");
     else setDrawerOpen(true);
   };
 
@@ -168,7 +179,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     setTerminals((current) => {
       const next = current.filter((terminal) => terminal.id !== id);
       if (id === activeTerminal) setActiveTerminal(next[next.length - 1]?.id ?? "");
-      if (next.length === 0) setDrawerOpen(false);
+      if (!next.some((terminal) => terminal.folder === folder)) setDrawerOpen(false);
       return next;
     });
   };
@@ -192,7 +203,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   return <div className="flex h-full min-h-0" data-testid="thread-view">
     <div className="flex min-w-0 flex-1 flex-col">
       <ThreadHeader projectId={project.id} projectName={project.name} folder={folder} title={title}
-        sessionId={selection.sessionId} terminalOpen={drawerOpen} onToggleTerminal={toggleTerminal}
+        sessionId={selection.sessionId} terminalOpen={drawerOpen && terminals.some((terminal) => terminal.folder === folder)} onToggleTerminal={toggleTerminal}
         diffOpen={diffOpen} onToggleDiff={() => { const next = !diffOpen; setDiffOpen(next); storeValue(DIFF_OPEN_KEY, next ? "1" : "0"); }}
         gitVersion={finishedTurns} onRunAction={runAction} />
       <div className="relative flex min-h-0 flex-1 flex-col">
@@ -229,7 +240,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
             </div>
           </>}
       </div>
-      {drawerOpen && terminals.length > 0 && <ThreadTerminalDrawer terminals={terminals} active={activeTerminal} height={drawerHeight}
+      {terminals.length > 0 && <ThreadTerminalDrawer terminals={terminals} folder={folder} open={drawerOpen} active={activeTerminal} height={drawerHeight}
         onSelect={setActiveTerminal} onAdd={() => addTerminal("Terminal")} onCloseTab={closeTerminal} onClose={() => setDrawerOpen(false)}
         onResize={(next) => { setDrawerHeight(next); storeValue(DRAWER_HEIGHT_KEY, String(next)); }} />}
     </div>

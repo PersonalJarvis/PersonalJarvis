@@ -28,6 +28,7 @@ UI can offer the follow-up it has for that code (``dirty`` → "remove anyway?")
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -36,6 +37,7 @@ from jarvis.agentic_ide import git_changes, git_ops, git_overview, github_link, 
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import account_home, get_registry
 from jarvis.agentic_ide.session_branches import PaneBranchRecord
+from jarvis.agentic_ide.thread_folders import allowed_thread_folder
 
 router = APIRouter(prefix="/api/agentic-ide/git", tags=["agentic-ide-git"])
 
@@ -84,8 +86,20 @@ def inspect_folder(folder: str = Query(..., min_length=1)) -> dict:
 @router.get("/changes", summary="Changed files under a folder, with line counts")
 def folder_changes(folder: str = Query(..., min_length=1)) -> dict:
     """What a thread's diff panel lists — the same reading as a workspace's
-    Changes tab, for a folder no workspace has open (a thread's worktree)."""
-    return asdict(git_changes.workspace_changes(folder))
+    Changes tab, for a folder no workspace has open (a thread's worktree).
+
+    Only a folder inside a connected project or an open workspace is read.
+    """
+    return asdict(git_changes.workspace_changes(_thread_folder(folder)))
+
+
+def _thread_folder(folder: str) -> Path:
+    path = allowed_thread_folder(folder)
+    if path is None:
+        raise HTTPException(
+            status_code=403, detail="This folder is not part of a connected project."
+        )
+    return path
 
 
 @router.get("/diff", summary="How one file under a folder differs from the last commit")
@@ -93,7 +107,7 @@ def folder_file_diff(
     folder: str = Query(..., min_length=1), path: str = Query(..., min_length=1)
 ) -> dict:
     try:
-        return asdict(git_changes.file_diff(folder, path))
+        return asdict(git_changes.file_diff(_thread_folder(folder), path))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 

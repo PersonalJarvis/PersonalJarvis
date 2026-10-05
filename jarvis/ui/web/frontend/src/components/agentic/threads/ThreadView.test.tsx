@@ -100,6 +100,25 @@ describe("ThreadView", () => {
     expect(useIdeThreadsStore.getState().projectOf).toEqual({ s1: "p1" });
   });
 
+  it("files a thread started in a draft under its project when the person moved on meanwhile", async () => {
+    let finishCreate: (row: AgentChatSession) => void = () => {};
+    api.createAgentChatSession.mockReturnValue(new Promise<AgentChatSession>((resolve) => { finishCreate = resolve; }));
+    render(<ThreadView onScreen />);
+    await waitFor(() => expect(useThreadChatStore.getState().draft.cwd).toBe("/repo"));
+    const box = screen.getByTestId("thread-composer-input");
+    fireEvent.change(box, { target: { value: "start something" } });
+    await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
+    await waitFor(() => expect(api.createAgentChatSession).toHaveBeenCalled());
+
+    // The person opens another thread before the first one exists.
+    act(() => useIdeThreadsStore.getState().openThread("other", "p1"));
+    await act(async () => { finishCreate(sessionRow({ session_id: "s-new" })); });
+
+    await waitFor(() => expect(useIdeThreadsStore.getState().projectOf).toEqual({ "s-new": "p1" }));
+    expect(useIdeThreadsStore.getState().selection).toEqual({ projectId: "p1", sessionId: "other" });
+    await waitFor(() => expect(useThreadChatStore.getState().activeSessionId).toBe("other"));
+  });
+
   it("draws the turn: the message, the work as one line, the answer and how long it took", async () => {
     useIdeThreadsStore.setState({ selection: { projectId: "p1", sessionId: "s1" } });
     api.fetchAgentChatSessions.mockResolvedValue([sessionRow()]);
