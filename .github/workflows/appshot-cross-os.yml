@@ -18,6 +18,9 @@ on:
       - "jarvis/jarvisx/**"
       - "jarvis/platform/clipboard*.py"
       - "jarvis/platform/screen_access.py"
+      - "jarvis/platform/user_dirs.py"
+      - "jarvis/platform/qt_sidecar.py"
+      - "jarvis/platform/probes.py"
       - "jarvis/screen_context/**"
       - "jarvis/trigger/backends/pynput.py"
       - "jarvis/ui/web/appshot_routes.py"
@@ -38,6 +41,8 @@ env:
     tests/unit/appshot tests/unit/jarvisx tests/unit/platform/test_clipboard.py
     tests/unit/platform/test_clipboard_image.py tests/unit/platform/test_clipboard_reader.py
     tests/unit/screen_context tests/unit/trigger/test_pynput_shifted_keys.py
+    tests/unit/platform/test_user_dirs.py tests/unit/platform/test_qt_sidecar.py
+    tests/unit/platform/test_probes.py tests/integration/test_downloads_routes.py
 
 jobs:
   linux:
