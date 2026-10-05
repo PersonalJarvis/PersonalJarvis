@@ -757,6 +757,7 @@ def _cli_entries(
             ref_id=turn.session_id,
             label=_clip(turn.label or turn.cwd),
             runner=turn.agent,
+            account_id=turn.account_id,
         )
 
 
