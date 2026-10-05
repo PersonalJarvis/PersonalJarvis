@@ -109,8 +109,8 @@ describe("useSectionHistory", () => {
     expect(useEventStore.getState().activeSection).toBe("agents");
   });
 
-  it("leaves a freshly opened agents section for the front page", () => {
-    useEventStore.setState({ activeSection: "agents" });
+  it.each(["agents", "dictation", "board"] as const)("leaves a freshly opened %s section for the front page", (section) => {
+    useEventStore.setState({ activeSection: section });
     const { result } = renderHook(() => useSectionHistory());
 
     expect(result.current.canGoBack).toBe(true);

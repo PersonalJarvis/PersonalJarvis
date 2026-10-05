@@ -44,8 +44,8 @@ describe("SectionNavButtons", () => {
     }
   });
 
-  it("leaves a freshly opened agents section for the front page", () => {
-    useEventStore.setState({ activeSection: "agents" });
+  it.each(["agents", "agentic-ide", "profile"] as const)("leaves a freshly opened %s section for the front page", (section) => {
+    useEventStore.setState({ activeSection: section });
     render(<SectionNavButtons />);
 
     expect(backButton().disabled).toBe(false);
