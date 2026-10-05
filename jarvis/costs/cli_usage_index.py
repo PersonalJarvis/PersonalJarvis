@@ -391,11 +391,11 @@ class CliTurn:
     tokens_cached: int
     cwd: str
     label: str
-    #: Stable account identity for the transcript root; empty when unknown.
-    account_id: str = ""
     #: What the CLI itself priced the call at, when it does (OpenCode). 0.0
     #: for the seat-driven CLIs, whose bill is derived from the rate tables.
     cost_usd: float = 0.0
+    #: Stable account identity for the transcript root; empty when unknown.
+    account_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,8 +419,8 @@ class CliRollup:
     turns: int
     cwd: str
     label: str
-    account_id: str = ""
     cost_usd: float = 0.0
+    account_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
