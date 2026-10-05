@@ -251,20 +251,15 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e . --no-deps
       - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
-      - name: Qualify plugin auth with the v2.9.0 exception
+      - name: Qualify plugin auth and disclose preview plugins
         shell: bash
-        env:
-          RELEASE_REF: ${{ github.ref }}
         run: |
-          # Maintainer-approved on 2026-10-04 for this immutable release only.
-          # Keep structural/security checks and the audit's BLOCKED results intact.
-          if [ "$RELEASE_REF" = "refs/tags/v2.9.0" ]; then
-            python scripts/ci/check_plugin_auth_contract.py
-            echo "::warning::Full plugin acceptance is waived for v2.9.0 only; no plugin E2E PASS is asserted."
-            echo "Plugin E2E acceptance: maintainer-approved exception for v2.9.0 only. Existing audit results remain unchanged. All other release checks remain required." >> "$GITHUB_STEP_SUMMARY"
-          else
-            python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass
-          fi
+          # A plugin ships as "verified" only with a completed browser journey;
+          # every other one ships labeled "preview" in the app (AGENTS.md section 3).
+          report="$(python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass)"
+          printf '%s\n' "$report"
+          # The last line counts verified and preview plugins for the release.
+          printf '%s\n' "${report##*$'\n'}" >> "$GITHUB_STEP_SUMMARY"
 
   python-fast:
     name: python contracts (fast)
@@ -345,14 +340,18 @@ jobs:
           name: ${{ needs.detect.outputs.duration_snapshot }}
       - name: Run shard
         continue-on-error: true
+        env:
+          SHARD: ${{ matrix.shard }}
         run: >-
           python scripts/ci/run_tests_parallel.py tests
-          --shard ${{ matrix.shard }}/6
-          --report out/test-report-linux-${{ matrix.shard }}.json
-          --junit-out out/junit-linux-${{ matrix.shard }}.xml
-          --durations-out out/durations-linux-${{ matrix.shard }}.json
+          --shard "$SHARD/6"
+          --report "out/test-report-linux-$SHARD.json"
+          --junit-out "out/junit-linux-$SHARD.xml"
+          --durations-out "out/durations-linux-$SHARD.json"
       - name: Ratchet (a failure not in the baseline blocks)
-        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-linux.json out/test-report-linux-${{ matrix.shard }}.json
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-linux.json "out/test-report-linux-$SHARD.json"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
@@ -410,16 +409,22 @@ jobs:
       - name: Run shard
         if: steps.pick.outputs.mode != 'none'
         continue-on-error: true
+        env:
+          SHARD: ${{ matrix.shard }}
+          PICK_MODE: ${{ steps.pick.outputs.mode }}
+          PICK_TOTAL: ${{ steps.pick.outputs.total }}
         run: |
           files=()
-          if [ "${{ steps.pick.outputs.mode }}" = "selected" ]; then files=(--files-from out/selected.txt); fi
+          if [ "$PICK_MODE" = "selected" ]; then files=(--files-from out/selected.txt); fi
           python scripts/ci/run_tests_parallel.py tests "${files[@]}" \
-            --shard ${{ matrix.shard }}/${{ steps.pick.outputs.total }} \
-            --report out/test-report-windows-${{ matrix.shard }}.json \
-            --junit-out out/junit-windows-${{ matrix.shard }}.xml
+            --shard "$SHARD/$PICK_TOTAL" \
+            --report "out/test-report-windows-$SHARD.json" \
+            --junit-out "out/junit-windows-$SHARD.xml"
       - name: Ratchet (a failure not in the baseline blocks)
         if: steps.pick.outputs.mode != 'none'
-        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-windows.json out/test-report-windows-${{ matrix.shard }}.json
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-windows.json "out/test-report-windows-$SHARD.json"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3

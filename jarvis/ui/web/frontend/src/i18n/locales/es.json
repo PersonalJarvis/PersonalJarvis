@@ -1301,6 +1301,8 @@
     "add_upload": "Subir tu propio plugin",
     "add_community": "Desde el marketplace de la comunidad",
     "add_marketplace": "Abrir el Marketplace",
+    "preview_badge": "Vista previa",
+    "preview_tooltip": "Aún no probado de principio a fin. Iniciar sesión puede requerir pasos adicionales.",
     "filter_label": "Mostrar",
     "filter_recommended": "Recomendados",
     "added": "Añadido",

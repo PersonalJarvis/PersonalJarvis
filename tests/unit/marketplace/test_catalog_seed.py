@@ -36,6 +36,26 @@ def test_every_seed_category_is_declared_in_the_display_order() -> None:
     )
 
 
+def test_acceptance_labels_match_across_python_typescript_and_the_api() -> None:
+    """`acceptance` crosses Python -> JSON -> TS -> UI; one drifted value would
+    hide or misplace the Preview badge."""
+    from typing import get_args
+
+    from jarvis.marketplace.catalog import Acceptance, PluginSpec
+
+    labels = set(get_args(Acceptance))
+    assert labels == {"verified", "preview"}
+    assert PluginSpec.model_fields["acceptance"].default == "preview"
+    view = (
+        Path(__file__).resolve().parents[3] / "jarvis/ui/web/frontend/src/views/PluginsView.tsx"
+    ).read_text(encoding="utf-8")
+    assert 'type Acceptance = "verified" | "preview";' in view
+    assert 'acceptance: p.acceptance ?? "preview"' in view
+    for plugin in _seed().plugins:
+        dumped = plugin.model_dump(mode="json")
+        assert dumped["acceptance"] in labels, plugin.id
+
+
 def test_every_seed_plugin_states_its_longevity_note_when_limited() -> None:
     """A `provider_limited` card must say HOW often the user has to come back —
     the badge alone would be a warning without an answer."""

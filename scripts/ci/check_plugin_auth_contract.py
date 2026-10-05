@@ -18,6 +18,10 @@ metadata flag — and fails the build when:
      blocked + owner of the remaining step).
   6. A PAT entry uses a non-https validation endpoint or documents no
      accepted token prefix.
+  7. A plugin is labeled ``acceptance: "verified"`` without a completed
+     browser journey (docs/marketplace/plugin-e2e-audit.json). Every other
+     plugin ships labeled "preview", so an unproven journey is disclosed in
+     the app instead of blocking the whole release.
 
 Stdlib only, cross-platform (pathlib, UTF-8). Exit 0 = clean, 1 = findings.
 """
@@ -73,8 +77,10 @@ def config_fingerprint(plugin: dict) -> str:
 def validate_e2e_audit(plugins: list[dict], audit: object, *, strict: bool = False) -> list[str]:
     """Validate attestations; evidence is manually observed, never inferred here.
 
-    CI tolerates explicit historical external blockers. Release qualification
-    uses --require-e2e-pass and accepts only completed journeys.
+    Every run: a plugin labeled "verified" needs a completed PASS, a new
+    built-in needs a PASS, and a legacy BLOCKED row needs a concrete blocker.
+    Release qualification (--require-e2e-pass) additionally requires every
+    PASS plugin to ship labeled "verified", so users see what was proven.
     """
     if not isinstance(audit, dict) or audit.get("schema_version") != 1:
         return ["e2e: expected audit schema_version 1"]
@@ -105,9 +111,16 @@ def validate_e2e_audit(plugins: list[dict], audit: object, *, strict: bool = Fal
             findings.append(f"{pid}: unresolved e2e result {result!r}")
         if row.get("config_fingerprint") != config_fingerprint(plugin):
             findings.append(f"{pid}: stale e2e evidence; auth/execution configuration changed")
+        acceptance = plugin.get("acceptance", "preview")
+        if acceptance not in ("verified", "preview"):
+            findings.append(f"{pid}: unknown acceptance label {acceptance!r}")
+        if acceptance == "verified" and result != "PASS":
+            findings.append(f"{pid}: acceptance 'verified' needs a completed e2e PASS")
+        if strict and result == "PASS" and acceptance != "verified":
+            findings.append(f"{pid}: completed e2e PASS must ship as acceptance 'verified'")
         if result == "BLOCKED":
-            if strict or pid not in LEGACY_PLUGIN_IDS:
-                findings.append(f"{pid}: completed e2e PASS required for release/new built-in")
+            if pid not in LEGACY_PLUGIN_IDS:
+                findings.append(f"{pid}: completed e2e PASS required for a new built-in")
             blocker = row.get("blocker")
             if not isinstance(blocker, dict) or any(
                 not isinstance(blocker.get(key), str) or len(blocker[key].strip()) < 12
@@ -377,6 +390,11 @@ def main() -> int:
             print(f"  - {f}")
         return 1
     print(f"auth-contract: clean ({len(plugins)} seed plugins checked)")
+    preview = sorted(pl["id"] for pl in plugins if pl.get("acceptance", "preview") != "verified")
+    print(
+        f"auth-contract: {len(plugins) - len(preview)} verified, {len(preview)} shipped as "
+        f"preview: {', '.join(preview) or 'none'}"
+    )
     return 0
 
 

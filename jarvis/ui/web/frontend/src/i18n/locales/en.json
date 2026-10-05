@@ -1301,6 +1301,8 @@
     "add_upload": "Upload your own plugin",
     "add_community": "From the community marketplace",
     "add_marketplace": "Open the Marketplace",
+    "preview_badge": "Preview",
+    "preview_tooltip": "Not yet tested end to end. Signing in may still need extra steps.",
     "filter_label": "Show",
     "filter_recommended": "Recommended",
     "added": "Added",

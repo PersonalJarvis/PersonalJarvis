@@ -1301,6 +1301,8 @@
     "add_upload": "Eigenes Plugin hochladen",
     "add_community": "Aus dem Community-Marketplace",
     "add_marketplace": "Marketplace öffnen",
+    "preview_badge": "Vorschau",
+    "preview_tooltip": "Noch nicht vollständig getestet. Die Anmeldung kann noch zusätzliche Schritte brauchen.",
     "filter_label": "Anzeigen",
     "filter_recommended": "Empfohlen",
     "added": "Hinzugefügt",
