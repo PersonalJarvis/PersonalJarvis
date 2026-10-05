@@ -268,8 +268,8 @@ export function Sidebar({
   const pluginAttention = usePluginAttention();
   const pluginsNeedReconnect = pluginAttention.count > 0;
   // The Local models health monitor (D7) writes a `local_models` record; a
-  // failing or half-configured local setup gets the same amber dot — badge
-  // only, never a toast.
+  // failing or half-configured local setup marks the profile button, the
+  // hub's entry point — badge only, never a toast.
   const localModelsHealth = sectionHealth.local_models;
   const localModelsNeedAttention =
     localModelsHealth?.status === "error" || localModelsHealth?.status === "needs_setup";
@@ -350,8 +350,8 @@ export function Sidebar({
       badge={item.id === "agents" ? agentsCount : undefined}
       betaLabel={item.beta ? t("nav.agentic_ide_beta") : undefined}
       alert={item.id === "apikeys" && apikeysHasError} alertTitle={t("sidebar.apikeys_alert")}
-      warn={item.id === "plugins" ? pluginsNeedReconnect : item.id === "local-models" && localModelsNeedAttention}
-      warnTitle={item.id === "local-models" ? localModelsHealth?.detail || localModelsHealth?.reason || undefined : pluginWarnTitle}
+      warn={item.id === "plugins" && pluginsNeedReconnect}
+      warnTitle={pluginWarnTitle}
       onClick={() => { setActive(item.id); }} />;
   };
 

@@ -25,15 +25,17 @@ import { cn } from "@/lib/utils";
  *
  *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
  *            {name} (the assistant), Contacts, Socials
- *   System: Computers, API Keys, Local models, Jarvis actions
+ *   System: Computers, API Keys, Jarvis actions
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
  * section id IS the tab state, so deep links, voice commands ("open the API
  * keys"), the deck and detached windows keep landing on the right tab with no
  * extra routing. The merged-in ids ("telephony", "taskbar", "languages",
- * "telephony-setup") resolve to the tab that hosts their content today,
- * exactly like MainView used to map them to standalone views.
+ * "telephony-setup", "local-models") resolve to the tab that hosts their
+ * content today, exactly like MainView used to map them to standalone views.
+ * The Local models page has no nav entry of its own: it opens from the local
+ * server rows on API Keys, so API Keys stays highlighted while it is shown.
  *
  * Labels, icons and grouping resolve from `NAV_GROUPS` (via `resolveNavLabel`,
  * so all three locales behave exactly like the sidebar rows did) — no second hand-written list to drift (AP-4).
@@ -109,7 +111,6 @@ type HubNavId =
   | "contacts"
   | "socials"
   | "apikeys"
-  | "local-models"
   | "computers"
   | "jarvis-actions"
   | "costs"
@@ -131,7 +132,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "local-models", "jarvis-actions"],
+    ids: ["computers", "apikeys", "jarvis-actions"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -139,7 +140,10 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
 ];
 
-const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<ComponentType>> = {
+/** Pages the hub shows under another entry's highlight. */
+type HubSubPage = "telephony-setup" | "local-models";
+
+const TAB_CONTENT: Record<HubNavId | HubSubPage, LazyExoticComponent<ComponentType>> = {
   settings: SettingsTab,
   profile: ProfileTab,
   "agent-instructions": AssistantTab,
@@ -162,7 +166,7 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
  * section id. Plain ids name their own tab; the merged-in ids resolve to the
  * tab hosting their content; anything else falls back to Settings.
  */
-function resolveHubTab(active: string): { content: HubNavId | "telephony-setup"; highlight: HubNavId } {
+function resolveHubTab(active: string): { content: HubNavId | HubSubPage; highlight: HubNavId } {
   switch (active) {
     case "profile":
       return { content: "profile", highlight: "profile" };
@@ -178,7 +182,7 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
     case "telephony-setup":
       return { content: "telephony-setup", highlight: "apikeys" };
     case "local-models":
-      return { content: "local-models", highlight: "local-models" };
+      return { content: "local-models", highlight: "apikeys" };
     case "computers":
       return { content: "computers", highlight: "computers" };
     case "appshots":
@@ -265,24 +269,15 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
       group.items.some((item) => item.id === match.id)))
     .map((match) => ({ ...match, label: resolveNavLabel(t, findNavItem(match.id)) }));
 
-  // The same two health signals the sidebar rows used to carry, now on the
-  // hub's own nav: a hard provider error on API Keys, a failing or
-  // half-configured local setup on Local models. Badge only, never a toast.
+  // The health signal the sidebar row used to carry, now on the hub's own
+  // nav: a hard provider error on API Keys. Badge only, never a toast.
   const apikeysHasError = useMemo(() => apiKeysHealthError(sectionHealth), [sectionHealth]);
-  const localModelsHealth = sectionHealth.local_models;
-  const localModelsNeedAttention =
-    localModelsHealth?.status === "error" || localModelsHealth?.status === "needs_setup";
 
   const renderNavItem = (item: NavItem) => {
     const Icon = item.icon;
     const isActive = item.id === highlight;
     const showAlert = item.id === "apikeys" && apikeysHasError;
-    const showWarn = item.id === "local-models" && localModelsNeedAttention;
-    const hint = showAlert
-      ? t("sidebar.apikeys_alert")
-      : showWarn
-        ? localModelsHealth?.detail || localModelsHealth?.reason
-        : undefined;
+    const hint = showAlert ? t("sidebar.apikeys_alert") : undefined;
     return (
       <li key={item.id}>
         <button
@@ -317,13 +312,6 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
               role="status"
               aria-label={t("sidebar.apikeys_alert")}
               className="h-2 w-2 shrink-0 rounded-full bg-destructive"
-            />
-          )}
-          {!showAlert && showWarn && (
-            <span
-              data-testid="settings-hub-warn-local-models"
-              role="status"
-              className="h-2 w-2 shrink-0 rounded-full bg-warning"
             />
           )}
         </button>

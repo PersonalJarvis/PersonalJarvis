@@ -10,7 +10,6 @@
  * a section added here would silently never appear on the deck.
  */
 import { KeyRound, type LucideIcon } from "lucide-react";
-import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   AgentsIcon,
   ArtifactsIcon,
@@ -209,14 +208,6 @@ export const NAV_GROUPS: NavItem[][] = [
       labelKey: "nav.apikeys",
       icon: KeyRound,
       matchIds: ["apikeys", "telephony", "telephony-setup"],
-    },
-    // Local models sit directly under API Keys: the same "which brain" question,
-    // answered for the machine itself instead of a hosted account.
-    {
-      id: "local-models",
-      labelKey: "nav.local_models",
-      icon: OllamaIcon,
-      fallbackLabel: "Local models",
     },
     {
       id: "settings",

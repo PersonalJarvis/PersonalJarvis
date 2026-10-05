@@ -23,6 +23,7 @@
  * active language.
  */
 import { KeyRound, type LucideIcon } from "lucide-react";
+import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   ChatIcon,
   ConnectorIcon,
@@ -174,7 +175,11 @@ function expand(item: NavItem): QuickSwitchEntry[] {
         tab("agentic-ide-classic", "quick_switch.terminal_grid", PaneGridIcon, "nav.agentic_ide"),
       ];
     case "apikeys":
-      return [entry(item), tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys")];
+      return [
+        entry(item),
+        tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys"),
+        tab("local-models", "nav.local_models", OllamaIcon, "nav.apikeys"),
+      ];
     case "settings":
       return [entry(item), tab("languages", "nav.languages", LanguageIcon, "nav.settings")];
     case "dictation":

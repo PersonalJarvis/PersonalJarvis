@@ -102,7 +102,6 @@ const NAV_IDS = [
   "contacts",
   "socials",
   "apikeys",
-  "local-models",
   "costs",
   "feedback",
 ] as const;
@@ -218,6 +217,17 @@ describe("SettingsHubView tab resolution", () => {
     ).toBe("page");
   });
 
+  it("has no Local models entry and highlights API Keys while that page is open", async () => {
+    mockState.activeSection = "local-models";
+    render(<SettingsHubView />);
+
+    await screen.findByTestId("TAB_LOCAL_MODELS");
+    expect(screen.queryByTestId("settings-hub-nav-local-models")).toBeNull();
+    expect(
+      screen.getByTestId("settings-hub-nav-apikeys").getAttribute("aria-current"),
+    ).toBe("page");
+  });
+
   it("falls back to Settings for an unexpected section id", async () => {
     mockState.activeSection = "chats";
     render(<SettingsHubView />);
@@ -300,21 +310,6 @@ describe("SettingsHubView health signals", () => {
     await screen.findByTestId("TAB_SETTINGS");
 
     expect(screen.getByTestId("settings-hub-alert-apikeys")).toBeTruthy();
-    expect(screen.queryByTestId("settings-hub-warn-local-models")).toBeNull();
-  });
-
-  it("carries the Local-models warn dot while the setup needs care", async () => {
-    mockHealth.local_models = {
-      status: "needs_setup",
-      reason: "not_configured",
-      detail: "",
-      subject_id: "ollama",
-    };
-    render(<SettingsHubView />);
-    await screen.findByTestId("TAB_SETTINGS");
-
-    expect(screen.getByTestId("settings-hub-warn-local-models")).toBeTruthy();
-    expect(screen.queryByTestId("settings-hub-alert-apikeys")).toBeNull();
   });
 
   it("stays calm when nothing is broken", async () => {
@@ -322,6 +317,5 @@ describe("SettingsHubView health signals", () => {
     await screen.findByTestId("TAB_SETTINGS");
 
     expect(screen.queryByTestId("settings-hub-alert-apikeys")).toBeNull();
-    expect(screen.queryByTestId("settings-hub-warn-local-models")).toBeNull();
   });
 });
