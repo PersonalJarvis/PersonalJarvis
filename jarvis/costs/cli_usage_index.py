@@ -131,6 +131,8 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 AGENT_CLAUDE = "claude-cli"
+AGENT_GLM = "glm-cli"
+"""GLM Coding Plan, using Claude Code protocol against Z.ai."""
 """Claude Code. Same spelling as ``jarvis.costs.model.SUBSCRIPTION_RUNNERS``."""
 
 AGENT_CODEX = "codex-cli"
@@ -168,6 +170,7 @@ identity. Not a subscription: the recorded cost is the bill."""
 
 AGENTS: tuple[str, ...] = (
     AGENT_CLAUDE,
+    AGENT_GLM,
     AGENT_CODEX,
     AGENT_KIMI,
     AGENT_AGY,
@@ -192,7 +195,7 @@ COST_READER_FOR_HARNESS: dict[str, str] = {
     # directory, so its sessions land in ~/.claude and are read — and priced —
     # as Claude Code. Attributing them to z.ai needs a config dir of their own
     # at spawn (docs/BUGS.md BUG-178, still open).
-    "glm": AGENT_CLAUDE,
+    "glm": AGENT_GLM,
 }
 HARNESSES_WITHOUT_LOCAL_TRANSCRIPT: dict[str, str] = {
     "deepseek-harness": (
@@ -599,6 +602,15 @@ def _dedup_paths(paths: list[Path]) -> list[Path]:
     return out
 
 
+def _glm_roots(home: Path | None) -> list[Path]:
+    """GLM Claude Code transcripts, isolated from the real Claude root."""
+    if home is not None:
+        return [home / ".jarvis-glm-claude"]
+    from jarvis.workspace.agents import glm_config_dir
+
+    return [glm_config_dir()]
+
+
 def _claude_roots(home: Path | None) -> list[Path]:
     """Claude Code config dirs: the CLI's own override, the default, and every
     managed account's directory."""
@@ -676,6 +688,7 @@ def _grok_roots(home: Path | None) -> list[Path]:
 #: that can hold transcripts.
 _LAYOUTS: tuple[tuple[str, str], ...] = (
     (AGENT_CLAUDE, "projects/*/*.jsonl"),
+    (AGENT_GLM, "projects/*/*.jsonl"),
     # The subagents a session spawned: ``<session>/subagents/agent-<id>.jsonl``
     # for the Agent tool, one level deeper under ``workflows/<run>/`` for a
     # workflow. ``**`` covers both and whatever depth a later CLI adds.
@@ -699,6 +712,8 @@ _LAYOUTS: tuple[tuple[str, str], ...] = (
 def _roots_for(agent: str, home: Path | None) -> list[Path]:
     if agent == AGENT_CLAUDE:
         return _claude_roots(home)
+    if agent == AGENT_GLM:
+        return _glm_roots(home)
     if agent == AGENT_CODEX:
         return _codex_roots(home)
     if agent == AGENT_GROK:
