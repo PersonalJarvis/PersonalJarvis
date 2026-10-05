@@ -173,11 +173,12 @@ the floor plan differ.
 - **Jarvis is the person's pet** (2026-10-02): Jarvis appears as the pet
   chosen in Settings → My Pets (`docs/pets.md`), in 3D, not always as Gigi.
   `companion/petCompanions.ts` maps a pet to its companion:
-  Gigi keeps its hover model; the six other built-ins have authored Blender
+  Gigi keeps its hover model; the seven other built-ins have authored Blender
   models (`scripts/art/build_pet_companions.py`, study
   `art/studies/jarvis-pet-companions`, one GLB per pet under
   `assets/society/companions/pets/`) and a gait of their own: Ember the
-  dragon flies with beating wings, Miso the cat trots, Bolt the battery
+  dragon flies with beating wings, Miso the cat trots, Cocoa the puppy trots
+  with flopping ears and a wagging tail, Bolt the battery
   waddles, Brew the teapot hops with a rattling lid, Mochi bounces and Shelly
   the snail crawls. Pets that fly hover at head height with Gigi's halo and
   sparkles; pets on the floor (`gigiFlight.ts` `ground` mode) walk right
