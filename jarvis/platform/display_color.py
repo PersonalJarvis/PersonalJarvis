@@ -267,11 +267,41 @@ def device_at(point: tuple[int, int] | None) -> str | None:
         return None
 
 
+def device_of_window(hwnd: int | None) -> str | None:
+    """Windows: the GDI name of the monitor showing most of window ``hwnd``."""
+    if sys.platform != "win32" or not hwnd:
+        return None
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        user32 = ctypes.WinDLL("user32")
+        user32.MonitorFromWindow.restype = wintypes.HMONITOR
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        return _monitor_name(user32.MonitorFromWindow(hwnd, 2))  # MONITOR_DEFAULTTONEAREST
+    except Exception:  # noqa: BLE001 - advisory, like the rest of this module
+        log.debug("monitor lookup by window failed", exc_info=True)
+        return None
+
+
 def _primary_device_name() -> str:
     return _monitor_device((0, 0))
 
 
 def _monitor_device(point: tuple[int, int]) -> str:
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.WinDLL("user32")
+    user32.MonitorFromPoint.restype = wintypes.HMONITOR
+    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+    handle = user32.MonitorFromPoint(
+        wintypes.POINT(int(point[0]), int(point[1])), 2
+    )  # MONITOR_DEFAULTTONEAREST
+    return _monitor_name(handle)
+
+
+def _monitor_name(handle: int) -> str:
     import ctypes  # noqa: PLC0415
     from ctypes import wintypes  # noqa: PLC0415
 
@@ -282,11 +312,6 @@ def _monitor_device(point: tuple[int, int]) -> str:
         ]
 
     user32 = ctypes.WinDLL("user32")
-    user32.MonitorFromPoint.restype = wintypes.HMONITOR
-    user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-    handle = user32.MonitorFromPoint(
-        wintypes.POINT(int(point[0]), int(point[1])), 2
-    )  # MONITOR_DEFAULTTONEAREST
     info = MonitorInfo()
     info.size = ctypes.sizeof(info)
     user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MonitorInfo)]
