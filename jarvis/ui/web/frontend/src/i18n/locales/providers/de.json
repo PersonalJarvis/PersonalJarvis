@@ -96,6 +96,9 @@
     "restart_title": "Neu starten, um das Update abzuschließen",
     "restart_desc": "Die neue Anbieter-Seite braucht einen Neustart des App-Hintergrunddienstes. Das dauert etwa zehn Sekunden.",
     "restart_action": "Jetzt neu starten",
+    "agent_providers_desc": "Schalte jeden Anbieter ein, den deine Agenten nutzen dürfen. Öffne einen, um Abo oder Schlüssel und seine Modelle zu wählen.",
+    "agent_providers_count": "{0} aktiv",
+    "voice_save_hint": "Speichern, damit der nächste Anruf diese Einstellungen nutzt",
     "tab_voice": "Live-Gespräche",
     "tab_agents": "Agenten",
     "subscriptions_title": "Abos",
@@ -116,7 +119,8 @@
     "key_missing_short": "Kein Schlüssel",
     "key_desc_short": "Ein Schlüssel für alles, was dieser Anbieter macht. Abrechnung pro Nutzung.",
     "separate_title": "Eigene Schlüssel",
-    "accounts_title": "Mehrere Anmeldungen pro Tool",
+    "accounts_title": "Mehrere Anmeldungen pro Tool"
+,
     "agent_providers_title": "Anbieter",
     "access_title": "Zugang",
     "access_desc": "Nutze dein Abo oder einen API-Schlüssel. Die Agenten laufen nur über den hier gewählten Zugang.",

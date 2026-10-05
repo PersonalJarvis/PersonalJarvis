@@ -86,7 +86,7 @@ export function PromptWriterCard() {
 
   if (loading) {
     return (
-      <div className="card-outline flex items-center gap-2 p-4 text-xs text-muted-foreground">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         {t("prompt_writer.loading")}
       </div>
@@ -98,15 +98,15 @@ export function PromptWriterCard() {
   const clis = options.filter((o) => !MODE_IDS.has(o.id));
 
   return (
-    <div className="card-outline space-y-3 p-4" data-testid="prompt-writer-card">
+    <div className="space-y-3" data-testid="prompt-writer-card">
       <div className="space-y-1">
-        <h4 className="text-xs font-medium">{t("prompt_writer.title")}</h4>
-        <p className="text-xs leading-relaxed text-muted-foreground">
+        <h4 className="text-sm font-medium">{t("prompt_writer.title")}</h4>
+        <p className="text-sm text-muted-foreground">
           {t("prompt_writer.description")}
         </p>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-0.5">
         {modes.map((option) => (
           <WriterRow
             key={option.id}
@@ -120,8 +120,8 @@ export function PromptWriterCard() {
       </div>
 
       {clis.length > 0 && (
-        <div className="space-y-2">
-          <p className="px-1 text-micro uppercase tracking-wider text-muted-foreground">
+        <div className="space-y-0.5">
+          <p className="px-2 pb-1 pt-2 text-xs text-muted-foreground">
             {t("prompt_writer.connected_clis")}
           </p>
           {clis.map((option) => (
@@ -182,15 +182,13 @@ function WriterRow({
       disabled={blocked || disabled}
       onClick={() => onSelect(option.id)}
       className={cn(
-        "flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition",
-        selected
-          ? "border-primary/60 bg-primary/5"
-          : "border-border hover:border-primary/40",
-        blocked && "cursor-not-allowed opacity-50 hover:border-border",
+        "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors",
+        selected ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground",
+        blocked && "cursor-not-allowed opacity-50 hover:bg-transparent",
       )}
     >
       <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 text-xs leading-snug">
+      <span className="min-w-0 flex-1 text-sm leading-snug">
         <span className="block truncate">{option.label}</span>
         {blocked && (
           <span className="block text-micro text-muted-foreground">

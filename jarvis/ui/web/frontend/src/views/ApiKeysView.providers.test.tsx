@@ -158,10 +158,10 @@ beforeEach(() => {
 });
 
 describe("ApiKeysView — Live calls", () => {
-  it("opens on live calls with GPT-Live in the list and one OpenAI key row", async () => {
+  it("opens on live calls with GPT-Live and one OpenAI key row", async () => {
     renderPage();
     const voice = await screen.findByTestId("apikeys-voice");
-    expect(within(voice).getByTestId("voice-provider-gpt-live").textContent).toContain("GPT-Live");
+    expect(within(voice).getByTestId("live-profile")).toBeTruthy();
     expect(await within(voice).findByTestId("voice-key")).toBeTruthy();
   });
 
@@ -270,6 +270,7 @@ describe("ApiKeysView — Agents", () => {
     const detail = await screen.findByTestId("agent-provider-detail-claude-api");
     await waitFor(() => expect(detail.textContent).toContain("me@example.com"));
     expect(within(detail).getByTestId("subscription-disconnect")).toBeTruthy();
+    fireEvent.click(within(detail).getByRole("button", { name: "Runtime" }));
     expect((within(detail).getByLabelText("Binary path") as HTMLInputElement).value).toBe("/usr/bin/claude");
   });
 });

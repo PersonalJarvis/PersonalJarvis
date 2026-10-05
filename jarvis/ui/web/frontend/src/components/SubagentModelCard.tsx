@@ -83,8 +83,9 @@ export function SubagentModelCard({
     (p) => p.id === catalogProvider && p.supports_model_pull,
   );
   return (
-    <div className="space-y-3 rounded-surface border border-border bg-card p-3.5">
-      <p className="text-xs leading-relaxed text-muted-foreground">
+    <div className="space-y-3" data-testid="subagent-model-card">
+      <h4 className="text-sm font-medium">{t("subagent_model.model_label")}</h4>
+      <p className="text-sm text-muted-foreground">
         {t("subagent_model.description")}
       </p>
       {catalogProvider ? (

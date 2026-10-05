@@ -225,7 +225,7 @@ export function LiveSubscriptionAccount({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-3">
+    <div className="space-y-3">
       <label className="block space-y-2 text-sm">
         <span>{t("live.subscription_account")}</span>
         <BrandedSelect

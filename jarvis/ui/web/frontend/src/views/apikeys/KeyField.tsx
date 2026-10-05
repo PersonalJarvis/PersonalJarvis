@@ -7,7 +7,7 @@ import { useT } from "@/i18n";
 import { keyMatchesSecret } from "@/lib/keyFormat";
 import { openExternalUrl } from "@/lib/openExternal";
 import { useEventStore } from "@/store/events";
-import { SettingsRow } from "./settingsUi";
+import { Row } from "./ledger";
 
 function announce(slot: string, action: "set" | "delete") {
   // Every mounted list and the health dots re-read. Only the slot NAME
@@ -30,6 +30,7 @@ export function KeyField({
   description,
   onChanged,
   testId = "provider-key",
+  stacked = false,
 }: {
   slot: string;
   present: boolean;
@@ -39,6 +40,8 @@ export function KeyField({
   description?: string;
   onChanged?: () => void | Promise<void>;
   testId?: string;
+  /** Field under the text, full width — for a narrow column. */
+  stacked?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -96,8 +99,8 @@ export function KeyField({
   ) : null;
 
   const control = showInput ? (
-    <div className="flex w-full items-center gap-2 sm:w-auto">
-      <div className="relative min-w-0 flex-1 sm:w-72 sm:flex-none">
+    <div className={stacked ? "flex w-full items-center gap-2" : "flex w-full items-center gap-2 sm:w-auto"}>
+      <div className={stacked ? "relative min-w-0 flex-1" : "relative min-w-0 flex-1 sm:w-72 sm:flex-none"}>
         <Input
           type={reveal ? "text" : "password"}
           autoComplete="off"
@@ -164,31 +167,38 @@ export function KeyField({
     </>
   );
 
-  return (
-    <SettingsRow
-      data-testid={testId}
-      title={title ?? t("providers_page.key_label")}
-      description={description}
-      status={
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="inline-flex items-center gap-1.5">
-            <span aria-hidden="true" className={present ? "h-1.5 w-1.5 rounded-full bg-success" : "h-1.5 w-1.5 rounded-full bg-border-strong"} />
-            {confirmDelete
-              ? t("providers_page.key_remove_confirm")
-              : present
-                ? t("providers_page.key_saved_hint")
-                : t("providers_page.key_missing_hint")}
-          </span>
-          {getKey}
-          {format && !format.match && format.detected && (
-            <span role="status" className="inline-flex items-center gap-1 text-warning">
-              <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
-              {t("providers_page.key_format_warning")
-                .replace("{0}", format.detected.label)
-                .replace("{1}", providerLabel)}
-            </span>
-          )}
+  const statusNode = (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span className="inline-flex items-center gap-1.5">
+        <span aria-hidden="true" className={present ? "h-1.5 w-1.5 rounded-full bg-success" : "h-1.5 w-1.5 rounded-full bg-border-strong"} />
+        {confirmDelete
+          ? t("providers_page.key_remove_confirm")
+          : present
+            ? t("providers_page.key_saved_hint")
+            : t("providers_page.key_missing_hint")}
+      </span>
+      {getKey}
+      {format && !format.match && format.detected && (
+        <span role="status" className="inline-flex items-center gap-1 text-warning">
+          <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
+          {t("providers_page.key_format_warning")
+            .replace("{0}", format.detected.label)
+            .replace("{1}", providerLabel)}
         </span>
+      )}
+    </span>
+  );
+
+  return (
+    <Row
+      data-testid={testId}
+      stacked={stacked}
+      title={title ?? t("providers_page.key_label")}
+      description={
+        <>
+          {description ? <span className="block">{description}</span> : null}
+          <span className={description ? "mt-1.5 block" : "block"}>{statusNode}</span>
+        </>
       }
       control={control}
     />

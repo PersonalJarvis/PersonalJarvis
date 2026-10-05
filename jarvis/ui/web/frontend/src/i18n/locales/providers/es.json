@@ -96,6 +96,9 @@
     "restart_title": "Reinicia para terminar la actualización",
     "restart_desc": "La nueva página de proveedores necesita reiniciar una vez el servicio de la app. Tarda unos diez segundos.",
     "restart_action": "Reiniciar ahora",
+    "agent_providers_desc": "Activa cada proveedor que tus agentes pueden usar. Abre uno para elegir suscripción o clave y sus modelos.",
+    "agent_providers_count": "{0} activos",
+    "voice_save_hint": "Guarda para usar estos ajustes en tu próxima llamada",
     "tab_voice": "Llamadas en directo",
     "tab_agents": "Agentes",
     "subscriptions_title": "Suscripciones",
@@ -116,7 +119,8 @@
     "key_missing_short": "Sin clave",
     "key_desc_short": "Una clave para todo lo que hace este proveedor. Se cobra por uso.",
     "separate_title": "Claves propias",
-    "accounts_title": "Varias sesiones por herramienta",
+    "accounts_title": "Varias sesiones por herramienta"
+,
     "agent_providers_title": "Proveedores",
     "access_title": "Acceso",
     "access_desc": "Usa tu suscripción o una clave API. Los agentes solo funcionan con el acceso elegido aquí.",

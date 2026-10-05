@@ -96,6 +96,9 @@
     "restart_title": "Restart to finish the update",
     "restart_desc": "The new provider page needs the app's background service to restart once. It takes about ten seconds.",
     "restart_action": "Restart now",
+    "agent_providers_desc": "Turn on every provider your agents may use. Open one to choose subscription or key and its models.",
+    "agent_providers_count": "{0} on",
+    "voice_save_hint": "Save to use these settings on your next call",
     "tab_voice": "Live calls",
     "tab_agents": "Agents",
     "subscriptions_title": "Subscriptions",
@@ -116,7 +119,8 @@
     "key_missing_short": "No key",
     "key_desc_short": "One key for everything this provider does. Billed per use.",
     "separate_title": "Separate keys",
-    "accounts_title": "Several sign-ins per tool",
+    "accounts_title": "Several sign-ins per tool"
+,
     "agent_providers_title": "Providers",
     "access_title": "Access",
     "access_desc": "Use your subscription or an API key. The agents run only on the one picked here.",
