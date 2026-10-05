@@ -306,7 +306,7 @@ describe("Sidebar settings-hub entry", () => {
   test("the profile button stays lit while any hub section is on screen", () => {
     // It IS the hub's entry point, so it carries "you are here" for all of
     // the hub's sections — including ones only reachable from inside the hub.
-    useEventStore.setState({ activeSection: "local-models" });
+    useEventStore.setState({ activeSection: "appshots" });
     renderSidebar();
 
     expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(

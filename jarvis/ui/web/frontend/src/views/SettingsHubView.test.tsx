@@ -80,9 +80,6 @@ vi.mock("@/views/ApiKeysView", () => ({ ApiKeysView: stub("TAB_APIKEYS") }));
 vi.mock("@/views/TelephonyView", () => ({
   TelephonySetupView: stub("TAB_TELEPHONY_SETUP"),
 }));
-vi.mock("@/views/LocalModelsView", () => ({
-  LocalModelsView: stub("TAB_LOCAL_MODELS"),
-}));
 vi.mock("@/views/PetsView", () => ({ PetsView: stub("TAB_PETS") }));
 vi.mock("@/views/CostsView", () => ({ CostsView: stub("TAB_COSTS") }));
 vi.mock("@/views/feedback/FeedbackView", () => ({
@@ -191,7 +188,6 @@ describe("SettingsHubView tab resolution", () => {
     ["contacts", "TAB_CONTACTS"],
     ["socials", "TAB_SOCIALS"],
     ["apikeys", "TAB_APIKEYS"],
-    ["local-models", "TAB_LOCAL_MODELS"],
     ["pets", "TAB_PETS"],
     ["costs", "TAB_COSTS"],
     ["feedback", "TAB_FEEDBACK"],
@@ -217,15 +213,12 @@ describe("SettingsHubView tab resolution", () => {
     ).toBe("page");
   });
 
-  it("has no Local models entry and highlights API Keys while that page is open", async () => {
-    mockState.activeSection = "local-models";
+  it("lists neither Local models nor Computers", async () => {
     render(<SettingsHubView />);
+    await screen.findByTestId("TAB_SETTINGS");
 
-    await screen.findByTestId("TAB_LOCAL_MODELS");
     expect(screen.queryByTestId("settings-hub-nav-local-models")).toBeNull();
-    expect(
-      screen.getByTestId("settings-hub-nav-apikeys").getAttribute("aria-current"),
-    ).toBe("page");
+    expect(screen.queryByTestId("settings-hub-nav-computers")).toBeNull();
   });
 
   it("falls back to Settings for an unexpected section id", async () => {

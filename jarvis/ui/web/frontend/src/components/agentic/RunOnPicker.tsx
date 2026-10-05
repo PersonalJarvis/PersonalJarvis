@@ -1,13 +1,12 @@
 /**
  * "Runs on" — where new agents run: this computer, or one of the connected
- * computers (a VPS, a local VM; see the Computers section). On a computer the
- * agents live in tmux there and keep working while this PC is off; the folder
- * is copied there first (new files that look like secrets stay here).
+ * computers (a VPS, a local VM). On a computer the agents live in tmux there
+ * and keep working while this PC is off; the folder is copied there first
+ * (new files that look like secrets stay here).
  */
 import { useEffect } from "react";
 import { Laptop, Server } from "lucide-react";
 import { useComputerChoiceList } from "@/hooks/useComputers";
-import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 
 const RUN_ON_KEY = "jarvis.agenticIde.runOn.";
@@ -44,7 +43,6 @@ export function RunOnPicker({
   hideWhenNone?: boolean;
 }) {
   const { computers, loaded } = useComputerChoiceList();
-  const setActiveSection = useEventStore((state) => state.setActiveSection);
   const usable = computers.filter((computer) => computer.health.status !== "provisioning");
   const options = [
     { id: null as string | null, name: "This computer", detail: "Stops when this PC sleeps or shuts down", online: true, icon: Laptop },
@@ -105,15 +103,6 @@ export function RunOnPicker({
         <p data-testid="ide-run-on-note" className="mt-2 text-xs text-muted-foreground">
           The folder is copied to {chosen.name} first, uncommitted changes included. Files like .env
           and private keys stay on this PC. The coding CLI must be installed there.
-        </p>
-      )}
-      {usable.length === 0 && (
-        <p className="mt-2 text-xs text-muted-foreground">
-          Want agents that keep working while this PC is off?{" "}
-          <button type="button" onClick={() => setActiveSection("computers")}
-            className="font-medium text-accent underline-offset-4 hover:underline">
-            Connect a server
-          </button>
         </p>
       )}
     </fieldset>

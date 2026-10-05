@@ -25,17 +25,15 @@ import { cn } from "@/lib/utils";
  *
  *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
  *            {name} (the assistant), Contacts, Socials
- *   System: Computers, API Keys, Jarvis actions
+ *   System: API Keys, Jarvis actions
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
  * section id IS the tab state, so deep links, voice commands ("open the API
  * keys"), the deck and detached windows keep landing on the right tab with no
  * extra routing. The merged-in ids ("telephony", "taskbar", "languages",
- * "telephony-setup", "local-models") resolve to the tab that hosts their
- * content today, exactly like MainView used to map them to standalone views.
- * The Local models page has no nav entry of its own: it opens from the local
- * server rows on API Keys, so API Keys stays highlighted while it is shown.
+ * "telephony-setup") resolve to the tab that hosts their content today,
+ * exactly like MainView used to map them to standalone views.
  *
  * Labels, icons and grouping resolve from `NAV_GROUPS` (via `resolveNavLabel`,
  * so all three locales behave exactly like the sidebar rows did) — no second hand-written list to drift (AP-4).
@@ -71,14 +69,6 @@ const TelephonySetupTab = lazy(() =>
     default: m.TelephonySetupView,
   })),
 );
-const LocalModelsTab = lazy(() =>
-  import("@/views/LocalModelsView").then((m) => ({
-    default: m.LocalModelsView,
-  })),
-);
-const ComputersTab = lazy(() =>
-  import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
-);
 const JarvisActionsTab = lazy(() =>
   import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
 );
@@ -111,7 +101,6 @@ type HubNavId =
   | "contacts"
   | "socials"
   | "apikeys"
-  | "computers"
   | "jarvis-actions"
   | "costs"
   | "feedback";
@@ -132,7 +121,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "jarvis-actions"],
+    ids: ["apikeys", "jarvis-actions"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -140,10 +129,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
 ];
 
-/** Pages the hub shows under another entry's highlight. */
-type HubSubPage = "telephony-setup" | "local-models";
-
-const TAB_CONTENT: Record<HubNavId | HubSubPage, LazyExoticComponent<ComponentType>> = {
+const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<ComponentType>> = {
   settings: SettingsTab,
   profile: ProfileTab,
   "agent-instructions": AssistantTab,
@@ -151,8 +137,6 @@ const TAB_CONTENT: Record<HubNavId | HubSubPage, LazyExoticComponent<ComponentTy
   socials: SocialsTab,
   apikeys: ApiKeysTab,
   "telephony-setup": TelephonySetupTab,
-  "local-models": LocalModelsTab,
-  computers: ComputersTab,
   appshots: AppshotsTab,
   shortcuts: ShortcutsTab,
   pets: PetsTab,
@@ -166,7 +150,7 @@ const TAB_CONTENT: Record<HubNavId | HubSubPage, LazyExoticComponent<ComponentTy
  * section id. Plain ids name their own tab; the merged-in ids resolve to the
  * tab hosting their content; anything else falls back to Settings.
  */
-function resolveHubTab(active: string): { content: HubNavId | HubSubPage; highlight: HubNavId } {
+function resolveHubTab(active: string): { content: HubNavId | "telephony-setup"; highlight: HubNavId } {
   switch (active) {
     case "profile":
       return { content: "profile", highlight: "profile" };
@@ -181,10 +165,6 @@ function resolveHubTab(active: string): { content: HubNavId | HubSubPage; highli
       return { content: "apikeys", highlight: "apikeys" };
     case "telephony-setup":
       return { content: "telephony-setup", highlight: "apikeys" };
-    case "local-models":
-      return { content: "local-models", highlight: "apikeys" };
-    case "computers":
-      return { content: "computers", highlight: "computers" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
     case "shortcuts":

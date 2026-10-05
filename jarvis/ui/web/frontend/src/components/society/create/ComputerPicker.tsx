@@ -1,15 +1,14 @@
 /**
  * "Runs on" — where an agent's work executes: this computer, or one of the
- * machines connected in the Computers section (a VPS, a local VM). The value
- * is a computer id; "" means this computer. Shared by the create dialog and
- * the agent's spec sheet so the two can never offer different choices.
+ * connected machines (a VPS, a local VM). The value is a computer id; ""
+ * means this computer. Shared by the create dialog and the agent's spec
+ * sheet so the two can never offer different choices.
  */
 import { Monitor, Server } from "lucide-react";
 import { Combobox } from "@/components/ui/combobox";
 import { useComputers } from "@/hooks/useComputers";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import { useEventStore } from "@/store/events";
 import type { Computer } from "@/lib/computersApi";
 
 function Dot({ computer }: { computer: Computer }) {
@@ -40,7 +39,6 @@ export function ComputerPicker({
 }) {
   const t = useT();
   const computers = useComputers();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const rows = computers.data ?? [];
   const chosen = rows.find((c) => c.id === value);
 
@@ -75,16 +73,7 @@ export function ComputerPicker({
           ? chosen.health.status === "online"
             ? t("society.create.runs_on_remote_hint")
             : t("society.create.runs_on_offline_hint")
-          : t("society.create.runs_on_here_hint")}{" "}
-        {rows.length === 0 && (
-          <button
-            type="button"
-            onClick={() => setActiveSection("computers")}
-            className="text-accent underline-offset-4 hover:underline"
-          >
-            {t("society.create.runs_on_connect")}
-          </button>
-        )}
+          : t("society.create.runs_on_here_hint")}
       </p>
     </div>
   );

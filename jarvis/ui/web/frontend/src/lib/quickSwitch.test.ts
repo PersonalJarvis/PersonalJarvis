@@ -87,7 +87,6 @@ describe("ranking", () => {
     ["ajustes", "settings"],
     ["skills", "skills"],
     ["api", "apikeys"],
-    ["ollama", "local-models"],
     ["market", "marketplace"],
     ["wiki", "memory"],
   ])("puts the meant destination first for %j", (query, expected) => {

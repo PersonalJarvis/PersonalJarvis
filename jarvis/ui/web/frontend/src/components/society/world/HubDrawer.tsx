@@ -177,7 +177,7 @@ export const HUBS: Record<KitPlace, HubConfig> = {
   models: {
     titleKey: "drawer_models_title",
     hintKey: "drawer_models_hint",
-    section: "local-models",
+    section: null,
     bodyKey: "drawer_models_body",
   },
   civic: {

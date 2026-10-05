@@ -36,7 +36,6 @@ describe("MainView — every settings-hub id mounts the hub", () => {
     "apikeys",
     "telephony",
     "telephony-setup",
-    "local-models",
     "costs",
     "feedback",
   ] as SectionId[])("routes %s to the Settings hub", async (activeSection) => {

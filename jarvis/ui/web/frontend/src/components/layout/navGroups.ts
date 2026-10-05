@@ -17,7 +17,6 @@ import {
   CaptureIcon,
   ChatIcon,
   CodeIcon,
-  ComputersIcon,
   ContactsIcon,
   DocsIcon,
   ExtensionsIcon,
@@ -194,15 +193,6 @@ export const NAV_GROUPS: NavItem[][] = [
   // Telefonie" voice command lands on the "telephony" id. Settings likewise
   // fronts the former "Taskbar" + "Languages" sections.
   [
-    // Computers: the servers and virtual machines the assistant and its agents
-    // can work on besides this one (a rented VPS, a hosting-account import, a
-    // local VM). A Settings-hub entry, first under System.
-    {
-      id: "computers",
-      labelKey: "nav.computers",
-      icon: ComputersIcon,
-      fallbackLabel: "Computers",
-    },
     {
       id: "apikeys",
       labelKey: "nav.apikeys",
@@ -288,8 +278,6 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "apikeys",
   "telephony",
   "telephony-setup",
-  "local-models",
-  "computers",
   "appshots",
   "shortcuts",
   "pets",

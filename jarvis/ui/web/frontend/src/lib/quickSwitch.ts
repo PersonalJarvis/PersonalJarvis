@@ -23,7 +23,6 @@
  * active language.
  */
 import { KeyRound, type LucideIcon } from "lucide-react";
-import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   ChatIcon,
   ConnectorIcon,
@@ -76,12 +75,10 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   agents: ["society", "world", "team", "routines", "schedule", "automations"],
   settings: ["preferences", "options", "config", "configuration", "general"],
   apikeys: ["keys", "credentials", "tokens", "providers"],
-  "local-models": ["ollama", "llama", "offline", "models"],
   memory: ["notes", "knowledge", "obsidian"],
   visualization: ["outputs", "results", "images", "pages"],
   costs: ["tokens", "usage", "money", "billing", "budget"],
   sessions: ["transcripts", "recordings", "history"],
-  computers: ["servers", "ssh", "vps", "remote", "machines"],
   "agent-instructions": ["assistant", "soul", "soul md", "character", "persona", "instructions", "memory md"],
   marketplace: ["store", "shop", "install"],
   board: ["stats", "dashboard", "activity"],
@@ -175,11 +172,7 @@ function expand(item: NavItem): QuickSwitchEntry[] {
         tab("agentic-ide-classic", "quick_switch.terminal_grid", PaneGridIcon, "nav.agentic_ide"),
       ];
     case "apikeys":
-      return [
-        entry(item),
-        tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys"),
-        tab("local-models", "nav.local_models", OllamaIcon, "nav.apikeys"),
-      ];
+      return [entry(item), tab("telephony", "nav.telephony", PhoneIcon, "nav.apikeys")];
     case "settings":
       return [entry(item), tab("languages", "nav.languages", LanguageIcon, "nav.settings")];
     case "dictation":

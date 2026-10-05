@@ -122,7 +122,7 @@ export const BUILDING_CARDS: Record<BuildingPlace, BuildingCard> = {
     taglineKey: "drawer_models_hint",
     doesKey: "card_models_does",
     howKey: "card_models_how",
-    section: "local-models",
+    section: null,
     hub: null,
   },
   civic: {
