@@ -328,6 +328,31 @@ async def test_concurrency_cap_and_result_release(world):
     assert [c[1] for c in dispatcher.calls] == ["a", "c"]
 
 
+async def test_result_cannot_release_a_foreign_run_slot(world, caplog):
+    store, roster, scheduler, dispatcher, _ = world
+    await store.append_and_publish(_assign("jarvis", "scout", trace="scout-run"))
+    await store.append_and_publish(_assign("jarvis", "archivist", trace="archivist-run"))
+
+    assert scheduler.running == {"run-1": "scout", "run-2": "archivist"}
+
+    forged = SocietyEnvelope(
+        msg_type=MsgType.RESULT,
+        from_agent="scout",
+        to_agent="jarvis",
+        trace_id="foreign-result",
+        payload={
+            "run_id": "run-2",
+            "done": "stolen completion",
+            "output": ["a"],
+        },
+    )
+    with caplog.at_level("WARNING", logger="jarvis.society.scheduler"):
+        await store.append_and_publish(forged)
+
+    assert scheduler.running == {"run-1": "scout", "run-2": "archivist"}
+    assert "referenced run run-2 owned by archivist" in caplog.text
+
+
 async def test_invalid_result_is_vetoed(world):
     store, _, _, _, _ = world
     await store.append_and_publish(
