@@ -45,7 +45,7 @@ describe("AppZoomKeybinds", () => {
 
   it("records a new zoom-in chord and remembers it", () => {
     render(<Zoom />);
-    fireEvent.click(screen.getByTestId("app-zoom-record-in"));
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-in"));
     expect(screen.getByTestId("app-zoom-row-in").getAttribute("data-keybind-recording")).toBe("true");
 
     fireEvent.keyDown(window, { key: "ArrowUp", code: "ArrowUp", altKey: true });
@@ -57,7 +57,7 @@ describe("AppZoomKeybinds", () => {
   it("records Plus on a German keyboard without the layout's key position", () => {
     useAppZoomSettings.getState().setBinding("in", "f9");
     render(<Zoom />);
-    fireEvent.click(screen.getByTestId("app-zoom-record-in"));
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-in"));
     fireEvent.keyDown(window, { key: "+", code: "BracketRight", ctrlKey: true });
     expect(useAppZoomSettings.getState().bindings.in).toBe("ctrl+plus");
   });
@@ -65,7 +65,7 @@ describe("AppZoomKeybinds", () => {
   it("refuses a chord another step uses, and keeps the old one", () => {
     render(<Zoom />);
     const before = useAppZoomSettings.getState().bindings.in;
-    fireEvent.click(screen.getByTestId("app-zoom-record-in"));
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-in"));
     fireEvent.keyDown(window, { key: "-", code: "Minus", ctrlKey: true });
     expect(useAppZoomSettings.getState().bindings.in).toBe(before);
     expect(screen.getByRole("alert").textContent).toMatch(/zoom step/i);
@@ -73,7 +73,7 @@ describe("AppZoomKeybinds", () => {
 
   it("refuses the quick switcher's chord", () => {
     render(<Zoom />);
-    fireEvent.click(screen.getByTestId("app-zoom-record-reset"));
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-reset"));
     fireEvent.keyDown(window, { key: " ", code: "Space", ctrlKey: true });
     expect(screen.getByRole("alert").textContent).toMatch(/quick switcher/i);
   });
@@ -81,12 +81,21 @@ describe("AppZoomKeybinds", () => {
   it("cancels on Escape and resets to the default", () => {
     useAppZoomSettings.getState().setBinding("out", "alt+down");
     render(<Zoom />);
-    fireEvent.click(screen.getByTestId("app-zoom-record-out"));
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-out"));
     fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
     expect(useAppZoomSettings.getState().bindings.out).toBe("alt+down");
 
+    // Remove and Reset live under the row while it records.
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-out"));
     fireEvent.click(screen.getByText("Reset to default"));
     expect(useAppZoomSettings.getState().bindings.out).toBe(defaultAppZoomBindings().out);
+  });
+
+  it("removes a chord from the open recorder", () => {
+    render(<Zoom />);
+    fireEvent.click(screen.getByTestId("chord-record-app-zoom-in"));
+    fireEvent.click(screen.getByTestId("chord-clear-app-zoom-in"));
+    expect(useAppZoomSettings.getState().bindings.in).toBe("");
   });
 
   it("steps the size with its buttons and resets on the percentage", () => {

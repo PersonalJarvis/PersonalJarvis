@@ -11,6 +11,7 @@ import {
   readQuickSwitchSettings,
   useQuickSwitchSettings,
 } from "@/store/quickSwitchSettings";
+import { APP_CHORD_STORAGE_KEY, readAppChordSettings, useAppChordSettings } from "@/store/appChordSettings";
 
 const KEYBINDS = {
   keybinds: {
@@ -34,6 +35,9 @@ function press(init: KeyboardEventInit) {
 describe("ShortcutsView", () => {
   beforeEach(() => {
     window.localStorage.removeItem(QUICK_SWITCH_STORAGE_KEY);
+    window.localStorage.removeItem(APP_CHORD_STORAGE_KEY);
+    useAppChordSettings.setState(readAppChordSettings());
+    useEventStore.getState().setActiveSection("shortcuts");
     useQuickSwitchSettings.setState({ ...readQuickSwitchSettings(), combo: "ctrl+space" });
     vi.stubGlobal(
       "fetch",
@@ -109,15 +113,42 @@ describe("ShortcutsView", () => {
     expect(screen.getByTestId("shortcut-tester-meaning").textContent).toMatch(/free/i);
   });
 
-  it("sends the dictation edit to the voice section", () => {
+  it("edits a dictation key in place, without leaving the page", async () => {
     render(<ShortcutsView />);
+    await act(async () => {});
     fireEvent.click(screen.getByTestId("shortcuts-edit-dictate"));
-    expect(useEventStore.getState().activeSection).toBe("voice-shortcuts");
+    expect(screen.getByTestId("combo-field-dictate")).toBeTruthy();
+    expect(useEventStore.getState().activeSection).not.toBe("voice-shortcuts");
   });
 
-  it("sends the appshot keys to the Appshots section", () => {
+  it("edits an appshot key in place", async () => {
     render(<ShortcutsView />);
+    await act(async () => {});
     fireEvent.click(screen.getByTestId("shortcuts-edit-appshot-region_hotkey"));
-    expect(useEventStore.getState().activeSection).toBe("appshots");
+    expect(screen.getByTestId("shortcuts-appshot-field-region_hotkey")).toBeTruthy();
+  });
+
+  it("gives every row the same one pencil", async () => {
+    render(<ShortcutsView />);
+    await act(async () => {});
+    for (const row of screen.getByTestId("shortcuts-list").querySelectorAll("li")) {
+      expect(row.querySelectorAll("button").length).toBe(1);
+    }
+  });
+
+  it("records a new chord for the shortcut overview", () => {
+    render(<ShortcutsView />);
+    fireEvent.click(screen.getByTestId("chord-record-shortcut_overlay"));
+    press({ key: "F1", code: "F1" });
+    expect(useAppChordSettings.getState().bindings.shortcut_overlay).toBe("f1");
+    expect(screen.getByTestId("shortcut-row-shortcut_overlay").textContent).toContain("F1");
+  });
+
+  it("refuses a bare letter for the IDE key menu", () => {
+    render(<ShortcutsView />);
+    fireEvent.click(screen.getByTestId("chord-record-ide_menu"));
+    press({ key: "g", code: "KeyG" });
+    expect(useAppChordSettings.getState().bindings.ide_menu).toBe("ctrl+b");
+    expect(screen.getByRole("alert").textContent).toMatch(/every time you type/i);
   });
 });

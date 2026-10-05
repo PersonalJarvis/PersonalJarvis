@@ -3,17 +3,12 @@
  * three chords (bigger, smaller, back to 100 %) as a row of the shortcut list,
  * and `AppZoomKeybinds` is the on/off switch with the current size.
  *
- * It has its own small recorder instead of the shared voice-key recorder, and
- * that is deliberate: the shared one records physical key positions and knows
- * no punctuation, because a global OS hotkey cannot use it. Zoom needs `+` and
- * `-`, which sit on different keys on a German and a US keyboard, so this
- * recorder reads the character the key types (see lib/appZoom).
- *
- * The value goes into the browser's storage (store/appZoomSettings), like the
- * quick switcher's chord: zoom is an in-window shortcut, not a global hotkey.
+ * The chords are recorded by character (see ./CharacterChordRow) and go into
+ * the browser's storage (store/appZoomSettings), like the quick switcher's
+ * chord: zoom is an in-window shortcut, not a global hotkey.
  */
-import { Fragment, useEffect, useState } from "react";
-import { Minus, Pencil, Plus, X } from "lucide-react";
+import { useCallback } from "react";
+import { Minus, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -21,8 +16,6 @@ import { useAppZoomSupport } from "@/hooks/useAppZoom";
 import { useT } from "@/i18n";
 import {
   APP_ZOOM_INTENTS,
-  appZoomCaps,
-  appZoomComboFromEvent,
   appZoomComboProblem,
   defaultAppZoomBindings,
   nextAppZoom,
@@ -32,7 +25,7 @@ import {
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { parseChord } from "@/lib/quickSwitchChord";
-import { NoKeys, ShortcutListRow } from "@/views/settings/ShortcutListRow";
+import { CharacterChordRow } from "@/views/settings/CharacterChordRow";
 
 const PROBLEM_KEY: Record<AppZoomComboProblem | "quick_switch", string> = {
   typing_key: "settings_view.app_zoom.problem_typing_key",
@@ -41,7 +34,8 @@ const PROBLEM_KEY: Record<AppZoomComboProblem | "quick_switch", string> = {
   quick_switch: "settings_view.app_zoom.problem_quick_switch",
 };
 
-function sameChord(a: string, b: string): boolean {
+/** Same chord, whatever order the modifiers were written in. */
+export function sameChord(a: string, b: string): boolean {
   const fold = (combo: string) => {
     const { mods, keys } = parseChord(combo);
     return [...[...mods].sort(), ...keys].join("+");
@@ -49,140 +43,38 @@ function sameChord(a: string, b: string): boolean {
   return Boolean(a && b) && fold(a) === fold(b);
 }
 
-export function ZoomCaps({ combo }: { combo: string }) {
-  return (
-    <span className="inline-flex items-center gap-1">
-      {appZoomCaps(combo).map((cap, i) => (
-        <Fragment key={`${cap}-${i}`}>
-          {i > 0 && <span className="text-muted-foreground/50">+</span>}
-          <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-micro text-foreground shadow-[inset_0_-1px_0_rgba(0,0,0,0.35)]">
-            {cap}
-          </kbd>
-        </Fragment>
-      ))}
-    </span>
-  );
-}
-
-/** One zoom step as a row of the shortcut list, with its own recorder. */
+/** One zoom step as a row of the shortcut list. */
 export function AppZoomChordRow({ intent, title }: { intent: AppZoomIntent; title: string }) {
   const t = useT();
   const enabled = useAppZoomSettings((s) => s.enabled);
   const bindings = useAppZoomSettings((s) => s.bindings);
   const setBinding = useAppZoomSettings((s) => s.setBinding);
   const quickSwitch = useQuickSwitchSettings();
-  const [recording, setRecording] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const combo = bindings[intent];
-  const fallback = defaultAppZoomBindings()[intent];
 
-  useEffect(() => {
-    if (!recording) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.key === "Escape") {
-        setRecording(false);
-        return;
-      }
-      const next = appZoomComboFromEvent(event);
-      if (next === null) return; // only modifiers so far
+  const problemFor = useCallback(
+    (next: string) => {
       const others = APP_ZOOM_INTENTS.filter((other) => other !== intent).map((other) => bindings[other]);
       const problem = appZoomComboProblem(next, others);
-      if (problem) {
-        setError(t(PROBLEM_KEY[problem]));
-        return;
-      }
-      if (quickSwitch.enabled && sameChord(next, quickSwitch.combo)) {
-        setError(t(PROBLEM_KEY.quick_switch));
-        return;
-      }
-      setError(null);
-      setBinding(intent, next);
-      setRecording(false);
-    };
-    // Capture on window: ahead of the zoom itself, the quick switcher and any
-    // terminal pane, so the keys land here while recording.
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [recording, intent, bindings, quickSwitch.enabled, quickSwitch.combo, setBinding, t]);
-
-  const off = !enabled && !recording;
-  const recordLabel = recording ? t("settings_view.keybinds.stop") : t("settings_view.keybinds.record");
+      if (problem) return t(PROBLEM_KEY[problem]);
+      if (quickSwitch.enabled && sameChord(next, quickSwitch.combo)) return t(PROBLEM_KEY.quick_switch);
+      return null;
+    },
+    [intent, bindings, quickSwitch.enabled, quickSwitch.combo, t],
+  );
+  const onChange = useCallback((combo: string) => setBinding(intent, combo), [intent, setBinding]);
 
   return (
-    <ShortcutListRow
-      testId={`app-zoom-row-${intent}`}
-      recording={recording}
+    <CharacterChordRow
+      rowTestId={`app-zoom-row-${intent}`}
+      testIdSuffix={`app-zoom-${intent}`}
       title={title}
       scope="window"
-      chord={
-        recording ? (
-          <span className="text-sm italic text-muted-foreground" aria-live="polite">
-            {t("settings_view.keybinds.recording")}
-          </span>
-        ) : off ? (
-          <NoKeys>{t("shortcut_overlay.off")}</NoKeys>
-        ) : combo ? (
-          <ZoomCaps combo={combo} />
-        ) : (
-          <NoKeys>{t("shortcut_overlay.unassigned")}</NoKeys>
-        )
-      }
-      actions={
-        <>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="h-8 w-8"
-            data-testid={`app-zoom-record-${intent}`}
-            aria-label={recordLabel}
-            title={recordLabel}
-            disabled={off}
-            onClick={() => {
-              setError(null);
-              setRecording((r) => !r);
-            }}
-          >
-            {recording ? <X /> : <Pencil />}
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            className="h-8 w-8"
-            data-testid={`app-zoom-clear-${intent}`}
-            aria-label={t("settings_view.keybinds.clear")}
-            title={t("settings_view.keybinds.clear")}
-            disabled={off || !combo || recording}
-            onClick={() => setBinding(intent, "")}
-          >
-            <X />
-          </Button>
-        </>
-      }
-    >
-      {error && (
-        <p className="mt-2 text-sm text-destructive" role="alert">
-          {error}
-        </p>
-      )}
-      {!off && !recording && combo !== fallback && (
-        <div className="mt-1 flex justify-end">
-          <button
-            type="button"
-            className="text-micro text-muted-foreground underline hover:text-foreground"
-            onClick={() => {
-              setError(null);
-              setBinding(intent, fallback);
-            }}
-          >
-            {t("settings_view.keybinds.reset")}
-          </button>
-        </div>
-      )}
-    </ShortcutListRow>
+      combo={bindings[intent]}
+      fallback={defaultAppZoomBindings()[intent]}
+      off={!enabled}
+      problemFor={problemFor}
+      onChange={onChange}
+    />
   );
 }
 

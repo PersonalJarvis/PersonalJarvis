@@ -1663,19 +1663,22 @@
     "scope_terminal": "En un terminal de agente",
     "edit": "Cambiar",
     "new_keys": "Teclas nuevas",
-    "edit_in_voice": "Cambiar en la sección de voz",
-    "edit_in_appshots": "Cambiar en Appshots",
     "appshot_window": "Appshot de la ventana de delante",
     "appshot_region": "Appshot de una zona",
     "appshot_recording": "Iniciar o detener una grabación de pantalla",
     "open_overlay": "Mostrar el resumen de atajos",
-    "options_title": "Activar o desactivar"
+    "options_title": "Activar o desactivar",
+    "remove": "Quitar atajo",
+    "record_hint": "Pulsa las teclas nuevas. Esc cancela.",
+    "appshot_record_hint": "Haz clic en el campo y pulsa las teclas nuevas.",
+    "problem_typing_key": "Esta tecla sola se activaría cada vez que escribes. Añade Ctrl, Alt o Command — o usa una tecla de función como F9.",
+    "problem_os_reserved": "La tecla de Windows pertenece al sistema. Elige una combinación con Ctrl o Alt.",
+    "problem_duplicate": "Otro atajo ya usa exactamente esta combinación."
   },
   "shortcut_overlay": {
     "title": "Atajos de teclado",
     "description": "Pulsa ? en cualquier lugar para abrir esta lista. Las teclas de voz se configuran en Ajustes.",
     "close": "Cerrar",
-    "or": "o",
     "unassigned": "sin asignar",
     "off": "desactivado",
     "footer": "Cámbialos en Ajustes → Atajos de teclado.",
@@ -1699,7 +1702,7 @@
       "app_zoom_reset": "Restablecer el zoom de la aplicación al 100 %",
       "open_overlay": "Abrir esta lista",
       "quick_switch": "Saltar rápido a cualquier sección",
-      "ide_menu": "Menú de teclas del IDE agéntico (dos veces: Ctrl+B al panel)"
+      "ide_menu": "Menú de teclas del IDE agéntico (pulsa dos veces para enviarlo al panel)"
     }
   },
   "quick_switch": {

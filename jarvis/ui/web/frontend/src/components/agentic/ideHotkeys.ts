@@ -21,6 +21,8 @@
  * without a DOM.
  */
 import type { PaneSplitDirection } from "./WorkspaceTerminalHeader";
+import { appZoomChordMatches } from "@/lib/appZoom";
+import { parseChord } from "@/lib/quickSwitchChord";
 
 export type PaneDirection = "left" | "right" | "up" | "down";
 
@@ -93,11 +95,18 @@ export const STICKY_ACTIONS: ReadonlySet<IdeHotkeyAction["kind"]> = new Set([
   "toggle-voice", "workspace-index", "workspace-step",
 ]);
 
+/** The shipped leader chord, as stored under Settings → Keyboard shortcuts. */
+export const DEFAULT_LEADER = "ctrl+b";
+
 /**
- * Is this the leader chord? Ctrl+B on every OS — Ctrl, not Cmd, on a Mac too,
- * because that is the terminal key tmux users already have in their hands.
+ * Is this the leader chord? Ctrl+B on every OS by default — Ctrl, not Cmd, on a
+ * Mac too, because that is the terminal key tmux users already have in their
+ * hands. `combo` is the chord the user chose ("" = off); another chord is
+ * matched like every other in-app chord.
  */
-export function isLeaderChord(event: HotkeyEventLike): boolean {
+export function isLeaderChord(event: HotkeyEventLike, combo: string = DEFAULT_LEADER): boolean {
+  if (!combo) return false;
+  if (combo !== DEFAULT_LEADER) return appZoomChordMatches(event, combo);
   // `code` first: it names the physical key on every layout. `key` covers a
   // host that reports no code (some remote-desktop and test events do).
   const isB = event.code === "KeyB" || (!event.code && event.key.toLowerCase() === "b");
@@ -106,6 +115,18 @@ export function isLeaderChord(event: HotkeyEventLike): boolean {
 
 /** What Ctrl+B twice types into the focused pane: the control code Ctrl+B itself sends. */
 export const LEADER_PASSTHROUGH = "\x02";
+
+/**
+ * What the leader pressed twice types into the focused pane: the control code
+ * the chord itself sends (Ctrl+B is `LEADER_PASSTHROUGH`). Only a plain
+ * Ctrl+letter has one; any other leader passes nothing through.
+ */
+export function leaderPassthrough(combo: string = DEFAULT_LEADER): string | null {
+  const { mods, keys } = parseChord(combo);
+  const letter = keys.length === 1 && /^[a-z]$/.test(keys[0]) ? keys[0] : null;
+  if (!letter || !mods.has("ctrl") || mods.size !== 1) return null;
+  return String.fromCharCode(letter.charCodeAt(0) - 96);
+}
 
 /** Letters the root menu keeps for its own commands; no agent may take one. */
 export const RESERVED_ROOT_KEYS = new Set(["e", "f", "m", "n", "p", "q", "r", "v", "w", "z"]);
@@ -264,7 +285,11 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
 export interface ModeBar { badge: string; hints: HotkeyHint[] }
 
 /** What the bar at the bottom says for a step; the full list lives behind `?`. */
-export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeBar {
+export function modeBar(
+  step: IdeHotkeyStep,
+  agents: readonly AgentKey[],
+  leaderCaps: readonly string[] = ["Ctrl", "B"],
+): ModeBar {
   if (step.menu === "direction") {
     return {
       badge: step.label.toUpperCase(),
@@ -295,7 +320,7 @@ export function modeBar(step: IdeHotkeyStep, agents: readonly AgentKey[]): ModeB
       { keys: ["Q"], label: "close" },
       { keys: ["W"], label: "workspaces" },
       { keys: ["?"], label: "all keys" },
-      { keys: ["Ctrl", "B"], label: "send Ctrl+B" },
+      { keys: [...leaderCaps], label: `send ${leaderCaps.join("+")}` },
     ],
   };
 }
@@ -305,7 +330,11 @@ export interface HotkeyHint { keys: string[]; label: string }
 export interface HotkeyHintGroup { title: string; hints: HotkeyHint[] }
 
 /** The rows the overlay shows for a step — the same table `resolveHotkey` reads. */
-export function hotkeyHints(step: IdeHotkeyStep, agents: readonly AgentKey[]): HotkeyHintGroup[] {
+export function hotkeyHints(
+  step: IdeHotkeyStep,
+  agents: readonly AgentKey[],
+  leaderCaps: readonly string[] = ["Ctrl", "B"],
+): HotkeyHintGroup[] {
   if (step.menu === "direction") {
     return [{
       title: `Open ${step.label}`,
@@ -366,7 +395,7 @@ export function hotkeyHints(step: IdeHotkeyStep, agents: readonly AgentKey[]): H
         { keys: ["Shift", "W"], label: "Rename workspace" },
         { keys: ["Shift", "D"], label: "Close workspace" },
         { keys: ["M"], label: "Voice bubble" },
-        { keys: ["Ctrl", "B"], label: "Send Ctrl+B to the pane" },
+        { keys: [...leaderCaps], label: `Send ${leaderCaps.join("+")} to the pane` },
       ],
     },
   ];

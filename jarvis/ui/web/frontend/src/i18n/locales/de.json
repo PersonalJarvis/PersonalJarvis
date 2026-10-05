@@ -1663,19 +1663,22 @@
     "scope_terminal": "In einem Agenten-Terminal",
     "edit": "Ändern",
     "new_keys": "Neue Tasten",
-    "edit_in_voice": "Im Sprachbereich ändern",
-    "edit_in_appshots": "In Appshots ändern",
     "appshot_window": "Appshot vom Fenster vorne",
     "appshot_region": "Appshot von einem Bereich",
     "appshot_recording": "Bildschirmaufnahme starten oder stoppen",
     "open_overlay": "Kürzel-Übersicht zeigen",
-    "options_title": "Ein- und ausschalten"
+    "options_title": "Ein- und ausschalten",
+    "remove": "Kürzel entfernen",
+    "record_hint": "Drück die neuen Tasten. Esc bricht ab.",
+    "appshot_record_hint": "Ins Feld klicken, dann die neuen Tasten drücken.",
+    "problem_typing_key": "Diese Taste allein würde bei jedem Tippen auslösen. Nimm Strg, Alt oder Command dazu — oder eine Funktionstaste wie F9.",
+    "problem_os_reserved": "Die Windows-Taste gehört dem System. Wähl eine Kombination mit Strg oder Alt.",
+    "problem_duplicate": "Ein anderes Kürzel nutzt schon genau diese Kombination."
   },
   "shortcut_overlay": {
     "title": "Tastenkürzel",
     "description": "Drücke überall ?, um diese Liste zu öffnen. Die Sprachtasten lassen sich in den Einstellungen ändern.",
     "close": "Schließen",
-    "or": "oder",
     "unassigned": "nicht belegt",
     "off": "aus",
     "footer": "Ändern kannst du sie unter Einstellungen → Tastenkürzel.",
@@ -1699,7 +1702,7 @@
       "app_zoom_reset": "App-Zoom auf 100 % zurücksetzen",
       "open_overlay": "Diese Liste öffnen",
       "quick_switch": "Schnell zu jedem Bereich springen",
-      "ide_menu": "Tastenmenü der Agentic IDE (zweimal: Strg+B an das Fenster)"
+      "ide_menu": "Tastenmenü der Agentic IDE (zweimal drücken: an das Fenster senden)"
     }
   },
   "quick_switch": {

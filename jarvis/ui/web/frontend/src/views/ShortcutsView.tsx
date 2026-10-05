@@ -2,13 +2,13 @@
  * Keyboard shortcuts — a Settings-hub page of its own.
  *
  * Every shortcut Jarvis answers to, in ONE list: the voice keys, the appshot
- * keys, the quick switcher, the zoom steps and the fixed chords of the
- * workspace. Each row says what the shortcut does and where it works, and
- * shows its keys in one column; the rows that can be changed carry their
- * editor (or, for keys owned by another section, a way there). The on/off
- * switches live under the list. On top sits a key tester: press anything and
- * it shows the keys big, plus what — if anything — they do in Jarvis. It
- * answers "is this combination free?" before someone records it.
+ * keys, the quick switcher, the zoom steps, the terminal text size, the
+ * shortcut overview and the Agentic IDE key menu. Each row says what the
+ * shortcut does and where it works, shows its keys in one column, and carries
+ * one pencil that changes it right here — no row sends the user elsewhere.
+ * The on/off switches live under the list. On top sits a key tester: press
+ * anything and it shows the keys big, plus what — if anything — they do in
+ * Jarvis. It answers "is this combination free?" before someone records it.
  *
  * The list is built from `lib/shortcutRegistry` — the source the `?` overlay
  * renders from — plus the appshot settings. The tester resolves through the
@@ -16,8 +16,8 @@
  * the voice keybind normalisation), never through a copied list, so it cannot
  * tell a different story than the app.
  */
-import { useEffect, useState, type ReactNode } from "react";
-import { ArrowUpRight, Keyboard, Pencil } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Keyboard, Pencil } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
@@ -34,31 +34,33 @@ import {
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { ACTION_LABEL_KEY, ComboChips, KeybindRow, formatCombo } from "@/views/settings/KeybindRow";
 import { QuickSwitchKeybind } from "@/views/settings/QuickSwitchKeybind";
-import { AppZoomChordRow, AppZoomKeybinds } from "@/views/settings/AppZoomKeybinds";
+import { AppZoomChordRow, AppZoomKeybinds, sameChord } from "@/views/settings/AppZoomKeybinds";
+import { CharacterChordRow } from "@/views/settings/CharacterChordRow";
 import { KeyCaps, NoKeys, ShortcutListRow } from "@/views/settings/ShortcutListRow";
-import { appZoomIntentFor, type AppZoomIntent } from "@/lib/appZoom";
+import { AppshotShortcutField } from "@/views/AppshotShortcutField";
+import { appZoomIntentFor, type AppZoomComboProblem, type AppZoomIntent } from "@/lib/appZoom";
+import { APP_CHORD_IDS, appChordProblem, defaultAppChords, type AppChordId } from "@/lib/appChords";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
+import { terminalZoomBindings, useAppChordSettings } from "@/store/appChordSettings";
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
-import { isTextEntryTarget } from "@/lib/shortcutOverlayTrigger";
+import { isTextEntryTarget, shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
 import {
   SHORTCUTS,
-  keyLabel,
   type AppSettingShortcut,
-  type FixedShortcut,
   type RebindableShortcut,
   type Shortcut,
   type ShortcutScope,
 } from "@/lib/shortcutRegistry";
-import { fetchAppshotSettings, formatAppshotHotkey, type AppshotSettings } from "@/lib/appshotApi";
-import { zoomIntentFor } from "@/components/agentic/terminalZoom";
+import {
+  fetchAppshotSettings,
+  formatAppshotHotkey,
+  saveAppshotSettings,
+  type AppshotSettings,
+  type AppshotSettingsPatch,
+} from "@/lib/appshotApi";
+import { zoomIntentForBindings } from "@/components/agentic/terminalZoom";
+import { isLeaderChord } from "@/components/agentic/ideHotkeys";
 import { cn } from "@/lib/utils";
-
-/** Voice keys that are edited in the voice section; this page links there. */
-const VOICE_SECTION_ACTIONS: ReadonlySet<KeybindAction> = new Set<KeybindAction>([
-  "dictate",
-  "dictate_toggle",
-  "paste_last",
-]);
 
 const APP_ZOOM_LABEL = {
   in: "settings_view.app_zoom.in_label",
@@ -66,7 +68,7 @@ const APP_ZOOM_LABEL = {
   reset: "settings_view.app_zoom.reset_label",
 } as const;
 
-const APP_ZOOM_SETTING: Record<Exclude<AppSettingShortcut["setting"], "quick_switch">, AppZoomIntent> = {
+const APP_ZOOM_SETTING: Partial<Record<AppSettingShortcut["setting"], AppZoomIntent>> = {
   app_zoom_in: "in",
   app_zoom_out: "out",
   app_zoom_reset: "reset",
@@ -81,6 +83,12 @@ const ZOOM_LABEL = {
 /** The overlay calls itself "this list"; on this page that would mean the page. */
 const LABEL_OVERRIDE: Record<string, string> = {
   "shortcut_overlay.workspace.open_overlay": "shortcuts_view.open_overlay",
+};
+
+const CHORD_PROBLEM_KEY: Record<AppZoomComboProblem, string> = {
+  typing_key: "shortcuts_view.problem_typing_key",
+  os_reserved: "shortcuts_view.problem_os_reserved",
+  duplicate: "shortcuts_view.problem_duplicate",
 };
 
 type AppshotField = "hotkey" | "region_hotkey" | "recording_hotkey";
@@ -98,11 +106,10 @@ type ListEntry =
   | { kind: "registry"; shortcut: Shortcut }
   | { kind: "appshot"; field: AppshotField; labelKey: string };
 
-/** Where it works first (everywhere → window → terminal), then changeable before fixed keys. */
+/** Where it works first (everywhere → window → terminal); the appshot keys after the voice keys. */
 function entryRank(entry: ListEntry): [number, number] {
   if (entry.kind === "appshot") return [SCOPE_ORDER.global, 1];
-  const { scope, kind } = entry.shortcut;
-  return [SCOPE_ORDER[scope], kind === "fixed" ? 2 : 0];
+  return [SCOPE_ORDER[entry.shortcut.scope], 0];
 }
 
 const LIST_ENTRIES: readonly ListEntry[] = [
@@ -152,6 +159,7 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
   const isMac = detectKeyboardPlatform() === "mac";
   const quickSwitch = useQuickSwitchSettings();
   const appZoom = useAppZoomSettings();
+  const appChords = useAppChordSettings((s) => s.bindings);
   const [pressed, setPressed] = useState<Pressed | null>(null);
 
   useEffect(() => {
@@ -178,16 +186,33 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
       if (caps.length === 0) return;
 
       let meaningKey: string | null = "";
-      const zoom = zoomIntentFor(event, { isMac });
+      const zoom = zoomIntentForBindings(event, { isMac, bindings: terminalZoomBindings(appChords) });
       const appZoomIntent = appZoom.enabled ? appZoomIntentFor(event, appZoom.bindings) : null;
+      // The tester's own listener never marks a field, so the overview is
+      // asked as if the key were pressed outside one.
+      const overview = shouldOpenShortcutOverlay(
+        {
+          key: event.key,
+          code: event.code,
+          shiftKey: event.shiftKey,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          defaultPrevented: false,
+          target: null,
+        },
+        appChords.shortcut_overlay,
+      );
       if (quickSwitch.enabled && quickSwitch.combo && eventMatchesChord(event, quickSwitch.combo)) {
         meaningKey = "settings_view.quick_switch.title";
       } else if (appZoomIntent) {
         meaningKey = APP_ZOOM_LABEL[appZoomIntent];
       } else if (zoom) {
         meaningKey = ZOOM_LABEL[zoom];
-      } else if (event.key === "?" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      } else if (overview) {
         meaningKey = "shortcut_overlay.workspace.open_overlay";
+      } else if (isLeaderChord(event, appChords.ide_menu)) {
+        meaningKey = "shortcut_overlay.workspace.ide_menu";
       } else if (combo) {
         const mine = [...normalizedComboTokens(combo)].sort().join("+");
         const hit = Object.entries(config?.keybinds ?? {}).find(
@@ -202,7 +227,7 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [config, quickSwitch.enabled, quickSwitch.combo, appZoom.enabled, appZoom.bindings, isMac]);
+  }, [config, quickSwitch.enabled, quickSwitch.combo, appZoom.enabled, appZoom.bindings, appChords, isMac]);
 
   const ghost = quickSwitch.combo ? formatCombo(quickSwitch.combo).split(" + ") : ["Ctrl", "Space"];
 
@@ -268,7 +293,7 @@ function Chips({ combo }: { combo: string }) {
   );
 }
 
-/** The pencil that opens or closes a row's editor. */
+/** The pencil that opens or closes a row's editor — the one control every row has. */
 function EditToggle({
   open,
   disabled = false,
@@ -299,31 +324,28 @@ function EditToggle({
   );
 }
 
-/** The arrow to the section that owns a key, for rows not edited here. */
-function EditElsewhere({ label, testId, onClick }: { label: string; testId: string; onClick: () => void }) {
-  return (
-    <Button
-      type="button"
-      size="icon"
-      variant="ghost"
-      className="h-8 w-8"
-      data-testid={testId}
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-    >
-      <ArrowUpRight />
-    </Button>
-  );
-}
-
 function VoiceKeyRow({ shortcut, keybinds }: { shortcut: RebindableShortcut; keybinds: Keybinds }) {
   const t = useT();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const pushToast = useEventStore((s) => s.pushToast);
   const [open, setOpen] = useState(false);
   const { config, loading, saveKeybind } = keybinds;
   const combo = config?.keybinds?.[shortcut.action] ?? "";
-  const elsewhere = VOICE_SECTION_ACTIONS.has(shortcut.action);
+
+  // A push-to-talk key only works while dictation listens in "hold" mode, so
+  // saving one pins that mode — the same side effect the voice section has.
+  const pinHoldMode = useCallback(async () => {
+    try {
+      const res = await fetch("/api/dictation/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "hold", persist: true }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      // The keybind itself is already saved — report the missing side effect.
+      pushToast("warning", (e as Error).message);
+    }
+  }, [pushToast]);
 
   return (
     <ShortcutListRow
@@ -340,18 +362,10 @@ function VoiceKeyRow({ shortcut, keybinds }: { shortcut: RebindableShortcut; key
         )
       }
       actions={
-        elsewhere ? (
-          <EditElsewhere
-            label={t("shortcuts_view.edit_in_voice")}
-            testId={`shortcuts-edit-${shortcut.action}`}
-            onClick={() => setActiveSection("voice-shortcuts")}
-          />
-        ) : (
-          <EditToggle open={open} onToggle={() => setOpen((o) => !o)} testId={`shortcuts-edit-${shortcut.action}`} />
-        )
+        <EditToggle open={open} onToggle={() => setOpen((o) => !o)} testId={`shortcuts-edit-${shortcut.action}`} />
       }
     >
-      {open && !elsewhere && (
+      {open && (
         <div className="mt-3">
           <KeybindRow
             action={shortcut.action}
@@ -359,6 +373,7 @@ function VoiceKeyRow({ shortcut, keybinds }: { shortcut: RebindableShortcut; key
             config={config}
             loading={loading}
             onSave={saveKeybind}
+            onSaved={shortcut.action === "dictate" ? pinHoldMode : undefined}
           />
         </div>
       )}
@@ -411,13 +426,45 @@ function QuickSwitchRow({
   );
 }
 
-function FixedRow({ shortcut, isMac }: { shortcut: FixedShortcut; isMac: boolean }) {
+/**
+ * One of the in-app chords of lib/appChords (terminal text size, overview,
+ * IDE key menu), recorded by character.
+ */
+function AppChordRow({ shortcut, id }: { shortcut: AppSettingShortcut; id: AppChordId }) {
   const t = useT();
+  const bindings = useAppChordSettings((s) => s.bindings);
+  const setBinding = useAppChordSettings((s) => s.setBinding);
+  const appZoom = useAppZoomSettings((s) => s.bindings);
+  const quickSwitch = useQuickSwitchSettings();
+
+  const problemFor = useCallback(
+    (next: string) => {
+      // The terminal steps may share a chord with the whole-app zoom on
+      // purpose: inside a terminal the terminal wins. Everything else must be
+      // unique among the in-window chords.
+      const others = APP_CHORD_IDS.filter((other) => other !== id).map((other) => bindings[other]);
+      if (id === "shortcut_overlay" || id === "ide_menu") others.push(...Object.values(appZoom));
+      const problem = appChordProblem(id, next, others);
+      if (problem) return t(CHORD_PROBLEM_KEY[problem]);
+      if (quickSwitch.enabled && sameChord(next, quickSwitch.combo)) {
+        return t("settings_view.app_zoom.problem_quick_switch");
+      }
+      return null;
+    },
+    [id, bindings, appZoom, quickSwitch.enabled, quickSwitch.combo, t],
+  );
+  const onChange = useCallback((combo: string) => setBinding(id, combo), [id, setBinding]);
+
   return (
-    <ShortcutListRow
+    <CharacterChordRow
+      rowTestId={`shortcut-row-${id}`}
+      testIdSuffix={id}
       title={t(LABEL_OVERRIDE[shortcut.labelKey] ?? shortcut.labelKey)}
       scope={shortcut.scope}
-      chord={<KeyCaps caps={shortcut.keys.map((key) => keyLabel(key, isMac))} />}
+      combo={bindings[id]}
+      fallback={defaultAppChords()[id]}
+      problemFor={problemFor}
+      onChange={onChange}
     />
   );
 }
@@ -426,17 +473,29 @@ function AppshotRow({
   field,
   labelKey,
   settings,
+  onSaved,
   isMac,
 }: {
   field: AppshotField;
   labelKey: string;
   /** undefined while loading, null when the settings could not be read. */
   settings: AppshotSettings | null | undefined;
+  onSaved: (settings: AppshotSettings) => void;
   isMac: boolean;
 }) {
   const t = useT();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const hotkey = settings?.[field] ?? "";
+
+  const save = async (next: string) => {
+    try {
+      onSaved(await saveAppshotSettings({ [field]: next } as AppshotSettingsPatch));
+    } catch (error) {
+      pushToast("error", t("appshots.save_error").replace("{0}", (error as Error).message));
+    }
+  };
 
   return (
     <ShortcutListRow
@@ -455,13 +514,32 @@ function AppshotRow({
         )
       }
       actions={
-        <EditElsewhere
-          label={t("shortcuts_view.edit_in_appshots")}
+        <EditToggle
+          open={open}
+          disabled={!settings}
+          onToggle={() => setOpen((o) => !o)}
           testId={`shortcuts-edit-appshot-${field}`}
-          onClick={() => setActiveSection("appshots")}
         />
       }
-    />
+    >
+      {open && settings && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-border bg-background p-3">
+          <AppshotShortcutField
+            value={hotkey}
+            isMac={isMac}
+            disabled={false}
+            testId={`shortcuts-appshot-field-${field}`}
+            label={t(labelKey)}
+            className="w-44"
+            onSave={save}
+            onStatus={setStatus}
+          />
+          <p className="min-w-0 flex-1 text-micro text-muted-foreground">
+            {status ?? t("shortcuts_view.appshot_record_hint")}
+          </p>
+        </div>
+      )}
+    </ShortcutListRow>
   );
 }
 
@@ -494,6 +572,7 @@ function ShortcutList({ keybinds }: { keybinds: Keybinds }) {
           field={entry.field}
           labelKey={entry.labelKey}
           settings={appshots}
+          onSaved={setAppshots}
           isMac={isMac}
         />
       );
@@ -502,19 +581,14 @@ function ShortcutList({ keybinds }: { keybinds: Keybinds }) {
     if (shortcut.kind === "rebindable") {
       return <VoiceKeyRow key={shortcut.labelKey} shortcut={shortcut} keybinds={keybinds} />;
     }
-    if (shortcut.kind === "fixed") {
-      return <FixedRow key={shortcut.labelKey} shortcut={shortcut} isMac={isMac} />;
-    }
     if (shortcut.setting === "quick_switch") {
       return <QuickSwitchRow key={shortcut.labelKey} shortcut={shortcut} voiceConfig={keybinds.config} />;
     }
-    return (
-      <AppZoomChordRow
-        key={shortcut.labelKey}
-        intent={APP_ZOOM_SETTING[shortcut.setting]}
-        title={t(shortcut.labelKey)}
-      />
-    );
+    const zoomIntent = APP_ZOOM_SETTING[shortcut.setting];
+    if (zoomIntent) {
+      return <AppZoomChordRow key={shortcut.labelKey} intent={zoomIntent} title={t(shortcut.labelKey)} />;
+    }
+    return <AppChordRow key={shortcut.labelKey} shortcut={shortcut} id={shortcut.setting as AppChordId} />;
   });
 
   return (

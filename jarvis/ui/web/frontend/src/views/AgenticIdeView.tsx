@@ -13,7 +13,8 @@ import { isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
-import { LEADER_PASSTHROUGH, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { appChord } from "@/store/appChordSettings";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -577,7 +578,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })}
       onPassThrough={() => {
         if (!session || !selected) return;
-        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data: LEADER_PASSTHROUGH };
+        // The control code of the user's leader chord; a leader that is not
+        // Ctrl+letter has none to pass through.
+        const data = leaderPassthrough(appChord("ide_menu"));
+        if (data === null) return;
+        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data };
         window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
       }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />

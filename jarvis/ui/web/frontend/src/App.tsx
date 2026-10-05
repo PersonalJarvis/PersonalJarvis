@@ -37,6 +37,7 @@ const ShortcutOverlay = lazy(() =>
   import("@/components/ShortcutOverlay").then((m) => ({ default: m.ShortcutOverlay })),
 );
 import { shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
+import { appChord } from "@/store/appChordSettings";
 /*
   Lazy for the same reason: the switcher carries every locale for its
   cross-language search, and nobody needs it before the first Ctrl+Space.
@@ -108,7 +109,7 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldOpenShortcutOverlay(event)) return;
+      if (!shouldOpenShortcutOverlay(event, appChord("shortcut_overlay"))) return;
       event.preventDefault();
       setShortcutsOpen(true);
     };
