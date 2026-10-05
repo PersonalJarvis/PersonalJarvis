@@ -46,6 +46,7 @@ _GLB_MAGIC = b"glTF"
 _REPO = Path(__file__).resolve().parents[3]
 _GATE = _REPO / "scripts" / "ci" / "check_society_figures.py"
 _SAFE_NAME = re.compile(r"[^a-z0-9]+")
+_SHARE_ID = re.compile(r"^[0-9a-f]{16}$")
 _SHARE_LOCK = threading.Lock()
 _SHARE_REPORT_CAP = 100
 
@@ -297,6 +298,8 @@ async def publish_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
 @router.post("/share/{share_id}/report")
 async def report_shared_figure(share_id: str, body: SharedFigureReport) -> dict[str, Any]:
     """Persist a local moderation report without auto-delisting the entry."""
+    if not _SHARE_ID.fullmatch(share_id):
+        raise HTTPException(404, "no such shared figure")
 
     def _report() -> dict[str, Any]:
         with _SHARE_LOCK:
@@ -324,6 +327,8 @@ async def report_shared_figure(share_id: str, body: SharedFigureReport) -> dict[
 @router.delete("/share/{share_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def delist_shared_figure(share_id: str) -> dict[str, Any]:
     """Delist one shared recipe while preserving its moderation history."""
+    if not _SHARE_ID.fullmatch(share_id):
+        raise HTTPException(404, "no such shared figure")
 
     def _delist() -> None:
         with _SHARE_LOCK:
