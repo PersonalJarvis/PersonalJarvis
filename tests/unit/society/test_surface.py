@@ -392,6 +392,63 @@ async def test_in_flight_tool_rechecks_live_session_mode(rt: SocietyRuntime, mon
     assert calls == [{"action": "list"}]
 
 
+async def test_browser_gate_restores_writable_state_after_read_only_session(
+    rt: SocietyRuntime,
+) -> None:
+    await rt.roster.create(name="Scout", approval_mode="bypass")
+    session = SimpleNamespace(
+        session_id="society:scout",
+        surface="society",
+        permission_mode="bypass",
+    )
+
+    class Store:
+        def get_session(self, session_id: str):
+            return session if session_id == session.session_id else None
+
+    class BrowserLike:
+        name = "society_browser"
+        description = "browser"
+        schema = {}
+        risk_tier = "monitor"
+        is_action_tool = True
+        _read_only = False
+
+        async def execute(self, _args: dict, _ctx: object) -> ToolResult:
+            return ToolResult(True, "ok", None)
+
+    from jarvis.society.surface import _GatedTool
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(rt, "_get_chat", lambda: SimpleNamespace(store=Store()))
+        await society_system_extra(None, None, session)
+        gated = _GatedTool(
+            BrowserLike(),
+            await rt.roster.get("scout"),
+            "core:browser",
+            "bypass",
+            rt,
+            session_id=session.session_id,
+        )
+
+        assert (await gated.execute({}, SimpleNamespace(approved_by="auto"))).success
+        assert gated._inner.is_action_tool is True
+        assert gated._inner._read_only is False
+
+        session.permission_mode = "plan"
+        assert (await gated.execute({}, SimpleNamespace(approved_by="auto"))).success
+        assert gated._inner.is_action_tool is False
+        assert gated._inner._read_only is True
+
+        session.permission_mode = "bypass"
+        assert (await gated.execute({}, SimpleNamespace(approved_by="auto"))).success
+        assert gated._inner.is_action_tool is True
+        assert gated._inner._read_only is False
+    finally:
+        monkeypatch.undo()
+
+
 async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime):
     await rt.roster.create(name="Mailer", approval_mode="bypass")
     session = SimpleNamespace(session_id="society:mailer", permission_mode="bypass")
