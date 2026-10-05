@@ -53,6 +53,17 @@ describe("SectionNavButtons", () => {
     expect(useEventStore.getState().activeSection).toBe("chats");
   });
 
+  it("goes home to a fresh front-page chat from any section", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    render(<SectionNavButtons />);
+
+    const home = screen.getByTestId("section-nav-home") as HTMLButtonElement;
+    expect(home.disabled).toBe(false);
+    expect(home.getAttribute("title")).toBe(home.getAttribute("aria-label"));
+    fireEvent.click(home);
+    expect(useEventStore.getState().activeSection).toBe("chats");
+  });
+
   it("walks back to the last visited section on every section", () => {
     render(<SectionNavButtons />);
 

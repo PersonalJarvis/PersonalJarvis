@@ -174,7 +174,8 @@
     "restore": "Wiederherstellen",
     "close": "Schließen",
     "nav_back": "Zurück",
-    "nav_forward": "Vor"
+    "nav_forward": "Vor",
+    "nav_home": "Startseite"
   },
   "nav": {
     "chat_workspace": "Chat",

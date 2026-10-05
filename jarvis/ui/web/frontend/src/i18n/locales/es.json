@@ -174,7 +174,8 @@
     "restore": "Restaurar",
     "close": "Cerrar",
     "nav_back": "Atrás",
-    "nav_forward": "Adelante"
+    "nav_forward": "Adelante",
+    "nav_home": "Inicio"
   },
   "nav": {
     "chat_workspace": "Chat",

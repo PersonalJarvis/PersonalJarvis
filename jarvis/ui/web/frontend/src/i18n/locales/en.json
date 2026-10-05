@@ -174,7 +174,8 @@
     "restore": "Restore",
     "close": "Close",
     "nav_back": "Go back",
-    "nav_forward": "Go forward"
+    "nav_forward": "Go forward",
+    "nav_home": "Home"
   },
   "nav": {
     "chat_workspace": "Chat",
