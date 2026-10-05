@@ -42,6 +42,40 @@ async def test_persisted_run_links_survive_reopening_without_loading_main_chat(w
         await store.close()
 
 
+@pytest.mark.parametrize("storage_failure", ["missing", "unreadable"])
+async def test_unavailable_saved_seat_cannot_start_an_alternate_chat(
+    world, tmp_path, monkeypatch, storage_failure,
+):
+    runtime, service, main, _ = world
+    store = TaskStore(tmp_path / "tasks.db")
+    await store.init()
+    runtime.task_services = lambda: (store, None)
+    agent = await runtime.roster.get("mailbox")
+    spec = build_task_spec(
+        agent, title="Pinned inbox", prompt="Read mail", schedule={"kind": "every"},
+        provider="openai-codex", model="pinned-model",
+    )
+    task_id = str(await store.insert(spec))
+    try:
+        if storage_failure == "missing":
+            await store.delete(task_id)
+        else:
+            async def unavailable_spec(_task_id):
+                raise OSError("Synthetic task storage outage")
+
+            monkeypatch.setattr(store, "get_spec", unavailable_spec)
+        with pytest.raises(RuntimeError, match="saved model seat is unavailable"):
+            await run_owned_routine(runtime, task_id, spec.tags, spec.action.prompt)
+        runs = [
+            s for s in service.store.list_sessions(surface="society")
+            if ":routine:" in s.session_id
+        ]
+        assert runs == []
+        assert service.store.list_events(main.session_id) == []
+    finally:
+        await store.close()
+
+
 async def test_busy_main_chat_queues_routine_without_mixing_transcripts(world, monkeypatch):
     runtime, service, main, brain = world
     started = asyncio.Event()

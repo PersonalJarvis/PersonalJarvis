@@ -92,10 +92,13 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
         task_store, _ = runtime.task_services()
         if task_store is not None:
             spec = await task_store.get_spec(task_id)
-            if spec is not None:
-                pinned = routine_seat(spec)
-    except Exception:  # noqa: BLE001 — an unreadable spec falls back to the live seat
-        pinned = {"provider": "", "model": "", "effort": "", "account_id": ""}
+            if spec is None:
+                raise RuntimeError("The saved routine is unavailable")
+            pinned = routine_seat(spec)
+    except Exception as exc:  # noqa: BLE001 — never substitute a seat after a storage failure
+        raise RuntimeError(
+            "The routine's saved model seat is unavailable; no alternate model was selected"
+        ) from exc
     if pinned["provider"]:
         return pinned["provider"], pinned["model"], pinned["effort"], pinned["account_id"]
     account_id = str(getattr(agent, "account_id", "") or "")
