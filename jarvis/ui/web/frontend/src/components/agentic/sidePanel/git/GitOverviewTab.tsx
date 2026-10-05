@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode, type SVGProps } from "react";
 import {
   ChevronRight,
   CircleCheck,
@@ -6,6 +6,7 @@ import {
   CircleDot,
   CircleHelp,
   CircleX,
+  Ellipsis,
   ExternalLink,
   FolderGit2,
   GitBranch,
@@ -15,6 +16,8 @@ import {
   GitPullRequestDraft,
   Loader2,
   RefreshCw,
+  Search,
+  X,
 } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -22,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
+import { BranchMenu, branchUrl } from "./BranchMenu";
 import { ConnectGitHubCard, GitHubRepoPicker } from "./GitHubRepoPicker";
 import {
   fetchGitOverview,
@@ -264,7 +268,19 @@ function MergedChips({ row }: { row: BranchRow }) {
   );
 }
 
-function BranchLine({ row, isDefault }: { row: BranchRow; isDefault: boolean }) {
+function BranchLine({
+  row,
+  isDefault,
+  repoUrl,
+  menuOpen,
+  onMenu,
+}: {
+  row: BranchRow;
+  isDefault: boolean;
+  repoUrl: string;
+  menuOpen: boolean;
+  onMenu: (row: BranchRow, x: number, y: number) => void;
+}) {
   const t = useT();
   const meta: string[] = [];
   if (row.upstream && (row.ahead || row.behind)) {
@@ -282,14 +298,22 @@ function BranchLine({ row, isDefault }: { row: BranchRow; isDefault: boolean }) 
     .filter(Boolean)
     .join("\n");
   const BranchIcon = row.current ? CircleDot : GitBranch;
+  const url = branchUrl(repoUrl, row);
+  const openTip = fill(t("ide_side_panel.git.open_branch"), { branch: row.name });
   return (
     <li
       data-testid="git-branch-row"
       data-branch={row.name}
       data-current={row.current || undefined}
-      className={cn("flex min-h-9 items-center gap-2 px-3 py-1", row.current && "bg-accent/10")}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onMenu(row, event.clientX, event.clientY);
+      }}
+      className={cn("group/row flex min-h-9 items-center gap-1 py-1 pl-2 pr-1", row.current && "bg-accent/10", menuOpen && "bg-secondary/60")}
     >
-      <BranchIcon className={cn("h-4 w-4 shrink-0", row.current ? "text-accent" : "text-muted-foreground")} aria-hidden />
+      <LinkIcon url={url} tip={url ? openTip : nameTip} label={url ? openTip : row.name} testId="git-branch-link">
+        <BranchIcon className={cn("h-4 w-4 shrink-0", row.current ? "text-accent" : "text-muted-foreground")} aria-hidden />
+      </LinkIcon>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
         <QuickTooltip content={nameTip} side="bottom" className="flex min-w-0 items-center gap-1.5">
           <span className={cn("truncate font-mono text-[12.5px]", row.current ? "font-semibold text-foreground" : "text-foreground")}>
@@ -312,7 +336,115 @@ function BranchLine({ row, isDefault }: { row: BranchRow; isDefault: boolean }) 
       </span>
       <PullRequestBadge prs={row.pull_requests} />
       <CiBadge ci={row.ci} stale={row.ci_stale} />
+      <QuickTooltip content={t("ide_side_panel.git.more")} side="bottom" className="inline-flex shrink-0">
+        <button
+          type="button"
+          data-testid="git-branch-more"
+          data-branch-menu-anchor
+          aria-label={fill(t("ide_side_panel.git.menu.aria"), { branch: row.name })}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            onMenu(row, rect.right - 264, rect.bottom + 4);
+          }}
+          className={cn(
+            "inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-secondary hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/row:opacity-100",
+            menuOpen && "bg-secondary text-foreground opacity-100",
+          )}
+        >
+          <Ellipsis className="h-4 w-4" aria-hidden />
+        </button>
+      </QuickTooltip>
     </li>
+  );
+}
+
+type BranchFilter = "all" | "pr" | "failing" | "unmerged" | "local";
+const BRANCH_FILTERS: BranchFilter[] = ["all", "pr", "failing", "unmerged", "local"];
+
+function matchesFilter(row: BranchRow, filter: BranchFilter): boolean {
+  if (filter === "pr") return row.pull_requests.some((pr) => pr.state !== "merged" && pr.state !== "closed");
+  if (filter === "failing") return row.ci.state === "failure";
+  if (filter === "unmerged") return row.merged_into.length === 0;
+  if (filter === "local") return !row.remote_only && !row.upstream && !row.on_github;
+  return true;
+}
+
+function matchesQuery(row: BranchRow, query: string): boolean {
+  if (!query) return true;
+  const needle = query.toLowerCase().replace(/^#/, "");
+  return (
+    row.name.toLowerCase().includes(needle) ||
+    row.pull_requests.some((pr) => String(pr.number) === needle || pr.title.toLowerCase().includes(needle))
+  );
+}
+
+/** Search by name or pull request, and narrow the list to what needs a look. */
+function BranchFilterBar({
+  query,
+  onQuery,
+  filter,
+  onFilter,
+  counts,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  filter: BranchFilter;
+  onFilter: (value: BranchFilter) => void;
+  counts: Record<BranchFilter, number>;
+}) {
+  const t = useT();
+  return (
+    <div data-testid="git-filter-bar" className="shrink-0 space-y-1.5 border-b border-border/60 px-3 py-2">
+      <label className="flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-background px-2 focus-within:ring-2 focus-within:ring-ring">
+        <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <input
+          data-testid="git-search"
+          value={query}
+          onChange={(event) => onQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && query) {
+              event.stopPropagation();
+              onQuery("");
+            }
+          }}
+          placeholder={t("ide_side_panel.git.search")}
+          aria-label={t("ide_side_panel.git.search")}
+          className="min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground"
+        />
+        {query && (
+          <button
+            type="button"
+            aria-label={t("ide_side_panel.git.search_clear")}
+            onClick={() => onQuery("")}
+            className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-3 w-3" aria-hidden />
+          </button>
+        )}
+      </label>
+      <div role="group" aria-label={t("ide_side_panel.git.filter_aria")} className="flex flex-wrap gap-1">
+        {BRANCH_FILTERS.map((value) => (
+          <button
+            key={value}
+            type="button"
+            data-testid={`git-filter-${value}`}
+            aria-pressed={filter === value}
+            onClick={() => onFilter(value)}
+            className={cn(
+              "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              filter === value
+                ? "border-primary/40 bg-primary/10 text-foreground"
+                : "border-border/70 text-muted-foreground hover:bg-secondary hover:text-foreground",
+            )}
+          >
+            {t(`ide_side_panel.git.filter.${value}`)}
+            <span className="tabular-nums text-muted-foreground">{counts[value]}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -409,6 +541,13 @@ export function GitOverviewTab() {
   const { data, error, routeMissing, loading, refresh } = useGitOverview(workspaceId);
   const [showRemote, setShowRemote] = useState(false);
   const [showLegend, setShowLegend] = useState(false);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<BranchFilter>("all");
+  const [menu, setMenu] = useState<{ row: BranchRow; x: number; y: number } | null>(null);
+  const openMenu = useCallback((row: BranchRow, x: number, y: number) => {
+    setMenu((current) => (current?.row.name === row.name ? null : { row, x, y }));
+  }, []);
+  const closeMenu = useCallback(() => setMenu(null), []);
   // Reopened from the repository chip to change an earlier choice.
   const [changing, setChanging] = useState(false);
   // The repository just picked. The pick is saved at once, but the GitHub
@@ -418,6 +557,22 @@ export function GitOverviewTab() {
   const [pickedRepo, setPickedRepo] = useState("");
   useEffect(() => setChanging(false), [workspaceId]);
   useEffect(() => setPickedRepo(""), [data, workspaceId]);
+  useEffect(() => {
+    setQuery("");
+    setFilter("all");
+    setMenu(null);
+  }, [workspaceId]);
+  const allRows = useMemo(() => [...(data?.branches ?? []), ...(data?.remote_branches ?? [])], [data]);
+  const trimmed = query.trim();
+  const counts = useMemo(() => {
+    const result = {} as Record<BranchFilter, number>;
+    for (const value of BRANCH_FILTERS) {
+      result[value] = allRows.filter((row) => matchesFilter(row, value) && matchesQuery(row, trimmed)).length;
+    }
+    return result;
+  }, [allRows, trimmed]);
+  const narrowed = filter !== "all" || trimmed !== "";
+  const visible = (rows: BranchRow[]) => rows.filter((row) => matchesFilter(row, filter) && matchesQuery(row, trimmed));
 
   if (!workspace) {
     return <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t("ide_side_panel.git.no_workspace")}</p>;
@@ -505,6 +660,9 @@ export function GitOverviewTab() {
           <Legend />
         </div>
       )}
+      {!picking && data?.available && allRows.length > 0 && (
+        <BranchFilterBar query={query} onQuery={setQuery} filter={filter} onFilter={setFilter} counts={counts} />
+      )}
       {picking && data && workspaceId ? (
         <GitHubRepoPicker
           key={workspaceId}
@@ -543,31 +701,50 @@ export function GitOverviewTab() {
         ) : (
           <>
             <ul aria-label={t("ide_side_panel.git.branches")}>
-              {data.branches.map((row) => (
-                <BranchLine key={row.name} row={row} isDefault={row.name === data.default_branch} />
+              {visible(data.branches).map((row) => (
+                <BranchLine
+                  key={row.name}
+                  row={row}
+                  isDefault={row.name === data.default_branch}
+                  repoUrl={github?.repo_url ?? ""}
+                  menuOpen={menu?.row.name === row.name}
+                  onMenu={openMenu}
+                />
               ))}
             </ul>
+            {narrowed && counts[filter] === 0 && (
+              <p data-testid="git-filter-empty" className="px-4 py-6 text-center text-xs text-muted-foreground">
+                {t("ide_side_panel.git.filter_empty")}
+              </p>
+            )}
             {data.truncated && (
               <p className="px-3 py-2 text-[11px] text-muted-foreground">
                 {fill(t("ide_side_panel.git.truncated"), { n: data.branches.length })}
               </p>
             )}
-            {data.remote_branches.length > 0 && (
+            {visible(data.remote_branches).length > 0 && (
               <div className="mt-1 border-t border-border/60">
                 <button
                   type="button"
                   data-testid="git-remote-toggle"
-                  aria-expanded={showRemote}
+                  aria-expanded={showRemote || narrowed}
                   onClick={() => setShowRemote((value) => !value)}
                   className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-[11px] font-medium text-muted-foreground hover:text-foreground"
                 >
-                  <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", showRemote && "rotate-90")} aria-hidden />
-                  {fill(t("ide_side_panel.git.remote_only"), { n: data.remote_branches.length })}
+                  <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", (showRemote || narrowed) && "rotate-90")} aria-hidden />
+                  {fill(t("ide_side_panel.git.remote_only"), { n: visible(data.remote_branches).length })}
                 </button>
-                {showRemote && (
-                  <ul aria-label={fill(t("ide_side_panel.git.remote_only"), { n: data.remote_branches.length })}>
-                    {data.remote_branches.map((row) => (
-                      <BranchLine key={row.name} row={row} isDefault={false} />
+                {(showRemote || narrowed) && (
+                  <ul aria-label={fill(t("ide_side_panel.git.remote_only"), { n: visible(data.remote_branches).length })}>
+                    {visible(data.remote_branches).map((row) => (
+                      <BranchLine
+                        key={row.name}
+                        row={row}
+                        isDefault={false}
+                        repoUrl={github?.repo_url ?? ""}
+                        menuOpen={menu?.row.name === row.name}
+                        onMenu={openMenu}
+                      />
                     ))}
                   </ul>
                 )}
@@ -577,6 +754,16 @@ export function GitOverviewTab() {
           </>
         )}
       </div>
+      )}
+      {menu && data && (
+        <BranchMenu
+          row={menu.row}
+          repoUrl={github?.repo_url ?? ""}
+          defaultBranch={data.default_branch}
+          x={menu.x}
+          y={menu.y}
+          onDismiss={closeMenu}
+        />
       )}
     </section>
   );

@@ -6255,7 +6255,39 @@
       "github_reading": "Leyendo pull requests y CI de GitHub…",
       "github_off": "Sin estado de GitHub: {reason}",
       "seconds_ago": "hace {n} s",
-      "minutes_ago": "hace {n} min"
+      "minutes_ago": "hace {n} min",
+      "open_branch": "Abrir {branch} en GitHub",
+      "more": "Más opciones",
+      "search": "Buscar ramas o #PR…",
+      "search_clear": "Borrar búsqueda",
+      "filter_aria": "Mostrar ramas",
+      "filter": {
+        "all": "Todas",
+        "pr": "PR abierto",
+        "failing": "CI fallido",
+        "unmerged": "Sin fusionar",
+        "local": "Solo local"
+      },
+      "filter_empty": "Ninguna rama coincide.",
+      "menu": {
+        "aria": "Opciones de {branch}",
+        "open_branch": "Abrir rama en GitHub",
+        "commits": "Historial de commits en GitHub",
+        "compare": "Comparar con {target}",
+        "open_pr": "Abrir pull request #{number}",
+        "create_pr": "Crear pull request",
+        "create_pr_hint": "Hacia {target}",
+        "open_ci": "Abrir ejecución de CI",
+        "open_commit": "Abrir último commit",
+        "copy_name": "Copiar nombre de la rama",
+        "copy_switch": "Copiar comando para cambiar",
+        "copy_sha": "Copiar SHA del commit",
+        "copy_link": "Copiar enlace de GitHub",
+        "copy_worktree": "Copiar ruta del worktree",
+        "copied": "Copiado: {text}",
+        "copy_failed": "No se pudo copiar al portapapeles.",
+        "no_repo": "Aún no hay repositorio de GitHub elegido"
+      }
     },
     "skills": {
       "subtitle": "Arrástralo a un terminal para pegarlo",

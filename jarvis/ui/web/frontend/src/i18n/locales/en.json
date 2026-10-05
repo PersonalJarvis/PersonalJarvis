@@ -6288,7 +6288,39 @@
       "github_reading": "Reading pull requests and CI from GitHub…",
       "github_off": "No GitHub status: {reason}",
       "seconds_ago": "{n} s ago",
-      "minutes_ago": "{n} min ago"
+      "minutes_ago": "{n} min ago",
+      "open_branch": "Open {branch} on GitHub",
+      "more": "More options",
+      "search": "Search branches or #PR…",
+      "search_clear": "Clear search",
+      "filter_aria": "Show branches",
+      "filter": {
+        "all": "All",
+        "pr": "Open PR",
+        "failing": "CI failed",
+        "unmerged": "Not merged",
+        "local": "Local only"
+      },
+      "filter_empty": "No branch matches.",
+      "menu": {
+        "aria": "Options for {branch}",
+        "open_branch": "Open branch on GitHub",
+        "commits": "Commit history on GitHub",
+        "compare": "Compare with {target}",
+        "open_pr": "Open pull request #{number}",
+        "create_pr": "Create pull request",
+        "create_pr_hint": "Into {target}",
+        "open_ci": "Open CI run",
+        "open_commit": "Open latest commit",
+        "copy_name": "Copy branch name",
+        "copy_switch": "Copy switch command",
+        "copy_sha": "Copy commit SHA",
+        "copy_link": "Copy GitHub link",
+        "copy_worktree": "Copy worktree path",
+        "copied": "Copied: {text}",
+        "copy_failed": "Could not copy to the clipboard.",
+        "no_repo": "No GitHub repository picked yet"
+      }
     },
     "skills": {
       "subtitle": "Drag one onto a terminal to paste it",

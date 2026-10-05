@@ -6255,7 +6255,39 @@
       "github_reading": "Pull Requests und CI werden von GitHub gelesen…",
       "github_off": "Kein GitHub-Status: {reason}",
       "seconds_ago": "vor {n} s",
-      "minutes_ago": "vor {n} min"
+      "minutes_ago": "vor {n} min",
+      "open_branch": "{branch} auf GitHub öffnen",
+      "more": "Weitere Optionen",
+      "search": "Branches oder #PR suchen…",
+      "search_clear": "Suche leeren",
+      "filter_aria": "Branches anzeigen",
+      "filter": {
+        "all": "Alle",
+        "pr": "Offener PR",
+        "failing": "CI rot",
+        "unmerged": "Nicht gemergt",
+        "local": "Nur lokal"
+      },
+      "filter_empty": "Kein Branch passt.",
+      "menu": {
+        "aria": "Optionen für {branch}",
+        "open_branch": "Branch auf GitHub öffnen",
+        "commits": "Commit-Verlauf auf GitHub",
+        "compare": "Mit {target} vergleichen",
+        "open_pr": "Pull Request #{number} öffnen",
+        "create_pr": "Pull Request erstellen",
+        "create_pr_hint": "Nach {target}",
+        "open_ci": "CI-Lauf öffnen",
+        "open_commit": "Letzten Commit öffnen",
+        "copy_name": "Branch-Namen kopieren",
+        "copy_switch": "Wechsel-Befehl kopieren",
+        "copy_sha": "Commit-SHA kopieren",
+        "copy_link": "GitHub-Link kopieren",
+        "copy_worktree": "Worktree-Pfad kopieren",
+        "copied": "Kopiert: {text}",
+        "copy_failed": "Kopieren in die Zwischenablage hat nicht geklappt.",
+        "no_repo": "Noch kein GitHub-Repository gewählt"
+      }
     },
     "skills": {
       "subtitle": "Auf ein Terminal ziehen, um ihn einzufügen",

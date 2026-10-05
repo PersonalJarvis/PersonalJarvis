@@ -266,6 +266,45 @@ describe("GitOverviewTab", () => {
     expect(useEventStore.getState().activeSection).toBe("plugins");
   });
 
+  it("opens a branch on GitHub from its icon, and leaves unpushed branches inert", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(within(row("feature/done")).getByTestId("git-branch-link"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/tree/feature/done");
+    expect(within(row("wip/local")).getByTestId("git-branch-link").tagName).toBe("SPAN");
+  });
+
+  it("offers GitHub pages and copies from a branch's menu", async () => {
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(within(row("feature/queued")).getByTestId("git-branch-more"));
+    const menu = await screen.findByTestId("git-branch-menu");
+    expect(within(menu).getByTestId("git-menu-pr").textContent).toContain("#8");
+    // A live pull request exists, so there is nothing new to create.
+    expect(within(menu).queryByTestId("git-menu-create-pr")).toBeNull();
+    fireEvent.click(within(menu).getByTestId("git-menu-compare"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/compare/main...feature/queued");
+    expect(screen.queryByTestId("git-branch-menu")).toBeNull();
+
+    fireEvent.contextMenu(row("feature/done"));
+    const second = await screen.findByTestId("git-branch-menu");
+    fireEvent.click(within(second).getByTestId("git-menu-create-pr"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/compare/main...feature/done?expand=1");
+  });
+
+  it("narrows the list by search and by filter", async () => {
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    fireEvent.click(screen.getByTestId("git-filter-failing"));
+    expect(screen.getAllByTestId("git-branch-row").map((el) => el.dataset.branch)).toEqual(["feature/dropped"]);
+    fireEvent.click(screen.getByTestId("git-filter-all"));
+    fireEvent.change(screen.getByTestId("git-search"), { target: { value: "#9" } });
+    expect(screen.getAllByTestId("git-branch-row").map((el) => el.dataset.branch)).toEqual(["feature/draft"]);
+    fireEvent.change(screen.getByTestId("git-search"), { target: { value: "nothing-like-this" } });
+    expect(screen.getByTestId("git-filter-empty")).toBeTruthy();
+  });
+
   it("asks for one restart when the running backend does not know the route yet", async () => {
     answer = { detail: "Not Found" };
     status = 404;
