@@ -249,6 +249,12 @@ class SocietyScheduler:
         async with self._dispatch_lock(target.agent_id):
             # Refresh after waiting: another room may have consumed this
             # recipient's slot while this one waited for its per-agent lock.
+            if await self._store.kill_switch():
+                if self._room_halt is not None:
+                    await self._room_halt(room)
+                else:
+                    await rooms.settle(room_id, reason="kill_switch")
+                return
             room = await rooms.get(room_id)
             if room is None or room.state is not RoomState.RUNNING or not room.live:
                 return
@@ -407,6 +413,9 @@ class SocietyScheduler:
                 return
         async with self._trace_lock(env.trace_id):
             async with self._dispatch_lock(target.agent_id):
+                if await self._store.kill_switch():
+                    await self._veto(env, FailureReason.KILL_SWITCH, "the society is halted")
+                    return
                 # Re-resolve under both admission locks: the target may have
                 # changed state while another event was being dispatched.
                 target = await self._resolve_target(env)
