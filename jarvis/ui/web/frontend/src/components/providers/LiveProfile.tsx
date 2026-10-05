@@ -7,7 +7,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import { Choice, Disclosure, Row, Rows, StatusLine } from "@/views/apikeys/ledger";
+import { Segmented, SettingsGroup, SettingsRow, SettingsSection } from "@/views/apikeys/settingsUi";
 import { ProviderLogo } from "./ProviderLogo";
 import { fetchAgentAccounts } from "@/lib/agentAccountsApi";
 import { LiveSubscriptionAccount } from "./LiveSubscriptionAccount";
@@ -256,7 +256,6 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
   // "Saved & active" button read as a broken control; the saved state is a
   // quiet line instead.
   const showSave = !ready || dirty;
-  const statusTone = billingPending ? "warn" : ready && !dirty ? "ok" : credentialReady ? "warn" : "off";
   const statusText = billingPending
     ? t("live.billing_pending")
     : ready && !dirty
@@ -265,191 +264,176 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
         ? t("providers_page.voice_save_hint")
         : t(subscription ? "live.subscription_sign_in" : "live.key_required");
   return (
-    <section
-      aria-label="GPT-Live"
-      data-testid="live-profile"
-      className="grid gap-x-16 gap-y-10 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]"
-    >
-      {/* Left: what the voice is, whether it is ready, and how it is paid. */}
-      <div className="min-w-0 lg:sticky lg:top-0 lg:self-start">
-        <div className="flex items-center gap-3">
-          <ProviderLogo providerId="openai-live" label="OpenAI" className="h-11 w-11" />
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-foreground-strong">GPT-Live</h2>
-            <p className="text-sm text-muted-foreground">OpenAI</p>
-          </div>
-        </div>
-        <p className="mt-4 text-sm text-muted-foreground">{t("live.conversation_help")}</p>
-        <div className="mt-3" data-testid={ready && !dirty ? "live-profile-saved" : "live-profile-status"}>
-          <StatusLine tone={statusTone}>{statusText}</StatusLine>
-        </div>
-
-        <div className="mt-8">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-sm font-medium text-foreground">{t("providers_page.access_title")}</span>
-            {selectedAuthMode ? (
-              <span className="text-sm text-muted-foreground">
-                {subscription ? t("providers_page.access_subscription") : t("providers_page.access_api_key")}
-              </span>
-            ) : (
-              <Choice<LiveAuthMode>
-                value={authMode}
-                disabled={saving}
-                label={t("live.billing_method")}
-                testId="live-access"
-                onChange={(mode) => update({ auth_mode: mode })}
-                options={[
-                  { value: "chatgpt_subscription", label: t("providers_page.access_subscription") },
-                  { value: "api_key", label: t("providers_page.access_api_key") },
-                ]}
-              />
-            )}
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t(subscription ? "live.subscription_billing" : "live.billing")}
-          </p>
-          <div className="mt-4">
-            {!subscription && keyField}
-            {subscription && !supportsSubscription ? (
-              <div className="flex items-center justify-between gap-4 py-2">
-                <p className="text-sm text-muted-foreground">{t("settings_view.wake_word.restart_required")}</p>
-                <Button size="sm" disabled={restart.restarting} onClick={() => void restart.restart()}>{restart.buttonLabel}</Button>
-              </div>
-            ) : null}
-            {subscription && supportsSubscription ? (
-              <>
-                <LiveSubscriptionAccount group={group} accountId={value.subscription_account_id ?? ""}
-                  loading={accounts.isPending} disabled={saving}
-                  voiceStatus={profile.data?.subscription?.account_id === accountId
-                    ? profile.data.subscription.voice_status : "unverified"}
-                  onAccountChange={(subscription_account_id) => update({ subscription_account_id })}
-                  onConnected={() => {
-                    void queryClient.invalidateQueries({ queryKey: ["live-subscription-accounts"] });
-                    void queryClient.invalidateQueries({ queryKey: ["live-profile"] });
-                    void queryClient.invalidateQueries({ queryKey: ["live-options", "chatgpt_subscription"] });
-                  }} />
-                {accounts.isError ? <p role="alert" className="mt-2 text-sm text-destructive">{t("live.subscription_accounts_failed")}</p> : null}
-              </>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* Right: the few things a person tunes, one line each. */}
-      <div className="min-w-0">
-        <Rows>
-          <Row
-            title={t("live.voice")}
-            description={subscription ? "GPT-Live · ChatGPT" : "GPT-Live 1"}
-            control={
-              <BrandedSelect
-                className="w-60"
-                value={voice}
-                disabled={saving || (subscription && !options.data)}
-                onValueChange={(selected) => choose(subscription ? { subscription_voice: selected } : { voice: selected })}
-                ariaLabel={t("live.voice")}
-                options={(options.data?.voices ?? (subscription ? [] : [voice])).map((voice) => ({
-                  value: voice,
-                  label: capitalize(voice),
-                }))}
-              />
-            }
-          />
-          <Row
-            title={t("live.thinking_model")}
-            description={t(subscription ? "live.subscription_thinking_help" : "live.thinking_help")}
-            control={
-              <BrandedSelect
-                className="w-60"
-                value={backendModel}
-                disabled={saving || (subscription && !options.data)}
-                onValueChange={chooseModel}
-                ariaLabel={t("live.thinking_model")}
-                placeholder={t("live.choose_model")}
-                searchPlaceholder={t("live.search_models")}
-                options={modelOptions}
-              />
-            }
-          />
-          <Row
-            title={t("live.reasoning")}
-            control={
-              <BrandedSelect
-                className="w-60"
-                value={reasoningEffort}
-                disabled={saving}
-                onValueChange={(selected) => choose(subscription ? { subscription_reasoning_effort: selected } : { reasoning_effort: selected })}
-                ariaLabel={t("live.reasoning")}
-                options={efforts.map((effort) => ({
-                  value: effort,
-                  label: effort ? capitalize(effort) : t("live.model_default"),
-                }))}
-              />
-            }
-          />
-          {!subscription && (
-            <Row
-              title={<label htmlFor="live-web-search">{t("live.web_search")}</label>}
-              description={t("live.web_search_help")}
-              control={
-                <Switch
-                  id="live-web-search"
-                  checked={value.web_search}
-                  disabled={saving}
-                  onCheckedChange={(web_search) => choose({ web_search })}
-                  aria-label={t("live.web_search")}
-                />
-              }
+    <section aria-label="GPT-Live" className="space-y-6" data-testid="live-profile">
+      <div className="space-y-2.5">
+        <div className="flex min-h-7 items-center justify-between gap-4 px-1">
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-normal text-foreground/70">
+            <ProviderLogo providerId="openai-live" label="OpenAI" size="sm" className="h-5 w-5" />
+            <span className="truncate">GPT-Live</span>
+          </h2>
+          <span
+            data-testid={ready && !dirty ? "live-profile-saved" : "live-profile-status"}
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+          >
+            <span
+              aria-hidden="true"
+              className={ready && !dirty ? "h-1.5 w-1.5 rounded-full bg-success" : "h-1.5 w-1.5 rounded-full bg-warning"}
             />
-          )}
-        </Rows>
-
-        <div className="border-t border-border/60 pt-2">
-          <Disclosure label={t("live.prompts")} testId="live-prompts">
-            <div className="grid gap-4 pb-2 md:grid-cols-2">
-              <label className="space-y-1.5">
-                <span className="block text-sm text-muted-foreground">{t("live.conversation_prompt")}</span>
-                <Textarea rows={3} value={value.instructions} onChange={(event) => update({ instructions: event.target.value })} />
-              </label>
-              <label className="space-y-1.5">
-                <span className="block text-sm text-muted-foreground">{t("live.backend_prompt")}</span>
-                <Textarea rows={3} value={value.backend_instructions} onChange={(event) => update({ backend_instructions: event.target.value })} />
-              </label>
-              {!subscription ? <label className="space-y-1.5 md:col-span-2">
-                <span className="block text-sm text-muted-foreground">{t("live.custom_model")}</span>
-                <Input value={value.backend_model} onChange={(event) => update({ backend_model: event.target.value })} />
-              </label> : null}
-            </div>
-          </Disclosure>
+            {statusText}
+          </span>
         </div>
-
-        <div className="mt-6 flex flex-col gap-3">
-          {options.isError ? <p role="alert" className="text-sm text-destructive">{t("live.options_failed")}</p> : null}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="max-w-md text-sm text-muted-foreground">{t("live.agents_separate")}</p>
-            <div className="flex items-center gap-2">
-              {!subscription && sameCredentials && saved?.configured && !profile.data?.agent_configured && (
-                <Button variant="outline" size="sm" disabled={saving} onClick={() => void useForAgents()}>
-                  {t("live.use_for_agents")}
-                </Button>
-              )}
-              {showSave ? (
-                <Button
-                  size="sm"
-                  disabled={saving || !backendModel.trim() || !credentialReady || !effortAvailable ||
-                    (subscription && (!options.data || options.isError || !models.some((model) => model.id === backendModel)))}
-                  onClick={() => void save()}
-                >
-                  {saving && <Loader2 className="animate-spin" />}
-                  {ready ? t("live.save_changes") : t("live.save")}
-                </Button>
-              ) : null}
+        <SettingsGroup>
+          <SettingsRow
+            title={t("providers_page.access_title")}
+            control={selectedAuthMode
+              ? <span className="text-sm text-muted-foreground">{subscription ? t("providers_page.access_subscription") : t("providers_page.access_api_key")}</span>
+              : <Segmented<LiveAuthMode>
+                  size="xs"
+                  value={authMode}
+                  disabled={saving}
+                  label={t("live.billing_method")}
+                  testId="live-access"
+                  onChange={(mode) => update({ auth_mode: mode })}
+                  options={[
+                    { value: "chatgpt_subscription", label: t("providers_page.access_subscription") },
+                    { value: "api_key", label: t("providers_page.access_api_key") },
+                  ]}
+                />}
+          />
+          {!subscription && keyField}
+          {subscription && !supportsSubscription ? (
+            <SettingsRow
+              title={t("live.subscription_mode")}
+              status={t("settings_view.wake_word.restart_required")}
+              control={<Button size="sm" disabled={restart.restarting} onClick={() => void restart.restart()}>{restart.buttonLabel}</Button>}
+            />
+          ) : null}
+          {subscription && supportsSubscription ? (
+            <div className="px-4 py-3">
+              <LiveSubscriptionAccount group={group} accountId={value.subscription_account_id ?? ""}
+                loading={accounts.isPending} disabled={saving}
+                voiceStatus={profile.data?.subscription?.account_id === accountId
+                  ? profile.data.subscription.voice_status : "unverified"}
+                onAccountChange={(subscription_account_id) => update({ subscription_account_id })}
+                onConnected={() => {
+                  void queryClient.invalidateQueries({ queryKey: ["live-subscription-accounts"] });
+                  void queryClient.invalidateQueries({ queryKey: ["live-profile"] });
+                  void queryClient.invalidateQueries({ queryKey: ["live-options", "chatgpt_subscription"] });
+                }} />
+              {accounts.isError ? <p role="alert" className="mt-2 text-xs text-destructive">{t("live.subscription_accounts_failed")}</p> : null}
             </div>
-          </div>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          {message && <p role="status" className="text-sm text-muted-foreground">{message}</p>}
-        </div>
+          ) : null}
+        </SettingsGroup>
       </div>
+
+      <SettingsSection title={t("live.conversation_heading")}>
+        <SettingsRow
+          title={t("live.voice")}
+          control={
+            <BrandedSelect
+              className="w-60"
+              value={voice}
+              disabled={saving || (subscription && !options.data)}
+              onValueChange={(selected) => choose(subscription ? { subscription_voice: selected } : { voice: selected })}
+              ariaLabel={t("live.voice")}
+              options={(options.data?.voices ?? (subscription ? [] : [voice])).map((voice) => ({
+                value: voice,
+                label: capitalize(voice),
+              }))}
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title={t("live.thinking_heading")}>
+        <SettingsRow
+          title={t("live.thinking_model")}
+          control={
+            <BrandedSelect
+              className="w-60"
+              value={backendModel}
+              disabled={saving || (subscription && !options.data)}
+              onValueChange={chooseModel}
+              ariaLabel={t("live.thinking_model")}
+              placeholder={t("live.choose_model")}
+              searchPlaceholder={t("live.search_models")}
+              options={modelOptions}
+            />
+          }
+        />
+        <SettingsRow
+          title={t("live.reasoning")}
+          control={
+            <BrandedSelect
+              className="w-60"
+              value={reasoningEffort}
+              disabled={saving}
+              onValueChange={(selected) => choose(subscription ? { subscription_reasoning_effort: selected } : { reasoning_effort: selected })}
+              ariaLabel={t("live.reasoning")}
+              options={efforts.map((effort) => ({
+                value: effort,
+                label: effort ? capitalize(effort) : t("live.model_default"),
+              }))}
+            />
+          }
+        />
+        {!subscription && (
+          <SettingsRow
+            title={<label htmlFor="live-web-search">{t("live.web_search")}</label>}
+            control={
+              <Switch
+                id="live-web-search"
+                checked={value.web_search}
+                disabled={saving}
+                onCheckedChange={(web_search) => choose({ web_search })}
+                aria-label={t("live.web_search")}
+              />
+            }
+          />
+        )}
+      </SettingsSection>
+
+      <SettingsSection title={t("live.prompts")}>
+        <div className="grid gap-4 px-4 py-3 md:grid-cols-2">
+          <label className="space-y-1.5">
+            <span className="block text-xs text-muted-foreground">{t("live.conversation_prompt")}</span>
+            <Textarea rows={3} value={value.instructions} onChange={(event) => update({ instructions: event.target.value })} />
+          </label>
+          <label className="space-y-1.5">
+            <span className="block text-xs text-muted-foreground">{t("live.backend_prompt")}</span>
+            <Textarea rows={3} value={value.backend_instructions} onChange={(event) => update({ backend_instructions: event.target.value })} />
+          </label>
+          {!subscription ? <label className="space-y-1.5 md:col-span-2">
+            <span className="block text-xs text-muted-foreground">{t("live.custom_model")}</span>
+            <Input value={value.backend_model} onChange={(event) => update({ backend_model: event.target.value })} />
+          </label> : null}
+        </div>
+      </SettingsSection>
+
+      {(showSave || options.isError || error || message ||
+        (!subscription && sameCredentials && saved?.configured && !profile.data?.agent_configured)) && (
+        <div className="flex flex-wrap items-center justify-end gap-3 px-1">
+          {options.isError ? <p role="alert" className="mr-auto text-xs text-destructive">{t("live.options_failed")}</p> : null}
+          {error ? <p role="alert" className="mr-auto text-xs text-destructive">{error}</p> : null}
+          {message ? <p role="status" className="mr-auto text-xs text-muted-foreground">{message}</p> : null}
+          {!subscription && sameCredentials && saved?.configured && !profile.data?.agent_configured && (
+            <Button variant="outline" size="sm" disabled={saving} onClick={() => void useForAgents()}>
+              {t("live.use_for_agents")}
+            </Button>
+          )}
+          {showSave ? (
+            <Button
+              size="sm"
+              disabled={saving || !backendModel.trim() || !credentialReady || !effortAvailable ||
+                (subscription && (!options.data || options.isError || !models.some((model) => model.id === backendModel)))}
+              onClick={() => void save()}
+            >
+              {saving && <Loader2 className="animate-spin" />}
+              {ready ? t("live.save_changes") : t("live.save")}
+            </Button>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

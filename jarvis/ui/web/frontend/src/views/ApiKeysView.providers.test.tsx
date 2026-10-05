@@ -22,8 +22,6 @@ vi.mock("@/hooks/useVoiceMode", () => ({
 // The sections below the providers own their data sources and have their own
 // tests; here they only need to stay out of the way.
 vi.mock("@/components/AgentAccountsPanel", () => ({ AgentAccountsPanel: () => null }));
-vi.mock("@/components/PromptWriterCard", () => ({ PromptWriterCard: () => null }));
-vi.mock("@/components/SubagentModelCard", () => ({ SubagentModelCard: () => null }));
 // GPT-Live's own form has its own tests; here it only has to place the key row.
 vi.mock("@/components/providers/LiveProfile", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/components/providers/LiveProfile")>()),
@@ -158,7 +156,7 @@ beforeEach(() => {
 });
 
 describe("ApiKeysView — Live calls", () => {
-  it("opens on live calls with GPT-Live and one OpenAI key row", async () => {
+  it("opens on live calls with the GPT-Live pane and one OpenAI key row", async () => {
     renderPage();
     const voice = await screen.findByTestId("apikeys-voice");
     expect(within(voice).getByTestId("live-profile")).toBeTruthy();
@@ -270,7 +268,6 @@ describe("ApiKeysView — Agents", () => {
     const detail = await screen.findByTestId("agent-provider-detail-claude-api");
     await waitFor(() => expect(detail.textContent).toContain("me@example.com"));
     expect(within(detail).getByTestId("subscription-disconnect")).toBeTruthy();
-    fireEvent.click(within(detail).getByRole("button", { name: "Runtime" }));
     expect((within(detail).getByLabelText("Binary path") as HTMLInputElement).value).toBe("/usr/bin/claude");
   });
 });

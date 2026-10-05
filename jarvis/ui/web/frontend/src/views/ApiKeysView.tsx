@@ -5,10 +5,11 @@ import { LiveProfile } from "@/components/providers/LiveProfile";
 import { Button } from "@/components/ui/button";
 import { AgentsTab } from "@/views/apikeys/AgentsTab";
 import { KeyField } from "@/views/apikeys/KeyField";
-import { UnderlineTabs } from "@/views/apikeys/ledger";
+import { SettingsGroup } from "@/views/apikeys/settingsUi";
 import { useProviders, useSectionHealth } from "@/hooks/useProviders";
 import { useProviderFamilies } from "@/lib/providerFamilies";
 import { useLocaleChunk, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
 const TABS = ["voice", "agents"] as const;
@@ -26,15 +27,14 @@ function initialTab(): Tab {
 }
 
 /**
- * API Keys, in two parts:
+ * API Keys, in two parts behind one centred switch, both as a provider list
+ * beside the selected provider's settings:
  *
  * - Live calls: the live voice runs on OpenAI GPT-Live — paid with the
- *   ChatGPT subscription or one OpenAI key — with its few settings;
+ *   ChatGPT subscription or one OpenAI key — with its voice and the thinking
+ *   model that answers with tools;
  * - Agents: every company the assistant's agents can run on, any number of
  *   them on at once, each reached by its subscription or its API key.
- *
- * Both are set in type and hairlines on the page itself; nothing sits in a
- * box inside a box.
  */
 export function ApiKeysView() {
   const t = useT();
@@ -84,17 +84,14 @@ export function ApiKeysView() {
             </Button>
           }
         />
-        <UnderlineTabs<Tab>
-          value={tab}
-          onChange={choose}
-          label={t("apikeys_view.title")}
-          options={TABS.map((value) => ({ value, label: t(`providers_page.tab_${value}`) }))}
-        />
+        <div className="flex justify-center">
+          <TabSwitch value={tab} onChange={choose} />
+        </div>
       </div>
 
       <div
         data-testid="api-keys-provider-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-12 pt-8"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-6"
       >
         <div key={tab} role="tabpanel" id="apikeys-panel" aria-labelledby={`apikeys-tab-${tab}`} className="profile-rise w-full">
           {tab === "voice" && <VoiceTab data={families} onSaved={refetch} />}
@@ -110,28 +107,62 @@ export function ApiKeysView() {
   );
 }
 
+/** A segmented switch between the page's parts. */
+function TabSwitch({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void }) {
+  const t = useT();
+  return (
+    <div
+      role="tablist"
+      aria-label={t("apikeys_view.title")}
+      data-testid="api-keys-category-tabs"
+      className="inline-flex rounded-lg border border-border/60 bg-card/40 p-0.5"
+    >
+      {TABS.map((tab) => (
+        <button
+          key={tab}
+          type="button"
+          role="tab"
+          id={`apikeys-tab-${tab}`}
+          aria-selected={value === tab}
+          aria-controls="apikeys-panel"
+          onClick={() => onChange(tab)}
+          className={cn(
+            "h-7 rounded-md px-3 text-sm font-medium transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            value === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {t(`providers_page.tab_${tab}`)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Live calls run on OpenAI GPT-Live, the one live speech-to-speech model the
- * assistant runs: how it is paid for on the left, its few settings beside it.
+ * assistant runs — so the tab is that one provider's settings pane: how it is
+ * paid for, its voice and the thinking model that answers with tools.
  */
 function VoiceTab({ data, onSaved }: { data: ReturnType<typeof useProviderFamilies>; onSaved: () => void }) {
   const openai = data.families?.find((family) => family.id === "openai");
   return (
-    <div data-testid="apikeys-voice">
-      <LiveProfile
-        onSaved={onSaved}
-        keyField={
-          <KeyField
-            stacked
-            slot={openai?.key_slot ?? "openai_api_key"}
-            present={openai?.key_present ?? false}
-            providerLabel="OpenAI"
-            dashboardUrl={openai?.dashboard_url}
-            onChanged={() => void data.reload()}
-            testId="voice-key"
-          />
-        }
-      />
+    <div data-testid="apikeys-voice" className="mx-auto w-full max-w-3xl">
+      <SettingsGroup divided={false} className="p-4">
+        <LiveProfile
+          onSaved={onSaved}
+          keyField={
+            <KeyField
+              slot={openai?.key_slot ?? "openai_api_key"}
+              present={openai?.key_present ?? false}
+              providerLabel="OpenAI"
+              dashboardUrl={openai?.dashboard_url}
+              onChanged={() => void data.reload()}
+              testId="voice-key"
+            />
+          }
+        />
+      </SettingsGroup>
     </div>
   );
 }
@@ -183,10 +214,15 @@ function RestartNeeded() {
   }
 
   return (
-    <div role="status" data-testid="providers-restart-needed" className="flex items-center gap-6 border-y border-border/60 py-4">
+    <div
+      role="status"
+      data-testid="providers-restart-needed"
+      className="flex items-center gap-4 rounded-xl border border-border/60 bg-card/40 px-4 py-3"
+    >
+      <RefreshCw aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-foreground">{t("providers_page.restart_title")}</p>
-        <p className="mt-0.5 text-sm text-muted-foreground">{t("providers_page.restart_desc")}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t("providers_page.restart_desc")}</p>
       </div>
       <Button size="sm" disabled={restarting} onClick={() => void restart()}>
         {restarting && <Loader2 className="animate-spin" />}

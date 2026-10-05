@@ -207,7 +207,7 @@ it("saves subscription voice without an API key and preserves the complete API s
   const { client, writes, fetcher, onAuthModeChange } = subscriptionSetup();
   await selectSubscription();
   await screen.findByText("live.subscription_connected");
-  expect(screen.getByText("live.subscription_voice_unverified")).toBeTruthy();
+  expect(screen.queryByText("live.subscription_voice_unverified")).toBeNull();
   expect(screen.queryByText("live.key_required")).toBeNull();
   expect(screen.queryByRole("button", { name: "live.use_for_agents" })).toBeNull();
   await waitFor(() => expect((screen.getByRole("combobox", { name: "live.thinking_model" }) as HTMLButtonElement).disabled).toBe(false));

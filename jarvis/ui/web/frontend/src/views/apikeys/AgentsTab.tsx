@@ -1,11 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, FlaskConical, Loader2, LogIn, LogOut } from "lucide-react";
-import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
-import { PromptWriterCard } from "@/components/PromptWriterCard";
+import { Check, FlaskConical, Loader2, LogIn, LogOut } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { ProviderTestControl } from "@/components/providers/ProviderTierSection";
-import { SubagentModelCard, type SubagentStatus } from "@/components/SubagentModelCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -48,8 +45,17 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { KeyField } from "./KeyField";
 import { accessPatch, familyAccess, nextDefault, onPatch, withPatch, type Access, type FamilyAccess } from "./agentAccess";
-import { Choice, Disclosure, Row, Rows, Section, StatusLine, ToggleChip } from "./ledger";
 import { familyState, type FamilyState } from "./providers/familyState";
+import {
+  DetailHeader,
+  ListRow,
+  MasterDetail,
+  ModelList,
+  ModelListRow,
+  Segmented,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsUi";
 
 type FamiliesData = ReturnType<typeof useProviderFamilies>;
 
@@ -72,7 +78,6 @@ export function shortVersion(raw: string | null | undefined): string | null {
 }
 
 const SOCIETY_CATALOG_KEY = ["agent-chat", "catalog", "society"] as const;
-const TEST_TIER_ORDER: ProviderDescriptor["tier"][] = ["brain", "realtime", "tts", "stt", "dictation"];
 
 /**
  * The agents' provider choices and the one action that changes them: save a
@@ -139,10 +144,11 @@ function useAgentProviders(entriesFor: (prefs: AgentProviderPrefs) => FamilyAcce
 type AgentProviders = ReturnType<typeof useAgentProviders>;
 
 /**
- * The Agents tab: every company the assistant's agents can run on, one line
- * each. Any number are on at once; a line opens in place to set the company
- * up — how it is reached, whether it takes the tasks nobody assigned, and
- * which of its models the agents are offered.
+ * The Agents tab: every company the assistant's agents can run on, as one
+ * list beside the selected company's settings. Any number of companies are
+ * on at once — each one connected is one more seat an agent can sit on.
+ * Inside a company the person picks how it is reached (subscription or API
+ * key) and which of its models the agents are offered.
  */
 export function AgentsTab({
   data,
@@ -177,129 +183,116 @@ export function AgentsTab({
   const entriesFor = (prefs: AgentProviderPrefs) => listed.map((f) => familyAccess(f, mapping, prefs, states[f.id]));
   const control = useAgentProviders(entriesFor, agents?.brain_primary ?? "", refresh);
   const entries = entriesFor(control.prefs);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const onCount = entries.filter((entry) => entry.on).length;
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedId || !entries.length) return;
+    const primary = entries.find((fa) => fa.rows.some((row) => row.is_active_brain));
+    setSelectedId((primary ?? entries.find((fa) => fa.on) ?? entries[0]).family.id);
+  }, [entries, selectedId]);
+  const selected = entries.find((fa) => fa.family.id === selectedId) ?? null;
 
   return (
-    <div className="flex flex-col gap-14" data-testid="apikeys-agents">
-      <Section
-        title={t("providers_page.agent_providers_title")}
-        description={t("providers_page.agent_providers_desc")}
-        action={<span className="text-sm text-muted-foreground">{t("providers_page.agent_providers_count").replace("{0}", String(onCount))}</span>}
-        data-testid="agents-providers"
-      >
-        <Rows>
-          {entries.map((entry) => (
-            <ProviderLine
-              key={entry.family.id}
-              entry={entry}
-              state={states[entry.family.id]}
-              open={openId === entry.family.id}
-              onToggle={() => setOpenId((id) => (id === entry.family.id ? null : entry.family.id))}
+    <div className="flex flex-col gap-10" data-testid="apikeys-agents">
+      <SettingsSection title={t("providers_page.agent_providers_title")} plain data-testid="agents-providers">
+        <MasterDetail
+          testId="agent-provider-list"
+          list={entries.map((fa) => (
+            <ProviderListRow
+              key={fa.family.id}
+              entry={fa}
+              state={states[fa.family.id]}
+              selected={fa.family.id === selectedId}
+              onSelect={() => setSelectedId(fa.family.id)}
               control={control}
-              onChanged={refresh}
             />
           ))}
-        </Rows>
-      </Section>
-
-      <AgentSettings />
-
-      <div className="border-t border-border/60 pt-2">
-        <Disclosure label={t("providers_page.accounts_title")} testId="agent-accounts">
-          <AgentAccountsPanel />
-        </Disclosure>
-      </div>
+          detail={
+            selected && states[selected.family.id] ? (
+              <ProviderDetail
+                key={selected.family.id}
+                entry={selected}
+                state={states[selected.family.id]}
+                control={control}
+                onChanged={refresh}
+              />
+            ) : null
+          }
+        />
+      </SettingsSection>
     </div>
   );
 }
 
-/** The line under a company's name: how it is reached, or what it still needs. */
-function entryStatus(entry: FamilyAccess, state: FamilyState | undefined, t: (key: string) => string): { tone: "ok" | "off" | "warn" | "error"; text: string } {
-  if (state?.failing) return { tone: "error", text: state.failing };
-  if (entry.access === "local") return { tone: "ok", text: t("providers_page.status_local") };
-  if (entry.access === "subscription") {
-    if (!state?.subscription) return { tone: "off", text: t("providers_page.subscription_unknown") };
-    if (state.subscriptionOn) {
-      return {
-        tone: "ok",
-        text: state.account ? t("providers_page.status_subscription_as").replace("{0}", state.account) : t("providers_page.status_subscription"),
-      };
-    }
-    return { tone: "off", text: t(state.subscription.installed ? "providers_page.not_signed_in" : "providers_page.not_installed") };
-  }
-  if (entry.family.key_present) return { tone: "ok", text: t("providers_page.status_key") };
-  if (state?.viaProject) return { tone: "ok", text: t("providers_page.status_project") };
-  return { tone: "off", text: t("providers_page.key_missing_short") };
+/** One entry per company, named and marked as the company, whichever access it uses. */
+function displayName(family: ProviderFamily): string {
+  return family.label;
 }
 
-function ProviderLine({
+function logoOf(family: ProviderFamily): string {
+  return family.logo_id;
+}
+
+/** The line under a company's name: how it is reached, or what it still needs. */
+function entryStatus(entry: FamilyAccess, state: FamilyState | undefined, t: (key: string) => string): string {
+  if (entry.access === "local") return t("providers_page.status_local");
+  if (entry.access === "subscription") {
+    if (!state?.subscription) return t("providers_page.subscription_unknown");
+    if (state.subscriptionOn) {
+      return state.account
+        ? t("providers_page.status_subscription_as").replace("{0}", state.account)
+        : t("providers_page.status_subscription");
+    }
+    if (!state.subscription.installed) return t("providers_page.not_installed");
+    return t("providers_page.not_signed_in");
+  }
+  if (entry.family.key_present) return t("providers_page.status_key");
+  if (state?.viaProject) return t("providers_page.status_project");
+  return t("providers_page.key_missing_short");
+}
+
+function ProviderListRow({
   entry,
   state,
-  open,
-  onToggle,
+  selected,
+  onSelect,
   control,
-  onChanged,
 }: {
   entry: FamilyAccess;
   state: FamilyState | undefined;
-  open: boolean;
-  onToggle: () => void;
+  selected: boolean;
+  onSelect: () => void;
   control: AgentProviders;
-  onChanged: () => Promise<void>;
 }) {
   const t = useT();
   const family = entry.family;
-  const status = entryStatus(entry, state, t);
-  const version = entry.access === "subscription" ? shortVersion(state?.subscription?.version) : null;
-  const isDefault = entry.on && entry.rows.some((row) => row.is_active_brain);
-  const switchLabel = t("providers_page.agents_use_for").replace("{0}", family.label);
-
+  const name = displayName(family);
+  const label = t("providers_page.agents_use_for").replace("{0}", name);
   return (
-    <div data-testid={`agent-provider-${family.id}`}>
-      <div className="flex items-center gap-4 py-3.5">
-        <button
-          type="button"
-          aria-expanded={open}
-          aria-label={family.label}
-          onClick={onToggle}
-          className="group flex min-w-0 flex-1 items-center gap-4 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <ProviderLogo providerId={family.logo_id} label={family.label} className={cn(!entry.on && "opacity-60")} />
-          <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-baseline gap-2">
-              <span className={cn("truncate text-sm font-medium", entry.on ? "text-foreground" : "text-muted-foreground")}>{family.label}</span>
-              {version ? <code className="shrink-0 text-xs text-muted-foreground">{version}</code> : null}
-              {isDefault ? (
-                <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-foreground">
-                  {t("providers_page.default_on")}
-                </span>
-              ) : null}
-            </span>
-            <span className="mt-0.5 flex min-w-0">
-              <StatusLine tone={status.tone}>{status.text}</StatusLine>
-            </span>
-          </span>
-          <ChevronRight
-            aria-hidden="true"
-            className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", open && "rotate-90")}
-          />
-        </button>
+    <ListRow
+      testId={`agent-provider-${family.id}`}
+      icon={<ProviderLogo providerId={logoOf(family)} label={name} size="sm" className="h-5 w-5" />}
+      name={name}
+      version={entry.access === "subscription" ? shortVersion(state?.subscription?.version) : null}
+      status={entryStatus(entry, state, t)}
+      dot={state?.failing ? "error" : null}
+      selected={selected}
+      dimmed={!entry.on}
+      onSelect={onSelect}
+      trailing={
         <Switch
           checked={entry.on}
           disabled={!entry.ready || !control.ready || control.busy !== null}
           onCheckedChange={(on) => void control.save(family.id, onPatch(entry, on, control.prefs))}
-          aria-label={switchLabel}
-          title={entry.ready ? switchLabel : t("providers_page.agents_needs_access")}
+          aria-label={label}
+          title={entry.ready ? label : t("providers_page.agents_needs_access")}
         />
-      </div>
-      {open && state ? <ProviderSetup entry={entry} state={state} control={control} onChanged={onChanged} /> : null}
-    </div>
+      }
+    />
   );
 }
 
-/** A company's setup, opened in place under its line. */
-function ProviderSetup({
+function ProviderDetail({
   entry,
   state,
   control,
@@ -312,6 +305,7 @@ function ProviderSetup({
 }) {
   const t = useT();
   const family = entry.family;
+  const name = displayName(family);
   const subscription = entry.access === "subscription";
   const keyed = entry.access === "api_key";
   const testCard = keyed
@@ -319,81 +313,92 @@ function ProviderSetup({
     : undefined;
 
   return (
-    <div data-testid={`agent-provider-detail-${family.id}`} className="pb-5 pl-[3.25rem]">
-      <Rows>
-        {entry.choices.length > 1 && (
-          <Row
-            title={t("providers_page.access_title")}
-            description={t("providers_page.access_desc")}
-            control={
-              <Choice<Access>
-                testId="agent-provider-access"
-                label={t("providers_page.access_title")}
-                value={entry.access}
-                disabled={!control.ready || control.busy !== null}
-                onChange={(access) => void control.save(family.id, accessPatch(entry, access, control.prefs))}
-                options={entry.choices.map((choice) => ({ value: choice, label: t(`providers_page.access_${choice}`) }))}
-              />
-            }
-          />
-        )}
-        {subscription && family.subscription && <AccountRow family={family} state={state} onChanged={onChanged} />}
-        {keyed && family.key_slot && (
-          <KeyField
-            slot={family.key_slot}
-            present={family.key_present}
-            providerLabel={family.label}
-            dashboardUrl={family.dashboard_url}
-            description={state.viaProject && !family.key_present ? t("providers_page.key_project_hint") : t("providers_page.key_desc_short")}
-            onChanged={onChanged}
-          />
-        )}
-        {entry.access === "local" && <Row title={t("providers_page.local_title")} description={t("providers_page.local_desc")} />}
-        {entry.rows.map((row) => (
-          <DefaultRow key={row.jarvis} row={row} label={family.local ? row.label ?? family.label : family.label} entry={entry} control={control} />
-        ))}
-        {entry.rows.map((row) => (
-          <AgentModels
-            key={`models-${row.jarvis}`}
-            providerId={row.jarvis}
-            title={entry.rows.length > 1 ? `${t("providers_page.models_title")} · ${row.label ?? row.jarvis}` : t("providers_page.models_title")}
-            control={control}
-            familyId={family.id}
-          />
-        ))}
-        {keyed && family.key_present && testCard && (
-          <Row
-            title={t("providers_page.key_test_label")}
-            description={t("providers_page.key_test_hint")}
-            control={<ProviderTestControl providerId={testCard.id} providerLabel={testCard.label} section={testCard.tier} active={testCard.active} />}
-          />
-        )}
-        {keyed && <SeparateKeys family={family} onChanged={onChanged} />}
-      </Rows>
+    <div data-testid={`agent-provider-detail-${family.id}`} className="space-y-6">
+      <div className="space-y-2.5">
+        <DetailHeader
+          icon={<ProviderLogo providerId={logoOf(family)} label={name} size="sm" className="h-5 w-5" />}
+          name={name}
+          version={subscription ? shortVersion(state.subscription?.version) : null}
+        />
+        <SettingsSectionCard>
+          {entry.choices.length > 1 && (
+            <SettingsRow
+              title={t("providers_page.access_title")}
+              control={
+                <Segmented<Access>
+                  size="xs"
+                  testId="agent-provider-access"
+                  label={t("providers_page.access_title")}
+                  value={entry.access}
+                  disabled={!control.ready || control.busy !== null}
+                  onChange={(access) => void control.save(family.id, accessPatch(entry, access, control.prefs))}
+                  options={entry.choices.map((choice) => ({ value: choice, label: t(`providers_page.access_${choice}`) }))}
+                />
+              }
+            />
+          )}
+          {subscription && family.subscription && <SubscriptionAccountRow family={family} state={state} onChanged={onChanged} />}
+          {keyed && family.key_slot && (
+            <KeyField
+              slot={family.key_slot}
+              present={family.key_present}
+              providerLabel={family.label}
+              dashboardUrl={family.dashboard_url}
+              description={state.viaProject && !family.key_present ? t("providers_page.status_project") : undefined}
+              onChanged={onChanged}
+            />
+          )}
+          {entry.access === "local" && (
+            <SettingsRow title={t("providers_page.local_title")} />
+          )}
+          {entry.rows.map((row) => (
+            <DefaultRow
+              key={row.jarvis}
+              row={row}
+              label={family.local ? row.label ?? family.label : name}
+              entry={entry}
+              control={control}
+            />
+          ))}
+          {keyed && family.key_present && testCard && (
+            <SettingsRow
+              title={t("providers_page.key_test_label")}
+              control={<ProviderTestControl providerId={testCard.id} providerLabel={testCard.label} section={testCard.tier} active={testCard.active} />}
+            />
+          )}
+        </SettingsSectionCard>
+      </div>
+
+      {entry.rows.map((row) => (
+        <AgentModels
+          key={row.jarvis}
+          providerId={row.jarvis}
+          title={entry.rows.length > 1 ? `${t("providers_page.models_title")} · ${row.label ?? row.jarvis}` : t("providers_page.models_title")}
+          control={control}
+          familyId={family.id}
+        />
+      ))}
 
       {subscription && family.subscription && state.subscription?.installed && (
-        <div className="border-t border-border/60 pt-1">
-          <Disclosure label={t("providers_page.runtime")} testId={`agent-runtime-${family.id}`}>
-            <Rows className="border-t-0">
-              <BinaryPathRow
-                kind={family.subscription.kind}
-                path={"binary_path" in state.subscription ? state.subscription.binary_path ?? "" : ""}
-                onChanged={onChanged}
-              />
-              <Row
-                title={t("providers_page.cli_check")}
-                description={t("providers_page.cli_check_hint")}
-                control={<CliTest endpoint={CLI[family.subscription.kind].test} onChanged={onChanged} />}
-              />
-            </Rows>
-          </Disclosure>
-        </div>
+        <SettingsSection title={t("providers_page.runtime")}>
+          <BinaryPathRow
+            kind={family.subscription.kind}
+            path={"binary_path" in state.subscription ? state.subscription.binary_path ?? "" : ""}
+            onChanged={onChanged}
+          />
+          <SettingsRow
+            title={t("providers_page.cli_check")}
+            control={<CliTest endpoint={CLI[family.subscription.kind].test} onChanged={onChanged} />}
+          />
+        </SettingsSection>
       )}
+
+      {keyed && <SeparateKeys family={family} onChanged={onChanged} />}
     </div>
   );
 }
 
-function AccountRow({ family, state, onChanged }: { family: ProviderFamily; state: FamilyState; onChanged: () => Promise<void> }) {
+function SubscriptionAccountRow({ family, state, onChanged }: { family: ProviderFamily; state: FamilyState; onChanged: () => Promise<void> }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const kind = family.subscription!.kind;
@@ -433,26 +438,28 @@ function AccountRow({ family, state, onChanged }: { family: ProviderFamily; stat
     }
   }
 
-  const line = pending === "waiting"
-    ? t(cli.where === "browser" ? "providers_page.login_waiting_browser" : "providers_page.login_waiting_terminal")
-    : !status
-      ? t("providers_page.subscription_unknown")
-      : state.subscriptionOn
-        ? state.account
-          ? t("providers_page.authenticated_as").replace("{0}", state.account)
-          : t("providers_page.authenticated")
-        : !installed
-          ? card?.install_hint || t("providers_page.subscription_install")
-          : t("providers_page.not_signed_in");
+  const line = !state.subscription
+    ? t("providers_page.subscription_unknown")
+    : state.subscriptionOn
+      ? state.account
+        ? t("providers_page.authenticated_as").replace("{0}", state.account)
+        : t("providers_page.authenticated")
+      : !installed
+        ? card?.install_hint || t("providers_page.subscription_install")
+        : t("providers_page.not_signed_in");
 
   return (
-    <Row
+    <SettingsRow
       data-testid={`subscription-account-${kind}`}
       title={t("providers_page.account")}
-      description={line}
+      status={
+        pending === "waiting"
+          ? t(cli.where === "browser" ? "providers_page.login_waiting_browser" : "providers_page.login_waiting_terminal")
+          : line
+      }
       control={
         state.subscriptionOn ? (
-          <Button size="sm" variant="ghost" className="text-muted-foreground" data-testid="subscription-disconnect" disabled={pending !== null} onClick={() => void disconnect()}>
+          <Button size="sm" variant="outline" data-testid="subscription-disconnect" disabled={pending !== null} onClick={() => void disconnect()}>
             {pending === "logout" ? <Loader2 className="animate-spin" /> : <LogOut />}
             {t("providers_page.disconnect")}
           </Button>
@@ -475,17 +482,20 @@ function DefaultRow({ row, label, entry, control }: { row: AgentRowStatus; label
   const t = useT();
   const isDefault = row.is_active_brain && entry.on;
   return (
-    <Row
+    <SettingsRow
       data-testid={`agent-default-row-${row.jarvis}`}
       title={t("providers_page.default_title")}
-      description={!entry.ready ? t("providers_page.agents_needs_access") : t("providers_page.default_desc")}
+      status={!entry.ready ? t("providers_page.agents_needs_access") : undefined}
       control={
         isDefault ? (
-          <span className="text-sm font-medium text-foreground">{t("providers_page.default_on")}</span>
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
+            <Check aria-hidden="true" className="h-4 w-4 text-accent" />
+            {t("providers_page.default_on")}
+          </span>
         ) : (
           <Button
             size="sm"
-            variant="ghost"
+            variant="outline"
             data-testid={`agent-make-default-${row.jarvis}`}
             disabled={!entry.on || control.busy !== null}
             onClick={() => void control.chooseDefault(row, label)}
@@ -500,8 +510,8 @@ function DefaultRow({ row, label, entry, control }: { row: AgentRowStatus; label
 }
 
 /**
- * The models a provider offers the agents, as chips: a chip switched off is
- * left out of every agent's model picker.
+ * The models a provider offers the agents, each with a switch: a model
+ * switched off is left out of every agent's model picker.
  */
 function AgentModels({ providerId, title, control, familyId }: { providerId: string; title: string; control: AgentProviders; familyId: string }) {
   const t = useT();
@@ -527,43 +537,55 @@ function AgentModels({ providerId, title, control, familyId }: { providerId: str
   const busy = !control.ready || control.busy !== null;
 
   return (
-    <Row
-      data-testid={`agent-models-${providerId}`}
-      title={title}
-      description={
-        models.length === 0
-          ? loading ? t("providers_page.models_loading") : t("providers_page.models_none")
-          : t("providers_page.models_count").replace("{0}", String(shown)).replace("{1}", String(models.length))
-      }
-      control={
-        models.length > 0 ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-muted-foreground"
-            disabled={busy}
-            onClick={() => setHidden(shown === 0 ? [] : models.map((model) => model.id))}
-          >
-            {shown === 0 ? t("providers_page.models_show_all") : t("providers_page.models_hide_all")}
-          </Button>
-        ) : undefined
-      }
-    >
-      {models.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5">
-          {models.map((model) => (
-            <ToggleChip
-              key={model.id}
-              on={!hidden.has(model.id)}
-              label={model.label || model.id}
-              hint={model.id}
+    <SettingsSection title={title} plain data-testid={`agent-models-${providerId}`}>
+      {models.length === 0 ? (
+        <div className="rounded-xl border border-border/60 bg-card/40 px-4 py-3 text-xs text-muted-foreground">
+          {loading ? t("providers_page.models_loading") : t("providers_page.models_none")}
+        </div>
+      ) : (
+        <ModelList
+          header={t("providers_page.models_count").replace("{0}", String(shown)).replace("{1}", String(models.length))}
+          action={
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
               disabled={busy}
-              onToggle={() => setHidden(toggled([...hidden], [model.id], hidden.has(model.id)))}
+              onClick={() => setHidden(shown === 0 ? [] : models.map((model) => model.id))}
+            >
+              {shown === 0 ? t("providers_page.models_show_all") : t("providers_page.models_hide_all")}
+            </Button>
+          }
+        >
+          {models.map((model) => (
+            <ModelListRow
+              key={model.id}
+              name={model.label || model.id}
+              id={model.id}
+              note={model.note ?? (model.efforts?.length ? t("providers_page.models_reasoning") : null)}
+              muted={hidden.has(model.id)}
+              control={
+                <Switch
+                  checked={!hidden.has(model.id)}
+                  disabled={busy}
+                  onCheckedChange={(on) => setHidden(toggled([...hidden], [model.id], on))}
+                  aria-label={model.label || model.id}
+                />
+              }
             />
           ))}
-        </div>
-      ) : null}
-    </Row>
+        </ModelList>
+      )}
+    </SettingsSection>
+  );
+}
+
+/** A plain card (no section title) for the rows under a detail header. */
+function SettingsSectionCard({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/60 bg-card/40 [&>*+*]:border-t [&>*+*]:border-border/50">
+      {children}
+    </div>
   );
 }
 
@@ -588,9 +610,8 @@ function BinaryPathRow({ kind, path, onChanged }: { kind: SubscriptionKind; path
   }
 
   return (
-    <Row
+    <SettingsRow
       title={t("providers_page.binary_path")}
-      description={t("providers_page.binary_path_hint")}
       control={
         <Input
           value={draft}
@@ -602,7 +623,7 @@ function BinaryPathRow({ kind, path, onChanged }: { kind: SubscriptionKind; path
           onKeyDown={(event) => {
             if (event.key === "Enter") void commit();
           }}
-          className={cn("h-8 font-mono text-sm sm:w-80", !editable && "text-muted-foreground")}
+          className={cn("h-8 font-mono text-sm sm:w-72", !editable && "text-muted-foreground")}
         />
       }
     />
@@ -636,18 +657,20 @@ function CliTest({ endpoint, onChanged }: { endpoint: string; onChanged: () => P
         <span
           role="status"
           title={error ?? result?.message}
-          className={cn("max-w-[16rem] truncate text-sm", error || (result && !result.ok) ? "text-destructive" : "text-muted-foreground")}
+          className={cn("max-w-[16rem] truncate text-xs", error || (result && !result.ok) ? "text-destructive" : "text-muted-foreground")}
         >
           {error ?? result?.message}
         </span>
       )}
-      <Button size="sm" variant="ghost" disabled={running} onClick={() => void run()}>
+      <Button size="sm" variant="outline" disabled={running} onClick={() => void run()}>
         {running ? <Loader2 className="animate-spin" /> : <FlaskConical />}
         {t("providers_page.test")}
       </Button>
     </span>
   );
 }
+
+const TEST_TIER_ORDER: ProviderDescriptor["tier"][] = ["brain", "realtime", "tts", "stt", "dictation"];
 
 /** Features that still hold a key of their own, each with a way back onto the main key. */
 function SeparateKeys({ family, onChanged }: { family: ProviderFamily; onChanged: () => Promise<void> }) {
@@ -671,17 +694,16 @@ function SeparateKeys({ family, onChanged }: { family: ProviderFamily; onChanged
   }
 
   return (
-    <>
+    <SettingsSection title={t("providers_page.separate_title")}>
       {family.separate_keys.map((entry) => (
-        <Row
+        <SettingsRow
           key={entry.slot}
           data-testid={`provider-separate-key-${entry.slot}`}
           title={t(`providers_page.separate_${entry.surface}`)}
-          description={t("providers_page.separate_hint")}
           control={
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
               disabled={merging !== null || !family.key_present}
               title={family.key_present ? undefined : t("providers_page.separate_needs_main")}
               onClick={() => void merge(entry.slot)}
@@ -692,40 +714,6 @@ function SeparateKeys({ family, onChanged }: { family: ProviderFamily; onChanged
           }
         />
       ))}
-    </>
-  );
-}
-
-/**
- * Settings that belong to the agents rather than to one provider: the model
- * a worker thinks with and who writes the task briefs.
- */
-function AgentSettings() {
-  const t = useT();
-  const [status, setStatus] = useState<SubagentStatus | null>(null);
-  const reload = async () => {
-    try {
-      const res = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
-      if (res.ok) setStatus((await res.json()) as SubagentStatus);
-    } catch (cause) {
-      // The model picker stays hidden; the list above reports the same
-      // endpoint's failure.
-      console.debug("agent status unavailable", cause);
-    }
-  };
-  useEffect(() => {
-    void reload();
-    const onChange = () => void reload();
-    window.addEventListener("jarvis:agent-switched", onChange);
-    return () => window.removeEventListener("jarvis:agent-switched", onChange);
-  }, []);
-
-  return (
-    <Section title={t("providers_page.agent_settings_title")} description={t("providers_page.agent_settings_desc")} data-testid="provider-agent-settings">
-      <div className="grid gap-x-12 gap-y-6 border-t border-border/60 pt-5 xl:grid-cols-2">
-        {status && <SubagentModelCard status={status} onSaved={() => void reload()} />}
-        <PromptWriterCard />
-      </div>
-    </Section>
+    </SettingsSection>
   );
 }
