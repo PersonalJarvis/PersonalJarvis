@@ -18,7 +18,13 @@ export type AccessoryChoice = Partial<Record<AccessorySlot, string>>;
 type Vec2 = [number, number];
 type Vec3 = [number, number, number];
 /** "2d" parts are flat-only shading; "3d" parts exist only as meshes. */
-interface PartBase { fill: string; glow?: boolean; rot?: number; only?: "2d" | "3d" }
+interface PartBase {
+  fill: string; glow?: boolean; rot?: number; only?: "2d" | "3d";
+  /** Flat shading: a translucent shadow or highlight. */
+  opacity?: number;
+  /** 3D finish: polished metal or a glossy surface. */
+  metal?: boolean; gloss?: boolean;
+}
 export type AccessoryPart = PartBase & (
   | { t: "sphere" | "dome"; c: Vec3; r: Vec3 }
   | { t: "box"; c: Vec3; s: Vec3; round: number }

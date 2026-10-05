@@ -11,6 +11,16 @@ import { RANK_INFO, rankAt, rankOf, type RankId, type SubjectKind } from "./leve
 import { RankInsignia } from "./insignia/RankInsignia";
 import { PERSON_SUBJECT, petSubject } from "./progressionApi";
 import { useProgression, type Celebration } from "./progressionStore";
+import { AgentSymbol } from "../AgentSymbol";
+import { resolveCompanion, type CompanionAppearance } from "../companion/appearance";
+import type { SocietyAgent } from "../data";
+import { accessoryItem, type AccessoryChoice } from "../companion/accessories";
+
+/** The accessory choice that puts one look on, in its own slot. */
+function lookSlot(id: string): AccessoryChoice {
+  const item = accessoryItem(id);
+  return item ? { [item.slot]: id } : {};
+}
 
 const TOAST_MS = 6500;
 
@@ -109,31 +119,51 @@ export function LevelHud({ playerName, petName, compact }: { playerName: string;
 }
 
 /** An agent's level-up: a quiet card in the corner, gone on its own. */
-export function LevelToasts({ names }: { names: ReadonlyMap<string, string> }) {
+export function LevelToasts({ names, agents = [] }: { names: ReadonlyMap<string, string>; agents?: readonly SocietyAgent[] }) {
   const t = useT();
   const toasts = useProgression((s) => s.toasts);
   const dismiss = useProgression((s) => s.dismissToast);
   useEffect(() => {
     if (toasts.length === 0) return;
-    const timers = toasts.map((toast) => setTimeout(() => dismiss(toast.id), TOAST_MS));
+    // A new look gets a moment longer: it is the part worth looking at.
+    const timers = toasts.map((toast) => setTimeout(() => dismiss(toast.id), TOAST_MS + (toast.looks?.length ? 3000 : 0)));
     return () => timers.forEach(clearTimeout);
   }, [toasts, dismiss]);
   if (toasts.length === 0) return null;
   return (
     <div className="level-toasts" role="status" aria-live="polite" data-office-ui>
-      {toasts.map((toast) => <LevelToast key={toast.id} toast={toast} name={names.get(toast.subjectId.slice("agent:".length)) ?? toast.subjectId.slice("agent:".length)}
-        onClose={() => dismiss(toast.id)} label={t} />)}
+      {toasts.map((toast) => {
+        const agentId = toast.subjectId.slice("agent:".length);
+        const agent = agents.find((a) => a.agentId === agentId);
+        return <LevelToast key={toast.id} toast={toast} name={names.get(agentId) ?? agentId}
+          look={resolveCompanion(agentId, agent?.figure?.companion)} onClose={() => dismiss(toast.id)} label={t} />;
+      })}
     </div>
   );
 }
 
-function LevelToast({ toast, name, onClose, label }: { toast: Celebration; name: string; onClose: () => void; label: (key: string) => string }) {
+function LevelToast({ toast, name, look, onClose, label }: { toast: Celebration; name: string; look: CompanionAppearance; onClose: () => void; label: (key: string) => string }) {
+  const looks = toast.looks ?? [];
   return (
     <button type="button" className="level-toast" onClick={onClose}>
       <LevelChip kind="agent" level={toast.level} />
       <span>
         <strong>{label("society.level.agent_up").replace("{0}", name).replace("{1}", String(toast.level))}</strong>
         <em>{toast.away ? label("society.level.while_away") : label(`society.level.title.${rankOf(toast.title)}`)}</em>
+        {looks.length > 0 && (
+          <span className="level-toast-looks" data-testid="level-toast-looks">
+            {/* The symbol shows the agent already wearing its new look. */}
+            {looks.map((id) => {
+              return (
+                <span key={id} className="level-toast-look">
+                  <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={30}
+                    accessories={{ ...look.accessories, ...lookSlot(id) }} />
+                  <span>{label("society.level.new_look").replace("{0}", label(`society.companion.items.${id}`))}</span>
+                </span>
+              );
+            })}
+          </span>
+        )}
       </span>
     </button>
   );

@@ -11,7 +11,15 @@ import json
 import re
 from pathlib import Path
 
-from jarvis.progression.rules import REWARDS, RULES, SLOTS, SUBJECT_KINDS, TITLES, WORLD_ACTIONS
+from jarvis.progression.rules import (
+    LOOK_UNLOCKS,
+    REWARDS,
+    RULES,
+    SLOTS,
+    SUBJECT_KINDS,
+    TITLES,
+    WORLD_ACTIONS,
+)
 
 _FRONTEND = Path(__file__).resolve().parents[3] / "jarvis/ui/web/frontend/src"
 _CATALOG = _FRONTEND / "components/society/progression/levelCatalog.ts"
@@ -52,3 +60,10 @@ def test_every_id_has_a_label_in_every_language():
         assert set(level["slot"]) == set(SLOTS), lang
         for kind in SUBJECT_KINDS:
             assert f"rules_{kind}" in level, (lang, kind)
+
+
+def test_every_agent_look_is_a_real_accessory():
+    catalog = json.loads(
+        (_FRONTEND / "components/society/companion/accessories.json").read_text(encoding="utf-8")
+    )
+    assert set(LOOK_UNLOCKS) == {item["id"] for item in catalog["items"]}

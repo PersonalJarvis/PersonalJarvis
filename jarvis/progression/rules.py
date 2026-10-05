@@ -229,6 +229,31 @@ def rewards_between(kind: SubjectKind, before: int, after: int) -> list[Reward]:
     ]
 
 
+# ------------------------------------------------------------------ agent looks
+
+#: The agent level at which each wearable look unlocks
+#: (``companion/accessories.json`` ids). Four are open from the start, so
+#: every agent can be dressed at once; the rest arrive as level-up rewards.
+#: A look an agent already wears is never taken away, whatever its level.
+LOOK_UNLOCKS: Final[dict[str, int]] = {
+    "sunglasses": 1,
+    "cap": 1,
+    "headphones": 1,
+    "hoodie": 1,
+    "lab_coat": 2,
+    "cigar": 3,
+    "suit": 4,
+    "top_hat": 6,
+    "tuxedo": 8,
+    "crown": 10,
+}
+
+
+def looks_between(before: int, after: int) -> list[str]:
+    """Agent looks newly unlocked when an agent climbs from ``before`` to ``after``."""
+    return [look for look, at in LOOK_UNLOCKS.items() if before < at <= after]
+
+
 # ------------------------------------------------------------------ titles
 
 _RANK_BANDS: Final[tuple[tuple[int, str], ...]] = tuple((level, rank) for level, rank, _ in RANKS)

@@ -28,6 +28,7 @@ from .rules import (
     RULES_BY_SOURCE,
     WORLD_ACTIONS,
     agent_subject,
+    looks_between,
     pet_subject,
     progress_for_xp,
     rewards_between,
@@ -143,6 +144,9 @@ class ProgressionService:
         unlocked = tuple(
             r.reward_id for r in rewards_between(kind, award.level_before, award.level_after)
         )
+        looks = (
+            tuple(looks_between(award.level_before, award.level_after)) if kind == "agent" else ()
+        )
         try:
             await self._bus.publish(
                 ProgressionAwarded(
@@ -157,6 +161,7 @@ class ProgressionService:
                     previous_level=award.level_before,
                     title=title_for(kind, award.level_after),
                     unlocked=unlocked,
+                    unlocked_looks=looks,
                 )
             )
         except Exception:  # noqa: BLE001 - the award is stored; the Verse catches up on its next read

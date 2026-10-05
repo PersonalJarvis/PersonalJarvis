@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from jarvis.progression.rules import (
+    LOOK_UNLOCKS,
     MAX_LEVEL,
     REWARDS,
     RULES,
@@ -57,6 +58,7 @@ def _rulebook() -> dict[str, Any]:
             }
             for r in REWARDS
         ],
+        "looks": [{"look_id": look, "agent": level} for look, level in LOOK_UNLOCKS.items()],
         "titles": {
             kind: [{"level": lvl, "title": t} for lvl, t in bands]
             for kind, bands in TITLES.items()

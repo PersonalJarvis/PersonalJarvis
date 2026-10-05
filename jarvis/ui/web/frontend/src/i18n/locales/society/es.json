@@ -810,6 +810,9 @@
         "cloud": "Nube",
         "drop": "Gota"
       },
+      "next_look": "Nivel {0} · próximo look: {1} en el nivel {2}",
+      "all_looks_open": "Todos los looks están desbloqueados.",
+      "unlocks_at": "desde el nivel {0}",
       "accessories": "Accesorios",
       "randomize": "Sorpréndeme",
       "remove_all": "Quitar todo",
@@ -1385,6 +1388,7 @@
       "next_promotion": "Próximo ascenso: {0} en el nivel {1}",
       "no_insignia": "Aún sin insignia",
       "pet_up": "{0} ha subido de nivel",
+      "new_look": "Nuevo look: {0}",
       "agent_up": "{0} ha llegado al nivel {1}",
       "while_away": "Mientras no estabas",
       "banner_aria": "{0} ha llegado al nivel {1}. Haz clic para cerrar.",
@@ -1562,6 +1566,10 @@
         "other": "Más"
       },
       "limits_note": "Los límites lo mantienen justo: algunas acciones solo cuentan unas pocas veces al día.",
+      "looks_title": "Looks de los agentes",
+      "looks_body": "Los agentes desbloquean nuevos looks al subir de nivel. Vístelos en la pestaña Apariencia del perfil; un look que ya llevan nunca se pierde.",
+      "look_start": "Desde el inicio",
+      "next_look": "Próximo look: {0} en el nivel {1}",
       "team_note": "Los agentes suben de nivel con el trabajo terminado y siempre llevan sus mejores piezas."
     }
   }

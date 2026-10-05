@@ -37,7 +37,8 @@ def test_accessory_slots_and_ids_match_the_frontend_catalog():
     ids = [item["id"] for item in catalog["items"]]
     assert len(ids) == len(set(ids))
     assert all(re.fullmatch(r"[a-z0-9_]{1,40}", item_id) for item_id in ids)
-    assert {item["slot"] for item in catalog["items"]} == set(catalog["slots"])
+    # Slots may stay empty (the set is small and finished), but never name an unknown slot.
+    assert {item["slot"] for item in catalog["items"]} <= set(catalog["slots"])
 
 
 def test_worn_accessories_survive_and_bare_looks_stay_unchanged():

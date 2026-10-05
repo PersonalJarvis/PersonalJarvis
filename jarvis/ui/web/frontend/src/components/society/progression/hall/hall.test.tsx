@@ -29,7 +29,7 @@ function snapshot(): ProgressionSnapshot {
   return {
     subjects: [{ subjectId: "person", kind: "person", xp: 130, level: 3, xpIntoLevel: 25, xpForNext: 90, title: "private" }],
     petId: "gigi", recent: [], latestSeq: 0, maxLevel: 50, levelXp: CURVE, rules: RULES, rewards: REWARDS,
-    titles: { person: BANDS, agent: BANDS, pet: BANDS },
+    titles: { person: BANDS, agent: BANDS, pet: BANDS }, looks: { cap: 1, suit: 4, crown: 10 },
   };
 }
 

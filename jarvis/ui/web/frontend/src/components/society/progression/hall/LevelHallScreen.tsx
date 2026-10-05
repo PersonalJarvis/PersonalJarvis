@@ -36,7 +36,40 @@ import { LevelHero, RewardCard, RuleRow, Section, TabIcon, type HallWho } from "
 import { RanksTab } from "./RanksTab";
 import { RewardsTab } from "./RewardsTab";
 import { StudioTab } from "./StudioTab";
+import { AgentSymbol } from "../../AgentSymbol";
+import { accessoryItem } from "../../companion/accessories";
+import { resolveCompanion } from "../../companion/appearance";
 import "./hall.css";
+
+const NO_LOOKS: Readonly<Record<string, number>> = {};
+
+/** Every agent look in unlock order, each worn by a sample agent symbol. */
+function LooksRoad({ looks }: { looks: Readonly<Record<string, number>> }) {
+  const t = useT();
+  const road = Object.entries(looks).sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]));
+  if (road.length === 0) return null;
+  return (
+    <ol className="hall-looks" data-testid="hall-looks">
+      {road.map(([id, level], i) => {
+        const item = accessoryItem(id);
+        if (!item) return null;
+        return (
+          <li key={id}>
+            <AgentSymbol shape={(["circle", "squircle", "hexagon", "drop", "pill"] as const)[i % 5]!}
+              color={["#7ab6ef", "#bba7ed", "#79c7c4", "#f2a65a", "#ed91aa"][i % 5]!} size={58} accessories={{ [item.slot]: id }} />
+            <strong>{t(`society.companion.items.${id}`)}</strong>
+            <em>{level <= 1 ? t("society.hall.look_start") : t("society.level.lv").replace("{0}", String(level))}</em>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The next look an agent at `level` opens, lowest first. */
+function nextLookFor(looks: Readonly<Record<string, number>>, level: number): [string, number] | undefined {
+  return Object.entries(looks).filter(([, at]) => at > level).sort((a, b) => a[1] - b[1])[0];
+}
 
 const LEAD_AGENT_ID = "jarvis";
 // Stable fallbacks: a selector that returns a fresh [] or {} re-renders forever.
@@ -156,26 +189,47 @@ function GuideTab({ who, petName }: { who: HallWho; petName: string }) {
 function TeamTab({ agents }: { agents: readonly SocietyAgent[] }) {
   const t = useT();
   const subjects = useProgression((s) => s.subjects);
+  const looks = useProgression((s) => s.snapshot?.looks ?? NO_LOOKS);
   const rows = useMemo(() => agents
     .filter((a) => a.agentId !== LEAD_AGENT_ID && a.tier !== "lead")
     .map((a) => ({ agent: a, subject: subjects[agentSubject(a.agentId)] }))
     .sort((a, b) => (b.subject?.xp ?? 0) - (a.subject?.xp ?? 0) || a.agent.name.localeCompare(b.agent.name)), [agents, subjects]);
   return (
     <div className="hall-team">
+      {Object.keys(looks).length > 0 && (
+        <Section title={t("society.hall.looks_title")}>
+          <p className="hall-lead">{t("society.hall.looks_body")}</p>
+          <LooksRoad looks={looks} />
+        </Section>
+      )}
       <Section title={t("society.level.team")}>
         {rows.length === 0 ? <p className="hall-empty">{t("society.level.no_agents")}</p> : (
           <ol className="hall-ranking">
-            {rows.map(({ agent, subject }, i) => (
+            {rows.map(({ agent, subject }, i) => {
+              const level = subject?.level ?? 1;
+              const look = resolveCompanion(agent.agentId, agent.figure?.companion);
+              const next = nextLookFor(looks, level);
+              const nextItem = next ? accessoryItem(next[0]) : undefined;
+              return (
               <li key={agent.agentId} data-podium={i < 3 ? i + 1 : undefined}>
                 <span className="hall-rank">{i + 1}</span>
-                <LevelChip kind="agent" level={subject?.level ?? 1} />
+                <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} accessories={look.accessories} size={34} />
+                <LevelChip kind="agent" level={level} />
                 <span className="hall-rank-body">
                   <span><strong>{agent.name}</strong> <em>{t(`society.level.title.${rankOf(subject?.title)}`)}</em></span>
                   <XpBar fraction={levelFraction(subject)} kind="agent" label={t("society.level.agent_xp_label").replace("{0}", agent.name)} />
+                  {next && nextItem && (
+                    <span className="hall-rank-next">
+                      <AgentSymbol shape={look.shape} color={look.color} eyes={look.eyes} size={22}
+                        accessories={{ ...look.accessories, [nextItem.slot]: next[0] }} />
+                      {t("society.hall.next_look").replace("{0}", t(`society.companion.items.${next[0]}`)).replace("{1}", String(next[1]))}
+                    </span>
+                  )}
                 </span>
                 <span className="hall-rank-xp">{t("society.level.total").replace("{0}", String(subject?.xp ?? 0))}</span>
               </li>
-            ))}
+              );
+            })}
           </ol>
         )}
       </Section>

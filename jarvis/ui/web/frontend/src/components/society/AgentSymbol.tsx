@@ -111,7 +111,9 @@ function AccessoryItemShapes({ item, shape, color, regions }: { item: AccessoryI
   // Paint back to front; body patches keep their authored layering.
   const ordered = regions ? parts : [...parts].sort((a, b) => partDepth(a) - partDepth(b));
   return <g data-accessory={item.id} transform={`translate(${x} ${y}) scale(${k})`}>
-    {ordered.map((part, index) => <AccessoryPartShape key={index} part={part} color={color} />)}
+    {ordered.map((part, index) => part.opacity === undefined
+      ? <AccessoryPartShape key={index} part={part} color={color} />
+      : <g key={index} opacity={part.opacity}><AccessoryPartShape part={part} color={color} /></g>)}
   </g>;
 }
 
@@ -130,7 +132,7 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
       <g className="agent-symbol-character">
         {draw(worn.filter(item => item.slot === "back"))}
         {worn.flatMap(item => item.parts.map((part, index) => {
-          if (part.t !== "rim") return null;
+          if (part.t !== "rim" || part.only === "3d") return null;
           // A hood frames the head only: clip the grown silhouette at maxY below the neckline.
           const [, anchorY, anchorK] = ACCESSORY_CATALOG.shapes[shape].anchors[item.slot];
           const clipId = `${maskId}-rim-${index}`;

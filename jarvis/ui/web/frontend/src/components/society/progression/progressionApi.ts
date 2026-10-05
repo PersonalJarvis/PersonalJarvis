@@ -52,6 +52,8 @@ export interface ProgressionSnapshot {
   rules: XpRuleRow[];
   rewards: RewardRow[];
   titles: Record<SubjectKind, { level: number; title: string }[]>;
+  /** The agent level each wearable look opens at (companion accessory ids). */
+  looks: Record<string, number>;
 }
 
 /** One `ProgressionAwarded` from the bus, as the WebSocket delivers it. */
@@ -66,6 +68,8 @@ export interface AwardEvent {
   previousLevel: number;
   title: string;
   unlocked: RewardId[];
+  /** Agent looks this level-up opened. */
+  unlockedLooks?: string[];
 }
 
 type Raw = Record<string, unknown>;
@@ -100,6 +104,7 @@ export function parseSnapshot(body: Raw): ProgressionSnapshot {
       return { rewardId: row.reward_id as RewardId, slot: str(row.slot) as Slot, levels: { person: at("person"), agent: at("agent"), pet: at("pet") } };
     }),
     titles: { person: bands("person"), agent: bands("agent"), pet: bands("pet") },
+    looks: Object.fromEntries(list(body.looks).filter((row) => str(row.look_id)).map((row) => [str(row.look_id), num(row.agent, 1)])),
   };
 }
 
@@ -112,6 +117,7 @@ export function parseAwardEvent(payload: unknown): AwardEvent | null {
     seq: num(p.seq), subjectId, kind: kindOf(p.subject_kind), source: str(p.xp_source), xp: num(p.xp),
     totalXp: num(p.total_xp), level: num(p.level, 1), previousLevel: num(p.previous_level, 1), title: str(p.title),
     unlocked: Array.isArray(p.unlocked) ? p.unlocked.filter(isRewardId) : [],
+    unlockedLooks: Array.isArray(p.unlocked_looks) ? p.unlocked_looks.filter((v): v is string => typeof v === "string") : [],
   };
 }
 

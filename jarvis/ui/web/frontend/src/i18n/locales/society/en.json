@@ -810,6 +810,9 @@
         "cloud": "Cloud",
         "drop": "Drop"
       },
+      "next_look": "Level {0} · next look: {1} at level {2}",
+      "all_looks_open": "Every look is unlocked.",
+      "unlocks_at": "unlocks at level {0}",
       "accessories": "Accessories",
       "randomize": "Surprise me",
       "remove_all": "Remove all",
@@ -1385,6 +1388,7 @@
       "next_promotion": "Next promotion: {0} at level {1}",
       "no_insignia": "No insignia yet",
       "pet_up": "{0} levelled up",
+      "new_look": "New look: {0}",
       "agent_up": "{0} reached level {1}",
       "while_away": "While you were away",
       "banner_aria": "{0} reached level {1}. Click to close.",
@@ -1562,6 +1566,10 @@
         "other": "More"
       },
       "limits_note": "Limits keep it fair: some actions only count a few times a day.",
+      "looks_title": "Agent looks",
+      "looks_body": "Agents unlock new looks as they level up. Dress them in the profile's Appearance tab; a look an agent wears is never taken away.",
+      "look_start": "From the start",
+      "next_look": "Next look: {0} at level {1}",
       "team_note": "Agents level up from finished work and always wear their best unlocks."
     }
   }

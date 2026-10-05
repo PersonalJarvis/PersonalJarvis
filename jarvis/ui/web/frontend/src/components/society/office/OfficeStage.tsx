@@ -508,7 +508,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       {!compact && showHintBar && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
-      <LevelToasts names={agentNames} />
+      <LevelToasts names={agentNames} agents={jarvisAgents} />
       <LevelHallScreen agents={jarvisAgents} playerName={playerName} petName={petName} playerLook={playerToyLook} />
       <LevelUpBanner playerName={playerName} petName={petName} />
       {creating && (

@@ -20,6 +20,8 @@ export interface Celebration {
   previousLevel: number;
   title: string;
   unlocked: RewardId[];
+  /** Agent looks the level-up opened (agents only). */
+  looks: string[];
   /** Earned while the Verse was closed: told, not staged in the world. */
   away: boolean;
 }
@@ -77,11 +79,16 @@ interface ProgressionState {
 
 let nextId = 1;
 
-export function celebrationOf(award: Pick<AwardEvent, "subjectId" | "kind" | "level" | "previousLevel" | "title" | "unlocked">, away = false): Celebration {
+export function celebrationOf(award: Pick<AwardEvent, "subjectId" | "kind" | "level" | "previousLevel" | "title" | "unlocked"> & { unlockedLooks?: string[] }, away = false): Celebration {
   return {
     id: nextId++, subjectId: award.subjectId, kind: award.kind, level: award.level, previousLevel: award.previousLevel,
-    title: award.title, unlocked: award.unlocked, away,
+    title: award.title, unlocked: award.unlocked, looks: award.unlockedLooks ?? [], away,
   };
+}
+
+/** Agent looks opened by a climb from `before` to `after`, in the order they unlock. */
+export function looksBetween(looks: Readonly<Record<string, number>>, before: number, after: number): string[] {
+  return Object.entries(looks ?? {}).filter(([, at]) => at > before && at <= after).sort((a, b) => a[1] - b[1]).map(([id]) => id);
 }
 
 export const useProgression = create<ProgressionState>((set, get) => ({
@@ -197,9 +204,11 @@ export function awayCelebrations(snapshot: ProgressionSnapshot, seenSeq: number 
     const unlocked = snapshot.rewards
       .filter((r) => { const at = r.levels[row.kind]; return at !== null && at > (prior?.previousLevel ?? row.levelBefore) && at <= row.levelAfter; })
       .map((r) => r.rewardId);
+    const from = prior?.previousLevel ?? row.levelBefore;
     latest.set(row.subjectId, celebrationOf({
-      subjectId: row.subjectId, kind: row.kind, level: row.levelAfter, previousLevel: prior?.previousLevel ?? row.levelBefore,
+      subjectId: row.subjectId, kind: row.kind, level: row.levelAfter, previousLevel: from,
       title: subject?.title ?? "", unlocked,
+      unlockedLooks: row.kind === "agent" ? looksBetween(snapshot.looks, from, row.levelAfter) : [],
     }, true));
   }
   return [...latest.values()];

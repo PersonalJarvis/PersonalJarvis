@@ -307,8 +307,9 @@ BUILDERS = {
 MATERIALS = {}
 
 
-def material(fill, glow):
-    key = f"acc:{fill}{':glow' if glow else ''}"
+def material(fill, glow, metal=False, gloss=False):
+    finish = ":metal" if metal else ":gloss" if gloss else ""
+    key = f"acc:{fill}{':glow' if glow else ''}{finish}"
     if key in MATERIALS:
         return MATERIALS[key]
     mat = bpy.data.materials.new(key)
@@ -320,6 +321,11 @@ def material(fill, glow):
         color = (*[c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in srgb], 1)
     bsdf.inputs["Base Color"].default_value = color
     bsdf.inputs["Roughness"].default_value = 0.55 if fill.startswith("#f") else 0.7
+    if metal:
+        bsdf.inputs["Metallic"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = 0.32
+    elif gloss:
+        bsdf.inputs["Roughness"].default_value = 0.22
     if glow:
         bsdf.inputs["Emission Color"].default_value = color
         bsdf.inputs["Emission Strength"].default_value = 1.4
@@ -455,7 +461,12 @@ def main():
     count = 0
     for item in catalog["items"]:
         pieces = [
-            (BUILDERS[p["t"]](p), material(p["fill"], p.get("glow", False)))
+            (
+                BUILDERS[p["t"]](p),
+                material(
+                    p["fill"], p.get("glow", False), p.get("metal", False), p.get("gloss", False)
+                ),
+            )
             for p in item["parts"]
             if p["t"] not in ("region", "rim") and p.get("only") != "2d"
         ]

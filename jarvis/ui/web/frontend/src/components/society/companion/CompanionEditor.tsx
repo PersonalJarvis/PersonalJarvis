@@ -7,8 +7,10 @@ import gigiMark from "@/assets/gigi-companion-avatar.png";
 import { lazy, Suspense } from "react";
 const CompanionPreview = lazy(() => import("./CompanionPreview").then(m => ({ default: m.CompanionPreview })));
 
-export function CompanionEditor({ value, onChange, disabled = false, lead = false, preview3d = true }: {
+export function CompanionEditor({ value, onChange, disabled = false, lead = false, preview3d = true, agentId }: {
   value: CompanionAppearance; onChange: (next: CompanionAppearance) => void; disabled?: boolean; lead?: boolean;
+  /** The agent whose level opens its looks; without one nothing is locked. */
+  agentId?: string;
   /** The 3D turntable needs its own WebGL context; dialogs outside the map skip it. */
   preview3d?: boolean;
 }) {
@@ -42,7 +44,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
         </button>)}
       </div>
     </div>
-    <AccessoryPicker value={value} onChange={accessories => update({ accessories })} />
+    <AccessoryPicker value={value} onChange={accessories => update({ accessories })} agentId={agentId} />
     </>}
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.visible")}
       <Switch checked={value.enabled} onCheckedChange={enabled => update({ enabled })} aria-label={t("society.companion.visible")} />

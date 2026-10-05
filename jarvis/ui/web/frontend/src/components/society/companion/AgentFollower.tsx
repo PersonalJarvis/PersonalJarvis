@@ -55,6 +55,8 @@ export function CompanionModel({ appearance, lead = false }: { appearance: Compa
 /** Worn items from the shared catalog, placed on the 1 m symbol master. */
 function CompanionAccessories({ appearance }: { appearance: CompanionAppearance }) {
   const { scene } = useGLTF(accessoryModels);
+  // Polished metal reads black without something to reflect: soften it then.
+  const reflective = useThree(state => !!state.scene.environment);
   const instance = useMemo(() => {
     const group = new Group();
     const materials: Material[] = [];
@@ -82,11 +84,12 @@ function CompanionAccessories({ appearance }: { appearance: CompanionAppearance 
       const own = source.clone();
       const token = source.name.split(":")[1] ?? "";
       if (token && !token.startsWith("#")) own.color.set(resolveFill(token, appearance.color));
+      if (!reflective && own.metalness > 0.5) { own.metalness = 0.35; own.roughness = 0.42; }
       mesh.material = own;
       materials.push(own);
     });
     return { group, materials };
-  }, [scene, appearance.shape, appearance.color, appearance.accessories]);
+  }, [scene, reflective, appearance.shape, appearance.color, appearance.accessories]);
   useEffect(() => () => { instance.materials.forEach(material => material.dispose()); }, [instance]);
   return <primitive object={instance.group} dispose={null} />;
 }

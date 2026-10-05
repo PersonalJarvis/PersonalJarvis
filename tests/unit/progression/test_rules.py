@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from jarvis.progression.rules import (
+    LOOK_UNLOCKS,
     MAX_LEVEL,
     RANKS,
     REWARDS,
@@ -12,6 +13,7 @@ from jarvis.progression.rules import (
     TITLES,
     WORLD_ACTIONS,
     level_for_xp,
+    looks_between,
     progress_for_xp,
     rewards_between,
     subject_kind,
@@ -125,3 +127,11 @@ def test_subject_ids_name_their_kind():
     assert subject_kind("pet:ember") == "pet"
     assert subject_kind("pet:") is None
     assert subject_kind("robot:x") is None
+
+
+def test_agent_looks_start_open_and_climb_as_rewards():
+    assert sum(1 for level in LOOK_UNLOCKS.values() if level == 1) >= 3
+    assert max(LOOK_UNLOCKS.values()) <= 10
+    assert looks_between(1, 1) == []
+    assert looks_between(3, 4) == ["suit"]
+    assert set(looks_between(1, 50)) == {k for k, v in LOOK_UNLOCKS.items() if v > 1}

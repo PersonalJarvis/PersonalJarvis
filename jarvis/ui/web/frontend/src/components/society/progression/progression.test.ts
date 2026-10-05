@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { equippedFor, levelFraction, progressFor, unlockedFor } from "./cosmetics";
 import { parseAwardEvent, parseSnapshot, type ProgressionSnapshot, type RewardRow } from "./progressionApi";
-import { awayCelebrations, useProgression } from "./progressionStore";
+import { awayCelebrations, looksBetween, useProgression } from "./progressionStore";
 import { RANK_INFO, rankAt, REWARD_IDS, slotOf, TITLE_IDS } from "./levelCatalog";
 import { rankArt } from "./insignia/rankArt";
 import { rackRows, ribbonsFor } from "./regalia/decorations3d";
@@ -24,7 +24,7 @@ const CURVE = [0, 40, 105, 195, 310, 450];
 function snapshot(overrides: Partial<ProgressionSnapshot> = {}): ProgressionSnapshot {
   return {
     subjects: [], petId: "ember", recent: [], latestSeq: 0, maxLevel: 50, levelXp: CURVE, rules: [], rewards: REWARDS,
-    titles: { person: BANDS, agent: BANDS, pet: BANDS },
+    titles: { person: BANDS, agent: BANDS, pet: BANDS }, looks: { cap: 1, suit: 4, crown: 10 },
     ...overrides,
   };
 }
@@ -233,5 +233,21 @@ describe("regalia", () => {
 describe("level catalog", () => {
   it("names every reward after its slot", () => {
     for (const id of REWARD_IDS) expect(["uniform", "headwear", "decoration"]).toContain(slotOf(id));
+  });
+});
+
+describe("agent looks as level rewards", () => {
+  it("names the looks an agent climb opened, lowest first", () => {
+    expect(looksBetween({ cap: 1, suit: 4, crown: 10 }, 1, 4)).toEqual(["suit"]);
+    expect(looksBetween({ cap: 1, suit: 4, crown: 10 }, 3, 12)).toEqual(["suit", "crown"]);
+    expect(looksBetween({ cap: 1 }, 1, 1)).toEqual([]);
+  });
+  it("tells an away agent level-up with the looks it opened", () => {
+    const snap = snapshot({
+      subjects: [{ subjectId: "agent:scout", kind: "agent", xp: 200, level: 4, xpIntoLevel: 5, xpForNext: 115, title: "private_first_class" }],
+      recent: [{ seq: 7, subjectId: "agent:scout", kind: "agent", source: "task_done", xp: 40, levelBefore: 3, levelAfter: 4, tsMs: 1 }],
+    });
+    const [party] = awayCelebrations(snap, 1);
+    expect(party?.looks).toEqual(["suit"]);
   });
 });

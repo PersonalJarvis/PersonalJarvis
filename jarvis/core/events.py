@@ -2420,6 +2420,8 @@ class ProgressionAwarded(Event):
     previous_level: int = 1
     title: str = ""
     unlocked: tuple[str, ...] = ()
+    #: Agent looks (``LOOK_UNLOCKS``) this level-up opened; agents only.
+    unlocked_looks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -101,6 +101,29 @@ The person chooses per slot (automatic = the finest unlock, own clothes, or
 any unlocked piece; stored per browser profile). Agents always wear their
 best unlocks.
 
+### Agent looks
+
+Agents also unlock the wearable looks of their profile symbol
+(`LOOK_UNLOCKS` in `rules.py`, ids from `companion/accessories.json`):
+
+| Agent level | Looks |
+|---|---|
+| 1 | sunglasses, cap, headphones, coder hoodie |
+| 2 | lab coat |
+| 3 | cigar |
+| 4 | suit and tie |
+| 6 | top hat |
+| 8 | tuxedo |
+| 10 | crown |
+
+The snapshot carries them as `looks` and a level-up's `ProgressionAwarded`
+names them in `unlocked_looks`. The agent's level-up toast shows the agent
+already wearing its new look, the Level Hall's Team page lists every look
+with its level and each agent's next one, and the Appearance picker marks a
+locked look with the level it opens at. The lock is a reward, never a
+penalty: a look an agent already wears stays wearable, and an unreachable
+level system locks nothing.
+
 ## 5. The level-up moment
 
 - **In the world:** a single gold ring runs out across the floor and a soft

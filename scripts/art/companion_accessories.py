@@ -202,10 +202,29 @@ def torso(top=0.0):
     return [(x, y + top) for x, y in pts]
 
 
+def shade(pts, opacity=0.16):
+    """Flat-only fabric shadow on the clothing (light falls from the upper left)."""
+    return region(pts, "#05070d", mode="front", opacity=opacity, only="2d")
+
+
+def chin_shadow(width):
+    """The head's soft shadow across the top of the shirt."""
+    return front([(-width, -0.4), (width, -0.4), (width - 1.0, 1.3), (-width + 1.0, 1.3)], "#05070d",
+                 opacity=0.2, only="2d")
+
+
+SIDE_SHADE = [(8.0, 1.2), (60, 1.2), (60, 60), (11.5, 60)]
+SHOULDER_LIGHT = [(-60, 0.0), (-9.5, 0.8), (-12.5, 60), (-60, 60)]
+
+
 def lapels(v_tip, fill, reach=8.2):
     """Two lapels along a shirt V that opens at the neckline and closes at v_tip."""
     left = [(-4.6, -0.4), (0, v_tip), (-1.3, v_tip + 1.6), (-reach + 1.3, 3.4), (-reach, 0.2)]
-    return [front(left, fill), front([(-x, y) for x, y in reversed(left)], fill)]
+    edge = [(-reach, 0.2, 0.3), (-reach + 1.3, 3.4, 0.3), (-1.3, v_tip + 1.6, 0.3)]
+    # A fine light edge along each lapel's outer roll (flat only).
+    shine = [tube(edge, 0.45, "#ffffff", opacity=0.16, only="2d"),
+             tube([(-x, y, z) for x, y, z in edge], 0.45, "#ffffff", opacity=0.1, only="2d")]
+    return [front(left, fill), front([(-x, y) for x, y in reversed(left)], fill), *shine]
 
 
 def outfit_items():
@@ -218,8 +237,8 @@ def outfit_items():
                      front([(6.4, 4.0), (8.2, 4.0), (7.6, 2.5)], SHIRT)]
 
     items["suit"] = [
-        jacket(NAVY),
-        front([(-4.6, -0.4), (4.6, -0.4), (0, 8.8)], SHIRT), *collar,
+        jacket(NAVY), shade(SIDE_SHADE), region(SHOULDER_LIGHT, "#ffffff", mode="front", opacity=0.05, only="2d"),
+        front([(-4.6, -0.4), (4.6, -0.4), (0, 8.8)], SHIRT), *collar, chin_shadow(4.6),
         front([(-1.0, 2.0), (1.0, 2.0), (2.1, 8.2), (0, 10.4), (-2.1, 8.2)], BURGUNDY),
         front([(-1.1, 3.9), (1.2, 3.1), (1.32, 3.75), (-1.2, 4.55)], BURGUNDY_DARK),
         front([(-1.6, 6.7), (1.75, 5.6), (1.85, 6.3), (-1.65, 7.4)], BURGUNDY_DARK),
@@ -229,8 +248,8 @@ def outfit_items():
         *pocket_square,
     ]
     items["tuxedo"] = [
-        jacket(TUX),
-        front([(-4.4, -0.4), (4.4, -0.4), (0, 9.8)], SHIRT),
+        jacket(TUX), shade(SIDE_SHADE, 0.22), region(SHOULDER_LIGHT, "#ffffff", mode="front", opacity=0.06, only="2d"),
+        front([(-4.4, -0.4), (4.4, -0.4), (0, 9.8)], SHIRT), chin_shadow(4.4),
         front(rect(-1.85, 3.0, -1.5, 7.6), SHIRT_SHADE), front(rect(1.5, 3.0, 1.85, 7.6), SHIRT_SHADE),
         front(octagon(0, 3.6, 0.5), INK), front(octagon(0, 5.8, 0.5), INK), front(octagon(0, 8.0, 0.45), INK),
         *lapels(9.8, TUX_SATIN),
@@ -241,8 +260,8 @@ def outfit_items():
         front([(5.4, 4.0), (6.9, 4.0), (6.0, 2.3)], SHIRT), front([(6.4, 4.0), (8.2, 4.0), (7.6, 2.5)], SHIRT),
     ]
     items["lab_coat"] = [
-        jacket(COAT),
-        front([(-4.0, -0.4), (4.0, -0.4), (0, 7.6)], COAT_BLUE),
+        jacket(COAT), shade(SIDE_SHADE, 0.08),
+        front([(-4.0, -0.4), (4.0, -0.4), (0, 7.6)], COAT_BLUE), chin_shadow(4.0),
         front([(-0.9, 1.8), (0.9, 1.8), (1.8, 6.6), (0, 8.4), (-1.8, 6.6)], TEAL),
         poly([(-1.4, -0.4), (1.4, -0.4), (0.9, 1.9), (-0.9, 1.9)], TEAL, z=0.9, d=0.8),
         *lapels(7.6, COAT_SHADE, reach=8.8),
@@ -259,7 +278,8 @@ def outfit_items():
                           sphere((-0.3, 7.0, 0.8), [0.45, 0.7, 0.45], "#9ca3af")], 2.2)
     items["hoodie"] = [
         rim(1.9, HOODIE, maxY=4.0),
-        region(torso(0.8), HOODIE),
+        rim(0.75, HOODIE_DARK, maxY=4.0, only="2d"),
+        region(torso(0.8), HOODIE), shade([(x, y + 0.8) for x, y in SIDE_SHADE], 0.18),
         front([(-5.2, 0.8), (5.2, 0.8), (4.0, 2.7), (0, 3.3), (-4.0, 2.7)], HOODIE_DARK),
         front([(-6.4, 7.6), (6.4, 7.6), (7.8, 13.0), (-7.8, 13.0)], HOODIE_DARK),
         *strings, *code,
@@ -277,29 +297,34 @@ def head_items():
     sapphires = [sphere((8.5 * math.sin(math.radians(a)), -1.9, 8.5 * math.cos(math.radians(a))), [1.1, 1.1, 0.6],
                         "#2f6fe0") for a in (-48, 48)]
     items["crown"] = [
+        sphere((0, 0.9, 0), [8.8, 1.7, 0.1], "#05070d", opacity=0.22, only="2d"),
         dome((0, -1.6, 0), [7.2, 6.0, 7.2], "#a61e36"),
         cyl((0, -1.8, 0), 8.0, 8.5, 4.4, GOLD),
         cyl((0, 0.25, 0), 8.15, 8.15, 0.9, GOLD_DARK), cyl((0, -3.75, 0), 8.55, 8.55, 0.7, GOLD_DARK),
         *spikes,
-        sphere((0, -1.9, 8.6), [1.7, 1.7, 0.8], "#d7263d"), *sapphires,
+        sphere((0, -1.9, 8.6), [1.7, 1.7, 0.8], "#d7263d", gloss=True), *sapphires,
+        sphere((-0.55, -2.5, 9.5), [0.5, 0.4, 0.1], "#ffffff", opacity=0.85, only="2d"),
         sphere((0, -7.8, 0), 1.25, GOLD),
         tube([(0, -8.8, 0), (0, -11.8, 0)], 0.85, GOLD), tube([(-1.1, -10.7, 0), (1.1, -10.7, 0)], 0.85, GOLD),
         box((-3.2, -2.9, 8.9), (4.2, 0.6, 0.1), "#ffe39b", 0.3, only="2d"),
     ]
     items["top_hat"] = place([
+        sphere((0, 1.0, 0), [10.8, 1.7, 0.1], "#05070d", opacity=0.24, only="2d"),
         cyl((0, -0.5, 0), 12.4, 12.4, 1.4, "#1e1f26"),
         sphere((-12.2, -0.9, 0), [1.6, 1.2, 4.2], "#1e1f26", only="2d"),
         sphere((12.2, -0.9, 0), [1.6, 1.2, 4.2], "#1e1f26", only="2d"),
         cyl((0, -7.6, 0), 7.4, 7.8, 12.6, "#272832"),
-        cyl((0, -2.5, 0), 7.5, 7.55, 2.8, BURGUNDY),
+        cyl((0, -2.5, 0), 7.5, 7.55, 2.8, BURGUNDY, gloss=True),
         box((-4.4, -8.6, 7.9), (1.3, 9.6, 0.1), "#3b3d4a", 0.6, only="2d"),
     ], dy=0.8, rot=-6)
     seams = [tube([(0, -6.2, 0), (0, 1.4, 0)], 0.45, "#2556b8", only="2d"),
              *both_sides([tube([(-0.2, -5.6, 0), (-1.6, 1.6, 0)], 0.45, "#2556b8", smooth=True, only="2d")], -4.6)]
     items["cap"] = [
+        sphere((0, 3.0, 0), [9.4, 1.6, 0.1], "#05070d", opacity=0.18, only="2d"),
         dome((0, 1.8, 0), [9.4, 8.4, 9.4], "#2f6fe0"), *seams,
         sphere((0, -6.6, 0), 1.2, "#2556b8"),
         poly(star(0, -1.4, 2.0, 0.9), "#ffffff", z=8.7, d=0.4),
+        sphere((0, 4.7, 7.5), [10.4, 1.4, 0.1], "#05070d", opacity=0.2, only="2d"),
         sphere((0, 2.4, 7.6), [11.6, 1.9, 7.4], "#1f4aa0"),
         box((0, 1.6, 8.9), (14, 0.5, 0.1), "#3a6fd0", 0.25, only="2d"),
     ]
@@ -336,6 +361,7 @@ def mouth_items():
         tube([(3.0, 0.62, 0.92), (3.4, 0.72, 0.94)], 3.05, BURGUNDY),
         tube([(9.6, 2.2, 1.4), (10.9, 2.5, 1.45)], 2.75, "#a3a3a3"),
         tube([(10.9, 2.5, 1.45), (11.3, 2.6, 1.47)], 2.55, "#ff6a1a", glow=True),
+        sphere((11.2, 2.6, 1.3), [2.6, 2.6, 0.1], "#ff8a3d", opacity=0.28, only="2d"),
         tube([(11.8, 1.3, 1.5), (13.4, -1.4, 1.6), (11.9, -4.4, 1.7), (13.8, -7.6, 1.8)], 0.8, "#d6d8de", smooth=True),
         tube([(12.8, -0.6, 1.5), (14.6, -2.4, 1.6), (14.0, -4.8, 1.7)], 0.55, "#d6d8de", smooth=True),
     ]}
@@ -404,6 +430,13 @@ def main():
                         "held": [*anchors["held"][:2], round(anchors["held"][2] * HELD_BOOST, 3)]},
         }
     groups = {"outfit": outfit_items(), "head": head_items(), "face": face_items(), "mouth": mouth_items()}
+    for group in groups.values():
+        for parts in group.values():
+            for part in parts:
+                if part["fill"] in (GOLD, GOLD_DARK, "#ffe08a"):
+                    part["metal"] = True
+                if part["fill"] in ("#14151a", TUX_SATIN):
+                    part["gloss"] = True
     items = []
     for slot, group in groups.items():
         for item_id, parts in group.items():

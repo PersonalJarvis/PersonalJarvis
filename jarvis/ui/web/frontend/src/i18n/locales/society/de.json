@@ -810,6 +810,9 @@
         "cloud": "Wolke",
         "drop": "Tropfen"
       },
+      "next_look": "Level {0} · nächster Look: {1} ab Level {2}",
+      "all_looks_open": "Alle Looks sind freigeschaltet.",
+      "unlocks_at": "ab Level {0}",
       "accessories": "Accessoires",
       "randomize": "Überrasch mich",
       "remove_all": "Alle entfernen",
@@ -1385,6 +1388,7 @@
       "next_promotion": "Nächste Beförderung: {0} ab Level {1}",
       "no_insignia": "Noch kein Abzeichen",
       "pet_up": "{0} ist aufgestiegen",
+      "new_look": "Neuer Look: {0}",
       "agent_up": "{0} hat Level {1} erreicht",
       "while_away": "Während du weg warst",
       "banner_aria": "{0} hat Level {1} erreicht. Zum Schließen klicken.",
@@ -1562,6 +1566,10 @@
         "other": "Weitere"
       },
       "limits_note": "Grenzen halten es fair: Manche Aktionen zählen nur ein paar Mal am Tag.",
+      "looks_title": "Agenten-Looks",
+      "looks_body": "Agenten schalten mit jedem Level neue Looks frei. Anziehen kannst du sie im Profil unter „Aussehen“; ein getragener Look bleibt immer erhalten.",
+      "look_start": "Von Anfang an",
+      "next_look": "Nächster Look: {0} ab Level {1}",
       "team_note": "Agenten steigen durch erledigte Arbeit auf und tragen immer ihre besten Teile."
     }
   }
