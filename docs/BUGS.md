@@ -12948,7 +12948,7 @@ be attributed to the user's Claude Code root. The cost model also prices the
 current Z.ai GLM families separately and labels `glm-cli` as a subscription
 runner. Remaining items are independent: chat/mission CLI usage deduplication
 needs a shared vendor-session identity, per-account attribution needs an
-account column, and an index-state endpoint is still absent.
+account column, and an index-state endpoint is already present in the Costs summary via `IndexStatus`; the remaining debt is per-account attribution and mission-worker deduplication.
 
 **Lesson.** A spend report has as many readers as the app has ways to spend,
 and every reader is a place to be wrong in its own way. The audit that found
