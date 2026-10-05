@@ -137,8 +137,8 @@ class SocietyScheduler:
         self._trace_cap = trace_message_cap
         self._delivery_lock = asyncio.Lock()
         #: Per-agent dispatch locks close the check→await→register race around
-        #: ``max_concurrent_runs``. Without them two assignments can both see
-        #: a free slot before either awaited dispatch returns.
+        #: ``max_concurrent_runs``. Without them two assignments or room turns
+        #: can both see a free slot before either awaited dispatch returns.
         self._dispatch_locks: dict[str, asyncio.Lock] = {}
         #: run_id → agent_id of work the scheduler started and has not seen end.
         self._running: dict[str, str] = {}
@@ -270,273 +270,6 @@ class SocietyScheduler:
                 return
             if run_id:
                 self._running[run_id] = target.agent_id
-        return run_id
-usted Python that turns envelopes into activity.
-
-Nothing else in the society may start work. The scheduler consumes the
-board and applies, in order, for every ``ASSIGN``:
-
-1. the master kill switch;
-2. the tier wall — only ``lead`` and ``orchestrator`` may assign;
-3. the delegation depth — an ASSIGN whose parent chain already holds two
-   ASSIGNs is refused (depth ≤ 2, no recursion);
-4. the target — must resolve to exactly one active agent;
-5. the budgets — the global ``BudgetTracker`` pre-spawn check and the
-   target's own ``daily_budget_usd`` against today's spend;
-6. the target's concurrency cap;
-7. the per-trace message cap.
-
-A refusal is itself an event: a ``VETO`` from ``scheduler`` on the same
-trace, carrying the typed reason — so the chat card, the ledger and the
-voice path all learn why, from the board.
-
-``SAY`` / ``QUERY`` / ``ANSWER`` / ``PROPOSE`` addressed to an agent are
-delivered by waking the target's canonical chat (the ``deliver`` hook; the
-chat binding provides it in M2). ``RESULT`` is validated against the
-handoff record (agent-definition §4.3) and releases the sender's run slot.
-
-The two hooks are injected so the scheduler is testable with fakes and so
-the mission machinery is imported only when it is actually used.
-"""
-
-from __future__ import annotations
-
-import asyncio
-import logging
-from collections.abc import Awaitable, Callable
-from typing import Any, Final
-from uuid import uuid4
-
-from .delivery import DeliveryBusy
-from .events import SCHEDULER_ACTOR as _SCHEDULER
-from .events import USER_ACTOR as _USER
-from .events import MsgType, RoomState, SocietyEnvelope, Tier, now_ms
-from .failure_reasons import FailureReason, classify_error, retry_action
-from .rooms import Room, RoomError, Rooms
-from .roster import AgentRecord, AgentState, Roster
-from .store import SocietyStore, day_start_ms
-
-log = logging.getLogger(__name__)
-
-__all__ = [
-    "CurateHook",
-    "DispatchHook",
-    "DeliverHook",
-    "RoomSettledHook",
-    "RoomHaltHook",
-    "RoomTurnHook",
-    "SocietyScheduler",
-    "validate_result",
-]
-
-#: ``dispatch(target, assign_envelope) -> run_id`` — starts real work under
-#: the target's identity and returns the mission/run id it started.
-DispatchHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[str]]
-#: ``deliver(target, envelope)`` — wakes the target's canonical chat.
-DeliverHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[None]]
-RoomTurnHook = Callable[[AgentRecord, Room, str], Awaitable[str]]
-RoomSettledHook = Callable[[SocietyEnvelope], Awaitable[None]]
-RoomHaltHook = Callable[[Room], Awaitable[Room]]
-# Curating a RESULT stages knowledge behind the existing human review gate.
-# This callback never dispatches work and is not a second orchestrator.
-CurateHook = Callable[[SocietyEnvelope], Awaitable[None]]
-
-MAX_DEPTH: Final[int] = 2
-DEFAULT_TRACE_MESSAGE_CAP: Final[int] = 24
-_DELIVERED: Final[frozenset[MsgType]] = frozenset(
-    {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE, MsgType.HOLD, MsgType.RELEASE}
-)
-_RESULT_REQUIRED: Final[tuple[str, ...]] = ("done",)
-
-
-def validate_result(payload: dict[str, Any]) -> str | None:
-    """``None`` when the handoff record is complete, else what is missing."""
-    for key in _RESULT_REQUIRED:
-        value = payload.get(key)
-        if not isinstance(value, str) or not value.strip():
-            return f"RESULT.{key} must be a non-empty string"
-    output = payload.get("output")
-    open_items = payload.get("open")
-    if not output and not open_items:
-        return "RESULT needs output (where the work is) or open (what remains)"
-    status = payload.get("status", "done")
-    if status not in ("done", "partial", "blocked"):
-        return "RESULT.status must be done | partial | blocked"
-    return None
-
-
-def _handoff_owner(env: SocietyEnvelope) -> str | None:
-    """The agent a RESULT hands its next step to, if it names one."""
-    if env.msg_type is not MsgType.RESULT:
-        return None
-    owner = env.payload.get("next_owner")
-    return owner.strip() if isinstance(owner, str) and owner.strip() else None
-
-
-def _delivery_view(env: SocietyEnvelope) -> SocietyEnvelope:
-    """Address a queued RESULT handoff to its next owner; other envelopes pass through."""
-    owner = _handoff_owner(env)
-    return env.model_copy(update={"to_agent": owner}) if owner is not None else env
-
-
-class SocietyScheduler:
-    def __init__(
-        self,
-        store: SocietyStore,
-        roster: Roster,
-        *,
-        dispatch: DispatchHook | None = None,
-        deliver: DeliverHook | None = None,
-        rooms: Rooms | None = None,
-        room_turn: RoomTurnHook | None = None,
-        room_settled: RoomSettledHook | None = None,
-        room_halt: RoomHaltHook | None = None,
-        curate: CurateHook | None = None,
-        budget_tracker: Any | None = None,
-        budget_tracker_getter: Callable[[], Any | None] | None = None,
-        trace_message_cap: int = DEFAULT_TRACE_MESSAGE_CAP,
-    ) -> None:
-        self._store = store
-        self._roster = roster
-        self._dispatch = dispatch
-        self._deliver = deliver
-        self._rooms = rooms
-        self._room_turn = room_turn
-        self._room_settled = room_settled
-        self._room_halt = room_halt
-        self._curate = curate
-        self._budget = budget_tracker
-        self._budget_getter = budget_tracker_getter
-        self._trace_cap = trace_message_cap
-        self._delivery_lock = asyncio.Lock()
-        #: Per-agent dispatch locks close the check→await→register race around
-        #: ``max_concurrent_runs``. Without them two assignments can both see
-        #: a free slot before either awaited dispatch returns.
-        self._dispatch_locks: dict[str, asyncio.Lock] = {}
-        #: run_id → agent_id of work the scheduler started and has not seen end.
-        self._running: dict[str, str] = {}
-        self._unsubscribe: Callable[[], None] | None = None
-
-    # ------------------------------------------------------------ wiring
-
-    def attach(self) -> SocietyScheduler:
-        if self._unsubscribe is None:
-            self._unsubscribe = self._store.bus.subscribe_all(self.on_envelope)
-        return self
-
-    def detach(self) -> None:
-        if self._unsubscribe is not None:
-            self._unsubscribe()
-            self._unsubscribe = None
-
-    def _dispatch_lock(self, agent_id: str) -> asyncio.Lock:
-        lock = self._dispatch_locks.get(agent_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._dispatch_locks[agent_id] = lock
-        return lock
-    @property
-    def running(self) -> dict[str, str]:
-        return dict(self._running)
-
-    def active_runs(self, agent_id: str) -> int:
-        return sum(1 for a in self._running.values() if a == agent_id)
-
-    def note_run_started(self, run_id: str, agent_id: str) -> None:
-        self._running[run_id] = agent_id
-
-    def note_run_ended(self, run_id: str) -> str | None:
-        return self._running.pop(run_id, None)
-
-    async def halt_all(self) -> int:
-        """Kill switch engaged: forget every run slot; returns how many."""
-        count = len(self._running)
-        self._running.clear()
-        return count
-
-    async def drive_rooms(self) -> None:
-        """Resume every running room. Safe to call repeatedly from recovery."""
-        if self._rooms is None or self._room_turn is None:
-            return
-        for room in await self._rooms.list(state=RoomState.RUNNING):
-            await self.drive_room(room.room_id)
-
-    async def drive_room(self, room_id: str) -> None:
-        """Advance one bounded room by at most one canonical-chat turn."""
-        rooms = self._rooms
-        dispatch = self._room_turn
-        if rooms is None or dispatch is None:
-            return
-        room = await rooms.get(room_id)
-        if room is None or room.state is not RoomState.RUNNING or not room.live:
-            return
-        if await self._store.kill_switch():
-            if self._room_halt is not None:
-                await self._room_halt(room)
-            else:
-                await rooms.settle(room_id, reason="kill_switch")
-            return
-
-        prefix = f"room:{room_id}:"
-        if room.inflight_claim_id and any(run_id.startswith(prefix) for run_id in self._running):
-            return
-
-        target_id = room.inflight_member or room.next_speaker
-        if not target_id:
-            await rooms.fail(room_id, reason=str(FailureReason.INTERNAL_ERROR))
-            return
-        target = await self._roster.resolve(target_id)
-        if target is None or target.state is AgentState.ARCHIVED:
-            await rooms.fail(room_id, reason=str(FailureReason.TARGET_UNKNOWN))
-            return
-        if target.state is AgentState.PAUSED:
-            await rooms.fail(room_id, reason=str(FailureReason.TARGET_PAUSED))
-            return
-
-        if not room.inflight_claim_id:
-            if await self._store.count_in_trace(room.trace_id) > self._trace_cap:
-                await rooms.fail(room_id, reason=str(FailureReason.MESSAGE_CAP))
-                return
-            budget = self._budget_getter() if self._budget_getter is not None else self._budget
-            if budget is not None:
-                try:
-                    budget.assert_under_limit(room.trace_id)
-                except Exception as exc:  # noqa: BLE001 — tracker owns its exception type
-                    log.info("society room %s budget gate refused dispatch: %s", room_id, exc)
-                    await rooms.fail(room_id, reason=str(FailureReason.BUDGET_EXHAUSTED))
-                    return
-            if target.daily_budget_usd > 0:
-                spent = await self._store.cost_since(target.agent_id, day_start_ms(now_ms()))
-                if spent >= target.daily_budget_usd:
-                    await rooms.fail(room_id, reason=str(FailureReason.BUDGET_EXHAUSTED))
-                    return
-            if self.active_runs(target.agent_id) >= target.max_concurrent_runs:
-                return
-
-        had_claim = bool(room.inflight_claim_id)
-        claim_id = room.inflight_claim_id or f"room-turn:{uuid4().hex}"
-        if not had_claim:
-            try:
-                room = await rooms.claim_turn(room_id, claim_id)
-            except RoomError as exc:
-                log.debug("society room %s claim lost a concurrent race: %s", room_id, exc)
-                return
-        try:
-            run_id = await dispatch(target, room, claim_id)
-        except DeliveryBusy:
-            if not had_claim:
-                try:
-                    await rooms.release_claim(room_id, claim_id)
-                except RoomError:
-                    log.debug("society room %s claim moved while releasing busy turn", room_id)
-            return
-        except Exception as exc:  # noqa: BLE001 — failed room turns are terminal and typed
-            log.warning("society room %s dispatch failed", room_id, exc_info=True)
-            await rooms.fail(room_id, reason=str(classify_error(exc)))
-            return
-        if run_id:
-            self._running[run_id] = target.agent_id
-
     # ------------------------------------------------------------ handler
 
     async def on_envelope(self, env: SocietyEnvelope) -> None:
@@ -657,11 +390,7 @@ class SocietyScheduler:
         async with self._dispatch_lock(target.agent_id):
             target = await self._resolve_target(env)
             if isinstance(target, FailureReason):
-                await self._veto(
-                    env,
-                    target,
-                    f"target {env.to_agent!r} cannot take work",
-                )
+                await self._veto(env, target, f"target {env.to_agent!r} cannot take work")
                 return
             if target.daily_budget_usd > 0:
                 spent = await self._store.cost_since(target.agent_id, day_start_ms(env.ts_ms))
@@ -698,6 +427,46 @@ class SocietyScheduler:
                     payload={"run_id": run_id, "text": f"{target.name} took the task"},
                 )
             )
+    def _release_result_run(self, env: SocietyEnvelope) -> None:
+        """Release only a live run slot owned by the RESULT sender."""
+        run_id = env.payload.get("run_id")
+        if isinstance(run_id, str):
+            owner = self._running.get(run_id)
+            if owner == env.from_agent:
+                self._running.pop(run_id, None)
+            elif owner is not None:
+                # A durable RESULT must never release another agent's live slot.
+                # This can happen after a stale/forged handoff carries a foreign
+                # run_id; keep the real owner accounting intact.
+                log.warning(
+                    "society: RESULT %s from %s referenced run %s owned by %s; "
+                    "preserving the live run slot",
+                    env.event_id,
+                    env.from_agent,
+                    run_id,
+                    owner,
+                )
+            return
+        # No run id: release one slot of the sender, oldest first.
+        for rid, agent in list(self._running.items()):
+            if agent == env.from_agent:
+                self._running.pop(rid, None)
+                break
+
+    async def _on_result(self, env: SocietyEnvelope) -> None:
+        # A malformed terminal report still ends the sender's run. Otherwise a
+        # bad RESULT can strand its concurrency slot forever while the board
+        # correctly marks the report invalid. Ownership is checked before
+        # releasing anything, so a forged/foreign run_id cannot free another
+        # agent's live work.
+        self._release_result_run(env)
+        problem = validate_result(env.payload)
+        if problem is not None:
+            await self._store.mark_delivery(
+                env.event_id, "failed", str(FailureReason.INVALID_RESULT)
+            )
+            await self._veto(env, FailureReason.INVALID_RESULT, problem)
+            return
         if self._curate is not None:
             try:
                 await self._curate(env)
