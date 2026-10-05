@@ -79,6 +79,27 @@ def ensure_standard_streams() -> None:
                 pass
 
 
+# Set by an Electron host (the Claude desktop app, VS Code, Cursor) for the
+# Node.js helpers it spawns. When the app is started or restarted from inside
+# such a host, the variable reaches this process and every child it starts:
+# an Electron program launched with it set runs as bare Node.js and exits, so
+# "Open in VS Code" / "Open in Cursor" and opening Slack, Discord or any other
+# Electron app silently did nothing (found 2026-10-05: ``Code.exe --version``
+# printed a Node version). Nothing in this Python process needs it.
+_INHERITED_ELECTRON_VARS = ("ELECTRON_RUN_AS_NODE",)
+
+
+def drop_inherited_electron_node_mode() -> None:
+    """Remove the Electron "run as Node" switch this process may have inherited.
+
+    Call once at startup, before any child process is spawned, so programs the
+    app opens (directly, via ``os.startfile`` or via ``open``/``xdg-open``)
+    start as themselves. Harmless on every OS when the variable is absent.
+    """
+    for name in _INHERITED_ELECTRON_VARS:
+        os.environ.pop(name, None)
+
+
 def standard_error_is_visible() -> bool:
     """Can a human read what we write to ``sys.stderr``?
 

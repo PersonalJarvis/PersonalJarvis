@@ -32,7 +32,7 @@ from filelock import FileLock, Timeout
 
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
-from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.process_utils import drop_inherited_electron_node_mode, ensure_standard_streams
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -50,6 +50,7 @@ _SPA_DOCUMENT_PROBE = "document.getElementById('root') !== null"
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.
 ensure_standard_streams()
+drop_inherited_electron_node_mode()
 
 if sys.platform == "win32":
     try:
