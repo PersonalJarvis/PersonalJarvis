@@ -438,7 +438,12 @@ class SocietyScheduler:
                         try:
                             await receive(target, env)
                         except DeliveryBusy:
-                            pass  # No chat service yet; the durable queue will retry.
+                            log.info(
+                                "society: queued receipt deferred for busy recipient %s "
+                                "(event=%s); durable queue will retry",
+                                env.to_agent,
+                                env.event_id,
+                            )
                         except Exception:
                             log.warning("society: queued receipt projection failed", exc_info=True)
                     continue
