@@ -225,6 +225,14 @@ def check_text_clipboard(report: Report) -> None:
     report.add("text copy accepted by the OS", ok)
     report.add("text copy returns promptly", took < 3.0, f"{took:.2f}s")
     report.add("text reads back unchanged", read_text() == text)
+    if _session() == "macos":
+        # An app started from Finder or the Dock has no locale variables.
+        saved = {k: os.environ.pop(k) for k in ("LANG", "LC_ALL", "LC_CTYPE") if k in os.environ}
+        try:
+            write_text(text)
+            report.add("text survives an app started without a locale", read_text() == text)
+        finally:
+            os.environ.update(saved)
 
 
 def check_jarvisx_copy(report: Report) -> None:
@@ -335,6 +343,30 @@ def check_real_appshot(report: Report, *, expect_capture: bool) -> None:
         report.add("a refusal explains itself", bool(result.message), result.message)
 
 
+def check_shift_digit_shortcut(report: Report) -> None:
+    """X11 only: a real Ctrl+Shift+9 (the recording shortcut) reaches the hotkey backend."""
+    if _session() != "x11" or not shutil.which("xdotool"):
+        return
+    try:
+        from jarvis.trigger.backends.pynput import PynputBackend
+    except ImportError as exc:
+        report.add("Ctrl+Shift+9 fires on X11", False, f"pynput backend unavailable: {exc}")
+        return
+    for layout in ("us", "de"):
+        if shutil.which("setxkbmap"):
+            _run(["setxkbmap", layout])
+        fired: list[int] = []
+        backend = PynputBackend()
+        backend.register([("ctrl+shift+9", lambda hits=fired: hits.append(1))])
+        backend.start()
+        time.sleep(1.0)
+        _run(["xdotool", "keydown", "ctrl", "keydown", "shift", "key", "9"])
+        _run(["xdotool", "keyup", "shift", "keyup", "ctrl"])
+        time.sleep(1.0)
+        backend.stop()
+        report.add(f"Ctrl+Shift+9 fires on X11 ({layout} layout)", bool(fired))
+
+
 def check_headless_imports(report: Report) -> None:
     for module in (
         "jarvis.appshot.service",
@@ -372,7 +404,7 @@ def main() -> int:
         check_text_clipboard,
         check_jarvisx_copy,
     ]
-    steps += [check_markup_burn, check_library_and_downloads]
+    steps += [check_markup_burn, check_library_and_downloads, check_shift_digit_shortcut]
     for step in steps:
         try:
             step(report)
