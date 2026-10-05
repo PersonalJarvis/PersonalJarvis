@@ -110,7 +110,9 @@ def _validated_chat_runner(
 
 
 class CreateAgentBody(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    #: Empty = one-click creation: placeholder name, random look, and the agent
+    #: proposes its own identity in its first conversation.
+    name: str | None = Field(default=None, max_length=40)
     title: str = ""
     description: str = ""
     tier: str = "specialist"

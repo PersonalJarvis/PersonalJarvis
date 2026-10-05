@@ -39,8 +39,8 @@ structural safety, the wiki as shared memory, and the world.
 card; nothing hidden drives behavior.
 
 **Identity**
-- `agent_id` (stable; since 2026-10-05 a random `agent-<hex>` id for new agents, never a
-  slug of the name, because the agent renames itself from conversation — older rows keep their
+- `agent_id` (stable; since 2026-10-05 an agent created without a name gets a random
+  `agent-<hex>` id, never a slug of its placeholder name, because the agent renames itself from conversation — older rows keep their
   slug ids), `name` (UNIQUE, the display name; a fresh agent carries a placeholder), `title` (one job line,
   "Gmail assistant"), `description` (standing instructions, Markdown; the agent's own AGENTS.md:
   goal, ownership, working style, approval boundary, durable rules). `tier`

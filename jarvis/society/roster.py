@@ -7,6 +7,10 @@ Identity rules (agent-definition §2, §6):
   the one invariant that keeps "one agent, one chat" true forever.
 * ``agent_id`` is a slug derived from the name once and never changes; the
   canonical chat id is ``society:<agent_id>`` (a pure function, no column).
+  An agent created without a name (one-click creation) gets a placeholder
+  name and a random ``agent-<hex>`` id instead, because it names itself from
+  its first conversation and the id must outlive that rename.
+* Every new agent without an explicit avatar gets a random companion look.
 * Exactly one ``lead`` exists and it is Jarvis; creating another lead is
   refused with a typed reason.
 """
@@ -15,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
@@ -22,7 +27,7 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from .companion import validate_avatar_companion
+from .companion import random_companion, validate_avatar_companion
 from .events import (
     AgentApprovalMode,
     AgentState,
@@ -43,8 +48,10 @@ __all__ = [
     "Roster",
     "RosterError",
     "PAIR_SESSION_MARKER",
+    "FRESH_NAMES",
     "canonical_session_id",
     "conversation_session_id",
+    "is_fresh",
     "pair_session_id",
     "slugify",
 ]
@@ -54,6 +61,14 @@ LEAD_AGENT_ID: Final[str] = "jarvis"
 _NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[^/\\:@#<>\"'`]{1,40}$")
 _MAX_TITLE: Final[int] = 120
 _MAX_DESCRIPTION: Final[int] = 20_000
+
+#: Placeholder names for an agent created with one click. Short, neutral and
+#: readable in every UI language; the agent proposes its real name in its
+#: first conversation.
+FRESH_NAMES: Final[tuple[str, ...]] = (
+    "Nova", "Juno", "Iris", "Kite", "Lumen", "Sage", "Vega", "Wren", "Orion", "Milo",
+    "Luna", "Finn", "Mira", "Otto", "Ruby", "Theo", "Zara", "Ivy", "Leo", "Nia",
+)
 
 
 class RosterError(ValueError):
@@ -71,6 +86,19 @@ def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", folded).encode("ascii", "ignore").decode("ascii")
     text = re.sub(r"[^a-zA-Z0-9]+", "-", text).strip("-").lower()
     return text or "agent"
+
+
+def is_fresh(agent: AgentRecord) -> bool:
+    """An agent that does not know its role yet: no title and no description.
+
+    One-click creation produces such an agent; its briefing then asks it to
+    introduce itself and propose an identity (agent-definition §6).
+    """
+    return (
+        str(agent.tier) == "specialist"
+        and not agent.title.strip()
+        and not agent.description.strip()
+    )
 
 
 def canonical_session_id(agent_id: str) -> str:
@@ -464,10 +492,28 @@ class Roster:
         self._snapshot = tuple(agents)
         self._epoch += 1
 
+    async def _placeholder_name(self) -> str:
+        """A free name from :data:`FRESH_NAMES`, else ``Agent <n>``."""
+        pool = list(FRESH_NAMES)
+        secrets.SystemRandom().shuffle(pool)
+        for candidate in pool:
+            if await self._store.get_agent_row_by_name(candidate) is None:
+                return candidate
+        number = 2
+        while await self._store.get_agent_row_by_name(f"Agent {number}") is not None:
+            number += 1
+        return f"Agent {number}"
+
+    async def _fresh_agent_id(self) -> str:
+        while True:
+            candidate = f"agent-{secrets.token_hex(4)}"
+            if await self._store.get_agent_row(candidate) is None:
+                return candidate
+
     async def create(
         self,
         *,
-        name: str,
+        name: str | None = None,
         title: str = "",
         description: str = "",
         tier: Tier | str = Tier.SPECIALIST,
@@ -476,14 +522,22 @@ class Roster:
         """Create an agent; returns ``(record, created)``.
 
         An existing name adopts the row (``created=False``) and leaves it
-        untouched — the caller decides whether to PATCH.
+        untouched — the caller decides whether to PATCH. Without a name the
+        agent is created fresh: placeholder name, random id (see module doc).
         """
-        clean_name = _validate_name(name)
-        existing = await self._store.get_agent_row_by_name(clean_name)
-        if existing is not None:
-            return await self._hydrate(existing), False
         tier_value = Tier(_enum(Tier, tier, "tier"))
-        agent_id = slugify(clean_name)
+        unnamed = not str(name or "").strip()
+        if unnamed:
+            if tier_value is Tier.LEAD:
+                raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead is always Jarvis")
+            clean_name = await self._placeholder_name()
+            agent_id = await self._fresh_agent_id()
+        else:
+            clean_name = _validate_name(str(name))
+            existing = await self._store.get_agent_row_by_name(clean_name)
+            if existing is not None:
+                return await self._hydrate(existing), False
+            agent_id = slugify(clean_name)
         if tier_value is Tier.LEAD and agent_id != LEAD_AGENT_ID:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
@@ -524,6 +578,8 @@ class Roster:
         }
         if tier_value is Tier.ORCHESTRATOR:
             row["max_concurrent_runs"] = 3
+        if tier_value is not Tier.LEAD and not fields.get("avatar"):
+            fields = {**fields, "avatar": {"companion": random_companion()}}
         for key, value in fields.items():
             if key not in _EDITABLE or key in ("title", "description", "tier"):
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"unknown field {key}")
