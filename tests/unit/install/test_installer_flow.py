@@ -238,7 +238,8 @@ def test_macos_fresh_install_ci_exercises_advertised_full_profile() -> None:
     workflow = (REPO / ".github" / "workflows" / "installer-smoke.yml").read_text(
         encoding="utf-8"
     )
-    assert 'if [ "${{ matrix.os }}" = "macos-latest" ]; then' in workflow
+    assert "MATRIX_OS: ${{ matrix.os }}" in workflow
+    assert 'if [ "$MATRIX_OS" = "macos-latest" ]; then' in workflow
     assert "installer.py --with-desktop --no-launch" in workflow
 
 

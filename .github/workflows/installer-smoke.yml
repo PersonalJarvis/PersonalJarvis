@@ -176,6 +176,8 @@ jobs:
 
       - name: Run the REAL installer end-to-end (runner-appropriate profile)
         shell: bash
+        env:
+          MATRIX_OS: ${{ matrix.os }}
         run: |
           set -euo pipefail
           # Reproduce exactly what install.sh does after the git clone: a venv,
@@ -189,7 +191,7 @@ jobs:
           . .venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip install rich packaging
-          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+          if [ "$MATRIX_OS" = "macos-latest" ]; then
             python install/installer.py --with-desktop --no-launch | tee install.log
           else
             python install/installer.py --headless --no-launch | tee install.log
@@ -359,9 +361,10 @@ jobs:
         id: tag
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG_RAW: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          INPUT_TAG="${{ inputs.tag }}"
+          INPUT_TAG="$INPUT_TAG_RAW"
           if [ -n "$INPUT_TAG" ]; then
               echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
               echo "Using manually-provided tag: $INPUT_TAG"
