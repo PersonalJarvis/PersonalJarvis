@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, Brain, Check, ChevronRight, Copy, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ArrowDown, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import type { ReasoningBlock, TextBlock, TimelineItem, ToolBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
@@ -388,33 +388,108 @@ function changedFiles(turn: TurnItem): { path: string; added: number; removed: n
   return [...byPath.values()];
 }
 
-function shortFile(path: string): string {
-  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  return parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : path;
+/** The thread's project folder, so changed files read relative to it. */
+const ThreadFolder = createContext("");
+
+function slashes(path: string): string {
+  return path.replace(/\\/g, "/");
 }
 
-function ChangedFiles({ turn }: { turn: TurnItem }) {
+/**
+ * A changed file as the project sees it: relative to the thread's folder,
+ * else (an absolute path elsewhere) its last three parts.
+ */
+export function projectPath(path: string, root: string): string {
+  const clean = slashes(path);
+  const base = slashes(root).replace(/\/+$/, "");
+  if (base && clean.toLowerCase().startsWith(`${base.toLowerCase()}/`)) return clean.slice(base.length + 1);
+  const absolute = clean.startsWith("/") || /^[A-Za-z]:\//.test(clean);
+  const parts = clean.split("/").filter(Boolean);
+  return absolute && parts.length > 3 ? `…/${parts.slice(-3).join("/")}` : clean;
+}
+
+/** A path split into its folder (read quieter) and its file name. */
+function splitPath(path: string): { folder: string; name: string } {
+  const clean = slashes(path);
+  const cut = clean.lastIndexOf("/");
+  return cut < 0 ? { folder: "", name: clean } : { folder: clean.slice(0, cut + 1), name: clean.slice(cut + 1) };
+}
+
+/** How many files a finished turn lists before the rest fold behind "Show N more files". */
+export const CHANGED_FILES_FOLDED = 3;
+
+/** Both counts, even a zero — the card's columns line up on them. */
+function ChangeCount({ added, removed, className }: { added: number; removed: number; className?: string }) {
+  return <span className={cn("shrink-0 tabular-nums", className)}>
+    <span className="text-success">+{added}</span> <span className="text-destructive">-{removed}</span>
+  </span>;
+}
+
+/**
+ * The card under a finished turn: how many files it edited and by how much,
+ * then one row per file — folder quiet, name bright, counts on the right.
+ * Only the first few rows show; the rest fold behind "Show N more files" so
+ * a big turn never fills the screen. A row opens to its own diff, and
+ * "Show changes" opens every diff at once.
+ */
+export function ChangedFiles({ turn }: { turn: TurnItem }) {
+  const root = useContext(ThreadFolder);
   const rows = useMemo(() => changedFiles(turn), [turn]);
-  const [openPath, setOpenPath] = useState<string | null>(null);
+  const [openPaths, setOpenPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const [expanded, setExpanded] = useState(false);
   if (rows.length === 0) return null;
   const added = rows.reduce((sum, row) => sum + row.added, 0);
   const removed = rows.reduce((sum, row) => sum + row.removed, 0);
-  return <section aria-label="Changed files" className="mt-3 overflow-hidden rounded-xl border border-border">
-    <div className="flex items-center gap-2 border-b border-border bg-card px-3 py-2 text-sm">
-      <span className="font-medium text-foreground">Changed {rows.length} {rows.length === 1 ? "file" : "files"}</span>
-      <DiffStat added={added} removed={removed} />
+  const hidden = Math.max(0, rows.length - CHANGED_FILES_FOLDED);
+  const shown = expanded ? rows : rows.slice(0, CHANGED_FILES_FOLDED);
+  const allOpen = rows.every((row) => openPaths.has(row.path));
+  const togglePath = (path: string) => setOpenPaths((prev) => {
+    const next = new Set(prev);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    return next;
+  });
+  const toggleAll = () => {
+    if (allOpen) { setOpenPaths(new Set()); return; }
+    setOpenPaths(new Set(rows.map((row) => row.path)));
+    setExpanded(true);
+  };
+  const title = `${rows.length} ${rows.length === 1 ? "file" : "files"} changed`;
+  return <section aria-label="Changed files" data-testid="thread-changed-files" className="mt-3 overflow-hidden rounded-xl border border-border bg-card">
+    <div className="flex items-center gap-3 border-b border-border px-3 py-3">
+      <span aria-hidden className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground-secondary">
+        <span className="flex h-5 w-5 items-center justify-center rounded-[5px] border-[1.5px] border-current"><Diff className="h-3 w-3" strokeWidth={2.25} /></span>
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold text-foreground-strong">{title}</div>
+        <ChangeCount added={added} removed={removed} className="text-sm" />
+      </div>
+      <button type="button" aria-pressed={allOpen} onClick={toggleAll}
+        className="shrink-0 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {allOpen ? "Hide changes" : "Show changes"}
+      </button>
     </div>
     <ul>
-      {rows.map((row) => <li key={row.path} className="border-b border-border last:border-b-0">
-        <button type="button" aria-expanded={openPath === row.path} onClick={() => setOpenPath(openPath === row.path ? null : row.path)}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-mono text-xs hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" title={row.path}>
-          <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform", openPath === row.path && "rotate-90")} />
-          <span className="min-w-0 flex-1 truncate text-foreground">{shortFile(row.path)}</span>
-          <DiffStat added={row.added} removed={row.removed} />
-        </button>
-        {openPath === row.path && <div className="px-3 pb-3"><DiffView files={row.files.map((file) => ({ ...file, path: "" }))} /></div>}
-      </li>)}
+      {shown.map((row) => {
+        const { folder, name } = splitPath(projectPath(row.path, root));
+        const open = openPaths.has(row.path);
+        return <li key={row.path}>
+          <button type="button" aria-expanded={open} onClick={() => togglePath(row.path)} title={row.path}
+            className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+            <span className="min-w-0 flex-1 truncate">
+              {folder && <span className="text-muted-foreground">{folder}</span>}
+              <span className="text-foreground">{name}</span>
+            </span>
+            <ChangeCount added={row.added} removed={row.removed} />
+          </button>
+          {open && <div className="px-3 pb-2 pt-0.5"><DiffView files={row.files.map((file) => ({ ...file, path: "" }))} /></div>}
+        </li>;
+      })}
     </ul>
+    {hidden > 0 && <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}
+      className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-sm text-foreground-secondary hover:bg-secondary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      {expanded ? "Collapse files" : `Show ${hidden} more ${hidden === 1 ? "file" : "files"}`}
+      <ChevronDown aria-hidden className={cn("h-4 w-4 transition-transform duration-200", expanded && "rotate-180")} />
+    </button>}
   </section>;
 }
 
@@ -484,7 +559,11 @@ function ItemView({ item }: { item: TimelineItem }) {
  * the bottom and stays put once they scroll up to read; a button brings them
  * back down.
  */
-export function ThreadTimeline({ items, sessionId, bottomInset }: { items: TimelineItem[]; sessionId: string | null; bottomInset: number }) {
+export function ThreadTimeline({ items, sessionId, bottomInset, folder = "" }: {
+  items: TimelineItem[]; sessionId: string | null; bottomInset: number;
+  /** The thread's project folder; changed files list relative to it. */
+  folder?: string;
+}) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const pinned = useRef(true);
   const [away, setAway] = useState(false);
@@ -512,7 +591,7 @@ export function ThreadTimeline({ items, sessionId, bottomInset }: { items: Timel
     return () => observer.disconnect();
   }, []);
 
-  return <div className="relative min-h-0 flex-1">
+  return <ThreadFolder.Provider value={folder}><div className="relative min-h-0 flex-1">
     <div ref={scroller} data-testid="thread-timeline"
       onScroll={(event) => {
         const box = event.currentTarget;
@@ -531,5 +610,5 @@ export function ThreadTimeline({ items, sessionId, bottomInset }: { items: Timel
       className="absolute left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-float hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       <ArrowDown className="h-4 w-4" />
     </button>}
-  </div>;
+  </div></ThreadFolder.Provider>;
 }

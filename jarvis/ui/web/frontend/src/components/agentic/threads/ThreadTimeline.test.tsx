@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ToolBlock, TurnBlock, TurnItem, TurnStatus } from "@/components/agentchat/reduce";
-import { ThreadTimeline } from "./ThreadTimeline";
+import { projectPath, ThreadTimeline } from "./ThreadTimeline";
 
 const tool = (id: string, command: string, over: Partial<ToolBlock> = {}): ToolBlock => ({
   kind: "tool", callId: id, name: "Bash", input: { command }, output: "ok", isError: false,
@@ -49,5 +49,45 @@ describe("thread work log", () => {
   it("follows a live thought by its newest paragraph", () => {
     show(turn([thought("r1", "Reading the config.\n\nNow the router.", true)], "running"));
     expect(screen.getByText("Now the router.")).toBeTruthy();
+  });
+});
+
+describe("changed files card", () => {
+  const edit = (id: string, path: string): ToolBlock =>
+    tool(id, "", { name: "Edit", input: { file_path: path, old_string: "a", new_string: "b\nc" } });
+
+  it("lists three files and folds the rest behind a count", () => {
+    const paths = ["src/a.ts", "src/b.ts", "docs/c.md", "lib/d.py", "e.json"];
+    show(turn(paths.map((path, i) => edit(`e${i}`, path))));
+    const card = screen.getByTestId("thread-changed-files");
+    expect(card.textContent).toContain("5 files changed");
+    expect(screen.getByText("a.ts")).toBeTruthy();
+    expect(screen.getAllByText("src/").length).toBe(2);
+    expect(screen.queryByText("d.py")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Show 2 more files/ }));
+    expect(screen.getByText("d.py")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Collapse files/ }));
+    expect(screen.queryByText("e.json")).toBeNull();
+  });
+
+  it("shows no fold line for three files or fewer", () => {
+    show(turn([edit("e1", "a.ts"), edit("e2", "b.ts")]));
+    expect(screen.queryByRole("button", { name: /more file/ })).toBeNull();
+  });
+
+  it("opens every diff at once from the header", () => {
+    show(turn(["a.ts", "b.ts", "c.ts", "d.ts"].map((path, i) => edit(`e${i}`, path))));
+    fireEvent.click(screen.getByRole("button", { name: "Show changes" }));
+    expect(screen.getByText("d.ts")).toBeTruthy();
+    expect(screen.getAllByRole("button", { expanded: true }).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("projectPath", () => {
+  it("reads a file relative to the thread folder on every OS", () => {
+    expect(projectPath("C:\\Repo\\src\\a.ts", "c:\\repo")).toBe("src/a.ts");
+    expect(projectPath("/home/me/repo/src/a.ts", "/home/me/repo/")).toBe("src/a.ts");
+    expect(projectPath("src/a.ts", "/home/me/repo")).toBe("src/a.ts");
+    expect(projectPath("/etc/x/y/z/a.conf", "/home/me/repo")).toBe("…/y/z/a.conf");
   });
 });

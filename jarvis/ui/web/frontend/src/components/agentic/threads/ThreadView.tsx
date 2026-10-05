@@ -188,7 +188,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
         </div>
       </div>
       : <>
-        <ThreadTimeline items={timeline.items} sessionId={selection.sessionId} bottomInset={composerHeight} />
+        <ThreadTimeline items={timeline.items} sessionId={selection.sessionId} bottomInset={composerHeight} folder={folder} />
         <div ref={composerBox} className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-70% to-transparent px-5 pb-4 pt-6">
           <div className="pointer-events-auto">
             <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce} strip={strip} />
