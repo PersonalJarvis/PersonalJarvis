@@ -1181,7 +1181,8 @@
     "card": {
       "learned_review_hint": "Las habilidades privadas aprendidas siguen siendo instrucciones consultivas. Envía una a Habilidades como borrador para revisarla antes de activarla globalmente.",
       "learned_review": "Revisar en Habilidades",
-      "learned_reviewing": "Preparando borrador…"
+      "learned_reviewing": "Preparando borrador…",
+      "shared_figures": "Catálogo de avatares compartidos"
     },
     "screen": {
       "title": "Pantalla aislada",
