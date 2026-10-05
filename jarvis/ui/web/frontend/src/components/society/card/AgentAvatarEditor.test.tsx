@@ -13,8 +13,13 @@ vi.mock("../figures/AgentFigureViewer", () => ({
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 
-function renderEditor(sample = false) {
-  const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => json({ agent: {} }));
+function renderEditor(sample = false, sharedFigures: unknown[] = []) {
+  const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    if (String(input) === "/api/society/figures/share") {
+      return json({ figures: sharedFigures, total: sharedFigures.length });
+    }
+    return json({ agent: {} });
+  });
   vi.stubGlobal("fetch", fetcher);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -73,6 +78,42 @@ it("patches only the avatar when a catalog base changes", async () => {
   const body = JSON.parse(String(patch?.[1]?.body));
   expect(Object.keys(body)).toEqual(["avatar"]);
   expect(body.avatar.base).toBe("knight");
+  expect(body.avatar.model).toBeUndefined();
+});
+
+it("applies a shared catalog recipe without introducing a model URL", async () => {
+  const shared = [{
+    id: "shared-rogue",
+    name: "Olive Scout",
+    license: "CC0-1.0",
+    source: "reviewed recipe",
+    report_count: 0,
+    recipe: {
+      contract: 1,
+      archetype: "biped",
+      base: "rogue",
+      parts: {},
+      palette: { primary: "#315d45" },
+      style: "fantasy",
+    },
+  }];
+  const { fetcher } = renderEditor(false, shared);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Olive Scout/ }));
+  fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
+
+  await waitFor(() => {
+    expect(fetcher.mock.calls.some(
+      ([url, init]) => String(url) === "/api/society/agents/research" && init?.method === "PATCH",
+    )).toBe(true);
+  });
+  const patch = fetcher.mock.calls.find(
+    ([url, init]) =>
+      String(url) === "/api/society/agents/research" && init?.method === "PATCH",
+  );
+  const body = JSON.parse(String(patch?.[1]?.body));
+  expect(body.avatar.base).toBe("rogue");
+  expect(body.avatar.palette.primary).toBe("#315d45");
   expect(body.avatar.model).toBeUndefined();
 });
 
