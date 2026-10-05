@@ -79,18 +79,42 @@ def _bus(request: Request) -> Any | None:
     return getattr(request.app.state, "bus", None)
 
 
-def _capability() -> dict[str, Any]:
+def _capture_capability() -> tuple[bool, str]:
+    """Whether a capture would run right now, and the reason when not.
+
+    Asks what the capture itself checks: a display, the capture package,
+    and the OS gate (Screen Recording on macOS, Wayland on Linux). A page
+    that said "ready" and then refused on Try it was the old behaviour.
+    """
     import importlib.util  # noqa: PLC0415
+
+    from jarvis.platform.probes import display_present  # noqa: PLC0415
+    from jarvis.screen_context.ports import capture_permission_error  # noqa: PLC0415
+
+    if not display_present():
+        return False, "There is no screen on this computer."
+    if importlib.util.find_spec("mss") is None:
+        return False, "The screen-capture package is not installed."
+    issue = capture_permission_error()
+    if issue is not None:
+        return False, issue.message
+    return True, ""
+
+
+def _capability() -> dict[str, Any]:
 
     from jarvis.appshot.region import picker_capability  # noqa: PLC0415
     from jarvis.cu.indicator.controller import screen_indicator_capability  # noqa: PLC0415
 
-    capture_ok = importlib.util.find_spec("mss") is not None
+    capture_ok, capture_reason = _capture_capability()
     effect_ok, effect_reason = screen_indicator_capability()
     region_ok, region_reason = picker_capability()
+    if not capture_ok:
+        # The picker would freeze the screens for a capture that is refused.
+        region_ok, region_reason = False, capture_reason
     return {
         "capture": capture_ok,
-        "capture_detail": "" if capture_ok else "The screen-capture package is not installed.",
+        "capture_detail": capture_reason,
         "effect": effect_ok,
         "effect_detail": effect_reason,
         "region": region_ok,

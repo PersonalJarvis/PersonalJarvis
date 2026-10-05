@@ -111,6 +111,25 @@ describe("AppshotsView", () => {
     expect(screen.queryByTestId("appshots-clipboard")).toBeNull();
   });
 
+  it("says on the Try row why a capture cannot run here", async () => {
+    const blocked = {
+      ...SETTINGS,
+      readiness: {
+        ...SETTINGS.readiness,
+        capture: false,
+        capture_detail: "Grant Screen Recording.",
+      },
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/appshot/settings") return json(blocked);
+      if (url === "/api/appshot/latest") return json({ appshot: null });
+      return json({}, 404);
+    });
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-try");
+    expect(screen.getByText(/Grant Screen Recording\./)).toBeDefined();
+  });
+
   it("disables every other control while appshots are switched off", async () => {
     fetchMock.mockImplementation(async (url: string) =>
       url === "/api/appshot/settings"

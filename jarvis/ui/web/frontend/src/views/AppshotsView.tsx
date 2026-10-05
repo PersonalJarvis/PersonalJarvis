@@ -613,7 +613,12 @@ export function AppshotsView() {
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
                       : picking
                         ? t("appshots.try_picking")
-                        : t("appshots.try_hint")
+                        : settings.readiness.capture === false
+                          ? t("appshots.effect_unavailable").replace(
+                              "{0}",
+                              settings.readiness.capture_detail,
+                            )
+                          : t("appshots.try_hint")
                   }
                   control={
                     <div className="flex items-center gap-2">
