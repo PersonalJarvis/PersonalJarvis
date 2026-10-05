@@ -18,6 +18,9 @@ import io
 import secrets
 import threading
 
+import pytest
+
+from jarvis.screen_context import service as _service_module
 from jarvis.screen_context.models import (
     DegradationCode,
     RedactionRule,
@@ -36,6 +39,17 @@ from jarvis.screen_context.service import (
     _encode,
     settings_from_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _accessibility_granted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests feed fake UI text; the host's real grant must not decide them.
+
+    A macOS runner has no Accessibility grant, so the real probe withheld
+    every fake node and the redaction tests saw empty text there.
+    """
+    monkeypatch.setattr(_service_module, "accessibility_permission_error", lambda: None)
+
 
 MONITORS = [
     {"left": -1920, "top": 0, "width": 3840, "height": 1080, "name": "virtual"},
