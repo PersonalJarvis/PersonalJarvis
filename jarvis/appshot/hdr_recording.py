@@ -77,7 +77,12 @@ def p010_frame(av: Any, pixel_format: str, y: Any, uv: Any) -> Any:
         fill(frame.planes[0], y >> 6)
         fill(frame.planes[1], uv[..., 0] >> 6)
         fill(frame.planes[2], uv[..., 1] >> 6)
-    tag_hdr10(frame)
+    try:
+        tag_hdr10(frame)
+    except AttributeError:
+        # PyAV before 16 (pinned on Apple Silicon) has no colour properties on
+        # a VideoFrame; the encoder's own tags still mark the stream as HDR10.
+        log.debug("appshot: this PyAV cannot tag frames; the encoder tags the stream")
     return frame
 
 
