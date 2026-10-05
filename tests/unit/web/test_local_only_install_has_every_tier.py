@@ -108,15 +108,25 @@ def test_the_dictation_card_follows_the_server_the_user_configured() -> None:
             providers={"ollama": BrainProviderConfig(base_url="http://gpu.lan:11434")}
         )
     )
-    original = cfg.load_config
-    cfg.load_config = lambda: conf  # type: ignore[assignment]
+    original = cfg.resolve_provider_endpoint
+
+    def configured_endpoint(provider_id: str, *, vendor_default_base_url: str | None = None, config=None):
+        if provider_id == "ollama":
+            return cfg.ResolvedEndpoint(base_url="http://gpu.lan:11434", credential=None, via_proxy=False)
+        return original(
+            provider_id,
+            vendor_default_base_url=vendor_default_base_url,
+            config=config,
+        )
+
+    cfg.resolve_provider_endpoint = configured_endpoint  # type: ignore[assignment]
     try:
         assert family.effective_base_url == "http://gpu.lan:11434/v1"
         # And a server on another machine is keyless but NOT on-device — the
         # privacy promise has to follow the address, not the billing model.
         assert family.runs_on_device is False
     finally:
-        cfg.load_config = original  # type: ignore[assignment]
+        cfg.resolve_provider_endpoint = original  # type: ignore[assignment]
 
 
 def test_the_realtime_tier_keeps_a_self_hosted_option() -> None:
