@@ -28,7 +28,7 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeExplorerStore, type ExplorerView } from "@/store/ideExplorer";
-import { paneTitleFrom, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
+import { paneTitleFrom, recapsFor, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { DiffView } from "./DiffView";
 import {
@@ -136,7 +136,7 @@ function StatusLetter({ status }: { status: ChangeStatus }) {
  */
 function ChangeAuthors({ authors, workspaceId }: { authors: ChangeAuthor[]; workspaceId: string }) {
   const t = useT();
-  const recaps = usePaneRecapsStore((state) => (state.workspaceId === workspaceId ? state.byName : undefined));
+  const recaps = usePaneRecapsStore((state) => recapsFor(state, workspaceId));
   const rows = useWorkspacePanesStore((state) => state.panes);
   if (authors.length === 0) return null;
   const named = authors.map((author) => {
