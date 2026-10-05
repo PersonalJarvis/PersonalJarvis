@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jarvis.core.config import DATA_DIR
 from jarvis.core.path_safety import UnsafePathError, safe_child
-from jarvis.society.figure_sharing import SharedFigureDraft
+from jarvis.society.figure_sharing import PUBLIC_FIGURE_LICENSES, SharedFigureDraft
 
 log = logging.getLogger(__name__)
 
