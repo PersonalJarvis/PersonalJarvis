@@ -26,7 +26,6 @@ the first capture, not at boot.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -421,23 +420,26 @@ class NativeSurfaceCapturer:
                     )
                 if native is not None:
                     return native
-            except Exception:  # noqa: BLE001 — platform policy below decides fallback
+            except Exception:  # noqa: BLE001 — the refusal below is the outcome
                 log.debug("native window capture failed", exc_info=True)
-            if os.name == "nt":
-                raise CaptureUnavailable(
-                    "The focused Windows window could not be captured safely. "
-                    "A desktop-rectangle fallback was refused because another "
-                    "window could overlap it. Bring the window to the foreground and "
-                    "retry; some protected or GPU-rendered windows do not support "
-                    "window-only capture."
-                )
+            # A window handle means "this window ALONE" (the privacy path: a
+            # denylisted window overlaps the rectangle). A desktop-rectangle
+            # grab would photograph exactly that window, so it is refused on
+            # every OS — Linux has no window-only capture at all.
+            raise CaptureUnavailable(
+                "The window could not be captured on its own, and a "
+                "desktop-rectangle fallback was refused because another window "
+                "overlaps it. Bring the window to the foreground or move the "
+                "other window away and retry; some protected or GPU-rendered "
+                "windows do not support window-only capture."
+            )
 
         try:
             if _is_wayland():
                 raise CaptureUnavailable(
-                    "Screen capture is unavailable in this Wayland session. "
-                    "Use an X11 session or install a supported desktop-portal "
-                    "capture backend."
+                    "Screen capture does not work in a Wayland session yet. "
+                    "Sign in with an X11 session (\"GNOME on Xorg\" or "
+                    "\"Plasma (X11)\" on the login screen)."
                 )
             import mss  # type: ignore[import-not-found]  # noqa: PLC0415
         except ImportError as exc:
@@ -533,9 +535,9 @@ def capture_permission_error() -> CapturePermissionIssue | None:
         return CapturePermissionIssue(
             code="wayland_portal",
             message=(
-                "Screen capture is unavailable in this Wayland session because "
-                "no desktop-portal capture backend is installed. Use an X11 "
-                "session or install a supported portal backend, then ask again."
+                "Screen capture does not work in a Wayland session yet. Sign in "
+                "with an X11 session (\"GNOME on Xorg\" or \"Plasma (X11)\" on "
+                "the login screen), then ask again."
             ),
         )
     try:
