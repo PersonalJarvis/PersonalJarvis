@@ -1181,7 +1181,8 @@
     "card": {
       "learned_review_hint": "Gelernte private Skills bleiben beratende Anweisungen. Sende einen als Entwurf an Skills, um ihn vor der globalen Aktivierung zu prüfen.",
       "learned_review": "In Skills prüfen",
-      "learned_reviewing": "Entwurf wird vorbereitet…"
+      "learned_reviewing": "Entwurf wird vorbereitet…",
+      "shared_figures": "Geteilter Avatar-Katalog"
     },
     "screen": {
       "title": "Isolierter Bildschirm",
