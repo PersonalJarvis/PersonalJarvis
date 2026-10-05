@@ -67,10 +67,11 @@ export const useSectionNavHistory = create<SectionNavHistoryState>((set, get) =>
     // Agents has no sidebar. With no earlier visit, back still leaves it
     // for the front page — that is what replaced the sidebar toggle.
     if (section === "agents" && past.length === 0) {
+      const home: SectionId[] = ["agents", ...future];
       set({
         current: "chats",
         past: [],
-        future: ["agents", ...future].slice(0, MAX_HISTORY),
+        future: home.slice(0, MAX_HISTORY),
         navigating: true,
       });
       useEventStore.getState().setActiveSection("chats");
