@@ -1,5 +1,23 @@
 # JARVIS-LAB next remote frontier
 
+## 2026-10-05 continuous reliability state
+
+Current verified remote HEAD: `157afa2d496935be154b554f31646a9a786edadf`.
+
+Recent reliability checkpoints now on the branch:
+- `10ae037`: unpinned fallback provider models no longer get clobbered by static tier defaults.
+- `c372ca5`: Society room test fixture accepts the restricted `read_only` turn contract.
+- `27b3018`: custom CLI aliases and call-sign reservations preserve hyphenated slugs.
+- `e601c95`: the frontier integration gap is closed in the code path: opt-in lazy refresh runs from `BrainManager.generate()` before the first real turn, and the bug register records CI qualification as pending.
+- `bd5358f`: a RESULT carrying another agent's live `run_id` can no longer release that agent's scheduler slot.
+- `157afa2`: malformed terminal RESULTs now release the sender's owned run slot instead of stranding concurrency.
+- `549337a`: duplicate T3 remote-agent documentation was removed from `docs/os-parity.md`.
+
+Current CI qualification is still asynchronous on the latest published commits. Do not mark these newest checkpoints green until the corresponding workflow completes; failures must be triaged by new regression IDs rather than by expanding baselines.
+
+Native macOS qualification remains separate and requires a physical Mac with Accessibility/input permission. It must not be represented as remotely complete.
+
+
 Verified on 2026-10-05: the lead-chat event-routine creation and connection-path readback contract is present at `094a2d4`. Its CI #213 passed static gates, contracts, frontend and the completed portable shards while newer branch activity superseded two Windows shards. PR #1 remains open and draft.
 
 M4 room scheduling is no longer the next unblocked task. The branch now carries bounded live-room scheduling through the existing `SocietyScheduler`, restart recovery, voice completion/status, curator review/taint invariants, and blocking exit contracts. M5 hardening guards are also present for legacy Agents routing, Jarvis-only production seeding, capability-driven teammate proposals, the canonical Society cost surface, locale/enum parity, boot budget, and Ledger accessibility.
