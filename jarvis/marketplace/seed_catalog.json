@@ -134,7 +134,7 @@
     {
       "id": "slack",
       "display_name": "Slack",
-      "description": "Channels, DMs, search and Canvas drafts",
+      "description": "Search, read and post in your channels and DMs",
       "category": "Messaging",
       "logo_slug": "slack",
       "logo_color": "4A154B",
@@ -152,11 +152,7 @@
         "scopes": [
           "chat:write",
           "users:read",
-          "users:read.email",
-          "search:read.public",
-          "search:read.private",
-          "search:read.im",
-          "search:read.mpim",
+          "search:read",
           "channels:history",
           "groups:history",
           "im:history",
@@ -164,20 +160,14 @@
           "channels:read",
           "groups:read",
           "im:read",
-          "mpim:read",
-          "canvases:read",
-          "canvases:write"
+          "mpim:read"
         ],
         "user_scopes_only": true,
         "refresh_supported": true,
         "refresh_token_ttl_days": 30
       },
-      "mcp_server": {
-        "transport": "http",
-        "url": "https://mcp.slack.com/mcp",
-        "auth_header_template": "Authorization: Bearer ${plugin_slack_access_token}"
-      },
-      "post_install_hint_md": "Slack PKCE apps use user-level scopes only — Jarvis acts as you, not as a bot. If your workspace admin requires approval, the OAuth flow will surface that prompt automatically."
+      "native_tool": "slack",
+      "post_install_hint_md": "Sign in to your Slack workspace in the browser and approve access. Jarvis acts as you with your own permissions, not as a bot: it can search and read the channels and direct messages you belong to, and it posts a message only after you confirm it. Some workspaces require an admin to approve new apps; Slack shows that request during sign-in. The sign-in renews itself; if it lapses after 30 days without use, reconnect here."
     },
     {
       "id": "linear",

@@ -204,50 +204,50 @@
     {
       "plugin_id": "slack",
       "result": "BLOCKED",
-      "config_fingerprint": "b63622e53686a82209b37ee568201a59eab8feb3334371c770a17939d4e622ff",
+      "config_fingerprint": "ac279f615bdb7c81ca7e489b3a37eb7c39575779b28c1feda06a3f50353194a1",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Repeated live Plugins UI inspection showed the four channel enumeration scopes and two Canvas scopes in plugin.json; Connect still displays publisher setup pending.",
+          "detail": "A live Plugins UI attempt was observed before 2026-10-05: Connect displayed publisher setup pending. That observation predates the switch to the native Slack Web API tool and the new scope list; the connect dialog for the new configuration has not been re-observed.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "reason": "The shared Slack app registration is pending, and the Slack plugin moved on 2026-10-05 from Slack's hosted MCP server to the native Slack Web API tool. The new configuration has contract tests only; no live sign-in, connected state, smoke action, reconnect or restart has been observed.",
         "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "next_action": "Finish provisioning the shared Slack app (catalog user scopes, HTTPS redirect through the publisher token broker), then run the full clean browser journey with a real read-only slack action (search_messages or read_history), reconnect and restart.",
+        "evidence": "Earlier observation: Connect Slack showed 'Browser sign-in is pending publisher setup. No developer account or client registration is required from you.' The native tool is covered by tests/unit/plugins/tool/test_slack_rest.py only."
       }
     },
     {

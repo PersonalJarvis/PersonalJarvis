@@ -100,24 +100,58 @@ def test_override_keeps_connection_details_but_not_presentation(monkeypatch, tmp
     clear_cache()
 
 
-def test_slack_scopes_cover_channel_listing_and_canvas_drafts() -> None:
+def test_slack_runs_the_native_web_api_tool() -> None:
+    """Slack's hosted MCP server admits only Marketplace-listed or internal
+    apps, so the shared (unlisted) app runs the native Web API tool."""
     slack = _seed().by_id("slack")
     assert slack is not None
-    assert {
-        "channels:read",
-        "groups:read",
-        "im:read",
-        "mpim:read",
-        "canvases:read",
-        "canvases:write",
-    } <= set(slack.auth.scopes)
+    assert slack.native_tool == "slack"
+    assert slack.mcp_server is None
+    assert {"search:read", "channels:read", "groups:read", "im:read", "mpim:read"} <= set(
+        slack.auth.scopes
+    )
+    assert not {"canvases:read", "canvases:write"} & set(slack.auth.scopes)
 
 
+_FIRST_SLACK_SCOPES = [
+    "chat:write",
+    "users:read",
+    "users:read.email",
+    "search:read.public",
+    "search:read.private",
+    "search:read.im",
+    "search:read.mpim",
+    "channels:history",
+    "groups:history",
+    "im:history",
+    "mpim:history",
+]
+_SECOND_SLACK_SCOPES = [
+    *_FIRST_SLACK_SCOPES,
+    "channels:read",
+    "groups:read",
+    "im:read",
+    "mpim:read",
+    "canvases:read",
+    "canvases:write",
+]
+_HOSTED_SLACK_MCP = {
+    "transport": "http",
+    "url": "https://mcp.slack.com/mcp",
+    "auth_header_template": "Authorization: Bearer ${plugin_slack_access_token}",
+}
+
+
+@pytest.mark.parametrize("legacy", [_FIRST_SLACK_SCOPES, _SECOND_SLACK_SCOPES])
 @pytest.mark.parametrize("custom", [None, "scopes", "client", "redirect", "server"])
-def test_slack_scope_upgrade_preserves_custom_auth_and_disk(monkeypatch, tmp_path, custom) -> None:
+def test_slack_scope_upgrade_preserves_custom_auth_and_disk(
+    monkeypatch, tmp_path, custom, legacy
+) -> None:
     clear_cache()
     seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
     plugin = next(item for item in seed["plugins"] if item["id"] == "slack")
+    plugin.pop("native_tool", None)
+    plugin["mcp_server"] = json.loads(json.dumps(_HOSTED_SLACK_MCP))
     plugin["auth"] = {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://slack.com/oauth/v2/authorize",
@@ -125,19 +159,7 @@ def test_slack_scope_upgrade_preserves_custom_auth_and_disk(monkeypatch, tmp_pat
         "revocation_url": "https://slack.com/api/auth.revoke",
         "client_id": "REPLACE_WITH_JARVIS_SLACK_APP_CLIENT_ID",
         "callback_port": 3118,
-        "scopes": [
-            "chat:write",
-            "users:read",
-            "users:read.email",
-            "search:read.public",
-            "search:read.private",
-            "search:read.im",
-            "search:read.mpim",
-            "channels:history",
-            "groups:history",
-            "im:history",
-            "mpim:history",
-        ],
+        "scopes": list(legacy),
         "user_scopes_only": True,
         "refresh_supported": True,
         "refresh_token_ttl_days": 30,
@@ -158,6 +180,7 @@ def test_slack_scope_upgrade_preserves_custom_auth_and_disk(monkeypatch, tmp_pat
     slack = load_catalog().by_id("slack")
 
     assert slack is not None
+    assert slack.native_tool == "slack"
     if custom:
         from jarvis.marketplace.catalog import PluginCatalog
 
@@ -165,8 +188,8 @@ def test_slack_scope_upgrade_preserves_custom_auth_and_disk(monkeypatch, tmp_pat
         assert slack.auth == expected.auth
         assert slack.mcp_server == expected.mcp_server
     else:
-        assert "canvases:write" in slack.auth.scopes
-        assert "channels:read" in slack.auth.scopes
+        assert slack.auth == _seed().by_id("slack").auth
+        assert slack.mcp_server is None
     assert override.read_text(encoding="utf-8") == content
     clear_cache()
 
