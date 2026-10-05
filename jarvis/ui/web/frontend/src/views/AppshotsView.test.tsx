@@ -77,6 +77,40 @@ describe("AppshotsView", () => {
     expect(Object.keys(JSON.parse(String(put[1].body)))).toEqual(["sound"]);
   });
 
+  it("saves the clipboard switch on its own", async () => {
+    const withClipboard = { ...SETTINGS, copy_to_clipboard: true };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/appshot/settings" && init?.method === "PUT") {
+        return json({ ...withClipboard, ...JSON.parse(String(init.body)) });
+      }
+      if (url === "/api/appshot/settings") return json(withClipboard);
+      if (url === "/api/appshot/latest") return json({ appshot: null });
+      return json({}, 404);
+    });
+    render(<AppshotsView />);
+    const toggle = await screen.findByTestId("appshots-clipboard");
+    expect(toggle.getAttribute("data-state")).toBe("checked");
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            url === "/api/appshot/settings" &&
+            init?.method === "PUT" &&
+            JSON.parse(String(init.body)).copy_to_clipboard === false,
+        ),
+      ).toBe(true),
+    );
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+    expect(Object.keys(JSON.parse(String(put[1].body)))).toEqual(["copy_to_clipboard"]);
+  });
+
+  it("hides the clipboard switch while an older backend is still running", async () => {
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-sound");
+    expect(screen.queryByTestId("appshots-clipboard")).toBeNull();
+  });
+
   it("disables every other control while appshots are switched off", async () => {
     fetchMock.mockImplementation(async (url: string) =>
       url === "/api/appshot/settings"

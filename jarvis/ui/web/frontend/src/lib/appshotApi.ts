@@ -30,6 +30,8 @@ export interface AppshotSettings {
   card_seconds: number;
   /** Keep every appshot and edit in the gallery. Absent on an older backend. */
   library?: boolean;
+  /** Copy shortcut and button appshots to the clipboard. Absent on an older backend. */
+  copy_to_clipboard?: boolean;
   sound_effects_master: boolean;
   shortcut: AppshotShortcutStatus;
   region_shortcut: AppshotShortcutStatus;
@@ -58,6 +60,7 @@ export type AppshotSettingsPatch = Partial<
   Pick<
     AppshotSettings,
     "enabled" | "hotkey" | "region_hotkey" | "recording_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
+    | "copy_to_clipboard"
   >
 >;
 

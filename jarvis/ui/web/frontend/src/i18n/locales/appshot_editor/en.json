@@ -101,6 +101,8 @@
     "library_edited_badge": "Edited",
     "library_empty": "No appshots yet. Take one with the shortcut and it shows up here.",
     "library_empty_edited": "No edited appshots yet. Open one, mark it up and save.",
+    "clipboard_label": "Copy to clipboard",
+    "clipboard_hint": "Every appshot you take by shortcut or button also goes on the clipboard, ready to paste with Ctrl+V (Cmd+V on a Mac).",
     "library_label": "Keep appshot history",
     "library_hint": "Keeps every appshot and edit on this computer, the newest 500. Off: nothing new is kept.",
     "library_edit": "Edit",

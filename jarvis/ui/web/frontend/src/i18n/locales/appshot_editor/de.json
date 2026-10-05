@@ -101,6 +101,8 @@
     "library_edited_badge": "Bearbeitet",
     "library_empty": "Noch keine Appshots. Mach einen mit dem Kürzel, dann erscheint er hier.",
     "library_empty_edited": "Noch keine bearbeiteten Appshots. Öffne einen, markiere etwas und speichere.",
+    "clipboard_label": "In die Zwischenablage kopieren",
+    "clipboard_hint": "Jeder Appshot per Tastenkürzel oder Knopf landet auch in der Zwischenablage und lässt sich sofort mit Strg+V einfügen (Cmd+V auf dem Mac).",
     "library_label": "Appshot-Verlauf behalten",
     "library_hint": "Bewahrt jeden Appshot und jede Bearbeitung auf diesem Computer auf, die neuesten 500. Aus: Neues wird nicht aufbewahrt.",
     "library_edit": "Bearbeiten",

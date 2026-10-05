@@ -19,6 +19,28 @@ overlays (the mascot, the bar) take the focus when you click them, so the
 capture looks past them to the app window underneath (BUG-228); with no app
 window there, it takes the whole screen instead.
 
+## Paste it anywhere
+
+Every appshot taken with a shortcut or a **Try it** button also goes on the
+system clipboard, so Ctrl+V (Cmd+V on a Mac) pastes it straight into a chat,
+a mail, a document or an image editor. It is the finished picture, markings
+included, at full resolution (the lossless copy, not the smaller picture the
+assistant gets). Looks the assistant takes on its own, or a spoken "what do
+you see?", never replace what is on the clipboard. **Copy to clipboard** on
+the Appshots page (`[appshot].copy_to_clipboard`) turns it off.
+
+The clipboard holds the same picture in several formats at once, because
+every app asks for a different one (`jarvis/platform/clipboard_image.py`):
+
+| OS | Formats | Who reads what |
+|---|---|---|
+| Windows | `PNG` (registered format, offered first) + `CF_DIB`; Windows adds `CF_BITMAP` and `CF_DIBV5` itself | Browsers, Electron chat apps and Office take the lossless PNG with its transparency; classic Win32 apps (Paint and older tools) take the bitmap, where transparent parts are laid on white instead of turning black |
+| macOS | `public.png` + `public.tiff` on the general pasteboard, set through the built-in JavaScript for Automation bridge (`osascript -l JavaScript`); AppleScript sets the PNG alone if that bridge fails | Modern apps read PNG; TIFF is the pasteboard's native image type that older Cocoa apps read |
+| Linux | `image/png` through `wl-copy` (Wayland) or `xclip` (X11) | Every X11 and Wayland toolkit reads `image/png`. Without either tool nothing is copied and the log names the package to install |
+| Headless | — | No clipboard; nothing is attempted |
+
+Jarvis X screenshots (`[jarvisx].copy_to_clipboard`) use the same code.
+
 ## Selecting an area
 
 The area picker is a short-lived PySide6 process (`python -m
@@ -366,6 +388,7 @@ original any-order behaviour.
 | `effect` | `true` | Flash and corner thumbnail |
 | `card_seconds` | `6` | How long the corner card rests, 0–600 seconds; `0` = until closed |
 | `library` | `true` | Keep every appshot and saved edit in the gallery (`<data dir>/appshots/`, newest 500) |
+| `copy_to_clipboard` | `true` | Put shortcut and button appshots on the clipboard (see [Paste it anywhere](#paste-it-anywhere)) |
 
 ## Operating systems
 

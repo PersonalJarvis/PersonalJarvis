@@ -99,7 +99,9 @@ def test_command_writer_passes_text_only_through_stdin(
 
     assert clipboard._run_command(["pbcopy"], clipboard_text) is True
     assert captured["command"] == ["pbcopy"]
-    assert captured["input"] == clipboard_text
+    assert captured["input"] == clipboard_text.encode("utf-8")
+    # A forked clipboard owner must not hold a pipe open (xclip, wl-copy).
+    assert captured["stdout"] is subprocess.DEVNULL
     assert clipboard_text not in captured["command"]
 
 

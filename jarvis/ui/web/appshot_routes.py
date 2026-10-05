@@ -57,6 +57,7 @@ class SettingsPatch(BaseModel):
     effect: bool | None = None
     card_seconds: int | None = Field(default=None, ge=0, le=600)
     library: bool | None = None
+    copy_to_clipboard: bool | None = None
 
 
 class TakeRequest(BaseModel):
@@ -119,6 +120,7 @@ def _settings_payload() -> dict[str, Any]:
         "effect": bool(block.effect),
         "card_seconds": int(getattr(block, "card_seconds", 6)),
         "library": bool(getattr(block, "library", True)),
+        "copy_to_clipboard": bool(getattr(block, "copy_to_clipboard", True)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
         "region_shortcut": _status("region"),

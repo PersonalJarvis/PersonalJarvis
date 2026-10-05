@@ -178,6 +178,9 @@ async def take_appshot(
         trigger,
         delivered_to,
     )
+    _start_clipboard_copy(
+        shot, trigger, config, selection.action if selection is not None else "done"
+    )
     if selection is not None and selection.action != "done":
         await _finish_action(selection.action, await finished(shot), bus)
     return AppshotResult(
@@ -216,6 +219,10 @@ def _image_size(image: bytes) -> tuple[int, int]:
 
 #: Lossless copies still encoding, by appshot id.
 _MASTERS: dict[str, asyncio.Task[Appshot]] = {}
+#: Appshots the user took on purpose; a look the assistant or a spoken
+#: "what do you see?" took never replaces what the user copied.
+_CLIPBOARD_TRIGGERS = frozenset({"hotkey", "button"})
+_COPIES: set[asyncio.Task[None]] = set()
 
 
 def _start_master(shot: Appshot, markup: Any, config: Any) -> None:
@@ -262,6 +269,36 @@ async def finished(shot: Appshot) -> Appshot:
             log.debug("appshot: lossless copy unavailable", exc_info=True)
     held = get_store().get(shot.id)
     return held if held is not None else replace(shot, master=None)
+
+
+def _start_clipboard_copy(shot: Appshot, trigger: str, config: Any, action: str) -> None:
+    """Put a shortcut or button appshot on the clipboard, ready for Ctrl/Cmd+V.
+
+    Read from ``[appshot].copy_to_clipboard``. The picker's own Copy already
+    copies, so it is not done twice. Runs in the background: the full-quality
+    picture may still be encoding, and the delivery must not wait for it.
+    """
+    if trigger not in _CLIPBOARD_TRIGGERS or action == "copy":
+        return
+    if not bool(getattr(config.appshot, "copy_to_clipboard", True)):
+        return
+    task = asyncio.create_task(_copy_to_clipboard(shot), name="appshot-clipboard")
+    _COPIES.add(task)
+    task.add_done_callback(_COPIES.discard)
+
+
+async def _copy_to_clipboard(shot: Appshot) -> None:
+    try:
+        from jarvis.appshot.card_actions import as_png  # noqa: PLC0415
+        from jarvis.platform.clipboard_image import copy_image  # noqa: PLC0415
+
+        shot = await finished(shot)
+        png = shot.original_png or await asyncio.to_thread(as_png, shot.image)
+        result = await asyncio.to_thread(copy_image, png)
+        if not result.ok:
+            log.info("appshot: not copied to the clipboard (%s)", result.reason)
+    except Exception:  # noqa: BLE001 - the appshot itself is taken and delivered
+        log.warning("appshot: the clipboard copy failed", exc_info=True)
 
 
 async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:

@@ -2727,6 +2727,11 @@ class AppshotConfig(BaseModel):
     #: and ``jarvis.appshot.library``). Off: nothing new is written there.
     library: bool = True
 
+    #: Put every appshot taken by shortcut or button on the system clipboard
+    #: too, so Ctrl/Cmd+V pastes it into any app right away (read by
+    #: ``jarvis.appshot.service``). Looks the assistant takes never copy.
+    copy_to_clipboard: bool = True
+
 
 class JarvisXConfig(BaseModel):
     """Top-level ``[jarvisx]`` config — the built-in screenshot and screen recorder.

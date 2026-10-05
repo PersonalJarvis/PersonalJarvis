@@ -563,6 +563,21 @@ export function AppshotsView() {
                     }
                   />
                 )}
+                {typeof settings.copy_to_clipboard === "boolean" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                    hint={editorReady ? t("appshot_editor.clipboard_hint") : ""}
+                    control={
+                      <Switch
+                        checked={settings.copy_to_clipboard}
+                        disabled={saving}
+                        aria-label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                        data-testid="appshots-clipboard"
+                        onCheckedChange={(copy_to_clipboard) => void save({ copy_to_clipboard })}
+                      />
+                    }
+                  />
+                )}
                 <Row
                   label={t("appshots.try_label")}
                   hint={

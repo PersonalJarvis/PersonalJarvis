@@ -17,6 +17,7 @@ import ctypes
 import logging
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Sequence
 
@@ -194,25 +195,30 @@ def _read_windows_native() -> str | None:
 
 
 def _run_command(command: Sequence[str], text: str) -> bool:
-    """Feed clipboard text to a fixed OS command through UTF-8 stdin."""
+    """Feed clipboard text to a fixed OS command through UTF-8 stdin.
+
+    stderr goes to an anonymous file and stdout nowhere, never a pipe:
+    ``xclip``/``xsel``/``wl-copy`` fork a child that keeps serving the
+    clipboard and inherits both, so a pipe would hold ``run`` until timeout.
+    """
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
-            list(command),
-            input=text,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_COMMAND_TIMEOUT_S,
-            check=False,
-            close_fds=True,
-            creationflags=NO_WINDOW_CREATIONFLAGS,
-        )
+        with tempfile.TemporaryFile() as err:
+            completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
+                list(command),
+                input=text.encode("utf-8"),
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                timeout=_COMMAND_TIMEOUT_S,
+                check=False,
+                close_fds=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            err.seek(0)
+            detail = err.read(4096).decode("utf-8", errors="replace").strip()
     except (OSError, subprocess.SubprocessError) as exc:
         log.warning("clipboard: native copy command unavailable (%s)", exc)
         return False
     if completed.returncode != 0:
-        detail = (completed.stderr or "").strip()
         log.warning(
             "clipboard: native copy command failed with exit %d%s",
             completed.returncode,

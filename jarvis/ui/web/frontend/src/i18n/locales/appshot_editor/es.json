@@ -101,6 +101,8 @@
     "library_edited_badge": "Editado",
     "library_empty": "Aún no hay appshots. Haz uno con el atajo y aparecerá aquí.",
     "library_empty_edited": "Aún no hay appshots editados. Abre uno, márcalo y guárdalo.",
+    "clipboard_label": "Copiar al portapapeles",
+    "clipboard_hint": "Cada appshot que tomes con un atajo o un botón también va al portapapeles, listo para pegar con Ctrl+V (Cmd+V en un Mac).",
     "library_label": "Guardar historial de appshots",
     "library_hint": "Guarda cada appshot y cada edición en este equipo, los 500 más recientes. Desactivado: no se guarda nada nuevo.",
     "library_edit": "Editar",

@@ -1,5 +1,18 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Screenshots paste anywhere (2026-10-05, T2)
+
+Appshots taken by shortcut or button and Jarvis X screenshots go on the
+clipboard in several formats at once (`jarvis/platform/clipboard_image.py`):
+Windows `PNG` + `CF_DIB` (transparency laid on white in the bitmap), macOS
+`public.png` + `public.tiff` through `osascript -l JavaScript` with an
+AppleScript PNG-only fallback, Linux `image/png` through `wl-copy` or `xclip`.
+The Linux copy commands (images and text) no longer wait on a pipe that the
+forked clipboard owner keeps open, which used to report every copy as failed
+after the five-second timeout. Verified live on Windows (PNG, DIB and the
+derived bitmap formats read back); macOS and Linux are covered by unit tests
+of the exact commands, not by a real pasteboard or X11/Wayland session.
+
 ## AppShot colour fidelity: HDR and wide gamut (2026-10-05, T3)
 
 Screenshots and recordings decide at capture time, per monitor, whether the
@@ -796,7 +809,7 @@ implementations, not stubs.
 |---|---|
 | Computer-Use / desktop actions (click, type, hotkey, scroll, drag, windows, apps, screenshots, UI trees) | Full per-OS backends (Win32/UIA, Quartz/AX, xdotool/AT-SPI); honest degradation on Wayland/headless/missing TCC grants |
 | On-demand Screen Context | One-shot capture is wired into the production brain on Windows, macOS, and Linux/X11; UIA/AX/AT-SPI text is source-filtered, the indicator precedes capture, and Wayland/headless/missing grants refuse honestly |
-| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The two-sided shortcuts (both Alt, both Shift, both Ctrl) read key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash and the area picker (both Shift keys, drag a rectangle, then mark it up with its toolbar) are PySide6 overlays where one can run; the markings are burnt into the capture with Pillow on every OS (`jarvis/appshot/markup.py`); Wayland/headless report the area picker unavailable. The appshot editor is web code and behaves the same everywhere; its Copy writes the PNG natively (`jarvis/platform/clipboard_image.py`): Windows `CF_DIB` + the registered PNG format, macOS `osascript` as `«class PNGf»`, Linux `wl-copy` or `xclip`, and with neither the browser clipboard. Save goes to `~/Downloads` on every OS. Verified live on Windows only; see `docs/appshots.md` |
+| Appshots (front-window capture on a shortcut, button or request) | Capture, privacy and delivery are OS-neutral (Screen Context engine, `jarvis/appshot`). The two-sided shortcuts (both Alt, both Shift, both Ctrl) read key state per OS: Windows `GetAsyncKeyState`, macOS `CGEventSourceKeyState` (Input Monitoring grant), Linux/X11 `XQueryKeymap`; Wayland/headless report it unavailable on the Appshots page. The flash and the area picker (both Shift keys, drag a rectangle, then mark it up with its toolbar) are PySide6 overlays where one can run; the markings are burnt into the capture with Pillow on every OS (`jarvis/appshot/markup.py`); Wayland/headless report the area picker unavailable. The appshot editor is web code and behaves the same everywhere; its Copy, and every shortcut or button appshot, writes the picture natively in several formats (`jarvis/platform/clipboard_image.py`): Windows the registered PNG format + `CF_DIB`, macOS `public.png` + `public.tiff` via `osascript -l JavaScript`, Linux `wl-copy` or `xclip`; the editor falls back to the browser clipboard without them. Save goes to `~/Downloads` on every OS. Verified live on Windows only; see `docs/appshots.md` |
 | Voice / audio (capture, playback, VAD, wake, STT, TTS, realtime) | Clean; headless disables voice honestly; WASAPI logic is inert-by-data off Windows |
 | Core (launcher, config, keyring, restart, autostart, tray, elevation, paths) | Clean; per-OS autostart (Registry / LaunchAgent / XDG `.desktop`), keyring falls back to a 0600 file on headless hosts |
 | Data / agents (wiki, contacts, telephony, sessions, missions, skills, self-mod, channels, MCP) | Clean; mission workers run on POSIX with a real process-group reaper |
