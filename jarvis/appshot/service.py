@@ -112,6 +112,13 @@ async def take_appshot(
             )
         service = get_service(bus=bus)
         if scope == "region":
+            # Refuse BEFORE the screens freeze: without the grant the frozen
+            # frame is wallpaper only (macOS) and the refusal would come after
+            # the user had marked up a fake screen.
+            check = getattr(service, "capture_permission_issue", None)
+            issue = await check() if check is not None else None
+            if issue is not None:
+                return AppshotResult(status="refused", reason_code=issue[0], message=issue[1])
             picked = await _pick_area(service, _language(config))
             if isinstance(picked, AppshotResult):
                 return picked
