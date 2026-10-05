@@ -275,6 +275,19 @@ describe("GitOverviewTab", () => {
     expect(within(row("wip/local")).getByTestId("git-branch-link").tagName).toBe("SPAN");
   });
 
+  it("marks every branch as local only, on GitHub, or only on GitHub", async () => {
+    answer = { ...OVERVIEW, branches: [...OVERVIEW.branches, branch("wip/local", { upstream: "", on_github: false })] };
+    render(<GitOverviewTab />);
+    await screen.findAllByTestId("git-branch-row");
+    const location = (name: string) => within(row(name)).getByTestId("git-location");
+    expect(location("wip/local").dataset.location).toBe("local");
+    expect(location("wip/local").textContent).toBe("local only");
+    expect(location("main").dataset.location).toBe("github");
+    expect(location("main").textContent).toBe("on GitHub");
+    fireEvent.click(screen.getByTestId("git-remote-toggle"));
+    expect(location("only-remote").dataset.location).toBe("github_only");
+  });
+
   it("offers GitHub pages and copies from a branch's menu", async () => {
     render(<GitOverviewTab />);
     await screen.findAllByTestId("git-branch-row");

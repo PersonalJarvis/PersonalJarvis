@@ -14,6 +14,8 @@ import {
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
+  Globe,
+  Laptop,
   Loader2,
   RefreshCw,
   Search,
@@ -268,6 +270,40 @@ function MergedChips({ row }: { row: BranchRow }) {
   );
 }
 
+type BranchLocation = "local" | "github" | "github_only";
+
+function branchLocation(row: BranchRow): BranchLocation {
+  if (row.remote_only) return "github_only";
+  return row.upstream || row.on_github ? "github" : "local";
+}
+
+// Where the branch lives, readable at a glance: a laptop while it exists only
+// on this computer (amber — nothing backs it up yet), a globe once it is on GitHub.
+const LOCATION_STYLE: Record<BranchLocation, { icon: typeof Globe; tone: string; label: string; tip: string }> = {
+  local: { icon: Laptop, tone: "border-warning/40 bg-warning/10 text-warning", label: "local_only", tip: "not_pushed" },
+  github: { icon: Globe, tone: "border-info/35 bg-info/10 text-info", label: "on_github", tip: "on_github_tip" },
+  github_only: { icon: Globe, tone: "border-info/35 bg-info/10 text-info", label: "github_only", tip: "github_only_tip" },
+};
+
+function LocationChip({ row }: { row: BranchRow }) {
+  const t = useT();
+  const location = branchLocation(row);
+  const style = LOCATION_STYLE[location];
+  const Icon = style.icon;
+  return (
+    <QuickTooltip content={t(`ide_side_panel.git.${style.tip}`)} side="bottom" className="inline-flex shrink-0">
+      <span
+        data-testid="git-location"
+        data-location={location}
+        className={cn("inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10.5px] font-medium leading-none", style.tone)}
+      >
+        <Icon className="h-3 w-3 shrink-0" aria-hidden />
+        {t(`ide_side_panel.git.${style.label}`)}
+      </span>
+    </QuickTooltip>
+  );
+}
+
 function BranchLine({
   row,
   isDefault,
@@ -325,14 +361,12 @@ function BranchLine({
             </span>
           )}
         </QuickTooltip>
-        {(row.merged_into.length > 0 || meta.length > 0 || row.worktree || unpushed) && (
-          <span className="flex min-w-0 items-center gap-2 text-[10.5px] text-muted-foreground">
-            <MergedChips row={row} />
-            {meta.length > 0 && <span className="shrink-0 tabular-nums">{meta.join(" · ")}</span>}
-            {row.worktree && <span className="shrink-0">{t("ide_side_panel.git.worktree_badge")}</span>}
-            {unpushed && <span className="shrink-0">{t("ide_side_panel.git.local_only")}</span>}
-          </span>
-        )}
+        <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10.5px] text-muted-foreground">
+          <LocationChip row={row} />
+          <MergedChips row={row} />
+          {meta.length > 0 && <span className="shrink-0 tabular-nums">{meta.join(" · ")}</span>}
+          {row.worktree && <span className="shrink-0">{t("ide_side_panel.git.worktree_badge")}</span>}
+        </span>
       </span>
       <PullRequestBadge prs={row.pull_requests} />
       <CiBadge ci={row.ci} stale={row.ci_stale} />
@@ -473,6 +507,14 @@ function Legend() {
         <li className="flex items-center gap-1.5">
           <GitMerge className="h-3.5 w-3.5 text-[hsl(var(--gh-merged))]" aria-hidden />
           {t("ide_side_panel.git.legend_merged")}
+        </li>
+        <li className="flex items-center gap-1.5">
+          <Laptop className="h-3.5 w-3.5 text-warning" aria-hidden />
+          {t("ide_side_panel.git.not_pushed")}
+        </li>
+        <li className="flex items-center gap-1.5">
+          <Globe className="h-3.5 w-3.5 text-info" aria-hidden />
+          {t("ide_side_panel.git.on_github_tip")}
         </li>
       </ul>
     </div>
