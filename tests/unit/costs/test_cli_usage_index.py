@@ -536,6 +536,69 @@ def test_codex_fork_replays_its_parent_but_is_counted_once(tmp_path: Path) -> No
     assert {t.model for t in turns} == {"gpt-5.6-terra"}
 
 
+def test_cli_index_persists_account_id_and_reindexes_when_owner_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    home = tmp_path / "home"
+    transcript = _claude_path(home)
+
+    monkeypatch.setattr(
+        "jarvis.costs.cli_usage_index._account_id_for_root",
+        lambda agent, root: "claude:work",
+    )
+    _write(transcript, [_claude_line(uuid="u1", msg_id="msg_a")])
+    refresh(data_dir=data, home=home)
+
+    (first,) = _all(data)
+    assert first.account_id == "claude:work"
+    (first_rollup,) = rollups(
+        data_dir=data, since_ms=0, until_ms=_FAR_FUTURE, bucket_ms=86_400_000
+    )
+    assert first_rollup.account_id == "claude:work"
+
+    monkeypatch.setattr(
+        "jarvis.costs.cli_usage_index._account_id_for_root",
+        lambda agent, root: "claude:other",
+    )
+    refresh(data_dir=data, home=home)
+
+    (second,) = _all(data)
+    assert second.account_id == "claude:other"
+    import sqlite3
+
+    with sqlite3.connect(index_db_path(data)) as conn:
+        column = conn.execute(
+            "PRAGMA table_info(cli_turns)"
+        ).fetchall()
+        assert any(row[1] == "account_id" for row in column)
+        stored = conn.execute("SELECT account_id FROM cli_turns").fetchone()
+    assert stored[0] == "claude:other"
+
+
+def test_cli_account_root_mapping_uses_registry_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from jarvis import agent_accounts
+    from jarvis.costs import cli_usage_index
+
+    root = tmp_path / ".claude"
+    monkeypatch.setattr(
+        agent_accounts,
+        "list_accounts",
+        lambda platform: [
+            SimpleNamespace(
+                id="claude:work",
+                config_dir=root,
+            )
+        ],
+    )
+
+    assert cli_usage_index._account_id_for_root(AGENT_CLAUDE, root) == "claude:work"
+
+
 def test_an_index_built_under_an_older_rule_is_reread(tmp_path: Path) -> None:
     """A schema bump re-reads every transcript and corrects its rows in place —
     the table never empties, so a report taken mid-way is never a fraction."""
