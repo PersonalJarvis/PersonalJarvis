@@ -162,6 +162,8 @@ def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: 
     assert body["published"] is True
     figure_id = body["figure"]["id"]
     assert body["figure"]["status"] == "active"
+    assert body["figure"]["report_count"] == 0
+    assert "reports" not in body["figure"]
 
     duplicate = client.post("/api/society/figures/share", json=safe)
     assert duplicate.status_code == 200
@@ -171,6 +173,8 @@ def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: 
     assert listed.status_code == 200
     assert listed.json()["total"] == 1
     assert listed.json()["figures"][0]["id"] == figure_id
+    assert listed.json()["figures"][0]["report_count"] == 0
+    assert "reports" not in listed.json()["figures"][0]
 
     assert client.post(
         f"/api/society/figures/share/{figure_id}/report",
@@ -182,6 +186,9 @@ def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: 
     )
     assert reported.status_code == 200
     assert reported.json() == {"reported": figure_id, "reports": 1}
+    relisted = client.get("/api/society/figures/share").json()["figures"][0]
+    assert relisted["report_count"] == 1
+    assert "reports" not in relisted
 
     delisted = client.delete(f"/api/society/figures/share/{figure_id}")
     assert delisted.status_code == 200
