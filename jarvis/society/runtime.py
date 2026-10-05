@@ -179,6 +179,7 @@ class SocietyRuntime:
             rooms=self.rooms,
             room_turn=self._dispatch_room_turn,
             room_settled=self._room_settled,
+            room_halt=self._settle_room_for_kill_switch,
             curate=self._curate_result,
             budget_tracker_getter=self._get_budget,
         )

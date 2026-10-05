@@ -885,7 +885,10 @@ async def test_failed_live_room_turn_records_cost_before_failure(tmp_path: Path)
         svc.store.close()
 
 
-async def test_kill_switch_recovers_cancelled_room_cost_without_watcher_queue(tmp_path: Path):
+@pytest.mark.parametrize("stop_path", ["runtime", "scheduler_recovery"])
+async def test_kill_switch_recovers_cancelled_room_cost_without_watcher_queue(
+    tmp_path: Path, stop_path: str,
+):
     from jarvis.society.events import RoomState
 
     svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
@@ -916,12 +919,20 @@ async def test_kill_switch_recovers_cancelled_room_cost_without_watcher_queue(tm
             cost_usd=0.31,
         )
 
-        result = await rt.engage_kill_switch()
+        if stop_path == "runtime":
+            result = await rt.engage_kill_switch()
+            assert result["engaged"] is True
+        else:
+            # Recovery can observe the persisted flag while the master stop is
+            # still cancelling chats. It must use the same owned-turn cleanup.
+            await rt.store.set_kill_switch(True)
+            await rt.scheduler.drive_rooms()
         settled = await rt.rooms.get(room.room_id)
-        assert result["engaged"] is True
         assert settled is not None
         assert settled.state is RoomState.SETTLED
         assert settled.settle_reason == "kill_switch"
+        assert svc.cancelled_turns == ["turn-1"]
+        assert rt.scheduler.running == {}
 
         events = await rt.store.events_for_trace(room.trace_id)
         says = [event for event in events if event.msg_type is MsgType.SAY]

@@ -50,6 +50,7 @@ __all__ = [
     "DispatchHook",
     "DeliverHook",
     "RoomSettledHook",
+    "RoomHaltHook",
     "RoomTurnHook",
     "SocietyScheduler",
     "validate_result",
@@ -62,6 +63,7 @@ DispatchHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[str]]
 DeliverHook = Callable[[AgentRecord, SocietyEnvelope], Awaitable[None]]
 RoomTurnHook = Callable[[AgentRecord, Room, str], Awaitable[str]]
 RoomSettledHook = Callable[[SocietyEnvelope], Awaitable[None]]
+RoomHaltHook = Callable[[Room], Awaitable[Room]]
 # Curating a RESULT stages knowledge behind the existing human review gate.
 # This callback never dispatches work and is not a second orchestrator.
 CurateHook = Callable[[SocietyEnvelope], Awaitable[None]]
@@ -101,6 +103,7 @@ class SocietyScheduler:
         rooms: Rooms | None = None,
         room_turn: RoomTurnHook | None = None,
         room_settled: RoomSettledHook | None = None,
+        room_halt: RoomHaltHook | None = None,
         curate: CurateHook | None = None,
         budget_tracker: Any | None = None,
         budget_tracker_getter: Callable[[], Any | None] | None = None,
@@ -113,6 +116,7 @@ class SocietyScheduler:
         self._rooms = rooms
         self._room_turn = room_turn
         self._room_settled = room_settled
+        self._room_halt = room_halt
         self._curate = curate
         self._budget = budget_tracker
         self._budget_getter = budget_tracker_getter
@@ -170,7 +174,10 @@ class SocietyScheduler:
         if room is None or room.state is not RoomState.RUNNING or not room.live:
             return
         if await self._store.kill_switch():
-            await rooms.settle(room_id, reason="kill_switch")
+            if self._room_halt is not None:
+                await self._room_halt(room)
+            else:
+                await rooms.settle(room_id, reason="kill_switch")
             return
 
         prefix = f"room:{room_id}:"
