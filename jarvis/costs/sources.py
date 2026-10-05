@@ -340,6 +340,7 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
         sessions: dict[str, sqlite3.Row] = {}
         session_has_surface = False
         session_has_vendor_session = False
+        session_has_account_id = False
         if _has_table(conn, "agent_chat_sessions"):
             try:
                 session_has_surface = any(
@@ -368,6 +369,19 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 columns += ", surface"
             if session_has_vendor_session:
                 columns += ", vendor_session"
+            try:
+                session_has_account_id = any(
+                    str(row["name"]) == "account_id"
+                    for row in conn.execute("PRAGMA table_info(agent_chat_sessions)")
+                )
+            except sqlite3.Error as exc:
+                log.debug(
+                    "cost read model: cannot inspect agent chat account-id column (%s)",
+                    exc,
+                )
+                session_has_account_id = False
+            if session_has_account_id:
+                columns += ", account_id"
             for row in conn.execute(f"SELECT {columns} FROM agent_chat_sessions"):
                 sessions[str(row["session_id"])] = row
 
@@ -456,6 +470,11 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 if runner in SUBSCRIPTION_RUNNERS and vendor_session
                 else str(row["session_id"] or "")
             )
+            account_id = (
+                str(session["account_id"] or "")
+                if session is not None and session_has_account_id
+                else ""
+            )
             yield CostEntry(
                 ts_ms=_int(row["ts_ms"]),
                 surface=SURFACE_SOCIETY if chat_surface == "society" else SURFACE_AGENT_CHAT,
@@ -470,6 +489,7 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 ref_id=ref_id,
                 label=_clip(session["title"] if session is not None else ""),
                 runner=runner,
+                account_id=account_id,
             )
     except sqlite3.Error as exc:
         log.warning("cost read model: agent chat source failed (%s)", exc)
