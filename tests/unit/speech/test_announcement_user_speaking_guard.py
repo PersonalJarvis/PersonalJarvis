@@ -30,6 +30,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -78,7 +79,7 @@ class FakePlayer:
 def _make_pipeline(tts: FakeTTS, bus: EventBus, player: FakePlayer) -> SpeechPipeline:
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     pipeline._player = player  # type: ignore[assignment]
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 async def _flush_deferred() -> None:
