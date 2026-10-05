@@ -329,6 +329,69 @@ async def test_bound_chat_ask_gates_monitor_without_widening_roster(rt: SocietyR
     assert filt(TOOLS)["gmail"].risk_tier_for_args({"action": "list"}) == "ask"
 
 
+async def test_in_flight_tool_rechecks_live_grants(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailbox", grant_mode="allowlist", grants=["plugin:gmail"])
+    session = SimpleNamespace(session_id="society:mailbox", permission_mode="bypass")
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    ctx = SimpleNamespace(approved_by="auto")
+
+    assert (await gated.execute({"action": "list"}, ctx)).success
+    await rt.roster.update("mailbox", {"grants": []})
+    blocked = await gated.execute({"action": "list"}, ctx)
+
+    assert not blocked.success
+    assert blocked.output["reason"] == "blocked_by_policy"
+    assert calls == [{"action": "list"}]
+
+
+async def test_in_flight_tool_rechecks_live_session_mode(rt: SocietyRuntime, monkeypatch: pytest.MonkeyPatch):
+    agent, _ = await rt.roster.create(name="Mailbox", approval_mode="bypass")
+    session = SimpleNamespace(
+        session_id="society:mailbox",
+        surface="society",
+        permission_mode="bypass",
+    )
+
+    class Store:
+        def get_session(self, session_id: str):
+            return session if session_id == session.session_id else None
+
+    monkeypatch.setattr(rt, "_get_chat", lambda: SimpleNamespace(store=Store()))
+    await society_system_extra(None, None, session)
+
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    ctx = SimpleNamespace(approved_by="auto")
+
+    assert (await gated.execute({"action": "list"}, ctx)).success
+    session.permission_mode = "plan"
+    blocked = await gated.execute({"action": "list"}, ctx)
+
+    assert not blocked.success
+    assert blocked.output["reason"] == "blocked_by_policy"
+    assert calls == [{"action": "list"}]
+
+
 async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime):
     await rt.roster.create(name="Mailer", approval_mode="bypass")
     session = SimpleNamespace(session_id="society:mailer", permission_mode="bypass")
