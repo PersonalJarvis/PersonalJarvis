@@ -43,6 +43,8 @@ function openQuestion(timeline: Timeline): { block: ToolBlock; question: Questio
 const PLAN_PROSE = cn(
   "prose prose-neutral max-w-none text-sm leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
   "prose-p:my-1.5 prose-p:text-foreground prose-li:text-foreground prose-headings:text-foreground-strong prose-strong:text-foreground-strong",
+  // A plan is read inside a small card: its headings stay at reading size.
+  "prose-headings:mb-1 prose-headings:mt-3 prose-h1:text-base prose-h2:text-sm prose-h3:text-sm",
   "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
 );
 
