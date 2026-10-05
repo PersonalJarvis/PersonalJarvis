@@ -72,9 +72,6 @@ vi.mock("@/views/ProfileView", () => ({ ProfileView: stub("TAB_PROFILE") }));
 vi.mock("@/views/AssistantProfileView", () => ({
   AssistantProfileView: stub("TAB_INSTRUCTIONS"),
 }));
-vi.mock("@/views/contacts/ContactsView", () => ({
-  ContactsView: stub("TAB_CONTACTS"),
-}));
 vi.mock("@/views/socials/SocialsView", () => ({ SocialsView: stub("TAB_SOCIALS") }));
 vi.mock("@/views/ApiKeysView", () => ({ ApiKeysView: stub("TAB_APIKEYS") }));
 vi.mock("@/views/TelephonyView", () => ({
@@ -96,7 +93,6 @@ const NAV_IDS = [
   "pets",
   "profile",
   "agent-instructions",
-  "contacts",
   "socials",
   "apikeys",
   "costs",
@@ -185,7 +181,6 @@ describe("SettingsHubView tab resolution", () => {
     ["settings", "TAB_SETTINGS"],
     ["profile", "TAB_PROFILE"],
     ["agent-instructions", "TAB_INSTRUCTIONS"],
-    ["contacts", "TAB_CONTACTS"],
     ["socials", "TAB_SOCIALS"],
     ["apikeys", "TAB_APIKEYS"],
     ["pets", "TAB_PETS"],
@@ -213,12 +208,12 @@ describe("SettingsHubView tab resolution", () => {
     ).toBe("page");
   });
 
-  it("lists neither Local models nor Computers", async () => {
+  it("lists neither Local models nor Contacts", async () => {
     render(<SettingsHubView />);
     await screen.findByTestId("TAB_SETTINGS");
 
     expect(screen.queryByTestId("settings-hub-nav-local-models")).toBeNull();
-    expect(screen.queryByTestId("settings-hub-nav-computers")).toBeNull();
+    expect(screen.queryByTestId("settings-hub-nav-contacts")).toBeNull();
   });
 
   it("falls back to Settings for an unexpected section id", async () => {

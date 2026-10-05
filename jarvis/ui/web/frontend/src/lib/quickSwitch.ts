@@ -79,6 +79,7 @@ const ALIASES: Partial<Record<string, readonly string[]>> = {
   visualization: ["outputs", "results", "images", "pages"],
   costs: ["tokens", "usage", "money", "billing", "budget"],
   sessions: ["transcripts", "recordings", "history"],
+  computers: ["servers", "ssh", "vps", "remote", "machines"],
   "agent-instructions": ["assistant", "soul", "soul md", "character", "persona", "instructions", "memory md"],
   marketplace: ["store", "shop", "install"],
   board: ["stats", "dashboard", "activity"],

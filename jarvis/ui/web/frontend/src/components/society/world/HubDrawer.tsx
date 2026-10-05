@@ -150,7 +150,7 @@ export const HUBS: Record<KitPlace, HubConfig> = {
   comms: {
     titleKey: "drawer_comms_title",
     hintKey: "drawer_comms_hint",
-    section: "contacts",
+    section: null,
     groups: [
       { labelKey: "comms_group_mail", color: "#06d6a0", items: COMMS_TOOLS },
       { labelKey: "comms_group_people", color: "#4cc9f0", items: COMMS_PEOPLE },

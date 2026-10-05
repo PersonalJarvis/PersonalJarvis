@@ -24,8 +24,8 @@ import { cn } from "@/lib/utils";
  * (General · System · Activity) and the selected section on the right:
  *
  *   General: General, Keyboard shortcuts, Appshots, My Pets, Profile,
- *            {name} (the assistant), Contacts, Socials
- *   System: API Keys, Jarvis actions
+ *            {name} (the assistant), Socials
+ *   System: Computers, API Keys, Jarvis actions
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
@@ -53,11 +53,6 @@ const ProfileTab = lazy(() =>
 const AssistantTab = lazy(() =>
   import("@/views/AssistantProfileView").then((m) => ({ default: m.AssistantProfileView })),
 );
-const ContactsTab = lazy(() =>
-  import("@/views/contacts/ContactsView").then((m) => ({
-    default: m.ContactsView,
-  })),
-);
 const SocialsTab = lazy(() =>
   import("@/views/socials/SocialsView").then((m) => ({
     default: m.SocialsView,
@@ -70,6 +65,9 @@ const TelephonySetupTab = lazy(() =>
   import("@/views/TelephonyView").then((m) => ({
     default: m.TelephonySetupView,
   })),
+);
+const ComputersTab = lazy(() =>
+  import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
 );
 const JarvisActionsTab = lazy(() =>
   import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
@@ -100,9 +98,9 @@ type HubNavId =
   | "pets"
   | "profile"
   | "agent-instructions"
-  | "contacts"
   | "socials"
   | "apikeys"
+  | "computers"
   | "jarvis-actions"
   | "costs"
   | "feedback";
@@ -117,13 +115,12 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
       "pets",
       "profile",
       "agent-instructions",
-      "contacts",
       "socials",
     ],
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["apikeys", "jarvis-actions"],
+    ids: ["computers", "apikeys", "jarvis-actions"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -135,10 +132,10 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   settings: SettingsTab,
   profile: ProfileTab,
   "agent-instructions": AssistantTab,
-  contacts: ContactsTab,
   socials: SocialsTab,
   apikeys: ApiKeysTab,
   "telephony-setup": TelephonySetupTab,
+  computers: ComputersTab,
   appshots: AppshotsTab,
   shortcuts: ShortcutsTab,
   pets: PetsTab,
@@ -158,8 +155,6 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "profile", highlight: "profile" };
     case "agent-instructions":
       return { content: "agent-instructions", highlight: "agent-instructions" };
-    case "contacts":
-      return { content: "contacts", highlight: "contacts" };
     case "socials":
       return { content: "socials", highlight: "socials" };
     case "apikeys":
@@ -167,6 +162,8 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "apikeys", highlight: "apikeys" };
     case "telephony-setup":
       return { content: "telephony-setup", highlight: "apikeys" };
+    case "computers":
+      return { content: "computers", highlight: "computers" };
     case "appshots":
       return { content: "appshots", highlight: "appshots" };
     case "shortcuts":

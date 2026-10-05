@@ -17,7 +17,7 @@ import {
   CaptureIcon,
   ChatIcon,
   CodeIcon,
-  ContactsIcon,
+  ComputersIcon,
   DocsIcon,
   ExtensionsIcon,
   FeedbackIcon,
@@ -181,7 +181,6 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: AssistantIcon,
       fallbackLabel: "Assistant",
     },
-    { id: "contacts", labelKey: "nav.contacts", icon: ContactsIcon },
     // Spend & Tokens — every token the app spent, priced per provider, model
     // and role. It reports, it does not configure.
     { id: "costs", labelKey: "nav.costs", icon: SpendIcon, fallbackLabel: "Spend" },
@@ -193,6 +192,15 @@ export const NAV_GROUPS: NavItem[][] = [
   // Telefonie" voice command lands on the "telephony" id. Settings likewise
   // fronts the former "Taskbar" + "Languages" sections.
   [
+    // Computers: the servers and virtual machines the assistant and its agents
+    // can work on besides this one (a rented VPS, a hosting-account import, a
+    // local VM). A Settings-hub entry, first under System.
+    {
+      id: "computers",
+      labelKey: "nav.computers",
+      icon: ComputersIcon,
+      fallbackLabel: "Computers",
+    },
     {
       id: "apikeys",
       labelKey: "nav.apikeys",
@@ -273,11 +281,11 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "languages",
   "profile",
   "agent-instructions",
-  "contacts",
   "socials",
   "apikeys",
   "telephony",
   "telephony-setup",
+  "computers",
   "appshots",
   "shortcuts",
   "pets",

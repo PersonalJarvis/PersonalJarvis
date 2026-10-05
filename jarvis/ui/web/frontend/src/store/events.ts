@@ -70,12 +70,13 @@ export type SectionId =
   | "profile"
   | "memory"
   | "apikeys"
+  // Computers: the user's own servers and local VMs, reached over SSH.
+  | "computers"
   | "settings"
   | "telephony"
   | "telephony-setup"
   | "socials"
   | "taskbar"
-  | "contacts"
   | "feedback"
   | "agent-instructions"
   // Appshots: the shortcut, destination, sound and flash for showing the
@@ -132,12 +133,12 @@ export const SECTION_IDS = [
   "profile",
   "memory",
   "apikeys",
+  "computers",
   "settings",
   "telephony",
   "telephony-setup",
   "socials",
   "taskbar",
-  "contacts",
   "feedback",
   "agent-instructions",
   "appshots",
@@ -229,12 +230,12 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   profile: "Profile",
   memory: "Notes",
   apikeys: "API Keys",
+  computers: "Computers",
   settings: "Settings",
   telephony: "Telephony",
   "telephony-setup": "Telephony setup",
   socials: "Socials",
   taskbar: "Taskbar",
-  contacts: "Contacts",
   feedback: "Feedback",
   "agent-instructions": "Assistant",
   appshots: "Appshots",
