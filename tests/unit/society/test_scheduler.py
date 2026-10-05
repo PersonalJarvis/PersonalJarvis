@@ -225,6 +225,74 @@ async def test_room_rechecks_paused_target_after_dispatch_wait(tmp_path: Path):
         scheduler.detach()
         await store.close()
 
+async def test_assign_waiting_on_agent_lock_is_blocked_by_kill_switch(world):
+    store, _, scheduler, _, _ = world
+    started = asyncio.Event()
+    release = asyncio.Event()
+    dispatched: list[str] = []
+
+    async def slow_dispatch(target, env):
+        dispatched.append(env.trace_id)
+        started.set()
+        await release.wait()
+        return f"run-{len(dispatched)}"
+
+    scheduler._dispatch = slow_dispatch
+    first = _assign("jarvis", "scout", trace="kill-race-a")
+    second = _assign("jarvis", "scout", trace="kill-race-b")
+    first_task = asyncio.create_task(scheduler._on_assign(first))
+    await started.wait()
+    second_task = asyncio.create_task(scheduler._on_assign(second))
+    await asyncio.sleep(0)
+    await store.set_kill_switch(True)
+    release.set()
+    await asyncio.gather(first_task, second_task)
+
+    assert dispatched == ["kill-race-a"]
+    assert scheduler.running == {"run-1": "scout"}
+    assert await _vetoes(store, "kill-race-b") == [str(FailureReason.KILL_SWITCH)]
+
+
+async def test_room_waiting_on_agent_lock_is_blocked_by_kill_switch(tmp_path: Path):
+    store = SocietyStore(tmp_path / "rooms-kill-race.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    scout, _ = await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    rooms = Rooms(store)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def slow_room_turn(target, room, claim_id):
+        calls.append(room.room_id)
+        started.set()
+        await release.wait()
+        return f"run-{len(calls)}"
+
+    first = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
+    second = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
+    scheduler = SocietyScheduler(store, roster, rooms=rooms, room_turn=slow_room_turn).attach()
+    try:
+        await roster.update(scout.agent_id, {"max_concurrent_runs": 2})
+        first_task = asyncio.create_task(scheduler.drive_room(first.room_id))
+        await started.wait()
+        second_task = asyncio.create_task(scheduler.drive_room(second.room_id))
+        await asyncio.sleep(0)
+        await store.set_kill_switch(True)
+        release.set()
+        await asyncio.gather(first_task, second_task)
+
+        assert calls == [first.room_id]
+        second_loaded = await rooms.get(second.room_id)
+        assert second_loaded is not None
+        assert second_loaded.state is RoomState.SETTLED
+        assert second_loaded.settle_reason == "kill_switch"
+    finally:
+        scheduler.detach()
+        await store.close()
+
 async def test_room_open_honors_kill_switch(tmp_path: Path):
     store = SocietyStore(tmp_path / "room-kill.db")
     await store.open()
