@@ -12,7 +12,6 @@ import {
   NotebookPen,
   Paperclip,
   ShieldCheck,
-  ShieldOff,
   Square,
 } from "lucide-react";
 
@@ -556,6 +555,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
   const hasPlan = Boolean((provider?.permission_modes ?? []).some((m) => m.id === "plan"));
   const planOn = draft.permissionMode === "plan";
+  // The front page has no Plan switch (maintainer, 2026-10-05): a chat left
+  // in Plan from before would stay read-only with nothing on screen saying
+  // so, so it returns to the stance Build would use.
+  useEffect(() => {
+    if (minimal && planOn && !locks?.permissionMode) void setPlan(false);
+  }, [minimal, planOn, locks?.permissionMode, setPlan]);
   // Every mode wears its stance's glyph (permissionIcons.ts) in the list and,
   // once picked, on the pill — the Combobox draws the selected option's icon
   // on its trigger, so the column's shield below only shows for a pick the
@@ -761,8 +766,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           {provider && permissionModes.length > 0 && (
             <>
               <ControlSeparator />
-              {/* The stance as glyph and word. Full access wears the warning
-                  hue, so "nothing asks" reads before anyone opens the menu. */}
+              {/* The stance as glyph and word, in the row's one grey like
+                  every other pick — no stance is singled out by colour. */}
               <span
                 title={locks?.permissionMode ?? [permissionLabel, permissionDescription].filter(Boolean).join(" — ")}
                 className="inline-flex min-w-0 shrink"
@@ -780,34 +785,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
                   className={cn(
                     COMPOSER_CONTROL_CLASS,
                     "max-w-[200px] max-md:[&>span.truncate]:sr-only",
-                    permissionModeIcon(permissionValue) === ShieldOff
-                      ? "text-warning hover:text-warning [&_svg]:text-warning"
-                      : undefined,
                   )}
                 />
               </span>
             </>
-          )}
-          {hasPlan && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={planOn}
-              aria-label={planOn ? t("agent_chat.mode_plan") : t("agent_chat.mode_build")}
-              data-testid="composer-plan"
-              onClick={() => void setPlan(!planOn)}
-              disabled={Boolean(locks?.permissionMode)}
-              title={locks?.permissionMode ?? (planOn ? t("agent_chat.plan_hint") : t("agent_chat.build_hint"))}
-              className={cn(
-                "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
-                planOn
-                  ? "bg-accent-soft px-2.5 text-accent"
-                  : "w-8 justify-center text-muted-foreground hover:bg-secondary hover:text-foreground",
-              )}
-            >
-              <NotebookPen className="h-4 w-4" aria-hidden />
-              {planOn && t("agent_chat.mode_plan")}
-            </button>
           )}
           <span className="min-w-2 flex-1" />
           <input
