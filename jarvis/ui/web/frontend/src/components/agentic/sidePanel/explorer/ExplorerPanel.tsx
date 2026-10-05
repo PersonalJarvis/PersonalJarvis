@@ -41,7 +41,7 @@ import {
   type FileDiff,
   type WorkspaceChanges,
 } from "./explorerApi";
-import { fileIcon } from "./fileIcon";
+import { FileTypeIcon } from "./FileTypeIcon";
 
 /** How often git is asked what changed while the Changes or Folder tab is on screen. */
 const CHANGES_POLL_MS = 6000;
@@ -321,7 +321,6 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
           ) : (
             <ul data-testid="explorer-changes">
               {changedFiles.map((file) => {
-                const Icon = file.is_directory ? Folder : fileIcon(file.path);
                 const authors = file.authors ?? [];
                 return (
                   <li key={file.path}>
@@ -335,7 +334,11 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
                       title={`${file.path} — ${t("ide_side_panel.explorer.drag_hint")}`}
                       className="group flex min-h-9 w-full items-center gap-2 px-3 py-1 text-left hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                     >
-                      <Icon className={cn("h-4 w-4 shrink-0", STATUS_TONE[file.status])} aria-hidden />
+                      {file.is_directory ? (
+                        <Folder className={cn("h-4 w-4 shrink-0", STATUS_TONE[file.status])} aria-hidden />
+                      ) : (
+                        <FileTypeIcon path={file.path} />
+                      )}
                       <span className="flex min-w-0 flex-1 flex-col leading-tight">
                         <span className={cn("truncate text-[13px] text-foreground", file.status === "deleted" && "line-through decoration-destructive/60")}>
                           {baseName(file.path)}
@@ -463,7 +466,7 @@ function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, abso
       {rows.map(({ item, depth }) => {
         const change = changeMap.get(item.path);
         const open = expanded.has(item.path);
-        const Icon = item.is_directory ? (open ? FolderOpen : Folder) : fileIcon(item.name);
+        const FolderIcon = open ? FolderOpen : Folder;
         const hasChangeInside = item.is_directory && changedFolders.has(item.path);
         return (
           <li key={item.path} role="treeitem" aria-expanded={item.is_directory ? open : undefined}>
@@ -486,13 +489,14 @@ function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, abso
                   open && "rotate-90",
                 )}
               />
-              <Icon
-                aria-hidden
-                className={cn(
-                  "h-4 w-4 shrink-0",
-                  change ? STATUS_TONE[change.status] : item.is_directory ? "text-muted-foreground" : "text-muted-foreground/80",
-                )}
-              />
+              {item.is_directory ? (
+                <FolderIcon
+                  aria-hidden
+                  className={cn("h-4 w-4 shrink-0", change ? STATUS_TONE[change.status] : "text-muted-foreground")}
+                />
+              ) : (
+                <FileTypeIcon path={item.name} />
+              )}
               <span className={cn("min-w-0 flex-1 truncate", change ? STATUS_TONE[change.status] : "text-foreground/90")}>
                 {item.name}
               </span>
@@ -566,7 +570,6 @@ function FileViewer({ workspaceId, path, change, onBack, onReference, referenceL
   }, [workspaceId, path]);
 
   const relative = diff?.path ?? path;
-  const Icon = fileIcon(baseName(relative));
   const known = change.get(relative);
   const status = diff && diff.status !== "unchanged" ? diff.status : known?.status;
 
@@ -589,9 +592,11 @@ function FileViewer({ workspaceId, path, change, onBack, onReference, referenceL
             title={t("ide_side_panel.explorer.drag_hint")}
             className="flex min-w-0 flex-1 cursor-grab items-center gap-2"
           >
-            <Icon className={cn("h-4 w-4 shrink-0", status ? STATUS_TONE[status as ChangeStatus] : "text-muted-foreground")} aria-hidden />
+            <FileTypeIcon path={relative} />
             <span className="flex min-w-0 flex-col leading-tight">
-              <span className="truncate text-[13px] font-semibold text-foreground">{baseName(relative)}</span>
+              <span className={cn("truncate text-[13px] font-semibold", status ? STATUS_TONE[status as ChangeStatus] : "text-foreground")}>
+                {baseName(relative)}
+              </span>
               {parentPath(relative) && <span className="truncate text-[10.5px] text-muted-foreground">{parentPath(relative)}</span>}
             </span>
           </span>

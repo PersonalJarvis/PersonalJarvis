@@ -75,6 +75,14 @@ Copyright (c) 2026 T3 Tools Inc. The full text ships in
 [`third_party/t3code/LICENSE`](../third_party/t3code/LICENSE), and every adapted
 file names its source in a header comment.
 
+The Agentic IDE explorer's coloured file-type icons
+(`jarvis/ui/web/frontend/src/components/agentic/sidePanel/explorer/fileIconSprite.ts`
+and `fileIcon.ts`) contain SVG symbols and file-name rules copied from
+[@pierre/trees](https://www.npmjs.com/package/@pierre/trees) 1.0.0-beta.6,
+Apache License 2.0, Copyright 2025 Pierre Computer Company, full text in
+[`third_party/pierre-trees/LICENSE`](../third_party/pierre-trees/LICENSE), plus a
+colour table adapted from T3 Code @ `31f9d83` under the MIT license above.
+
 ## Still to do at the 2.0 release
 
 - [ ] `homebrew-tap/Formula/personal-jarvis-installer.rb` and
