@@ -12941,16 +12941,18 @@ account, Claude only) → $12.6k API-equivalent across two seats, Codex, Kimi
 and Grok Build; unpriced tokens 16.7M → agy's 1.4M (the one CLI that writes
 no model id, named as such).
 
-**Resolved for GLM/chat/account attribution; mission dedup remains.** GLM panes
-now use a dedicated Claude config root under the active Jarvis data dir, the
-usage index has a distinct `glm-cli` reader identity, and its Z.ai model rates
-are separate from Anthropic. Subscription agent-chat rows carry the vendor
-session id and are suppressed once the CLI index has caught up, so the same
-turn is not billed twice. CLI transcript rows now persist and expose the owning
-account id (including `glm:default`) with a schema migration that re-reads
-existing transcripts. The Costs summary already exposes CLI index state through
-`IndexStatus`. The remaining independent gap is mission-worker ↔ CLI dedup
-because `WorkerSpawned` still does not carry the same vendor-session identity.
+**Resolved for GLM/chat/account/mission attribution.** GLM panes now use
+a dedicated Claude config root under the active Jarvis data dir, the usage index
+has a distinct `glm-cli` reader identity, and Z.ai model rates are separate
+from Anthropic. Subscription agent-chat rows carry the vendor session id and
+are suppressed once the CLI index has caught up. Mission worker receipts now
+join their `WorkerSpawned.session_id` / `WorkerDraftReady.session_id` to the
+same subscription CLI session and are suppressed only when the CLI index
+demonstrably covers the same usage, so partial indexing never erases a durable
+mission receipt. CLI transcript rows persist and expose the owning account id,
+including built-in defaults and `glm:default`, with schema migration and
+re-index-on-owner-change. The Costs summary exposes CLI index state through
+`IndexStatus`. No known cost-attribution gap remains in this register.
 
 **Lesson.** A spend report has as many readers as the app has ways to spend,
 and every reader is a place to be wrong in its own way. The audit that found
