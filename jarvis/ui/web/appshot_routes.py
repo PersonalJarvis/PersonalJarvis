@@ -57,6 +57,8 @@ class SettingsPatch(BaseModel):
     effect: bool | None = None
     card_seconds: int | None = Field(default=None, ge=0, le=600)
     library: bool | None = None
+    #: Keep only the newest N screenshots and N recordings; ``0`` keeps all.
+    keep_newest: int | None = Field(default=None, ge=0, le=500)
     copy_to_clipboard: bool | None = None
 
 
@@ -120,6 +122,7 @@ def _settings_payload() -> dict[str, Any]:
         "effect": bool(block.effect),
         "card_seconds": int(getattr(block, "card_seconds", 6)),
         "library": bool(getattr(block, "library", True)),
+        "keep_newest": int(getattr(block, "keep_newest", 0) or 0),
         "copy_to_clipboard": bool(getattr(block, "copy_to_clipboard", True)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
@@ -202,6 +205,10 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
     ):
         await shortcut.reload()
+    if changes.get("keep_newest"):
+        from jarvis.appshot import retention  # noqa: PLC0415
+
+        await asyncio.to_thread(retention.apply, int(changes["keep_newest"]))
     return await asyncio.to_thread(_settings_payload)
 
 

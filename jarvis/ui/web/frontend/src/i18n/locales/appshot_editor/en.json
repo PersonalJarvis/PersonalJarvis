@@ -115,6 +115,11 @@
     "library_drag_hint": "Drag a picture into a chat or a terminal to attach it. Click it to edit.",
     "library_drag_out": "Drag into another app",
     "library_show_more": "Show more",
+    "library_show_less": "Show less",
+    "keep_label": "Delete old captures",
+    "keep_hint": "Keeps only the newest screenshots and the newest screen recordings in the gallery. Older ones are deleted automatically.",
+    "keep_all": "Never",
+    "keep_option": "Keep the newest {0}",
     "library_load_failed": "The appshots could not be loaded: {0}",
     "library_open_failed": "This appshot could not be opened: {0}"
   }

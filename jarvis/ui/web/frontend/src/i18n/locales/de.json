@@ -6681,6 +6681,10 @@
       "sound_label": "Auslöser-Geräusch abspielen",
       "effect_label": "Animation zeigen",
       "effect_hint": "Ein kurzer Blitz, dann fliegt das Vorschaubild in die Ecke.",
+      "keep_label": "Alte Aufnahmen löschen",
+      "keep_hint": "Behält nur die neuesten Screenshots und die neuesten Aufnahmen. Ältere werden automatisch aus dem Speicherordner gelöscht.",
+      "keep_all": "Nie",
+      "keep_option": "Die neuesten {0} behalten",
       "recording_unavailable": "Bildschirmaufnahmen sind hier nicht verfügbar: {0}"
     }
   },

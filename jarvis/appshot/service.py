@@ -380,9 +380,10 @@ async def _keep_in_library(shot: Appshot, config: Any) -> None:
     """Write the appshot into the gallery's history when ``[appshot].library`` is on."""
     if not bool(getattr(config.appshot, "library", False)):
         return
-    from jarvis.appshot import library  # noqa: PLC0415
+    from jarvis.appshot import library, retention  # noqa: PLC0415
 
-    await asyncio.to_thread(library.save, shot)
+    if await asyncio.to_thread(library.save, shot):
+        await asyncio.to_thread(retention.apply, retention.keep_newest(config))
 
 
 async def keep_edit_in_library(shot: Appshot) -> None:

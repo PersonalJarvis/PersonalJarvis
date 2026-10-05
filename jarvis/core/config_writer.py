@@ -1000,7 +1000,8 @@ def set_screen_context_settings(
 #: Keys ``[appshot]`` accepts — same allowlist reasoning as Screen Context.
 #: The master switch is ``[screen_context].enabled``, written by the setter above.
 APPSHOT_SETTING_KEYS: frozenset[str] = frozenset(
-    {"hotkey", "region_hotkey", "recording_hotkey", "target", "sound", "effect", "card_seconds", "library",
+    {"keep_newest",
+     "hotkey", "region_hotkey", "recording_hotkey", "target", "sound", "effect", "card_seconds", "library",
      "copy_to_clipboard"}
 )
 
@@ -1053,6 +1054,7 @@ JARVISX_SETTING_KEYS: frozenset[str] = frozenset(
         "copy_to_clipboard",
         "sound",
         "effect",
+        "keep_newest",
     }
 )
 

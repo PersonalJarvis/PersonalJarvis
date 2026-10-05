@@ -19,6 +19,7 @@ import {
   type AppshotSettings,
   type AppshotSettingsPatch,
   CARD_SECONDS_CHOICES,
+  KEEP_NEWEST_CHOICES,
   openAppshotEditorWindow,
 } from "@/lib/appshotApi";
 import { gestureFamily } from "@/lib/appshotChord";
@@ -352,6 +353,17 @@ export function AppshotsView() {
     // `editorReady` re-labels the options once the chunk has arrived.
     [t, editorReady],
   );
+  const keepOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      KEEP_NEWEST_CHOICES.map((count) => ({
+        value: String(count),
+        label:
+          count === 0
+            ? t("appshot_editor.keep_all")
+            : t("appshot_editor.keep_option").replace("{0}", String(count)),
+      })),
+    [t, editorReady],
+  );
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
       { value: "auto", label: t("appshots.target_auto") },
@@ -559,6 +571,22 @@ export function AppshotsView() {
                         aria-label={editorReady ? t("appshot_editor.library_label") : ""}
                         data-testid="appshots-library"
                         onCheckedChange={(library) => void save({ library })}
+                      />
+                    }
+                  />
+                )}
+                {typeof settings.keep_newest === "number" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.keep_label") : ""}
+                    hint={editorReady ? t("appshot_editor.keep_hint") : ""}
+                    control={
+                      <BrandedSelect
+                        value={String(settings.keep_newest)}
+                        options={keepOptions}
+                        ariaLabel={editorReady ? t("appshot_editor.keep_label") : ""}
+                        disabled={saving}
+                        testId="appshots-keep-newest"
+                        onValueChange={(value) => void save({ keep_newest: Number(value) })}
                       />
                     }
                   />

@@ -83,6 +83,28 @@ describe("AppshotLibrary", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows three full rows first, then more and less on request", async () => {
+    // Four columns fit: three rows are twelve tiles.
+    const realStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const style = realStyle(element, pseudo);
+      if (element.tagName !== "UL") return style;
+      return Object.create(style, { gridTemplateColumns: { value: "100px 100px 100px 100px" } });
+    });
+    items = Array.from({ length: 30 }, (_, index) => ({ ...ORIGINAL, id: `p${index}`, has_edit: false }));
+    render(<AppshotLibrary enabled refreshKey="" />);
+    await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(12));
+    expect(screen.queryByTestId("appshot-library-less")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("appshot-library-more"));
+    expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(30);
+    expect(screen.queryByTestId("appshot-library-more")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("appshot-library-less"));
+    expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(12);
+    vi.restoreAllMocks();
+  });
+
   it("shows every kept picture and filters to the edited ones", async () => {
     render(<AppshotLibrary enabled refreshKey="" />);
     await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(3));

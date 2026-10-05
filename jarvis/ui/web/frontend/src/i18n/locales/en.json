@@ -6714,6 +6714,10 @@
       "sound_label": "Play the shutter sound",
       "effect_label": "Show the animation",
       "effect_hint": "A short flash, then the thumbnail flies into the corner.",
+      "keep_label": "Delete old captures",
+      "keep_hint": "Keeps only the newest screenshots and the newest recordings. Older ones are deleted from the save folder automatically.",
+      "keep_all": "Never",
+      "keep_option": "Keep the newest {0}",
       "recording_unavailable": "Screen recording is not available here: {0}"
     }
   },

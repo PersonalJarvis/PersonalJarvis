@@ -30,6 +30,8 @@ export interface AppshotSettings {
   card_seconds: number;
   /** Keep every appshot and edit in the gallery. Absent on an older backend. */
   library?: boolean;
+  /** Keep only the newest N screenshots and N recordings; 0 = keep all. Absent on an older backend. */
+  keep_newest?: number;
   /** Copy shortcut and button appshots to the clipboard. Absent on an older backend. */
   copy_to_clipboard?: boolean;
   sound_effects_master: boolean;
@@ -60,7 +62,7 @@ export type AppshotSettingsPatch = Partial<
   Pick<
     AppshotSettings,
     "enabled" | "hotkey" | "region_hotkey" | "recording_hotkey" | "target" | "sound" | "effect" | "card_seconds" | "library"
-    | "copy_to_clipboard"
+    | "copy_to_clipboard" | "keep_newest"
   >
 >;
 
@@ -176,6 +178,9 @@ export async function openAppshotEditorWindow(id: string): Promise<boolean> {
 
 /** How long the corner card may rest, in seconds; 0 = until closed. */
 export const CARD_SECONDS_CHOICES = [3, 6, 10, 30, 60, 300, 0] as const;
+
+/** Choices for "Delete old captures"; 0 = never. */
+export const KEEP_NEWEST_CHOICES = [0, 10, 20, 50, 100] as const;
 
 // -- library: the gallery of every kept appshot and edit ----------------------
 

@@ -6681,6 +6681,10 @@
       "sound_label": "Reproducir el sonido del obturador",
       "effect_label": "Mostrar la animación",
       "effect_hint": "Un destello breve y la miniatura vuela a la esquina.",
+      "keep_label": "Borrar capturas antiguas",
+      "keep_hint": "Conserva solo las capturas y las grabaciones más recientes. Las anteriores se borran automáticamente de la carpeta de guardado.",
+      "keep_all": "Nunca",
+      "keep_option": "Conservar las {0} más recientes",
       "recording_unavailable": "La grabación de pantalla no está disponible aquí: {0}"
     }
   },

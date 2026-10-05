@@ -115,6 +115,11 @@
     "library_drag_hint": "Zieh ein Bild in einen Chat oder ein Terminal, um es anzuhängen. Klick es an, um es zu bearbeiten.",
     "library_drag_out": "In eine andere App ziehen",
     "library_show_more": "Mehr anzeigen",
+    "library_show_less": "Weniger anzeigen",
+    "keep_label": "Alte Aufnahmen löschen",
+    "keep_hint": "Behält nur die neuesten Screenshots und die neuesten Bildschirmaufnahmen in der Galerie. Ältere werden automatisch gelöscht.",
+    "keep_all": "Nie",
+    "keep_option": "Die neuesten {0} behalten",
     "library_load_failed": "Die Appshots konnten nicht geladen werden: {0}",
     "library_open_failed": "Dieser Appshot konnte nicht geöffnet werden: {0}"
   }

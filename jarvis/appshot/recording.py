@@ -172,6 +172,8 @@ class RecordingService:
             ):
                 self._state.update(phase="error", message="The recorder stopped unexpectedly.")
                 log.warning("appshot: recorder exited with code %s", code)
+            if self._state["phase"] == "saved":
+                await _trim_old_captures()
         except Exception:
             log.exception("appshot: recorder monitor failed")
             self._state.update(phase="error", message="The recorder connection was lost.")
@@ -213,6 +215,18 @@ class RecordingService:
 
 
 _service: RecordingService | None = None
+
+
+async def _trim_old_captures() -> None:
+    """Apply ``[appshot].keep_newest`` once a recording was saved. Never raises."""
+    try:
+        from jarvis.appshot import retention
+        from jarvis.core.config import load_config
+
+        config = await asyncio.to_thread(load_config)
+        await asyncio.to_thread(retention.apply, retention.keep_newest(config))
+    except Exception:  # noqa: BLE001 - the recording is saved; trimming waits for the next one
+        log.warning("appshot: could not trim old captures", exc_info=True)
 
 
 def get_recording_service() -> RecordingService:

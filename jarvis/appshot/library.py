@@ -427,9 +427,22 @@ def clear() -> int:
     return removed
 
 
-def _prune() -> None:
-    """Keep at most :data:`MAX_ENTRIES` appshots. Caller holds the lock."""
+def prune(keep: int) -> int:
+    """Keep only the newest ``keep`` appshots (``[appshot].keep_newest``).
+
+    ``0`` or anything above :data:`MAX_ENTRIES` keeps the usual cap. Returns
+    how many appshots were deleted.
+    """
+    with _lock:
+        return _prune(keep)
+
+
+def _prune(keep: int = 0) -> int:
+    """Keep at most ``keep`` (else :data:`MAX_ENTRIES`) appshots. Caller holds the lock."""
+    limit = keep if 0 < keep < MAX_ENTRIES else MAX_ENTRIES
     root = library_root()
+    if not root.is_dir():
+        return 0
     dated: list[tuple[float, Path]] = []
     for folder in root.iterdir():
         if not folder.is_dir() or not valid_id(folder.name):
@@ -437,11 +450,12 @@ def _prune() -> None:
         meta = _read_meta(folder) or {}
         taken = meta.get("taken_at", 0.0)
         dated.append((float(taken) if isinstance(taken, (int, float)) else 0.0, folder))
-    if len(dated) <= MAX_ENTRIES:
-        return
+    if len(dated) <= limit:
+        return 0
     dated.sort(key=lambda entry: entry[0])
-    for _taken, folder in dated[: len(dated) - MAX_ENTRIES]:
+    for _taken, folder in dated[: len(dated) - limit]:
         shutil.rmtree(folder, ignore_errors=True)
+    return len(dated) - limit
 
 
 __all__ = [
@@ -455,6 +469,7 @@ __all__ = [
     "library_root",
     "list_items",
     "load_shot",
+    "prune",
     "save",
     "save_edit",
     "set_root",
