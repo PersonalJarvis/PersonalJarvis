@@ -789,7 +789,7 @@ def list_sessions(
             d["pending_approvals"] = svc.pending_approvals(s.session_id)
             d["cli_title"] = _cli_title(svc, s)
         out.append(d)
-    _title_jarvis_chats(request, svc, out)
+    _title_chats(request, svc, out)
     return {"sessions": out}
 
 
@@ -816,12 +816,14 @@ def _cli_title(svc: Any, session: Any) -> str:
     return title
 
 
-def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:
-    """Give the Jarvis chats a topic title instead of their first words.
+def _title_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:
+    """Give the Jarvis chats and the IDE's threads a topic title, not their first words.
 
-    Only the ``jarvis`` surface — the front page's own history — is retitled;
-    an agent's chat keeps the title its first message gave it. A title the user
-    typed is recognised by the titler and kept.
+    The ``jarvis`` surface — the front page's own history — and the ``agent``
+    surface — the IDE's threads — are retitled. A thread whose coding CLI named
+    the conversation itself keeps that name (``cli_title``); Claude Code in
+    print mode never writes one, so most threads are named here. A title the
+    user typed is recognised by the titler and kept.
     """
     from jarvis.agent_chat.store import _title_from
     from jarvis.sessions import chat_titles
@@ -829,7 +831,8 @@ def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) 
     now = int(time.time() * 1000)
     requests: list[chat_titles.TitleRequest] = []
     for row in rows:
-        if row.get("surface") != "jarvis":
+        surface = row.get("surface")
+        if not (surface == "jarvis" or (surface == "agent" and not row.get("cli_title"))):
             continue
         sid = str(row["session_id"])
 
@@ -867,7 +870,9 @@ def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) 
         return
     for row in rows:
         key = (chat_titles.KIND_TYPED, str(row["session_id"]))
-        if key in titles:
+        # A Jarvis chat with no topic shows as what it is ("Voice chat · 09:42");
+        # a thread keeps its first message rather than an empty row.
+        if key in titles and (titles[key] or row.get("surface") == "jarvis"):
             row["title"] = titles[key]
 
 

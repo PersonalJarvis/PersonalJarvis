@@ -136,6 +136,32 @@ def test_the_thread_list_offers_the_cli_title_until_the_person_renames(
         assert row["cli_title"] == ""
 
 
+def test_a_thread_the_cli_did_not_name_gets_a_topic_title(tmp_path, monkeypatch) -> None:
+    from jarvis.sessions import chat_titles
+
+    class _Titler:
+        def titles_for(self, requests):
+            return {(r.kind, r.conv_id): "Thread mode titles" for r in requests}
+
+    monkeypatch.setattr(chat_titles, "titler_for_state", lambda state: _Titler())
+    monkeypatch.setattr(cli_title, "session_title", lambda *args, **kwargs: "")
+    app, service = _chat_app(tmp_path)
+    session = service.store.create_session(
+        provider="claude-api",
+        model="",
+        effort="",
+        cwd=str(tmp_path),
+        permission_mode="default",
+        surface="agent",
+    )
+    service.store.append_event(
+        session.session_id, make_event("user_message", {"text": "Hallo, ich möchte Titel"})
+    )
+    with TestClient(app) as client:
+        row = client.get("/api/agent-chat/sessions?surface=agent").json()["sessions"][0]
+        assert row["title"] == "Thread mode titles"
+
+
 def test_the_front_page_list_is_left_alone(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(cli_title, "session_title", lambda *args, **kwargs: "never")
     app, service = _chat_app(tmp_path)
@@ -147,7 +173,7 @@ def test_the_front_page_list_is_left_alone(tmp_path, monkeypatch) -> None:
         permission_mode="",
         surface="jarvis",
     )
-    monkeypatch.setattr("jarvis.ui.web.agent_chat_routes._title_jarvis_chats", lambda *args: None)
+    monkeypatch.setattr("jarvis.ui.web.agent_chat_routes._title_chats", lambda *args: None)
     with TestClient(app) as client:
         row = client.get("/api/agent-chat/sessions?surface=jarvis").json()["sessions"][0]
         assert "cli_title" not in row
