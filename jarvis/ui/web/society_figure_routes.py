@@ -45,6 +45,18 @@ MAX_BYTES = 12 * 1024 * 1024
 _GLB_MAGIC = b"glTF"
 _REPO = Path(__file__).resolve().parents[3]
 _GATE = _REPO / "scripts" / "ci" / "check_society_figures.py"
+_PUBLIC_CATALOG = (
+    _REPO
+    / "jarvis"
+    / "ui"
+    / "web"
+    / "frontend"
+    / "src"
+    / "components"
+    / "society"
+    / "figures"
+    / "catalog.json"
+)
 _SAFE_NAME = re.compile(r"[^a-z0-9]+")
 _SHARE_ID = re.compile(r"^[0-9a-f]{16}$")
 _SHARE_LOCK = threading.Lock()
@@ -102,6 +114,60 @@ def _write_share_catalog(doc: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     tmp.replace(path)
+
+
+def _validate_shared_assets(body: SharedFigureDraft) -> None:
+    """Require every shared recipe asset to exist in the shipped public catalog."""
+    try:
+        catalog = json.loads(_PUBLIC_CATALOG.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("shared figure catalog asset index unavailable", exc_info=True)
+        raise HTTPException(503, "shared figure asset catalog unavailable") from exc
+
+    recipe = body.normalized()["recipe"]
+    archetype = str(recipe.get("archetype") or "")
+    base_name = str(recipe.get("base") or "")
+    bases = catalog.get("bases") if isinstance(catalog, dict) else None
+    parts = catalog.get("parts") if isinstance(catalog, dict) else None
+    if not isinstance(bases, list) or not isinstance(parts, list):
+        raise HTTPException(503, "shared figure asset catalog unavailable")
+
+    base = next(
+        (
+            row
+            for row in bases
+            if isinstance(row, dict)
+            and row.get("archetype") == archetype
+            and row.get("base") == base_name
+            and row.get("license") in PUBLIC_FIGURE_LICENSES
+            and (archetype, base_name) != ("spirit", "gigi")
+        ),
+        None,
+    )
+    if base is None:
+        raise HTTPException(422, "shared figure base is not in the reviewed public catalog")
+
+    recipe_parts = recipe.get("parts") or {}
+    if not isinstance(recipe_parts, dict):
+        raise HTTPException(422, "shared figure parts must be a slot map")
+    for slot, part_id in recipe_parts.items():
+        match = next(
+            (
+                row
+                for row in parts
+                if isinstance(row, dict)
+                and row.get("id") == part_id
+                and row.get("slot") == slot
+                and row.get("archetype") == archetype
+                and row.get("license") in PUBLIC_FIGURE_LICENSES
+            ),
+            None,
+        )
+        if match is None:
+            raise HTTPException(
+                422,
+                f"shared figure part {part_id!r} is not a reviewed {archetype} {slot!r} asset",
+            )
 
 
 def _shared_figure_id(normalized: dict[str, Any]) -> str:
@@ -230,6 +296,7 @@ async def import_figure(request: Request, name: str = Query("figure")) -> dict[s
 @router.post("/share/validate", openapi_extra={"x-jarvis-readonly": True})
 def validate_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
     """Validate a recipe-only marketplace candidate without publishing or writing files."""
+    _validate_shared_assets(body)
     return {"shareable": True, "draft": body.normalized()}
 
 
@@ -261,6 +328,7 @@ async def list_shared_figures() -> dict[str, Any]:
 @router.post("/share", openapi_extra={"x-jarvis-dangerous": True})
 async def publish_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
     """Publish one reviewed recipe into the local shared catalog."""
+    _validate_shared_assets(body)
     normalized = body.normalized()
     figure_id = _shared_figure_id(normalized)
 
