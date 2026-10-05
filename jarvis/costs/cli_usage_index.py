@@ -2131,9 +2131,11 @@ def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) ->
         before = _rows_of(conn, cand.key)
         if scan.rows:
             priced = [
-                (*r, cand.account_id)
+                (*r, 0.0, cand.account_id)
                 if len(r) == 11
                 else (*r, cand.account_id)
+                if len(r) == 12
+                else r
                 for r in scan.rows
             ]
             conn.executemany(_INSERT_TURN, priced)
