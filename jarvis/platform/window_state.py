@@ -1747,7 +1747,46 @@ def _window_frame_rect_linux(win: WindowInfo) -> tuple[int, int, int, int] | Non
         return None
     if width <= 0 or height <= 0:
         return None
-    return (left, top, width, height)
+    return _trim_gtk_frame_extents(int(win.handle), (left, top, width, height))
+
+
+def _trim_gtk_frame_extents(
+    window_id: int, rect: tuple[int, int, int, int]
+) -> tuple[int, int, int, int]:
+    """Drop a GTK client-side-decoration shadow from an X11 window rect.
+
+    GTK windows that draw their own title bar (GNOME apps) make the X window
+    larger than what the user sees, by the invisible shadow margins they
+    publish in ``_GTK_FRAME_EXTENTS`` (left, right, top, bottom). Without the
+    trim a window appshot showed a band of desktop around the window. A
+    window without the property, or a host without python-xlib, keeps the
+    rect as it is.
+    """
+    try:
+        from Xlib import X, display  # type: ignore[import-not-found]  # noqa: PLC0415
+    except ImportError:
+        return rect
+    conn = None
+    try:
+        conn = display.Display()
+        window = conn.create_resource_object("window", window_id)
+        prop = window.get_full_property(conn.intern_atom("_GTK_FRAME_EXTENTS"), X.AnyPropertyType)
+        values = list(getattr(prop, "value", []) or [])
+    except Exception:  # noqa: BLE001 - an unreadable property keeps the plain rect
+        log.debug("GTK frame extents unreadable for window %s", window_id, exc_info=True)
+        return rect
+    finally:
+        if conn is not None:
+            conn.close()
+    if len(values) != 4:
+        return rect
+    left_m, right_m, top_m, bottom_m = (max(0, int(v)) for v in values)
+    left, top, width, height = rect
+    trimmed_w = width - left_m - right_m
+    trimmed_h = height - top_m - bottom_m
+    if trimmed_w <= 0 or trimmed_h <= 0:
+        return rect
+    return (left + left_m, top + top_m, trimmed_w, trimmed_h)
 
 
 def _resolve_macos_ax_window(win: WindowInfo) -> tuple[object | None, str]:
