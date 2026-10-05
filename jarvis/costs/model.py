@@ -143,6 +143,7 @@ SUBSCRIPTION_RUNNERS: frozenset[str] = frozenset(
         "codex-cli",
         "agy-cli",
         "kimi-cli",
+        "glm-cli",
         # NOT grok-cli: Grok Build runs on the user's xAI key and records what
         # it billed per turn (costUsdTicks) — money that moved, not a seat.
     }
