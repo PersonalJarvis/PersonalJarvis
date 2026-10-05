@@ -16,15 +16,19 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import logging
 import re
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jarvis.core.config import DATA_DIR
 from jarvis.society.figure_sharing import SharedFigureDraft
@@ -41,10 +45,71 @@ _GLB_MAGIC = b"glTF"
 _REPO = Path(__file__).resolve().parents[3]
 _GATE = _REPO / "scripts" / "ci" / "check_society_figures.py"
 _SAFE_NAME = re.compile(r"[^a-z0-9]+")
+_SHARE_LOCK = threading.Lock()
+_SHARE_REPORT_CAP = 100
+
+
+class SharedFigureReport(BaseModel):
+    """One local moderation report for a shared figure catalog entry."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reason: str = Field(min_length=1, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_is_meaningful(cls, value: str) -> str:
+        clean = value.strip()
+        if not clean:
+            raise ValueError("report reason must not be blank")
+        return clean
 
 
 def figures_dir() -> Path:
     return DATA_DIR / "society" / "figures"
+
+
+def _share_catalog_path() -> Path:
+    return figures_dir().parent / "shared-figures.json"
+
+
+def _empty_share_catalog() -> dict[str, Any]:
+    return {"version": 1, "figures": {}}
+
+
+def _read_share_catalog() -> dict[str, Any]:
+    path = _share_catalog_path()
+    if not path.exists():
+        return _empty_share_catalog()
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(doc, dict)
+        or doc.get("version") != 1
+        or not isinstance(doc.get("figures"), dict)
+    ):
+        raise ValueError("invalid shared figure catalog")
+    return doc
+
+
+def _write_share_catalog(doc: dict[str, Any]) -> None:
+    path = _share_catalog_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps(doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
+
+
+def _shared_figure_id(normalized: dict[str, Any]) -> str:
+    payload = json.dumps(
+        normalized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:16]
 
 
 def _figure_path(file_name: str) -> Path | None:
@@ -155,6 +220,116 @@ async def import_figure(request: Request, name: str = Query("figure")) -> dict[s
 def validate_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
     """Validate a recipe-only marketplace candidate without publishing or writing files."""
     return {"shareable": True, "draft": body.normalized()}
+
+
+@router.get("/share", openapi_extra={"x-jarvis-readonly": True})
+async def list_shared_figures() -> dict[str, Any]:
+    """List locally published, non-delisted recipe-only marketplace entries."""
+
+    def _list() -> list[dict[str, Any]]:
+        with _SHARE_LOCK:
+            doc = _read_share_catalog()
+            rows = [
+                row
+                for row in doc["figures"].values()
+                if isinstance(row, dict) and row.get("status") == "active"
+            ]
+            return sorted(rows, key=lambda row: (int(row.get("created_ms") or 0), str(row.get("id"))))
+
+    try:
+        rows = await run_in_threadpool(_list)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        log.warning("shared figure catalog read failed", exc_info=True)
+        raise HTTPException(500, "shared figure catalog unavailable") from exc
+    return {"figures": rows, "total": len(rows)}
+
+
+@router.post("/share", openapi_extra={"x-jarvis-dangerous": True})
+async def publish_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
+    """Publish one reviewed recipe into the local shared catalog."""
+    normalized = body.normalized()
+    figure_id = _shared_figure_id(normalized)
+
+    def _publish() -> tuple[dict[str, Any], bool]:
+        with _SHARE_LOCK:
+            doc = _read_share_catalog()
+            existing = doc["figures"].get(figure_id)
+            if isinstance(existing, dict):
+                if existing.get("status") == "delisted":
+                    raise PermissionError("delisted shared figures cannot be republished implicitly")
+                return existing, False
+            now = int(time.time() * 1000)
+            row = {
+                "id": figure_id,
+                **normalized,
+                "status": "active",
+                "reports": [],
+                "created_ms": now,
+                "updated_ms": now,
+            }
+            doc["figures"][figure_id] = row
+            _write_share_catalog(doc)
+            return row, True
+
+    try:
+        row, created = await run_in_threadpool(_publish)
+    except PermissionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        log.warning("shared figure catalog write failed", exc_info=True)
+        raise HTTPException(500, "shared figure catalog unavailable") from exc
+    return {"published": created, "figure": row}
+
+
+@router.post("/share/{share_id}/report")
+async def report_shared_figure(share_id: str, body: SharedFigureReport) -> dict[str, Any]:
+    """Persist a local moderation report without auto-delisting the entry."""
+
+    def _report() -> dict[str, Any]:
+        with _SHARE_LOCK:
+            doc = _read_share_catalog()
+            row = doc["figures"].get(share_id)
+            if not isinstance(row, dict) or row.get("status") != "active":
+                raise KeyError(share_id)
+            reports = list(row.get("reports") or [])
+            reports.append({"reason": body.reason, "reported_ms": int(time.time() * 1000)})
+            row["reports"] = reports[-_SHARE_REPORT_CAP:]
+            row["updated_ms"] = int(time.time() * 1000)
+            _write_share_catalog(doc)
+            return row
+
+    try:
+        row = await run_in_threadpool(_report)
+    except KeyError as exc:
+        raise HTTPException(404, "no such shared figure") from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        log.warning("shared figure report failed", exc_info=True)
+        raise HTTPException(500, "shared figure catalog unavailable") from exc
+    return {"reported": share_id, "reports": len(row.get("reports") or [])}
+
+
+@router.delete("/share/{share_id}", openapi_extra={"x-jarvis-dangerous": True})
+async def delist_shared_figure(share_id: str) -> dict[str, Any]:
+    """Delist one shared recipe while preserving its moderation history."""
+
+    def _delist() -> None:
+        with _SHARE_LOCK:
+            doc = _read_share_catalog()
+            row = doc["figures"].get(share_id)
+            if not isinstance(row, dict):
+                raise KeyError(share_id)
+            row["status"] = "delisted"
+            row["updated_ms"] = int(time.time() * 1000)
+            _write_share_catalog(doc)
+
+    try:
+        await run_in_threadpool(_delist)
+    except KeyError as exc:
+        raise HTTPException(404, "no such shared figure") from exc
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        log.warning("shared figure delist failed", exc_info=True)
+        raise HTTPException(500, "shared figure catalog unavailable") from exc
+    return {"delisted": share_id}
 
 
 @router.get("/{file_name}")
