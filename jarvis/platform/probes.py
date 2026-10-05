@@ -128,8 +128,28 @@ def has_hotkey() -> bool:
     plat = detect_platform()
     if plat == "win32":
         return _has_module("global_hotkeys")
-    # macOS/Linux use pynput; Wayland blocks global grabs by design (AD-8).
-    return _has_module("pynput") and not is_wayland()
+    # macOS/Linux use pynput; Wayland blocks global grabs by design (AD-8),
+    # and a headless box has no keyboard to listen to.
+    return _has_module("pynput") and display_present() and not is_wayland()
+
+
+def hotkey_unavailable_reason() -> str:
+    """Why :func:`has_hotkey` says no, in words a person can act on."""
+    plat = detect_platform()
+    if plat != "win32":
+        if not display_present():
+            return "There is no desktop on this computer, so there is no keyboard to listen to."
+        if is_wayland():
+            return (
+                "Wayland does not let apps listen for global shortcuts. Use an X11 "
+                "session, or ask by voice or with the button."
+            )
+    if plat == "linux" and not _has_module("pynput"):
+        return (
+            "Global shortcuts need the desktop-linux extra: "
+            'pip install "personal-jarvis[desktop-linux]".'
+        )
+    return "Global shortcuts are not available on this desktop."
 
 
 def has_cursor() -> bool:
@@ -191,6 +211,7 @@ __all__ = [
     "screen_recording_granted",
     "has_ax_tree",
     "has_hotkey",
+    "hotkey_unavailable_reason",
     "has_cursor",
     "has_overlay",
     "has_elevation",
