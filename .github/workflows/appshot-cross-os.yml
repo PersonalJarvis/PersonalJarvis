@@ -17,6 +17,9 @@ on:
       - "jarvis/appshot/**"
       - "jarvis/jarvisx/**"
       - "jarvis/platform/clipboard*.py"
+      - "jarvis/platform/screen_access.py"
+      - "jarvis/screen_context/**"
+      - "jarvis/trigger/backends/pynput.py"
       - "jarvis/ui/web/appshot_routes.py"
       - "scripts/ci/appshot_desktop_smoke.py"
       - "tests/unit/appshot/**"
@@ -34,6 +37,7 @@ env:
   APPSHOT_TESTS: >-
     tests/unit/appshot tests/unit/jarvisx tests/unit/platform/test_clipboard.py
     tests/unit/platform/test_clipboard_image.py tests/unit/platform/test_clipboard_reader.py
+    tests/unit/screen_context tests/unit/trigger/test_pynput_shifted_keys.py
 
 jobs:
   linux:
@@ -52,12 +56,12 @@ jobs:
       - name: Desktop packages
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends xvfb xauth xclip xsel \
+          sudo apt-get install -y -qq --no-install-recommends xvfb xauth xclip xsel xdotool x11-xkb-utils \
             wl-clipboard sway libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 \
             libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 libxcb-randr0 \
             libxcb-render-util0 libxcb-image0 libportaudio2 ffmpeg
       - name: Install
-        run: python -m pip install -e ".[dev,desktop]"
+        run: python -m pip install -e ".[dev,desktop,desktop-linux]"
       - name: Unit tests (no display, Qt offscreen)
         env:
           QT_QPA_PLATFORM: offscreen
