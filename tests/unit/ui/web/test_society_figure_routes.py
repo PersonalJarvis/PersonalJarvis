@@ -180,6 +180,14 @@ def test_shared_recipe_validation_requires_shipped_reviewed_assets(client: TestC
     assert response.status_code == 422
     assert "part" in response.json()["detail"]
 
+    wrong_family = {
+        **safe,
+        "recipe": {**safe["recipe"], "parts": {"belt": "belt-sash"}},
+    }
+    response = client.post("/api/society/figures/share/validate", json=wrong_family)
+    assert response.status_code == 422
+    assert "family" in response.json()["detail"]
+
 
 def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: Path):
     safe = {
