@@ -9,6 +9,10 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [2.9.0] — 2026-10-05
+
 ### Added
 
 - Share agents as reusable templates without running a publishing server.
