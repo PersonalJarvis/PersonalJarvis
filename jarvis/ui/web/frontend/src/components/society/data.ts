@@ -142,9 +142,6 @@ export interface RosterData {
   sample: boolean;
 }
 
-/** Agents created in THIS window while the backend is unreachable — sample data, not persisted. */
-const LOCAL_ROSTER: SocietyAgent[] = [];
-
 /**
  * Sample rows retired in this window. The sample roster is a frozen module
  * constant, so a retirement there is remembered here instead of mutating it.
@@ -258,7 +255,7 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   } catch {
     // Unreachable backend: the sample roster below says so on the rail.
   }
-  const rows = [...SAMPLE_ROSTER, ...LOCAL_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
+  const rows = [...SAMPLE_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
   return { agents: rows, sample: true };
 }
 
@@ -422,7 +419,7 @@ export function useUpdateAgentDescription() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, description: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -516,7 +513,7 @@ export function useUpdateAgentLimits() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, limits: AgentLimits): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       const body = {
         daily_budget_usd: Math.max(0, limits.dailyBudgetUsd),
         permission_ceiling: limits.permissionCeiling,
@@ -547,7 +544,7 @@ export function useSetAgentComputer() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, computerId: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         agent.computerId = computerId || null;
       } else {
@@ -574,7 +571,7 @@ export function useSetAgentPaused() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, paused: boolean): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -608,11 +605,9 @@ export function useRetireAgent() {
   return useCallback(
     async (agent: SocietyAgent, executioner: SocietyAgent | null): Promise<void> => {
       if (agent.tier === "lead") throw new Error("the lead cannot be retired");
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         RETIRED_SAMPLE.add(agent.agentId);
-        const local = LOCAL_ROSTER.indexOf(agent);
-        if (local >= 0) LOCAL_ROSTER.splice(local, 1);
       } else {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "DELETE",

@@ -26,11 +26,10 @@ This surface is deliberately additive: a CLI that cannot mount MCP servers, an
 app whose tool gateway is not up yet, or a brain that has not finished building
 simply runs with less. Nothing here is allowed to make a turn fail.
 
-Currently unreachable, on purpose. No surface seats a CLI as Jarvis since the
-front page's chat went API-only (2026-08-26, ``SurfaceKit.cli_seats``), so
-``run_cli_turn(identity=…)`` is False on every turn today. The service asks the
-kit — ``brain_runner and cli_seats`` — rather than a surface name, so a surface
-that wants both picks this up without a change here. Keep it working.
+The service asks the kit — ``brain_runner and cli_seats`` — rather than a
+surface name. Both the Jarvis chat and every Society agent on a subscription
+seat reach this module: a Society seat hands in the agent's own briefing as
+``prompt_override``, so the CLI answers as that agent, not as Jarvis.
 """
 
 from __future__ import annotations
