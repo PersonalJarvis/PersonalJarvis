@@ -2670,7 +2670,8 @@
     "clear_search": "Clear search",
     "group_general": "General",
     "group_system": "System",
-    "group_activity": "Activity"
+    "group_activity": "Activity",
+    "general": "General"
   },
   "settings_view": {
     "silence_window": {
@@ -2740,6 +2741,7 @@
       "overlay_taskbar": "Overlay & taskbar"
     },
     "languages_group_title": "Languages",
+    "sections": { "voice": "Voice" },
     "music_group_title": "Music",
     "music": {
       "service_section": "Preferred service",

@@ -2637,7 +2637,8 @@
     "clear_search": "Suche löschen",
     "group_general": "Allgemein",
     "group_system": "System",
-    "group_activity": "Aktivität"
+    "group_activity": "Aktivität",
+    "general": "Allgemein"
   },
   "settings_view": {
     "silence_window": {
@@ -2707,6 +2708,7 @@
       "overlay_taskbar": "Overlay & Taskleiste"
     },
     "languages_group_title": "Sprachen",
+    "sections": { "voice": "Stimme" },
     "music_group_title": "Musik",
     "music": {
       "service_section": "Bevorzugter Dienst",

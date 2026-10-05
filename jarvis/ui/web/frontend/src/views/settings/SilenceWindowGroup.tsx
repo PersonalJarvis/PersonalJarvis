@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Timer } from "lucide-react";
 import { useSilenceWindow } from "@/hooks/useSilenceWindow";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import {
+  SettingsLinkButton,
+  SettingsRow,
+  SettingsValue,
+  settingsRangeCls,
+} from "@/views/settings/SettingsLayout";
 
 /** The automatic setting: every voice mode keeps its own factory timing. */
 const AUTOMATIC_MS = 0;
@@ -96,52 +101,38 @@ export function SilenceWindowGroup() {
   const showReset = ms !== defaultMs;
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Timer className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-display text-sm font-semibold">
-              {t("settings_view.silence_window.title")}
-            </h4>
-            <span className="font-mono text-sm text-foreground-strong">{describe(ms)}</span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.silence_window.description")}
+    <SettingsRow
+      id="settings-silence-window"
+      title={t("settings_view.silence_window.title")}
+      description={t("settings_view.silence_window.description")}
+      control={<SettingsValue>{describe(ms)}</SettingsValue>}
+    >
+      <input
+        type="range"
+        aria-label={t("settings_view.silence_window.title")}
+        min={config?.min ?? AUTOMATIC_MS}
+        max={config?.max ?? 5000}
+        step={100}
+        value={ms}
+        disabled={loading || saving}
+        onChange={(e) => setLocalMs(snap(Number(e.target.value)))}
+        onMouseUp={() => void commit(ms)}
+        onKeyUp={() => void commit(ms)}
+        onTouchEnd={() => void commit(ms)}
+        className={settingsRangeCls}
+      />
+      {(isAutomatic || showReset) && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {isAutomatic ? t("settings_view.silence_window.automatic_caption") : null}
           </p>
-
-          <input
-            type="range"
-            min={config?.min ?? AUTOMATIC_MS}
-            max={config?.max ?? 5000}
-            step={100}
-            value={ms}
-            disabled={loading || saving}
-            onChange={(e) => setLocalMs(snap(Number(e.target.value)))}
-            onMouseUp={() => void commit(ms)}
-            onKeyUp={() => void commit(ms)}
-            onTouchEnd={() => void commit(ms)}
-            className="mt-4 w-full accent-primary disabled:opacity-50"
-          />
-
-          {isAutomatic && (
-            <p className="mt-2 text-micro text-muted-foreground">
-              {t("settings_view.silence_window.automatic_caption")}
-            </p>
-          )}
-
           {showReset && (
-            <button
-              type="button"
-              onClick={onReset}
-              disabled={saving}
-              className="mt-3 text-micro text-muted-foreground underline hover:text-foreground disabled:opacity-50"
-            >
+            <SettingsLinkButton onClick={onReset} disabled={saving}>
               {t("settings_view.silence_window.reset")}
-            </button>
+            </SettingsLinkButton>
           )}
         </div>
-      </div>
-    </div>
+      )}
+    </SettingsRow>
   );
 }

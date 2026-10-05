@@ -10,10 +10,9 @@ import {
   MousePointer2,
   Music,
   RefreshCw,
-  ShieldCheck,
   Wand2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
@@ -24,7 +23,8 @@ import {
   type PermissionSnapshot,
   type SetupProgress,
 } from "@/hooks/usePermissions";
-import { SettingsBlock } from "@/views/settings/SettingsBlock";
+import { SettingsCard, SettingsSection } from "@/views/settings/SettingsLayout";
+import { cn } from "@/lib/utils";
 
 const ICONS = {
   microphone: Mic,
@@ -40,10 +40,16 @@ const READY_STATES = new Set(["granted", "not_required"]);
 
 export function PermissionRows({
   compact = false,
+  embedded = false,
   deferRestartNote = false,
   onSnapshot,
 }: {
   compact?: boolean;
+  /**
+   * Drawn inside a settings card: rows lose their own frame and sit on the
+   * card, split by its hairlines.
+   */
+  embedded?: boolean;
   /**
    * Onboarding mode: the guide ends with ONE unconditional fresh restart,
    * so a granted-but-stale permission shows a calm "applies after the
@@ -145,6 +151,14 @@ export function PermissionRows({
 
   const items = snapshot?.permissions ?? [];
   if (items.length === 0 || snapshot?.platform !== "darwin") {
+    if (embedded) {
+      return (
+        <div className="flex items-start gap-2 py-3.5 text-sm text-muted-foreground">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+          {t("permissions.not_required")}
+        </div>
+      );
+    }
     return (
       <div className="flex items-start gap-2 rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
         <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
@@ -154,7 +168,7 @@ export function PermissionRows({
   }
 
   return (
-    <div className="space-y-2">
+    <div className={embedded ? "divide-y divide-border [&>.rounded-lg]:my-3" : "space-y-2"}>
       {snapshot?.app_identity.stable === false && (
         <div className="flex items-start gap-2 rounded-lg bg-secondary p-3 text-xs text-foreground">
           <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -185,6 +199,7 @@ export function PermissionRows({
           item={permission}
           busy={pendingId === permission.id}
           compact={compact}
+          embedded={embedded}
           onRequest={() => run(() => request(permission.id))}
           onOpenSettings={() => run(() => openSettings(permission.id))}
           onReset={() => run(() => reset(permission.id))}
@@ -264,6 +279,7 @@ function PermissionRow({
   item,
   busy,
   compact,
+  embedded,
   onRequest,
   onOpenSettings,
   onReset,
@@ -271,6 +287,7 @@ function PermissionRow({
   item: PermissionItem;
   busy: boolean;
   compact: boolean;
+  embedded: boolean;
   onRequest: () => void;
   onOpenSettings: () => void;
   onReset: () => void;
@@ -305,7 +322,12 @@ function PermissionRow({
       : item.status;
 
   return (
-    <div className={`rounded-lg border border-border bg-background ${compact ? "p-3" : "p-4"}`}>
+    <div
+      className={cn(
+        embedded ? "py-3.5" : "rounded-lg border border-border bg-background",
+        !embedded && (compact ? "p-3" : "p-4"),
+      )}
+    >
       <div className="flex flex-wrap items-center gap-3">
         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-[12rem] flex-1">
@@ -356,18 +378,21 @@ function PermissionRow({
 
 export function PermissionsPanel() {
   const t = useT();
+  // The explanation names macOS; every other OS needs no grants at all and
+  // only gets the one-line "nothing to grant" row.
+  const [platform, setPlatform] = useState<string | null>(null);
+  const onSnapshot = useCallback(
+    (snapshot: PermissionSnapshot | null) => setPlatform(snapshot?.platform ?? null),
+    [],
+  );
   return (
-    <div className="mt-8 space-y-4">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("permissions.group_title")}
-      </h3>
-      <SettingsBlock
-        icon={ShieldCheck}
-        title={t("permissions.title")}
-        description={t("permissions.description")}
-      >
-        <PermissionRows />
-      </SettingsBlock>
-    </div>
+    <SettingsSection
+      title={t("permissions.group_title")}
+      description={platform === "darwin" ? t("permissions.description") : undefined}
+    >
+      <SettingsCard className="px-4">
+        <PermissionRows embedded onSnapshot={onSnapshot} />
+      </SettingsCard>
+    </SettingsSection>
   );
 }

@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
  * page over the user's current section, with a searchable left navigation
  * (General · System · Activity) and the selected section on the right:
  *
- *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
+ *   General: General, Keyboard shortcuts, Appshots, My Pets, Profile,
  *            {name} (the assistant), Contacts, Socials
  *   System: API Keys, Jarvis actions
  *   Activity: Spend, Feedback
@@ -37,6 +37,8 @@ import { cn } from "@/lib/utils";
  *
  * Labels, icons and grouping resolve from `NAV_GROUPS` (via `resolveNavLabel`,
  * so all three locales behave exactly like the sidebar rows did) — no second hand-written list to drift (AP-4).
+ * One exception: inside the hub the "settings" entry reads "General", because
+ * the whole page already is Settings.
  *
  * Tab contents stay code-split one `lazy` boundary per view, so opening the
  * hub still only pays for the shell plus the visible tab.
@@ -234,9 +236,11 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const { content, highlight } = resolveHubTab(active);
   const Content = TAB_CONTENT[content];
 
+  const labelOf = (item: NavItem) =>
+    item.id === "settings" ? t("settings_hub.general") : resolveNavLabel(t, item);
   const needle = query.trim().toLowerCase();
   const matches = (item: NavItem) =>
-    needle === "" || resolveNavLabel(t, item).toLowerCase().includes(needle);
+    needle === "" || labelOf(item).toLowerCase().includes(needle);
 
   // Twelve entries — filtered inline; no memo needed at this size.
   const visibleGroups = HUB_NAV_GROUPS.map((group) => ({
@@ -247,7 +251,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
   const pageMatches = searchSettingsPages(language, query, t)
     .filter((match) => !visibleGroups.some((group) =>
       group.items.some((item) => item.id === match.id)))
-    .map((match) => ({ ...match, label: resolveNavLabel(t, findNavItem(match.id)) }));
+    .map((match) => ({ ...match, label: labelOf(findNavItem(match.id)) }));
 
   // The health signal the sidebar row used to carry, now on the hub's own
   // nav: a hard provider error on API Keys. Badge only, never a toast.
@@ -271,21 +275,21 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
           title={hint}
           aria-current={isActive ? "page" : undefined}
           className={cn(
-            "group flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium transition-colors",
+            "group flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-sm transition-colors",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             isActive
-              ? "jarvis-nav-active bg-secondary text-foreground"
-              : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+              ? "bg-secondary font-medium text-foreground-strong"
+              : "text-foreground-secondary hover:bg-secondary hover:text-foreground",
           )}
         >
           <Icon
             aria-hidden
             className={cn(
               "h-4 w-4 shrink-0 transition-colors",
-              isActive ? "text-foreground" : "text-muted-foreground group-hover:text-foreground",
+              isActive ? "text-foreground-strong" : "text-muted-foreground group-hover:text-foreground",
             )}
           />
-          <span className="min-w-0 flex-1 truncate text-left">{resolveNavLabel(t, item)}</span>
+          <span className="min-w-0 flex-1 truncate text-left">{labelOf(item)}</span>
           {showAlert && (
             <span
               data-testid="settings-hub-alert-apikeys"
@@ -303,37 +307,40 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
     <div data-testid="settings-hub" className="flex h-full min-h-0 flex-col md:flex-row">
       <aside
         data-testid="settings-hub-sidebar"
-        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-64 md:border-b-0"
+        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-60 md:border-b-0"
       >
-        <div className="px-3 pb-2 pt-3">
+        <div className="px-3 pb-1 pt-3">
           {/* The page covers the whole window, so its way out sits where a
               full-page settings screen keeps it: first in its own nav. */}
           <button type="button" onClick={onClose} data-testid="settings-hub-close"
-            className="mb-2 flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
             <span className="min-w-0 flex-1 truncate text-left">{t("settings_hub.back_to_app")}</span>
           </button>
+          <p className="px-2.5 pb-3 pt-4 font-display text-lg font-semibold text-foreground-strong">
+            {t("nav.settings")}
+          </p>
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <input type="text" role="searchbox" data-testid="settings-hub-search" value={query} onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }}
               placeholder={t("settings_hub.search_placeholder")}
               aria-label={t("settings_hub.search_placeholder")}
-              className="h-9 w-full rounded-md border border-border bg-input pl-9 pr-9 text-base text-foreground placeholder:text-foreground-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring"
+              className="h-8 w-full rounded-md border border-transparent bg-secondary pl-8 pr-8 text-sm text-foreground placeholder:text-foreground-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-ring"
             />
             {query && <button type="button" onClick={() => setQuery("")}
               aria-label={t("settings_hub.clear_search")}
-              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <X className="h-4 w-4" aria-hidden />
+              className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <X className="h-3.5 w-3.5" aria-hidden />
             </button>}
           </div>
         </div>
         <nav aria-label={t("nav.settings")}
           className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 scrollbar-jarvis">
-          <ul className="space-y-1">
+          <ul>
             {visibleGroups.map((group) => (
               <li key={group.labelKey}>
-                <p className="px-3 pb-1 pt-4 text-sm font-medium uppercase tracking-wide text-foreground-faint">
+                <p className="px-2.5 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
                   {t(group.labelKey)}
                 </p>
                 <ul className="space-y-0.5">{group.items.map(renderNavItem)}</ul>
@@ -342,7 +349,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
           </ul>
           {pageMatches.length > 0 && (
             <div data-testid="settings-hub-page-results">
-              <p className="px-3 pb-1 pt-5 text-sm font-medium uppercase tracking-wide text-foreground-faint">
+              <p className="px-2.5 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
                 {t("settings_hub.search_pages")}
               </p>
               <ul className="space-y-0.5">
@@ -354,9 +361,9 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
                         setQuery("");
                         setActive(match.id);
                       }}
-                      className="flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      <span className="text-base font-medium text-foreground">{match.label}</span>
-                      {match.detail && <span className="w-full truncate text-sm text-muted-foreground" title={match.detail}>{match.detail}</span>}
+                      className="flex w-full flex-col rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="text-sm font-medium text-foreground">{match.label}</span>
+                      {match.detail && <span className="w-full truncate text-xs text-muted-foreground" title={match.detail}>{match.detail}</span>}
                     </button>
                   </li>
                 ))}
@@ -365,7 +372,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
           )}
           {optionMatches.length > 0 && (
             <div data-testid="settings-hub-option-results">
-              <p className="px-3 pb-1 pt-5 text-sm font-medium uppercase tracking-wide text-foreground-faint">
+              <p className="px-2.5 pb-1.5 pt-5 text-xs font-medium text-muted-foreground">
                 {t("settings_hub.search_results")}
               </p>
               <ul className="space-y-0.5">
@@ -377,9 +384,9 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
                         setQuery("");
                         setActive("settings");
                       }}
-                      className="flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                      <span className="text-base font-medium text-foreground">{match.label}</span>
-                      {match.detail && <span className="w-full truncate text-sm text-muted-foreground" title={match.detail}>{match.detail}</span>}
+                      className="flex w-full flex-col rounded-md px-2.5 py-1.5 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      <span className="text-sm font-medium text-foreground">{match.label}</span>
+                      {match.detail && <span className="w-full truncate text-xs text-muted-foreground" title={match.detail}>{match.detail}</span>}
                     </button>
                   </li>
                 ))}
@@ -387,7 +394,7 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
             </div>
           )}
           {needle && visibleGroups.length === 0 && pageMatches.length === 0 && optionMatches.length === 0 && (
-            <p role="status" className="px-3 py-5 text-base text-muted-foreground">
+            <p role="status" className="px-2.5 py-5 text-sm text-muted-foreground">
               {t("settings_hub.no_results")}
             </p>
           )}

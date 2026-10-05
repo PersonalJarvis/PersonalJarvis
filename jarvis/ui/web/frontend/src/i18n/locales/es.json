@@ -2637,7 +2637,8 @@
     "clear_search": "Borrar búsqueda",
     "group_general": "General",
     "group_system": "Sistema",
-    "group_activity": "Actividad"
+    "group_activity": "Actividad",
+    "general": "General"
   },
   "settings_view": {
     "silence_window": {
@@ -2707,6 +2708,7 @@
       "overlay_taskbar": "Overlay y barra de tareas"
     },
     "languages_group_title": "Idiomas",
+    "sections": { "voice": "Voz" },
     "music_group_title": "Música",
     "music": {
       "service_section": "Servicio preferido",

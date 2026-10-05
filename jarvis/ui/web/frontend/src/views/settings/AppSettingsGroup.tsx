@@ -1,12 +1,20 @@
-import { useState } from "react";
-import { Bot, Compass, Monitor, Moon, Power, Sun, Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { Monitor, Moon, Sun, Zap } from "lucide-react";
 import { SETUP_REPLAY_EVENT } from "@/components/onboarding/tourEvents";
+import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
 import { useBackgroundAgents, type BackgroundAgentsPatch } from "@/hooks/useBackgroundAgents";
 import { useTheme, type ThemePreference } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { fill, useLocaleChunk, useT } from "@/i18n";
+import {
+  SettingsCard,
+  SettingsNote,
+  SettingsRow,
+  SettingsSection,
+  SettingsSegmented,
+} from "@/views/settings/SettingsLayout";
 
 /**
  * "App settings" group inside the Settings view. Currently hosts the
@@ -21,19 +29,19 @@ import { fill, useLocaleChunk, useT } from "@/i18n";
  * into. The toggle still persists the intent in that case (it just cannot create
  * an OS entry there).
  */
-export function AppSettingsGroup() {
+export function AppSettingsGroup({ children }: { children?: ReactNode } = {}) {
   const t = useT();
 
   return (
-    <div className="mt-8 space-y-4">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("settings_view.app_settings_group_title")}
-      </h3>
-      <AppearanceRow />
-      <AutostartRow />
-      <BackgroundAgentsRow />
-      <TourRow />
-    </div>
+    <SettingsSection title={t("settings_view.app_settings_group_title")}>
+      <SettingsCard>
+        <AppearanceRow />
+        <AutostartRow />
+        <BackgroundAgentsRows />
+        {children}
+        <TourRow />
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 
@@ -47,25 +55,20 @@ function TourRow() {
   const ready = useLocaleChunk("onboarding");
   if (!ready) return null;
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Compass className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h4 className="font-medium">{t("app_tour.replay_title")}</h4>
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT))}
-              data-testid="settings-replay-tour"
-              className="inline-flex items-center rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {t("app_tour.replay")}
-            </button>
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t("app_tour.replay_body")}</p>
-        </div>
-      </div>
-    </div>
+    <SettingsRow
+      title={t("app_tour.replay_title")}
+      description={t("app_tour.replay_body")}
+      control={
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT))}
+          data-testid="settings-replay-tour"
+        >
+          {t("app_tour.replay")}
+        </Button>
+      }
+    />
   );
 }
 
@@ -93,59 +96,30 @@ function AppearanceRow() {
   const { preference, theme, setPreference } = useTheme();
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        {theme === "dark" ? (
-          <Moon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <Sun className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h4 className="font-medium">{t("settings_view.appearance.title")}</h4>
-            <div
-              role="radiogroup"
-              aria-label={t("settings_view.appearance.title")}
-              className="inline-flex rounded-lg border border-border bg-background p-0.5"
-            >
-              {THEME_OPTIONS.map(({ value, icon: Icon, labelKey }) => {
-                const active = preference === value;
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setPreference(value)}
-                    className={
-                      "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors " +
-                      (active
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-secondary hover:text-foreground")
-                    }
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    {t(labelKey)}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("settings_view.appearance.description")}
-          </p>
-          {preference === "system" && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t(
-                theme === "dark"
-                  ? "settings_view.appearance.system_now_dark"
-                  : "settings_view.appearance.system_now_light",
-              )}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
+    <SettingsRow
+      title={t("settings_view.appearance.title")}
+      description={
+        preference === "system"
+          ? `${t("settings_view.appearance.description")} ${t(
+              theme === "dark"
+                ? "settings_view.appearance.system_now_dark"
+                : "settings_view.appearance.system_now_light",
+            )}`
+          : t("settings_view.appearance.description")
+      }
+      control={
+        <SettingsSegmented
+          value={preference}
+          onChange={setPreference}
+          ariaLabel={t("settings_view.appearance.title")}
+          options={THEME_OPTIONS.map(({ value, icon: Icon, labelKey }) => ({
+            value,
+            label: t(labelKey),
+            icon: <Icon aria-hidden />,
+          }))}
+        />
+      }
+    />
   );
 }
 
@@ -208,63 +182,63 @@ function AutostartRow() {
     }
   }
 
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Power className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-medium">{t("settings_view.autostart.title")}</h4>
-            <Switch
-              checked={enabled}
-              disabled={loading || saving || !supported}
-              aria-label={t("settings_view.autostart.title")}
-              onCheckedChange={onToggle}
-            />
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("settings_view.autostart.description")}
-          </p>
+  const hasDetails = Boolean(
+    error ||
+      (!supported && !loading) ||
+      instantStartActive ||
+      canUpgradeInstantStart ||
+      (supported && config?.entry_path),
+  );
 
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
+  return (
+    <SettingsRow
+      title={t("settings_view.autostart.title")}
+      description={t("settings_view.autostart.description")}
+      control={
+        <Switch
+          checked={enabled}
+          disabled={loading || saving || !supported}
+          aria-label={t("settings_view.autostart.title")}
+          onCheckedChange={onToggle}
+        />
+      }
+    >
+      {hasDetails && (
+        <>
+          {error && <p className="text-sm text-destructive">{error}</p>}
 
           {!supported && !loading && (
-            <p className="mt-3 text-xs text-foreground">
+            <p className="text-sm text-foreground">
               {config?.detail || t("settings_view.autostart.unsupported")}
             </p>
           )}
 
           {instantStartActive && (
-            <p className="mt-3 text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               {t("settings_view.autostart.instant_start_active")}
             </p>
           )}
 
           {canUpgradeInstantStart && (
-            <div className="mt-3 rounded-md border border-border bg-background p-3">
-              <p className="text-xs text-muted-foreground">
+            <SettingsNote className="flex flex-wrap items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 text-muted-foreground">
                 {t("settings_view.autostart.instant_start_hint")}
-              </p>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={onEnableInstantStart}
-                className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                <Zap className="h-3.5 w-3.5" />
+              </span>
+              <Button size="sm" disabled={saving} onClick={onEnableInstantStart}>
+                <Zap aria-hidden />
                 {t("settings_view.autostart.enable_instant_start")}
-              </button>
-            </div>
+              </Button>
+            </SettingsNote>
           )}
 
           {supported && config?.entry_path && (
-            <p className="mt-2 break-all font-mono text-micro text-muted-foreground">
+            <p className="break-all font-mono text-xs text-muted-foreground">
               {config.entry_path}
             </p>
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </SettingsRow>
   );
 }
 
@@ -273,10 +247,10 @@ const CHANNEL_LABELS: Record<string, string> = { telegram: "Telegram", discord: 
 /**
  * "Keep agents running after closing": on quit the app hands routines and chat
  * channels to a windowless background service, which hands them back when the
- * app opens again. The second switch makes the login entry start only that
- * service. The line below says what a quit would keep right now.
+ * app opens again. The second row makes the login entry start only that
+ * service. The line under the first says what a quit would keep right now.
  */
-function BackgroundAgentsRow() {
+function BackgroundAgentsRows() {
   const t = useT();
   const { config, loading, error, save } = useBackgroundAgents();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -305,57 +279,51 @@ function BackgroundAgentsRow() {
   for (const channel of work?.channels ?? []) parts.push(CHANNEL_LABELS[channel] ?? channel);
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-medium">{t("settings_view.background_agents.title")}</h4>
-            <Switch
-              checked={keep}
-              disabled={loading || saving}
-              aria-label={t("settings_view.background_agents.title")}
-              onCheckedChange={(next) => void apply({ keep_agents_running: next })}
-            />
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("settings_view.background_agents.description")}
-          </p>
+    <>
+      <SettingsRow
+        title={t("settings_view.background_agents.title")}
+        description={t("settings_view.background_agents.description")}
+        control={
+          <Switch
+            checked={keep}
+            disabled={loading || saving}
+            aria-label={t("settings_view.background_agents.title")}
+            onCheckedChange={(next) => void apply({ keep_agents_running: next })}
+          />
+        }
+      >
+        {(error || config?.running_as_service || (config && keep)) && (
+          <>
+            {error && <p className="text-sm text-destructive">{error}</p>}
 
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-
-          {config?.running_as_service && (
-            <p className="mt-3 text-xs text-foreground">
-              {t("settings_view.background_agents.service_active")}
-            </p>
-          )}
-
-          {config && keep && !config.running_as_service && (
-            <p className="mt-3 text-xs text-muted-foreground">
-              {parts.length > 0
-                ? fill(t("settings_view.background_agents.keeps_now"), { what: parts.join(", ") })
-                : t("settings_view.background_agents.keeps_nothing")}
-            </p>
-          )}
-
-          <div className="mt-3 flex items-center justify-between gap-4 rounded-md border border-border bg-background p-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium">
-                {t("settings_view.background_agents.login_title")}
+            {config?.running_as_service && (
+              <p className="text-sm text-foreground">
+                {t("settings_view.background_agents.service_active")}
               </p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {t("settings_view.background_agents.login_description")}
+            )}
+
+            {config && keep && !config.running_as_service && (
+              <p className="text-sm text-muted-foreground">
+                {parts.length > 0
+                  ? fill(t("settings_view.background_agents.keeps_now"), { what: parts.join(", ") })
+                  : t("settings_view.background_agents.keeps_nothing")}
               </p>
-            </div>
-            <Switch
-              checked={config?.background_only_at_login ?? false}
-              disabled={loading || saving || !config?.autostart_enabled}
-              aria-label={t("settings_view.background_agents.login_title")}
-              onCheckedChange={(next) => void apply({ background_only_at_login: next })}
-            />
-          </div>
-        </div>
-      </div>
-    </div>
+            )}
+          </>
+        )}
+      </SettingsRow>
+      <SettingsRow
+        title={t("settings_view.background_agents.login_title")}
+        description={t("settings_view.background_agents.login_description")}
+        control={
+          <Switch
+            checked={config?.background_only_at_login ?? false}
+            disabled={loading || saving || !config?.autostart_enabled}
+            aria-label={t("settings_view.background_agents.login_title")}
+            onCheckedChange={(next) => void apply({ background_only_at_login: next })}
+          />
+        }
+      />
+    </>
   );
 }

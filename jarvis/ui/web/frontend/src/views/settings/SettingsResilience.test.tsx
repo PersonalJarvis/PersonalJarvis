@@ -160,17 +160,15 @@ describe("SettingsView against an empty backend", () => {
 
     render(wrap(<SettingsView />));
 
-    // A locale row (identical in every language) proves the page is rendered.
+    // The interface-language dropdown proves the page is rendered.
     // The keybind rows moved to the Keyboard shortcuts page — tested below.
     await waitFor(() => {
-      // One row per language section (interface / recognition / reply).
-      expect(screen.getAllByText("Deutsch (German)").length).toBeGreaterThan(0);
+      expect(screen.getByTestId("ui-language").textContent).toContain("English");
     });
-    // A 640px form cap left the groups as a left-hand column in a sea of
-    // black. The section fills the window; the page gutter sits on the row inside.
+    // The page is one centred reading column with its own gutter.
     const scroll = screen.getByTestId("settings-scroll");
-    expect(scroll.className).not.toMatch(/max-w-form/);
-    expect(scroll.firstElementChild?.className).toMatch(/px-8/);
+    expect(scroll.firstElementChild?.className).toMatch(/mx-auto/);
+    expect(scroll.firstElementChild?.className).toMatch(/px-6/);
   });
 
   it("renders the Keyboard shortcuts page when every route answers {}", async () => {

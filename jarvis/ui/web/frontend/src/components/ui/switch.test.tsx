@@ -37,15 +37,15 @@ describe("Switch state legibility", () => {
     expect(root.className).not.toContain("bg-card");
   });
 
-  it("rests OFF on the lift surface and ON on the life colour", () => {
+  it("rests OFF on the lift surface and ON on the accent", () => {
     const { root } = renderSwitch(false);
     expect(root.className).toContain("data-[state=unchecked]:bg-secondary");
-    expect(root.className).toContain("data-[state=checked]:bg-success");
+    expect(root.className).toContain("data-[state=checked]:bg-accent");
   });
 
   it("keeps the thumb readable on both tracks without outshining the row", () => {
     const { thumb } = renderSwitch(true);
-    expect(thumb.className).toContain("data-[state=checked]:bg-primary-foreground");
+    expect(thumb.className).toContain("data-[state=checked]:bg-accent-foreground");
     expect(thumb.className).toContain("data-[state=unchecked]:bg-muted-foreground");
     // The brightest pixel in the row must never be an OFF switch.
     expect(thumb.className).not.toContain("data-[state=unchecked]:bg-foreground");
