@@ -328,8 +328,8 @@ CREATE INDEX IF NOT EXISTS idx_cli_turns_path ON cli_turns (path);
 _INSERT_TURN = (
     "INSERT INTO cli_turns "
     "(agent, dedup_key, path, session_id, ts_ms, model, "
-    " tokens_in, tokens_out, tokens_cached, cwd, label, cost_usd) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    " tokens_in, tokens_out, tokens_cached, cwd, label, cost_usd, account_id) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT(agent, dedup_key) DO UPDATE SET "
     " session_id = CASE WHEN cli_turns.path = excluded.path"
     "   THEN excluded.session_id ELSE cli_turns.session_id END,"
@@ -347,6 +347,8 @@ _INSERT_TURN = (
     "   THEN excluded.label ELSE cli_turns.label END,"
     " cost_usd = CASE WHEN cli_turns.path = excluded.path"
     "   THEN excluded.cost_usd ELSE cli_turns.cost_usd END,"
+    " account_id = CASE WHEN cli_turns.path = excluded.path"
+    "   THEN excluded.account_id ELSE cli_turns.account_id END,"
     " model = CASE WHEN excluded.model <> ''"
     "   AND (cli_turns.path = excluded.path OR cli_turns.model = '')"
     "   THEN excluded.model ELSE cli_turns.model END "
@@ -356,12 +358,13 @@ _INSERT_TURN = (
 
 _UPSERT_FILE = (
     "INSERT INTO indexed_files "
-    "(path, agent, session_id, size, mtime_ns, byte_offset, model, cwd, label, scanned_ms) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+    "(path, agent, session_id, size, mtime_ns, byte_offset, model, cwd, label, scanned_ms, account_id) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
     "ON CONFLICT(path) DO UPDATE SET "
     "agent=excluded.agent, session_id=excluded.session_id, size=excluded.size, "
     "mtime_ns=excluded.mtime_ns, byte_offset=excluded.byte_offset, model=excluded.model, "
-    "cwd=excluded.cwd, label=excluded.label, scanned_ms=excluded.scanned_ms"
+    "cwd=excluded.cwd, label=excluded.label, scanned_ms=excluded.scanned_ms, "
+    "account_id=excluded.account_id"
 )
 
 
@@ -1681,6 +1684,11 @@ def _migrate(conn: sqlite3.Connection, version: int) -> None:
     if version == 0 and not _has_rows(conn):
         return
     columns = {r[1] for r in conn.execute("PRAGMA table_info(cli_turns)")}
+    file_columns = {r[1] for r in conn.execute("PRAGMA table_info(indexed_files)")}
+    if "account_id" not in columns:
+        conn.execute("ALTER TABLE cli_turns ADD COLUMN account_id TEXT NOT NULL DEFAULT ''")
+    if "account_id" not in file_columns:
+        conn.execute("ALTER TABLE indexed_files ADD COLUMN account_id TEXT NOT NULL DEFAULT ''")
     if "cost_usd" not in columns:
         # 3: OpenCode writes its own price. Additive.
         conn.execute("ALTER TABLE cli_turns ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0")
@@ -1801,7 +1809,7 @@ def _resume_rows(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
             str(row["path"]): row
             for row in conn.execute(
                 "SELECT path, agent, session_id, size, mtime_ns, byte_offset, "
-                "       model, cwd, label FROM indexed_files"
+                "       model, cwd, label, account_id FROM indexed_files"
             )
         }
     except sqlite3.Error as exc:
@@ -2066,7 +2074,11 @@ def _pending(
         # run stopped early — on its deadline, on the per-file cap, or on a
         # half-written trailing line — and there is still tail to read.
         if row is not None and _int(row["byte_offset"]) >= cand.size:
-            if _int(row["size"]) == cand.size and _int(row["mtime_ns"]) == cand.mtime_ns:
+            if (
+                _int(row["size"]) == cand.size
+                and _int(row["mtime_ns"]) == cand.mtime_ns
+                and str(row["account_id"] or "") == cand.account_id
+            ):
                 continue
         out.append(cand)
     return out
@@ -2113,7 +2125,12 @@ def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) ->
     try:
         before = _rows_of(conn, cand.key)
         if scan.rows:
-            priced = [r if len(r) == 12 else (*r, 0.0) for r in scan.rows]
+            priced = [
+                (*r, cand.account_id)
+                if len(r) == 11
+                else (*r, cand.account_id)
+                for r in scan.rows
+            ]
             conn.executemany(_INSERT_TURN, priced)
         added = _rows_of(conn, cand.key) - before
         if scan.cursor.model:
@@ -2137,6 +2154,7 @@ def _commit_file(conn: sqlite3.Connection, cand: _Candidate, scan: _FileScan) ->
                 scan.cursor.cwd,
                 scan.cursor.label,
                 int(time.time() * 1000),
+                cand.account_id,
             ),
         )
         conn.commit()
