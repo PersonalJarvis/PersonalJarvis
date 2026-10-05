@@ -1203,7 +1203,7 @@ class SocietyRuntime:
                         else {}
                     ),
                 )
-            except Exception:
+            except (Exception, asyncio.CancelledError):
                 svc.unsubscribe(session.session_id, queue)
                 raise
             finally:
@@ -1215,6 +1215,8 @@ class SocietyRuntime:
                     await svc.cancel(session.session_id, expected_turn_id=turn_id)
                 except Exception:  # noqa: BLE001 — room state is already authoritative
                     log.warning("society room turn could not be cancelled after lost claim", exc_info=True)
+                finally:
+                    svc.unsubscribe(session.session_id, queue)
                 raise
 
         run_id = f"room:{room.room_id}:{turn_id}"

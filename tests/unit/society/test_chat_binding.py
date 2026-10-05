@@ -785,6 +785,54 @@ async def test_assign_runs_in_the_canonical_chat_and_ends_as_a_result(tmp_path: 
         await rt.close()
 
 
+@pytest.mark.parametrize("failure", ["cancelled_send", "lost_claim"])
+async def test_room_dispatch_failure_releases_subscription_before_watcher(
+    tmp_path: Path, monkeypatch, failure: str,
+):
+    import asyncio
+
+    from jarvis.society.rooms import RoomError
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg,
+    )
+    await rt.ensure_started()
+    try:
+        scout, _ = await rt.roster.create(name="Scout", provider="openai")
+        await rt.roster.create(name="Archivist", provider="openai")
+        room = await rt.rooms.open(
+            opened_by="jarvis", members=["scout", "archivist"], topic="Bounded dispatch.",
+        )
+        claimed = await rt.rooms.claim_turn(room.room_id, "claim-test")
+        original_send = svc.send
+
+        async def interrupted_send(session_id, text, *, incoming=None):
+            if failure == "cancelled_send":
+                raise asyncio.CancelledError
+            turn_id = await original_send(session_id, text, incoming=incoming)
+            await rt.rooms.settle(room.room_id, reason="user")
+            return turn_id
+
+        monkeypatch.setattr(svc, "send", interrupted_send)
+        error = asyncio.CancelledError if failure == "cancelled_send" else RoomError
+        with pytest.raises(error):
+            await rt._dispatch_room_turn(scout, claimed, "claim-test")
+        assert svc.queues["society:scout"] == []
+        assert not rt._watchers
+        assert rt.scheduler.running == {}
+        if failure == "lost_claim":
+            assert svc.cancelled_turns == ["turn-1"]
+        else:
+            durable = await rt.rooms.get(room.room_id)
+            assert durable.inflight_claim_id == "claim-test"
+            assert durable.inflight_turn_id == ""
+    finally:
+        await rt.close()
+        svc.store.close()
+
+
 async def test_room_live_scheduler_serializes_turns_and_silence_settles(tmp_path: Path):
     import asyncio
 
