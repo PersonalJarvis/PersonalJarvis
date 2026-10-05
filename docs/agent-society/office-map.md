@@ -122,6 +122,15 @@ target runs WebGL.
 - **Pets**: each agent's symbol (the profile companion) follows it at about a
   fifth of its height, reusing `AgentFollower`; the lead is drawn as the
   person's own pet (see *Jarvis is the person's pet* below).
+- **Accessories** (`companion/accessories.ts`): a symbol can wear one item per
+  slot (hats, eyes, mouth, neck, outfit, back, props; 84 items) chosen in the
+  companion editor and stored as `companion.accessories` in the avatar JSON.
+  `scripts/art/companion_accessories.py` writes one catalog of 3D primitives
+  (`accessories.json`); the flat symbol draws their front projection and
+  `scripts/art/build_companion_accessories.py` (background Blender) builds the
+  same parts into `assets/society/companions/accessories.glb`, so the profile
+  picture and the map companion always match. Clothing is clipped to each
+  silhouette; unknown ids from a newer build are skipped, never rejected.
 - **Live monitors** (`LiveMonitors.tsx`, `useDeskChats.ts`, `deskChat.ts`): an
   agent seated at its own desk shows the tail of its chat (user lines, replies,
   running tools) on its monitor, refreshed by jittered polling of the existing
