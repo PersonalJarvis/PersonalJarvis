@@ -141,6 +141,46 @@ def test_shared_recipe_validation_is_recipe_only_and_fail_closed(client: TestCli
 
 
 
+def test_shared_recipe_validation_requires_shipped_reviewed_assets(client: TestClient):
+    safe = {
+        "name": "Scout olive",
+        "license": "CC0-1.0",
+        "source": "KayKit Character Pack / reviewed recipe",
+        "recipe": {
+            "contract": 1,
+            "archetype": "biped",
+            "base": "rogue",
+            "parts": {},
+            "palette": {"primary": "#315d45"},
+            "style": "fantasy",
+        },
+    }
+
+    missing_base = {
+        **safe,
+        "recipe": {**safe["recipe"], "base": "does-not-exist"},
+    }
+    response = client.post("/api/society/figures/share/validate", json=missing_base)
+    assert response.status_code == 422
+    assert "base" in response.json()["detail"]
+
+    missing_part = {
+        **safe,
+        "recipe": {**safe["recipe"], "parts": {"headgear": "headgear-nope"}},
+    }
+    response = client.post("/api/society/figures/share/validate", json=missing_part)
+    assert response.status_code == 422
+    assert "part" in response.json()["detail"]
+
+    wrong_slot = {
+        **safe,
+        "recipe": {**safe["recipe"], "parts": {"back": "headgear-cap"}},
+    }
+    response = client.post("/api/society/figures/share", json=wrong_slot)
+    assert response.status_code == 422
+    assert "part" in response.json()["detail"]
+
+
 def test_shared_catalog_publish_report_and_delist(client: TestClient, tmp_path: Path):
     safe = {
         "name": "Scout olive",
