@@ -360,7 +360,7 @@ function clock(ms: number): string {
 
 function UserBubble({ item }: { item: UserItem }) {
   return <div className="group flex flex-col items-end gap-1" data-testid="thread-user-message">
-    <div className="jarvis-user-bubble max-w-[80%] rounded-2xl px-4 py-2.5">
+    <div className="max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-foreground">
       {item.attachments.length > 0 && <div className="mb-2 flex flex-wrap justify-end gap-2">
         {item.attachments.map((file) => file.url && file.kind === "image"
           ? <img key={file.name} src={file.url} alt={file.name} className="h-24 max-w-[200px] rounded-lg border border-border object-cover" />

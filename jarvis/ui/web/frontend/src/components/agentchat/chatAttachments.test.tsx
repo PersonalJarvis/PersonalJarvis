@@ -7,7 +7,8 @@ import { EMPTY_TIMELINE, reduceEvent } from "@/components/agentchat/reduce";
 import { useFileDropGuard } from "@/hooks/useFileDropGuard";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
-import type { AgentChatCatalog } from "@/lib/agentChatApi";
+import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import type { AgentChatCatalog, ChatAttachment } from "@/lib/agentChatApi";
 
 /**
  * Files in the chat composer — the drop, the paste, and what travels with the
@@ -319,5 +320,22 @@ describe("the app-wide file drop guard", () => {
     window.dispatchEvent(event);
     expect(prevent).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe("the thumbnail strip", () => {
+  it("shows the picture alone, without a read receipt", () => {
+    render(
+      <ChatAttachmentStrip
+        look="thumbnail"
+        attachments={[{ name: "shot.png", kind: "image", described_by: "none", detail: "", note: "" } as unknown as ChatAttachment]}
+        analyzing={0}
+        onRemove={() => {}}
+        previews={{ "shot.png": "blob:shot" }}
+      />,
+    );
+    const card = screen.getByTestId("chat-attachment-shot.png");
+    expect(card.querySelector("img")?.getAttribute("src")).toBe("blob:shot");
+    expect(card.textContent).not.toContain("not described");
   });
 });

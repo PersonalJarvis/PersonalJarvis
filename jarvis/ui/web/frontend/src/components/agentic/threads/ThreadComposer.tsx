@@ -343,7 +343,7 @@ export function ThreadComposer({
       <QuestionPanel timeline={timeline} />
       {(files.attachments.length > 0 || files.analyzing > 0) && <div className="px-3 pt-3 sm:px-4">
         <ChatAttachmentStrip attachments={files.attachments} analyzing={files.analyzing}
-          onRemove={files.remove} previews={files.previews} />
+          onRemove={files.remove} previews={files.previews} look="thumbnail" />
       </div>}
       <textarea ref={textareaRef} value={value} rows={2} data-testid="thread-composer-input"
         aria-label="Message the coding agent"

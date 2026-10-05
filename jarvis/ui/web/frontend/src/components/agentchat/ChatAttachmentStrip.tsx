@@ -30,18 +30,87 @@ export function ChatAttachmentStrip({
   analyzing,
   onRemove,
   previews = {},
+  look = "card",
 }: {
   attachments: ChatAttachment[];
   analyzing: number;
   onRemove: (name: string) => void;
   /** A picture per image or video attachment, keyed by its name. */
   previews?: Record<string, string>;
+  /**
+   * "thumbnail" shows the picture alone, with no name and no read receipt.
+   * For composers whose agent opens the file itself (the thread view hands
+   * a coding CLI the path), where whether the backend could describe the
+   * file says nothing about whether the agent will see it.
+   */
+  look?: "card" | "thumbnail";
 }) {
   const t = useT();
   // A picture that failed to load (an older backend, a file swept since)
   // falls back to the file's icon instead of an empty frame.
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   if (attachments.length === 0 && analyzing === 0) return null;
+  if (look === "thumbnail") {
+    return (
+      <div data-testid="chat-attachments" className="flex max-h-40 shrink-0 flex-wrap items-center gap-2 overflow-y-auto scrollbar-jarvis">
+        {attachments.map((item) => {
+          const media = attachmentMedia(item);
+          const preview = media && !broken[item.name] ? previews[item.name] : undefined;
+          const Icon = media === "video" ? Film : item.kind === "image" ? ImageIcon : FileText;
+          const markBroken = () => setBroken((prev) => ({ ...prev, [item.name]: true }));
+          return (
+            <span
+              key={item.name}
+              data-testid={`chat-attachment-${item.name}`}
+              data-media={preview ? media : undefined}
+              title={item.name}
+              className={cn(
+                "group/attachment relative flex h-16 shrink-0 items-center overflow-hidden rounded-xl border border-border bg-secondary",
+                preview ? "max-w-[10rem]" : "max-w-[14rem] gap-2 px-3 text-muted-foreground",
+              )}
+            >
+              {preview && media === "video" ? (
+                <>
+                  <video src={preview} muted playsInline preload="metadata" onError={markBroken} className="h-full w-auto max-w-[10rem] object-cover" />
+                  <span aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white">
+                      <Play className="ml-0.5 h-3 w-3 fill-current" />
+                    </span>
+                  </span>
+                </>
+              ) : preview ? (
+                <img src={preview} alt={item.name} onError={markBroken} className="h-full w-auto min-w-[4rem] max-w-[10rem] object-cover" />
+              ) : (
+                <>
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                  <span className="truncate pr-3 text-xs font-medium text-foreground">{item.name}</span>
+                </>
+              )}
+              <button
+                type="button"
+                aria-label={fill(t("agent_chat.attach_remove"), { name: item.name })}
+                data-testid={`chat-attachment-remove-${item.name}`}
+                onClick={() => onRemove(item.name)}
+                className="absolute right-1 top-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-black/55 text-white opacity-0 transition-opacity hover:bg-black/75 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring group-hover/attachment:opacity-100 [@media(hover:none)]:opacity-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          );
+        })}
+        {analyzing > 0 && (
+          <span
+            data-testid="chat-attachment-working"
+            aria-label={t("agent_chat.attach_working")}
+            title={t("agent_chat.attach_working")}
+            className="flex h-16 w-16 items-center justify-center rounded-xl border border-dashed border-border text-muted-foreground"
+          >
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
     <div
       data-testid="chat-attachments"
