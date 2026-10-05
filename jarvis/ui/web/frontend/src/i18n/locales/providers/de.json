@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "Verbinde jeden KI-Anbieter einmal – mit deinem Abo oder einem Schlüssel – und wähle, wofür {name} ihn nutzt.",
+    "subtitle": "Die Live-Stimme läuft über OpenAI. Die Agenten laufen über jedes Abo oder jeden Schlüssel, den du hier verbindest.",
     "checking": "Wird geprüft…",
     "checked_now": "Gerade geprüft",
     "checked_minutes": "Vor {0} Min. geprüft",
@@ -96,6 +96,27 @@
     "restart_title": "Neu starten, um das Update abzuschließen",
     "restart_desc": "Die neue Anbieter-Seite braucht einen Neustart des App-Hintergrunddienstes. Das dauert etwa zehn Sekunden.",
     "restart_action": "Jetzt neu starten",
+    "tab_voice": "Stimme",
+    "tab_agents": "Agenten",
+    "tab_more": "Mehr",
+    "subscriptions_title": "Abos",
+    "keys_title": "API-Keys",
+    "authenticated": "Angemeldet",
+    "authenticated_as": "Angemeldet · {0}",
+    "not_installed": "Nicht installiert",
+    "not_signed_in": "Nicht angemeldet",
+    "account": "Konto",
+    "agents_needs_login": "Melde dich zuerst an, um die Agenten darüber laufen zu lassen.",
+    "agents_use_for": "Agenten über {0} laufen lassen",
+    "runtime": "Laufzeit",
+    "binary_path": "Programmpfad",
+    "binary_path_hint": "Das Kommandozeilen-Tool hinter dieser Anmeldung.",
+    "cli_check": "Prüfen",
+    "cli_check_hint": "Findet das Tool und liest Version und Anmeldung.",
+    "key_saved_short": "Schlüssel gespeichert",
+    "key_missing_short": "Kein Schlüssel",
+    "key_desc_short": "Ein Schlüssel für alles, was dieser Anbieter macht. Abrechnung pro Nutzung.",
+    "separate_title": "Eigene Schlüssel",
     "accounts_title": "Mehrere Anmeldungen pro Tool"
   }
 }

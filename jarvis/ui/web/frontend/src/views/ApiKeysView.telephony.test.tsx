@@ -3,7 +3,7 @@
  *
  * Design (2026-06-09): the former standalone "Telephony" sidebar screen was
  * folded into the API-Keys view as another section (header + the existing
- * status/credentials/scripts/calls cards), shown below the providers. These
+ * status/credentials/scripts/calls cards), shown on the page's "More" tab. These
  * tests pin that the section header renders and that the embedded TelephonyPanel
  * loads and shows live telephony data from /api/telephony/*.
  */
@@ -149,6 +149,8 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("renders the Telephony tier header inside the API-Keys view", async () => {
     installFetchMock(routes());
     renderView();
+    // Telephony lives on the page's "More" tab.
+    fireEvent.click(await screen.findByRole("tab", { name: "More" }));
 
     // English is the test-default locale; tier_telephony => "Telephony".
     await waitFor(() => expect(screen.getByText("Telephony")).toBeTruthy());
@@ -157,6 +159,8 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("loads live telephony status (Charon voice) from /api/telephony", async () => {
     installFetchMock(routes());
     renderView();
+    // Telephony lives on the page's "More" tab.
+    fireEvent.click(await screen.findByRole("tab", { name: "More" }));
 
     await waitFor(() => {
       expect(screen.getByTestId("status-tts-voice").textContent).toBe("Charon");
@@ -169,6 +173,8 @@ describe("ApiKeysView — embedded Telephony tier", () => {
   it("offers a 'Setup script' button that navigates to the telephony-setup page", async () => {
     installFetchMock(routes());
     renderView();
+    // Telephony lives on the page's "More" tab.
+    fireEvent.click(await screen.findByRole("tab", { name: "More" }));
 
     const btn = await waitFor(() =>
       screen.getByRole("button", { name: /Setup script/i }),

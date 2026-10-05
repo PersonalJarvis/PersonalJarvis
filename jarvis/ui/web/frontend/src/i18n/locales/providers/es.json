@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "Conecta cada empresa de IA una sola vez — con tu suscripción o una clave — y elige para qué la usa {name}.",
+    "subtitle": "La voz en directo funciona con OpenAI. Los agentes funcionan con cualquier suscripción o clave que conectes aquí.",
     "checking": "Comprobando…",
     "checked_now": "Comprobado ahora",
     "checked_minutes": "Comprobado hace {0} min",
@@ -96,6 +96,27 @@
     "restart_title": "Reinicia para terminar la actualización",
     "restart_desc": "La nueva página de proveedores necesita reiniciar una vez el servicio de la app. Tarda unos diez segundos.",
     "restart_action": "Reiniciar ahora",
+    "tab_voice": "Voz",
+    "tab_agents": "Agentes",
+    "tab_more": "Más",
+    "subscriptions_title": "Suscripciones",
+    "keys_title": "Claves API",
+    "authenticated": "Sesión iniciada",
+    "authenticated_as": "Sesión iniciada · {0}",
+    "not_installed": "No instalado",
+    "not_signed_in": "Sin sesión iniciada",
+    "account": "Cuenta",
+    "agents_needs_login": "Inicia sesión primero para ejecutar los agentes con ella.",
+    "agents_use_for": "Ejecutar los agentes con {0}",
+    "runtime": "Ejecución",
+    "binary_path": "Ruta del programa",
+    "binary_path_hint": "La herramienta de línea de comandos de este inicio de sesión.",
+    "cli_check": "Comprobar",
+    "cli_check_hint": "Busca la herramienta y lee su versión y su sesión.",
+    "key_saved_short": "Clave guardada",
+    "key_missing_short": "Sin clave",
+    "key_desc_short": "Una clave para todo lo que hace este proveedor. Se cobra por uso.",
+    "separate_title": "Claves propias",
     "accounts_title": "Varias sesiones por herramienta"
   }
 }

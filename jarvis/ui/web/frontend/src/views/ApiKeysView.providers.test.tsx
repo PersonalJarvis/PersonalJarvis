@@ -1,6 +1,6 @@
 /**
- * The provider page: every company once, one key per company, and the jobs it
- * powers switchable where they are shown.
+ * The provider page: a Voice tab on OpenAI GPT-Live, and an Agents tab with the
+ * subscription logins and the API keys as lists beside their settings.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -27,6 +27,10 @@ vi.mock("@/views/TelephonyView", () => ({ TelephonyPanel: () => null }));
 vi.mock("@/components/AgentAccountsPanel", () => ({ AgentAccountsPanel: () => null }));
 vi.mock("@/components/PromptWriterCard", () => ({ PromptWriterCard: () => null }));
 vi.mock("@/components/SubagentModelCard", () => ({ SubagentModelCard: () => null }));
+// GPT-Live's own form has its own tests; here it only has to place the key row.
+vi.mock("@/components/providers/LiveProfile", () => ({
+  LiveProfile: ({ keyField }: { keyField?: React.ReactNode }) => <div data-testid="live-profile">{keyField}</div>,
+}));
 
 import { _resetProvidersCacheForTests } from "@/hooks/useProviders";
 import { ApiKeysView } from "@/views/ApiKeysView";
@@ -61,6 +65,7 @@ const AGENTS = {
   provider_slug: null, model_override: null, sub_model_override: "", model_resolved: null,
   mapping: [
     { jarvis: "claude-api", label: "Claude", key_set: true, is_active_brain: false, billing: "subscription_or_api" },
+    { jarvis: "openai", label: "OpenAI", key_set: false, is_active_brain: false, billing: "api" },
     { jarvis: "gemini", label: "Google Gemini", key_set: true, is_active_brain: true, billing: "api" },
   ],
 };
@@ -116,25 +121,43 @@ function renderPage() {
   );
 }
 
-describe("ApiKeysView — one entry per company", () => {
-  it("lists every company once, with how it is connected", async () => {
-    renderPage();
-    const list = await screen.findByTestId("provider-family-list");
-    expect(within(list).getByTestId("provider-family-claude-api").textContent).toContain("Anthropic");
-    expect(within(list).getByTestId("provider-family-claude-api").textContent).toContain("me@example.com");
-    expect(within(list).getByTestId("provider-family-gemini").textContent).toContain("API key");
-  });
+function openAgents() {
+  fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
+}
 
-  it("opens on the company that carries the voice and tags what it powers", async () => {
+beforeEach(() => {
+  try {
+    localStorage.removeItem("jarvis.apikeys.tab");
+  } catch {
+    /* no storage in this environment */
+  }
+});
+
+describe("ApiKeysView — Voice", () => {
+  it("opens on the voice tab with one OpenAI key row", async () => {
     renderPage();
-    const detail = await screen.findByTestId("provider-family-detail-gemini");
-    expect(within(detail).getByTestId("provider-use-voice")).toBeTruthy();
-    expect(within(detail).getByTestId("provider-use-agents")).toBeTruthy();
+    const voice = await screen.findByTestId("apikeys-voice");
+    expect(within(voice).getByTestId("voice-key")).toBeTruthy();
+  });
+});
+
+describe("ApiKeysView — Agents", () => {
+  it("lists the subscription logins with account and version", async () => {
+    renderPage();
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const claude = await screen.findByTestId("subscription-claude_cli");
+    expect(claude.textContent).toContain("Claude");
+    expect(claude.textContent).toContain("me@example.com · Claude Max");
+    expect(claude.textContent).toContain("v2.1.0");
   });
 
   it("saves one key for the whole company", async () => {
     renderPage();
-    fireEvent.click(await screen.findByTestId("provider-family-claude-api"));
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const list = await screen.findByTestId("api-key-list");
+    fireEvent.click(within(list).getByRole("button", { name: "Anthropic" }));
     const input = await screen.findByTestId("provider-key-input");
     fireEvent.change(input, { target: { value: "sk-ant-api03-test" } });
     fireEvent.click(screen.getByTestId("provider-key-save"));
@@ -146,6 +169,10 @@ describe("ApiKeysView — one entry per company", () => {
 
   it("moves a feature with its own key back onto the main key", async () => {
     renderPage();
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const list = await screen.findByTestId("api-key-list");
+    fireEvent.click(within(list).getByRole("button", { name: "Google Gemini" }));
     const row = await screen.findByTestId("provider-separate-key-realtime_gemini_api_key");
     fireEvent.click(within(row).getByRole("button"));
     await waitFor(() =>
@@ -153,22 +180,25 @@ describe("ApiKeysView — one entry per company", () => {
     );
   });
 
-  it("switches the agents onto another company in one click", async () => {
+  it("runs the agents on a subscription with its switch", async () => {
     renderPage();
-    fireEvent.click(await screen.findByTestId("provider-family-claude-api"));
-    fireEvent.click(await screen.findByTestId("provider-agent-use-claude-api"));
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const claude = await screen.findByTestId("subscription-claude_cli");
+    fireEvent.click(within(claude).getByRole("switch"));
     await waitFor(() => {
       const post = calls.find((c) => c.url === "/api/jarvis-agent/switch");
       expect(post?.body).toMatchObject({ provider: "claude-api" });
     });
   });
 
-  it("shows the subscription sign-in with the account and the CLI behind it", async () => {
+  it("shows the sign-in with the account and the binary behind it", async () => {
     renderPage();
-    fireEvent.click(await screen.findByTestId("provider-family-claude-api"));
-    const section = await screen.findByTestId("provider-subscription");
-    expect(section.textContent).toContain("me@example.com");
-    expect(section.textContent).toContain("2.1.0");
-    expect(within(section).getByTestId("provider-subscription-disconnect")).toBeTruthy();
+    await screen.findByTestId("apikeys-voice");
+    openAgents();
+    const detail = await screen.findByTestId("subscription-detail-claude_cli");
+    expect(detail.textContent).toContain("me@example.com");
+    expect(within(detail).getByTestId("subscription-disconnect")).toBeTruthy();
+    expect((within(detail).getByLabelText("Binary path") as HTMLInputElement).value).toBe("/usr/bin/claude");
   });
 });

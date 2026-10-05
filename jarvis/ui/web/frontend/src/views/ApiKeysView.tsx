@@ -1,40 +1,60 @@
 import { useEffect, useState } from "react";
-import { Bot, KeyRound, Loader2, Phone, RefreshCw } from "lucide-react";
+import { Loader2, Phone, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { AgentAccountsPanel } from "@/components/AgentAccountsPanel";
-import { SubagentModelCard, type SubagentStatus } from "@/components/SubagentModelCard";
-import { PromptWriterCard } from "@/components/PromptWriterCard";
-import { useTierHealth } from "@/components/providers/ProviderTierSection";
+import { LiveProfile } from "@/components/providers/LiveProfile";
 import { Button } from "@/components/ui/button";
 import { TelephonyPanel } from "@/views/TelephonyView";
 import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 import { JarvisApiGroup } from "@/views/settings/JarvisApiGroup";
 import { TeamProxyGroup } from "@/views/settings/TeamProxyGroup";
-import { ProvidersPanel } from "@/views/apikeys/ProvidersPanel";
+import { AgentsTab } from "@/views/apikeys/AgentsTab";
+import { KeyField } from "@/views/apikeys/KeyField";
+import { SettingsSection } from "@/views/apikeys/settingsUi";
 import { useProviders, useSectionHealth } from "@/hooks/useProviders";
 import { useProviderFamilies } from "@/lib/providerFamilies";
 import { useLocaleChunk, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
+
+const TABS = ["voice", "agents", "more"] as const;
+type Tab = (typeof TABS)[number];
+const TAB_STORAGE_KEY = "jarvis.apikeys.tab";
+
+function initialTab(): Tab {
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    if (saved && (TABS as readonly string[]).includes(saved)) return saved as Tab;
+  } catch {
+    // Private mode / no storage: open on the first tab.
+  }
+  return "voice";
+}
 
 /**
- * API Keys — every AI company once, each with one way to sign in and one key.
+ * API Keys, in three parts behind one switch:
  *
- * The page used to be split by feature (live voice, agents, the install key,
- * advanced), so one company appeared on several tabs with several keys. Now
- * a company is connected once — its subscription login or a single key that
- * every feature reads — and its settings say what the assistant uses it for,
- * with each job switchable where it is shown. Below the providers sit the
- * settings that belong to no single company: the agents' model and accounts,
- * the install's own key, and the optional integrations.
+ * - Voice: the live voice runs on OpenAI GPT-Live — paid with the ChatGPT
+ *   subscription or one OpenAI key — with only its essential settings;
+ * - Agents: the subscription logins and the API keys the background agents
+ *   can run on, each as a list beside the selected entry's settings;
+ * - More: the install's own key and the optional integrations.
  */
 export function ApiKeysView() {
   const t = useT();
   // The page's own strings load with it; nothing paints raw keys meanwhile.
   const stringsReady = useLocaleChunk("providers");
-  const { providers, loading, error, refetch, setActiveOptimistic } = useProviders();
+  const { providers, refetch } = useProviders();
   const families = useProviderFamilies();
   const { health } = useSectionHealth();
-  const tierHealth = useTierHealth(providers);
-  const refreshing = families.loading;
+  const [tab, setTab] = useState<Tab>(initialTab);
+  const choose = (next: Tab) => {
+    setTab(next);
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, next);
+    } catch {
+      // Remembering the tab is a convenience; without storage it resets.
+    }
+  };
 
   if (!stringsReady) {
     return (
@@ -48,7 +68,6 @@ export function ApiKeysView() {
     <div className="flex h-full min-h-0 flex-col" data-tour="apikeys-page">
       <div className="shrink-0 px-8">
         <PageHeader
-          icon={<KeyRound />}
           title={t("apikeys_view.title")}
           description={t("providers_page.subtitle")}
           actions={
@@ -57,53 +76,122 @@ export function ApiKeysView() {
               variant="ghost"
               className="text-muted-foreground"
               data-testid="providers-refresh"
-              disabled={refreshing}
+              disabled={families.loading}
               onClick={() => {
                 refetch();
                 void families.reload();
               }}
             >
-              {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+              {families.loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
               <CheckedAgo at={families.checkedAt} />
             </Button>
           }
         />
+        <TabSwitch value={tab} onChange={choose} />
       </div>
 
       <div
         data-testid="api-keys-provider-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-2"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-8 pb-10 pt-6"
       >
-        <div className="profile-rise flex w-full flex-col gap-12">
-          <ProvidersPanel
-            data={families}
-            providers={providers}
-            providersLoading={loading}
-            providersError={error}
-            health={health}
-            realtimeHealth={tierHealth.realtime}
-            onProvidersChanged={refetch}
-            onActivateOptimistic={setActiveOptimistic}
-          />
-          <AgentSettings />
-          <section className="flex flex-col gap-3">
-            <SectionTitle title={t("apikeys_view.jarvis_key_title")} description={t("apikeys_view.jarvis_key_desc")} />
-            <JarvisApiGroup />
-          </section>
-          <section className="flex flex-col gap-3">
-            <SectionTitle title={t("apikeys_view.advanced_title")} description={t("apikeys_view.advanced_desc")} />
-            <div className="space-y-4">
-              <TeamProxyGroup />
-              <TelephonySection />
-              <WikiProviderCard />
-            </div>
-            {/* Nominative-use trademark notice: provider and integration names
-                and logos belong to their owners and only identify what you
-                connect to (see TRADEMARK.md). */}
-            <p className="px-1 pt-2 text-sm text-muted-foreground">{t("apikeys_view.trademark_notice")}</p>
-          </section>
+        <div key={tab} role="tabpanel" id="apikeys-panel" aria-labelledby={`apikeys-tab-${tab}`} className="profile-rise w-full">
+          {tab === "voice" && <VoiceTab data={families} onSaved={refetch} />}
+          {tab === "agents" &&
+            (families.error === "restart_required" ? (
+              <RestartNeeded />
+            ) : (
+              <AgentsTab data={families} providers={providers} health={health} onProvidersChanged={refetch} />
+            ))}
+          {tab === "more" && <MoreTab />}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A segmented switch between the page's parts. */
+function TabSwitch({ value, onChange }: { value: Tab; onChange: (tab: Tab) => void }) {
+  const t = useT();
+  return (
+    <div
+      role="tablist"
+      aria-label={t("apikeys_view.title")}
+      data-testid="api-keys-category-tabs"
+      className="inline-flex rounded-lg border border-border/60 bg-card/40 p-0.5"
+    >
+      {TABS.map((tab) => (
+        <button
+          key={tab}
+          type="button"
+          role="tab"
+          id={`apikeys-tab-${tab}`}
+          aria-selected={value === tab}
+          aria-controls="apikeys-panel"
+          onClick={() => onChange(tab)}
+          className={cn(
+            "h-7 rounded-md px-3 text-sm font-medium transition-colors",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            value === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {t(`providers_page.tab_${tab}`)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The live voice is OpenAI GPT-Live — the one live speech-to-speech model the
+ * assistant runs — so this tab is that one provider: how it is paid for and
+ * its essential settings.
+ */
+function VoiceTab({ data, onSaved }: { data: ReturnType<typeof useProviderFamilies>; onSaved: () => void }) {
+  const openai = data.families?.find((family) => family.id === "openai");
+  const slot = openai?.key_slot ?? "openai_api_key";
+  return (
+    <div data-testid="apikeys-voice" className="max-w-4xl">
+      <LiveProfile
+        onSaved={onSaved}
+        keyField={
+          <KeyField
+            slot={slot}
+            present={openai?.key_present ?? false}
+            providerLabel="OpenAI"
+            dashboardUrl={openai?.dashboard_url}
+            onChanged={() => void data.reload()}
+            testId="voice-key"
+          />
+        }
+      />
+    </div>
+  );
+}
+
+/** The install's own key and the optional integrations. */
+function MoreTab() {
+  const t = useT();
+  return (
+    <div className="flex max-w-4xl flex-col gap-10">
+      <SettingsSection title={t("apikeys_view.jarvis_key_title")} plain>
+        <JarvisApiGroup />
+      </SettingsSection>
+      <SettingsSection title={t("apikeys_view.advanced_title")} plain>
+        <div className="space-y-4">
+          <TeamProxyGroup />
+          <section>
+            <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
+              <Phone aria-hidden="true" className="h-4 w-4" /> {t("apikeys_view.tier_telephony")}
+            </h3>
+            <TelephonyPanel />
+          </section>
+          <WikiProviderCard />
+        </div>
+      </SettingsSection>
+      {/* Nominative-use trademark notice: provider and integration names and
+          logos belong to their owners and only identify what you connect to
+          (see TRADEMARK.md). */}
+      <p className="px-1 text-xs text-muted-foreground">{t("apikeys_view.trademark_notice")}</p>
     </div>
   );
 }
@@ -127,69 +215,48 @@ function CheckedAgo({ at }: { at: number | null }) {
   );
 }
 
-function SectionTitle({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="px-1">
-      <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
-      <p className="mt-0.5 text-base text-muted-foreground">{description}</p>
-    </div>
-  );
-}
-
 /**
- * Settings that belong to the agents rather than to one company: the model a
- * worker runs, who writes the task briefs, and the several logins a person
- * can hold per command-line tool.
+ * The window runs a newer page than its backend: the bundle reloads on its
+ * own after an update, the server does not. One sentence and one button,
+ * instead of an error that suggests something is broken.
  */
-function AgentSettings() {
+function RestartNeeded() {
   const t = useT();
-  const [status, setStatus] = useState<SubagentStatus | null>(null);
-  const reload = async () => {
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [restarting, setRestarting] = useState(false);
+
+  async function restart() {
+    setRestarting(true);
     try {
-      const res = await fetch("/api/jarvis-agent/status", { cache: "no-store" });
-      if (res.ok) setStatus((await res.json()) as SubagentStatus);
+      const response = await fetch("/api/settings/restart-app", { method: "POST" });
+      if (response.status === 409) {
+        pushToast("warning", t("topbar.restart_missions_running"));
+        setRestarting(false);
+        return;
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      // The window closes and relaunches; the button stays busy until then.
     } catch (cause) {
-      // The model card simply stays hidden; the provider list above reports
-      // the same endpoint's failure.
-      console.debug("agent status unavailable", cause);
+      pushToast("error", (cause as Error).message);
+      setRestarting(false);
     }
-  };
-  useEffect(() => {
-    void reload();
-    const onChange = () => void reload();
-    window.addEventListener("jarvis:agent-switched", onChange);
-    return () => window.removeEventListener("jarvis:agent-switched", onChange);
-  }, []);
+  }
 
   return (
-    <section data-testid="provider-agent-settings" className="flex flex-col gap-3">
-      <SectionTitle title={t("providers_page.agent_settings_title")} description={t("providers_page.agent_settings_desc")} />
-      <div className="grid gap-4 xl:grid-cols-2">
-        {status && <SubagentModelCard status={status} onSaved={() => void reload()} />}
-        <PromptWriterCard />
+    <div
+      role="status"
+      data-testid="providers-restart-needed"
+      className="flex items-center gap-4 rounded-xl border border-border/60 bg-card/40 px-4 py-3"
+    >
+      <RefreshCw aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground">{t("providers_page.restart_title")}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{t("providers_page.restart_desc")}</p>
       </div>
-      <div className="flex items-center gap-2 px-1 pt-2 text-sm font-medium text-muted-foreground">
-        <Bot aria-hidden="true" className="h-4 w-4" />
-        {t("providers_page.accounts_title")}
-      </div>
-      <AgentAccountsPanel />
-    </section>
-  );
-}
-
-/**
- * Telephony: a labelled header above the embedded `TelephonyPanel`, which owns
- * its data source (`/api/telephony/*`); the setup scripts and guide live on the
- * dedicated TelephonySetupView, reached through the panel's "Setup script".
- */
-function TelephonySection() {
-  const t = useT();
-  return (
-    <section>
-      <h3 className="mb-3 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-        <Phone aria-hidden="true" className="h-4 w-4" /> {t("apikeys_view.tier_telephony")}
-      </h3>
-      <TelephonyPanel />
-    </section>
+      <Button size="sm" disabled={restarting} onClick={() => void restart()}>
+        {restarting && <Loader2 className="animate-spin" />}
+        {t("providers_page.restart_action")}
+      </Button>
+    </div>
   );
 }

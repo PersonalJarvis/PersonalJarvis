@@ -1,6 +1,6 @@
 {
   "providers_page": {
-    "subtitle": "Connect each AI company once — with your subscription or one key — and choose what {name} uses it for.",
+    "subtitle": "The live voice runs on OpenAI. The agents run on any subscription or key you connect here.",
     "checking": "Checking…",
     "checked_now": "Checked just now",
     "checked_minutes": "Checked {0} min ago",
@@ -96,6 +96,27 @@
     "restart_title": "Restart to finish the update",
     "restart_desc": "The new provider page needs the app's background service to restart once. It takes about ten seconds.",
     "restart_action": "Restart now",
+    "tab_voice": "Voice",
+    "tab_agents": "Agents",
+    "tab_more": "More",
+    "subscriptions_title": "Subscriptions",
+    "keys_title": "API keys",
+    "authenticated": "Authenticated",
+    "authenticated_as": "Authenticated · {0}",
+    "not_installed": "Not installed",
+    "not_signed_in": "Not signed in",
+    "account": "Account",
+    "agents_needs_login": "Sign in first to run the agents on it.",
+    "agents_use_for": "Run the agents on {0}",
+    "runtime": "Runtime",
+    "binary_path": "Binary path",
+    "binary_path_hint": "The command-line tool this sign-in runs.",
+    "cli_check": "Check",
+    "cli_check_hint": "Finds the tool, reads its version and sign-in.",
+    "key_saved_short": "Key saved",
+    "key_missing_short": "No key",
+    "key_desc_short": "One key for everything this provider does. Billed per use.",
+    "separate_title": "Separate keys",
     "accounts_title": "Several sign-ins per tool"
   }
 }
