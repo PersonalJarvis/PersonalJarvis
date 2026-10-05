@@ -21,7 +21,8 @@
     "card": {
       "learned_review_hint": "Le skill apprese private restano istruzioni consultive. Inviane una a Skills come bozza per revisionarla prima dell'attivazione globale.",
       "learned_review": "Rivedi in Skills",
-      "learned_reviewing": "Preparazione bozza…"
+      "learned_reviewing": "Preparazione bozza…",
+      "shared_figures": "Catalogo avatar condivisi"
     },
     "triggers": {
       "event_filter": "Filtro evento (opzionale)",
