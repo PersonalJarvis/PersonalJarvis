@@ -367,6 +367,25 @@ def check_shift_digit_shortcut(report: Report) -> None:
         report.add(f"Ctrl+Shift+9 fires on X11 ({layout} layout)", bool(fired))
 
 
+def check_macos_gesture_permission(report: Report) -> None:
+    """macOS: a both-keys shortcut never reports armed without Input Monitoring."""
+    if _session() != "macos":
+        return
+    from jarvis.appshot.gesture import make_probe
+    from jarvis.platform.permissions import PermissionId, get_system_permission_port
+
+    granted = get_system_permission_port().runtime_access_granted(PermissionId.INPUT_MONITORING)
+    probe, reason = make_probe("alt")
+    if granted:
+        report.add("both-Option shortcut arms with Input Monitoring", probe is not None, reason)
+    else:
+        report.add(
+            "both-Option shortcut names the missing Input Monitoring grant",
+            probe is None and "Input Monitoring" in reason,
+            reason,
+        )
+
+
 def check_headless_imports(report: Report) -> None:
     for module in (
         "jarvis.appshot.service",
@@ -405,6 +424,7 @@ def main() -> int:
         check_jarvisx_copy,
     ]
     steps += [check_markup_burn, check_library_and_downloads, check_shift_digit_shortcut]
+    steps += [check_macos_gesture_permission]
     for step in steps:
         try:
             step(report)
