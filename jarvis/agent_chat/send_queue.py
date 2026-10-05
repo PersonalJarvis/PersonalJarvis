@@ -172,7 +172,7 @@ async def _drain_loop(svc: Any, session_id: str, pending: _ChatQueue) -> None:
             await svc.send(
                 session_id, head.text, head.attachments, tool_choices=head.tool_choices
             )
-        except SessionBusy:
+        except SessionBusy:  # the seat is still taken: this message simply waits longer
             continue
         except Exception:  # noqa: BLE001 — reported in the chat, then the next one runs
             # The detail stays in the log; a provider's text never reaches the chat.

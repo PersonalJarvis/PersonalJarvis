@@ -96,7 +96,7 @@ class ReviewWindow:
     def parse(cls, raw: str) -> ReviewWindow:
         try:
             data = json.loads(raw) if raw else {}
-        except ValueError:
+        except ValueError:  # a damaged window starts over; the next turn rebuilds it
             data = {}
         if not isinstance(data, dict):
             data = {}

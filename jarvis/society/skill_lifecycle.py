@@ -62,7 +62,7 @@ class SkillUsage:
     def _load(self) -> dict[str, dict[str, Any]]:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except FileNotFoundError:  # no skill has been used yet: an empty record is correct
             return {}
         except (OSError, ValueError):
             log.warning("society skills: usage file %s unreadable; starting over", self.path)

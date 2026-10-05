@@ -478,7 +478,7 @@ async def _apply_identity(rt: Any, agent: AgentRecord, payload: dict[str, Any]) 
         fields["approval_rules"] = derived_rules
     try:
         updated = await rt.roster.update(agent.agent_id, fields)
-    except RosterError as exc:
+    except RosterError as exc:  # reported on the outcome card as "failed"; nothing changed
         return {"applied": False, "detail": str(exc), "kind": "identity"}
     label = updated.name + (f" - {updated.title}" if updated.title else "")
     return {
