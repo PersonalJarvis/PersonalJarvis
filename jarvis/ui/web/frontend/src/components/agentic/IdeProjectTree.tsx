@@ -7,7 +7,6 @@ import { useComputerChoices } from "@/hooks/useComputers";
 import { addTerminal, fetchWorkspacePanes, interruptTerminal, placeWorkspace, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
-import { IdeLayoutSwitch } from "./threads/IdeLayoutSwitch";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
@@ -780,7 +779,6 @@ export function IdeProjectTree() {
     <div className="flex h-8 items-center justify-between pl-2 pr-1 text-[15px] font-semibold text-foreground">
       <span>Workspaces</span>
       <div className="flex items-center gap-0.5">
-        <IdeLayoutSwitch />
         <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-3.5 w-3.5" /></button>
         <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}

@@ -25,6 +25,7 @@ import { useT } from "@/i18n";
 import { RecentChats } from "@/components/home/RecentChats";
 import { useHomeStore } from "@/store/home";
 import { LazyIdeProjectTree } from "@/components/agentic/LazyIdeProjectTree";
+import { IDE_SECTIONS } from "@/lib/ideSections";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { SidebarSearchBar } from "@/components/layout/SidebarSearchBar";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
@@ -65,17 +66,6 @@ const UpdateButton = lazy(() =>
  * file is outside this change; once it lands these can go back to `cn`.
  */
 
-/**
- * The section ids the Agentic IDE answers to.
- *
- * Mirrors the nav row's own `matchIds` (see ./navGroups): the section has been
- * renamed twice and the older ids are still what some entry points set.
- */
-const IDE_SECTIONS: readonly string[] = [
-  "agentic-ide",
-  "chat-workspace",
-  "agentic-ide-classic",
-];
 
 /**
  * The voice status dot, in the three colours a status is allowed to have.

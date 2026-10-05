@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
-import { IdeLayoutSwitch } from "./IdeLayoutSwitch";
 import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "./ThreadPopover";
 import { shortAge, threadStatus, threadTitle, threadsByProject, useThreadChatStore, type ThreadStatus } from "./threadModel";
 
@@ -233,7 +232,6 @@ export function ThreadTree() {
     <div className="flex h-8 items-center justify-between gap-2 pl-2 pr-1 text-[15px] font-semibold text-foreground">
       <span>Threads</span>
       <div className="flex items-center gap-1">
-        <IdeLayoutSwitch />
         <button type="button" aria-label="Jarvis Live" title="Jarvis Live" onClick={toggleVoice}
           className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Mic className="h-3.5 w-3.5" /></button>
         <button type="button" aria-label="Connect project" title="Connect project folder" onClick={connectProject}

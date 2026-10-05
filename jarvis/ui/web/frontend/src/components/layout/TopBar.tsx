@@ -12,6 +12,8 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
+import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
+import { IDE_SECTIONS } from "@/lib/ideSections";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 
 /**
@@ -90,12 +92,29 @@ export function TopBar() {
           if (chrome.frameless) chrome.command("maximize");
         }}
       />
+      <IdeCaptionSwitch />
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The Agentic IDE's grid / threads switch, centred in the caption. Only on the
+ * IDE: everywhere else the caption's middle stays the window's drag handle.
+ * It floats over that handle rather than splitting it, so the strip keeps
+ * dragging on both sides of the switch.
+ */
+function IdeCaptionSwitch() {
+  const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
+  if (!onIde) return null;
+  return (
+    <div className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center">
+      <IdeLayoutSwitch className="pointer-events-auto" />
     </div>
   );
 }
