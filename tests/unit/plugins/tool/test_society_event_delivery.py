@@ -26,7 +26,9 @@ from jarvis.ui.web.society_routes import router as society_router
 from jarvis.ui.web.tasks_routes import router as tasks_router
 
 
-@pytest.mark.parametrize("owner_state", ["active", "paused", "seat_failed", "deferred"])
+@pytest.mark.parametrize("owner_state", [
+    "active", "paused", "seat_failed", "deferred", "queued_restart", "claimed_restart",
+])
 async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
     tmp_path, monkeypatch, owner_state,
 ):
@@ -129,6 +131,30 @@ async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
             assert duplicate.status_code == 202, duplicate.text
             assert duplicate.json()["status"] == "duplicate"
 
+            if owner_state in ("queued_restart", "claimed_restart"):
+                assert await store.hooks.counts(task_id) == (1, 1)
+                if owner_state == "claimed_restart":
+                    pending = await store.hooks.pending()
+                    await store.hooks.mark(task_id, pending[0]["delivery_id"], "running")
+                    await store.update_state(task_id, "running")
+                await scheduler.shutdown()
+                await store.close()
+                store = TaskStore(tmp_path / "tasks.db")
+                await store.init()
+                runner = TaskRunner(
+                    store, bus, owned_agent_runner=owned_run,
+                    agent_brain=SimpleNamespace(run_task=generic_run), agent_brain_wait_s=0,
+                )
+                scheduler = TaskScheduler(store, bus, runner)
+                app.state.task_store = store
+                app.state.task_scheduler = scheduler
+                await scheduler.hydrate()
+                replayed = await deliver(True, "merged-after-restart")
+                assert replayed.status_code == 202, replayed.text
+                assert replayed.json()["status"] == "duplicate"
+                assert calls == []
+                expected_pending = 0 if owner_state == "claimed_restart" else 1
+                assert await store.hooks.counts(task_id) == (1, expected_pending)
             if owner_state == "paused":
                 await runtime.roster.update("scout", {"state": "paused"})
             await scheduler._drain_hooks()
@@ -145,7 +171,10 @@ async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
                 await asyncio.sleep(2.1)
                 await scheduler._drain_hooks()
                 await scheduler.shutdown()
-            expected_calls = 0 if owner_state == "paused" else 2 if owner_state == "deferred" else 1
+            if owner_state in ("paused", "claimed_restart"):
+                expected_calls = 0
+            else:
+                expected_calls = 2 if owner_state == "deferred" else 1
             assert len(calls) == expected_calls
             for called_id, tags, prompt in calls:
                 assert called_id == task_id
@@ -158,11 +187,15 @@ async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
             detail = await client.get(f"/api/tasks/{task_id}")
             assert detail.status_code == 200, detail.text
             receipt = detail.json()
-            if owner_state in ("paused", "seat_failed"):
+            if owner_state in ("paused", "seat_failed", "claimed_restart"):
                 assert receipt["last_run_state"] == "failed"
                 assert receipt["state"] == "scheduled"
                 assert not receipt["last_result"]
-                expected_error = "paused" if owner_state == "paused" else "was not rerouted"
+                expected_error = {
+                    "paused": "paused",
+                    "seat_failed": "was not rerouted",
+                    "claimed_restart": "Hook interrupted; inspect its result before retrying",
+                }[owner_state]
                 assert expected_error in receipt["last_error"]
             else:
                 assert receipt["last_run_state"] == "completed"
