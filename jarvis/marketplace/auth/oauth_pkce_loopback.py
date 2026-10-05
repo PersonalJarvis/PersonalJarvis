@@ -75,6 +75,12 @@ class PkceLoopbackConfig:
     # authorize request carries `access_type=offline` + `prompt=consent`.
     offline_access: bool = False
     client_auth_method: Literal["client_secret_post", "client_secret_basic"] = "client_secret_post"
+    # Family key of a ``publisher_clients.SHIPPED_TOKEN_BROKERS`` entry. Set
+    # only for the shipped public client of a provider that demands a client
+    # secret: the code exchange then goes to that broker (and, when the broker
+    # has one, the browser redirect to its https callback) instead of
+    # ``token_url``, with no secret. ``None`` means the provider directly.
+    token_broker: str | None = None
 
     def token_auth_method(self, secret: str | None) -> str:
         """Honor X's endpoint contract, including legacy installed catalogs."""
@@ -97,6 +103,24 @@ def _basic_token_header(client_id: str, secret: str | None, method: str) -> dict
         )
     credentials = f"{quote_plus(client_id)}:{quote_plus(secret)}".encode()
     return {"Authorization": "Basic " + base64.b64encode(credentials).decode("ascii")}
+
+
+def _broker(family: str | None):
+    """Resolve a token-broker family, failing loudly when it vanished.
+
+    A grant issued through a broker can only be exchanged or refreshed there:
+    the provider refuses it without the secret the app does not hold.
+    """
+    if not family:
+        return None
+    from jarvis.marketplace.publisher_clients import token_broker
+
+    broker = token_broker(family)
+    if broker is None:
+        raise RuntimeError(
+            f"the {family} token broker is no longer available; reconnect the plugin"
+        )
+    return broker
 
 
 def _refresh_expires_at(payload: dict) -> datetime | None:
@@ -213,7 +237,7 @@ class PkceLoopbackHandler:
                 "in use, or the hosted callback base URL is unreachable)"
             ) from exc
 
-        redirect_uri = callback_server.redirect_uri
+        redirect_uri = self._redirect_uri(callback_server.redirect_uri)
         verifier, challenge = pkce_pair()
         sid = session_id()
 
@@ -234,6 +258,18 @@ class PkceLoopbackHandler:
             redirect_uri=redirect_uri,
             expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000),
         )
+
+    def _redirect_uri(self, listener_uri: str) -> str:
+        """The redirect_uri sent to the provider.
+
+        Normally the local listener's own address. A token broker with an
+        https callback (Slack) replaces it: the provider redirects the browser
+        there, and the broker bounces the request on to the same listener.
+        """
+        broker = _broker(self._config.token_broker)
+        if broker is not None and broker.redirect_uri:
+            return broker.redirect_uri
+        return listener_uri
 
     def _authorize_params(self, *, redirect_uri: str, state: str, challenge: str) -> dict[str, str]:
         """Build the authorize query params. Extracted so the optional
@@ -312,28 +348,31 @@ class PkceLoopbackHandler:
             "grant_type": "authorization_code",
             "redirect_uri": pending.redirect_uri,
         }
-        if (
-            pending.config.client_secret
-            and pending.config.token_auth_method(pending.config.client_secret)
-            == "client_secret_post"
-        ):
-            body["client_secret"] = pending.config.client_secret
-        if pending.config.resource:
-            body["resource"] = pending.config.resource
+        broker = _broker(pending.config.token_broker)
+        if broker is not None:
+            # The broker adds the shipped client's secret itself and refuses
+            # any field beyond the grant, so no secret and no extras go out.
+            token_url = broker.token_url
+            client_secret = None
+            auth_method = "none"
+        else:
+            token_url = pending.config.token_url
+            client_secret = pending.config.client_secret
+            auth_method = pending.config.token_auth_method(client_secret)
+            if client_secret and auth_method == "client_secret_post":
+                body["client_secret"] = client_secret
+            if pending.config.resource:
+                body["resource"] = pending.config.resource
         timeout = httpx.Timeout(pending.config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
-                pending.config.token_url,
+                token_url,
                 data=body,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": "Personal-Jarvis/1.0",
-                    **_basic_token_header(
-                        pending.config.client_id,
-                        pending.config.client_secret,
-                        pending.config.token_auth_method(pending.config.client_secret),
-                    ),
+                    **_basic_token_header(pending.config.client_id, client_secret, auth_method),
                 },
             )
         if r.status_code != 200:
@@ -379,11 +418,12 @@ class PkceLoopbackHandler:
         # remain bound to their issuing client. Keeping the pair inside the same
         # protected token blob makes refresh independent of that drift.
         extra["client_id"] = pending.config.client_id
-        extra["token_endpoint_auth_method"] = pending.config.token_auth_method(
-            pending.config.client_secret
-        )
-        if pending.config.client_secret:
-            extra["client_secret"] = pending.config.client_secret
+        extra["token_endpoint_auth_method"] = auth_method
+        if client_secret:
+            extra["client_secret"] = client_secret
+        if broker is not None:
+            # A brokered grant can only ever be refreshed through the broker.
+            extra["token_broker"] = pending.config.token_broker
         return Tokens(access=access, refresh=refresh, expires_at=expires_at, extra=extra)
 
     async def refresh(self, current: Tokens) -> Tokens:
@@ -398,25 +438,43 @@ class PkceLoopbackHandler:
         if bound_client_id:
             client_id = bound_client_id
             client_secret = current.extra.get("client_secret")
+            # The grant's own broker marker decides, never today's config: an
+            # expert override added later must not reroute a brokered grant,
+            # and a brokered client must not reroute an expert's grant. A
+            # secret-less grant of a shipped broker client without the marker
+            # can likewise only be refreshed through that broker.
+            broker_family = current.extra.get("token_broker")
+            if not broker_family and not client_secret:
+                from jarvis.marketplace.publisher_clients import broker_family_for_client
+
+                broker_family = broker_family_for_client(client_id)
         else:
             client_id = self._config.client_id
             client_secret = self._config.client_secret
+            broker_family = self._config.token_broker
+        broker = _broker(broker_family)
         refresh_body = {
             "grant_type": "refresh_token",
             "refresh_token": current.refresh,
             "client_id": client_id,
         }
-        auth_method = current.extra.get(
-            "token_endpoint_auth_method"
-        ) or self._config.token_auth_method(client_secret)
-        if client_secret and auth_method == "client_secret_post":
-            refresh_body["client_secret"] = client_secret
-        if self._config.resource:
-            refresh_body["resource"] = self._config.resource
+        if broker is not None:
+            token_url = broker.token_url
+            client_secret = None
+            auth_method = "none"
+        else:
+            token_url = self._config.token_url
+            auth_method = current.extra.get(
+                "token_endpoint_auth_method"
+            ) or self._config.token_auth_method(client_secret)
+            if client_secret and auth_method == "client_secret_post":
+                refresh_body["client_secret"] = client_secret
+            if self._config.resource:
+                refresh_body["resource"] = self._config.resource
         timeout = httpx.Timeout(self._config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
-                self._config.token_url,
+                token_url,
                 data=refresh_body,
                 headers={
                     "Accept": "application/json",
@@ -470,6 +528,8 @@ class PkceLoopbackHandler:
                 extra["client_secret"] = client_secret
             else:
                 extra.pop("client_secret", None)
+        if broker is not None:
+            extra["token_broker"] = broker_family
         return Tokens(
             access=access,
             refresh=new_refresh,

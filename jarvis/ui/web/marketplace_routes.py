@@ -52,7 +52,6 @@ from jarvis.marketplace.auth import (
     DeviceFlowHandler,
     FlowResult,
     HostedMcpDcrHandler,
-    PkceLoopbackConfig,
     PkceLoopbackHandler,
     get_registry,
     sanitize_provider_error,
@@ -741,15 +740,15 @@ async def connect_start(
         # Resolve the effective client from secrets so a reconnect uses the
         # operator's real Google client, not the catalog placeholder (the same
         # resolution the refresh scheduler uses — connect/refresh stay in sync).
+        # The shared builder also routes a shipped client's token exchange
+        # through its broker when the provider demands a secret.
         from jarvis.marketplace.connect_helpers import (
+            build_pkce_config,
             is_placeholder_client_id,
-            resolve_pkce_client,
         )
 
-        _pkce_client_id, _pkce_client_secret = resolve_pkce_client(
-            plugin_id, spec.auth.client_id, spec.auth.client_secret
-        )
-        if is_placeholder_client_id(_pkce_client_id):
+        pkce_config = build_pkce_config(plugin_id, spec.auth)
+        if is_placeholder_client_id(pkce_config.client_id):
             detail = (
                 f"oauth client not configured for plugin {plugin_id!r}: no "
                 "publisher-provisioned shared client is installed yet and "
@@ -765,26 +764,7 @@ async def connect_start(
                     "via the dialog's token fallback."
                 )
             raise HTTPException(status_code=409, detail=detail)
-        handler = PkceLoopbackHandler(
-            PkceLoopbackConfig(
-                plugin_id=plugin_id,
-                authorization_url=spec.auth.authorization_url,
-                token_url=spec.auth.token_url,
-                client_id=_pkce_client_id,
-                client_secret=_pkce_client_secret,
-                callback_port=spec.auth.callback_port or 0,
-                scopes=list(spec.auth.scopes),
-                scope_separator=spec.auth.scope_separator,
-                # Slack-specific: PKCE-enabled apps must use user_scope= per
-                # docs.slack.dev/authentication/using-pkce. When the catalog
-                # marks a plugin user-scopes-only, route the param.
-                scope_param_name=("user_scope" if spec.auth.user_scopes_only else "scope"),
-                callback_path=spec.auth.callback_path,
-                resource=spec.auth.resource,
-                offline_access=spec.auth.offline_access,
-                client_auth_method=spec.auth.client_auth_method,
-            )
-        )
+        handler = PkceLoopbackHandler(pkce_config)
     else:
         raise HTTPException(
             status_code=400,
