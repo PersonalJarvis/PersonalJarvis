@@ -159,12 +159,12 @@ async def test_concurrent_rooms_respect_target_run_cap(tmp_path: Path):
         await release.wait()
         return f"run-{len(calls)}"
 
+    first = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
+    second = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
     scheduler = SocietyScheduler(
         store, roster, rooms=rooms, room_turn=slow_room_turn, budget_tracker=FakeBudget()
     ).attach()
     try:
-        first = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
-        second = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
         first_task = asyncio.create_task(scheduler.drive_room(first.room_id))
         await started.wait()
         second_task = asyncio.create_task(scheduler.drive_room(second.room_id))
