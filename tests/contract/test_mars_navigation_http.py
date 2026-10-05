@@ -219,7 +219,14 @@ async def test_private_rejected_input_is_never_echoed_or_logged(world, location,
     assert response.status_code == 422
     assert response.json() == {"detail": {"reason": "invalid_navigation_request"}}
     assert response.headers["cache-control"] == "no-store"
-    assert private not in response.text and private not in caplog.text
+    # The test's own httpx client logs its request URL at INFO when another
+    # test lowers the level; only server-side records belong to the claim.
+    server_logs = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if not record.name.startswith(("httpx", "httpcore"))
+    )
+    assert private not in response.text and private not in server_logs
     assert world.calls == []
 
 

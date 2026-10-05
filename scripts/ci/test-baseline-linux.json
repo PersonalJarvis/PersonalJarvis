@@ -150,7 +150,6 @@
     "tests.unit.test_router_delegator_policy.TestDelegatorPolicyInPrompt::test_default_on_uncertainty_is_self_serve",
     "tests.unit.test_tts_defaults_parity::test_all_tts_providers_have_defaults_entry",
     "tests.unit.ui.jarvisbar.test_qt_overlay::test_full_frame_paint_clears_black_backing_and_previous_pixels",
-    "tests.unit.ui.test_icon_identity::test_bundled_app_icon_png_is_white_rounded_tile",
     "tests.unit.ui.web.test_skills_routes::test_creator_author_writes_a_draft_skill_with_a_brain",
     "tests.unit.ui.web.test_society_figure_routes::test_a_contract_figure_is_accepted_stored_and_served",
     "tests.unit.ui.web.test_society_routes::test_memory_file_serves_society_page_and_refuses_escape",

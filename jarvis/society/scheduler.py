@@ -92,6 +92,20 @@ def validate_result(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _handoff_owner(env: SocietyEnvelope) -> str | None:
+    """The agent a RESULT hands its next step to, if it names one."""
+    if env.msg_type is not MsgType.RESULT:
+        return None
+    owner = env.payload.get("next_owner")
+    return owner.strip() if isinstance(owner, str) and owner.strip() else None
+
+
+def _delivery_view(env: SocietyEnvelope) -> SocietyEnvelope:
+    """Address a queued RESULT handoff to its next owner; other envelopes pass through."""
+    owner = _handoff_owner(env)
+    return env.model_copy(update={"to_agent": owner}) if owner is not None else env
+
+
 class SocietyScheduler:
     def __init__(
         self,
@@ -396,6 +410,9 @@ class SocietyScheduler:
     async def _on_result(self, env: SocietyEnvelope) -> None:
         problem = validate_result(env.payload)
         if problem is not None:
+            await self._store.mark_delivery(
+                env.event_id, "failed", str(FailureReason.INVALID_RESULT)
+            )
             await self._veto(env, FailureReason.INVALID_RESULT, problem)
             return
         run_id = env.payload.get("run_id")
@@ -416,11 +433,10 @@ class SocietyScheduler:
                     env.event_id,
                     exc_info=True,
                 )
-        next_owner = env.payload.get("next_owner")
-        if isinstance(next_owner, str) and next_owner and self._deliver is not None:
-            target = await self._resolve_target(env.model_copy(update={"to_agent": next_owner}))
-            if isinstance(target, AgentRecord):
-                await self._deliver(target, env)
+        # The insert trigger already queued any handoff under this event id,
+        # atomically with the RESULT, before any observer ran. Releasing a run
+        # can also allow an older busy delivery to proceed.
+        await self.drain_deliveries()
 
     async def drain_deliveries(self) -> None:
         """FIFO per recipient. Busy recipients never block other conversations."""
@@ -428,7 +444,23 @@ class SocietyScheduler:
             return
         async with self._delivery_lock:
             busy: set[str | None] = set()
-            for env in await self._store.pending_deliveries():
+            for queued in await self._store.pending_deliveries():
+                env = _delivery_view(queued)
+                if env.msg_type is MsgType.RESULT:
+                    if _handoff_owner(env) is None:
+                        # Python also recognizes Unicode whitespace that SQL
+                        # trim does not. A blank next_owner creates no work.
+                        await self._store.mark_delivery(env.event_id, "delivered")
+                        continue
+                    # Publication may have been interrupted before _on_result.
+                    # Invalid handoffs must not reach even a busy-chat receipt.
+                    problem = validate_result(env.payload)
+                    if problem is not None:
+                        await self._store.mark_delivery(
+                            env.event_id, "failed", str(FailureReason.INVALID_RESULT)
+                        )
+                        await self._veto(env, FailureReason.INVALID_RESULT, problem)
+                        continue
                 if await self._record_assignment_reply(env):
                     continue
                 if env.to_agent in busy:

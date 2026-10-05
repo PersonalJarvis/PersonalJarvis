@@ -25,6 +25,33 @@ def pytest_configure(config) -> None:  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _society_runtime_isolated():
+    """Restore the process-wide society runtime after every test.
+
+    ``SocietyRuntime.ensure_started`` registers itself as the current runtime
+    and only ``close`` unregisters it. A test that never closes its runtime
+    used to leak it into later suites, where the Jarvis chat kit then offered
+    ``society_browser`` and tool-set assertions failed depending on order.
+
+    The brain's registered society factory is restored too: a suite that
+    builds the real web server registers its default-data-dir factory, and a
+    later voice/chat turn would otherwise start a society in ``./data``.
+    """
+    module = sys.modules.get("jarvis.society.runtime")
+    before = module.current_runtime() if module is not None else None
+    # Some suites stub the module in sys.modules; only a real list is tracked.
+    ref = getattr(sys.modules.get("jarvis.brain.factory"), "_SOCIETY_FACTORY_REF", None)
+    factory_before = list(ref) if isinstance(ref, list) else []
+    yield
+    module = sys.modules.get("jarvis.society.runtime")
+    if module is not None and module.current_runtime() is not before:
+        module.set_current_runtime(before)
+    ref = getattr(sys.modules.get("jarvis.brain.factory"), "_SOCIETY_FACTORY_REF", None)
+    if isinstance(ref, list) and ref != factory_before:
+        ref[:] = factory_before
+
+
+@pytest.fixture(autouse=True)
 def _authenticated_test_clients(request, monkeypatch):  # noqa: ANN001
     """Give legacy TestClient suites a real authenticated browser session.
 

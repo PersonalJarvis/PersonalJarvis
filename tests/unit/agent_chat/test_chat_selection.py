@@ -1,5 +1,6 @@
 """The chat pick survives restart and seats voice-created agents without inference."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,11 +23,20 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_chat_routes, "_live_cli_models", no_live_models)
     monkeypatch.setattr(agent_chat_routes, "_cli_installed", lambda runner: False)
     monkeypatch.setattr("jarvis.agent_chat.service._claude_cli_installed", lambda: False)
-    application = FastAPI()
+    runtime = SocietyRuntime(tmp_path / "society", seed_starter_team=False)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Close on the client's own loop, as the server does at shutdown.
+        try:
+            yield
+        finally:
+            await runtime.close()
+
+    application = FastAPI(lifespan=lifespan)
     application.include_router(agent_chat_routes.router)
     application.include_router(society_router)
     application.state.agent_chat = AgentChatService(AgentChatStore(tmp_path / "chat.db"))
-    runtime = SocietyRuntime(tmp_path / "society", seed_starter_team=False)
     application.state.society_factory = lambda: runtime
     return application
 

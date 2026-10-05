@@ -181,3 +181,13 @@ WHEN NEW.msg_type IN ('SAY', 'QUERY', 'ANSWER', 'PROPOSE', 'HOLD', 'RELEASE')
 BEGIN
     INSERT OR IGNORE INTO society_deliveries (event_id) VALUES (NEW.event_id);
 END;
+
+-- A RESULT's handoff must survive a crash before bus publication too.
+-- Validation remains in the scheduler, including when recovering the queue.
+CREATE TRIGGER IF NOT EXISTS society_queue_result AFTER INSERT ON society_events
+WHEN NEW.msg_type = 'RESULT' AND NEW.from_agent != 'scheduler'
+    AND json_type(NEW.payload_json, '$.next_owner') = 'text'
+    AND length(trim(json_extract(NEW.payload_json, '$.next_owner'), char(9,10,11,12,13,32))) > 0
+BEGIN
+    INSERT OR IGNORE INTO society_deliveries (event_id) VALUES (NEW.event_id);
+END;

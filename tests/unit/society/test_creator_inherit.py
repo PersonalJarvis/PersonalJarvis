@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -13,17 +14,27 @@ from jarvis.society.runtime import SocietyRuntime
 from jarvis.ui.web.society_routes import router
 
 
-def _client(tmp_path: Path) -> tuple[TestClient, SocietyRuntime]:
-    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+@pytest.fixture
+async def runtime(tmp_path: Path):
+    """A started society runtime that is always closed, even on failure."""
+    rt = SocietyRuntime(tmp_path, seed_starter_team=False)
+    await rt.ensure_started()
+    try:
+        yield rt
+    finally:
+        await rt.close()
+
+
+def _client(runtime: SocietyRuntime) -> TestClient:
     app = FastAPI()
     app.include_router(router)
     app.state.society_factory = lambda: runtime
-    return TestClient(app), runtime
+    return TestClient(app)
 
 
-async def test_inherit_fills_blank_seat_and_permissions_and_caps_a_raise(tmp_path: Path) -> None:
-    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
-    await runtime.ensure_started()
+async def test_inherit_fills_blank_seat_and_permissions_and_caps_a_raise(
+    runtime: SocietyRuntime,
+) -> None:
     creator, _ = await runtime.roster.create(
         name="Bot Maker",
         provider="grok-build",
@@ -67,29 +78,25 @@ async def test_inherit_fills_blank_seat_and_permissions_and_caps_a_raise(tmp_pat
     assert "core:run-shell" in capped["denies"] and "core:search-web" in capped["denies"]
 
 
-async def test_inherit_never_loosens_the_creators_approval_mode(tmp_path: Path) -> None:
-    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
-    await runtime.ensure_started()
-    try:
-        asker, _ = await runtime.roster.create(name="Asker", approval_mode="ask")
-        assert inherit_creator_fields({}, asker)["approval_mode"] == "ask"
-        raised = inherit_creator_fields({"approval_mode": "bypass"}, asker)
-        assert raised["approval_mode"] == "ask"
-        stricter = inherit_creator_fields({"approval_mode": "always_ask"}, asker)
-        assert stricter["approval_mode"] == "always_ask"
-        bogus = inherit_creator_fields({"approval_mode": "yolo"}, asker)
-        assert bogus["approval_mode"] == "ask"
+async def test_inherit_never_loosens_the_creators_approval_mode(runtime: SocietyRuntime) -> None:
+    asker, _ = await runtime.roster.create(name="Asker", approval_mode="ask")
+    assert inherit_creator_fields({}, asker)["approval_mode"] == "ask"
+    raised = inherit_creator_fields({"approval_mode": "bypass"}, asker)
+    assert raised["approval_mode"] == "ask"
+    stricter = inherit_creator_fields({"approval_mode": "always_ask"}, asker)
+    assert stricter["approval_mode"] == "always_ask"
+    bogus = inherit_creator_fields({"approval_mode": "yolo"}, asker)
+    assert bogus["approval_mode"] == "ask"
 
-        careful, _ = await runtime.roster.create(name="Careful", approval_mode="always_ask")
-        kid = inherit_creator_fields({"approval_mode": "bypass"}, careful)
-        assert kid["approval_mode"] == "always_ask"
-    finally:
-        await runtime.close()
+    careful, _ = await runtime.roster.create(name="Careful", approval_mode="always_ask")
+    kid = inherit_creator_fields({"approval_mode": "bypass"}, careful)
+    assert kid["approval_mode"] == "always_ask"
 
 
-async def test_create_from_society_session_inherits_seat_and_permissions(tmp_path: Path) -> None:
-    client, runtime = _client(tmp_path)
-    await runtime.ensure_started()
+async def test_create_from_society_session_inherits_seat_and_permissions(
+    runtime: SocietyRuntime,
+) -> None:
+    client = _client(runtime)
     creator, _ = await runtime.roster.create(
         name="Bot Maker",
         provider="grok-build",
@@ -128,9 +135,10 @@ async def test_create_from_society_session_inherits_seat_and_permissions(tmp_pat
     assert GrantMode(agent["grant_mode"]) is GrantMode.ALLOWLIST
 
 
-async def test_ui_create_without_session_keeps_defaults_and_explicit_seat(tmp_path: Path) -> None:
-    client, runtime = _client(tmp_path)
-    await runtime.ensure_started()
+async def test_ui_create_without_session_keeps_defaults_and_explicit_seat(
+    runtime: SocietyRuntime,
+) -> None:
+    client = _client(runtime)
     await runtime.roster.create(
         name="Bot Maker",
         provider="grok-build",
@@ -167,9 +175,8 @@ async def test_ui_create_without_session_keeps_defaults_and_explicit_seat(tmp_pa
     assert picked["grant_mode"] == "all"
 
 
-async def test_paused_creator_session_does_not_inherit(tmp_path: Path) -> None:
-    client, runtime = _client(tmp_path)
-    await runtime.ensure_started()
+async def test_paused_creator_session_does_not_inherit(runtime: SocietyRuntime) -> None:
+    client = _client(runtime)
     creator, _ = await runtime.roster.create(
         name="Bot Maker",
         provider="grok-build",

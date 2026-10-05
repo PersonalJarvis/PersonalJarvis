@@ -61,6 +61,18 @@ def _client(data_dir: Path) -> TestClient:
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _no_background_cli_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.ui.web import costs_routes
+
+    # Each summary request would start the background CLI-usage indexer, which
+    # reads this machine's real vendor transcripts and writes
+    # cli_usage_index.db into the sandbox on its own thread. Whether that file
+    # existed by the time ``sources_present`` was read was a race that failed
+    # the suite depending on test order. The indexer has its own coverage.
+    monkeypatch.setattr(costs_routes._refresher, "nudge", lambda _data_dir: None)
+
+
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
     _seed(tmp_path / "data")

@@ -370,7 +370,11 @@ def memory_client(tmp_path: Path):
     app.state.society = None
     app.state.society_factory = lambda: runtime
     with TestClient(app) as c:
-        yield c, tmp_path / "vault"
+        try:
+            yield c, tmp_path / "vault"
+        finally:
+            assert c.portal is not None
+            c.portal.call(runtime.close)
 
 
 def test_memory_overview_recall_and_promotion_through_approvals(memory_client):
@@ -457,20 +461,27 @@ def test_bind_agent_chat_creates_the_canonical_session(tmp_path: Path):
     app.include_router(router)
     app.state.society = None
     app.state.society_factory = lambda: runtime
-    with TestClient(app) as c:
-        c.post(
-            "/api/society/agents", json={"name": "Scout", "provider": "openai", "model": "gpt-5"}
-        )
-        res = c.post("/api/society/agents/scout/chat")
-        assert res.status_code == 200, res.text
-        session = res.json()["session"]
-        assert session["session_id"] == "society:scout" and session["surface"] == "society"
-        assert session["provider"] == "openai" and session["model"] == "gpt-5"
-        # Idempotent: the same session comes back, nothing is duplicated.
-        again = c.post("/api/society/agents/scout/chat").json()["session"]
-        assert again["session_id"] == session["session_id"]
-        assert c.post("/api/society/agents/nobody/chat").status_code == 404
-    svc.store.close()
+    try:
+        with TestClient(app) as c:
+            try:
+                c.post(
+                    "/api/society/agents",
+                    json={"name": "Scout", "provider": "openai", "model": "gpt-5"},
+                )
+                res = c.post("/api/society/agents/scout/chat")
+                assert res.status_code == 200, res.text
+                session = res.json()["session"]
+                assert session["session_id"] == "society:scout" and session["surface"] == "society"
+                assert session["provider"] == "openai" and session["model"] == "gpt-5"
+                # Idempotent: the same session comes back, nothing is duplicated.
+                again = c.post("/api/society/agents/scout/chat").json()["session"]
+                assert again["session_id"] == session["session_id"]
+                assert c.post("/api/society/agents/nobody/chat").status_code == 404
+            finally:
+                assert c.portal is not None
+                c.portal.call(runtime.close)
+    finally:
+        svc.store.close()
 
 
 def test_bind_agent_chat_without_a_chat_service_is_503(memory_client):

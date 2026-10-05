@@ -5,6 +5,7 @@ fakes only.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -19,13 +20,25 @@ class FakeManager:
         return "m-1"
 
 
+def _app(runtime: SocietyRuntime) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            await runtime.close()
+
+    app = FastAPI(lifespan=lifespan)
+    app.include_router(router)
+    app.state.society_factory = lambda: runtime
+    return app
+
+
 def test_persistent_group_membership_headless(tmp_path: Path) -> None:
     runtime = SocietyRuntime(
         tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
     )
-    app = FastAPI()
-    app.include_router(router)
-    app.state.society_factory = lambda: runtime
+    app = _app(runtime)
     with TestClient(app) as client:
         for name in ("Scout", "Writer"):
             assert client.post("/api/society/agents", json={"name": name}).status_code == 200
@@ -42,13 +55,9 @@ def test_persistent_group_membership_headless(tmp_path: Path) -> None:
             "scout",
             "writer",
         ]
-        assert client.portal is not None
-        client.portal.call(runtime.close)
 
     restarted = SocietyRuntime(tmp_path, seed_starter_team=False)
-    app2 = FastAPI()
-    app2.include_router(router)
-    app2.state.society_factory = lambda: restarted
+    app2 = _app(restarted)
     with TestClient(app2) as client:
         assert client.get("/api/society/chat-groups").json()["groups"][0]["group_id"] == group_id
         after = {
@@ -61,9 +70,7 @@ def test_persistent_group_membership_headless(tmp_path: Path) -> None:
 def test_two_agents_exchange_typed_messages_headless(tmp_path: Path) -> None:
     manager = FakeManager()
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False, mission_manager=lambda: manager)
-    app = FastAPI()
-    app.include_router(router)
-    app.state.society_factory = lambda: runtime
+    app = _app(runtime)
 
     with TestClient(app) as c:
         # Seed.
@@ -135,9 +142,7 @@ def test_roster_rename_and_archive_keep_identity_headless(tmp_path: Path) -> Non
     runtime = SocietyRuntime(
         tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
     )
-    app = FastAPI()
-    app.include_router(router)
-    app.state.society_factory = lambda: runtime
+    app = _app(runtime)
 
     with TestClient(app) as client:
         created = client.post("/api/society/agents", json={"name": "Scout"}).json()["agent"]

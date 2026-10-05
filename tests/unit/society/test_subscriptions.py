@@ -143,6 +143,8 @@ async def test_ensure_session_follows_account_and_effort(tmp_path: Path):
 
 @pytest.fixture
 def client(tmp_path: Path):
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -153,7 +155,16 @@ def client(tmp_path: Path):
     runtime = SocietyRuntime(
         tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
     )
-    app = FastAPI()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Close on the client's own loop, as the server does at shutdown.
+        try:
+            yield
+        finally:
+            await runtime.close()
+
+    app = FastAPI(lifespan=lifespan)
     app.include_router(router)
     app.state.society_factory = lambda: runtime
     with TestClient(app) as c:

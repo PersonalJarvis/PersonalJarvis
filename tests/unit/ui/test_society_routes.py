@@ -3,6 +3,7 @@ earned in its chat, and a configuration proposal is applied only by its own rout
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,7 +27,16 @@ TOOLS = {
 
 def _app(tmp_path: Path) -> tuple[FastAPI, SocietyRuntime]:
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False, brain_tools=lambda: TOOLS)
-    app = FastAPI()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        # Close on the client's own loop, as the server does at shutdown.
+        try:
+            yield
+        finally:
+            await runtime.close()
+
+    app = FastAPI(lifespan=lifespan)
     app.include_router(router)
     app.state.society_factory = lambda: runtime
     return app, runtime

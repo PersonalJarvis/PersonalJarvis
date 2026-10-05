@@ -87,7 +87,7 @@ class FakeManager:
 
 
 @pytest.fixture
-def ecosystem(tmp_path: Path) -> Any:
+async def ecosystem(tmp_path: Path) -> Any:
     """A live society reachable exactly the way the MCP tools reach it."""
     runtime = SocietyRuntime(
         tmp_path, seed_starter_team=False, mission_manager=lambda: FakeManager()
@@ -100,6 +100,7 @@ def ecosystem(tmp_path: Path) -> Any:
         yield runtime
     finally:
         runtime_refs._reset_for_tests()
+        await runtime.close()
 
 
 async def _call(tool: str, **args: Any) -> Any:

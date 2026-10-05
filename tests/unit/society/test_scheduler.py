@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -432,3 +433,139 @@ async def test_no_spawn_tool_in_never_granted_is_a_dispatch_path(world):
     from jarvis.society.capabilities import NEVER_GRANTED
 
     assert {"spawn-worker", "spawn-subagents", "multi-spawn"} <= NEVER_GRANTED
+
+
+def _handoff(next_owner: str, trace: str = "h") -> SocietyEnvelope:
+    return SocietyEnvelope(
+        msg_type=MsgType.RESULT,
+        from_agent="scout",
+        to_agent="jarvis",
+        trace_id=trace,
+        payload={"done": "x", "output": ["a"], "next_owner": next_owner},
+    )
+
+
+async def test_result_handoff_is_a_durable_delivery_receipt(world):
+    store, _, _, _, deliverer = world
+    result = await store.append_and_publish(_handoff("archivist"))
+    assert deliverer.delivered == [("archivist", MsgType.RESULT)]
+    assert await store.delivery_status(result.event_id) == "delivered"
+    assert await store.pending_deliveries() == []
+
+
+async def test_result_handoff_respects_kill_switch(world):
+    store, _, _, _, deliverer = world
+    await store.set_kill_switch(True)
+    result = await store.append_and_publish(_handoff("archivist"))
+    assert deliverer.delivered == []
+    assert await store.delivery_status(result.event_id) == "failed"
+    assert await _vetoes(store, "h") == [str(FailureReason.KILL_SWITCH)]
+
+
+async def test_result_handoff_to_unknown_owner_is_vetoed(world):
+    store, _, _, _, deliverer = world
+    result = await store.append_and_publish(_handoff("nobody"))
+    assert deliverer.delivered == []
+    assert await store.delivery_status(result.event_id) == "failed"
+    assert await _vetoes(store, "h") == [str(FailureReason.TARGET_UNKNOWN)]
+
+
+@pytest.mark.parametrize("gate", ["paused", "message_cap"])
+async def test_result_handoff_obeys_recipient_and_trace_gates(world, gate):
+    store, roster, scheduler, _, deliverer = world
+    if gate == "paused":
+        await roster.update("archivist", {"state": "paused"})
+        reason = FailureReason.TARGET_PAUSED
+    else:
+        scheduler._trace_cap = 0
+        reason = FailureReason.MESSAGE_CAP
+    result = await store.append_and_publish(_handoff("archivist"))
+    assert deliverer.delivered == []
+    assert await store.delivery_status(result.event_id) == "failed"
+    assert await _vetoes(store, "h") == [str(reason)]
+
+
+async def test_busy_result_handoff_is_retried_after_reopen(tmp_path: Path):
+    path = tmp_path / "society.db"
+    store = SocietyStore(path)
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    busy = SocietyScheduler(store, roster, deliver=BusyDeliverer()).attach()
+    result = await store.append_and_publish(_handoff("archivist"))
+    busy.detach()
+    assert [e.event_id for e in await store.pending_deliveries()] == [result.event_id]
+    assert await _vetoes(store, "h") == []
+    await store.close()
+
+    reopened = SocietyStore(path)
+    await reopened.open()
+    deliverer = FakeDeliverer()
+    scheduler = SocietyScheduler(reopened, Roster(reopened), deliver=deliverer)
+    try:
+        await scheduler.drain_deliveries()
+        await scheduler.drain_deliveries()
+        assert deliverer.delivered == [("archivist", MsgType.RESULT)]
+        assert await reopened.delivery_status(result.event_id) == "delivered"
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.parametrize("next_owner", [None, "", "  ", "\t\n", "\u2003", 123])
+async def test_result_without_next_owner_is_not_queued(world, next_owner):
+    store, _, _, _, deliverer = world
+    await store.append_and_publish(
+        SocietyEnvelope(
+            msg_type=MsgType.RESULT,
+            from_agent="scout",
+            to_agent="jarvis",
+            trace_id="n",
+            payload={"done": "x", "output": ["a"], "next_owner": next_owner},
+        )
+    )
+    assert deliverer.delivered == []
+    assert await store.pending_deliveries() == []
+
+
+@pytest.mark.parametrize("valid", [True, False])
+async def test_result_handoff_survives_interrupted_publication(world, monkeypatch, valid):
+    store, _, scheduler, _, deliverer = world
+    result = _handoff("archivist")
+    if not valid:
+        result = result.model_copy(update={"payload": {"next_owner": "archivist"}})
+
+    async def interrupted_publish(_env):
+        raise asyncio.CancelledError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store.bus, "publish", interrupted_publish)
+        with pytest.raises(asyncio.CancelledError):
+            await store.append_and_publish(result)
+    scheduler.detach()
+    await store.close()
+    await store.open()
+    assert [env.event_id for env in await store.pending_deliveries()] == [result.event_id]
+
+    recovery = SocietyScheduler(store, Roster(store), deliver=deliverer)
+    await recovery.drain_deliveries()
+    await recovery.drain_deliveries()
+    persisted = await store.get_event(result.event_id)
+    assert persisted is not None and persisted.to_agent == "jarvis"
+    if valid:
+        assert deliverer.delivered == [("archivist", MsgType.RESULT)]
+        assert await store.delivery_status(result.event_id) == "delivered"
+    else:
+        assert deliverer.delivered == []
+        assert await store.delivery_status(result.event_id) == "failed"
+        assert await _vetoes(store, "h") == [str(FailureReason.INVALID_RESULT)]
+
+
+async def test_invalid_result_handoff_is_vetoed_once(world):
+    store, _, scheduler, _, deliverer = world
+    result = _handoff("archivist").model_copy(update={"payload": {"next_owner": "archivist"}})
+    await store.append_and_publish(result)
+    await scheduler.drain_deliveries()
+    assert deliverer.delivered == []
+    assert await store.delivery_status(result.event_id) == "failed"
+    assert await _vetoes(store, "h") == [str(FailureReason.INVALID_RESULT)]
