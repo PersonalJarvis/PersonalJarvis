@@ -200,3 +200,30 @@ def test_empty_clipboard_reads_as_empty_string_not_unavailable(
 
     monkeypatch.setattr(clipboard.subprocess, "run", _run)
     assert clipboard._read_command(["pbpaste"]) == ""
+
+
+@pytest.mark.parametrize(
+    ("wayland", "expected_write", "expected_read"),
+    [
+        ("wayland-0", "wl-copy", "wl-paste"),
+        # An X11 desktop with wl-clipboard installed must not try Wayland first.
+        ("", "xclip", "xclip"),
+    ],
+)
+def test_linux_picks_the_tool_for_the_session(
+    monkeypatch: pytest.MonkeyPatch, wayland: str, expected_write: str, expected_read: str
+) -> None:
+    monkeypatch.setenv("WAYLAND_DISPLAY", wayland)
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    written: list[str] = []
+    read: list[str] = []
+    monkeypatch.setattr(
+        clipboard, "_run_command", lambda command, _text: written.append(command[0]) or True
+    )
+    monkeypatch.setattr(clipboard, "_read_command", lambda command: read.append(command[0]) or "")
+
+    clipboard._write_linux("hello")
+    clipboard._read_linux()
+
+    assert written == [f"/usr/bin/{expected_write}"]
+    assert read == [f"/usr/bin/{expected_read}"]
