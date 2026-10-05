@@ -903,8 +903,9 @@ class _CardWindow(QWidget):
         self.setWindowOpacity(0.35)
         result = drag.exec(Qt.DropAction.CopyAction)
         self.setWindowOpacity(1.0)
-        if result == Qt.DropAction.IgnoreAction:
-            # Dropped nowhere (or Esc): the card stays.
+        if result == Qt.DropAction.IgnoreAction or self._pinned:
+            # Dropped nowhere (or Esc), or pinned: the card stays. A pinned
+            # card leaves only through its own Close.
             self._hover = False
             self._hot = ""
             self._arm_dismiss(_CARD_AFTER_HOVER_MS)
