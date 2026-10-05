@@ -124,7 +124,7 @@ async def test_technical_unavailability_ends_without_an_action_fallback() -> Non
     assert result.diagnostic_detail == "No display available."
 
 
-async def test_wayland_unavailability_returns_portal_remediation() -> None:
+async def test_wayland_unavailability_returns_x11_remediation() -> None:
     service = FakeService(
         outcome(
             "refused",
@@ -137,7 +137,9 @@ async def test_wayland_unavailability_returns_portal_remediation() -> None:
     result = await screen_context_for_turn("look at this", locale="en", service=service)
 
     assert result.status == "unavailable"
-    assert "XDG desktop portal" in (result.message or "")
+    # No portal capture path exists, so the honest remedy is an X11 login.
+    assert "X11 session" in (result.message or "")
+    assert "portal" not in (result.message or "").lower()
     assert "No desktop action" in (result.message or "")
 
 

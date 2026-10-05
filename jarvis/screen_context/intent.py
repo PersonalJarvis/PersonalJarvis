@@ -725,9 +725,9 @@ _CAPTURE_UNAVAILABLE_REPLY: dict[str, dict[str, str]] = {
             "action was started."
         ),
         "wayland_portal": (
-            "Screen capture is unavailable in this Wayland session. Install and "
-            "enable an XDG desktop portal for your compositor, or sign in with "
-            "an X11 session, then ask again. No desktop action was started."
+            "Screen capture does not work in a Wayland session yet. Sign in "
+            "with an X11 session, for example GNOME on Xorg, then ask again. "
+            "No desktop action was started."
         ),
         "no_display": (
             "I cannot access an interactive display on this device. Sign in to "
@@ -747,10 +747,10 @@ _CAPTURE_UNAVAILABLE_REPLY: dict[str, dict[str, str]] = {
             "Desktop-Aktion gestartet."  # i18n-allow
         ),
         "wayland_portal": (
-            "Die Bildschirmaufnahme ist in dieser Wayland-Sitzung nicht "  # i18n-allow
-            "verfügbar. Installiere und aktiviere ein XDG-Desktop-Portal für "  # i18n-allow
-            "deinen Compositor oder melde dich über X11 an und frag noch "  # i18n-allow
-            "einmal. Es wurde keine Desktop-Aktion gestartet."  # i18n-allow
+            "Die Bildschirmaufnahme funktioniert in einer Wayland-Sitzung "  # i18n-allow
+            "noch nicht. Melde dich mit einer X11-Sitzung an, zum Beispiel "  # i18n-allow
+            "GNOME on Xorg, und frag noch einmal. Es wurde keine "  # i18n-allow
+            "Desktop-Aktion gestartet."  # i18n-allow
         ),
         "no_display": (
             "Ich kann auf diesem Gerät gerade keine interaktive Anzeige "  # i18n-allow
@@ -771,10 +771,9 @@ _CAPTURE_UNAVAILABLE_REPLY: dict[str, dict[str, str]] = {
             "pedirlo. No se inició ninguna acción de escritorio."
         ),
         "wayland_portal": (
-            "La captura de pantalla no está disponible en esta sesión de "
-            "Wayland. Instala y activa un portal de escritorio XDG para tu "
-            "compositor, o inicia una sesión X11, y vuelve a pedirlo. No se "
-            "inició ninguna acción de escritorio."
+            "La captura de pantalla todavía no funciona en una sesión de "
+            "Wayland. Inicia una sesión X11, por ejemplo GNOME on Xorg, y "
+            "vuelve a pedirlo. No se inició ninguna acción de escritorio."
         ),
         "no_display": (
             "No puedo acceder a una pantalla interactiva en este dispositivo. "
