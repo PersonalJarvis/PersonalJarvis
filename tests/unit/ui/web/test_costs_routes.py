@@ -116,6 +116,34 @@ def test_comma_separated_filters_are_accepted(client: TestClient) -> None:
     assert body["totals"]["entries"] == 2
 
 
+def test_entries_expose_account_id(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.costs.model import CostEntry
+    from jarvis.ui.web import costs_routes
+
+    entry = CostEntry(
+        ts_ms=NOW_MS,
+        surface="agentic-ide",
+        role="agent",
+        provider="claude-cli",
+        model="claude-opus-5",
+        tokens_in=100,
+        tokens_out=20,
+        tokens_cached=0,
+        cost_usd=0.0,
+        price_source="subscription",
+        ref_id="vendor-session-1",
+        label="Claude work",
+        runner="claude-cli",
+        account_id="claude:work",
+    )
+    monkeypatch.setattr(costs_routes._cache, "get", lambda *args, **kwargs: [entry])
+
+    body = client.get("/api/costs/entries?days=30").json()
+
+    assert body["total"] == 1
+    assert body["items"][0]["account_id"] == "claude:work"
+
+
 def test_entries_sort_and_paginate(client: TestClient) -> None:
     page = client.get("/api/costs/entries?days=30&sort=cost&limit=1").json()
     assert page["total"] == 2
