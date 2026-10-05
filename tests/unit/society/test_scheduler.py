@@ -381,6 +381,34 @@ async def test_concurrent_assignments_respect_target_run_cap(world):
     assert scheduler.running == {"run-1": "scout"}
     assert await _vetoes(store, "race-b") == [str(FailureReason.CONCURRENCY_CAP)]
 
+async def test_concurrent_assignments_respect_trace_message_cap(world):
+    store, _, scheduler, _, _ = world
+    scheduler._trace_cap = 1
+    started = asyncio.Event()
+    release = asyncio.Event()
+    dispatched: list[str] = []
+
+    async def slow_dispatch(target, env):
+        dispatched.append(env.trace_id)
+        started.set()
+        await release.wait()
+        return "run-1"
+
+    scheduler._dispatch = slow_dispatch
+    first = _assign("jarvis", "scout", trace="same-trace")
+    second = _assign("jarvis", "archivist", trace="same-trace")
+    first_task = asyncio.create_task(scheduler._on_assign(first))
+    await started.wait()
+    second_task = asyncio.create_task(scheduler._on_assign(second))
+    await asyncio.sleep(0)
+    assert not second_task.done()
+    release.set()
+    await asyncio.gather(first_task, second_task)
+
+    assert dispatched == ["same-trace"]
+    assert scheduler.running == {"run-1": "scout"}
+    assert await _vetoes(store, "same-trace") == [str(FailureReason.MESSAGE_CAP)]
+
 async def test_invalid_result_is_vetoed(world):
     store, _, _, _, _ = world
     await store.append_and_publish(
