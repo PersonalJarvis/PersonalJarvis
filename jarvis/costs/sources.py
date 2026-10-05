@@ -815,7 +815,7 @@ def collect_entries(
     entries: list[CostEntry] = []
     entries.extend(_voice_entries(sources.sessions_db, since_ms, until_ms))
     agent_chat_entries = list(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
-    entries.extend(_mission_entries(sources.missions_db, since_ms, until_ms))
+    mission_entries = list(_mission_entries(sources.missions_db, since_ms, until_ms))
     entries.extend(_speech_entries(sources.sessions_db, since_ms, until_ms))
     cli_entries = list(_cli_entries(sources.cli_index_dir, since_ms, until_ms, bucket_ms))
 
@@ -845,6 +845,37 @@ def collect_entries(
             entry.runner in SUBSCRIPTION_RUNNERS
             and entry.ref_id
             and (entry.runner, entry.ref_id) in indexed_keys
+        )
+    )
+
+    mission_totals: dict[tuple[str, str], tuple[int, float]] = {}
+    for entry in mission_entries:
+        if entry.runner in SUBSCRIPTION_RUNNERS and entry.ref_id:
+            key = (entry.runner, entry.ref_id)
+            tokens, cost = mission_totals.get(key, (0, 0.0))
+            mission_totals[key] = (tokens + entry.tokens_total, cost + entry.cost_usd)
+    mission_indexed_keys: set[tuple[str, str]] = set()
+    for key, (tokens, cost) in mission_totals.items():
+        cli_tokens = cli_totals.get(key, 0)
+        cli_cost = sum(
+            entry.cost_usd
+            for entry in cli_entries
+            if (entry.runner, entry.ref_id) == key
+        )
+        covered = (
+            tokens > 0 and cli_tokens >= tokens
+        ) or (
+            tokens <= 0 and cost > 0 and cli_cost > 0 and cli_cost >= cost * 0.99
+        )
+        if covered:
+            mission_indexed_keys.add(key)
+    entries.extend(
+        entry
+        for entry in mission_entries
+        if not (
+            entry.runner in SUBSCRIPTION_RUNNERS
+            and entry.ref_id
+            and (entry.runner, entry.ref_id) in mission_indexed_keys
         )
     )
     entries.extend(cli_entries)
