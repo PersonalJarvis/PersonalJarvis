@@ -6,6 +6,8 @@ Endpoints (all under ``/api/agentic-ide/git``)::
     GET  /changes             Changed files under a folder, with line counts
     GET  /diff                One file's change against the last commit
     GET  /overview            A workspace's branches with merged-into, PR and CI state
+    GET  /branch/contents     A branch's own commits and changed files
+    GET  /branch/diff         How a branch changed one file
     GET  /branch/editors      Where a branch's checkout can be opened on this computer
     POST /branch/open         Open a branch's checkout in the file manager or an editor
     GET  /github/repos        The person's GitHub repositories, for the one-time pick
@@ -35,7 +37,14 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import git_changes, git_ops, git_overview, github_link, github_status
+from jarvis.agentic_ide import (
+    branch_contents,
+    git_changes,
+    git_ops,
+    git_overview,
+    github_link,
+    github_status,
+)
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import account_home, get_registry
 from jarvis.agentic_ide.session_branches import PaneBranchRecord
@@ -130,7 +139,8 @@ def workspace_overview(
     session = get_registry().get(workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    return git_overview.overview(session.folder, refresh=refresh).to_dict()
+    # The tab polls again soon while GitHub's first read is still loading.
+    return git_overview.overview(session.folder, refresh=refresh, wait_for_github=False).to_dict()
 
 
 @router.get("/session-status", summary="Current GitHub branch, pull request and CI status per pane")
@@ -165,6 +175,41 @@ def _native_actions(request: Request) -> bool:
     return is_loopback_request(request.scope) and bool(
         getattr(request.app.state, "native_file_actions", False)
     )
+
+
+def _workspace_folder(workspace_id: str) -> Path:
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return Path(session.folder)
+
+
+@router.get("/branch/contents", summary="A branch's own commits and changed files")
+def branch_contents_route(
+    workspace_id: str = Query(..., min_length=1),
+    branch: str = Query(..., min_length=1, max_length=300),
+    base: str = Query("", max_length=300, description="The default branch to compare with"),
+    remote: bool = Query(False, description="Read origin/<branch> (a GitHub-only branch)"),
+) -> dict:
+    """What the Git tab shows when a branch row is folded open."""
+    folder = _workspace_folder(workspace_id)
+    return branch_contents.branch_contents(folder, branch, base, remote=remote).to_dict()
+
+
+@router.get("/branch/diff", summary="How a branch changed one file")
+def branch_diff_route(
+    workspace_id: str = Query(..., min_length=1),
+    branch: str = Query(..., min_length=1, max_length=300),
+    path: str = Query(..., min_length=1, max_length=1000),
+    base: str = Query("", max_length=300),
+    remote: bool = Query(False),
+) -> dict:
+    folder = _workspace_folder(workspace_id)
+    try:
+        diff = branch_contents.branch_file_diff(folder, branch, base, path, remote=remote)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return asdict(diff)
 
 
 @router.get("/branch/editors", summary="Where a branch's checkout can be opened")
