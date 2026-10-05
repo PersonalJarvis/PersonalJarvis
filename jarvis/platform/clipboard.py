@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -107,13 +108,27 @@ def _read_command(command: Sequence[str]) -> str | None:
     return completed.stdout
 
 
+def _session_order(
+    candidates: tuple[tuple[str, list[str]], ...],
+) -> tuple[tuple[str, list[str]], ...]:
+    """The Wayland tool first only in a Wayland session; last otherwise.
+
+    ``wl-copy``/``wl-paste`` are often installed on X11 desktops too, and
+    there they fail ("Failed to connect to a Wayland server"), so trying them
+    first made every copy and paste on such a desktop fail.
+    """
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return candidates
+    return candidates[1:] + candidates[:1]
+
+
 def _read_linux() -> str | None:
-    """Use the available Wayland/X11 clipboard command, if any."""
-    candidates = (
+    """Use the clipboard command for this session (Wayland or X11), if any."""
+    candidates = _session_order((
         ("wl-paste", ["wl-paste", "--no-newline"]),
         ("xclip", ["xclip", "-selection", "clipboard", "-out"]),
         ("xsel", ["xsel", "--clipboard", "--output"]),
-    )
+    ))
     for executable, command in candidates:
         resolved = shutil.which(executable)
         if resolved:
@@ -229,12 +244,12 @@ def _run_command(command: Sequence[str], text: str) -> bool:
 
 
 def _write_linux(text: str) -> bool:
-    """Use the available Wayland/X11 clipboard command, if any."""
-    candidates = (
+    """Use the clipboard command for this session (Wayland or X11), if any."""
+    candidates = _session_order((
         ("wl-copy", ["wl-copy", "--type", "text/plain;charset=utf-8"]),
         ("xclip", ["xclip", "-selection", "clipboard", "-in"]),
         ("xsel", ["xsel", "--clipboard", "--input"]),
-    )
+    ))
     for executable, command in candidates:
         resolved = shutil.which(executable)
         if resolved:
