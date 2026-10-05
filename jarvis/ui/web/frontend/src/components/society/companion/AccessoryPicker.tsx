@@ -64,7 +64,8 @@ export function AccessoryPicker({ value, onChange, agentId }: { value: Companion
         className={`${tile} text-xs text-muted-foreground ${!worn[slot] ? "border-foreground bg-secondary" : "border-border hover:bg-secondary"}`}>
         {t("society.companion.none")}
       </button>
-      {ACCESSORY_IDS_BY_SLOT[slot].map(id => {
+      {/* Open looks first, then the rest in the order the agent will earn them. */}
+      {[...ACCESSORY_IDS_BY_SLOT[slot]].sort((a, b) => (looks.unlocks?.[a] ?? 0) - (looks.unlocks?.[b] ?? 0)).map(id => {
         const name = t(`society.companion.items.${id}`);
         const active = worn[slot] === id;
         const open = wearable(id);
