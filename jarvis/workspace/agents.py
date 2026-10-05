@@ -1104,7 +1104,7 @@ def _custom_aliases(display_name: str, entry_id: str) -> tuple[str, ...]:
     elif words and len(words[0]) >= 4 and words[0].isalpha():
         out.append(words[0])
     slug = str(entry_id or "").lower()
-    if len(slug) >= 4 and slug.isalpha() and slug not in out:
+    if len(slug) >= 4 and slug.replace("-", "").isalnum() and slug not in out:
         out.append(slug)
     return tuple(out)
 
@@ -1393,8 +1393,12 @@ def reserved_call_signs() -> frozenset[str]:
             names.add(first[0].lower())
         names.update(spelling.lower() for spelling in agent.spoken_aliases)
     # Single letters and anything with a space in it are not call-sign shaped,
-    # so reserving them protects nothing and only shrinks the pool.
-    return frozenset(n for n in names if n.isalpha() and len(n) > 1)
+    # so reserving them protects nothing and only shrinks the pool. Slugs may
+    # contain hyphens; dots, slashes and other punctuation stay excluded.
+    return frozenset(
+        n for n in names
+        if len(n) > 1 and n.replace("-", "").isalnum()
+    )
 
 
 @dataclass(slots=True)
