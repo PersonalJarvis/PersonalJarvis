@@ -162,6 +162,17 @@ def claude_argv_prefix() -> list[str]:
     return claude_cli_argv_prefix(binary)
 
 
+def warm_claude_capabilities() -> None:
+    """Run the Claude CLI's flag probes (blocking, cached) so planning only reads them."""
+    from jarvis.claude_auth import claude_cli_supports_thinking_display
+
+    try:
+        prefix = claude_argv_prefix()
+    except CliUnavailable:
+        return  # planning reports the missing CLI itself
+    claude_cli_supports_thinking_display(prefix)
+
+
 def codex_argv_prefix() -> list[str]:
     try:
         from jarvis.missions.workers.codex_direct_worker import _resolve_codex_argv_prefix
@@ -445,6 +456,7 @@ def plan_claude(
         resume=resume,
         identity=identity,
         env=jarvis_harness.apply_env(_account_env("claude")),
+        thinking_summaries=True,
     )
 
 
@@ -491,10 +503,12 @@ def _plan_claude_code(
     resume: str | None,
     identity: jarvis_harness.Identity | None,
     env: dict[str, str],
+    thinking_summaries: bool = False,
 ) -> CliPlan:
     mode = normalize_permission("claude-cli", permission_mode)
+    prefix = claude_argv_prefix()
     argv = [
-        *claude_argv_prefix(),
+        *prefix,
         "--print",
         "--output-format",
         "stream-json",
@@ -514,6 +528,15 @@ def _plan_claude_code(
         argv += ["--model", model]
     if effort:
         argv += ["--effort", effort]
+    # Without this the stream carries empty thinking blocks and the chat shows
+    # no reasoning. The probe ran off the event loop before planning
+    # (``warm_claude_capabilities``); an older CLI without the flag skips it.
+    # Anthropic's endpoint only — GLM's compatible one is not asked for a
+    # thinking setting it never documented.
+    from jarvis.claude_auth import claude_cli_thinking_display_known
+
+    if thinking_summaries and claude_cli_thinking_display_known(prefix):
+        argv += ["--thinking-display", "summarized"]
     # Jarvis' own tools, and the identity that says when to use them. Both are
     # skipped when the app cannot offer them (no control key, server not bound
     # yet) — the session then behaves exactly as it did before. On the Jarvis
@@ -2923,6 +2946,8 @@ async def _run_cli_once(
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
+            if runner == "claude-cli":
+                await asyncio.to_thread(warm_claude_capabilities)
             plan: CliPlan = planner(
                 prompt=planned_prompt,
                 cwd=cwd,

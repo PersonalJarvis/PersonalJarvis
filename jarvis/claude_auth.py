@@ -71,6 +71,7 @@ _AUTH_STATUS_CACHE: dict[
     tuple[str, str, str, str, str], tuple[float, ClaudeCliAuthSnapshot | None]
 ] = {}
 _SAFE_MODE_CACHE: dict[tuple[str, ...], bool] = {}
+_THINKING_DISPLAY_CACHE: dict[tuple[str, ...], bool] = {}
 _AUTH_STATUS_TTL_S = 5.0
 
 
@@ -97,6 +98,7 @@ def clear_version_cache() -> None:
     _AUTH_LOGOUT_CACHE.clear()
     _AUTH_STATUS_CACHE.clear()
     _SAFE_MODE_CACHE.clear()
+    _THINKING_DISPLAY_CACHE.clear()
 
 
 # ----------------------------------------------------------------------
@@ -350,6 +352,41 @@ def claude_cli_supports_safe_mode(argv_prefix: Sequence[str]) -> bool:
         supported = False
     _SAFE_MODE_CACHE[key] = supported
     return supported
+
+
+def claude_cli_supports_thinking_display(argv_prefix: Sequence[str]) -> bool:
+    """Capability-probe ``--thinking-display`` (summaries of the model's thinking).
+
+    A print-mode stream leaves thinking blocks empty unless the CLI is asked
+    for summaries, so a chat shows no reasoning at all. The flag is hidden
+    from ``--help``; the probe passes it an invalid value beside
+    ``--version``. A CLI that knows the option rejects the value and names
+    it; an older one ignores it and prints its version. Cached per prefix.
+    """
+    key = tuple(argv_prefix)
+    if key in _THINKING_DISPLAY_CACHE:
+        return _THINKING_DISPLAY_CACHE[key]
+    try:
+        proc = subprocess.run(
+            [*key, "--thinking-display", "probe", "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=4.0,
+            text=True,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+        supported = proc.returncode != 0 and "--thinking-display" in output
+    except (OSError, subprocess.SubprocessError):
+        supported = False
+    _THINKING_DISPLAY_CACHE[key] = supported
+    return supported
+
+
+def claude_cli_thinking_display_known(argv_prefix: Sequence[str]) -> bool:
+    """The cached probe result only — never spawns, so it is safe on the event loop."""
+    return _THINKING_DISPLAY_CACHE.get(tuple(argv_prefix), False)
 
 
 def claude_native_auth_env(env: Mapping[str, str]) -> dict[str, str]:
