@@ -136,10 +136,10 @@ class SocietyScheduler:
         self._budget_getter = budget_tracker_getter
         self._trace_cap = trace_message_cap
         self._delivery_lock = asyncio.Lock()
-        #: Per-agent dispatch locks close the check→await→register race around
-        #: ``max_concurrent_runs``. Without them two assignments or room turns
-        #: can both see a free slot before either awaited dispatch returns.
+        #: Admission locks close check→await→append races in the scheduler.
         self._dispatch_locks: dict[str, asyncio.Lock] = {}
+        from weakref import WeakValueDictionary
+        self._trace_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         #: run_id → agent_id of work the scheduler started and has not seen end.
         self._running: dict[str, str] = {}
         self._unsubscribe: Callable[[], None] | None = None
@@ -161,6 +161,13 @@ class SocietyScheduler:
         if lock is None:
             lock = asyncio.Lock()
             self._dispatch_locks[agent_id] = lock
+        return lock
+
+    def _trace_lock(self, trace_id: str) -> asyncio.Lock:
+        lock = self._trace_locks.get(trace_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._trace_locks[trace_id] = lock
         return lock
     @property
     def running(self) -> dict[str, str]:
@@ -240,8 +247,9 @@ class SocietyScheduler:
             if self.active_runs(target.agent_id) >= target.max_concurrent_runs:
                 return
 
-        lock = self._dispatch_lock(target.agent_id)
-        async with lock:
+        async with self._dispatch_lock(target.agent_id):
+            # Refresh after waiting: another room may have consumed this
+            # recipient's slot while this one waited for its per-agent lock.
             room = await rooms.get(room_id)
             if room is None or room.state is not RoomState.RUNNING or not room.live:
                 return
@@ -387,46 +395,49 @@ class SocietyScheduler:
             except Exception as exc:  # noqa: BLE001 — BudgetExceeded is the tracker's own type
                 await self._veto(env, FailureReason.BUDGET_EXHAUSTED, str(exc))
                 return
-        async with self._dispatch_lock(target.agent_id):
-            target = await self._resolve_target(env)
-            if isinstance(target, FailureReason):
-                await self._veto(env, target, f"target {env.to_agent!r} cannot take work")
-                return
-            if target.daily_budget_usd > 0:
-                spent = await self._store.cost_since(target.agent_id, day_start_ms(env.ts_ms))
-                if spent >= target.daily_budget_usd:
+        async with self._trace_lock(env.trace_id):
+            async with self._dispatch_lock(target.agent_id):
+                # Re-resolve under both admission locks: the target may have
+                # changed state while another event was being dispatched.
+                target = await self._resolve_target(env)
+                if isinstance(target, FailureReason):
+                    await self._veto(env, target, f"target {env.to_agent!r} cannot take work")
+                    return
+                if target.daily_budget_usd > 0:
+                    spent = await self._store.cost_since(target.agent_id, day_start_ms(env.ts_ms))
+                    if spent >= target.daily_budget_usd:
+                        await self._veto(
+                            env,
+                            FailureReason.BUDGET_EXHAUSTED,
+                            f"{target.name} spent ${spent:.2f} of ${target.daily_budget_usd:.2f} today",
+                        )
+                        return
+                if self.active_runs(target.agent_id) >= target.max_concurrent_runs:
                     await self._veto(
                         env,
-                        FailureReason.BUDGET_EXHAUSTED,
-                        f"{target.name} spent ${spent:.2f} of ${target.daily_budget_usd:.2f} today",
+                        FailureReason.CONCURRENCY_CAP,
+                        f"{target.name} already runs {target.max_concurrent_runs} task(s)",
                     )
                     return
-            if self.active_runs(target.agent_id) >= target.max_concurrent_runs:
-                await self._veto(
-                    env,
-                    FailureReason.CONCURRENCY_CAP,
-                    f"{target.name} already runs {target.max_concurrent_runs} task(s)",
+                if self._dispatch is None:
+                    await self._veto(env, FailureReason.INTERNAL_ERROR, "no dispatcher is wired")
+                    return
+                try:
+                    run_id = await self._dispatch(target, env)
+                except Exception as exc:  # noqa: BLE001 — a failed spawn is a typed veto, never a crash
+                    await self._veto(env, classify_error(exc), f"dispatch failed: {exc}")
+                    return
+                self._running[run_id] = target.agent_id
+                await self._store.append_and_publish(
+                    SocietyEnvelope(
+                        msg_type=MsgType.CLAIM,
+                        from_agent=target.agent_id,
+                        to_agent=env.from_agent,
+                        trace_id=env.trace_id,
+                        parent_event_id=env.event_id,
+                        payload={"run_id": run_id, "text": f"{target.name} took the task"},
+                    )
                 )
-                return
-            if self._dispatch is None:
-                await self._veto(env, FailureReason.INTERNAL_ERROR, "no dispatcher is wired")
-                return
-            try:
-                run_id = await self._dispatch(target, env)
-            except Exception as exc:  # noqa: BLE001 — a failed spawn is a typed veto, never a crash
-                await self._veto(env, classify_error(exc), f"dispatch failed: {exc}")
-                return
-            self._running[run_id] = target.agent_id
-            await self._store.append_and_publish(
-                SocietyEnvelope(
-                    msg_type=MsgType.CLAIM,
-                    from_agent=target.agent_id,
-                    to_agent=env.from_agent,
-                    trace_id=env.trace_id,
-                    parent_event_id=env.event_id,
-                    payload={"run_id": run_id, "text": f"{target.name} took the task"},
-                )
-            )
     def _release_result_run(self, env: SocietyEnvelope) -> None:
         """Release only a live run slot owned by the RESULT sender."""
         run_id = env.payload.get("run_id")
