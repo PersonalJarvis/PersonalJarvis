@@ -663,6 +663,23 @@ def test_cli_account_root_mapping_uses_registry_id(
     assert cli_usage_index._account_id_for_root(AGENT_CLAUDE, root) == "claude:work"
 
 
+def test_cli_account_root_mapping_identifies_builtin_account(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis import agent_accounts
+    from jarvis.costs import cli_usage_index
+
+    root = tmp_path / ".claude"
+    monkeypatch.setattr(agent_accounts, "native_dir", lambda platform: root)
+    monkeypatch.setattr(
+        agent_accounts,
+        "list_accounts",
+        lambda platform: [],
+    )
+
+    assert cli_usage_index._account_id_for_root(AGENT_CLAUDE, root) == "claude:default"
+
+
 def test_an_index_built_under_an_older_rule_is_reread(tmp_path: Path) -> None:
     """A schema bump re-reads every transcript and corrects its rows in place —
     the table never empties, so a report taken mid-way is never a fraction."""
