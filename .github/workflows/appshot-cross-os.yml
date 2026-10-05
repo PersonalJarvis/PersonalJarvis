@@ -43,6 +43,7 @@ env:
     tests/unit/screen_context tests/unit/trigger/test_pynput_shifted_keys.py
     tests/unit/platform/test_user_dirs.py tests/unit/platform/test_qt_sidecar.py
     tests/unit/platform/test_probes.py tests/integration/test_downloads_routes.py
+    tests/unit/platform/test_gtk_frame_extents.py tests/unit/platform/test_window_state_rects.py
 
 jobs:
   linux:
