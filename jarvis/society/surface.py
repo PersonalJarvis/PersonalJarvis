@@ -427,6 +427,9 @@ class _GatedTool:
         self._approval_mode = approval_mode
         self._runtime = runtime
         self._session_id = session_id
+        self._base_inner_risk_tier = inner.risk_tier
+        self._base_inner_is_action_tool = getattr(inner, "is_action_tool", None)
+        self._base_inner_read_only = getattr(inner, "_read_only", None)
         self.name = inner.name
         self.description = inner.description
         self.schema = inner.schema
@@ -519,13 +522,18 @@ class _GatedTool:
                     {"reason": "blocked_by_policy"},
                     "session is now read-only",
                 )
-            if mode in ("plan", "read-only"):
-                if hasattr(self._inner, "_read_only"):
-                    self._inner._read_only = True
+            if self._capability_id == "core:browser":
+                restricted = mode in ("plan", "read-only")
+                if hasattr(self._inner, "_read_only") and self._base_inner_read_only is not None:
+                    self._inner._read_only = bool(self._base_inner_read_only or restricted)
                 if hasattr(self._inner, "risk_tier"):
-                    self._inner.risk_tier = "safe"
-                if hasattr(self._inner, "is_action_tool"):
-                    self._inner.is_action_tool = False
+                    self._inner.risk_tier = (
+                        "safe" if restricted else str(self._base_inner_risk_tier or "monitor")
+                    )
+                if hasattr(self._inner, "is_action_tool") and self._base_inner_is_action_tool is not None:
+                    self._inner.is_action_tool = (
+                        False if restricted else bool(self._base_inner_is_action_tool)
+                    )
 
         from .approvals import Verdict, decide
 
