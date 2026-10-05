@@ -60,6 +60,32 @@ function removalErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const NO_LAUNCHERS: ProjectLaunchers = { file_manager: false, editors: [], remote_url: null, remote_label: null };
+
+// Launchers outlive the tree, so a menu opened after switching views is
+// complete at once instead of growing its editor rows a moment later.
+const launcherCache = new Map<string, ProjectLaunchers>();
+const launcherRequests = new Map<string, Promise<ProjectLaunchers>>();
+
+/** One launcher request per project at a time; settles into `launcherCache`. */
+function loadLaunchers(projectId: string): Promise<ProjectLaunchers> {
+  const pending = launcherRequests.get(projectId);
+  if (pending) return pending;
+  const request = fetchProjectLaunchers(projectId)
+    // A headless or older backend has no launchers; the menu simply omits them.
+    .catch(() => NO_LAUNCHERS)
+    .then((found) => { launcherCache.set(projectId, found); return found; })
+    .finally(() => { launcherRequests.delete(projectId); });
+  launcherRequests.set(projectId, request);
+  return request;
+}
+
+/** Test hook: forget every cached launcher set. */
+export function resetLauncherCacheForTests(): void {
+  launcherCache.clear();
+  launcherRequests.clear();
+}
+
 /**
  * The project's only workspace when it carries the project's own name. Such a
  * project renders as ONE row: a folder header over a child with the same name
@@ -125,7 +151,7 @@ export function IdeProjectTree() {
   // What the open menu can offer beyond the row itself: the project's editors
   // and remote, and the panes of the workspace. Fetched when a menu opens, so
   // an item is only shown when it can actually run.
-  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>({});
+  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>(() => Object.fromEntries(launcherCache));
   const [menuPanes, setMenuPanes] = useState<WorkspacePaneRow[] | null>(null);
   const [confirmProject, setConfirmProject] = useState<string | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -262,13 +288,27 @@ export function IdeProjectTree() {
 
   const menuProjectId = contextMenu?.projectId ?? null;
   const menuWorkspaceId = contextMenu?.kind === "workspace" ? contextMenu.workspaceId : null;
+  // Fetched ahead, one project after another, so the menu is complete the
+  // moment it opens; opening it refreshes that project in the background.
+  const visibleProjectKey = visible.map((project) => project.id).join(" ");
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      for (const id of visibleProjectKey ? visibleProjectKey.split(" ") : []) {
+        if (!live) return;
+        if (launcherCache.has(id)) continue;
+        const found = await loadLaunchers(id);
+        if (live) setLaunchers((previous) => ({ ...previous, [id]: found }));
+      }
+    })();
+    return () => { live = false; };
+  }, [visibleProjectKey]);
+
   useEffect(() => {
     if (!menuProjectId) return;
     let live = true;
-    fetchProjectLaunchers(menuProjectId)
-      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); })
-      // A headless or older backend has no launchers; the menu simply omits them.
-      .catch(() => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: { file_manager: false, editors: [], remote_url: null, remote_label: null } })); });
+    loadLaunchers(menuProjectId)
+      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); });
     return () => { live = false; };
   }, [menuProjectId]);
 
