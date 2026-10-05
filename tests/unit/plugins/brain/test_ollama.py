@@ -33,15 +33,28 @@ class _FakeOpenAI:
         _FakeOpenAI.last_kwargs = kwargs
 
 
-def _no_override(monkeypatch) -> None:
-    monkeypatch.setattr(cfg, "load_config", lambda: JarvisConfig())
+def _use_config(conf: JarvisConfig, monkeypatch) -> None:
+    """Route endpoint reads through an explicit config, bypassing disk/cache state."""
+    resolve = cfg.resolve_provider_endpoint
+
+    def configured_endpoint(provider_id: str, *, vendor_default_base_url=None, config=None):
+        return resolve(
+            provider_id,
+            vendor_default_base_url=vendor_default_base_url,
+            config=conf,
+        )
+
+    monkeypatch.setattr(cfg, "resolve_provider_endpoint", configured_endpoint)
     monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+
+def _no_override(monkeypatch) -> None:
+    _use_config(JarvisConfig(), monkeypatch)
 
 
 def _override(url: str, monkeypatch) -> None:
     conf = JarvisConfig(brain=BrainConfig(providers={"ollama": BrainProviderConfig(base_url=url)}))
-    monkeypatch.setattr(cfg, "load_config", lambda: conf)
-    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    _use_config(conf, monkeypatch)
 
 
 # ── Server-root normalization ────────────────────────────────────────────
