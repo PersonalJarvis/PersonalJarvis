@@ -407,14 +407,8 @@ class SocietyScheduler:
             )
         )
 
-    async def _on_result(self, env: SocietyEnvelope) -> None:
-        problem = validate_result(env.payload)
-        if problem is not None:
-            await self._store.mark_delivery(
-                env.event_id, "failed", str(FailureReason.INVALID_RESULT)
-            )
-            await self._veto(env, FailureReason.INVALID_RESULT, problem)
-            return
+    def _release_result_run(self, env: SocietyEnvelope) -> None:
+        """Release only a live run slot owned by the RESULT sender."""
         run_id = env.payload.get("run_id")
         if isinstance(run_id, str):
             owner = self._running.get(run_id)
@@ -423,8 +417,7 @@ class SocietyScheduler:
             elif owner is not None:
                 # A durable RESULT must never release another agent's live slot.
                 # This can happen after a stale/forged handoff carries a foreign
-                # run_id; keep the real owner accounting intact and continue the
-                # RESULT projection itself.
+                # run_id; keep the real owner accounting intact.
                 log.warning(
                     "society: RESULT %s from %s referenced run %s owned by %s; "
                     "preserving the live run slot",
@@ -433,12 +426,27 @@ class SocietyScheduler:
                     run_id,
                     owner,
                 )
-        else:
-            # No run id: release one slot of the sender, oldest first.
-            for rid, agent in list(self._running.items()):
-                if agent == env.from_agent:
-                    self._running.pop(rid, None)
-                    break
+            return
+        # No run id: release one slot of the sender, oldest first.
+        for rid, agent in list(self._running.items()):
+            if agent == env.from_agent:
+                self._running.pop(rid, None)
+                break
+
+    async def _on_result(self, env: SocietyEnvelope) -> None:
+        # A malformed terminal report still ends the sender's run. Otherwise a
+        # bad RESULT can strand its concurrency slot forever while the board
+        # correctly marks the report invalid. Ownership is checked before
+        # releasing anything, so a forged/foreign run_id cannot free another
+        # agent's live work.
+        self._release_result_run(env)
+        problem = validate_result(env.payload)
+        if problem is not None:
+            await self._store.mark_delivery(
+                env.event_id, "failed", str(FailureReason.INVALID_RESULT)
+            )
+            await self._veto(env, FailureReason.INVALID_RESULT, problem)
+            return
         if self._curate is not None:
             try:
                 await self._curate(env)
