@@ -120,6 +120,46 @@ def _refresh_expires_at(payload: dict) -> datetime | None:
     return datetime.now(UTC) + timedelta(seconds=seconds)
 
 
+@dataclass(frozen=True)
+class _GrantFields:
+    access: str | None
+    refresh: str | None
+    expires_at: datetime | None
+    scope: str | None
+
+
+def _grant_fields(payload: dict) -> _GrantFields:
+    """Read one token set from a token-endpoint answer, never mixing sources.
+
+    Slack's user-scope code exchange nests the user token under
+    ``authed_user`` (``access_token``, ``refresh_token``, ``expires_in``,
+    ``scope``); the top level then belongs to a bot token, if any. A Slack
+    refresh of a user token answers at the top level instead, as every other
+    provider does. Taking all four fields from the same object keeps a bot's
+    refresh token from ever being paired with a user's access token.
+    """
+    nested = payload.get("authed_user")
+    source = nested if isinstance(nested, dict) and nested.get("access_token") else payload
+    expires_at: datetime | None = None
+    try:
+        expires_in = source.get("expires_in")
+        if expires_in is not None:
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(expires_in))
+    except (TypeError, ValueError):
+        # An unreadable lifetime is not fatal: the token works until the
+        # provider says otherwise, and the tool refreshes on that answer.
+        log.debug("token response carried an unreadable expires_in; treating as unknown")
+    access = source.get("access_token")
+    refresh = source.get("refresh_token")
+    scope = source.get("scope")
+    return _GrantFields(
+        access=str(access) if access else None,
+        refresh=str(refresh) if refresh else None,
+        expires_at=expires_at,
+        scope=str(scope) if scope else None,
+    )
+
+
 @dataclass
 class _PendingPkceFlow:
     config: PkceLoopbackConfig
@@ -300,33 +340,28 @@ class PkceLoopbackHandler:
             detail = sanitize_provider_error(r.text)
             raise RuntimeError(f"token exchange HTTP {r.status_code}: {detail}")
         payload = r.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("token response was not a JSON object")
         # Slack wraps success/failure in "ok" plus error codes; many other
         # providers return error inline. Handle both shapes.
         if payload.get("ok") is False:
             err = sanitize_provider_error(str(payload.get("error", "unknown")))
             raise RuntimeError(f"token exchange failed: {err}")
         # Slack's response nests the user token under `authed_user`.
-        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
+        grant = _grant_fields(payload)
+        access = grant.access
         if not access:
             raise RuntimeError("token response missing access_token")
-        refresh = payload.get("authed_user", {}).get("refresh_token") or payload.get(
-            "refresh_token"
-        )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
-        expires_at = (
-            datetime.now(UTC) + timedelta(seconds=int(expires_in))
-            if expires_in is not None
-            else None
-        )
+        refresh = grant.refresh
+        expires_at = grant.expires_at
         extra: dict[str, str] = {}
         team = payload.get("team", {})
         if isinstance(team, dict) and team.get("id"):
             extra["team_id"] = team["id"]
         if isinstance(team, dict) and team.get("name"):
             extra["team_name"] = team["name"]
-        scope = payload.get("authed_user", {}).get("scope") or payload.get("scope")
-        if scope:
-            extra["scope"] = scope
+        if grant.scope:
+            extra["scope"] = grant.scope
         grant_ends = _refresh_expires_at(payload)
         if grant_ends is not None:
             extra["refresh_expires_at"] = grant_ends.isoformat()
@@ -393,26 +428,34 @@ class PkceLoopbackHandler:
             detail = sanitize_provider_error(r.text)
             raise RuntimeError(f"refresh HTTP {r.status_code}: {detail}")
         payload = r.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("refresh response was not a JSON object")
         if payload.get("ok") is False:
             err = payload.get("error", "unknown")
-            if err in ("invalid_grant", "token_revoked", "invalid_refresh_token"):
+            # Slack answers an expired or rotated-away refresh token (PKCE
+            # refresh tokens end after 30 days) with these codes; only a new
+            # sign-in heals them.
+            if err in (
+                "invalid_grant",
+                "token_revoked",
+                "invalid_refresh_token",
+                "token_expired",
+            ):
                 raise RuntimeError("revoked")
             raise RuntimeError(f"refresh failed: {sanitize_provider_error(str(err))}")
-        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
+        # A Slack user-token refresh answers at the top level; the code
+        # exchange nested it under `authed_user`. `_grant_fields` reads either.
+        grant = _grant_fields(payload)
+        access = grant.access
         if not access:
             raise RuntimeError("refresh missing access_token")
-        new_refresh = (
-            payload.get("authed_user", {}).get("refresh_token")
-            or payload.get("refresh_token")
-            or current.refresh
-        )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
-        expires_at = (
-            datetime.now(UTC) + timedelta(seconds=int(expires_in))
-            if expires_in is not None
-            else None
-        )
+        # Rotation hands out a new refresh token on every refresh; keep the old
+        # one only when the provider does not rotate.
+        new_refresh = grant.refresh or current.refresh
+        expires_at = grant.expires_at
         extra = dict(current.extra)
+        if grant.scope:
+            extra["scope"] = grant.scope
         extra["token_endpoint_auth_method"] = auth_method
         grant_ends = _refresh_expires_at(payload)
         if grant_ends is not None:
