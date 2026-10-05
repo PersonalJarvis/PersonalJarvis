@@ -489,3 +489,28 @@ async def test_a_recheck_of_something_unregistered_is_not_an_answer() -> None:
     from jarvis.workspace import agents as registry
 
     assert await registry.recheck_agent("no-such-cli") is None
+
+
+def test_glm_spawn_uses_a_distinct_claude_config_root(monkeypatch, tmp_path):
+    from jarvis.core import config as cfg
+    from jarvis.workspace.agents import glm_config_dir, glm_spawn_env
+
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path / "jarvis-data")
+    monkeypatch.setattr(cfg, "get_secret", lambda *args: "zai-test-token")
+    monkeypatch.setattr(
+        cfg,
+        "load_config",
+        lambda: type("Cfg", (), {
+            "agentic_ide": type("Agents", (), {
+                "glm": type("Glm", (), {})(),
+            })(),
+        })(),
+    )
+    env = glm_spawn_env()
+
+    assert env is not None
+    assert env["CLAUDE_CONFIG_DIR"] == str(glm_config_dir())
+    assert env["CLAUDE_CONFIG_DIR"] != str(__import__("pathlib").Path.home() / ".claude")
+    assert env["ANTHROPIC_BASE_URL"] == "https://api.z.ai/api/anthropic"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "zai-test-token"
+    assert env["ANTHROPIC_API_KEY"] == ""
