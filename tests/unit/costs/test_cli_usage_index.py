@@ -33,6 +33,7 @@ from jarvis.costs.cli_usage_index import (
     AGENT_CLAUDE,
     AGENT_CODEX,
     AGENT_KIMI,
+    AGENT_GLM,
     entries,
     index_db_path,
     index_state,
@@ -1393,3 +1394,26 @@ def test_an_index_from_version_two_keeps_its_rows_and_gains_the_column(tmp_path:
 
     turns = _all(data)
     assert len(turns) == 1 and turns[0].cost_usd == 0.0
+
+
+def test_glm_transcript_root_is_indexed_separately_from_claude(tmp_path: Path) -> None:
+    """GLM borrows Claude Code but must never be priced under Claude's identity."""
+    data = tmp_path / "data"
+    _write(_claude_path(tmp_path, "claude-session"), [
+        _claude_line(uuid="u1", msg_id="msg_claude", session="claude-session", model="claude-opus-5"),
+    ])
+    glm_path = (
+        tmp_path / ".jarvis-glm-claude" / "projects" / "-work-personal-jarvis" / "glm-session.jsonl"
+    )
+    _write(glm_path, [
+        _claude_line(uuid="u2", msg_id="msg_glm", session="glm-session", model="glm-4.6"),
+    ])
+
+    result = refresh(data_dir=data, home=tmp_path)
+
+    assert result.turns_added == 2
+    turns = _all(data)
+    by_agent = {turn.agent: turn for turn in turns}
+    assert by_agent[AGENT_CLAUDE].model == "claude-opus-5"
+    assert by_agent[AGENT_GLM].model == "glm-4.6"
+    assert by_agent[AGENT_GLM].session_id == "glm-session"
