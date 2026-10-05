@@ -7,6 +7,8 @@ import { useComputerChoices } from "@/hooks/useComputers";
 import { addTerminal, fetchWorkspacePanes, interruptTerminal, placeWorkspace, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import cursorLogo from "@/assets/editors/cursor.svg?url";
+import vscodeLogo from "@/assets/editors/vscode.svg?url";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
@@ -668,14 +670,18 @@ export function IdeProjectTree() {
 
   const run = (action: () => void) => () => { setContextMenu(null); action(); };
 
-  /** Up to two installed editors and the hosted remote, as menu items. */
+  /** VS Code, Cursor (greyed when not installed) and the hosted remote, as menu items. */
   const launcherItems = (project: IdeProject, scope: "project" | "workspace"): TreeMenuItem[] => {
     const found = launchers[project.id];
     if (!found) return [];
-    const items: TreeMenuItem[] = found.editors.slice(0, 2).map((editor) => ({
-      id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, testId: `ide-${scope}-menu-editor-${editor.id}`,
-      onSelect: run(() => void openIn(project.id, editor.id)),
-    }));
+    const items: TreeMenuItem[] = found.editors.map((editor) => {
+      const installed = editor.installed !== false;
+      return {
+        id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, image: EDITOR_LOGOS[editor.id],
+        testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : "Not installed",
+        onSelect: run(() => void openIn(project.id, editor.id)),
+      };
+    });
     if (scope === "project" && found.file_manager) {
       items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
     }
@@ -855,12 +861,16 @@ const FILE_MANAGER_LABEL = (() => {
   return "Show in file manager";
 })();
 const TREE_MENU_MARGIN = 8;
+/** Each featured editor's own app icon, in its real colours. */
+const EDITOR_LOGOS: Record<string, string> = { code: vscodeLogo, cursor: cursorLogo };
 
 /** One row of the sidebar's action menu. */
 interface TreeMenuItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  /** A brand mark drawn instead of `icon`; greyed out with the item when disabled. */
+  image?: string;
   testId: string;
   onSelect: () => void;
   disabled?: boolean;
@@ -981,7 +991,10 @@ function TreeContextMenu({
                     : "text-foreground hover:bg-muted focus-visible:bg-muted"
                 }`}
               >
-                <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />
+                {item.image
+                  ? <img src={item.image} alt="" aria-hidden draggable={false} data-testid={`${item.testId}-logo`}
+                      className={`h-4 w-4 shrink-0 object-contain ${item.disabled ? "grayscale" : ""}`} />
+                  : <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />}
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{item.label}</span>
                   {item.hint && <span className="truncate text-[11px] text-muted-foreground">{item.hint}</span>}

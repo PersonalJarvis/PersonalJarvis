@@ -326,6 +326,24 @@ it("offers the project's real launchers and runs them", async () => {
   await waitFor(() => expect(openProjectIn).toHaveBeenCalledWith("p1", "remote"));
 });
 
+it("shows VS Code and Cursor with their logos and greys out the one not installed", async () => {
+  fetchProjectLaunchers.mockResolvedValue({
+    file_manager: true, remote_url: null, remote_label: null,
+    editors: [{ id: "code", label: "VS Code", installed: true }, { id: "cursor", label: "Cursor", installed: false }],
+  });
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  const vscode = await screen.findByTestId("ide-project-menu-editor-code");
+  const cursor = screen.getByTestId("ide-project-menu-editor-cursor");
+  expect((vscode as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByTestId("ide-project-menu-editor-code-logo").className).not.toContain("grayscale");
+  expect((cursor as HTMLButtonElement).disabled).toBe(true);
+  expect(cursor.textContent).toBe("Open in CursorNot installed");
+  expect(screen.getByTestId("ide-project-menu-editor-cursor-logo").className).toContain("grayscale");
+  fireEvent.click(cursor);
+  expect(openProjectIn).not.toHaveBeenCalled();
+});
+
 it("hides launchers the backend cannot offer", async () => {
   fetchProjectLaunchers.mockRejectedValue(new Error("Not Found"));
   render(<IdeProjectTree />);

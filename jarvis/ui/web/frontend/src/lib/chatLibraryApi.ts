@@ -153,7 +153,8 @@ export async function revealProject(projectId: string): Promise<boolean> {
 /** Where a project's folder can be opened on this machine right now. */
 export interface ProjectLaunchers {
   file_manager: boolean;
-  editors: { id: string; label: string }[];
+  /** `installed: false` marks a featured editor this computer does not have. */
+  editors: { id: string; label: string; installed?: boolean }[];
   remote_url: string | null;
   remote_label: string | null;
 }
