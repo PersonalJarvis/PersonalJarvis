@@ -475,9 +475,12 @@ export function ChangedFiles({ turn }: { turn: TurnItem }) {
         return <li key={row.path}>
           <button type="button" aria-expanded={open} onClick={() => togglePath(row.path)} title={row.path}
             className="flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm hover:bg-secondary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-            <span className="min-w-0 flex-1 truncate">
-              {folder && <span className="text-muted-foreground">{folder}</span>}
-              <span className="text-foreground">{name}</span>
+            {/* The folder gives way first, cut from its left, so the name stays readable. */}
+            <span className="flex min-w-0 flex-1">
+              {folder && <span dir="rtl" className="min-w-0 shrink-[999] truncate text-left text-muted-foreground">
+                <bdi dir="ltr">{folder}</bdi>
+              </span>}
+              <span className="min-w-0 truncate text-foreground">{name}</span>
             </span>
             <ChangeCount added={row.added} removed={row.removed} />
           </button>
