@@ -71,6 +71,20 @@ def test_provider_model_drives_router_when_tier_model_is_omitted() -> None:
     assert mgr._fast_model("gemini") == "gemini-3.5-flash-ui-choice"
 
 
+def test_unpinned_fallback_uses_live_provider_model_after_frontier_refresh() -> None:
+    cfg = _config()
+    cfg.brain.router.provider = "gemini"
+    cfg.brain.router.model = "gemini-fast-old"
+    cfg.brain.router.fallback_provider = "openai"
+    cfg.brain.router.fallback_model = None
+    cfg.brain.providers["openai"].model = "gpt-5.5-new"
+
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus())
+
+    assert mgr._configured_fallbacks == [("openai", None)]
+    assert ("openai", "gpt-5.5-new") in mgr._build_fallback_chain("fast")
+
+
 def test_router_fallback_chain_still_offers_pro_as_failover() -> None:
     # Fixing the clobber must NOT drop the pro failover from the chain — flash
     # is primary, pro remains the gemini-tier failover.
