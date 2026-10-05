@@ -227,3 +227,28 @@ def test_linux_picks_the_tool_for_the_session(
 
     assert written == [f"/usr/bin/{expected_write}"]
     assert read == [f"/usr/bin/{expected_read}"]
+
+
+@pytest.mark.parametrize(("platform", "utf8"), [("darwin", True), ("linux", False)])
+def test_macos_clipboard_commands_always_speak_utf8(
+    monkeypatch: pytest.MonkeyPatch, platform: str, utf8: bool
+) -> None:
+    """An app started from Finder has no locale; pbcopy would fall back to MacRoman."""
+    monkeypatch.delenv("LANG", raising=False)
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.setattr(clipboard, "detect_platform", lambda: platform)
+    seen: list[object] = []
+
+    def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(clipboard.subprocess, "run", _run)
+    clipboard._run_command(["/usr/bin/pbcopy"], "Größe ✓")  # i18n-allow: non-ASCII round trip
+    clipboard._read_command(["/usr/bin/pbpaste"])
+
+    for env in seen:
+        if utf8:
+            assert isinstance(env, dict) and env["LC_ALL"] == "en_US.UTF-8"
+        else:
+            assert env is None
