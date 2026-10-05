@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { isTourEvent } from "@/components/onboarding/tourEvents";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
-import { ArrowLeft, Loader2, Search, X } from "lucide-react";
+import { Loader2, Search, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
   NAV_GROUPS,
@@ -212,7 +212,7 @@ function HubLoadingFallback() {
   );
 }
 
-export function SettingsHubView({ onClose }: { onClose: () => void }) {
+export function SettingsHubView() {
   const t = useT();
   const language = useUiLanguage();
   const active = useEventStore((s) => s.activeSection);
@@ -307,14 +307,9 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
         className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-60 md:border-b-0"
       >
         <div className="px-3 pb-1 pt-3">
-          {/* The page covers the whole window, so its way out sits where a
-              full-page settings screen keeps it: first in its own nav. */}
-          <button type="button" onClick={onClose} data-testid="settings-hub-close"
-            className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 truncate text-left">{t("settings_hub.back_to_app")}</span>
-          </button>
-          <p className="px-2.5 pb-3 pt-4 font-display text-lg font-semibold text-foreground-strong">
+          {/* No way-out row of its own: the caption's back arrow and Escape
+              leave the page, so the heading opens the nav. */}
+          <p className="px-2.5 pb-3 pt-1 font-display text-lg font-semibold text-foreground-strong">
             {t("nav.settings")}
           </p>
           <div className="relative">
@@ -418,11 +413,13 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
 /**
  * The hub as a full-window page over the current section: it covers the app
  * sidebar and the stage, wears the same gray ground + rounded reading sheet as
- * the app shell, and leaves the 32 px window caption (window controls, drag
- * strip) visible above it. Closing it — the X or Escape — returns to the
- * section behind it.
+ * the app shell, and starts BELOW the 32 px window caption, so back/forward,
+ * the drag strip and the window controls stay visible and live. The app root
+ * is `isolate`, so the caption's own z-index cannot lift it over this portal;
+ * leaving the strip uncovered is the only way it shows. Closing it — the
+ * caption's back arrow or Escape — returns to the section behind it.
  *
- * Positioned with `inset-0` rather than a transform: a transform would turn
+ * Positioned with fixed insets rather than a transform: a transform would turn
  * the dialog into the containing block of every `position: fixed` layer a tab
  * renders inline (an image preview, view-level dialogs) and trap them inside
  * the page instead of covering the screen.
@@ -446,7 +443,7 @@ export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 jarvis-nav-surface" />
+        <Dialog.Overlay className="fixed inset-x-0 bottom-0 top-8 z-40 jarvis-nav-surface" />
         <Dialog.Content
           data-testid="settings-hub-dialog"
           ref={content}
@@ -478,10 +475,10 @@ export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
               event.preventDefault();
             }
           }}
-          className="jarvis-nav-surface fixed inset-0 z-40 flex flex-col overflow-hidden pt-8 text-foreground outline-none"
+          className="jarvis-nav-surface fixed inset-x-0 bottom-0 top-8 z-40 flex flex-col overflow-hidden text-foreground outline-none"
         >
           <Dialog.Title className="sr-only">{t("nav.settings")}</Dialog.Title>
-          <SettingsHubView onClose={onClose} />
+          <SettingsHubView />
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

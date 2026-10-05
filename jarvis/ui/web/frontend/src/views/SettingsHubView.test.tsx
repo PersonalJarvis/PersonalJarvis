@@ -85,8 +85,7 @@ vi.mock("@/views/feedback/FeedbackView", () => ({
 
 import { SettingsHubDialog, SettingsHubView as HubView } from "@/views/SettingsHubView";
 
-const noop = () => {};
-const SettingsHubView = () => <HubView onClose={noop} />;
+const SettingsHubView = () => <HubView />;
 
 const NAV_IDS = [
   "settings",
@@ -111,15 +110,21 @@ afterEach(() => {
 });
 
 describe("SettingsHubView header and navigation", () => {
-  it("separates the navigation from the content and closes through its X", async () => {
-    const onClose = vi.fn();
-    render(<HubView onClose={onClose} />);
+  it("separates the navigation from the content and opens with the heading", async () => {
+    render(<HubView />);
     await screen.findByTestId("TAB_SETTINGS");
     expect(screen.getByTestId("settings-hub-sidebar").className).toContain("jarvis-nav-surface");
     expect(screen.getByTestId("settings-hub-content").parentElement?.className).toContain("jarvis-sheet");
-    fireEvent.click(screen.getByTestId("settings-hub-close"));
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(mockState.setActiveSection).not.toHaveBeenCalled();
+    // The caption's back arrow leaves the page; the nav has no row for it.
+    expect(screen.queryByTestId("settings-hub-close")).toBeNull();
+    expect(screen.queryByText("settings_hub.back_to_app")).toBeNull();
+  });
+
+  it("starts below the window caption so its controls stay visible", async () => {
+    render(<SettingsHubDialog onClose={vi.fn()} />);
+    const dialog = await screen.findByTestId("settings-hub-dialog");
+    expect(dialog.className).toContain("top-8");
+    expect(dialog.className).not.toContain("inset-0");
   });
 
   it("opens as a named dialog that Escape closes", async () => {

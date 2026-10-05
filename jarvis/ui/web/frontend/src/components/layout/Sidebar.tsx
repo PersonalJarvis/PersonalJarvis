@@ -2,7 +2,6 @@ import {
   Loader2,
   Mic,
   ChevronDown,
-  ChevronLeft,
   MoreHorizontal,
   Plus,
 } from "lucide-react";
@@ -511,13 +510,10 @@ export function Sidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto scrollbar-jarvis">
-        {onIdeSection ? <nav aria-label="IDE navigation" className="px-2 pt-2">
-          <button type="button" data-testid="ide-back-to-jarvis" onClick={() => setActive("chats")}
-            className="flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <ChevronLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />
-            {!railed && <span>Back to Jarvis</span>}
-          </button>
-          {railed && <div className="mt-2 flex flex-col items-center gap-1 border-t border-border/60 pt-2">
+        {/* The IDE has no "back" row: the caption's back arrow leaves it, so
+            the workspace tree starts right under the sidebar header. */}
+        {onIdeSection ? (railed && <nav aria-label="IDE navigation" className="px-2 pt-2">
+          <div className="flex flex-col items-center gap-1">
             <button type="button" aria-label="Workspace options" title="Workspace options"
               disabled={!activeIdeWorkspaceId}
               onClick={() => { if (activeIdeWorkspaceId) openIdeWorkspaceOptions(activeIdeWorkspaceId); }}
@@ -528,8 +524,8 @@ export function Sidebar({
               className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Mic aria-hidden className="h-4 w-4" />
             </button>
-          </div>}
-        </nav> : <nav aria-label={t("sidebar.sections")} className="space-y-px px-2 py-2">
+          </div>
+        </nav>) : <nav aria-label={t("sidebar.sections")} className="space-y-px px-2 py-2">
           <ul className="space-y-px">
             {/* One door: a fresh typed chat. Voice is a mode INSIDE the chat
                 now (its top bar's button), so there is nothing to choose
