@@ -152,6 +152,33 @@ async def test_list_filters_by_agent_tag(agent):
     assert [r["id"] for r in rows] == ["task-1"]
     assert rows[0]["title"] == "[agent:Mailbox] brief"
     assert rows[0]["trigger"]["type"] == "every"
+    assert rows[0]["connection_required"] is False
+    assert rows[0]["webhook_path"] is None
+    assert rows[0]["connection_path"] is None
+
+
+async def test_webhook_list_readback_keeps_connection_requirement(agent):
+    store = FakeTaskStore()
+    spec = build_task_spec(
+        agent,
+        title="PR merged",
+        prompt="Summarize the merged pull request.",
+        schedule={
+            "kind": "webhook",
+            "provider": "github",
+            "conditions": {"action": "closed", "pull_request.merged": True},
+        },
+    )
+    task_id = await create_routine(store, None, spec)
+
+    rows = await list_routines(store, "mailbox")
+
+    assert len(rows) == 1
+    assert rows[0]["id"] == task_id
+    assert rows[0]["connection_required"] is True
+    assert rows[0]["webhook_path"] == f"/api/tasks/hooks/{task_id}"
+    assert rows[0]["connection_path"] == f"/api/tasks/{task_id}/webhook-connection"
+
 
 
 async def test_scheduler_is_preferred(agent):
