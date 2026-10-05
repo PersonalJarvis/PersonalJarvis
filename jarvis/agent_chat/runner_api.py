@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
-from jarvis.agent_chat.effort import normalize_effort
+from jarvis.agent_chat.effort import effort_note, normalize_effort
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import normalize_permission
 from jarvis.agent_chat.store import AgentChatSession
@@ -331,6 +331,9 @@ async def run_api_turn(handle: TurnHandle, user_text: str) -> None:
     )
     if handle.output_language:
         system += "\nRespond in this language: " + handle.output_language
+    note = effort_note(provider, effort)
+    if note:
+        system += "\n\n" + note.strip()
     # Plan mode hands the model only the reading tools: it cannot change a
     # thing, and it is told so in the system prompt.
     tools: tuple[dict[str, Any], ...] = (

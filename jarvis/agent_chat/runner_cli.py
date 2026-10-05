@@ -72,7 +72,7 @@ from typing import Any, Final
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
 from jarvis.agent_chat.cli_catalog import CatalogCache, catalog_key, discover_codex_models
-from jarvis.agent_chat.effort import ORDER, normalize_effort, snap_to_ladder
+from jarvis.agent_chat.effort import ORDER, effort_note, normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import default_permission, normalize_permission
 from jarvis.agent_chat.questions import (
@@ -2941,6 +2941,12 @@ async def run_cli_turn(
     return outcome.vendor_session
 
 
+def _agy_effective_effort(model: str, effort: str) -> str:
+    """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
+    args = agy_model_args(model, effort, _agy_catalog_cached())
+    return args[args.index("--effort") + 1] if "--effort" in args else ""
+
+
 async def _run_cli_once(
     handle: TurnHandle,
     user_text: str,
@@ -3003,6 +3009,10 @@ async def _run_cli_once(
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
+            told_effort = (
+                _agy_effective_effort(session.model, effort) if runner == "agy-cli" else effort
+            )
+            planned_prompt = effort_note(session.provider, told_effort) + planned_prompt
             if runner == "claude-cli":
                 await asyncio.to_thread(warm_claude_capabilities)
             plan: CliPlan = planner(
