@@ -15,7 +15,6 @@ const SEARCH_GROUPS = [
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },
-  { id: "silence-window", keys: ["silence_window"] },
   { id: "volume", keys: ["volume"] },
   { id: "audio-devices", keys: ["audio_devices"] },
   { id: "music", keys: ["music", "music_group_title"] },

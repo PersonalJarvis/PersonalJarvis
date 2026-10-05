@@ -8,7 +8,6 @@ import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
 import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
-import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
@@ -112,9 +111,6 @@ function VoiceSettingsGroup() {
       <SettingsCard>
         <SettingsGroupBoundary group="realtime-voice" inline>
           <RealtimeVoiceGroup />
-        </SettingsGroupBoundary>
-        <SettingsGroupBoundary group="silence-window" inline>
-          <SilenceWindowGroup />
         </SettingsGroupBoundary>
         <SettingsGroupBoundary group="volume" inline>
           <VolumeGroup />
