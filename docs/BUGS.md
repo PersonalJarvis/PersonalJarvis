@@ -12941,14 +12941,16 @@ account, Claude only) → $12.6k API-equivalent across two seats, Codex, Kimi
 and Grok Build; unpriced tokens 16.7M → agy's 1.4M (the one CLI that writes
 no model id, named as such).
 
-**Resolved for GLM, remaining cost-audit debt explicit.** GLM panes now
-use a dedicated Claude config root under the active Jarvis data dir and the
-usage index has a distinct `glm-cli` reader identity, so GLM transcripts cannot
-be attributed to the user's Claude Code root. The cost model also prices the
-current Z.ai GLM families separately and labels `glm-cli` as a subscription
-runner. Remaining items are independent: chat/mission CLI usage deduplication
-needs a shared vendor-session identity, per-account attribution needs an
-account column, and an index-state endpoint is already present in the Costs summary via `IndexStatus`; the remaining debt is per-account attribution and mission-worker deduplication.
+**Resolved for GLM/chat/account attribution; mission dedup remains.** GLM panes
+now use a dedicated Claude config root under the active Jarvis data dir, the
+usage index has a distinct `glm-cli` reader identity, and its Z.ai model rates
+are separate from Anthropic. Subscription agent-chat rows carry the vendor
+session id and are suppressed once the CLI index has caught up, so the same
+turn is not billed twice. CLI transcript rows now persist and expose the owning
+account id (including `glm:default`) with a schema migration that re-reads
+existing transcripts. The Costs summary already exposes CLI index state through
+`IndexStatus`. The remaining independent gap is mission-worker ↔ CLI dedup
+because `WorkerSpawned` still does not carry the same vendor-session identity.
 
 **Lesson.** A spend report has as many readers as the app has ways to spend,
 and every reader is a place to be wrong in its own way. The audit that found
