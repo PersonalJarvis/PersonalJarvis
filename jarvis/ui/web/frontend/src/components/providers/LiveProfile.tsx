@@ -103,6 +103,8 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
   const profile = useQuery(liveProfileQuery);
   const [draft, setDraft] = useState<LiveProfileValue | null>(null);
   const [saving, setSaving] = useState(false);
+  // Custom instructions are rarely touched; they open on request.
+  const [showInstructions, setShowInstructions] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const storedValue = draft ?? profile.data?.profile;
@@ -393,21 +395,33 @@ export function LiveProfile({ onSaved, onAuthModeChange, selectedAuthMode, keyFi
         )}
       </SettingsSection>
 
-      <SettingsSection title={t("live.prompts")}>
-        <div className="grid gap-4 px-4 py-3 md:grid-cols-2">
-          <label className="space-y-1.5">
-            <span className="block text-xs text-muted-foreground">{t("live.conversation_prompt")}</span>
-            <Textarea rows={3} value={value.instructions} onChange={(event) => update({ instructions: event.target.value })} />
-          </label>
-          <label className="space-y-1.5">
-            <span className="block text-xs text-muted-foreground">{t("live.backend_prompt")}</span>
-            <Textarea rows={3} value={value.backend_instructions} onChange={(event) => update({ backend_instructions: event.target.value })} />
-          </label>
-          {!subscription ? <label className="space-y-1.5 md:col-span-2">
-            <span className="block text-xs text-muted-foreground">{t("live.custom_model")}</span>
-            <Input value={value.backend_model} onChange={(event) => update({ backend_model: event.target.value })} />
-          </label> : null}
-        </div>
+      <SettingsSection title={t("providers_page.instructions_title")}>
+        <SettingsRow
+          title={t("providers_page.instructions_row")}
+          status={value.instructions.trim() || value.backend_instructions.trim()
+            ? t("providers_page.instructions_set") : t("providers_page.instructions_none")}
+          control={
+            <Button size="sm" variant="outline" data-testid="live-instructions-toggle" onClick={() => setShowInstructions((open) => !open)}>
+              {showInstructions ? t("providers_page.instructions_hide") : t("providers_page.instructions_edit")}
+            </Button>
+          }
+        />
+        {showInstructions ? (
+          <div className="grid gap-4 px-4 py-3 md:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="block text-xs text-muted-foreground">{t("live.conversation_prompt")}</span>
+              <Textarea rows={3} value={value.instructions} onChange={(event) => update({ instructions: event.target.value })} />
+            </label>
+            <label className="space-y-1.5">
+              <span className="block text-xs text-muted-foreground">{t("live.backend_prompt")}</span>
+              <Textarea rows={3} value={value.backend_instructions} onChange={(event) => update({ backend_instructions: event.target.value })} />
+            </label>
+            {!subscription ? <label className="space-y-1.5 md:col-span-2">
+              <span className="block text-xs text-muted-foreground">{t("live.custom_model")}</span>
+              <Input value={value.backend_model} onChange={(event) => update({ backend_model: event.target.value })} />
+            </label> : null}
+          </div>
+        ) : null}
       </SettingsSection>
 
       {(showSave || options.isError || error || message ||

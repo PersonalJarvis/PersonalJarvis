@@ -12,7 +12,8 @@ import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 
-const TABS = ["voice", "agents"] as const;
+// Agents first: the providers are set up there; live calls reuse the OpenAI login.
+const TABS = ["agents", "voice"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_STORAGE_KEY = "jarvis.apikeys.tab";
 
@@ -23,7 +24,7 @@ function initialTab(): Tab {
   } catch {
     // Private mode / no storage: open on the first tab.
   }
-  return "voice";
+  return "agents";
 }
 
 /**

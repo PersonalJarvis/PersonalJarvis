@@ -149,7 +149,8 @@ function openAgents() {
 
 beforeEach(() => {
   try {
-    localStorage.removeItem("jarvis.apikeys.tab");
+    // Most tests start on Live calls and switch over; the default is tested below.
+    localStorage.setItem("jarvis.apikeys.tab", "voice");
   } catch {
     /* no storage in this environment */
   }
@@ -163,10 +164,16 @@ describe("ApiKeysView — Live calls", () => {
     expect(await within(voice).findByTestId("voice-key")).toBeTruthy();
   });
 
-  it("has only the two tabs", async () => {
+  it("has only the two tabs, Agents first", async () => {
     renderPage();
     await screen.findByTestId("apikeys-voice");
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Live calls", "Agents"]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Agents", "Live calls"]);
+  });
+
+  it("opens on Agents the first time", async () => {
+    localStorage.removeItem("jarvis.apikeys.tab");
+    renderPage();
+    expect(await screen.findByTestId("apikeys-agents")).toBeTruthy();
   });
 });
 
