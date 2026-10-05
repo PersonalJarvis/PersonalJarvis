@@ -165,11 +165,18 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
   exists (fixed 2026-04-28: now the `claude-opus-4-7` stable alias).
   The other Frontier-2026-Q2 IDs are marked verifiable in `frontier_resolver.py`,
   but there is no automatic health check before use.
-- **Fix status**: Partial. The claude-opus-4-7 stable alias is already set.
-  Pending: `frontier_autoswitch` must run actively and populate the cache
-  before production use.
-- **Regression guard**: still outstanding — TODO: `frontier_resolver` tests
-  must validate all TIER_DEFAULTS IDs against a probe list.
+- **Fix status (2026-10-05)**: Partial and still open. The claude-opus-4-7
+  stable alias is already set. `frontier_resolver.py` and the opt-in
+  `frontier_autoswitch.py` exist, but a repository audit did not find a
+  verified boot-path call to `apply_frontier_resolution()` on `jarvis-lab`.
+  `BrainManager` still resolves missing provider models from the static
+  `TIER_DEFAULTS_BY_PROVIDER` table, so stale IDs remain a latent risk when
+  no explicit model is configured.
+- **Regression guard (2026-10-05)**: focused picker/cache tests exist, but the
+  stronger guard requested here is still outstanding: prove the active boot
+  path refreshes defaults before they are used, or replace that path with an
+  equivalent verified live-catalog mechanism. Do not mark Bug #5 closed until
+  that behavior is demonstrated by code plus CI.
 
 ## Bug #6: pyautogui dependency missing (MEDIUM, dependent)
 
