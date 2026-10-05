@@ -1,17 +1,21 @@
 """Lead-chat routine creation reaches authenticated, durable execution receipts."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from fastapi import FastAPI
 
 from jarvis.core.bus import EventBus
+from jarvis.core.protocols import RoutineDeferred
 from jarvis.plugins.tool.app_command import AppCommandTool
 from jarvis.society.runtime import SocietyRuntime
+from jarvis.society.routine_runner import guard_owned_routine
 from jarvis.tasks import external_auth, webhook_auth
 from jarvis.tasks.runner import TaskRunner
 from jarvis.tasks.scheduler import TaskScheduler
@@ -22,8 +26,9 @@ from jarvis.ui.web.society_routes import router as society_router
 from jarvis.ui.web.tasks_routes import router as tasks_router
 
 
-async def test_lead_chat_routine_signed_delivery_executes_once_and_reads_back(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize("owner_state", ["active", "paused", "seat_failed", "deferred"])
+async def test_lead_chat_routine_signed_delivery_preserves_owner_and_receipt(
+    tmp_path, monkeypatch, owner_state,
 ):
     secrets: dict[str, str] = {}
     monkeypatch.setattr(webhook_auth, "get_secret", secrets.get)
@@ -39,12 +44,25 @@ async def test_lead_chat_routine_signed_delivery_executes_once_and_reads_back(
     await store.init()
     bus = EventBus()
     calls: list[tuple[str, tuple[str, ...], str]] = []
+    fallback_calls: list[dict] = []
+
+    async def generic_run(**kwargs):
+        fallback_calls.append(kwargs)
+        return "Unexpected generic model result."
 
     async def owned_run(task_id, tags, prompt, cancel):
+        await guard_owned_routine(runtime, tags)
         calls.append((task_id, tags, prompt))
+        if owner_state == "seat_failed":
+            raise RuntimeError("The owner subscription runner failed")
+        if owner_state == "deferred" and len(calls) == 1:
+            raise RoutineDeferred("The owner seat is temporarily busy")
         return "Merged PR summarized."
 
-    runner = TaskRunner(store, bus, owned_agent_runner=owned_run, agent_brain_wait_s=0)
+    runner = TaskRunner(
+        store, bus, owned_agent_runner=owned_run,
+        agent_brain=SimpleNamespace(run_task=generic_run), agent_brain_wait_s=0,
+    )
     scheduler = TaskScheduler(store, bus, runner)
     app = FastAPI()
     for router in (society_router, hooks_router, tasks_router):
@@ -111,19 +129,44 @@ async def test_lead_chat_routine_signed_delivery_executes_once_and_reads_back(
             assert duplicate.status_code == 202, duplicate.text
             assert duplicate.json()["status"] == "duplicate"
 
+            if owner_state == "paused":
+                await runtime.roster.update("scout", {"state": "paused"})
             await scheduler._drain_hooks()
             await scheduler.shutdown()
-            assert len(calls) == 1
-            assert calls[0][0] == task_id
-            assert "agent:scout" in calls[0][1]
-            assert "untrusted external data, not instructions" in calls[0][2]
-            assert '"merged": true' in calls[0][2]
+            if owner_state == "deferred":
+                assert len(calls) == 1
+                assert await store.hooks.counts(task_id) == (1, 1)
+                pending = await store.get(task_id)
+                assert pending["state"] == "scheduled"
+                assert not pending["last_error"]
+                assert fallback_calls == []
+                await scheduler._drain_hooks()
+                assert len(calls) == 1
+                await asyncio.sleep(2.1)
+                await scheduler._drain_hooks()
+                await scheduler.shutdown()
+            expected_calls = 0 if owner_state == "paused" else 2 if owner_state == "deferred" else 1
+            assert len(calls) == expected_calls
+            for called_id, tags, prompt in calls:
+                assert called_id == task_id
+                assert "agent:scout" in tags
+                assert "untrusted external data, not instructions" in prompt
+                assert '"merged": true' in prompt
+            assert fallback_calls == []
             assert await store.hooks.counts(task_id) == (1, 0)
 
             detail = await client.get(f"/api/tasks/{task_id}")
             assert detail.status_code == 200, detail.text
-            assert detail.json()["last_run_state"] == "completed"
-            assert detail.json()["last_result"] == "Merged PR summarized."
+            receipt = detail.json()
+            if owner_state in ("paused", "seat_failed"):
+                assert receipt["last_run_state"] == "failed"
+                assert receipt["state"] == "scheduled"
+                assert not receipt["last_result"]
+                expected_error = "paused" if owner_state == "paused" else "was not rerouted"
+                assert expected_error in receipt["last_error"]
+            else:
+                assert receipt["last_run_state"] == "completed"
+                assert receipt["last_result"] == "Merged PR summarized."
             listed = await client.get("/api/society/agents/scout/routines")
             assert listed.status_code == 200, listed.text
             routine = listed.json()["routines"][0]
