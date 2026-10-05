@@ -1252,8 +1252,20 @@ def _forget_command_catalog() -> None:
         from jarvis.commands.registry import get_registry
 
         get_registry.cache_clear()
-    except Exception:  # noqa: BLE001 - the catalog is not this module's job
-        return
+    except Exception:  # noqa: BLE001, S110 - the catalog is not this module's job
+        pass
+    # The spoken-request parser compiles every entry's spoken names into its
+    # patterns. Rebuilt only when it is already loaded: a first import builds
+    # them from the live registry anyway. Looked up in sys.modules rather than
+    # imported, because this runs INSIDE the registry read the parser's own
+    # rebuild performs.
+    intent = sys.modules.get("jarvis.agentic_ide.intent")
+    refresh = getattr(intent, "refresh_agent_patterns", None)
+    if refresh is not None:
+        try:
+            refresh()
+        except Exception as exc:  # noqa: BLE001 - a stale parser beats a failed registration
+            log.warning("workspace agents: spoken-name patterns not refreshed: %s", exc)
 
 
 def list_agents() -> list[WorkspaceAgent]:

@@ -162,6 +162,21 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }, { onMessage: expect.any(Function) }));
   });
 
+  it("offers adding a custom command from the add-agent dialog", async () => {
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals: [] };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    fireEvent.click(within(dialog).getByTestId("add-agent-custom-cli"));
+    expect(await screen.findByTestId("custom-cli-dialog")).toBeTruthy();
+    // The picker stays underneath (hidden from assistive tech while the form is
+    // modal), so a saved command can be picked right away.
+    expect(screen.getByRole("dialog", { name: "Add coding agent", hidden: true })).toBeTruthy();
+  });
+
   it("splits with a plain terminal even when no coding CLI is installed", async () => {
     api.fetchIdeAgents.mockResolvedValue({ agents: [
       { ...agent, installed: false },
