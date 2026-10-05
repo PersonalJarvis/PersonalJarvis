@@ -75,6 +75,31 @@ export function threadsByProject(
   return out;
 }
 
+/**
+ * A project's threads in the person's own order. Threads they never placed
+ * (new ones, restored ones) lead, newest first; the dragged ones follow in
+ * the order they were left in, whatever their activity since.
+ */
+export function arrangeThreads<T extends Pick<AgentChatSession, "session_id" | "updated_ms">>(
+  threads: readonly T[],
+  order: readonly string[] | undefined,
+): T[] {
+  if (!order || order.length === 0) return [...threads];
+  const place = new Map(order.map((id, index) => [id, index]));
+  const loose = threads.filter((thread) => !place.has(thread.session_id)).sort((a, b) => b.updated_ms - a.updated_ms);
+  const placed = threads.filter((thread) => place.has(thread.session_id))
+    .sort((a, b) => (place.get(a.session_id) ?? 0) - (place.get(b.session_id) ?? 0));
+  return [...loose, ...placed];
+}
+
+/** `ids` with `sourceId` moved just before or after `targetId`; unchanged when either is missing. */
+export function moveThreadId(ids: readonly string[], sourceId: string, targetId: string, before: boolean): string[] {
+  if (sourceId === targetId || !ids.includes(sourceId) || !ids.includes(targetId)) return [...ids];
+  const rest = ids.filter((id) => id !== sourceId);
+  const at = rest.indexOf(targetId) + (before ? 0 : 1);
+  return [...rest.slice(0, at), sourceId, ...rest.slice(at)];
+}
+
 /** The row's state: a waiting approval first, then work, then news since the last look. */
 export function threadStatus(
   session: Pick<AgentChatSession, "session_id" | "running" | "pending_approvals" | "updated_ms">,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Folder, FolderOpen, Loader2, Mic, MoreHorizontal, Pencil, Plus, SquarePlus, Trash2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Mic, MoreHorizontal, Pencil, Plus, SquarePlus, Trash2, X } from "lucide-react";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { patchAgentChatSession, type AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
@@ -8,13 +8,15 @@ import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
 import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "./ThreadPopover";
-import { shortAge, threadStatus, threadTitle, threadsByProject, useThreadChatStore, type ThreadStatus } from "./threadModel";
+import { arrangeThreads, moveThreadId, shortAge, threadStatus, threadTitle, threadsByProject, useThreadChatStore, type ThreadStatus } from "./threadModel";
 
 const EXPANSION_KEY = "jarvis.ide.threadExpansion.v1";
 /** Threads a project shows before "Show more". */
 const FOLDED_COUNT = 6;
 /** How often the list asks for fresh session rows while it is on screen. */
 const POLL_MS = 4000;
+/** What a dragged thread row carries, so only a thread row is a valid drop. */
+const THREAD_DRAG_MIME = "application/x-jarvis-thread";
 
 function readExpansion(): Record<string, boolean> {
   try {
@@ -48,7 +50,9 @@ function StatusMark({ status }: { status: ThreadStatus }) {
  * The sidebar while the IDE shows threads: every project with its threads,
  * each named by the title its coding CLI gave the conversation and marked
  * with that CLI's logo. A project row opens and folds; its "+" starts a new
- * thread in it.
+ * thread in it. Threads are dragged (or moved with Alt+arrow keys) into the
+ * person's own order, and archived from the row menu into a folded
+ * "Archived" list under their project, from where they come back.
  */
 export function ThreadTree() {
   const projects = useIdeProjectsStore((state) => state.projects);
@@ -64,10 +68,18 @@ export function ThreadTree() {
   const openThread = useIdeThreadsStore((state) => state.openThread);
   const newThread = useIdeThreadsStore((state) => state.newThread);
   const forgetThread = useIdeThreadsStore((state) => state.forgetThread);
+  const archived = useIdeThreadsStore((state) => state.archived);
+  const order = useIdeThreadsStore((state) => state.order);
+  const archiveThread = useIdeThreadsStore((state) => state.archiveThread);
+  const restoreThread = useIdeThreadsStore((state) => state.restoreThread);
+  const setThreadOrder = useIdeThreadsStore((state) => state.setThreadOrder);
   const [expansion, setExpansion] = useState(readExpansion);
   const [showAll, setShowAll] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<{ sessionId: string; title: string } | null>(null);
   const [menu, setMenu] = useState<{ sessionId: string; projectId: string } | null>(null);
+  const [archiveOpen, setArchiveOpen] = useState<Record<string, boolean>>({});
+  const [dragged, setDragged] = useState<{ sessionId: string; projectId: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ sessionId: string; before: boolean } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const menuAnchor = useRef<HTMLElement | null>(null);
@@ -112,6 +124,13 @@ export function ThreadTree() {
     }
   };
 
+  const move = (projectId: string, ids: readonly string[], sourceId: string, targetId: string, before: boolean) => {
+    const next = moveThreadId(ids, sourceId, targetId, before);
+    if (next.some((id, index) => id !== ids[index])) setThreadOrder(projectId, next);
+  };
+
+  const clearDrag = () => { setDragged(null); setDropTarget(null); };
+
   const remove = async (sessionId: string) => {
     setConfirmDelete(null);
     setBusy(sessionId);
@@ -124,7 +143,12 @@ export function ThreadTree() {
   };
 
   const projectRow = (project: IdeProject) => {
-    const threads = grouped.get(project.id) ?? [];
+    const all = grouped.get(project.id) ?? [];
+    const threads = arrangeThreads(all.filter((thread) => !(thread.session_id in archived)), order[project.id]);
+    const stored = all.filter((thread) => thread.session_id in archived)
+      .sort((a, b) => (archived[b.session_id] ?? 0) - (archived[a.session_id] ?? 0));
+    const ids = threads.map((thread) => thread.session_id);
+    const archiveShown = archiveOpen[project.id] ?? false;
     const draftHere = selection.sessionId === null && selection.projectId === project.id;
     const open = expansion[project.id] ?? (threads.length > 0 || draftHere);
     const shown = showAll[project.id] ? threads : threads.slice(0, FOLDED_COUNT);
@@ -170,8 +194,46 @@ export function ThreadTree() {
                 className="rounded p-1 text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
             </form>;
           }
+          const dropHere = dropTarget?.sessionId === session.session_id ? dropTarget : null;
           return <div key={session.session_id} data-testid={`thread-row-${session.session_id}`}
-            className={cn("group/thread relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted", (selected || menuOpen) && "bg-muted")}
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.setData(THREAD_DRAG_MIME, session.session_id);
+              event.dataTransfer.effectAllowed = "move";
+              setDragged({ sessionId: session.session_id, projectId: project.id });
+            }}
+            onDragEnd={clearDrag}
+            onDragOver={(event) => {
+              // A thread moves within its own project; a drop elsewhere is no drop.
+              if (!dragged || dragged.projectId !== project.id || dragged.sessionId === session.session_id) return;
+              if (!event.dataTransfer.types.includes(THREAD_DRAG_MIME)) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              const rect = event.currentTarget.getBoundingClientRect();
+              const before = event.clientY - rect.top < rect.height / 2;
+              setDropTarget((current) => current?.sessionId === session.session_id && current.before === before ? current : { sessionId: session.session_id, before });
+            }}
+            onDragLeave={(event) => {
+              const next = event.relatedTarget as Node | null;
+              if (next && event.currentTarget.contains(next)) return;
+              setDropTarget((current) => current?.sessionId === session.session_id ? null : current);
+            }}
+            onDrop={(event) => {
+              if (!dragged || dragged.projectId !== project.id) return;
+              event.preventDefault();
+              const rect = event.currentTarget.getBoundingClientRect();
+              const before = event.clientY - rect.top < rect.height / 2;
+              const sourceId = dragged.sessionId;
+              clearDrag();
+              move(project.id, ids, sourceId, session.session_id, before);
+            }}
+            className={cn(
+              "group/thread relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted",
+              (selected || menuOpen) && "bg-muted",
+              dragged?.sessionId === session.session_id && "opacity-40",
+              dropHere?.before && "before:absolute before:-top-0.5 before:left-2 before:right-2 before:h-0.5 before:rounded-full before:bg-primary",
+              dropHere && !dropHere.before && "after:absolute after:-bottom-0.5 after:left-2 after:right-2 after:h-0.5 after:rounded-full after:bg-primary",
+            )}
             onContextMenu={(event) => {
               event.preventDefault();
               // Keep the app-wide edit menu (EditContextMenu) from opening on top.
@@ -182,7 +244,14 @@ export function ThreadTree() {
             <button type="button" aria-current={selected ? "page" : undefined}
               onClick={() => openThread(session.session_id, project.id)}
               onDoubleClick={() => setRenaming({ sessionId: session.session_id, title: threadTitle(session) })}
-              title={threadTitle(session)}
+              onKeyDown={(event) => {
+                if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                event.preventDefault();
+                const index = ids.indexOf(session.session_id);
+                const neighbour = ids[event.key === "ArrowUp" ? index - 1 : index + 1];
+                if (neighbour) move(project.id, ids, session.session_id, neighbour, event.key === "ArrowUp");
+              }}
+              title={`${threadTitle(session)} — drag to reorder, or press Alt plus arrow keys to move`}
               className={cn(
                 "flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-8 pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 selected ? "text-foreground-strong" : "text-foreground",
@@ -222,11 +291,52 @@ export function ThreadTree() {
           className="flex min-h-7 items-center gap-2 rounded-md pl-8 text-left text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <Plus aria-hidden className="h-3.5 w-3.5" />Start a thread
         </button>}
+        {stored.length > 0 && <button type="button" aria-expanded={archiveShown}
+          data-testid={`thread-archived-${project.id}`}
+          onClick={() => setArchiveOpen((current) => ({ ...current, [project.id]: !archiveShown }))}
+          className="flex min-h-7 items-center gap-1 rounded-md pl-8 text-left text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {archiveShown ? <ChevronDown aria-hidden className="h-3.5 w-3.5" /> : <ChevronRight aria-hidden className="h-3.5 w-3.5" />}
+          Archived ({stored.length})
+        </button>}
+        {archiveShown && stored.map((session) => {
+          const selected = session.session_id === openSessionId && selection.sessionId !== null;
+          const menuOpen = menu?.sessionId === session.session_id;
+          return <div key={session.session_id} data-testid={`thread-archived-row-${session.session_id}`}
+            className={cn("group/thread relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted", (selected || menuOpen) && "bg-muted")}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              menuAnchor.current = event.currentTarget;
+              setMenu({ sessionId: session.session_id, projectId: project.id });
+            }}>
+            <button type="button" aria-current={selected ? "page" : undefined}
+              onClick={() => openThread(session.session_id, project.id)} title={threadTitle(session)}
+              className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-8 pr-2 text-left text-[15px] text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="min-w-0 flex-1 truncate">{threadTitle(session)}</span>
+              {busy === session.session_id
+                ? <Loader2 aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                : <span className="shrink-0 text-xs tabular-nums transition-opacity group-hover/thread:opacity-0 [@media(hover:none)]:opacity-0">{shortAge(session.updated_ms)}</span>}
+            </button>
+            <div className={cn(
+              "absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity",
+              menuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
+            )}>
+              <button type="button" aria-label={`Restore ${threadTitle(session)}`} title="Restore"
+                onClick={() => restoreThread(session.session_id)}
+                className="rounded p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <ArchiveRestore className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>;
+        })}
       </div>}
     </div>;
   };
 
   const menuSession = menu ? sessions.find((session) => session.session_id === menu.sessionId) ?? null : null;
+  const menuArchived = menuSession !== null && menuSession.session_id in archived;
+  // A thread that is working or waiting for an answer stays in view: archived, nobody would see it ask.
+  const menuBusy = Boolean(menuSession?.running) || Boolean(menuSession?.pending_approvals?.length);
 
   return <div data-testid="ide-thread-tree" className="flex-1 px-2 pb-3 pt-2">
     <div className="flex h-8 items-center justify-between gap-2 pl-2 pr-1 text-[15px] font-semibold text-foreground">
@@ -263,6 +373,11 @@ export function ThreadTree() {
             onSelect={() => { setRenaming({ sessionId: menuSession.session_id, title: threadTitle(menuSession) }); setMenu(null); }} />
           <ThreadMenuItem icon={<SquarePlus className="h-3.5 w-3.5" />} label="New thread in this project"
             onSelect={() => { newThread(menu.projectId); setMenu(null); }} />
+          {menuArchived
+            ? <ThreadMenuItem icon={<ArchiveRestore className="h-3.5 w-3.5" />} label="Restore"
+              onSelect={() => { restoreThread(menuSession.session_id); setMenu(null); }} />
+            : <ThreadMenuItem icon={<Archive className="h-3.5 w-3.5" />} label="Archive" disabled={menuBusy}
+              onSelect={() => { archiveThread(menuSession.session_id); setMenu(null); }} />}
           <ThreadMenuSeparator />
           <ThreadMenuItem icon={<Trash2 className="h-3.5 w-3.5" />} label="Delete" danger disabled={Boolean(menuSession.running)}
             onSelect={() => setConfirmDelete(menu.sessionId)} />

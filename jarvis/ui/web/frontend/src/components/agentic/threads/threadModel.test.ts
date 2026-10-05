@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
-import { comparablePath, isInside, projectIdFor, shortAge, threadStatus, threadTitle, threadsByProject } from "./threadModel";
+import { arrangeThreads, comparablePath, isInside, moveThreadId, projectIdFor, shortAge, threadStatus, threadTitle, threadsByProject } from "./threadModel";
 
 function project(id: string, path: string): IdeProject {
   return {
@@ -85,5 +85,35 @@ describe("shortAge", () => {
     expect(shortAge(now - 3 * 3_600_000, now)).toBe("3h");
     expect(shortAge(now - 2 * 86_400_000, now)).toBe("2d");
     expect(shortAge(now - 15 * 86_400_000, now)).toBe("2w");
+  });
+});
+
+describe("arrangeThreads", () => {
+  const rows = [
+    { session_id: "a", updated_ms: 30 },
+    { session_id: "b", updated_ms: 20 },
+    { session_id: "c", updated_ms: 10 },
+    { session_id: "d", updated_ms: 40 },
+  ];
+
+  it("keeps the given order when nothing was placed", () => {
+    expect(arrangeThreads(rows, undefined).map((row) => row.session_id)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("puts unplaced threads first, newest first, then the placed ones in their order", () => {
+    expect(arrangeThreads(rows, ["c", "a", "gone"]).map((row) => row.session_id)).toEqual(["d", "b", "c", "a"]);
+  });
+});
+
+describe("moveThreadId", () => {
+  it("moves a thread before or after another", () => {
+    expect(moveThreadId(["a", "b", "c"], "c", "a", true)).toEqual(["c", "a", "b"]);
+    expect(moveThreadId(["a", "b", "c"], "a", "c", false)).toEqual(["b", "c", "a"]);
+    expect(moveThreadId(["a", "b", "c"], "a", "b", false)).toEqual(["b", "a", "c"]);
+  });
+
+  it("leaves the order alone for an unknown or identical id", () => {
+    expect(moveThreadId(["a", "b"], "x", "a", true)).toEqual(["a", "b"]);
+    expect(moveThreadId(["a", "b"], "a", "a", true)).toEqual(["a", "b"]);
   });
 });

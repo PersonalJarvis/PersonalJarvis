@@ -72,7 +72,7 @@ beforeEach(() => {
   api.sendAgentChatMessage.mockReset().mockResolvedValue({ turn_id: "t1" });
   api.patchAgentChatSession.mockReset().mockResolvedValue(sessionRow());
   useIdeProjectsStore.setState({ projects: [project], activeWorkspaceId: null });
-  useIdeThreadsStore.setState({ layout: "threads", selection: { projectId: "p1", sessionId: null }, projectOf: {}, seen: {}, focusNonce: 0 });
+  useIdeThreadsStore.setState({ layout: "threads", selection: { projectId: "p1", sessionId: null }, projectOf: {}, seen: {}, archived: {}, order: {}, focusNonce: 0 });
   useThreadChatStore.getState().newChat();
 });
 
@@ -164,5 +164,36 @@ describe("ThreadTree", () => {
     expect(useIdeThreadsStore.getState().selection).toEqual({ projectId: "p1", sessionId: "s1" });
     fireEvent.click(screen.getByTestId("thread-new-p1"));
     expect(useIdeThreadsStore.getState().selection).toEqual({ projectId: "p1", sessionId: null });
+  });
+
+  it("archives a thread from its menu and brings it back from the project's archive", async () => {
+    api.fetchAgentChatSessions.mockResolvedValue([sessionRow({ cli_title: "Fix login test" })]);
+    useIdeThreadsStore.setState({ selection: { projectId: "p1", sessionId: "s1" } });
+    render(<ThreadTree />);
+    await waitFor(() => expect(screen.getByText("Fix login test")).toBeTruthy());
+    fireEvent.contextMenu(screen.getByTestId("thread-row-s1"));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Archive/ }));
+    expect(screen.queryByTestId("thread-row-s1")).toBeNull();
+    expect(useIdeThreadsStore.getState().selection).toEqual({ projectId: "p1", sessionId: null });
+    expect(JSON.parse(localStorage.getItem("jarvis.agenticIde.threadArchived.v1") ?? "{}")).toHaveProperty("s1");
+
+    fireEvent.click(screen.getByTestId("thread-archived-p1"));
+    fireEvent.click(screen.getByRole("button", { name: "Restore Fix login test" }));
+    expect(screen.getByTestId("thread-row-s1")).toBeTruthy();
+    expect(screen.queryByTestId("thread-archived-p1")).toBeNull();
+  });
+
+  it("moves a thread with Alt and the arrow keys and keeps that order", async () => {
+    api.fetchAgentChatSessions.mockResolvedValue([
+      sessionRow({ session_id: "s1", cli_title: "Older", updated_ms: 1 }),
+      sessionRow({ session_id: "s2", cli_title: "Newer", updated_ms: 5 }),
+    ]);
+    render(<ThreadTree />);
+    await waitFor(() => expect(screen.getByText("Older")).toBeTruthy());
+    const titles = () => screen.getAllByTestId(/^thread-row-/).map((row) => row.textContent);
+    expect(titles()[0]).toContain("Newer");
+    fireEvent.keyDown(screen.getByText("Older"), { key: "ArrowUp", altKey: true });
+    expect(titles()[0]).toContain("Older");
+    expect(useIdeThreadsStore.getState().order).toEqual({ p1: ["s1", "s2"] });
   });
 });
