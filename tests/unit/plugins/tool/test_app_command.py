@@ -354,7 +354,9 @@ async def test_society_webhook_routine_readback_requires_external_connection(tmp
         routine = listed.json()["routines"][0]
         assert routine["trigger"]["type"] == "webhook"
         assert routine["trigger"]["provider"] == "github"
+        assert routine["connection_required"] is True
         assert routine["webhook_path"] == response["webhook_path"]
+        assert routine["connection_path"] == response["connection_path"]
     finally:
         await runtime.close()
 
