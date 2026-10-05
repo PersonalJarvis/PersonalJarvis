@@ -83,8 +83,8 @@ describe("AppshotLibrary", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows three full rows first, then more and less on request", async () => {
-    // Four columns fit: three rows are twelve tiles.
+  it("shows two full rows first, then more and less on request", async () => {
+    // Four columns fit: two rows are eight tiles.
     const realStyle = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
       const style = realStyle(element, pseudo);
@@ -93,7 +93,7 @@ describe("AppshotLibrary", () => {
     });
     items = Array.from({ length: 30 }, (_, index) => ({ ...ORIGINAL, id: `p${index}`, has_edit: false }));
     render(<AppshotLibrary enabled refreshKey="" />);
-    await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(12));
+    await waitFor(() => expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(8));
     expect(screen.queryByTestId("appshot-library-less")).toBeNull();
 
     fireEvent.click(screen.getByTestId("appshot-library-more"));
@@ -101,7 +101,7 @@ describe("AppshotLibrary", () => {
     expect(screen.queryByTestId("appshot-library-more")).toBeNull();
 
     fireEvent.click(screen.getByTestId("appshot-library-less"));
-    expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(12);
+    expect(screen.getAllByTestId("appshot-library-tile")).toHaveLength(8);
     vi.restoreAllMocks();
   });
 

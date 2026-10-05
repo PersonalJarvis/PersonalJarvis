@@ -38,7 +38,7 @@ import { useEventStore } from "@/store/events";
 type Filter = "all" | "edited";
 
 /** Rows shown while the gallery is folded; "Show more" opens the rest. */
-const ROWS = 3;
+const ROWS = 2;
 /** Tiles each further "Show more" adds; the grid stays light with 500 kept. */
 const PAGE = 48;
 /** Columns assumed until the grid has been measured (and where it cannot be). */
