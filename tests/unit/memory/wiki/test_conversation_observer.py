@@ -193,8 +193,11 @@ async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> No
                 MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE)
             )
             await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-            await asyncio.wait_for(brain.completed.wait(), timeout=2.0)
-            await _drain(journal, min_count=index + 1)
+            # Full Windows shards can briefly starve the event loop while
+            # other subprocess batches tear down; this is completion, not the
+            # AP-9 latency assertion below, so keep a non-flaky CI margin.
+            await asyncio.wait_for(brain.completed.wait(), timeout=5.0)
+            await _drain(journal, timeout_s=5.0, min_count=index + 1)
             assert brain.call_count == index + 1
     finally:
         bridge.stop()
