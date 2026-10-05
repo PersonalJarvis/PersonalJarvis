@@ -44,6 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { KeyField } from "./KeyField";
+import { SubscriptionAccounts } from "./SubscriptionAccounts";
 import { accessPatch, familyAccess, nextDefault, onPatch, withPatch, type Access, type FamilyAccess } from "./agentAccess";
 import { familyState, type FamilyState } from "./providers/familyState";
 import {
@@ -392,6 +393,8 @@ function ProviderDetail({
           />
         </SettingsSection>
       )}
+
+      {subscription && family.subscription && <SubscriptionAccounts kind={family.subscription.kind} />}
 
       {keyed && <SeparateKeys family={family} onChanged={onChanged} />}
     </div>
