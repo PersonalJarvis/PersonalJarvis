@@ -5,7 +5,7 @@ import de from "@/i18n/locales/society/de.json";
 import es from "@/i18n/locales/society/es.json";
 import { AgentSymbol } from "../AgentSymbol";
 import {
-  ACCESSORY_CATALOG, ACCESSORY_IDS_BY_SLOT, ACCESSORY_ITEMS, ACCESSORY_SLOTS, randomAccessories, resolveFill,
+  ACCESSORY_CATALOG, ACCESSORY_IDS_BY_SLOT, ACCESSORY_ITEMS, ACCESSORY_SLOTS, OFFERED_SLOTS, randomAccessories, resolveFill,
   symbolViewBox, wornAccessories,
 } from "./accessories";
 import { COMPANION_SHAPES, companionSchema, resolveCompanion } from "./appearance";
@@ -26,7 +26,9 @@ describe("agent symbol accessories", () => {
     for (const shape of COMPANION_SHAPES) {
       for (const slot of ACCESSORY_SLOTS) expect(ACCESSORY_CATALOG.shapes[shape].anchors[slot]).toHaveLength(3);
     }
-    for (const slot of ACCESSORY_SLOTS) expect(ACCESSORY_IDS_BY_SLOT[slot].length).toBeGreaterThan(4);
+    // A small, finished set: every offered slot has items, every item has a home slot.
+    expect(ACCESSORY_ITEMS).toHaveLength(10);
+    expect(OFFERED_SLOTS).toEqual(["outfit", "mouth", "face", "head"]);
   });
 
   it("keeps a bare symbol at its original frame and grows only for worn items", () => {
@@ -48,6 +50,13 @@ describe("agent symbol accessories", () => {
     const mask = container.querySelector("mask");
     expect(mask).not.toBeNull();
     expect(container.querySelector(`g[mask="url(#${mask!.id})"] [data-accessory="suit"]`)).not.toBeNull();
+  });
+
+  it("frames only the head with the hoodie's hood and keeps 2D-only shading out of 3D", () => {
+    const { container } = render(<AgentSymbol shape="circle" color="#7ab6ef" size={40} accessories={{ outfit: "hoodie" }} />);
+    expect(container.querySelector('[data-accessory-rim="hoodie"] clipPath rect')).not.toBeNull();
+    const hat = ACCESSORY_ITEMS.find(item => item.id === "top_hat")!;
+    expect(hat.parts.some(part => part.only === "2d")).toBe(true);
   });
 
   it("stores accessories with the companion and recovers older looks", () => {

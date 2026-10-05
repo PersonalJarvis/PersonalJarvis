@@ -1,6 +1,5 @@
 import { useT } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
-import { BrandedSelect } from "@/components/ui/select";
 import { AgentSymbol } from "../AgentSymbol";
 import { AccessoryPicker } from "./AccessoryPicker";
 import { COMPANION_COLORS, COMPANION_SHAPES, type CompanionAppearance } from "./appearance";
@@ -8,8 +7,10 @@ import gigiMark from "@/assets/gigi-companion-avatar.png";
 import { lazy, Suspense } from "react";
 const CompanionPreview = lazy(() => import("./CompanionPreview").then(m => ({ default: m.CompanionPreview })));
 
-export function CompanionEditor({ value, onChange, disabled = false, lead = false }: {
+export function CompanionEditor({ value, onChange, disabled = false, lead = false, preview3d = true }: {
   value: CompanionAppearance; onChange: (next: CompanionAppearance) => void; disabled?: boolean; lead?: boolean;
+  /** The 3D turntable needs its own WebGL context; dialogs outside the map skip it. */
+  preview3d?: boolean;
 }) {
   const t = useT();
   const update = (patch: Partial<CompanionAppearance>) => onChange({ ...value, ...patch });
@@ -18,7 +19,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       {lead ? <img src={gigiMark} width={88} height={88} alt="" /> : <AgentSymbol {...value} size={88} />}
       <div><h3 className="font-medium">{t("society.companion.title")}</h3><p className="mt-1 text-sm text-muted-foreground">{t("society.companion.hint")}</p></div>
     </div>
-    <Suspense fallback={null}><CompanionPreview appearance={value} lead={lead} /></Suspense>
+    {preview3d && <Suspense fallback={null}><CompanionPreview appearance={value} lead={lead} /></Suspense>}
     {!lead && <><div><span className="mb-2 block text-sm font-medium">{t("society.companion.shape")}</span>
       <div className="flex flex-wrap gap-2">{COMPANION_SHAPES.map(shape => <button key={shape} type="button"
         aria-label={t(`society.companion.shapes.${shape}`)} aria-pressed={value.shape === shape}
@@ -33,9 +34,13 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       </div>
     </div>
     <div className="flex items-center justify-between gap-3 text-sm"><span>{t("society.companion.eyes")}</span>
-      <BrandedSelect ariaLabel={t("society.companion.eyes")} className="rounded-md border border-border bg-background p-2 text-foreground"
-        disabled={disabled} value={value.eyes} onValueChange={eyes => update({ eyes: eyes as CompanionAppearance["eyes"] })}
-        options={[{ value: "dots", label: t("society.companion.dots") }, { value: "lines", label: t("society.companion.lines") }]} />
+      {/* Plain toggles: a popup menu inside a modal dialog can strand its pointer lock. */}
+      <div className="flex gap-1.5" role="group" aria-label={t("society.companion.eyes")}>
+        {(["dots", "lines"] as const).map(eyes => <button key={eyes} type="button" aria-pressed={value.eyes === eyes} onClick={() => update({ eyes })}
+          className={`rounded-full border px-2.5 py-1 text-xs ${value.eyes === eyes ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-background text-foreground hover:bg-secondary"}`}>
+          {t(`society.companion.${eyes}`)}
+        </button>)}
+      </div>
     </div>
     <AccessoryPicker value={value} onChange={accessories => update({ accessories })} />
     </>}

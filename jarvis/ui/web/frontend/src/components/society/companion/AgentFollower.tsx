@@ -67,7 +67,7 @@ function CompanionAccessories({ appearance }: { appearance: CompanionAppearance 
         const node = free.clone(true);
         node.position.set((x - 20) * unit, (meta.bottom - y) * unit, ACCESSORY_CATALOG.slotDepth[item.slot] * ACCESSORY_CATALOG.frontDepthM);
         node.rotation.set(0, 0, 0);
-        node.scale.setScalar(k * unit);
+        node.scale.setScalar(k * (item.scale ?? 1) * unit);
         group.add(node);
       }
       // Clothing is authored per silhouette, already in the master's frame.

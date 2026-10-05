@@ -2,23 +2,24 @@ import { useState } from "react";
 import { Shuffle, X } from "lucide-react";
 import { useT } from "@/i18n";
 import { AgentSymbol } from "../AgentSymbol";
-import { ACCESSORY_IDS_BY_SLOT, randomAccessories, type AccessoryChoice, type AccessorySlot } from "./accessories";
+import { ACCESSORY_IDS_BY_SLOT, OFFERED_SLOTS, randomAccessories, type AccessoryChoice, type AccessorySlot } from "./accessories";
 import type { CompanionAppearance } from "./appearance";
 
-/** Picker order: what people change most comes first. */
-const PICKER_SLOTS: AccessorySlot[] = ["head", "face", "mouth", "neck", "outfit", "back", "held"];
+/** Picker order: what people change most comes first; empty slots stay hidden. */
+const PICKER_SLOTS = (["outfit", "head", "face", "mouth", "neck", "back", "held"] as AccessorySlot[])
+  .filter(slot => OFFERED_SLOTS.includes(slot));
 
 /** One tile per item, each showing this agent already wearing it. */
 export function AccessoryPicker({ value, onChange }: { value: CompanionAppearance; onChange: (next: AccessoryChoice) => void }) {
   const t = useT();
-  const [slot, setSlot] = useState<AccessorySlot>("head");
+  const [slot, setSlot] = useState<AccessorySlot>(PICKER_SLOTS[0] ?? "head");
   const worn = value.accessories;
   const choose = (id: string | undefined) => {
     const next = { ...worn };
     if (id) next[slot] = id; else delete next[slot];
     onChange(next);
   };
-  const tile = "grid h-14 w-14 place-items-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  const tile = "grid h-[76px] w-[76px] place-items-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   return <div data-testid="accessory-picker">
     <div className="mb-2 flex items-center justify-between gap-2">
       <span className="text-sm font-medium">{t("society.companion.accessories")}</span>
@@ -48,7 +49,7 @@ export function AccessoryPicker({ value, onChange }: { value: CompanionAppearanc
         const active = worn[slot] === id;
         return <button key={id} type="button" aria-pressed={active} aria-label={label} title={label} onClick={() => choose(id)}
           className={`${tile} ${active ? "border-foreground bg-secondary" : "border-border hover:bg-secondary"}`}>
-          <AgentSymbol shape={value.shape} color={value.color} eyes={value.eyes} accessories={{ ...worn, [slot]: id }} size={46} />
+          <AgentSymbol shape={value.shape} color={value.color} eyes={value.eyes} accessories={{ ...worn, [slot]: id }} size={60} />
         </button>;
       })}
     </div>

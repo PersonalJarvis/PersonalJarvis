@@ -353,6 +353,47 @@ def assemble(name, pieces):
     return obj
 
 
+def rim_piece(part, meta, anchor, outline):
+    """A hood: a band around the silhouette, open below maxY (symbol y)."""
+    top, bottom = meta["top"], meta["bottom"]
+    scale = 1 / (bottom - top)
+    _, ay, k = anchor
+    limit = ay + part["maxY"] * k if "maxY" in part else math.inf
+    outer = offset_polygon(outline, part["w"])
+    inner = offset_polygon(outline, -0.3)
+    y_front, y_back = -0.12, FRONT_M + 0.05
+    bm = bmesh.new()
+
+    def vert(p, y):
+        return bm.verts.new(((p[0] - 20) * scale, y, (bottom - p[1]) * scale))
+
+    n = len(outline)
+    for i in range(n):
+        j = (i + 1) % n
+        if max(outer[i][1], outer[j][1], inner[i][1], inner[j][1]) > limit:
+            continue
+        of, oj, inf, inj = (
+            vert(outer[i], y_front),
+            vert(outer[j], y_front),
+            vert(inner[i], y_front),
+            vert(inner[j], y_front),
+        )
+        ob, obj, inb, injb = (
+            vert(outer[i], y_back),
+            vert(outer[j], y_back),
+            vert(inner[i], y_back),
+            vert(inner[j], y_back),
+        )
+        bm.faces.new((inf, inj, oj, of))
+        bm.faces.new((of, oj, obj, ob))
+        bm.faces.new((ob, obj, injb, inb))
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for face in bm.faces:
+        face.smooth = True
+    return bm
+
+
 def region_pieces(item, shape, meta, outline):
     top, bottom = meta["top"], meta["bottom"]
     scale = 1 / (bottom - top)
@@ -362,6 +403,16 @@ def region_pieces(item, shape, meta, outline):
     pieces = []
     order = 0
     for part in item["parts"]:
+        if part.get("only") == "2d":
+            continue
+        if part["t"] == "rim":
+            pieces.append(
+                (
+                    rim_piece(part, meta, meta["anchors"][item["slot"]], outline),
+                    material(part["fill"], False),
+                )
+            )
+            continue
         if part["t"] != "region":
             continue
         clip = [(ax + x * k, ay + y * k) for x, y in part["pts"]]
@@ -406,7 +457,7 @@ def main():
         pieces = [
             (BUILDERS[p["t"]](p), material(p["fill"], p.get("glow", False)))
             for p in item["parts"]
-            if p["t"] != "region"
+            if p["t"] not in ("region", "rim") and p.get("only") != "2d"
         ]
         if pieces:
             assemble(f"acc_{item['id']}", pieces)

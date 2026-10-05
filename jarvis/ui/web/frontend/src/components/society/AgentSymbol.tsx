@@ -39,21 +39,23 @@ function roundedOutline(shape: "squircle" | "pill"): string {
 
 const ROUNDED_OUTLINES = { squircle: roundedOutline("squircle"), pill: roundedOutline("pill") };
 
-function SymbolBody({ shape, color }: { shape: SymbolShape; color: string }) {
+/** grow > 0 widens the silhouette by that many units on every side (a hood rim). */
+function SymbolBody({ shape, color, grow = 0 }: { shape: SymbolShape; color: string; grow?: number }) {
+  const edge = (base: number) => base + grow * 2 > 0 ? { stroke: color, strokeWidth: base + grow * 2, strokeLinejoin: "round" as const } : {};
   switch (shape) {
     case "squircle":
     case "pill":
-      return <path d={ROUNDED_OUTLINES[shape]} fill={color} />;
+      return <path d={ROUNDED_OUTLINES[shape]} fill={color} {...edge(0)} />;
     case "triangle":
-      return <path d="M20 5.5 L36 33.5 L4 33.5 Z" fill={color} stroke={color} strokeWidth={5} strokeLinejoin="round" />;
+      return <path d="M20 5.5 L36 33.5 L4 33.5 Z" fill={color} {...edge(5)} />;
     case "hexagon":
-      return <path d="M20 3.5 L34.5 11.75 L34.5 28.25 L20 36.5 L5.5 28.25 L5.5 11.75 Z" fill={color} stroke={color} strokeWidth={3} strokeLinejoin="round" />;
+      return <path d="M20 3.5 L34.5 11.75 L34.5 28.25 L20 36.5 L5.5 28.25 L5.5 11.75 Z" fill={color} {...edge(3)} />;
     case "cloud":
-      return <path d="M11 32 a7.5 7.5 0 0 1 -1 -14.9 A9.5 9.5 0 0 1 29 12.5 A7 7 0 0 1 30 32 Z" fill={color} />;
+      return <path d="M11 32 a7.5 7.5 0 0 1 -1 -14.9 A9.5 9.5 0 0 1 29 12.5 A7 7 0 0 1 30 32 Z" fill={color} {...edge(0)} />;
     case "drop":
-      return <path d="M20 3 C20 3 6 20 6 27 a14 13.5 0 0 0 28 0 C34 20 20 3 20 3 Z" fill={color} />;
+      return <path d="M20 3 C20 3 6 20 6 27 a14 13.5 0 0 0 28 0 C34 20 20 3 20 3 Z" fill={color} {...edge(0)} />;
     default:
-      return <circle cx={20} cy={20} fill={color} r={16.2} />;
+      return <circle cx={20} cy={20} fill={color} r={16.2} {...edge(0)} />;
   }
 }
 
@@ -94,14 +96,18 @@ function AccessoryPartShape({ part, color }: { part: AccessoryPart; color: strin
     }
     case "region":
       return <polygon points={part.pts.map(p => p.join(",")).join(" ")} fill={fill} />;
+    case "rim":
+      return null; // Drawn behind the body by AgentSymbol itself.
   }
 }
 
 /** One worn item at its slot anchor: either its body patches or its free parts. */
 function AccessoryItemShapes({ item, shape, color, regions }: { item: AccessoryItem; shape: SymbolShape; color: string; regions: boolean }) {
-  const parts = item.parts.filter(part => (part.t === "region") === regions);
+  const parts = item.parts.filter(part => part.t !== "rim" && part.only !== "3d" && (part.t === "region") === regions);
   if (!parts.length) return null;
-  const [x, y, k] = ACCESSORY_CATALOG.shapes[shape].anchors[item.slot];
+  const [anchorX, y, anchorK] = ACCESSORY_CATALOG.shapes[shape].anchors[item.slot];
+  const k = anchorK * (item.scale ?? 1);
+  const x = anchorX + (ACCESSORY_CATALOG.slotFlatShift[item.slot] ?? 0);
   // Paint back to front; body patches keep their authored layering.
   const ordered = regions ? parts : [...parts].sort((a, b) => partDepth(a) - partDepth(b));
   return <g data-accessory={item.id} transform={`translate(${x} ${y}) scale(${k})`}>
@@ -123,6 +129,17 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
     <svg aria-hidden focusable="false" data-agent-symbol={shape} data-thinking={thinking ? "true" : undefined} width={size} height={size} style={{ width: size, height: size, flexShrink: 0 }} viewBox={viewBox} className="society-agent-symbol block">
       <g className="agent-symbol-character">
         {draw(worn.filter(item => item.slot === "back"))}
+        {worn.flatMap(item => item.parts.map((part, index) => {
+          if (part.t !== "rim") return null;
+          // A hood frames the head only: clip the grown silhouette at maxY below the neckline.
+          const [, anchorY, anchorK] = ACCESSORY_CATALOG.shapes[shape].anchors[item.slot];
+          const clipId = `${maskId}-rim-${index}`;
+          const bottom = part.maxY === undefined ? 90 : anchorY + part.maxY * anchorK;
+          return <g key={`${item.id}-rim-${index}`} data-accessory-rim={item.id}>
+            <clipPath id={clipId}><rect x={-30} y={-30} width={100} height={bottom + 30} /></clipPath>
+            <g clipPath={`url(#${clipId})`}><SymbolBody shape={shape} color={resolveFill(part.fill, color)} grow={part.w} /></g>
+          </g>;
+        }))}
         <g data-agent-body><SymbolBody shape={shape} color={color} /></g>
         {worn.some(item => item.regions) && <>
           <mask id={maskId} maskUnits="userSpaceOnUse" x={-20} y={-20} width={80} height={84}><SymbolBody shape={shape} color="#ffffff" /></mask>

@@ -17,7 +17,8 @@ export type AccessoryChoice = Partial<Record<AccessorySlot, string>>;
 
 type Vec2 = [number, number];
 type Vec3 = [number, number, number];
-interface PartBase { fill: string; glow?: boolean; rot?: number }
+/** "2d" parts are flat-only shading; "3d" parts exist only as meshes. */
+interface PartBase { fill: string; glow?: boolean; rot?: number; only?: "2d" | "3d" }
 export type AccessoryPart = PartBase & (
   | { t: "sphere" | "dome"; c: Vec3; r: Vec3 }
   | { t: "box"; c: Vec3; s: Vec3; round: number }
@@ -26,10 +27,14 @@ export type AccessoryPart = PartBase & (
   | { t: "poly"; pts: Vec2[]; z: number; d: number; smooth: boolean }
   | { t: "tube"; pts: Vec3[]; w: number; smooth: boolean }
   | { t: "region"; pts: Vec2[]; mode: "wrap" | "front" }
+  /** The body silhouette grown by w symbol units, behind the body (a hood). */
+  | { t: "rim"; w: number; maxY?: number }
 );
 export interface AccessoryItem {
   id: string;
   slot: AccessorySlot;
+  /** Item size on top of the slot anchor's scale. */
+  scale?: number;
   /** Front-projection bounds around the anchor, before the shape's scale. */
   bounds: [number, number, number, number];
   /** True when some parts are patches of the body surface (clothing). */
@@ -43,6 +48,8 @@ interface Catalog {
   schema: number;
   slots: AccessorySlot[];
   slotDepth: Record<AccessorySlot, number>;
+  /** Flat-only x shift that recentres clothing under the tilted flat face. */
+  slotFlatShift: Partial<Record<AccessorySlot, number>>;
   frontDepthM: number;
   shapes: Record<SymbolShape, AccessoryShape>;
   items: AccessoryItem[];
@@ -54,6 +61,8 @@ const BY_ID = new Map(ACCESSORY_ITEMS.map(item => [item.id, item]));
 export const ACCESSORY_IDS_BY_SLOT: Record<AccessorySlot, string[]> = Object.fromEntries(
   ACCESSORY_SLOTS.map(slot => [slot, ACCESSORY_ITEMS.filter(item => item.slot === slot).map(item => item.id)]),
 ) as Record<AccessorySlot, string[]>;
+/** Slots that currently offer at least one item. */
+export const OFFERED_SLOTS: AccessorySlot[] = ACCESSORY_SLOTS.filter(slot => ACCESSORY_IDS_BY_SLOT[slot].length > 0);
 
 /** Slots whose parts follow the tilted face of the flat symbol. */
 export const FACE_SLOTS: ReadonlySet<AccessorySlot> = new Set(["face", "mouth"]);
@@ -111,7 +120,7 @@ export function smoothPath(points: readonly Vec2[], closed: boolean): string {
 export function partDepth(part: AccessoryPart): number {
   if (part.t === "poly") return part.z;
   if (part.t === "tube") return part.pts.reduce((sum, p) => sum + p[2], 0) / part.pts.length;
-  if (part.t === "region") return -Infinity;
+  if (part.t === "region" || part.t === "rim") return -Infinity;
   return part.c[2];
 }
 
@@ -121,7 +130,8 @@ export function symbolViewBox(shape: SymbolShape, worn: readonly AccessoryItem[]
   const anchors = ACCESSORY_CATALOG.shapes[shape].anchors;
   let x0 = 0, y0 = 0, x1 = 40, y1 = 44;
   for (const item of worn) {
-    const [ax, ay, k] = anchors[item.slot];
+    const [ax, ay, anchorK] = anchors[item.slot];
+    const k = anchorK * (item.scale ?? 1);
     const [bx0, by0, bx1, by1] = item.bounds;
     if (bx0 === bx1 && by0 === by1) continue;
     // The face tilt moves points by at most ~2 units; pad instead of rotating.

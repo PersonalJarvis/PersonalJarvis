@@ -140,7 +140,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
               </dl>
             </TabsContent>
             {!lead && <TabsContent value="look" className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-              <CompanionEditor value={look} onChange={setLook} disabled={sample || save.isPending} />
+              <CompanionEditor value={look} onChange={setLook} disabled={sample || save.isPending} preview3d={false} />
             </TabsContent>}
             <TabsContent value="memory" className="mt-3 min-h-0 flex-1 overflow-hidden"><AgentMemoryFiles agentId={agent.agentId} sample={sample} /></TabsContent>
           </Tabs>

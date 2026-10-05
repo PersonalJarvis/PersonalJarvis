@@ -123,8 +123,11 @@ target runs WebGL.
   fifth of its height, reusing `AgentFollower`; the lead is drawn as the
   person's own pet (see *Jarvis is the person's pet* below).
 - **Accessories** (`companion/accessories.ts`): a symbol can wear one item per
-  slot (hats, eyes, mouth, neck, outfit, back, props; 84 items) chosen in the
-  companion editor and stored as `companion.accessories` in the avatar JSON.
+  slot, chosen in the agent profile's Appearance tab or the companion editor
+  and stored as `companion.accessories` in the avatar JSON. The set is ten
+  finished pieces (suit, tuxedo, lab coat, coder hoodie, crown, top hat, cap,
+  headphones, sunglasses, cigar); clothing starts just below the eyes with
+  sloped shoulders so the face stays free, and the hoodie's hood frames the head.
   `scripts/art/companion_accessories.py` writes one catalog of 3D primitives
   (`accessories.json`); the flat symbol draws their front projection and
   `scripts/art/build_companion_accessories.py` (background Blender) builds the
