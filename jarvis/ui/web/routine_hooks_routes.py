@@ -372,17 +372,12 @@ async def get_webhook_connection(
     _, _, row = await _webhook(request, task_id)
     spec = await _services(request)[0].get_spec(str(task_id))
     if spec.trigger.provider not in {"generic", "github"}:
-        from jarvis.core.config import get_secret
-        from jarvis.tasks.webhook_auth import _slot
+        from jarvis.tasks.webhook_auth import connection_configured
 
         # Generic hooks use this credential as a Bearer token; GitHub uses the
         # same per-routine secret as its HMAC signing secret. Other providers
         # bring their own verification settings, so they expose no token here.
-        configured = (
-            bool(spec.trigger.oidc_audience and spec.trigger.service_account)
-            if spec.trigger.provider == "gmail"
-            else bool(await asyncio.to_thread(get_secret, _slot(row)))
-        )
+        configured = await asyncio.to_thread(connection_configured, row, spec.trigger)
         response.headers["Cache-Control"] = "no-store"
         return {
             "path": f"/api/tasks/hooks/{task_id}",

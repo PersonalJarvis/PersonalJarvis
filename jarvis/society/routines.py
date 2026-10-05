@@ -12,6 +12,7 @@ runner already understands.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Sequence
 from typing import Any, Final
@@ -356,6 +357,7 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         "state": row.get("state"),
         "trigger": spec.get("trigger"),
         "connection_required": webhook,
+        "connection_configured": None if webhook else False,
         "webhook_path": f"/api/tasks/hooks/{task_id}" if webhook else None,
         "connection_path": (
             f"/api/tasks/{task_id}/webhook-connection" if webhook else None
@@ -374,7 +376,16 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
 
 async def list_routines(task_store: Any, agent_id: str) -> list[dict[str, Any]]:
     rows = await task_store.list(limit=1000)
-    return [_summary(r) for r in rows if is_agent_routine(r, agent_id)]
+    owned = [row for row in rows if is_agent_routine(row, agent_id)]
+    summaries = [_summary(row) for row in owned]
+    from jarvis.tasks.webhook_auth import connection_configured
+
+    for row, summary in zip(owned, summaries, strict=True):
+        if summary["connection_required"]:
+            summary["connection_configured"] = await asyncio.to_thread(
+                connection_configured, row, summary["trigger"]
+            )
+    return summaries
 
 
 async def create_routine(task_store: Any, scheduler: Any | None, spec: TaskSpec) -> str:

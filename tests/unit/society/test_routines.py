@@ -33,6 +33,7 @@ class FakeTaskStore:
                 "state": "scheduled",
                 "spec_json": spec.model_dump_json(),
                 "due_at_ns": 1,
+                "created_at_ns": len(self.rows) + 1,
             }
         )
         return task_id
@@ -97,7 +98,11 @@ async def test_spec_carries_identity_tags_and_grants(agent):
         agent,
         title="  Morning   inbox  brief ",
         prompt="Summarize new mail.",
-        schedule={"kind": "every", "interval_seconds": 3600, "start_at": "2026-09-02T07:00:00+00:00"},
+        schedule={
+            "kind": "every",
+            "interval_seconds": 3600,
+            "start_at": "2026-09-02T07:00:00+00:00",
+        },
         plugin_grants=[{"plugin_id": "gmail", "scope": "read"}, {"plugin_id": ""}],
     )
     assert spec.title == "[agent:Mailbox] Morning inbox brief"
@@ -153,11 +158,16 @@ async def test_list_filters_by_agent_tag(agent):
     assert rows[0]["title"] == "[agent:Mailbox] brief"
     assert rows[0]["trigger"]["type"] == "every"
     assert rows[0]["connection_required"] is False
+    assert rows[0]["connection_configured"] is False
     assert rows[0]["webhook_path"] is None
     assert rows[0]["connection_path"] is None
 
 
-async def test_webhook_list_readback_keeps_connection_requirement(agent):
+async def test_webhook_list_readback_keeps_connection_requirement(agent, monkeypatch):
+    from jarvis.tasks import webhook_auth
+
+    secrets: dict[str, str] = {}
+    monkeypatch.setattr(webhook_auth, "get_secret", secrets.get)
     store = FakeTaskStore()
     spec = build_task_spec(
         agent,
@@ -176,8 +186,12 @@ async def test_webhook_list_readback_keeps_connection_requirement(agent):
     assert len(rows) == 1
     assert rows[0]["id"] == task_id
     assert rows[0]["connection_required"] is True
+    assert rows[0]["connection_configured"] is False
     assert rows[0]["webhook_path"] == f"/api/tasks/hooks/{task_id}"
     assert rows[0]["connection_path"] == f"/api/tasks/{task_id}/webhook-connection"
+
+    secrets[webhook_auth._slot(store.rows[0])] = "stored-secret"
+    assert (await list_routines(store, "mailbox"))[0]["connection_configured"] is True
 
 
 

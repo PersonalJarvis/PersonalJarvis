@@ -16,6 +16,31 @@ def _slot(row: dict[str, Any]) -> str:
     return f"routine_webhook_{row['id']}_{row['created_at_ns']}"
 
 
+def connection_configured(row: dict[str, Any], trigger: Any) -> bool:
+    """Return credential presence without generating or revealing a secret."""
+    provider = (
+        trigger.get("provider", "generic")
+        if isinstance(trigger, dict)
+        else getattr(trigger, "provider", "generic")
+    )
+    if provider == "gmail":
+        audience = (
+            trigger.get("oidc_audience")
+            if isinstance(trigger, dict)
+            else getattr(trigger, "oidc_audience", None)
+        )
+        account = (
+            trigger.get("service_account")
+            if isinstance(trigger, dict)
+            else getattr(trigger, "service_account", None)
+        )
+        return bool(audience and account)
+    try:
+        return bool(get_secret(_slot(row)))
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def connection_token(row: dict[str, Any], *, rotate: bool = False) -> str:
     with _KEY_LOCK:
         name = _slot(row)
