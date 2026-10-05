@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentComposer } from "@/components/agentchat/AgentComposer";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { EMPTY_TIMELINE, reduceEvent } from "@/components/agentchat/reduce";
+import { forgetHeldFiles } from "@/components/agentchat/useChatAttachments";
 import { useFileDropGuard } from "@/hooks/useFileDropGuard";
 import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
@@ -122,6 +123,8 @@ describe("chat composer attachments", () => {
 
   afterEach(() => {
     cleanup();
+    // Held files outlive the composer; a test's picture must not leak into the next.
+    forgetHeldFiles(useAgentChatStore);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });

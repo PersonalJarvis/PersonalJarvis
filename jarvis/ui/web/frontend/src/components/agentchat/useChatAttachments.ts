@@ -17,7 +17,7 @@
  * differs: a chat has no pane to type a path into, so the files are HELD here
  * and travel with the sentence when it is sent.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   extractPaneDrop,
@@ -59,6 +59,56 @@ export interface ChatAttachments {
   clear: () => void;
 }
 
+/** The files one draft holds, with their pictures. */
+interface HeldFiles {
+  attachments: ChatAttachment[];
+  previews: Record<string, string>;
+}
+
+const NOTHING_HELD: HeldFiles = { attachments: [], previews: {} };
+
+/**
+ * Held files per draft, outside React. A composer unmounts whenever the
+ * person switches app sections; the typed text already waited in a draft
+ * store, and files that vanished beside it read as the app dropping half the
+ * message (maintainer, 2026-10-05). The outer key is the owner (a chat store),
+ * so two chats with the same session key never share files.
+ */
+const parked = new WeakMap<object, Map<string, HeldFiles>>();
+const listeners = new Set<() => void>();
+
+function heldFor(owner: object, key: string): HeldFiles {
+  return parked.get(owner)?.get(key) ?? NOTHING_HELD;
+}
+
+function updateHeld(owner: object, key: string, update: (current: HeldFiles) => HeldFiles): void {
+  const current = heldFor(owner, key);
+  const next = update(current);
+  if (next === current) return;
+  let drafts = parked.get(owner);
+  if (!drafts) {
+    drafts = new Map();
+    parked.set(owner, drafts);
+  }
+  if (next.attachments.length === 0 && Object.keys(next.previews).length === 0) drafts.delete(key);
+  else drafts.set(key, next);
+  listeners.forEach((listener) => listener());
+}
+
+/** Let go of every draft's held files for one owner, pictures included. */
+export function forgetHeldFiles(owner: object): void {
+  const drafts = parked.get(owner);
+  if (!drafts) return;
+  drafts.forEach((held) => Object.values(held.previews).forEach(revokePreview));
+  parked.delete(owner);
+  listeners.forEach((listener) => listener());
+}
+
+function subscribeHeld(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
 /**
  * Hold files for one chat's next message.
  *
@@ -67,6 +117,10 @@ export interface ChatAttachments {
  * drop that carried nothing usable is a warning about what was dragged, while
  * an attach that threw is an error about the app, and collapsing the two
  * buries the second.
+ *
+ * `draft` keeps the files across unmounts: the same owner and key get them
+ * back, the way a composer gets its unsent text back. Without it the files
+ * live and die with the composer.
  */
 export function useChatAttachments(
   target: {
@@ -76,17 +130,27 @@ export function useChatAttachments(
     surface: AgentChatSurface;
   },
   onProblem: (message: string, severity: "warning" | "error") => void,
+  draft?: { owner: object; key: string },
 ): ChatAttachments {
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const ownRef = useRef<object | null>(null);
+  ownRef.current ??= {};
+  const owner = draft?.owner ?? ownRef.current;
+  const key = draft?.key ?? "";
+  const kept = draft !== undefined;
+  const held = useSyncExternalStore(subscribeHeld, () => heldFor(owner, key));
+  const { attachments, previews } = held;
   const [analyzing, setAnalyzing] = useState(0);
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const previewsRef = useRef(previews);
-  previewsRef.current = previews;
   const { sessionId, cwd, provider, surface } = target;
 
-  // Object URLs hold the picture in memory until revoked; let them go with
-  // the composer.
-  useEffect(() => () => Object.values(previewsRef.current).forEach(revokePreview), []);
+  // Object URLs hold the picture in memory until revoked. Files that are not
+  // kept for a draft go with the composer; kept ones wait for send or remove.
+  useEffect(() => {
+    if (kept) return;
+    return () => updateHeld(owner, key, (current) => {
+      Object.values(current.previews).forEach(revokePreview);
+      return NOTHING_HELD;
+    });
+  }, [kept, owner, key]);
 
   const attach = useCallback(
     async (payload: PaneDropPayload) => {
@@ -105,12 +169,6 @@ export function useChatAttachments(
           onProblem("That drop carried nothing this chat could use.", "warning");
           return;
         }
-        // Keyed by name so the same file attached twice is held once — a
-        // repeated reference has the model read it again for nothing.
-        setAttachments((prev) => [
-          ...prev,
-          ...found.filter((item) => !prev.some((held) => held.name === item.name)),
-        ]);
         const pictures = matchPreviews(found, payload.files);
         if (folder) {
           for (const item of found) {
@@ -119,23 +177,31 @@ export function useChatAttachments(
             }
           }
         }
-        if (Object.keys(pictures).length > 0) {
-          setPreviews((prev) => {
-            const next = { ...prev };
-            for (const [name, url] of Object.entries(pictures)) {
-              if (next[name]) revokePreview(next[name]);
-              next[name] = url;
-            }
-            return next;
-          });
-        }
+        // Written to the draft this drop was made in, even when the person
+        // switched away while the file was still being read.
+        updateHeld(owner, key, (current) => {
+          const nextPreviews = { ...current.previews };
+          for (const [name, url] of Object.entries(pictures)) {
+            if (nextPreviews[name]) revokePreview(nextPreviews[name]);
+            nextPreviews[name] = url;
+          }
+          return {
+            // Keyed by name so the same file attached twice is held once — a
+            // repeated reference has the model read it again for nothing.
+            attachments: [
+              ...current.attachments,
+              ...found.filter((item) => !current.attachments.some((held) => held.name === item.name)),
+            ],
+            previews: nextPreviews,
+          };
+        });
       } catch (e) {
         onProblem((e as Error).message, "error");
       } finally {
         setAnalyzing((n) => Math.max(0, n - 1));
       }
     },
-    [sessionId, cwd, provider, surface, onProblem],
+    [sessionId, cwd, provider, surface, onProblem, owner, key],
   );
 
   const { dragging, handlers: dragHandlers } = usePaneFileDrag(
@@ -185,23 +251,20 @@ export function useChatAttachments(
   );
 
   const remove = useCallback((name: string) => {
-    setAttachments((prev) => prev.filter((a) => a.name !== name));
-    setPreviews((prev) => {
-      if (!prev[name]) return prev;
-      revokePreview(prev[name]);
-      const rest = { ...prev };
+    updateHeld(owner, key, (current) => {
+      const rest = { ...current.previews };
+      if (rest[name]) revokePreview(rest[name]);
       delete rest[name];
-      return rest;
+      return { attachments: current.attachments.filter((a) => a.name !== name), previews: rest };
     });
-  }, []);
+  }, [owner, key]);
 
   const clear = useCallback(() => {
-    setAttachments([]);
-    setPreviews((prev) => {
-      Object.values(prev).forEach(revokePreview);
-      return {};
+    updateHeld(owner, key, (current) => {
+      Object.values(current.previews).forEach(revokePreview);
+      return NOTHING_HELD;
     });
-  }, []);
+  }, [owner, key]);
 
   return {
     attachments,

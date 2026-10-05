@@ -224,6 +224,7 @@ export function ThreadComposer({
   const files = useChatAttachments(
     { sessionId: activeSessionId, cwd: draft.cwd, provider: draft.provider, surface: "agent" },
     (message) => setProblem(message),
+    { owner: useThreadChatStore, key: threadKey },
   );
   const triggers = useMemo(() => provider?.typeahead ?? [], [provider]);
   const typeahead = useComposerTypeahead(textareaRef, value, setValue, {

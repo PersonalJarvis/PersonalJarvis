@@ -204,9 +204,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     stopAndSend: stopDictationAndSend,
   } = useComposerDictation(setValue, () => void onSend());
 
-  // Files going in with this message. Held here rather than in the store: they
-  // belong to the sentence being typed, and a chat opened elsewhere must not
-  // inherit them.
+  // Files going in with this message. Kept per chat store and session, like
+  // the typed text: they belong to the sentence being typed, a chat opened
+  // elsewhere must not inherit them, and a section switch must not drop them.
   const [attachError, setAttachError] = useState("");
   const onAttachProblem = useCallback(
     (message: string, severity: "warning" | "error") => {
@@ -222,6 +222,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       surface,
     },
     onAttachProblem,
+    { owner: store, key: activeSessionId ?? "" },
   );
   // A shortcut appshot parked for "the next message" joins this one.
   useAppshotClaim(files.attachFiles, surface === "jarvis", activeSessionId ?? "new");
