@@ -2,6 +2,7 @@ import { useT } from "@/i18n";
 import { Switch } from "@/components/ui/switch";
 import { BrandedSelect } from "@/components/ui/select";
 import { AgentSymbol } from "../AgentSymbol";
+import { AccessoryPicker } from "./AccessoryPicker";
 import { COMPANION_COLORS, COMPANION_SHAPES, type CompanionAppearance } from "./appearance";
 import gigiMark from "@/assets/gigi-companion-avatar.png";
 import { lazy, Suspense } from "react";
@@ -22,7 +23,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
       <div className="flex flex-wrap gap-2">{COMPANION_SHAPES.map(shape => <button key={shape} type="button"
         aria-label={t(`society.companion.shapes.${shape}`)} aria-pressed={value.shape === shape}
         onClick={() => update({ shape })} className={`grid h-12 w-12 place-items-center rounded-lg border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${value.shape === shape ? "border-foreground bg-secondary" : "border-border hover:bg-secondary"}`}>
-        <AgentSymbol shape={shape} color={value.color} eyes={value.eyes} size={36} />
+        <AgentSymbol shape={shape} color={value.color} eyes={value.eyes} accessories={value.accessories} size={36} />
       </button>)}</div>
     </div>
     <div><span className="mb-2 block text-sm font-medium">{t("society.companion.color")}</span>
@@ -36,6 +37,7 @@ export function CompanionEditor({ value, onChange, disabled = false, lead = fals
         disabled={disabled} value={value.eyes} onValueChange={eyes => update({ eyes: eyes as CompanionAppearance["eyes"] })}
         options={[{ value: "dots", label: t("society.companion.dots") }, { value: "lines", label: t("society.companion.lines") }]} />
     </div>
+    <AccessoryPicker value={value} onChange={accessories => update({ accessories })} />
     </>}
     <label className="flex items-center justify-between gap-3 text-sm">{t("society.companion.visible")}
       <Switch checked={value.enabled} onCheckedChange={enabled => update({ enabled })} aria-label={t("society.companion.visible")} />

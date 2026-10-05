@@ -1,10 +1,12 @@
 import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode, type RefObject } from "react";
 import { useGLTF } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Group, Mesh, MeshStandardMaterial, Vector3 } from "three";
+import { Group, Mesh, MeshStandardMaterial, Vector3, type Material } from "three";
 import { useReducedMotion } from "framer-motion";
 import companionModels from "@/assets/society/companions/companions.glb";
 import gigiModel from "@/assets/society/companions/gigi.glb";
+import accessoryModels from "@/assets/society/companions/accessories.glb";
+import { ACCESSORY_CATALOG, resolveFill, wornAccessories } from "./accessories";
 import { companionEyeColors, type CompanionAppearance } from "./appearance";
 import { advancePetTrail, createPetTrail, petDisplayPosition, recordOwner, type PetTrail, type TrailPoint } from "./trail";
 
@@ -41,8 +43,52 @@ export function CompanionModel({ appearance, lead = false }: { appearance: Compa
     return { model, materials };
   }, [scene, lead, appearance.shape, appearance.color, appearance.eyes]);
   useEffect(() => () => { instance.materials.forEach(material => material.dispose()); }, [instance]);
+  const wearing = !lead && wornAccessories(appearance.accessories).length > 0;
   // Gigi's authored body is 0.4 m; the symbol master is exactly 1 m.
-  return <primitive object={instance.model} scale={appearance.sizeM / (lead ? 0.4 : 1)} dispose={null} />;
+  return <group scale={appearance.sizeM / (lead ? 0.4 : 1)}>
+    <primitive object={instance.model} dispose={null} />
+    {/* Accessories load on their own, so a missing asset never hides the companion. */}
+    {wearing && <PetBoundary><Suspense fallback={null}><CompanionAccessories appearance={appearance} /></Suspense></PetBoundary>}
+  </group>;
+}
+
+/** Worn items from the shared catalog, placed on the 1 m symbol master. */
+function CompanionAccessories({ appearance }: { appearance: CompanionAppearance }) {
+  const { scene } = useGLTF(accessoryModels);
+  const instance = useMemo(() => {
+    const group = new Group();
+    const materials: Material[] = [];
+    const meta = ACCESSORY_CATALOG.shapes[appearance.shape];
+    const unit = 1 / (meta.bottom - meta.top);
+    for (const item of wornAccessories(appearance.accessories)) {
+      const free = scene.getObjectByName(`acc_${item.id}`);
+      if (free) {
+        const [x, y, k] = meta.anchors[item.slot];
+        const node = free.clone(true);
+        node.position.set((x - 20) * unit, (meta.bottom - y) * unit, ACCESSORY_CATALOG.slotDepth[item.slot] * ACCESSORY_CATALOG.frontDepthM);
+        node.rotation.set(0, 0, 0);
+        node.scale.setScalar(k * unit);
+        group.add(node);
+      }
+      // Clothing is authored per silhouette, already in the master's frame.
+      const patch = item.regions ? scene.getObjectByName(`acc_${item.id}__${appearance.shape}`) : undefined;
+      if (patch) group.add(patch.clone(true));
+    }
+    group.traverse(object => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh) return;
+      mesh.castShadow = true;
+      const source = mesh.material as MeshStandardMaterial;
+      const own = source.clone();
+      const token = source.name.split(":")[1] ?? "";
+      if (token && !token.startsWith("#")) own.color.set(resolveFill(token, appearance.color));
+      mesh.material = own;
+      materials.push(own);
+    });
+    return { group, materials };
+  }, [scene, appearance.shape, appearance.color, appearance.accessories]);
+  useEffect(() => () => { instance.materials.forEach(material => material.dispose()); }, [instance]);
+  return <primitive object={instance.group} dispose={null} />;
 }
 
 /** Sibling of the character: world-space footsteps never inherit its rotation. */
