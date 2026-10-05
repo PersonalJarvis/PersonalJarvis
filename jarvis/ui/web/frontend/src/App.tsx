@@ -266,6 +266,9 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
+  // Agents fills the window. The caption's back button leaves it, so the
+  // sidebar toggle that used to reveal this column is not needed.
+  const agentsFullscreen = activeSection === "agents";
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
 
@@ -333,20 +336,24 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <BrowserRealtimeControl controlOnly />
 
-      <Sidebar
-        width={sidebar.size}
-        collapsed={activeSection === "agents" ? false : navCollapsed}
-      />
+      {!agentsFullscreen && (
+        <>
+          <Sidebar
+            width={sidebar.size}
+            collapsed={navCollapsed}
+          />
 
-      <PaneResizer
-        showLine={false}
-        orientation="vertical"
-        onPointerDown={startSidebarResize}
-        onDoubleClick={sidebar.reset}
-        onNudge={sidebar.nudge}
-        active={sidebar.isResizing}
-        title="Drag to resize the sidebar — double-click to reset"
-      />
+          <PaneResizer
+            showLine={false}
+            orientation="vertical"
+            onPointerDown={startSidebarResize}
+            onDoubleClick={sidebar.reset}
+            onNudge={sidebar.nudge}
+            active={sidebar.isResizing}
+            title="Drag to resize the sidebar — double-click to reset"
+          />
+        </>
+      )}
 
       {/*
         The stage column carries NO z-index, and must not get one back.

@@ -63,6 +63,19 @@ export const useSectionNavHistory = create<SectionNavHistoryState>((set, get) =>
 
   goBack: () => {
     const { current, past, future } = get();
+    const section = current ?? useEventStore.getState().activeSection;
+    // Agents has no sidebar. With no earlier visit, back still leaves it
+    // for the front page — that is what replaced the sidebar toggle.
+    if (section === "agents" && past.length === 0) {
+      set({
+        current: "chats",
+        past: [],
+        future: ["agents", ...future].slice(0, MAX_HISTORY),
+        navigating: true,
+      });
+      useEventStore.getState().setActiveSection("chats");
+      return "chats";
+    }
     if (current === null || past.length === 0) return null;
     const target = past[past.length - 1];
     if (target === current) {
@@ -121,7 +134,8 @@ export interface SectionHistory {
  * path would cover one. "Back" returns to the previously visited section and
  * "forward" only re-applies an undone step: it stays disabled until a step was
  * undone, and any new visit clears the redo stack, because a section never
- * visited cannot be gone to.
+ * visited cannot be gone to. Agents is the exception: it fills the window and
+ * has no sidebar, so back leaves it for the front page even on the first visit.
  */
 export function useSectionHistory(): SectionHistory {
   const activeSection = useEventStore((s) => s.activeSection);
@@ -136,7 +150,7 @@ export function useSectionHistory(): SectionHistory {
   }, [activeSection, record]);
 
   return {
-    canGoBack: past.length > 0,
+    canGoBack: past.length > 0 || activeSection === "agents",
     canGoForward: future.length > 0,
     goBack,
     goForward,

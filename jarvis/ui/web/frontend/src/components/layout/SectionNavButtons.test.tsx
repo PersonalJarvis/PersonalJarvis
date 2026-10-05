@@ -44,6 +44,15 @@ describe("SectionNavButtons", () => {
     }
   });
 
+  it("leaves a freshly opened agents section for the front page", () => {
+    useEventStore.setState({ activeSection: "agents" });
+    render(<SectionNavButtons />);
+
+    expect(backButton().disabled).toBe(false);
+    fireEvent.click(backButton());
+    expect(useEventStore.getState().activeSection).toBe("chats");
+  });
+
   it("walks back to the last visited section on every section", () => {
     render(<SectionNavButtons />);
 

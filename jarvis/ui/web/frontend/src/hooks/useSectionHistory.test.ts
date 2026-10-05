@@ -109,6 +109,24 @@ describe("useSectionHistory", () => {
     expect(useEventStore.getState().activeSection).toBe("agents");
   });
 
+  it("leaves a freshly opened agents section for the front page", () => {
+    useEventStore.setState({ activeSection: "agents" });
+    const { result } = renderHook(() => useSectionHistory());
+
+    expect(result.current.canGoBack).toBe(true);
+    expect(result.current.canGoForward).toBe(false);
+
+    let target: string | null = null;
+    act(() => {
+      target = result.current.goBack();
+    });
+
+    expect(target).toBe("chats");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(result.current.canGoBack).toBe(false);
+    expect(result.current.canGoForward).toBe(true);
+  });
+
   it("ignores a back step with no history", () => {
     const { result } = renderHook(() => useSectionHistory());
     expect(result.current.canGoBack).toBe(false);
