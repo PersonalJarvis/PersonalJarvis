@@ -1,6 +1,6 @@
 /**
- * The Keyboard shortcuts page: its four sections, and the key tester telling
- * what a pressed combination does — through the real matchers.
+ * The Keyboard shortcuts page: one list of every shortcut, and the key tester
+ * telling what a pressed combination does — through the real matchers.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -45,12 +45,35 @@ describe("ShortcutsView", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the four sections", async () => {
+  it("lists every shortcut in one list, global keys first", async () => {
     render(<ShortcutsView />);
-    for (const id of ["app", "calls", "dictation", "workspace"]) {
-      expect(screen.getByTestId(`shortcuts-section-${id}`)).toBeTruthy();
+    const list = screen.getByTestId("shortcuts-list");
+    const rows = list.querySelectorAll("li");
+    // 14 registry entries + the three appshot keys.
+    expect(rows.length).toBe(17);
+    expect(screen.getByTestId("shortcuts-count").textContent).toContain("17");
+    expect(rows[0].textContent).toContain("Anywhere on this computer");
+    expect(rows[rows.length - 1].textContent).toContain("In an agent terminal");
+    for (const id of ["call", "hangup", "dictate", "quick_switch", "appshot-hotkey"]) {
+      expect(screen.getByTestId(`shortcut-row-${id}`)).toBeTruthy();
     }
     expect(await screen.findAllByText("Ctrl")).toBeTruthy();
+  });
+
+  it("opens the recorder under a voice key row", async () => {
+    render(<ShortcutsView />);
+    await act(async () => {});
+    expect(screen.queryByTestId("combo-field-call")).toBeNull();
+    fireEvent.click(screen.getByTestId("shortcuts-edit-call"));
+    expect(screen.getByTestId("combo-field-call")).toBeTruthy();
+  });
+
+  it("shows the quick switcher as off once it is switched off", () => {
+    render(<ShortcutsView />);
+    fireEvent.click(screen.getByTestId("quick-switch-enabled"));
+    const row = screen.getByTestId("shortcut-row-quick_switch");
+    expect(row.textContent).toMatch(/off/i);
+    expect(screen.getByTestId("shortcuts-edit-quick_switch").hasAttribute("disabled")).toBe(true);
   });
 
   it("names what the quick switcher chord does", () => {
@@ -61,7 +84,7 @@ describe("ShortcutsView", () => {
 
   it("names a voice keybind and calls a free chord free", async () => {
     render(<ShortcutsView />);
-    await screen.findByTestId("shortcuts-section-dictation");
+    await screen.findByTestId("shortcut-row-dictate");
     // Let the keybinds fetch settle before pressing.
     await act(async () => {});
     press({ key: "v", code: "KeyV", ctrlKey: true, altKey: true });
@@ -88,7 +111,13 @@ describe("ShortcutsView", () => {
 
   it("sends the dictation edit to the voice section", () => {
     render(<ShortcutsView />);
-    fireEvent.click(screen.getByTestId("shortcuts-edit-dictation"));
+    fireEvent.click(screen.getByTestId("shortcuts-edit-dictate"));
     expect(useEventStore.getState().activeSection).toBe("voice-shortcuts");
+  });
+
+  it("sends the appshot keys to the Appshots section", () => {
+    render(<ShortcutsView />);
+    fireEvent.click(screen.getByTestId("shortcuts-edit-appshot-region_hotkey"));
+    expect(useEventStore.getState().activeSection).toBe("appshots");
   });
 });

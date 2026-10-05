@@ -27,10 +27,17 @@ import type { KeybindAction } from "@/hooks/useHotkey";
 
 export type ShortcutArea = "voice" | "workspace";
 
+/**
+ * Where a shortcut fires: anywhere on the computer (a global OS hotkey), only
+ * while the Jarvis window is in front, or only inside an agent terminal.
+ */
+export type ShortcutScope = "global" | "window" | "terminal";
+
 interface ShortcutBase {
   /** i18n key for the one-line description. */
   labelKey: string;
   area: ShortcutArea;
+  scope: ShortcutScope;
 }
 
 export interface RebindableShortcut extends ShortcutBase {
@@ -71,18 +78,20 @@ export type Shortcut = RebindableShortcut | FixedShortcut | AppSettingShortcut;
 
 export const SHORTCUTS: readonly Shortcut[] = [
   // ── Voice — every one of these is rebindable in Settings ───────────────
-  { kind: "rebindable", area: "voice", action: "dictate", labelKey: "shortcut_overlay.voice.dictate" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "dictate", labelKey: "shortcut_overlay.voice.dictate" },
   {
     kind: "rebindable",
     area: "voice",
+    scope: "global",
     action: "dictate_toggle",
     labelKey: "shortcut_overlay.voice.dictate_toggle",
   },
-  { kind: "rebindable", area: "voice", action: "call", labelKey: "shortcut_overlay.voice.call" },
-  { kind: "rebindable", area: "voice", action: "hangup", labelKey: "shortcut_overlay.voice.hangup" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "call", labelKey: "shortcut_overlay.voice.call" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "hangup", labelKey: "shortcut_overlay.voice.hangup" },
   {
     kind: "rebindable",
     area: "voice",
+    scope: "global",
     action: "paste_last",
     labelKey: "shortcut_overlay.voice.paste_last",
   },
@@ -91,6 +100,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   {
     kind: "fixed",
     area: "workspace",
+    scope: "terminal",
     keys: ["Mod", "+"],
     alternateKeys: [["Mod", "="]],
     labelKey: "shortcut_overlay.workspace.zoom_in",
@@ -98,6 +108,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   {
     kind: "fixed",
     area: "workspace",
+    scope: "terminal",
     keys: ["Mod", "-"],
     alternateKeys: [["Mod", "_"]],
     labelKey: "shortcut_overlay.workspace.zoom_out",
@@ -105,42 +116,49 @@ export const SHORTCUTS: readonly Shortcut[] = [
   {
     kind: "fixed",
     area: "workspace",
+    scope: "terminal",
     keys: ["Mod", "0"],
     labelKey: "shortcut_overlay.workspace.zoom_reset",
   },
   {
     kind: "fixed",
     area: "workspace",
+    scope: "window",
     keys: ["?"],
     labelKey: "shortcut_overlay.workspace.open_overlay",
   },
   {
     kind: "fixed",
     area: "workspace",
+    scope: "terminal",
     keys: ["Ctrl", "B"],
     labelKey: "shortcut_overlay.workspace.ide_menu",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "quick_switch",
     labelKey: "shortcut_overlay.workspace.quick_switch",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_in",
     labelKey: "shortcut_overlay.workspace.app_zoom_in",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_out",
     labelKey: "shortcut_overlay.workspace.app_zoom_out",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_reset",
     labelKey: "shortcut_overlay.workspace.app_zoom_reset",
   },

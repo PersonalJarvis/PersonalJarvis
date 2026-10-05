@@ -1,6 +1,7 @@
 /**
- * The Keyboard shortcuts page's zoom block: on/off, the current size, and the
- * three chords (bigger, smaller, back to 100 %).
+ * The Keyboard shortcuts page's zoom pieces: `AppZoomChordRow` is one of the
+ * three chords (bigger, smaller, back to 100 %) as a row of the shortcut list,
+ * and `AppZoomKeybinds` is the on/off switch with the current size.
  *
  * It has its own small recorder instead of the shared voice-key recorder, and
  * that is deliberate: the shared one records physical key positions and knows
@@ -31,12 +32,7 @@ import {
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { parseChord } from "@/lib/quickSwitchChord";
-
-const LABEL_KEY: Record<AppZoomIntent, string> = {
-  in: "settings_view.app_zoom.in_label",
-  out: "settings_view.app_zoom.out_label",
-  reset: "settings_view.app_zoom.reset_label",
-};
+import { NoKeys, ShortcutListRow } from "@/views/settings/ShortcutListRow";
 
 const PROBLEM_KEY: Record<AppZoomComboProblem | "quick_switch", string> = {
   typing_key: "settings_view.app_zoom.problem_typing_key",
@@ -68,8 +64,10 @@ export function ZoomCaps({ combo }: { combo: string }) {
   );
 }
 
-function ZoomChordRow({ intent }: { intent: AppZoomIntent }) {
+/** One zoom step as a row of the shortcut list, with its own recorder. */
+export function AppZoomChordRow({ intent, title }: { intent: AppZoomIntent; title: string }) {
   const t = useT();
+  const enabled = useAppZoomSettings((s) => s.enabled);
   const bindings = useAppZoomSettings((s) => s.bindings);
   const setBinding = useAppZoomSettings((s) => s.setBinding);
   const quickSwitch = useQuickSwitchSettings();
@@ -109,32 +107,39 @@ function ZoomChordRow({ intent }: { intent: AppZoomIntent }) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [recording, intent, bindings, quickSwitch.enabled, quickSwitch.combo, setBinding, t]);
 
+  const off = !enabled && !recording;
+  const recordLabel = recording ? t("settings_view.keybinds.stop") : t("settings_view.keybinds.record");
+
   return (
-    <div
-      className="flex flex-col gap-1 py-2.5"
-      data-testid={`app-zoom-row-${intent}`}
-      data-keybind-recording={recording ? "true" : undefined}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="min-w-0 text-sm text-foreground">{t(LABEL_KEY[intent])}</span>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {recording ? (
-            <span className="text-sm italic text-muted-foreground" aria-live="polite">
-              {t("settings_view.keybinds.recording")}
-            </span>
-          ) : combo ? (
-            <ZoomCaps combo={combo} />
-          ) : (
-            <span className="text-sm italic text-muted-foreground">{t("shortcut_overlay.unassigned")}</span>
-          )}
+    <ShortcutListRow
+      testId={`app-zoom-row-${intent}`}
+      recording={recording}
+      title={title}
+      scope="window"
+      chord={
+        recording ? (
+          <span className="text-sm italic text-muted-foreground" aria-live="polite">
+            {t("settings_view.keybinds.recording")}
+          </span>
+        ) : off ? (
+          <NoKeys>{t("shortcut_overlay.off")}</NoKeys>
+        ) : combo ? (
+          <ZoomCaps combo={combo} />
+        ) : (
+          <NoKeys>{t("shortcut_overlay.unassigned")}</NoKeys>
+        )
+      }
+      actions={
+        <>
           <Button
             type="button"
             size="icon"
             variant="ghost"
             className="h-8 w-8"
             data-testid={`app-zoom-record-${intent}`}
-            aria-label={recording ? t("settings_view.keybinds.stop") : t("settings_view.keybinds.record")}
-            title={recording ? t("settings_view.keybinds.stop") : t("settings_view.keybinds.record")}
+            aria-label={recordLabel}
+            title={recordLabel}
+            disabled={off}
             onClick={() => {
               setError(null);
               setRecording((r) => !r);
@@ -150,31 +155,34 @@ function ZoomChordRow({ intent }: { intent: AppZoomIntent }) {
             data-testid={`app-zoom-clear-${intent}`}
             aria-label={t("settings_view.keybinds.clear")}
             title={t("settings_view.keybinds.clear")}
-            disabled={!combo || recording}
+            disabled={off || !combo || recording}
             onClick={() => setBinding(intent, "")}
           >
             <X />
           </Button>
-        </div>
-      </div>
+        </>
+      }
+    >
       {error && (
-        <p className="text-sm text-destructive" role="alert">
+        <p className="mt-2 text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
-      {!recording && combo !== fallback && (
-        <button
-          type="button"
-          className="self-end text-micro text-muted-foreground underline hover:text-foreground"
-          onClick={() => {
-            setError(null);
-            setBinding(intent, fallback);
-          }}
-        >
-          {t("settings_view.keybinds.reset")}
-        </button>
+      {!off && !recording && combo !== fallback && (
+        <div className="mt-1 flex justify-end">
+          <button
+            type="button"
+            className="text-micro text-muted-foreground underline hover:text-foreground"
+            onClick={() => {
+              setError(null);
+              setBinding(intent, fallback);
+            }}
+          >
+            {t("settings_view.keybinds.reset")}
+          </button>
+        </div>
       )}
-    </div>
+    </ShortcutListRow>
   );
 }
 
@@ -190,7 +198,7 @@ export function AppZoomKeybinds() {
   const stepper = support !== "browser" && support !== "unsupported";
 
   return (
-    <div className="mt-4 space-y-stack border-t border-border pt-4" data-testid="app-zoom-settings">
+    <div className="space-y-stack" data-testid="app-zoom-settings">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-base font-medium text-foreground">{label}</p>
@@ -236,13 +244,6 @@ export function AppZoomKeybinds() {
               <Plus />
             </Button>
           </div>
-        </div>
-      )}
-      {enabled && (
-        <div className="divide-y divide-border">
-          {APP_ZOOM_INTENTS.map((intent) => (
-            <ZoomChordRow key={intent} intent={intent} />
-          ))}
         </div>
       )}
       <p className="text-sm text-muted-foreground" data-testid="app-zoom-note">

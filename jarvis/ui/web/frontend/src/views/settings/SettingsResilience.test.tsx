@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsView } from "@/views/SettingsView";
@@ -189,6 +189,7 @@ describe("SettingsView against an empty backend", () => {
     render(wrap(<ShortcutsView />));
 
     // The keybind field proves the row that used to kill Settings survived.
+    fireEvent.click(await screen.findByTestId("shortcuts-edit-call"));
     await waitFor(() => expect(screen.getByTestId("combo-field-call")).toBeTruthy());
     expect(screen.getByTestId("shortcut-tester")).toBeTruthy();
   });
