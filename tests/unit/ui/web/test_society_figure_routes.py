@@ -22,8 +22,9 @@ _TOOLS = _REPO / "scripts" / "figures" / "glb_tools.py"
 
 
 def _shipped() -> Path | None:
-    files = sorted(_FIGURES.glob("biped-*.glb")) if _FIGURES.exists() else []
-    return files[0] if files else None
+    """A self-contained figure suitable for the raw one-file import contract."""
+    path = _FIGURES / "spirit-gigi.glb"
+    return path if path.exists() else None
 
 
 def _tools():
@@ -54,14 +55,16 @@ def test_garbage_is_refused_as_not_a_glb(client: TestClient):
 
 @pytest.mark.skipif(_shipped() is None, reason="no figure asset built yet")
 def test_a_contract_figure_is_accepted_stored_and_served(client: TestClient):
-    body = _shipped().read_bytes()  # type: ignore[union-attr]
+    source = _shipped()
+    body = source.read_bytes()  # type: ignore[union-attr]
+    expected = _tools().figure_extras(_tools().read_glb(source).doc)  # type: ignore[arg-type]
     res = client.post("/api/society/figures?name=My Hero", content=body)
     assert res.status_code == 200, res.text
     payload = res.json()
     assert payload["accepted"] is True, payload
     figure = payload["figure"]
     assert figure["file"].startswith("my-hero-") and figure["file"].endswith(".glb")
-    assert figure["archetype"] == "biped"
+    assert figure["archetype"] == expected["archetype"]
     assert "walk" in figure["clips"]
 
     listed = client.get("/api/society/figures").json()
