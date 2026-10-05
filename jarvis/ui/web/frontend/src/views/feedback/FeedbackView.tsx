@@ -434,8 +434,10 @@ export function FeedbackView() {
         subtitle={t("feedback.subtitle")}
       />
 
-      <div className="flex flex-1 px-8 pb-10 pt-2">
-        <div className="w-full max-w-form space-y-6">
+      {/* Two columns on a wide window: the report on the left, what is
+          already tracked and the community on the right. */}
+      <div className="grid flex-1 items-start gap-8 px-8 pb-10 pt-2 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="min-w-0 space-y-6">
           {/* What kind of report — this also picks the GitHub issue form. */}
           <div>
             <span
@@ -529,7 +531,7 @@ export function FeedbackView() {
                 </label>
                 <textarea
                   id="feedback-primary"
-                  rows={4}
+                  rows={7}
                   value={primary}
                   maxLength={FIELD_MAX}
                   onChange={(ev) => setPrimary(ev.target.value)}
@@ -547,7 +549,7 @@ export function FeedbackView() {
                 </label>
                 <textarea
                   id="feedback-secondary"
-                  rows={3}
+                  rows={5}
                   value={secondary}
                   maxLength={FIELD_MAX}
                   onChange={(ev) => setSecondary(ev.target.value)}
@@ -613,11 +615,11 @@ export function FeedbackView() {
                 </p>
               ) : null}
 
-              <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="submit"
                   disabled={!canSubmit}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-foreground/70 px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center justify-center gap-2 rounded-lg bg-foreground/70 px-4 py-2.5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ExternalLink className="h-4 w-4" aria-hidden="true" />
                   {type === "bug"
@@ -630,7 +632,7 @@ export function FeedbackView() {
                     type="button"
                     onClick={() => void onSendDirect()}
                     disabled={!canSubmit}
-                    className="w-full rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                    className="order-first rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-muted-foreground transition hover:border-primary/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {sending ? t("feedback.sending") : t("feedback.send_without_github")}
                   </button>
@@ -644,6 +646,9 @@ export function FeedbackView() {
             </form>
           )}
 
+        </div>
+
+        <aside className="min-w-0 space-y-4 lg:sticky lg:top-2">
           {/* What is already tracked — public read, no login required. */}
           {hasBoard ? (
             <div className="space-y-4 rounded-2xl border border-border bg-card/40 p-5">
@@ -711,7 +716,7 @@ export function FeedbackView() {
               </button>
             </div>
           ) : null}
-        </div>
+        </aside>
       </div>
     </div>
   );
