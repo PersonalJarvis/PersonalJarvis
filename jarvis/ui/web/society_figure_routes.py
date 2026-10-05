@@ -113,6 +113,15 @@ def _shared_figure_id(normalized: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
+def _public_share_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Public catalog projection; moderation reasons stay local."""
+    return {
+        key: value
+        for key, value in row.items()
+        if key != "reports"
+    } | {"report_count": len(row.get("reports") or [])}
+
+
 def _figure_path(file_name: str) -> Path | None:
     """The stored figure called *file_name*, or None when the name is not one.
 
@@ -231,7 +240,7 @@ async def list_shared_figures() -> dict[str, Any]:
         with _SHARE_LOCK:
             doc = _read_share_catalog()
             rows = [
-                row
+                _public_share_row(row)
                 for row in doc["figures"].values()
                 if isinstance(row, dict) and row.get("status") == "active"
             ]
@@ -282,7 +291,7 @@ async def publish_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
     except (OSError, ValueError) as exc:
         log.warning("shared figure catalog write failed", exc_info=True)
         raise HTTPException(500, "shared figure catalog unavailable") from exc
-    return {"published": created, "figure": row}
+    return {"published": created, "figure": _public_share_row(row)}
 
 
 @router.post("/share/{share_id}/report")
