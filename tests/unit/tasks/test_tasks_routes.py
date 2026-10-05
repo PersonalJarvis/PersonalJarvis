@@ -228,6 +228,24 @@ async def test_run_now_409_while_running_and_404_unknown(harness: Harness) -> No
     assert row["last_run_state"] == "running"
 
 
+@pytest.mark.parametrize("state", ["running", "scheduled", "interrupted", "cancelled"])
+async def test_new_unsuccessful_run_does_not_show_previous_success(harness: Harness, state) -> None:
+    async with harness.client() as client:
+        tid = (await client.post("/api/tasks", json=_every_body())).json()["id"]
+        await harness.store.update_state(tid, "running")
+        await harness.store.append_step(tid, "log", {"event": "agent_result", "text": "Old result"})
+        await harness.store.update_state(tid, "scheduled", result={"duration_ms": 1})
+        await harness.store.update_state(tid, "running")
+        if state != "running":
+            await harness.store.update_state(tid, state, error="Latest run unsuccessful")
+        row = (await client.get("/api/tasks")).json()["tasks"][0]
+        detail = (await client.get(f"/api/tasks/{tid}")).json()
+    for receipt in (row, detail):
+        assert receipt["last_result"] is None
+        assert receipt["last_run_state"] != "completed"
+    assert "Old result" in str(detail["steps"])
+
+
 async def test_run_now_without_scheduler_503(harness: Harness) -> None:
     harness.app.state.task_scheduler = None
     tid = await harness.store.insert(TaskSpec(**{

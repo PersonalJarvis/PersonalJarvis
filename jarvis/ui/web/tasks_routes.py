@@ -130,7 +130,7 @@ def _row_to_summary(
         "created_by": (spec or {}).get("created_by") or "user",
         "interval_seconds": interval,
         "last_run_state": _last_run_state(row),
-        "last_result": last_result,
+        "last_result": last_result if _last_run_state(row) == "completed" else None,
     }
 
 

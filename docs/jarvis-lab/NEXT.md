@@ -20,6 +20,8 @@ CI #230 (37291147213) is complete and green across all portable, Windows, fronte
 
 CI #232 on `5657fcd` is complete and green. Owner-facing routine readback now includes the latest execution outcome, error and a result bounded to 400 characters from the existing TaskStore. An older success is withheld during a running or failed execution. Contracts exercise signed delivery outcomes, database reopen, result bounds and owner isolation. Qualification of this new slice is pending its own CI.
 
+The Automations list and detail API now apply the same outcome guard: a running, failed, cancelled or interrupted run cannot display an earlier success as its current result. Historical result steps remain available for inspection. Focused API contracts cover each outcome; full portable qualification is pending.
+
 The next remote-safe step is an audit of durable handoff receipts around scheduler recovery and room result projection. Preserve exact event IDs, retry state and owner accounting through the existing scheduler; add only a focused regression when a real gap is found. Native Mac qualification remains blocked on physical Accessibility and input permissions.
 
 Native MacAgentBench qualification remains explicitly deferred to a physical Mac with user-granted permissions and must not be represented as remotely complete.
