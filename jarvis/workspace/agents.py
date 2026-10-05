@@ -573,6 +573,13 @@ def kimi_generation() -> str | None:
     return None
 
 
+def glm_config_dir() -> Path:
+    """The per-instance Claude config root reserved for GLM Coding Plan transcripts."""
+    from jarvis.core import config as cfg
+
+    return Path(cfg.DATA_DIR) / "cli" / "glm-claude"
+
+
 def glm_spawn_env() -> dict[str, str] | None:
     """Environment that turns a Claude Code process into a GLM one.
 
@@ -608,6 +615,9 @@ def glm_spawn_env() -> dict[str, str] | None:
         "ANTHROPIC_AUTH_TOKEN": token,
         "API_TIMEOUT_MS": _setting("request_timeout_ms", "3000000"),
         "ANTHROPIC_API_KEY": "",
+        # GLM uses Claude Code's binary, so its transcript/config root must be
+        # separate from the user's real Claude Code root for truthful accounting.
+        "CLAUDE_CONFIG_DIR": str(glm_config_dir()),
     }
     # Only pin a model when the user actually chose one: vendor documentation
     # disagrees with itself about the current ids, and a wrong id fails at
