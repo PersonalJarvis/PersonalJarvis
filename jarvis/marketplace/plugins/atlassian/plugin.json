@@ -24,7 +24,7 @@
         "url": "https://mcp.atlassian.com/v1/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_atlassian_access_token}"
       },
-      "post_install_hint_md": "Sign in with your Atlassian account and pick the site to connect. Available projects and spaces follow your Jira and Confluence permissions."
+      "post_install_hint_md": "Needs a Jira or Confluence Cloud site. Sign in with your Atlassian account and pick the site to connect. Available projects and spaces follow your Jira and Confluence permissions."
     }
   }
 }

@@ -2,55 +2,6 @@
   "schema_version": 1,
   "plugins": [
     {
-      "plugin_id": "atlassian",
-      "result": "BLOCKED",
-      "config_fingerprint": "14541d4f308e6784af5bb1ccf9d5a2fd624d876de62e18a2b00f7e0eac4b335e",
-      "initial_state": "draft_not_listed",
-      "evidence": {
-        "ui": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "browser": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "callback": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "connected": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "smoke": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "reconnect": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        },
-        "restart": {
-          "status": "BLOCKED",
-          "detail": "Not run: the draft is not in the shipped catalog until an account holder completes this stage.",
-          "reference": "docs/marketplace/quick-win-connectors.md#probe-evidence"
-        }
-      },
-      "blocker": {
-        "reason": "No Atlassian (Jira & Confluence) account is signed in on the test machine, so no consent, connection or real action could be observed.",
-        "owner": "Atlassian (Jira & Confluence) account holder",
-        "next_action": "Sign in to the provider once, promote the draft into the seed catalog, then run the full clean browser journey with one real read-only action.",
-        "evidence": "2026-10-05 probe: discovery, Dynamic Client Registration with a 127.0.0.1 loopback redirect and the provider authorize page all succeeded without an account."
-      }
-    },
-    {
       "plugin_id": "sentry",
       "result": "BLOCKED",
       "config_fingerprint": "7eb13c5422dfd2cadd18f54b3422ba4056c512e59b64bbf43f57e474a815cc40",

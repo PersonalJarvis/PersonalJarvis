@@ -26,9 +26,12 @@ of the shipped catalog.
 
 ## Drafts
 
+Atlassian (Jira & Confluence) was promoted on 2026-10-05 after a complete
+browser journey; see [`plugin-e2e-audit.json`](plugin-e2e-audit.json). The
+remaining drafts:
+
 | id | Service | MCP endpoint | Every tool asks first |
 |---|---|---|---|
-| `atlassian` | Atlassian (Jira & Confluence) | `https://mcp.atlassian.com/v1/mcp` | no |
 | `sentry` | Sentry | `https://mcp.sentry.dev/mcp` | no |
 | `intercom` | Intercom | `https://mcp.intercom.com/mcp` | yes |
 | `paypal` | PayPal | `https://mcp.paypal.com/mcp` | yes |

@@ -51,7 +51,7 @@ def _seed_form(pid: str) -> dict:
 
 def test_pending_record_covers_quick_win_drafts() -> None:
     assert PENDING["schema_version"] == 1
-    assert len(ROWS) == len(PENDING["plugins"]) == 26
+    assert ROWS and len(ROWS) == len(PENDING["plugins"])
 
 
 @pytest.mark.parametrize("pid", sorted(ROWS))

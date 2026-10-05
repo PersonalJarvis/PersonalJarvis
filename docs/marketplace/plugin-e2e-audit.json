@@ -803,6 +803,50 @@
       }
     },
     {
+      "plugin_id": "atlassian",
+      "result": "PASS",
+      "config_fingerprint": "14541d4f308e6784af5bb1ccf9d5a2fd624d876de62e18a2b00f7e0eac4b335e",
+      "initial_state": "clean_unconnected",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "2026-10-05, Windows, dev instance of the desktop app (same checkout and bundle): the Atlassian card rendered in the Plugins dialog with its logo and Connect opened the browser-login dialog.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect performed discovery from the auth-server metadata, registered a client by DCR with a 127.0.0.1 loopback redirect and opened the official Atlassian sign-in and consent page; the account holder signed in and approved the site.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "PASS",
+          "detail": "The loopback callback received the authorization code; the token exchange stored access and refresh tokens without any pasted credential.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "PASS",
+          "detail": "The card and the detail view showed Connected - Live only after the connection check listed the Atlassian MCP tools.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "PASS",
+          "detail": "A typed Jarvis chat request ran atlassian getAccessibleAtlassianResources and getVisibleJiraProjects (both read-only, approved in the UI) and answered with the real Jira project of the connected site.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
+        },
+        "reconnect": {
+          "status": "PASS",
+          "detail": "Disconnect removed the stored credentials (status Not connected); Connect ran the browser consent again and the plugin returned to Connected within 15 seconds.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "PASS",
+          "detail": "After a full restart of the app process the plugin still reported Connected, the stored grant carried a refresh token and the connection check listed the MCP tools again.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
+      }
+    },
+    {
       "plugin_id": "dropbox",
       "result": "BLOCKED",
       "config_fingerprint": "4011e71044920baaf2e86e871958888225b95773a36f767a7c9a18263abc8a04",
