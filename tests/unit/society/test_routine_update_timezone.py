@@ -68,14 +68,17 @@ async def test_update_requires_timezone_and_adopts_client_header(routine, schedu
     updated = await client.patch(
         path, json=body, headers={context.CLIENT_TIMEZONE_HEADER: "Europe/Rome"},
     )
+    if schedule["kind"] == "at_time":
+        assert updated.status_code == 409, updated.text
+        assert updated.json()["detail"] == "Routine updates require a recurring trigger"
+        assert await store.get_spec(task_id) == before
+        assert context.client_timezone.get() is None
+        return
     assert updated.status_code == 200, updated.text
     stored = await store.get_spec(task_id)
     assert stored.id == before.id
     assert stored.trigger.type == schedule["kind"]
-    if schedule["kind"] == "at_time":
-        assert stored.trigger.iso_timestamp.endswith("+02:00")
-    else:
-        assert stored.trigger.timezone == "Europe/Rome"
+    assert stored.trigger.timezone == "Europe/Rome"
     assert context.client_timezone.get() is None
 
 
