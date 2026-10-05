@@ -217,6 +217,12 @@ function ThoughtRow({ block, live, stamp, grouped = false, onOpenChange }: {
   </WorkRow>;
 }
 
+/**
+ * A picture in the agent's words — an image it viewed or made — reads as a
+ * small preview in the thread; a click opens it full size.
+ */
+const THREAD_MEDIA = "[&_[data-kind=image]_img]:max-h-48 [&_[data-kind=image]_img]:max-w-sm [&_[data-kind=image]_img]:border [&_[data-kind=image]_img]:border-border";
+
 function StepRow({ item, running, grouped, onOpenChange }: { item: WorkItem; running: boolean; grouped?: boolean; onOpenChange?: OpenChange }) {
   if (item.kind === "call") return <CallRow call={item.call} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
   return <ThoughtRow block={item.block} live={running && item.block.live} stamp={item.startedMs} grouped={grouped} onOpenChange={onOpenChange} />;
@@ -535,7 +541,7 @@ const TurnView = memo(function TurnView({ turn }: { turn: TurnItem }) {
       : `Worked${duration ? ` for ${duration}` : ""}`;
   const renderRow = (row: ThreadRow) => {
     if (row.kind === "work") return <WorkGroupView key={row.id} group={row} running={running} />;
-    if (row.kind === "text") return <div key={row.id} className={PROSE}><ChatMarkdown text={row.text} /></div>;
+    if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     const pending = pendingLabel(row.block);
     return pending ? <WorkRow key={row.id} icon={pending.icon} label={pending.text} live /> : null;
   };
