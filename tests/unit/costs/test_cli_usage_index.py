@@ -599,6 +599,70 @@ def test_cli_account_root_mapping_uses_registry_id(
     assert cli_usage_index._account_id_for_root(AGENT_CLAUDE, root) == "claude:work"
 
 
+def test_cli_index_assigns_and_persists_account_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    home = tmp_path / "home"
+    _write(_claude_path(home), [_claude_line(uuid="u1", msg_id="msg_a")])
+
+    monkeypatch.setattr(
+        "jarvis.costs.cli_usage_index._account_id_for_root",
+        lambda agent, root: "claude:work",
+    )
+    refresh(data_dir=data, home=home)
+
+    (turn,) = _all(data)
+    assert turn.account_id == "claude:work"
+
+    from jarvis.costs.cli_usage_index import index_db_path
+    with sqlite3.connect(index_db_path(data)) as conn:
+        row = conn.execute("SELECT account_id FROM cli_turns").fetchone()
+    assert row == ("claude:work",)
+
+
+def test_cli_index_updates_account_id_when_root_owner_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    data = tmp_path / "data"
+    home = tmp_path / "home"
+    _write(_claude_path(home), [_claude_line(uuid="u1", msg_id="msg_a")])
+
+    monkeypatch.setattr(
+        "jarvis.costs.cli_usage_index._account_id_for_root",
+        lambda agent, root: "claude:first",
+    )
+    refresh(data_dir=data, home=home)
+
+    monkeypatch.setattr(
+        "jarvis.costs.cli_usage_index._account_id_for_root",
+        lambda agent, root: "claude:second",
+    )
+    refresh(data_dir=data, home=home)
+
+    (turn,) = _all(data)
+    assert turn.account_id == "claude:second"
+    assert turn.tokens_in == 15
+
+
+def test_cli_account_root_mapping_uses_registry_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from jarvis import agent_accounts
+    from jarvis.costs import cli_usage_index
+
+    root = tmp_path / ".claude"
+    monkeypatch.setattr(
+        agent_accounts,
+        "list_accounts",
+        lambda platform: [SimpleNamespace(id="claude:work", config_dir=root)],
+    )
+
+    assert cli_usage_index._account_id_for_root(AGENT_CLAUDE, root) == "claude:work"
+
+
 def test_an_index_built_under_an_older_rule_is_reread(tmp_path: Path) -> None:
     """A schema bump re-reads every transcript and corrects its rows in place —
     the table never empties, so a report taken mid-way is never a fraction."""
