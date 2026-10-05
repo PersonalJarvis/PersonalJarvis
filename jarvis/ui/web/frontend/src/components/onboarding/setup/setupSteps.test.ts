@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HOW_BEATS } from "./HowWalk";
-import { resumeStep, SETUP_STEP_IDS, SETUP_STEPS, stepsFor } from "./setupSteps";
+import en from "@/i18n/locales/onboarding/en.json";
+import { resumeStep, SETUP_STEP_IDS, WALK_STOPS, walkStopsFor, WIZARD_STEP_IDS } from "./setupSteps";
 
 const SRC = join(__dirname, "..", "..", "..");
 
@@ -24,68 +24,68 @@ describe("setup steps", () => {
     expect([...block![1].matchAll(/"([a-z-]+)"/g)].map((m) => m[1])).toEqual([...SETUP_STEP_IDS]);
   });
 
-  it("ask for permissions on macOS only", () => {
-    expect(stepsFor("darwin")).toContain("permissions");
-    expect(stepsFor("win32")).not.toContain("permissions");
-    expect(stepsFor("linux")).not.toContain("permissions");
-    expect(stepsFor(null)).not.toContain("permissions");
+  it("show three steps in the window, then the walk", () => {
+    expect([...WIZARD_STEP_IDS]).toEqual(["name", "connect", "voice"]);
+    expect(SETUP_STEP_IDS[SETUP_STEP_IDS.length - 1]).toBe("tour");
+  });
+});
+
+describe("the walk", () => {
+  const stops = (en as { first_run: { tour: { stops: Record<string, string>; labels: Record<string, string> } } })
+    .first_run.tour;
+
+  it("has unique stops, each with a line and a label in the locale", () => {
+    const ids = WALK_STOPS.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(stops.stops[id], id).toBeTruthy();
+      expect(stops.labels[id], id).toBeTruthy();
+    }
   });
 
-  it("start with the consent and end with the start", () => {
-    const steps = stepsFor("darwin");
-    expect(steps[0]).toBe("welcome");
-    expect(steps[steps.length - 1]).toBe("ready");
+  it("explains every section the user meets", () => {
+    const ids = WALK_STOPS.map((s) => s.id);
+    for (const id of ["chat", "voice", "agents", "ide", "plugins", "wake"]) expect(ids).toContain(id);
   });
 
-  it("point only at anchors the app actually sets", () => {
+  it("has six to seven stops on Windows and Linux, one more on macOS", () => {
+    expect(walkStopsFor("win32").length).toBe(7);
+    expect(walkStopsFor("linux").length).toBe(7);
+    expect(walkStopsFor(null).map((s) => s.id)).not.toContain("permissions");
+    expect(walkStopsFor("darwin").map((s) => s.id)).toContain("permissions");
+  });
+
+  it("points only at anchors the app actually sets", () => {
     const code = sources(SRC)
       .filter((f) => !f.includes(join("components", "onboarding")))
       .map((f) => readFileSync(f, "utf8"))
       .join("\n");
-    for (const id of SETUP_STEP_IDS) {
-      const anchor = SETUP_STEPS[id].anchor;
-      if (!anchor) continue;
-      // A literal hook, or one handed to a component as its `tourId`.
-      const literal = code.includes(`data-tour="${anchor}"`) || code.includes(`tourId="${anchor}"`);
-      // Settings groups get theirs from a template: data-tour={`settings-${section.id}`}.
-      const group = anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
-      expect(literal || group, anchor).toBe(true);
+    for (const stop of WALK_STOPS) {
+      if (!stop.anchor) continue;
+      const literal = code.includes(`data-tour="${stop.anchor}"`);
+      // Sidebar rows and Settings groups get theirs from a template.
+      const nav = stop.anchor.startsWith("nav-") && code.includes("data-tour={`nav-${item.id}`}");
+      const group = stop.anchor.startsWith("settings-") && code.includes("data-tour={`settings-${section.id}`}");
+      expect(literal || nav || group, stop.anchor).toBe(true);
     }
   });
 
-  it("let the pet's walk point only at anchors the app actually sets", () => {
-    const code = sources(SRC)
-      .filter((f) => !f.includes(join("components", "onboarding")))
-      .map((f) => readFileSync(f, "utf8"))
-      .join("\n");
-    for (const beat of HOW_BEATS) {
-      if (!beat.anchor) continue;
-      const literal = code.includes(`data-tour="${beat.anchor}"`);
-      const nav = beat.anchor.startsWith("nav-") && code.includes("data-tour={`nav-${item.id}`}");
-      expect(literal || nav, beat.anchor).toBe(true);
-    }
-  });
-
-  it("open the app's own place for each job", () => {
-    expect(SETUP_STEPS.keys.section).toBe("apikeys");
-    expect(SETUP_STEPS.subscriptions.section).toBe("apikeys");
-    expect(SETUP_STEPS.subscriptions.apiKeysTab).toBe("subagents");
-    expect(SETUP_STEPS.voice.section).toBe("settings");
-    expect(SETUP_STEPS.voice.anchor).toBe("settings-wake-word");
-    expect(SETUP_STEPS.welcome.anchor).toBeUndefined();
+  it("ends on the chat", () => {
+    const last = WALK_STOPS[WALK_STOPS.length - 1];
+    expect(last.id).toBe("done");
+    expect(last.section).toBe("chats");
   });
 });
 
 describe("resumeStep", () => {
-  const steps = stepsFor("win32");
-
   it("returns to the saved step", () => {
-    expect(resumeStep(steps, "voice")).toBe("voice");
-    expect(resumeStep(steps, "subscriptions")).toBe("subscriptions");
+    expect(resumeStep("connect")).toBe("connect");
+    expect(resumeStep("tour")).toBe("tour");
   });
 
-  it("starts at the welcome for a fresh run or an unknown, old step id", () => {
-    expect(resumeStep(steps, null)).toBe("welcome");
-    expect(resumeStep(steps, "api-keys")).toBe("welcome");
+  it("starts with the name for a fresh run or an unknown, old step id", () => {
+    expect(resumeStep(null)).toBe("name");
+    expect(resumeStep("keys")).toBe("name");
+    expect(resumeStep("welcome")).toBe("name");
   });
 });
