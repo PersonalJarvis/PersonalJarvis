@@ -726,7 +726,9 @@ export function Combobox({
                           )}
                         </span>
                         {option.description && (
-                          <span className="mt-0.5 line-clamp-2 text-xs font-normal text-muted-foreground">
+                          // Under the label, not under the icon: a 16 px glyph
+                          // plus the row's 8 px gap.
+                          <span className={cn("mt-0.5 line-clamp-2 text-xs font-normal leading-4 text-muted-foreground", option.icon && "pl-6")}>
                             {option.description}
                           </span>
                         )}

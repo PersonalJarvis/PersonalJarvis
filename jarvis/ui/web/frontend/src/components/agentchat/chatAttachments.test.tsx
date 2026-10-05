@@ -177,6 +177,26 @@ describe("chat composer attachments", () => {
     expect(screen.queryByTestId("composer-drop-overlay")).toBeNull();
   });
 
+  it("draws a picture dropped by path from the backend's copy", async () => {
+    composer();
+    const card = screen.getByTestId("agent-composer");
+    // The Appshots gallery drags a path, never the bytes.
+    const byPath = {
+      ...transfer([]),
+      types: ["text/uri-list"],
+      getData: (type: string) => (type === "text/uri-list" ? "file:///C:/shots/shot.png" : ""),
+    };
+
+    await act(async () => {
+      fireEvent.drop(card, { dataTransfer: byPath });
+    });
+
+    await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png").dataset.media).toBe("image"));
+    const src = screen.getByTestId("chat-attachment-shot.png").querySelector("img")?.getAttribute("src") ?? "";
+    expect(src).toContain("/api/agent-chat/attachments/file?");
+    expect(new URLSearchParams(src.split("?")[1]).get("reference")).toBe(ATTACHMENT.reference);
+  });
+
   it("sends the attachments with the sentence and then holds none", async () => {
     const send = vi.fn(async () => {});
     seed({ send });

@@ -1201,6 +1201,50 @@ async def attach_files(
     return {"attachments": [item.to_dict() for item in found], "cwd": folder}
 
 
+@router.get(
+    "/attachments/file",
+    summary="Show one attached picture or video in the composer",
+    openapi_extra={"x-jarvis-readonly": True},
+)
+async def attachment_file(cwd: str, reference: str) -> Any:
+    """Stream an attached image or video back for the composer's thumbnail.
+
+    A file dragged in by path (the Appshots gallery, Explorer inside the
+    desktop shell) never passes its bytes through the window, so the composer
+    has nothing to draw. ``reference`` is the attachment's own reference from
+    :func:`attach_files`, ``cwd`` the folder that call answered with. Only a
+    picture or video that resolves INSIDE that folder is served — symlinks
+    included — and never SVG, which can carry script.
+    """
+    from fastapi.responses import FileResponse
+
+    from jarvis.agent_chat.media import MEDIA_TYPES
+    from jarvis.agentic_ide import drops
+
+    folder = _validate_cwd(cwd)
+    relative = drops.dereference(reference)
+    if not folder or not relative:
+        raise HTTPException(status_code=404, detail="attachment not found")
+
+    def _resolve() -> Path | None:
+        inside = drops.within_workspace(str(Path(folder) / relative), folder)
+        if inside is None:
+            return None
+        target = Path(folder) / inside
+        return target if target.is_file() else None
+
+    target = await asyncio.to_thread(_resolve)
+    mime = MEDIA_TYPES.get(target.suffix.lower(), "") if target else ""
+    if target is None or not mime.startswith(("image/", "video/")) or mime == "image/svg+xml":
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return FileResponse(
+        target,
+        media_type=mime,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+    )
+
+
 # ------------------------------------------------------------------ folders
 
 

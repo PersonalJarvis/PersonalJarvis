@@ -506,6 +506,15 @@ export async function attachChatFiles(payload: {
   provider?: string;
   surface?: AgentChatSurface;
 }): Promise<ChatAttachment[]> {
+  return (await attachChatFilesIn(payload)).attachments;
+}
+
+/** {@link attachChatFiles}, plus the folder the files landed in. */
+export async function attachChatFilesIn(payload: Parameters<typeof attachChatFiles>[0]): Promise<{
+  attachments: ChatAttachment[];
+  /** Where the copies live; "" from a backend that does not say. */
+  cwd: string;
+}> {
   const form = new FormData();
   for (const file of payload.files ?? []) form.append("files", file, file.name);
   if (payload.paths?.length) form.append("paths", payload.paths.join("\n"));
@@ -514,11 +523,20 @@ export async function attachChatFiles(payload: {
   if (payload.provider) form.append("provider", payload.provider);
   if (payload.surface) form.append("surface", payload.surface);
 
-  const data = await json<{ attachments?: ChatAttachment[] }>(
+  const data = await json<{ attachments?: ChatAttachment[]; cwd?: string }>(
     await fetch("/api/agent-chat/attachments", { method: "POST", body: form }),
     "attach-failed",
   );
-  return Array.isArray(data.attachments) ? data.attachments : [];
+  return {
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
+    cwd: typeof data.cwd === "string" ? data.cwd : "",
+  };
+}
+
+/** The attached picture or video itself, for a thumbnail (images and videos only). */
+export function attachmentFileUrl(cwd: string, reference: string): string {
+  const query = new URLSearchParams({ cwd, reference });
+  return `/api/agent-chat/attachments/file?${query.toString()}`;
 }
 
 export async function cancelAgentChatTurn(sessionId: string): Promise<void> {

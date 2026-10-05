@@ -1,5 +1,7 @@
-import { FileText, ImageIcon, Loader2, X } from "lucide-react";
+import { useState } from "react";
+import { FileText, Film, ImageIcon, Loader2, Play, X } from "lucide-react";
 
+import { attachmentMedia } from "@/components/agentchat/useChatAttachments";
 import type { ChatAttachment } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -7,12 +9,14 @@ import { cn } from "@/lib/utils";
 /**
  * The files waiting to go in with the next message.
  *
- * Each card shows the picture itself when its bytes passed through this
- * window, and says what was actually LEARNED from the file, not merely that
- * one is attached. That distinction is the whole feature: "screenshot.png"
- * tells the person nothing about whether the model will be able to see it,
- * while "described" and "not described" are the two outcomes they need to
- * tell apart BEFORE pressing Send — and the second happens for real, on any
+ * Each card shows the picture itself — a video's first frame under a play
+ * mark — whenever it can be drawn: from the bytes that passed through this
+ * window, or from the backend's copy of a file that arrived by path. And it
+ * says what was actually LEARNED from the file, not merely that one is
+ * attached. That distinction is the whole feature: "screenshot.png" tells the
+ * person nothing about whether the model will be able to see it, while
+ * "described" and "not described" are the two outcomes they need to tell
+ * apart BEFORE pressing Send — and the second happens for real, on any
  * install whose providers cannot see images.
  *
  * A near-twin of the Agentic IDE's terminal strip
@@ -30,34 +34,64 @@ export function ChatAttachmentStrip({
   attachments: ChatAttachment[];
   analyzing: number;
   onRemove: (name: string) => void;
-  /** A local picture per image attachment, keyed by its name. */
+  /** A picture per image or video attachment, keyed by its name. */
   previews?: Record<string, string>;
 }) {
   const t = useT();
+  // A picture that failed to load (an older backend, a file swept since)
+  // falls back to the file's icon instead of an empty frame.
+  const [broken, setBroken] = useState<Record<string, boolean>>({});
   if (attachments.length === 0 && analyzing === 0) return null;
   return (
     <div
       data-testid="chat-attachments"
-      className="flex max-h-32 shrink-0 flex-wrap items-center gap-2 overflow-y-auto px-1 scrollbar-jarvis"
+      className="flex max-h-40 shrink-0 flex-wrap items-center gap-2 overflow-y-auto px-1 scrollbar-jarvis"
     >
       {attachments.map((item) => {
         const read = item.described_by !== "none" && item.detail.length > 0;
-        const preview = previews[item.name];
-        const Icon = item.kind === "image" ? ImageIcon : FileText;
+        const media = attachmentMedia(item);
+        const preview = media && !broken[item.name] ? previews[item.name] : undefined;
+        const Icon = media === "video" ? Film : item.kind === "image" ? ImageIcon : FileText;
+        const markBroken = () => setBroken((prev) => ({ ...prev, [item.name]: true }));
         return (
           <span
             key={item.name}
             data-testid={`chat-attachment-${item.name}`}
+            data-media={preview ? media : undefined}
             title={
               read
                 ? `${item.detail.slice(0, 400)}${item.detail.length > 400 ? "…" : ""}`
                 : item.note || item.name
             }
-            className="group/attachment relative flex h-12 max-w-[15rem] items-center gap-2.5 rounded-xl border border-border bg-background/40 py-1 pl-1 pr-2"
+            className={cn(
+              "group/attachment relative flex max-w-[16rem] items-center gap-2.5 rounded-xl border border-border bg-background/40 py-1 pl-1 pr-2",
+              preview ? "h-16" : "h-12",
+            )}
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary text-muted-foreground">
-              {preview ? (
-                <img src={preview} alt="" className="h-full w-full object-cover" />
+            <span
+              className={cn(
+                "relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-secondary text-muted-foreground",
+                preview ? "h-14 w-14" : "h-10 w-10",
+              )}
+            >
+              {preview && media === "video" ? (
+                <>
+                  <video
+                    src={preview}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    onError={markBroken}
+                    className="h-full w-full object-cover"
+                  />
+                  <span aria-hidden className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white">
+                      <Play className="ml-0.5 h-3 w-3 fill-current" />
+                    </span>
+                  </span>
+                </>
+              ) : preview ? (
+                <img src={preview} alt="" onError={markBroken} className="h-full w-full object-cover" />
               ) : (
                 <Icon className="h-4 w-4" aria-hidden />
               )}

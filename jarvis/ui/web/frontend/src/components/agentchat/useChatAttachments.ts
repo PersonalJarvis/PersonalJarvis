@@ -28,16 +28,21 @@ import {
 } from "@/components/agentic/paneDrop";
 import { usePaneFileDrag } from "@/components/agentic/paneFileDrag";
 import { waitForNativeDrop } from "@/lib/nativeDrop";
-import { attachChatFiles, type AgentChatSurface, type ChatAttachment } from "@/lib/agentChatApi";
+import {
+  attachChatFilesIn,
+  attachmentFileUrl,
+  type AgentChatSurface,
+  type ChatAttachment,
+} from "@/lib/agentChatApi";
 
 export interface ChatAttachments {
   /** What will travel with the next message. */
   attachments: ChatAttachment[];
   /**
-   * A local picture for each held image whose bytes passed through this
-   * window (a paste, the file picker, a claimed appshot), keyed by the
-   * attachment's name. A file the desktop shell handed over by path has no
-   * bytes here and simply has no entry.
+   * A picture for each held image or video, keyed by the attachment's name:
+   * a local `blob:` URL when its bytes passed through this window (a paste,
+   * the file picker, a claimed appshot), else the backend's copy of the file
+   * (a drag from the Appshots gallery or Explorer arrives by path only).
    */
   previews: Record<string, string>;
   /** How many files are being read right now — 0 when nothing is in flight. */
@@ -81,17 +86,14 @@ export function useChatAttachments(
 
   // Object URLs hold the picture in memory until revoked; let them go with
   // the composer.
-  useEffect(
-    () => () => Object.values(previewsRef.current).forEach((url) => URL.revokeObjectURL(url)),
-    [],
-  );
+  useEffect(() => () => Object.values(previewsRef.current).forEach(revokePreview), []);
 
   const attach = useCallback(
     async (payload: PaneDropPayload) => {
       if (isEmptyPayload(payload)) return;
       setAnalyzing((n) => n + 1);
       try {
-        const found = await attachChatFiles({
+        const { attachments: found, cwd: folder } = await attachChatFilesIn({
           files: payload.files,
           paths: payload.paths,
           sessionId,
@@ -110,11 +112,18 @@ export function useChatAttachments(
           ...found.filter((item) => !prev.some((held) => held.name === item.name)),
         ]);
         const pictures = matchPreviews(found, payload.files);
+        if (folder) {
+          for (const item of found) {
+            if (!pictures[item.name] && attachmentMedia(item)) {
+              pictures[item.name] = attachmentFileUrl(folder, item.reference);
+            }
+          }
+        }
         if (Object.keys(pictures).length > 0) {
           setPreviews((prev) => {
             const next = { ...prev };
             for (const [name, url] of Object.entries(pictures)) {
-              if (next[name]) URL.revokeObjectURL(next[name]);
+              if (next[name]) revokePreview(next[name]);
               next[name] = url;
             }
             return next;
@@ -179,7 +188,7 @@ export function useChatAttachments(
     setAttachments((prev) => prev.filter((a) => a.name !== name));
     setPreviews((prev) => {
       if (!prev[name]) return prev;
-      URL.revokeObjectURL(prev[name]);
+      revokePreview(prev[name]);
       const rest = { ...prev };
       delete rest[name];
       return rest;
@@ -189,7 +198,7 @@ export function useChatAttachments(
   const clear = useCallback(() => {
     setAttachments([]);
     setPreviews((prev) => {
-      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+      Object.values(prev).forEach(revokePreview);
       return {};
     });
   }, []);
@@ -207,17 +216,32 @@ export function useChatAttachments(
   };
 }
 
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|avif|bmp|ico|heic|heif|tiff?)$/i;
+const VIDEO_EXT = /\.(mp4|m4v|webm|mov)$/i;
+
+/** Whether a held file can be drawn as a picture or a video, from its name. */
+export function attachmentMedia(item: Pick<ChatAttachment, "name" | "kind">): "image" | "video" | null {
+  if (VIDEO_EXT.test(item.name)) return "video";
+  if (item.kind === "image" || IMAGE_EXT.test(item.name)) return "image";
+  return null;
+}
+
+/** Only a local object URL holds memory; a backend URL has nothing to free. */
+function revokePreview(url: string): void {
+  if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+}
+
 /**
- * Pair the images the backend read with the bytes that went up, for a
- * picture in the composer. The backend may store a file under another name
+ * Pair the images and videos the backend read with the bytes that went up,
+ * for a picture in the composer. The backend may store a file under another name
  * (a clipboard image gets one, a clash gets a suffix), so an exact name match
  * comes first and a lone image on both sides pairs by being alone. Anything
  * still unpaired gets no picture rather than the wrong one.
  */
 export function matchPreviews(found: ChatAttachment[], files: File[]): Record<string, string> {
   if (typeof URL.createObjectURL !== "function") return {};
-  const images = files.filter((f) => f.type.startsWith("image/"));
-  const read = found.filter((item) => item.kind === "image");
+  const images = files.filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
+  const read = found.filter((item) => attachmentMedia(item) !== null);
   const out: Record<string, string> = {};
   const used = new Set<File>();
   for (const item of read) {
