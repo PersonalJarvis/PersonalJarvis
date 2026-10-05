@@ -10,7 +10,9 @@ every 50 ms, no hook, no tap:
   ``VK_RMENU`` too, so the Alt gesture works on AltGr layouts).
 * macOS: ``CGEventSourceKeyState`` on the left/right key codes (Option, Shift,
   Control). Needs the same Input Monitoring grant as every other global
-  shortcut; without it the read stays false and nothing fires.
+  shortcut; without it the read stays false and nothing fires, so
+  :func:`make_probe` reports the shortcut unavailable and names the grant
+  instead of arming a watcher that can never fire.
 * Linux/X11: ``XQueryKeymap`` through python-xlib (pynput's own dependency).
 * Wayland, headless, missing packages: :func:`make_probe` returns ``None``
   with the reason, and the caller reports the shortcut as unavailable.
@@ -104,6 +106,25 @@ def _x11_probe(family: str) -> Probe | None:
     return probe
 
 
+def _macos_input_monitoring_missing() -> str:
+    """Why macOS would read every key as up, or ``""`` when the grant is live."""
+    try:
+        from jarvis.platform.permissions import (  # noqa: PLC0415
+            PermissionId,
+            get_system_permission_port,
+        )
+
+        if get_system_permission_port().runtime_access_granted(PermissionId.INPUT_MONITORING):
+            return ""
+    except Exception:  # noqa: BLE001 - an unanswerable probe arms; the read decides
+        log.debug("appshot: Input Monitoring probe failed", exc_info=True)
+        return ""
+    return (
+        "Allow Input Monitoring for Personal Jarvis in System Settings > Privacy & "
+        "Security > Input Monitoring, then restart Personal Jarvis."
+    )
+
+
 def make_probe(family: str = "alt") -> tuple[Probe | None, str]:
     """The key-state reader for ``family`` on this host, or ``None`` and why not."""
     from jarvis.platform import detect_platform  # noqa: PLC0415
@@ -116,6 +137,9 @@ def make_probe(family: str = "alt") -> tuple[Probe | None, str]:
         if not display_present():
             return None, "No display on this computer, so there is no keyboard to watch."
         if platform == "darwin":
+            missing = _macos_input_monitoring_missing()
+            if missing:
+                return None, missing
             return _macos_probe(family), ""
         if is_wayland():
             return None, (

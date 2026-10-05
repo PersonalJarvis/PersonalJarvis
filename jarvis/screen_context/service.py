@@ -342,6 +342,23 @@ class ScreenContextService:
 
         return await self.capture(verdict=verdict, trace_id=trace_id)
 
+    async def capture_permission_issue(self) -> tuple[str, str] | None:
+        """``(reason_code, message)`` when the OS would refuse a capture now.
+
+        Silent (it never asks the OS for a grant). The area picker asks this
+        before it freezes the screen: without Screen Recording on macOS the
+        frozen frame is wallpaper only, and the refusal would come only after
+        the user had selected and marked up a fake screen.
+        """
+        issue = await asyncio.to_thread(self._permission_probe)
+        if not issue:
+            return None
+        if isinstance(issue, CapturePermissionIssue):
+            return issue.code, issue.message
+        # Compatibility for injected third-party/test probes that still
+        # implement the original ``str | None`` port contract.
+        return "capture_permission", str(issue)
+
     async def capture(
         self,
         *,
@@ -369,16 +386,9 @@ class ScreenContextService:
                 message="Screen Context settings changed before capture could start.",
             )
 
-        permission_issue = await asyncio.to_thread(self._permission_probe)
-        if permission_issue:
-            if isinstance(permission_issue, CapturePermissionIssue):
-                reason_code = permission_issue.code
-                permission_message = permission_issue.message
-            else:
-                # Compatibility for injected third-party/test probes that still
-                # implement the original ``str | None`` port contract.
-                reason_code = "capture_permission"
-                permission_message = str(permission_issue)
+        permission_issue = await self.capture_permission_issue()
+        if permission_issue is not None:
+            reason_code, permission_message = permission_issue
             log.info("screen_context: capture refused — %s", permission_message)
             return CaptureOutcome(
                 status="refused",
