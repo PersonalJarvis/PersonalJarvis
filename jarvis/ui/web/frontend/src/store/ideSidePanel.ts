@@ -10,7 +10,7 @@ import { create } from "zustand";
  */
 
 /** Every function the panel can show. A new one is a new id plus a registry entry. */
-export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "skills" | "office" | `terminal:${string}`;
+export type SidePanelTabId = "agents" | "changes" | "files" | "git" | "skills" | "subscriptions" | "office" | `terminal:${string}`;
 
 export interface SidePanelTerminal {
   id: `terminal:${string}`;
@@ -21,7 +21,7 @@ export interface SidePanelTerminal {
 
 export const MAX_TERMINAL_TABS = 16;
 
-export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "skills", "office"];
+export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "skills", "subscriptions", "office"];
 
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
 // v4: the panel starts with Agents alone and the other tabs are added from

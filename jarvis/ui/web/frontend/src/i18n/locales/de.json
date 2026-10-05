@@ -6161,7 +6161,34 @@
       "agents": "Agents",
       "files": "Ordner",
       "changes": "Änderungen",
+      "subscriptions": "Abos",
       "office": "Jarvis Verse"
+    },
+    "subscriptions": {
+      "hint": "Angemeldete Abos, nach Tool",
+      "refresh": "Verbrauch aktualisieren",
+      "empty": "Noch kein Abo angemeldet. Füge eines in den Workspace-Einstellungen hinzu.",
+      "error": "Abos konnten nicht geladen werden ({error}).",
+      "active": "Aktiv",
+      "active_tip": "Neue Terminals dieses Tools starten mit diesem Abo.",
+      "used": "{percent} % verbraucht",
+      "usage_pending": "Verbrauch wird gelesen…",
+      "usage_unsupported": "Dieses Tool meldet keinen Planverbrauch.",
+      "usage_signed_out": "Nicht angemeldet, daher kein Verbrauch.",
+      "usage_unavailable": "Der Verbrauch konnte gerade nicht gelesen werden.",
+      "cached": "Zuletzt gemeldet {when}",
+      "reset_soon": "Wird jetzt zurückgesetzt",
+      "reset_in_minutes": "Zurückgesetzt in {m} Min.",
+      "reset_in_hours": "Zurückgesetzt in {h} Std. {m} Min.",
+      "reset_on": "Zurückgesetzt {when}",
+      "window": {
+        "session": "Aktuelle Sitzung",
+        "session_length": "Aktuelle Sitzung ({length})",
+        "weekly": "Wochenlimit",
+        "weekly_scoped": "Wochenlimit · {scope}",
+        "monthly": "Monatslimit",
+        "other": "Weiteres Limit"
+      }
     },
     "git": {
       "aria": "Branches, Pull Requests und CI",

@@ -6161,7 +6161,34 @@
       "agents": "Agentes",
       "files": "Carpeta",
       "changes": "Cambios",
+      "subscriptions": "Suscripciones",
       "office": "Jarvis Verse"
+    },
+    "subscriptions": {
+      "hint": "Suscripciones con sesión iniciada, por herramienta",
+      "refresh": "Actualizar uso",
+      "empty": "Aún no hay ninguna suscripción con sesión iniciada. Añade una en los ajustes del espacio de trabajo.",
+      "error": "No se pudieron cargar las suscripciones ({error}).",
+      "active": "Activa",
+      "active_tip": "Los terminales nuevos de esta herramienta usan esta suscripción.",
+      "used": "{percent} % usado",
+      "usage_pending": "Leyendo el uso…",
+      "usage_unsupported": "Esta herramienta no informa del uso del plan.",
+      "usage_signed_out": "Sin sesión iniciada, así que no hay uso que mostrar.",
+      "usage_unavailable": "No se pudo leer el uso en este momento.",
+      "cached": "Último dato {when}",
+      "reset_soon": "Se restablece ahora",
+      "reset_in_minutes": "Se restablece en {m} min",
+      "reset_in_hours": "Se restablece en {h} h {m} min",
+      "reset_on": "Se restablece el {when}",
+      "window": {
+        "session": "Sesión actual",
+        "session_length": "Sesión actual ({length})",
+        "weekly": "Límite semanal",
+        "weekly_scoped": "Límite semanal · {scope}",
+        "monthly": "Límite mensual",
+        "other": "Otro límite"
+      }
     },
     "git": {
       "aria": "Ramas, pull requests y CI",

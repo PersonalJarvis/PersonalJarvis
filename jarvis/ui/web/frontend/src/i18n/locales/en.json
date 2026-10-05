@@ -6194,7 +6194,34 @@
       "agents": "Agents",
       "files": "Folder",
       "changes": "Changes",
+      "subscriptions": "Subscriptions",
       "office": "Jarvis Verse"
+    },
+    "subscriptions": {
+      "hint": "Signed-in subscriptions, by tool",
+      "refresh": "Refresh usage",
+      "empty": "No subscription is signed in yet. Add one in the workspace settings.",
+      "error": "Subscriptions could not be loaded ({error}).",
+      "active": "Active",
+      "active_tip": "New terminals of this tool start on this subscription.",
+      "used": "{percent}% used",
+      "usage_pending": "Reading usage…",
+      "usage_unsupported": "This tool does not report plan usage.",
+      "usage_signed_out": "Not signed in, so there is no usage to show.",
+      "usage_unavailable": "Usage could not be read right now.",
+      "cached": "Last reported {when}",
+      "reset_soon": "Resets now",
+      "reset_in_minutes": "Resets in {m} min",
+      "reset_in_hours": "Resets in {h} h {m} min",
+      "reset_on": "Resets {when}",
+      "window": {
+        "session": "Current session",
+        "session_length": "Current session ({length})",
+        "weekly": "Weekly limit",
+        "weekly_scoped": "Weekly limit · {scope}",
+        "monthly": "Monthly limit",
+        "other": "Other limit"
+      }
     },
     "git": {
       "aria": "Branches, pull requests and CI",
