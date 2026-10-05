@@ -140,6 +140,49 @@ async def test_room_open_is_driven_by_the_same_scheduler(tmp_path: Path):
         await store.close()
 
 
+async def test_concurrent_rooms_respect_target_run_cap(tmp_path: Path):
+    store = SocietyStore(tmp_path / "rooms-concurrent.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Jarvis", tier=Tier.LEAD)
+    scout, _ = await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    await roster.update(scout.agent_id, {"max_concurrent_runs": 1})
+    rooms = Rooms(store)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls: list[str] = []
+
+    async def slow_room_turn(target, room, claim_id):
+        calls.append(room.room_id)
+        started.set()
+        await release.wait()
+        return f"run-{len(calls)}"
+
+    scheduler = SocietyScheduler(
+        store, roster, rooms=rooms, room_turn=slow_room_turn, budget_tracker=FakeBudget()
+    ).attach()
+    try:
+        first = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
+        second = await rooms.open(opened_by="jarvis", members=["scout", "archivist"], live=True)
+        first_task = asyncio.create_task(scheduler.drive_room(first.room_id))
+        await started.wait()
+        second_task = asyncio.create_task(scheduler.drive_room(second.room_id))
+        await asyncio.sleep(0)
+        assert not second_task.done()
+        release.set()
+        await asyncio.gather(first_task, second_task)
+
+        assert calls == [first.room_id]
+        assert scheduler.running == {"run-1": "scout"}
+        second_loaded = await rooms.get(second.room_id)
+        assert second_loaded is not None
+        assert second_loaded.state is RoomState.RUNNING
+        assert second_loaded.inflight_claim_id == ""
+    finally:
+        scheduler.detach()
+        await store.close()
+
 async def test_room_open_honors_kill_switch(tmp_path: Path):
     store = SocietyStore(tmp_path / "room-kill.db")
     await store.open()
