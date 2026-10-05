@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 import threading
@@ -10,6 +11,7 @@ from typing import Any
 from jarvis.core.config import get_secret, set_secret
 
 _KEY_LOCK = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 def _slot(row: dict[str, Any]) -> str:
@@ -37,7 +39,9 @@ def connection_configured(row: dict[str, Any], trigger: Any) -> bool:
         return bool(audience and account)
     try:
         return bool(get_secret(_slot(row)))
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as exc:
+        # Credential values and exception messages never belong in diagnostics.
+        log.warning("routine webhook credential readiness unavailable (%s)", type(exc).__name__)
         return False
 
 
