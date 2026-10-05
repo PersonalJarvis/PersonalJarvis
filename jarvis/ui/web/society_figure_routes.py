@@ -8,8 +8,9 @@ way or drifts its root is refused with the gate's own reasons instead of walking
 backwards on the island. Accepted files live under ``DATA_DIR/society/figures``
 and are served from here; a recipe references one by its URL (``model``).
 
-Not a marketplace lane: nothing here is shared, uploaded elsewhere, or
-attributed. It is the person's own file on the person's own machine.
+There are two deliberately separate lanes. Imported GLBs stay private on the
+person's own machine. Shared-catalog entries are recipe-only JSON referencing
+reviewed built-in assets; they never upload a model or contact a remote service.
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from jarvis.core.config import DATA_DIR
-from jarvis.society.figure_sharing import SharedFigureDraft
 from jarvis.core.path_safety import UnsafePathError, safe_child
+from jarvis.society.figure_sharing import SharedFigureDraft
 
 log = logging.getLogger(__name__)
 
@@ -234,11 +235,14 @@ async def list_shared_figures() -> dict[str, Any]:
                 for row in doc["figures"].values()
                 if isinstance(row, dict) and row.get("status") == "active"
             ]
-            return sorted(rows, key=lambda row: (int(row.get("created_ms") or 0), str(row.get("id"))))
+            return sorted(
+                rows,
+                key=lambda row: (int(row.get("created_ms") or 0), str(row.get("id"))),
+            )
 
     try:
         rows = await run_in_threadpool(_list)
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         log.warning("shared figure catalog read failed", exc_info=True)
         raise HTTPException(500, "shared figure catalog unavailable") from exc
     return {"figures": rows, "total": len(rows)}
@@ -275,7 +279,7 @@ async def publish_shared_figure(body: SharedFigureDraft) -> dict[str, Any]:
         row, created = await run_in_threadpool(_publish)
     except PermissionError as exc:
         raise HTTPException(409, str(exc)) from exc
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         log.warning("shared figure catalog write failed", exc_info=True)
         raise HTTPException(500, "shared figure catalog unavailable") from exc
     return {"published": created, "figure": row}
@@ -302,7 +306,7 @@ async def report_shared_figure(share_id: str, body: SharedFigureReport) -> dict[
         row = await run_in_threadpool(_report)
     except KeyError as exc:
         raise HTTPException(404, "no such shared figure") from exc
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         log.warning("shared figure report failed", exc_info=True)
         raise HTTPException(500, "shared figure catalog unavailable") from exc
     return {"reported": share_id, "reports": len(row.get("reports") or [])}
@@ -326,7 +330,7 @@ async def delist_shared_figure(share_id: str) -> dict[str, Any]:
         await run_in_threadpool(_delist)
     except KeyError as exc:
         raise HTTPException(404, "no such shared figure") from exc
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         log.warning("shared figure delist failed", exc_info=True)
         raise HTTPException(500, "shared figure catalog unavailable") from exc
     return {"delisted": share_id}
