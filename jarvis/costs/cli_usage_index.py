@@ -132,7 +132,7 @@ log = logging.getLogger(__name__)
 
 AGENT_CLAUDE = "claude-cli"
 AGENT_GLM = "glm-cli"
-"""GLM Coding Plan, using Claude Code protocol against Z.ai."""
+"""GLM Coding Plan, using Claude Code protocol against Z.ai with its own config root."""
 """Claude Code. Same spelling as ``jarvis.costs.model.SUBSCRIPTION_RUNNERS``."""
 
 AGENT_CODEX = "codex-cli"
@@ -277,11 +277,11 @@ _ROLLOUT_ID = re.compile(r"([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}
 #   5 — the index became a ledger: vanished transcripts keep their rows, a
 #       bump re-reads instead of rebuilding, and a path index was added.
 #       Nothing about a row changed.
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 #: Rows written under a version below this were counted under a rule that has
 #: since changed and are re-read from their transcripts where those still
 #: exist. Rows from this version on are right as they are.
-_REREAD_BELOW = 4
+_REREAD_BELOW = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -294,7 +294,8 @@ CREATE TABLE IF NOT EXISTS indexed_files (
     model       TEXT NOT NULL DEFAULT '',
     cwd         TEXT NOT NULL DEFAULT '',
     label       TEXT NOT NULL DEFAULT '',
-    scanned_ms  INTEGER NOT NULL DEFAULT 0
+    scanned_ms  INTEGER NOT NULL DEFAULT 0,
+    account_id  TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS cli_turns (
     agent         TEXT NOT NULL,
@@ -309,6 +310,7 @@ CREATE TABLE IF NOT EXISTS cli_turns (
     cwd           TEXT NOT NULL DEFAULT '',
     label         TEXT NOT NULL DEFAULT '',
     cost_usd      REAL NOT NULL DEFAULT 0,
+    account_id    TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (agent, dedup_key)
 );
 CREATE INDEX IF NOT EXISTS idx_cli_turns_ts ON cli_turns (ts_ms);
@@ -551,6 +553,7 @@ class _Candidate:
     agent: str
     size: int
     mtime_ns: int
+    account_id: str = ""
 
 
 def _account_roots(platform: str) -> list[Path]:
