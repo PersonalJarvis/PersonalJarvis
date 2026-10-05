@@ -757,7 +757,28 @@ def _sqlite_stat(path: Path) -> tuple[int, int]:
     return size + wal.st_size, max(mtime_ns, wal.st_mtime_ns)
 
 
-def _discover(home: Path | None) -> list[_Candidate]:
+def _account_id_for_root(agent: str, root: Path) -> str:
+    """Return the registered account owning one CLI config root."""
+    if agent == AGENT_GLM:
+        return "glm:default"
+    platform_by_agent = {
+        AGENT_CLAUDE: "claude",
+        AGENT_CODEX: "codex",
+        AGENT_GROK: "grok-build",
+    }
+    platform = platform_by_agent.get(agent)
+    if platform is None:
+        return ""
+    try:
+        from jarvis import agent_accounts
+
+        target = _key_of(root)
+        for account in agent_accounts.list_accounts(platform):
+            if _key_of(Path(account.config_dir)) == target:
+                return str(account.id)
+    except Exception as exc:  # noqa: BLE001 - attribution must never stop indexing
+        log.debug("cli usage index: account lookup failed for %s (%s)", agent, exc)
+    return ""\n\n\ndef _discover(home: Path | None) -> list[_Candidate]:
     """Every transcript on this machine, with its size and mtime.
 
     A root that does not exist is simply not there — that is the state of a
@@ -792,6 +813,7 @@ def _discover(home: Path | None) -> list[_Candidate]:
                     agent=agent,
                     size=size,
                     mtime_ns=mtime_ns,
+                    account_id=_account_id_for_root(agent, root),
                 )
     return list(found.values())
 
