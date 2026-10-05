@@ -108,7 +108,9 @@ def as_png(image: bytes) -> bytes:
 
 def save_to_downloads(png: bytes, *, folder: Path | None = None, now: float | None = None) -> Path:
     """Write ``png`` into Downloads under a fresh name and return the path."""
-    target = folder or (Path.home() / "Downloads")
+    from jarvis.platform import user_dirs  # noqa: PLC0415
+
+    target = folder or user_dirs.downloads_dir()
     target.mkdir(parents=True, exist_ok=True)
     moment = time.time() if now is None else now
     stem = time.strftime("appshot-%Y%m%d-%H%M%S", time.localtime(moment))
