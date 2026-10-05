@@ -1,5 +1,5 @@
-"""Frontier auto-switch — at boot Hauptjarvis checks whether newer models are
-available and switches automatically (user mandate 2026-04-28).
+"""Frontier auto-switch — on the first real brain turn, an explicit opt-in
+checks whether newer models are available and switches automatically (user mandate 2026-04-28).
 
 Procedure:
 1. Resolver queries /v1/models per Hauptjarvis provider (claude-api, gemini,
@@ -11,10 +11,10 @@ Procedure:
 4. Record the switch in the ``_pending_switches`` list — the frontend shows a
    modal, the user clicks OK -> POST /api/frontier/ack -> list cleared.
 
-No smoke-test in the boot path: that would cost 4 additional API round-trips
-(1 per provider) and delay boot by 1-2 s. If the new model is broken, the first
-brain call will fail and the existing fallback mechanism (RateLimitTracker,
-dead-providers) kicks in.
+No provider probe runs during process boot. The lazy first-turn hook keeps
+those API round-trips off startup; the resolver's 24 h cache then avoids repeat
+fetches for subsequent turns. If a newly selected model is broken, the normal
+provider fallback/error handling remains authoritative.
 """
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ async def apply_frontier_resolution(
     resolver: FrontierResolver,
     bus: EventBus | None,
 ) -> list[FrontierSwitch]:
-    """Boot hook: determine frontier models and mutate config + emit events.
+    """First-turn hook: determine frontier models and mutate config + emit events.
 
     Acts ONLY on Hauptjarvis providers (see SUPPORTED_PROVIDERS). The
     ``[brain.sub_jarvis]`` legacy block (Wave-4 migration) is left untouched
