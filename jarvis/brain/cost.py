@@ -219,6 +219,7 @@ PRICING_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 # Anthropic's 1.25x write premium slightly rather than inventing a rate.
 CACHE_READ_FRACTION_DEFAULT = 0.10
 CACHE_READ_FRACTION_BY_PREFIX: tuple[tuple[str, float], ...] = (
+    ("glm-", 0.20),
     ("gemini", 0.25),
     ("google/", 0.25),
     # Measured from xAI's own costUsdTicks (2026-08-25): a quarter, not a tenth.
