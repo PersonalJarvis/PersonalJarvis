@@ -188,24 +188,41 @@ def save(shot: Appshot) -> bool:
     """Write a freshly taken appshot. Never raises; False when nothing was kept."""
     try:
         folder = _folder(shot.id)
-        ext = _EXTENSIONS.get(shot.mime, "jpg")
+        # The lossless copy when there is one: full resolution, PNG, the
+        # monitor's colour profile. The model's JPEG is the fallback.
+        lossless = bool(shot.original_png)
+        image = shot.original_png if lossless else shot.image
+        mime = "image/png" if lossless else shot.mime
+        ext = _EXTENSIONS.get(mime, "jpg")
+        width, height = _png_size(image) if lossless else (shot.width, shot.height)
         with _lock:
             folder.mkdir(parents=True, exist_ok=True)
             name = f"{_stem(shot.taken_at)}.{ext}"
-            (folder / name).write_bytes(shot.image)
+            (folder / name).write_bytes(image)
             meta = {
                 **_base_meta(shot),
                 "file": name,
-                "mime": shot.mime,
-                "width": shot.width,
-                "height": shot.height,
+                "mime": mime,
+                "width": width,
+                "height": height,
             }
+            if shot.hdr_png:
+                hdr_name = f"{_stem(shot.taken_at)}-hdr.png"
+                (folder / hdr_name).write_bytes(shot.hdr_png)
+                meta["hdr_file"] = hdr_name
             _write_meta(folder, meta)
             _prune()
         return True
     except (OSError, ValueError) as exc:
         log.warning("appshot library: could not keep the appshot (%s)", exc)
         return False
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    """Width and height from a PNG's IHDR, without decoding it."""
+    import struct  # noqa: PLC0415
+
+    return struct.unpack(">II", png[16:24])
 
 
 def save_edit(shot: Appshot) -> bool:

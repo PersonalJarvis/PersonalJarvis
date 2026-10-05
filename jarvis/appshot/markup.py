@@ -22,7 +22,7 @@ import base64
 import binascii
 import io
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -126,13 +126,7 @@ def apply_to_image(image: Any, markup: Markup) -> Any:
     width, height = out.size
     longer = max(width, height)
     for hide in markup.hides:
-        fx, fy, fw, fh = hide.rect
-        box = (
-            round(fx * width),
-            round(fy * height),
-            min(width, round((fx + fw) * width)),
-            min(height, round((fy + fh) * height)),
-        )
+        box = _hide_box(hide, (width, height))
         if box[2] - box[0] < 1 or box[3] - box[1] < 1:
             continue
         patch = out.crop(box)
@@ -187,6 +181,24 @@ def _gradient(size: tuple[int, int], stops: tuple[str, ...]) -> Any:
     return small.resize(size, Image.Resampling.BILINEAR)
 
 
+def _hide_box(hide: Hide, size: tuple[int, int]) -> tuple[int, int, int, int]:
+    width, height = size
+    fx, fy, fw, fh = hide.rect
+    return (
+        round(fx * width),
+        round(fy * height),
+        min(width, round((fx + fw) * width)),
+        min(height, round((fy + fh) * height)),
+    )
+
+
+def _frame_layout(size: tuple[int, int], frame: Frame) -> tuple[int, int]:
+    """``(margin, corner radius)`` of the background frame around a picture of ``size``."""
+    longer = max(size)
+    unit = max(1.0, longer / 1400.0)
+    return round(longer * frame.padding), round(frame.radius * unit)
+
+
 def _framed(picture: Any, frame: Frame) -> Any:
     """``picture`` on its background, as the full editor's ``renderResult`` frames it."""
     from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
@@ -194,10 +206,7 @@ def _framed(picture: Any, frame: Frame) -> Any:
     from jarvis.appshot.picker.markup_model import BACKGROUND_PRESETS  # noqa: PLC0415
 
     width, height = picture.size
-    longer = max(width, height)
-    pad = round(longer * frame.padding)
-    unit = max(1.0, longer / 1400.0)
-    radius = round(frame.radius * unit)
+    pad, radius = _frame_layout((width, height), frame)
     stops = dict(BACKGROUND_PRESETS).get(frame.preset) or BACKGROUND_PRESETS[0][1]
     canvas = _gradient((width + pad * 2, height + pad * 2), stops).convert("RGBA")
     box = (pad, pad, pad + width, pad + height)
@@ -231,6 +240,45 @@ def apply_to_bytes(image: bytes, mime: str, markup: Markup) -> bytes:
     return buffer.getvalue()
 
 
+def apply_to_scrgb(scrgb: Any, markup: Markup, sdr_white_nits: float) -> Any:
+    """An HDR master (scRGB) with the markings, ``float32 (h, w, 3)``.
+
+    The markings are drawn exactly as on the 8-bit picture and land at SDR
+    white, like any UI on an HDR desktop. Every pixel they did not touch —
+    and the picture inside a background frame — keeps its full-depth value.
+    Blur and pixelate patches are replaced as a whole, never mixed.
+    """
+    import numpy as np  # noqa: PLC0415
+    from PIL import Image, ImageDraw  # noqa: PLC0415
+
+    from jarvis.platform.hdr_image import scrgb_to_srgb8, srgb8_to_scrgb  # noqa: PLC0415
+
+    base = np.asarray(scrgb)[..., :3].astype(np.float32)
+    height, width = base.shape[:2]
+    sdr = scrgb_to_srgb8(base, sdr_white_nits)
+    marked = np.asarray(apply_to_image(Image.fromarray(sdr), replace(markup, frame=None)))
+    changed = (marked != sdr).any(axis=-1)
+    for hide in markup.hides:
+        x0, y0, x1, y1 = _hide_box(hide, (width, height))
+        changed[y0:y1, x0:x1] = True
+    out = base.copy()
+    out[changed] = srgb8_to_scrgb(marked[changed], sdr_white_nits)
+    if markup.frame is None:
+        return out
+    canvas = srgb8_to_scrgb(
+        np.asarray(_framed(Image.fromarray(marked), markup.frame)), sdr_white_nits
+    )
+    pad, radius = _frame_layout((width, height), markup.frame)
+    mask = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, width - 1, height - 1), radius=radius, fill=255
+    )
+    inside = np.asarray(mask) == 255  # soft corner pixels keep the 8-bit blend
+    window = canvas[pad : pad + height, pad : pad + width]
+    window[inside] = out[inside]
+    return canvas
+
+
 def apply_to_rgb(
     size: tuple[int, int], rgb: bytes, markup: Markup
 ) -> tuple[tuple[int, int], bytes]:
@@ -248,6 +296,7 @@ __all__ = [
     "Markup",
     "apply_to_bytes",
     "apply_to_image",
+    "apply_to_scrgb",
     "apply_to_rgb",
     "parse_markup",
 ]

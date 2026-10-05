@@ -8,7 +8,7 @@ import zlib
 import numpy as np
 import pytest
 
-from jarvis.appshot import hdr_image
+from jarvis.platform import hdr_image
 
 
 def _decode_png16(data: bytes) -> tuple[np.ndarray, dict[bytes, bytes]]:

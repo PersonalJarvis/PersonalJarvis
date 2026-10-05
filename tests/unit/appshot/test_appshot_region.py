@@ -145,7 +145,7 @@ class RegionCaptureService:
         self.regions: list = []
         self.displays = Displays()
 
-    async def capture(self, *, verdict=None, trace_id=None, region=None):
+    async def capture(self, *, verdict=None, trace_id=None, region=None, master=False):
         self.regions.append((verdict, region))
         context = ScreenContext(
             image=b"jpeg",

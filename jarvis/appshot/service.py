@@ -75,6 +75,7 @@ def shot_from_context(context: Any, *, trigger: str) -> Appshot:
         ui_text=context.ui_text,
         trigger=trigger,
         taken_at=time.time(),
+        master=getattr(context, "master", None),
     )
 
 
@@ -125,6 +126,7 @@ async def take_appshot(
                     verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
                     trace_id=trace_id or uuid.uuid4(),
                     region=bbox,
+                    master=True,
                 )
             finally:
                 shutter_markup.reset(token)
@@ -132,6 +134,7 @@ async def take_appshot(
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
                 trace_id=trace_id or uuid.uuid4(),
+                master=True,
             )
         if outcome.status != "captured" or outcome.context is None:
             return AppshotResult(
@@ -154,7 +157,9 @@ async def take_appshot(
 
     store = get_store()
     store.remember(shot, keep_s=float(config.screen_context.deck_preview_s))
-    await _keep_in_library(shot, config)
+    # The lossless copy encodes in the background: the model's picture and the
+    # card must not wait a second for a 4K HDR PNG. It then goes to the library.
+    _start_master(shot, selection.markup if selection is not None else None, config)
     await _attach_to_card(shot, config)
     delivered_to = "turn"
     if deliver:
@@ -174,8 +179,10 @@ async def take_appshot(
         delivered_to,
     )
     if selection is not None and selection.action != "done":
-        await _finish_action(selection.action, shot, bus)
-    return AppshotResult(status="captured", shot=replace(shot, delivered_to=delivered_to))
+        await _finish_action(selection.action, await finished(shot), bus)
+    return AppshotResult(
+        status="captured", shot=replace(shot, delivered_to=delivered_to, master=None)
+    )
 
 
 def _language(config: Any) -> str:
@@ -207,20 +214,70 @@ def _image_size(image: bytes) -> tuple[int, int]:
         return picture.size
 
 
+#: Lossless copies still encoding, by appshot id.
+_MASTERS: dict[str, asyncio.Task[Appshot]] = {}
+
+
+def _start_master(shot: Appshot, markup: Any, config: Any) -> None:
+    """Encode the lossless copy, swap it into the store, then keep it in the library."""
+    if shot.master is None:
+        task = asyncio.create_task(_keep_without_master(shot, config))
+    else:
+        task = asyncio.create_task(_encode_master(shot, markup, config))
+    _MASTERS[shot.id] = task
+    task.add_done_callback(lambda _done, shot_id=shot.id: _MASTERS.pop(shot_id, None))
+
+
+async def _keep_without_master(shot: Appshot, config: Any) -> Appshot:
+    await _keep_in_library(shot, config)
+    return shot
+
+
+async def _encode_master(shot: Appshot, markup: Any, config: Any) -> Appshot:
+    from jarvis.appshot.master import encode_master  # noqa: PLC0415
+
+    try:
+        files = await asyncio.to_thread(encode_master, shot.master, markup)
+        shot = replace(
+            shot, original_png=files.png, hdr_png=files.hdr_png or b"", master=None
+        )
+    except Exception:  # noqa: BLE001 - the model's picture is still kept and shown
+        log.warning("appshot: the lossless copy could not be made", exc_info=True)
+        shot = replace(shot, master=None)
+    get_store().update(shot)
+    await _keep_in_library(shot, config)
+    return shot
+
+
+async def finished(shot: Appshot) -> Appshot:
+    """``shot`` with its lossless copy, waiting for it when it is still encoding."""
+    task = _MASTERS.get(shot.id)
+    if task is not None:
+        try:
+            return await asyncio.shield(task)
+        except Exception:  # noqa: BLE001 - fall back to the picture we have
+            log.debug("appshot: lossless copy unavailable", exc_info=True)
+    held = get_store().get(shot.id)
+    return held if held is not None else replace(shot, master=None)
+
+
 async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:
     """Copy, save or open the appshot, as the picker's toolbar asked."""
     try:
         if action in ("copy", "save"):
-            from jarvis.appshot.card_actions import as_png, save_to_downloads  # noqa: PLC0415
+            from jarvis.appshot.card_actions import (  # noqa: PLC0415
+                as_png,
+                save_shot_to_downloads,
+            )
 
-            png = await asyncio.to_thread(as_png, shot.image)
             if action == "copy":
                 from jarvis.platform.clipboard_image import write_png  # noqa: PLC0415
 
+                png = shot.original_png or await asyncio.to_thread(as_png, shot.image)
                 if not await asyncio.to_thread(write_png, png):
                     log.warning("appshot: the area could not be copied to the clipboard")
             else:
-                path = await asyncio.to_thread(save_to_downloads, png)
+                path = await asyncio.to_thread(save_shot_to_downloads, shot)
                 log.info("appshot: area saved as %s", path.name)
         elif action == "edit":
             from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415

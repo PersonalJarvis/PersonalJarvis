@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 #: How many appshots stay at hand — as many as the corner card stack shows.
 MAX_RECENT = 5
@@ -46,6 +47,13 @@ class Appshot:
     #: Wall-clock seconds.
     taken_at: float
     delivered_to: str = ""
+    #: The user's lossless copy (:mod:`jarvis.appshot.master`): the
+    #: full-resolution 8-bit PNG, and a 16-bit HDR PNG when the monitor ran
+    #: HDR. Empty until encoded, and for pictures that had no master.
+    original_png: bytes = field(default=b"", repr=False)
+    hdr_png: bytes = field(default=b"", repr=False)
+    #: The raw master on its way to those files; dropped once they exist.
+    master: Any = field(default=None, repr=False, compare=False)
 
     def meta(self) -> dict[str, object]:
         """What the app may show about it — no pixels."""
@@ -128,12 +136,33 @@ class AppshotStore:
             if index is None:
                 return None
             shot, until = recent[index]
-            edited = replace(shot, image=image, mime=mime, width=width, height=height)
+            # The edit supersedes the lossless copies of the unedited picture.
+            edited = replace(
+                shot, image=image, mime=mime, width=width, height=height,
+                original_png=b"", hdr_png=b"",
+            )
             recent[index] = (edited, until)
             pending = self._live_pending()
             if pending is not None and pending.id == shot_id:
-                self._pending = replace(pending, image=image, mime=mime, width=width, height=height)
+                self._pending = replace(
+                    pending, image=image, mime=mime, width=width, height=height,
+                    original_png=b"", hdr_png=b"",
+                )
             return edited
+
+    def update(self, shot: Appshot) -> None:
+        """Swap in a newer version of a held appshot, keeping its place and expiry."""
+        with self._lock:
+            for index, (held, until) in enumerate(self._recent):
+                if held.id == shot.id:
+                    self._recent[index] = (
+                        replace(shot, delivered_to=held.delivered_to or shot.delivered_to),
+                        until,
+                    )
+            if self._pending is not None and self._pending.id == shot.id:
+                self._pending = replace(
+                    shot, delivered_to=self._pending.delivered_to or shot.delivered_to
+                )
 
     def mark_delivered(self, shot_id: str, delivered_to: str) -> None:
         with self._lock:

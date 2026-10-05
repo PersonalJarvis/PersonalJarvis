@@ -121,12 +121,38 @@ def save_to_downloads(png: bytes, *, folder: Path | None = None, now: float | No
     return path
 
 
+def save_shot_to_downloads(
+    shot: Any, *, folder: Path | None = None, now: float | None = None
+) -> Path:
+    """Save an appshot's lossless copy; beside it the HDR one, when there is one.
+
+    ``appshot-….png`` is the 8-bit picture every viewer shows the same way;
+    ``appshot-…-hdr.png`` keeps the HDR monitor's full range for viewers that
+    read PNG colour tags (cICP). Returns the 8-bit file's path.
+    """
+    png = shot.original_png or as_png(shot.image)
+    where = {k: v for k, v in (("folder", folder), ("now", now)) if v is not None}
+    path = save_to_downloads(png, **where)
+    if shot.hdr_png:
+        hdr = path.with_name(f"{path.stem}-hdr.png")
+        if not hdr.exists():
+            hdr.write_bytes(shot.hdr_png)
+    return path
+
+
 def _held(shot_id: str):
     """The card's appshot: by id when the card names one, else the last one."""
     from jarvis.appshot.store import get_store  # noqa: PLC0415
 
     store = get_store()
     return store.get(shot_id) if shot_id else store.latest()
+
+
+async def _with_originals(shot: Any) -> Any:
+    """Wait for a lossless copy that is still encoding (a second at most)."""
+    from jarvis.appshot.service import finished  # noqa: PLC0415
+
+    return await finished(shot)
 
 
 async def run_card_action(action: str, shot_id: str = "") -> str:
@@ -147,14 +173,15 @@ async def run_card_action(action: str, shot_id: str = "") -> str:
 
             ok = await asyncio.to_thread(write_text, text)
             return labels["text_copied"] if ok else labels["failed"]
-        png = await asyncio.to_thread(as_png, shot.image)
+        shot = await _with_originals(shot)
         if action == "copy":
             from jarvis.platform.clipboard_image import write_png  # noqa: PLC0415
 
+            png = shot.original_png or await asyncio.to_thread(as_png, shot.image)
             ok = await asyncio.to_thread(write_png, png)
             return labels["copied"] if ok else labels["failed"]
         if action == "save":
-            path = await asyncio.to_thread(save_to_downloads, png)
+            path = await asyncio.to_thread(save_shot_to_downloads, shot)
             log.info("appshot: card saved %s", path.name)
             return labels["saved"]
     except Exception:  # noqa: BLE001 - the card says so; nothing else depends on it

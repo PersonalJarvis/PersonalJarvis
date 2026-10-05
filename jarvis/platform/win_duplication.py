@@ -403,8 +403,14 @@ class DesktopDuplication:
         self._pointer_tex: _Com | None = None
         self._p010: dict[str, Any] = {}
         self._shader: _Com | None = None
+        from jarvis.core.win32_dpi import per_monitor_dpi_context  # noqa: PLC0415
+
         try:
-            self._open(device_name)
+            # Physical pixels throughout: output rectangles then match the
+            # capture coordinates mss uses, and DuplicateOutput1 refuses a
+            # DPI-unaware thread.
+            with per_monitor_dpi_context():
+                self._open(device_name)
         except BaseException:
             self.close()
             raise
@@ -415,8 +421,6 @@ class DesktopDuplication:
         return obj
 
     def _open(self, device_name: str | None) -> None:
-        from jarvis.core.win32_dpi import per_monitor_dpi_context  # noqa: PLC0415
-
         dxgi = ctypes.WinDLL("dxgi")
         d3d11 = ctypes.WinDLL("d3d11")
         factory_ptr = _out()
@@ -441,12 +445,10 @@ class DesktopDuplication:
         self.info = info
         formats = (ctypes.c_uint32 * 1)(_DXGI_FORMAT_R16G16B16A16_FLOAT)
         dup = _out()
-        # DuplicateOutput1 refuses a DPI-unaware thread.
-        with per_monitor_dpi_context():
-            hr = self._output5.call(
-                _OUTPUT5_DUPLICATE_OUTPUT1, ctypes.c_void_p(self._device.ptr),
-                ctypes.c_uint(0), ctypes.c_uint(1), formats, ctypes.byref(dup),
-            )
+        hr = self._output5.call(
+            _OUTPUT5_DUPLICATE_OUTPUT1, ctypes.c_void_p(self._device.ptr),
+            ctypes.c_uint(0), ctypes.c_uint(1), formats, ctypes.byref(dup),
+        )
         if hr < 0:
             _raise(hr, "DuplicateOutput1")
         self._dup = _Com(dup.value)

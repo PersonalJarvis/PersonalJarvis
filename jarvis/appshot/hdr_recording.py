@@ -193,7 +193,7 @@ class HdrCapture:
         try:
             from PySide6.QtGui import QImage  # noqa: PLC0415
 
-            from jarvis.appshot.hdr_image import scrgb_to_srgb8  # noqa: PLC0415
+            from jarvis.platform.hdr_image import scrgb_to_srgb8  # noqa: PLC0415
 
             frame = self._dup.read_linear()
             x, y, w, h = self.crop
