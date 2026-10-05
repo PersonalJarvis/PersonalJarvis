@@ -353,6 +353,34 @@ async def test_result_cannot_release_a_foreign_run_slot(world, caplog):
     assert "referenced run run-2 owned by archivist" in caplog.text
 
 
+async def test_concurrent_assignments_respect_target_run_cap(world):
+    store, roster, scheduler, _, _ = world
+    await roster.update("scout", {"max_concurrent_runs": 1})
+    started = asyncio.Event()
+    release = asyncio.Event()
+    dispatched: list[str] = []
+
+    async def slow_dispatch(target, env):
+        dispatched.append(env.trace_id)
+        started.set()
+        await release.wait()
+        return "run-1"
+
+    scheduler._dispatch = slow_dispatch
+    first = _assign("jarvis", "scout", trace="race-a")
+    second = _assign("jarvis", "scout", trace="race-b")
+    first_task = asyncio.create_task(scheduler._on_assign(first))
+    await started.wait()
+    second_task = asyncio.create_task(scheduler._on_assign(second))
+    await asyncio.sleep(0)
+    assert not second_task.done()
+    release.set()
+    await asyncio.gather(first_task, second_task)
+
+    assert dispatched == ["race-a"]
+    assert scheduler.running == {"run-1": "scout"}
+    assert await _vetoes(store, "race-b") == [str(FailureReason.CONCURRENCY_CAP)]
+
 async def test_invalid_result_is_vetoed(world):
     store, _, _, _, _ = world
     await store.append_and_publish(
