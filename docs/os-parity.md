@@ -1,5 +1,46 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## AppShot colour fidelity: HDR and wide gamut (2026-10-05, T3)
+
+Screenshots and recordings decide at capture time, per monitor, whether the
+desktop holds more than 8-bit sRGB (`jarvis/platform/display_color.py`).
+
+- **Windows** reads the active colour mode (SDR / wide colour gamut / HDR on
+  Windows 11 24H2+, "advanced colour" on older builds), the bit depth, the SDR
+  white level and the monitor's ICC profile. On an HDR or WCG monitor both
+  capture paths read the framebuffer at full depth through FP16 Desktop
+  Duplication (`jarvis/platform/win_duplication.py`, ctypes only):
+  - recordings convert each frame on the GPU (compute shader) to BT.2020 PQ
+    P010 and encode 10-bit AV1 or HEVC Main 10, hardware first, then
+    SVT-AV1 / x265, tagged BT.2020 / SMPTE ST 2084 / BT.2020-NCL
+    (`jarvis/appshot/hdr_recording.py`). The pointer is drawn in; windows
+    excluded from capture stay out. Clip exports keep the 10-bit depth and
+    the tags (`jarvis/appshot/video_edit.py`).
+  - appshots read the rectangle once at full depth and derive the model's
+    8-bit frame from it (SDR white = sRGB white), so redaction boxes cover the
+    same pixels in both. The user's copy is a lossless full-resolution PNG
+    plus a 16-bit BT.2020 PQ PNG with `cICP`/`cLLi`
+    (`jarvis/appshot/master.py`, `jarvis/platform/hdr_image.py`); Save writes
+    both (`appshot-….png`, `appshot-…-hdr.png`), the library keeps both.
+  - A rotated monitor, a rectangle across two monitors, or any duplication
+    failure falls back to the 8-bit path; a still desktop gets one repaint
+    nudge before that fallback.
+- **macOS** reports EDR headroom and the screen's colour space from NSScreen;
+  captures stay 8-bit (no full-depth ScreenCaptureKit path yet). Appshot
+  copies carry the screen's ICC profile, recordings carry sRGB tags.
+- **Linux / headless** has no portable colour API: captures are 8-bit sRGB,
+  said so by `DisplayColor.source == "default"`.
+
+Every SDR recording now states the matrix its encoder used (BT.601 for NVENC
+RGB input and swscale) plus sRGB primaries and transfer. Untagged files had
+been decoded with BT.709 by players, shifting saturated colours by up to 39 of
+255 levels.
+
+Verified on Windows 11 with a 10-bit HDR monitor: 4K60 HDR recording
+(AV1 hardware), decoded pixels within 0.0002 scRGB of the framebuffer; HDR
+appshot master through the real Screen Context service; SDR tag correctness
+by decoding colour bars. macOS and Linux paths are covered by unit tests only.
+
 ## Live computer control by the session's own model (2026-10-03, T3)
 
 Voice sessions operate the screen through `computer` (ADR-0038). The same
