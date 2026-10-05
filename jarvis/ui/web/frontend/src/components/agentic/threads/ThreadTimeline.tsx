@@ -480,7 +480,7 @@ export function ChangedFiles({ turn }: { turn: TurnItem }) {
               {folder && <span dir="rtl" className="min-w-0 shrink-[999] truncate text-left text-muted-foreground">
                 <bdi dir="ltr">{folder}</bdi>
               </span>}
-              <span className="min-w-0 truncate text-foreground">{name}</span>
+              <span className="min-w-0 max-w-full shrink-0 truncate text-foreground">{name}</span>
             </span>
             <ChangeCount added={row.added} removed={row.removed} />
           </button>
