@@ -178,6 +178,8 @@ class CostEntry:
     #: them because a character and a token are different units (BUG-177).
     chars: int = 0
     audio_ms: int = 0
+    # Internal runner identity for source reconciliation; not exposed in to_dict().
+    runner: str = ""
 
     @property
     def tokens_total(self) -> int:
