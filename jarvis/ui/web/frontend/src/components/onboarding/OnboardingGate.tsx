@@ -86,14 +86,14 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
 
   // A real first run is recorded as done (the walk included) and gets its
   // one completion restart; a replay just closes.
-  const completeFirstRun = (reason: string) => {
+  const completeFirstRun = () => {
     void (async () => {
       await onb.completeTour();
       try {
         await onb.complete();
       } catch (e) {
         // The next start resumes setup at its last step, so nothing is lost.
-        console.warn(`onboarding: completing after ${reason} failed`, e);
+        console.warn("onboarding: completing after the walk failed", e);
       }
     })();
   };
@@ -105,17 +105,11 @@ export function OnboardingGate({ activeSection }: { activeSection?: string } = {
           key={setupReplay}
           onb={onb}
           preview={isPreview}
-          onSkipAll={() => {
-            setSetupReplay(0);
-            setDismissed(true);
-            if (isPreview) return;
-            completeFirstRun("skipping setup");
-          }}
           onFinished={() => {
             setSetupReplay(0);
             setDismissed(true);
             if (isPreview) return;
-            completeFirstRun("the walk");
+            completeFirstRun();
           }}
         />
       </Suspense>

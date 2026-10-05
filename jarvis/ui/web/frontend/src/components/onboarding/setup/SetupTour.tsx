@@ -24,14 +24,11 @@ export function SetupTour({
   onb,
   preview,
   onFinished,
-  onSkipAll,
   startAt,
 }: {
   onb: Onb;
   preview: boolean;
   onFinished: () => void;
-  /** "Skip setup" on the first step: ends the whole first-run guide. */
-  onSkipAll?: () => void;
   startAt?: SetupStepId;
 }) {
   const ready = useLocaleChunk("onboarding");
@@ -70,7 +67,6 @@ export function SetupTour({
       onStep={(target) => goTo(target, skipped.filter((id) => id !== stepId))}
       onSkip={skipTo}
       onFinish={() => goTo("tour", skipped)}
-      onSkipAll={onSkipAll}
     />
   );
 }

@@ -6,21 +6,14 @@ vi.mock("./setup/SetupTour", () => ({
     preview,
     startAt,
     onFinished,
-    onSkipAll,
   }: {
     preview: boolean;
     startAt?: string;
     onFinished: () => void;
-    onSkipAll?: () => void;
   }) => (
-    <>
-      <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
-        guide
-      </button>
-      <button type="button" data-testid="guide-skip-all" onClick={onSkipAll}>
-        skip
-      </button>
-    </>
+    <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
+      guide
+    </button>
   ),
 }));
 vi.mock("./setup/SectionWalk", () => ({
@@ -193,16 +186,4 @@ it("never completes onboarding after a replayed setup", async () => {
   const urls = fetchMock.mock.calls.map((c) => String(c[0]));
   expect(urls).not.toContain("/api/onboarding/complete");
   expect(urls).not.toContain("/api/onboarding/tour-complete");
-});
-
-it("skips the whole first run: tour recorded, onboarding completed, no guide left", async () => {
-  const fetchMock = stub({ ...base, completed: false, tour_completed: false });
-  render(<OnboardingGate activeSection="chats" />);
-  const skip = await screen.findByTestId("guide-skip-all");
-  act(() => skip.click());
-  const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
-  await waitFor(() => expect(urls()).toContain("/api/onboarding/complete"));
-  expect(urls()).toContain("/api/onboarding/tour-complete");
-  expect(screen.queryByTestId("guide")).toBeNull();
-  expect(screen.queryByTestId("tour")).toBeNull();
 });

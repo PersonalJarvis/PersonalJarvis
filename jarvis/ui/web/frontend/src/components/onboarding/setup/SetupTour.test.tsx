@@ -47,6 +47,7 @@ function stubFetch() {
         return reply({ ok: true, phrase: sent.phrase, engine: "auto", resolved_engine: "auto", degraded: false });
       }
       if (url === "/api/settings/wake-word") return reply(wakeWord);
+      if (url === "/api/settings/keybinds") return reply({ keybinds: { call: "ctrl+alt+j" }, defaults: {}, suggestions: [] });
       if (url === "/api/settings/autostart" && method === "PUT") return reply({ ok: true, enabled: true, supported: true });
       if (url === "/api/settings/autostart") return reply({ enabled: false, supported: true });
       if (url.endsWith("/status") && url in cliStatus) return reply(cliStatus[url]);
@@ -120,7 +121,6 @@ it("asks for a name, saves it as the wake word and moves on to connecting", asyn
   const go = screen.getByTestId("onboarding-primary") as HTMLButtonElement;
   expect(go.disabled).toBe(true);
   fireEvent.change(input, { target: { value: "Nova" } });
-  expect(screen.getByTestId("setup-name-preview").textContent).toContain("Hey Nova");
   await act(async () => {
     fireEvent.click(go);
   });
@@ -141,11 +141,11 @@ it("keeps a name that did not change without saving it again", async () => {
   expect(calls.some((c) => c.url === "/api/settings/wake-word" && c.method === "PUT")).toBe(false);
 });
 
-it("lists the subscriptions, marks a signed-in one as ready and records a skipped step", async () => {
+it("lists one row per provider, marks a signed-in one as ready and records a skipped step", async () => {
   cliStatus["/api/claude/status"] = { installed: true, connected: true, mode: "subscription", user_email: "a@b.c" };
   const onb = fakeOnb({ current_step: "connect" });
   render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  for (const id of ["claude", "codex", "antigravity", "grok"]) await screen.findByTestId(`setup-sub-${id}`);
+  for (const id of ["claude", "openai", "google", "grok"]) await screen.findByTestId(`setup-sub-${id}`);
   await waitFor(() => expect(screen.getByTestId("setup-sub-claude").dataset.state).toBe("ready"));
   expect(screen.getByTestId("setup-sub-claude").textContent).toContain("a@b.c");
   // Something is connected: Continue moves on without a skip.
@@ -174,20 +174,21 @@ it("shows the install command when a subscription's app is missing", async () =>
     body: { detail: { message: "Codex CLI is not installed", install_command: "npm i -g @openai/codex" } },
   };
   render(<SetupTour onb={fakeOnb({ current_step: "connect" })} preview={false} onFinished={vi.fn()} />);
-  const connect = await screen.findByTestId("setup-sub-codex-connect");
+  const connect = await screen.findByTestId("setup-sub-openai-connect");
   await act(async () => {
     fireEvent.click(connect);
   });
-  const install = await screen.findByTestId("setup-sub-codex-install");
+  const install = await screen.findByTestId("setup-sub-openai-install");
   expect(install.textContent).toContain("npm i -g @openai/codex");
   expect(calls.some((c) => c.url === "/api/codex/login" && c.method === "POST")).toBe(true);
 });
 
-it("offers an API key next to the subscriptions", async () => {
+it("takes an API key right in the provider's row", async () => {
   render(<SetupTour onb={fakeOnb({ current_step: "connect" })} preview={false} onFinished={vi.fn()} />);
-  fireEvent.click(await screen.findByTestId("setup-key-toggle"));
-  await screen.findByTestId("setup-key-panel");
-  await screen.findByTestId("setup-key-provider-openai");
+  fireEvent.click(await screen.findByTestId("setup-sub-openai-key"));
+  await screen.findByTestId("setup-key-panel-openai");
+  // A row whose family has no key card offers only the sign-in.
+  expect(screen.queryByTestId("setup-sub-claude-key")).toBeNull();
 });
 
 it("ends the window on the voice step and walks the app, then finishes", async () => {
@@ -197,6 +198,7 @@ it("ends the window on the voice step and walks the app, then finishes", async (
   render(<SetupTour onb={onb} preview={false} onFinished={onFinished} />);
   await waitFor(() => expect(screen.getByTestId("setup-voice-wake").textContent).toContain("Hey Nova"));
   await screen.findByTestId("onboarding-autostart");
+  expect(screen.getByTestId("setup-voice-keys").textContent).toBe("CtrlAltJ");
   await act(async () => {
     fireEvent.click(screen.getByTestId("onboarding-start"));
   });
@@ -228,13 +230,6 @@ it("goes back to a finished step from its pill", async () => {
   await screen.findByTestId("onboarding-start");
   fireEvent.click(screen.getByTestId("setup-pill-name"));
   await waitFor(() => expect(step()).toBe("name"));
-});
-
-it("offers to skip the whole setup on the first step", async () => {
-  const onSkipAll = vi.fn();
-  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} onSkipAll={onSkipAll} />);
-  fireEvent.click(await screen.findByTestId("setup-skip-all"));
-  expect(onSkipAll).toHaveBeenCalledTimes(1);
 });
 
 it("never writes the onboarding state in a replay", async () => {

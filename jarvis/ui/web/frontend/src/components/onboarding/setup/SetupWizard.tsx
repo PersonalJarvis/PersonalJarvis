@@ -5,15 +5,15 @@
  * A row of numbered step pills sits under the header; finished steps can be
  * clicked to go back. Each step is a large title, one plain sentence and the
  * step's own rows, with the way forward at the bottom right. Nothing in the
- * window blocks: every step can be left for later, and the whole setup can be
- * skipped from the first step.
+ * window blocks: every step past the name can be left for later.
  */
-import { ArrowLeft, ArrowRight, Check, Loader2, Mic, Power } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
+import { useKeybinds } from "@/hooks/useHotkey";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, setUiLanguage, useT, useUiLanguage, type UiLanguage } from "@/i18n";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
@@ -27,16 +27,12 @@ import { WIZARD_STEP_IDS, type WizardStepId } from "./setupSteps";
 
 const LANGS: UiLanguage[] = ["en", "de", "es"];
 
-/** One-tap name ideas on the first step — any name works. */
-export const NAME_IDEAS = ["Nova", "Atlas", "Luna", "Milo", "Echo"];
-
 export function SetupWizard({
   step,
   preview,
   onStep,
   onSkip,
   onFinish,
-  onSkipAll,
 }: {
   step: WizardStepId;
   /** A replay from Settings: nothing restarts at the end. */
@@ -47,8 +43,6 @@ export function SetupWizard({
   onSkip: (target: WizardStepId) => void;
   /** The last step's button: on to the walk through the app. */
   onFinish: () => void;
-  /** "Skip setup" on the first step: ends the whole first-run guide. */
-  onSkipAll?: () => void;
 }) {
   const t = useT();
   const titleId = useId();
@@ -81,7 +75,7 @@ export function SetupWizard({
           <StepPills current={index} onPick={(i) => onStep(WIZARD_STEP_IDS[i])} />
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto border-t border-border bg-background/60 px-6 py-6">
-          {step === "name" && <NameStep onContinue={() => onStep("connect")} onSkipAll={onSkipAll} />}
+          {step === "name" && <NameStep onContinue={() => onStep("connect")} />}
           {step === "connect" && (
             <ConnectStepFrame
               onBack={() => prev && onStep(prev)}
@@ -218,7 +212,7 @@ function BackAction({ onClick }: { onClick: () => void }) {
  * "What would you like to call me?" The name is the wake word: saving it
  * renames the assistant everywhere (bylines, the voice, the sidebar).
  */
-function NameStep({ onContinue, onSkipAll }: { onContinue: () => void; onSkipAll?: () => void }) {
+function NameStep({ onContinue }: { onContinue: () => void }) {
   const t = useT();
   const { config, saveWakeWord } = useWakeWord();
   const saved = deriveAssistantName(config?.phrase ?? "");
@@ -267,46 +261,8 @@ function NameStep({ onContinue, onSkipAll }: { onContinue: () => void; onSkipAll
         data-testid="setup-name-input"
         className="mt-5 h-12 w-full rounded-lg border border-border-strong bg-input px-4 text-lg text-foreground placeholder:text-foreground-faint focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span className="mr-1 text-xs text-muted-foreground">{t("first_run.name.ideas")}</span>
-        {NAME_IDEAS.map((idea) => (
-          <button
-            key={idea}
-            type="button"
-            onClick={() => setTyped(idea)}
-            className={cn(
-              "rounded-full border px-2.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              name === idea
-                ? "border-accent bg-accent-soft text-foreground"
-                : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground",
-            )}
-          >
-            {idea}
-          </button>
-        ))}
-      </div>
-      <p
-        className={cn(
-          "mt-5 flex items-center gap-2 rounded-lg border border-border bg-popover px-3.5 py-2.5 text-sm transition-opacity",
-          name ? "opacity-100" : "opacity-50",
-        )}
-        data-testid="setup-name-preview"
-      >
-        <Mic aria-hidden className="h-4 w-4 shrink-0 text-accent" />
-        <span className="text-muted-foreground">
-          {name ? fill(t("first_run.name.preview"), { phrase: `Hey ${name}` }) : t("first_run.name.preview_empty")}
-        </span>
-      </p>
       {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
-      <StepFooter
-        left={
-          onSkipAll && (
-            <QuietAction onClick={onSkipAll} testId="setup-skip-all" className="text-sm">
-              {t("first_run.name.skip_all")}
-            </QuietAction>
-          )
-        }
-      >
+      <StepFooter>
         <Button type="submit" disabled={!name || saving} data-testid="onboarding-primary">
           {saving && <Loader2 aria-hidden className="animate-spin" />}
           {t("first_run.continue")}
@@ -346,30 +302,43 @@ function ConnectStepFrame({ onBack, onContinue }: { onBack: () => void; onContin
   );
 }
 
+/** One line of the voice step's list: a label, one plain sentence, a control. */
 function SettingRow({
-  icon,
   title,
   detail,
   control,
   testId,
 }: {
-  icon: ReactNode;
   title: string;
   detail: string;
   control: ReactNode;
   testId?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-popover px-4 py-3" data-testid={testId}>
-      <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground">
-        {icon}
-      </span>
+    <div className="flex items-center gap-4 px-4 py-3.5" data-testid={testId}>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-foreground">{title}</p>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{detail}</p>
       </div>
       <div className="shrink-0">{control}</div>
     </div>
+  );
+}
+
+/** A key combination as keycaps: "ctrl+alt+j" → Ctrl + Alt + J. */
+function Keycaps({ combo }: { combo: string }) {
+  const keys = combo.split("+").map((k) => k.trim()).filter(Boolean);
+  return (
+    <span className="inline-flex items-center gap-1" data-testid="setup-voice-keys">
+      {keys.map((key, i) => (
+        <kbd
+          key={`${key}-${i}`}
+          className="min-w-6 rounded-md border border-border-strong bg-secondary px-1.5 py-0.5 text-center font-mono text-xs text-foreground shadow-[inset_0_-1px_0_hsl(var(--border-strong))]"
+        >
+          {key.length <= 2 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ")}
+        </kbd>
+      ))}
+    </span>
   );
 }
 
@@ -381,6 +350,8 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
   const t = useT();
   const { config, setWakeActivation } = useWakeWord();
   const autostart = useAutostart();
+  const { config: keybinds } = useKeybinds();
+  const callCombo = keybinds?.keybinds?.call?.trim() ?? "";
   const assistantName = useEventStore((s) => s.assistantName);
   const [listening, setListening] = useState<boolean | null>(null);
   const [wakeNote, setWakeNote] = useState<string | null>(null);
@@ -419,11 +390,10 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
   return (
     <>
       <StepHead title={t("first_run.voice.title")} lede={t("first_run.voice.lede")} />
-      <div className="mt-5 space-y-1.5">
+      <div className="mt-5 divide-y divide-border overflow-hidden rounded-lg border border-border bg-popover">
         <SettingRow
           testId="setup-voice-wake"
-          icon={<Mic aria-hidden className="h-4 w-4" />}
-          title={phrase ? `Hey ${name}` : t("first_run.voice.no_word")}
+          title={phrase ? fill(t("first_run.voice.wake_title"), { phrase: `Hey ${name}` }) : t("first_run.voice.no_word")}
           detail={on ? t("first_run.voice.wake_on") : t("first_run.voice.wake_off")}
           control={
             <Switch
@@ -435,11 +405,17 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
             />
           }
         />
-        {wakeNote && <p className="px-1 text-xs text-muted-foreground">{wakeNote}</p>}
+        {callCombo && (
+          <SettingRow
+            testId="setup-voice-call"
+            title={t("first_run.voice.call_title")}
+            detail={t("first_run.voice.call_detail")}
+            control={<Keycaps combo={callCombo} />}
+          />
+        )}
         {autostart.config?.supported && (
           <SettingRow
             testId="setup-voice-login"
-            icon={<Power aria-hidden className="h-4 w-4" />}
             title={t("first_run.voice.login_title")}
             detail={t("first_run.voice.login_detail")}
             control={
@@ -453,6 +429,7 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
           />
         )}
       </div>
+      {wakeNote && <p className="mt-2 px-1 text-xs text-muted-foreground">{wakeNote}</p>}
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
         {preview ? t("first_run.voice.preview_note") : t("first_run.voice.restart_note")}
       </p>

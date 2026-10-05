@@ -1,17 +1,21 @@
 /**
  * Setup window, step 2: connect an AI.
  *
- * Subscriptions the user already pays for come first, one row each, signed
- * in with one click — the official CLI opens the browser, and the row polls
- * until the login lands. An API key sits below as its own row: one key is
- * all the assistant needs to think and talk, and a key saved here is switched
- * on right away (a starter plan it completes, or the Brain when none is
- * active yet).
+ * One row per provider. A row offers both ways in side by side: sign in with
+ * a subscription the user already pays for (the official CLI opens the
+ * browser, and the row polls until the login lands), or paste an API key
+ * right in the row. Providers that only take a key sit under "More
+ * providers". A key saved here is switched on right away (a starter plan it
+ * completes, or the Brain when none is active yet).
+ *
+ * Which key card belongs to a row is decided by provider FAMILY from the
+ * catalog, never a hardcoded id, so any single key that can be the brain
+ * works (AP-21).
  */
-import { Check, ChevronRight, Copy, KeyRound, Loader2, Lock } from "lucide-react";
+import { Check, ChevronRight, Copy, Loader2, Lock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
-import { ProviderLogo } from "@/components/providers/ProviderLogo";
+import { providerFamily, ProviderLogo } from "@/components/providers/ProviderLogo";
 import { Button } from "@/components/ui/button";
 import { switchBrainProvider, useProviders, type ProviderDescriptor } from "@/hooks/useProviders";
 import { applyStarterPlan, getStarterPlans, selectStarterPlan, type StarterPlan } from "@/hooks/useStarterPlans";
@@ -19,16 +23,12 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { planKeysComplete, primarySlot, slotConfigured, slotEffective, startableProviders } from "../brainPlans";
 
-/** How a subscription row reads its CLI login, and when it counts as signed in. */
+/** How a subscription reads its CLI login, and when it counts as signed in. */
 export interface SubscriptionSpec {
-  id: string;
-  /** A provider id ProviderLogo knows, for the brand mark. */
-  logoId: string;
-  label: string;
-  /** The plans that sign in here — product names, the same in every language. */
-  plans: string;
   statusUrl: string;
   loginUrl: string;
+  /** The plans that sign in here — product names, the same in every language. */
+  plans: string;
   isReady: (status: CliStatus) => boolean;
 }
 
@@ -39,48 +39,71 @@ export interface CliStatus {
   user_email?: string | null;
 }
 
-export const SUBSCRIPTIONS: readonly SubscriptionSpec[] = [
+/** A provider row: its brand, its subscription (if any) and the key family it takes. */
+export interface ProviderRowSpec {
+  id: string;
+  label: string;
+  /** A provider id ProviderLogo knows, for the brand mark. */
+  logoId: string;
+  /** The `providerFamily` of the brain key card this row edits. */
+  keyFamily: string;
+  subscription: SubscriptionSpec;
+}
+
+export const PROVIDER_ROWS: readonly ProviderRowSpec[] = [
   {
     id: "claude",
-    logoId: "claude-cli",
     label: "Claude",
-    plans: "Claude Pro · Max",
-    statusUrl: "/api/claude/status",
-    loginUrl: "/api/claude/login",
-    isReady: (s) => Boolean(s.connected && s.mode === "subscription"),
+    logoId: "claude-cli",
+    keyFamily: "claude",
+    subscription: {
+      statusUrl: "/api/claude/status",
+      loginUrl: "/api/claude/login",
+      plans: "Claude Pro · Max",
+      isReady: (s) => Boolean(s.connected && s.mode === "subscription"),
+    },
   },
   {
-    id: "codex",
+    id: "openai",
+    label: "OpenAI",
     logoId: "openai-codex",
-    label: "ChatGPT",
-    plans: "ChatGPT Plus · Pro (Codex)",
-    statusUrl: "/api/codex/status",
-    loginUrl: "/api/codex/login",
-    isReady: (s) => Boolean(s.connected),
+    keyFamily: "openai",
+    subscription: {
+      statusUrl: "/api/codex/status",
+      loginUrl: "/api/codex/login",
+      plans: "ChatGPT Plus · Pro",
+      isReady: (s) => Boolean(s.connected),
+    },
   },
   {
-    id: "antigravity",
-    logoId: "antigravity",
-    label: "Google",
-    plans: "Google AI Pro · Ultra (Antigravity)",
-    statusUrl: "/api/antigravity/status",
-    loginUrl: "/api/antigravity/login",
-    isReady: (s) => Boolean(s.connected && s.mode !== "api_key"),
+    id: "google",
+    label: "Google Gemini",
+    logoId: "gemini",
+    keyFamily: "gemini",
+    subscription: {
+      statusUrl: "/api/antigravity/status",
+      loginUrl: "/api/antigravity/login",
+      plans: "Google AI Pro · Ultra",
+      isReady: (s) => Boolean(s.connected && s.mode !== "api_key"),
+    },
   },
   {
     id: "grok",
-    logoId: "grok-build",
-    label: "Grok",
-    plans: "SuperGrok · X Premium+",
-    statusUrl: "/api/grok-build/status",
-    loginUrl: "/api/grok-build/login",
-    isReady: (s) => Boolean(s.connected && s.mode === "subscription"),
+    label: "xAI Grok",
+    logoId: "grok",
+    keyFamily: "xai",
+    subscription: {
+      statusUrl: "/api/grok-build/status",
+      loginUrl: "/api/grok-build/login",
+      plans: "SuperGrok · X Premium+",
+      isReady: (s) => Boolean(s.connected && s.mode === "subscription"),
+    },
   },
 ];
 
 /** How often a row re-reads its login while the browser sign-in runs. */
 const LOGIN_POLL_MS = 2500;
-/** Give up waiting after this long; the row offers Connect again. */
+/** Give up waiting after this long; the row offers Sign in again. */
 const LOGIN_POLL_MAX_MS = 180_000;
 
 async function readStatus(url: string): Promise<CliStatus | null> {
@@ -89,19 +112,25 @@ async function readStatus(url: string): Promise<CliStatus | null> {
     if (!res.ok) return null;
     return (await res.json()) as CliStatus;
   } catch {
-    // A warming backend reads as "not known yet"; the row shows Connect.
+    // A warming backend reads as "not known yet"; the row offers Sign in.
     return null;
   }
 }
 
-type RowPhase = "checking" | "ready" | "idle" | "starting" | "waiting";
+type LoginPhase = "checking" | "ready" | "idle" | "starting" | "waiting";
 
-/** Names of the subscriptions signed in right now — read by the setup's other steps. */
-export type ConnectedChange = (id: string, ready: boolean) => void;
+interface SubscriptionState {
+  phase: LoginPhase;
+  status: CliStatus | null;
+  error: string | null;
+  installCommand: string | null;
+  connect: () => Promise<void>;
+  checkAgain: () => Promise<void>;
+}
 
-function SubscriptionRow({ spec, onReady }: { spec: SubscriptionSpec; onReady: ConnectedChange }) {
-  const t = useT();
-  const [phase, setPhase] = useState<RowPhase>("checking");
+/** One subscription's login: read once, then poll only while a sign-in runs. */
+function useSubscription(spec: SubscriptionSpec): SubscriptionState {
+  const [phase, setPhase] = useState<LoginPhase>("checking");
   const [status, setStatus] = useState<CliStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installCommand, setInstallCommand] = useState<string | null>(null);
@@ -111,11 +140,9 @@ function SubscriptionRow({ spec, onReady }: { spec: SubscriptionSpec; onReady: C
     (next: CliStatus | null) => {
       if (!alive.current) return false;
       setStatus(next);
-      const ready = Boolean(next && spec.isReady(next));
-      onReady(spec.id, ready);
-      return ready;
+      return Boolean(next && spec.isReady(next));
     },
-    [spec, onReady],
+    [spec],
   );
 
   useEffect(() => {
@@ -129,7 +156,7 @@ function SubscriptionRow({ spec, onReady }: { spec: SubscriptionSpec; onReady: C
     };
   }, [spec.statusUrl, apply]);
 
-  async function connect() {
+  const connect = useCallback(async () => {
     setError(null);
     setPhase("starting");
     try {
@@ -162,46 +189,121 @@ function SubscriptionRow({ spec, onReady }: { spec: SubscriptionSpec; onReady: C
       }
     }
     if (alive.current) setPhase("idle");
-  }
+  }, [spec, apply]);
 
-  async function checkAgain() {
+  const checkAgain = useCallback(async () => {
     setPhase("checking");
     const fresh = await readStatus(spec.statusUrl);
     const ready = apply(fresh);
     if (!alive.current) return;
     if (ready || fresh?.installed) setInstallCommand(null);
     setPhase(ready ? "ready" : "idle");
-  }
+  }, [spec.statusUrl, apply]);
 
-  const ready = phase === "ready";
-  const detail = ready
-    ? status?.user_email
-      ? fill(t("first_run.connect.signed_in_as"), { account: status.user_email })
-      : t("first_run.connect.signed_in")
-    : phase === "waiting"
+  return { phase, status, error, installCommand, connect, checkAgain };
+}
+
+/** The brand mark without a tile, beside the row's name. */
+function Mark({ providerId, label }: { providerId: string; label: string }) {
+  return <ProviderLogo providerId={providerId} label={label} className="h-5 w-5 rounded-none bg-transparent" />;
+}
+
+function ReadyMark() {
+  const t = useT();
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">
+      <Check aria-hidden className="h-3.5 w-3.5" />
+      {t("first_run.connect.ready")}
+    </span>
+  );
+}
+
+/** The key field for one brain key card, opened inside its row. */
+function KeyPanel({ provider, onChanged }: { provider: ProviderDescriptor; onChanged: () => void }) {
+  const slot = primarySlot(provider);
+  if (!slot) return null;
+  return (
+    <div className="border-t border-border px-4 pb-4 pt-3" data-testid={`setup-key-panel-${provider.id}`}>
+      <ApiKeyForm
+        secretKey={slot}
+        dashboardUrl={provider.dashboard_url}
+        configured={slotConfigured(provider)}
+        effectiveConfigured={slotEffective(provider)}
+        credentialHelp={provider.credential_help}
+        onChanged={onChanged}
+      />
+    </div>
+  );
+}
+
+function KeyToggle({ open, onClick, testId }: { open: boolean; onClick: () => void; testId: string }) {
+  const t = useT();
+  return (
+    <Button size="sm" variant="ghost" onClick={onClick} aria-expanded={open} data-testid={testId} className="text-muted-foreground">
+      {t("first_run.connect.api_key")}
+      <ChevronRight aria-hidden className={cn("transition-transform", open && "rotate-90")} />
+    </Button>
+  );
+}
+
+/** A provider with both ways in: a subscription sign-in and an API key. */
+function ProviderRow({
+  spec,
+  keyProvider,
+  onReady,
+  onKeyChanged,
+}: {
+  spec: ProviderRowSpec;
+  keyProvider: ProviderDescriptor | undefined;
+  onReady: (id: string, ready: boolean) => void;
+  onKeyChanged: () => void;
+}) {
+  const t = useT();
+  const sub = useSubscription(spec.subscription);
+  const [keyOpen, setKeyOpen] = useState(false);
+  const signedIn = sub.phase === "ready";
+  const keySaved = Boolean(keyProvider && slotEffective(keyProvider));
+
+  useEffect(() => {
+    onReady(spec.id, signedIn);
+  }, [spec.id, signedIn, onReady]);
+
+  const parts: string[] = [];
+  if (signedIn) {
+    parts.push(
+      sub.status?.user_email
+        ? fill(t("first_run.connect.signed_in_as"), { account: sub.status.user_email })
+        : t("first_run.connect.signed_in"),
+    );
+  }
+  if (keySaved) parts.push(t("first_run.connect.key_saved"));
+  const detail =
+    sub.phase === "waiting"
       ? t("first_run.connect.finish_in_browser")
-      : status && status.installed === false
-        ? t("first_run.connect.not_installed")
-        : spec.plans;
+      : parts.length > 0
+        ? parts.join(" · ")
+        : keyProvider
+          ? fill(t("first_run.connect.plans_or_key"), { plans: spec.subscription.plans })
+          : spec.subscription.plans;
 
   return (
-    <div className="rounded-lg border border-border bg-popover px-4 py-3" data-testid={`setup-sub-${spec.id}`} data-state={phase}>
-      <div className="flex items-center gap-3">
-        <ProviderLogo providerId={spec.logoId} label={spec.label} />
+    <div className="rounded-lg border border-border bg-popover" data-testid={`setup-sub-${spec.id}`} data-state={sub.phase}>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+        <Mark providerId={spec.logoId} label={spec.label} />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-foreground">{spec.label}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</p>
         </div>
-        <div className="shrink-0">
-          {ready ? (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success">
-              <Check aria-hidden className="h-3.5 w-3.5" />
-              {t("first_run.connect.ready")}
-            </span>
-          ) : phase === "checking" ? (
-            <span className="text-xs text-muted-foreground">{t("first_run.connect.checking")}</span>
-          ) : phase === "waiting" ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-1.5">
+          {keyProvider && (
+            <KeyToggle open={keyOpen} onClick={() => setKeyOpen((o) => !o)} testId={`setup-sub-${spec.id}-key`} />
+          )}
+          {signedIn ? (
+            <ReadyMark />
+          ) : sub.phase === "checking" ? (
+            <span className="px-2 text-xs text-muted-foreground">{t("first_run.connect.checking")}</span>
+          ) : sub.phase === "waiting" ? (
+            <span className="inline-flex items-center gap-1.5 px-2 text-xs text-muted-foreground">
               <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
               {t("first_run.connect.waiting")}
             </span>
@@ -209,26 +311,52 @@ function SubscriptionRow({ spec, onReady }: { spec: SubscriptionSpec; onReady: C
             <Button
               size="sm"
               variant="outline"
-              onClick={() => void connect()}
-              disabled={phase === "starting"}
+              onClick={() => void sub.connect()}
+              disabled={sub.phase === "starting"}
               data-testid={`setup-sub-${spec.id}-connect`}
             >
-              {phase === "starting" && <Loader2 aria-hidden className="animate-spin" />}
-              {t("first_run.connect.connect")}
+              {sub.phase === "starting" && <Loader2 aria-hidden className="animate-spin" />}
+              {t("first_run.connect.sign_in")}
             </Button>
           )}
         </div>
       </div>
-      {installCommand && !ready && (
-        <div className="ml-12 mt-3 space-y-2" data-testid={`setup-sub-${spec.id}-install`}>
+      {sub.installCommand && !signedIn && (
+        <div className="space-y-2 px-4 pb-3.5 pl-12" data-testid={`setup-sub-${spec.id}-install`}>
           <p className="text-xs text-muted-foreground">{t("first_run.connect.install_first")}</p>
-          <CommandBlock command={installCommand} />
-          <Button size="sm" variant="ghost" onClick={() => void checkAgain()}>
+          <CommandBlock command={sub.installCommand} />
+          <Button size="sm" variant="ghost" onClick={() => void sub.checkAgain()}>
             {t("first_run.connect.check_again")}
           </Button>
         </div>
       )}
-      {error && !ready && <p className="ml-12 mt-2 text-xs text-destructive">{error}</p>}
+      {sub.error && !signedIn && <p className="px-4 pb-3 pl-12 text-xs text-destructive">{sub.error}</p>}
+      {keyOpen && keyProvider && <KeyPanel provider={keyProvider} onChanged={onKeyChanged} />}
+    </div>
+  );
+}
+
+/** A provider that only takes an API key. */
+function KeyOnlyRow({ provider, onKeyChanged }: { provider: ProviderDescriptor; onKeyChanged: () => void }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const saved = slotEffective(provider);
+  return (
+    <div className="rounded-lg border border-border bg-popover" data-testid={`setup-key-row-${provider.id}`}>
+      <div className="flex items-center gap-3 px-4 py-3.5">
+        <Mark providerId={provider.id} label={provider.label} />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">{provider.label}</p>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {saved ? t("first_run.connect.key_saved") : t("first_run.connect.key_only")}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <KeyToggle open={open} onClick={() => setOpen((o) => !o)} testId={`setup-key-row-${provider.id}-key`} />
+          {saved && <ReadyMark />}
+        </div>
+      </div>
+      {open && <KeyPanel provider={provider} onChanged={onKeyChanged} />}
     </div>
   );
 }
@@ -311,7 +439,7 @@ export function useKeyActivation(providers: ProviderDescriptor[]): KeyActivation
   const startableNow = startableProviders(providers);
   const liveVoice = plans.some((p) => p.mode === "realtime" && planKeysComplete(p, startableNow));
   const localBrain = providers.some((p) => p.tier === "brain" && p.active && (p.secret_keys?.length ?? 0) === 0);
-  const hasKey = withKey.length > 0 || localBrain;
+  const hasKey = startableNow.some(slotEffective) || localBrain;
 
   useEffect(() => {
     if (!savedSlot || connecting || connected) return;
@@ -351,152 +479,79 @@ export function useKeyActivation(providers: ProviderDescriptor[]): KeyActivation
   return { hasKey, connecting, connected, partial, liveVoice };
 }
 
-function ApiKeyRow({ activation }: { activation: KeyActivation }) {
-  const t = useT();
-  const { providers, refetch } = useProviders();
-  const startable = useMemo(() => startableProviders(providers), [providers]);
-  const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState<string | null>(null);
-  const current = startable.find((p) => p.id === picked) ?? startable.find(slotEffective) ?? startable[0];
-  const keyed = startable.find(slotEffective);
-  const slot = current ? primarySlot(current) : null;
-  const { hasKey, connecting, connected, partial, liveVoice } = activation;
-
-  const summary = connecting
-    ? t("first_run.connect.key_connecting")
-    : connected
-      ? fill(t("first_run.connect.key_connected"), { provider: connected })
-      : keyed
-        ? fill(t("first_run.connect.key_present"), { provider: keyed.label })
-        : t("first_run.connect.key_hint");
-
-  return (
-    <div className="rounded-lg border border-border bg-popover" data-testid="setup-key-row">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        data-testid="setup-key-toggle"
-        className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary">
-          <KeyRound aria-hidden className="h-4 w-4 text-muted-foreground" />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm font-medium text-foreground">{t("first_run.connect.key_title")}</span>
-          <span className="mt-0.5 block truncate text-xs text-muted-foreground" data-testid="setup-key-summary">
-            {summary}
-          </span>
-        </span>
-        {hasKey && !connecting ? (
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-success">
-            <Check aria-hidden className="h-3.5 w-3.5" />
-            {t("first_run.connect.ready")}
-          </span>
-        ) : connecting ? (
-          <Loader2 aria-hidden className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-        ) : null}
-        <ChevronRight
-          aria-hidden
-          className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")}
-        />
-      </button>
-      {open && (
-        <div className="space-y-3 px-4 pb-4" data-testid="setup-key-panel">
-          {startable.length > 0 ? (
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t("first_run.connect.key_provider")}>
-              {startable.map((p) => {
-                const on = p.id === current?.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={on}
-                    onClick={() => setPicked(p.id)}
-                    data-testid={`setup-key-provider-${p.id}`}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      on
-                        ? "border-accent bg-accent-soft font-medium text-foreground"
-                        : "border-border text-muted-foreground hover:bg-secondary hover:text-foreground",
-                    )}
-                  >
-                    <ProviderLogo providerId={p.id} label={p.label} size="sm" />
-                    {p.label}
-                    {slotEffective(p) && <Check aria-hidden className="h-3 w-3 text-success" />}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">{t("first_run.connect.key_none")}</p>
-          )}
-          {current && slot && (
-            <ApiKeyForm
-              key={current.id}
-              secretKey={slot}
-              dashboardUrl={current.dashboard_url}
-              configured={slotConfigured(current)}
-              effectiveConfigured={slotEffective(current)}
-              credentialHelp={current.credential_help}
-              onChanged={() => void refetch()}
-            />
-          )}
-          {partial && (
-            <p className="text-xs text-warning">{fill(t("first_run.connect.key_partial"), { parts: partial })}</p>
-          )}
-          {hasKey && !connecting && (
-            <p className="text-xs text-muted-foreground" data-testid="setup-key-live">
-              {liveVoice ? t("first_run.connect.live_ready") : t("first_run.connect.live_missing")}
-            </p>
-          )}
-          <p className="flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
-            <Lock aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
-            {t("first_run.connect.key_security")}
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /**
  * The step's body. `onConnectedChange` reports whether anything is connected
  * (a subscription or a key), so the window can say what Continue leaves out.
  */
 export function ConnectStep({ onConnectedChange }: { onConnectedChange: (any: boolean) => void }) {
   const t = useT();
-  const { providers } = useProviders();
+  const { providers, refetch } = useProviders();
   const activation = useKeyActivation(providers);
+  const startable = useMemo(() => startableProviders(providers), [providers]);
   const [ready, setReady] = useState<Record<string, boolean>>({});
-  const onReady = useCallback<ConnectedChange>((id, ok) => {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const onReady = useCallback((id: string, ok: boolean) => {
     setReady((prev) => (prev[id] === ok ? prev : { ...prev, [id]: ok }));
   }, []);
-  const anySubscription = Object.values(ready).some(Boolean);
-  const anything = anySubscription || activation.hasKey;
+  const onKeyChanged = useCallback(() => void refetch(), [refetch]);
+  const anything = Object.values(ready).some(Boolean) || activation.hasKey;
 
   useEffect(() => {
     onConnectedChange(anything);
   }, [anything, onConnectedChange]);
 
+  const rowFamilies = new Set(PROVIDER_ROWS.map((r) => r.keyFamily));
+  const keyFor = (family: string) => startable.find((p) => providerFamily(p.id) === family);
+  const others = startable.filter((p) => !rowFamilies.has(providerFamily(p.id) ?? ""));
+  const { connecting, connected, partial, liveVoice, hasKey } = activation;
+
   return (
-    <div className="space-y-5">
-      <section className="space-y-1.5" aria-labelledby="setup-subs-label">
-        <h2 id="setup-subs-label" className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("first_run.connect.subscriptions")}
-        </h2>
-        {SUBSCRIPTIONS.map((spec) => (
-          <SubscriptionRow key={spec.id} spec={spec} onReady={onReady} />
-        ))}
-        <p className="pt-1 text-xs leading-relaxed text-muted-foreground">{t("first_run.connect.subscriptions_why")}</p>
-      </section>
-      <section className="space-y-1.5" aria-labelledby="setup-key-label">
-        <h2 id="setup-key-label" className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("first_run.connect.or_key")}
-        </h2>
-        <ApiKeyRow activation={activation} />
-      </section>
+    <div className="space-y-1.5">
+      {PROVIDER_ROWS.map((spec) => (
+        <ProviderRow
+          key={spec.id}
+          spec={spec}
+          keyProvider={keyFor(spec.keyFamily)}
+          onReady={onReady}
+          onKeyChanged={onKeyChanged}
+        />
+      ))}
+      {others.length > 0 && (
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-expanded={moreOpen}
+            data-testid="setup-more-providers"
+            className="group flex items-center gap-1 rounded text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronRight aria-hidden className={cn("h-3.5 w-3.5 transition-transform", moreOpen && "rotate-90")} />
+            {t("first_run.connect.more")}
+          </button>
+          {moreOpen && (
+            <div className="mt-2 space-y-1.5">
+              {others.map((p) => (
+                <KeyOnlyRow key={p.id} provider={p} onKeyChanged={onKeyChanged} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="space-y-1.5 pt-3 text-xs leading-relaxed text-muted-foreground" data-testid="setup-key-status">
+        {connecting ? (
+          <p>{t("first_run.connect.key_connecting")}</p>
+        ) : connected ? (
+          <p>{fill(t("first_run.connect.key_connected"), { provider: connected })}</p>
+        ) : null}
+        {partial && <p className="text-warning">{fill(t("first_run.connect.key_partial"), { parts: partial })}</p>}
+        {hasKey && !connecting && (
+          <p data-testid="setup-key-live">{liveVoice ? t("first_run.connect.live_ready") : t("first_run.connect.live_missing")}</p>
+        )}
+        <p className="flex items-start gap-1.5">
+          <Lock aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+          {t("first_run.connect.key_security")}
+        </p>
+      </div>
     </div>
   );
 }
