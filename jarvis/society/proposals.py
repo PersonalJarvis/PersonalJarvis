@@ -460,6 +460,10 @@ async def _apply_identity(rt: Any, agent: AgentRecord, payload: dict[str, Any]) 
         k: str(getattr(agent, k) or "") for k in ("name", "title", "description")
     }
     previous["focus"] = list(agent.focus)
+    previous["approval_rules"] = {
+        key: list(agent.approval_rules.get(key, []))
+        for key in ("require_approval", "always_allow")
+    }
     derived_focus, derived_rules = rt.derive(
         fields.get("title", agent.title), fields.get("description", agent.description)
     )

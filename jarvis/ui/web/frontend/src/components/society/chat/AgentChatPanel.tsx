@@ -822,7 +822,15 @@ function previousIdentity(data: Record<string, unknown>): PreviousIdentity | nul
     title: typeof value.title === "string" ? value.title : "",
     description: typeof value.description === "string" ? value.description : "",
     focus: Array.isArray(value.focus) ? value.focus.map(String) : [],
+    ...(value.approval_rules && typeof value.approval_rules === "object"
+      ? { approval_rules: rulesOf(value.approval_rules as Record<string, unknown>) }
+      : {}),
   };
+}
+
+function rulesOf(raw: Record<string, unknown>): { require_approval: string[]; always_allow: string[] } {
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  return { require_approval: list(raw.require_approval), always_allow: list(raw.always_allow) };
 }
 
 /**

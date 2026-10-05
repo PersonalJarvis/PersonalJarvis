@@ -91,9 +91,9 @@ class SkillUsage:
                 row["last_activity_ms"] = stamp
                 row["state"] = ACTIVE
                 self._save(records)
-        except Timeout:
+        except (Timeout, OSError):
             # A missed count only delays aging by one event; the skill itself is safe.
-            log.warning("society skills: usage of %s not recorded (lock busy)", slug)
+            log.warning("society skills: usage of %s not recorded", slug, exc_info=True)
 
     def transitions(self, slugs: list[str], *, now: int | None = None) -> dict[str, int]:
         """Move every listed skill to the state its last activity calls for."""
@@ -132,8 +132,9 @@ class SkillUsage:
                         changed = True
                 if changed:
                     self._save(records)
-        except Timeout:
-            log.warning("society skills: lifecycle pass skipped for %s (lock busy)", self.root)
+        except (Timeout, OSError):
+            # Aging waits for the next pass; listing the skills must still work.
+            log.warning("society skills: lifecycle pass skipped for %s", self.root, exc_info=True)
         return counts
 
     # ------------------------------------------------------------ reads

@@ -441,6 +441,9 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
 
     try:
         session = ensure_session(svc, rt.config(), agent)
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session.session_id)
     except PermissionError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}

@@ -146,6 +146,13 @@ def _agent() -> SimpleNamespace:
     return SimpleNamespace(agent_id="scout", name="Scout")
 
 
+def test_a_claimed_user_origin_does_not_pass_the_limit(tmp_path: Path):
+    agent = _agent()
+    with pytest.raises(NotebookFull):
+        for index in range(HARD_LIMITS["user"] // 900 + 2):
+            edit_book(tmp_path, agent, f"{index} " + "z" * 900, target="user", origin="user")
+
+
 def test_a_full_notebook_asks_the_agent_to_consolidate(tmp_path: Path):
     agent = _agent()
     filler = "x" * 900
@@ -165,13 +172,15 @@ def test_a_full_notebook_asks_the_agent_to_consolidate(tmp_path: Path):
 def test_the_persons_own_request_is_never_refused(tmp_path: Path):
     agent = _agent()
     for index in range(HARD_LIMITS["user"] // 900 + 2):
-        edit_book(tmp_path, agent, f"{index} " + "y" * 900, target="user", origin="user")
+        edit_book(
+            tmp_path, agent, f"{index} " + "y" * 900, target="user", allow_over_limit=True
+        )
     assert len(read_books(tmp_path, agent)["user"]) == HARD_LIMITS["user"] // 900 + 2
 
 
 def test_the_review_sees_how_full_each_notebook_is(tmp_path: Path):
     agent = _agent()
-    edit_book(tmp_path, agent, "The person lives in Berlin.", target="user", origin="user")
+    edit_book(tmp_path, agent, "The person lives in Berlin.", target="user")
     capacity = notebook_capacity(read_books(tmp_path, agent))
     assert capacity["user"].endswith(f"/{HARD_LIMITS['user']} characters")
     assert capacity["memory"] == f"0/{HARD_LIMITS['memory']} characters"

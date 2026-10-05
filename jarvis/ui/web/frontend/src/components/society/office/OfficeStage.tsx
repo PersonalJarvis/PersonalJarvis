@@ -295,12 +295,18 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   // Spawning a Jarvis agent (the spawn point, reception): the host's one-click create, or the office's
   // own where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
   const quickCreate = useQuickCreateAgent();
+  const creatingRef = useRef(false);
   const createAgent = useCallback(() => {
     const store = useOfficeStore.getState();
     store.select(null);
     if (Math.hypot(player.x - layout.arrival.x, player.z - layout.arrival.z) > 4) store.focusOn(layout.arrival);
-    if (onCreateAgent) onCreateAgent();
-    else void quickCreate().catch((error) => console.warn("Agent creation failed", error));
+    if (onCreateAgent) { onCreateAgent(); return; }
+    // A double click must not create two agents.
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    void quickCreate()
+      .catch((error) => console.warn("Agent creation failed", error))
+      .finally(() => { creatingRef.current = false; });
   }, [onCreateAgent, layout, quickCreate]);
   const actions = useMemo<OfficeActions>(() => ({
     onOpenAgent: openAgent,

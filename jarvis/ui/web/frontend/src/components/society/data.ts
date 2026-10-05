@@ -442,11 +442,13 @@ export interface PreviousIdentity {
   title: string;
   description: string;
   focus: string[];
+  /** Present when the identity also wrote derived approval rules. */
+  approval_rules?: { require_approval: string[]; always_allow: string[] };
 }
 
 /**
  * Undo an applied `identity` proposal: write the previous name, title,
- * description and focus back. The explicit focus keeps the route from
+ * description, focus and approval rules back. The explicit focus keeps the route from
  * re-deriving one from the restored text.
  */
 export function useRestoreIdentity() {

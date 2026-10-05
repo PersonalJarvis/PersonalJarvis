@@ -125,13 +125,13 @@ async def test_both_prompt_sections_are_bounded_without_truncating_stored_facts(
     scout = await rt.roster.get("scout")
     # The person's own requests are never refused by the notebook limit.
     await rt.memory.remember(
-        scout, "Long profile detail. " * 1000, target="user", importance=1, origin="user"
+        scout, "Long profile detail. " * 1000, target="user", importance=1, explicit_request=True
     )
     await rt.memory.remember(
-        scout, "Long project detail. " * 1000, target="memory", importance=1, origin="user"
+        scout, "Long project detail. " * 1000, target="memory", importance=1, explicit_request=True
     )
     await rt.memory.remember(
-        scout, "Reply always in English.", target="user", importance=10, origin="user"
+        scout, "Reply always in English.", target="user", importance=10, explicit_request=True
     )
     prompt = rt.memory.head(scout)
     assert "Your user profile" in prompt and "Your memory" in prompt

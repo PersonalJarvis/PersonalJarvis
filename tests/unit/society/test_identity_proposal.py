@@ -70,6 +70,7 @@ async def test_fresh_agent_applies_its_first_identity_from_the_user_turn(world):
     assert outcome and outcome[-1]["status"] == "applied"
     assert outcome[-1]["previous"] == {
         "name": placeholder, "title": "", "description": "", "focus": [],
+        "approval_rules": {"require_approval": [], "always_allow": []},
     }
     assert outcome[-1]["agent_name"] == "Mail Desk"
     assert not _identity_notices(svc, "proposal")  # no card to confirm
@@ -123,3 +124,36 @@ async def test_only_a_fresh_agent_carries_the_introduction(world):  # noqa: F811
     established = await rt.roster.get("mailbox")
     assert FRESH_AGENT_GUIDANCE in build_briefing(fresh, [], [])
     assert "## You are new" not in build_briefing(established, [], [])
+
+
+def test_an_identity_is_never_a_silent_safe_call(world):  # noqa: F811
+    rt, _svc = world
+    tool = ProposeChangeTool(rt, "mailbox")
+    assert tool.risk_tier_for_args({"kind": "identity", "payload": {}}) == "monitor"
+    assert tool.risk_tier_for_args({"kind": "rule", "payload": {}}) == "safe"
+
+
+async def test_a_long_first_role_goes_to_a_card(world):  # noqa: F811
+    from jarvis.society.agent_tools import FRESH_IDENTITY_MAX_CHARS
+
+    rt, svc = world
+    fresh, _ = await rt.roster.create()
+    tool = ProposeChangeTool(rt, fresh.agent_id, session_id=fresh.session_id)
+    long_role = {"name": "Mail Desk", "description": "x" * (FRESH_IDENTITY_MAX_CHARS + 1)}
+    token = _user_turn(fresh.session_id, "You handle my Gmail inbox.")
+    try:
+        result = await tool.execute({"kind": "identity", "payload": long_role}, None)
+    finally:
+        current_chat_turn.reset(token)
+    assert result.output["status"] == "pending"
+    assert is_fresh(await rt.roster.get(fresh.agent_id))
+
+
+async def test_undo_data_includes_the_approval_rules(world):  # noqa: F811
+    rt, _svc = world
+    item = await proposals.propose(
+        rt, await rt.roster.get("mailbox"), kind="identity",
+        payload={"title": "Inbox lead"}, reason="", session_id="x",
+    )
+    out = await proposals.resolve(rt, item.id, approve=True)
+    assert out["previous"]["approval_rules"]["require_approval"] == ["plugin:gmail:send"]

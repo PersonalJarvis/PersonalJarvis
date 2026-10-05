@@ -17,6 +17,7 @@ Identity rules (agent-definition §2, §6):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import secrets
@@ -474,6 +475,9 @@ class Roster:
         #: is on the very next turn's card.
         self._snapshot: tuple[AgentRecord, ...] = ()
         self._epoch: int = 0
+        #: Serializes creation: the free-name and free-id checks and the
+        #: insert must not interleave between two concurrent creates.
+        self._create_lock = asyncio.Lock()
 
     def snapshot(self) -> list[AgentRecord]:
         """The roster as last read — synchronous, no IO; ``[]`` before the first read."""
@@ -525,6 +529,20 @@ class Roster:
         untouched — the caller decides whether to PATCH. Without a name the
         agent is created fresh: placeholder name, random id (see module doc).
         """
+        async with self._create_lock:
+            return await self._create(
+                name=name, title=title, description=description, tier=tier, **fields
+            )
+
+    async def _create(
+        self,
+        *,
+        name: str | None,
+        title: str,
+        description: str,
+        tier: Tier | str,
+        **fields: Any,
+    ) -> tuple[AgentRecord, bool]:
         tier_value = Tier(_enum(Tier, tier, "tier"))
         unnamed = not str(name or "").strip()
         if unnamed:

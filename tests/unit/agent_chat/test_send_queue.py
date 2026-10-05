@@ -22,7 +22,10 @@ class BusyChat:
         self.notices: list[tuple[str, dict]] = []
         self.fail_next = False
         self.store = SimpleNamespace(
-            get_session=lambda sid: SimpleNamespace(session_id=sid, surface=self.surface)
+            get_session=lambda sid: SimpleNamespace(session_id=sid, surface=self.surface),
+            list_events=lambda sid, tail=None: [
+                {"kind": "notice", "payload": payload} for s, payload in self.notices if s == sid
+            ],
         )
 
     def is_running(self, session_id: str) -> bool:
@@ -145,4 +148,34 @@ async def test_a_message_that_fails_to_start_is_reported_and_the_next_runs():
     assert chat.sent == [("society:scout", "fine")]
     failed = [p for _, p in chat.notices if p.get("status") == "failed"]
     assert failed and failed[0]["queue_id"] == first
-    assert "refused" in failed[0]["text"]
+    # The runner's own error text never reaches the chat (AP-34).
+    assert "refused" not in failed[0]["text"]
+
+
+async def test_a_message_that_waits_too_long_is_reported(monkeypatch):
+    monkeypatch.setattr(send_queue, "MAX_WAIT_S", 0.05)
+    chat = BusyChat()
+    chat.busy.add("society:scout")
+    queue_id = (await send_or_queue(chat, "society:scout", "too late"))[1]
+    await _until(lambda: any(p.get("status") == "failed" for _, p in chat.notices))
+    assert chat.sent == []
+    failed = [p for _, p in chat.notices if p.get("status") == "failed"]
+    assert failed[0]["queue_id"] == queue_id
+    assert "society:scout" not in send_queue._queues(chat)
+
+
+async def test_opening_the_chat_closes_waiting_notices_a_restart_orphaned():
+    chat = BusyChat()
+    chat.notices.append(
+        ("society:scout", {"kind": "message_queued", "queue_id": "old", "text": "lost"})
+    )
+    chat.notices.append(
+        ("society:scout", {"kind": "message_queued", "queue_id": "done", "text": "ok"})
+    )
+    chat.notices.append(
+        ("society:scout", {"kind": "message_dequeued", "queue_id": "done", "status": "sent"})
+    )
+    assert await send_queue.close_orphans(chat, "society:scout") == 1
+    closed = chat.notices[-1][1]
+    assert closed["queue_id"] == "old" and closed["status"] == "failed"
+    assert await send_queue.close_orphans(chat, "society:scout") == 0

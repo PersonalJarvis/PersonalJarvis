@@ -9,10 +9,11 @@ kept). Without a provider on the row the session runs on the Agents tier
 the rest of the app uses (``local_models.assistant_session.agents_tier``).
 
 ``make_deliver_hook`` is what the scheduler calls for SAY / QUERY / ANSWER /
-PROPOSE / RESULT envelopes: ensure the target's conversation chat with the
-sender (``society:<target>:with:<sender>``; the person's own messages use the
-canonical chat), then start a turn with the message framed as coming from the
-sender. A busy session raises
+PROPOSE / RESULT envelopes: ensure the target's one chat (MASTERPLAN §2.10),
+then start a turn with the message framed as coming from the sender; the chat
+renders it as a delegation card. Side chats written before 2026-10-05
+(``society:<target>:with:<sender>``) stay readable but never run. A busy
+session raises
 ``target busy`` so the scheduler writes a typed veto and the envelope stays
 in the inbox for the next turn.
 """
