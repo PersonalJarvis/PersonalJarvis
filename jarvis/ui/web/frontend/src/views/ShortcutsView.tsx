@@ -306,7 +306,7 @@ export function ShortcutsView() {
       data-testid="shortcuts-view"
       className="flex h-full flex-col overflow-y-auto bg-background px-8 pb-10 scrollbar-jarvis"
     >
-      <div className="w-full max-w-[1200px]">
+      <div className="w-full">
         <PageHeader
           icon={<Keyboard />}
           title={t("shortcuts_view.title")}

@@ -77,7 +77,7 @@ export function ApiKeysView() {
           role="tabpanel"
           id="apikeys-panel"
           aria-labelledby={`apikeys-tab-${active}`}
-          className="profile-rise mx-auto w-full max-w-page"
+          className="profile-rise w-full max-w-page"
         >
           {active === "realtime" && (
             <RealtimeTab

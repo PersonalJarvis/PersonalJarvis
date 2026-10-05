@@ -1,7 +1,8 @@
 /**
  * ProfileView — what the assistant knows about you, and how to change it.
  *
- * One column, read top to bottom like any settings page:
+ * Read top to bottom like any settings page (the detail groups sit two to a
+ * row on a wide window):
  *
  *   ┌────────────────────────────────────────────────────────────┐
  *   │ Photo · name · language · timezone                         │
@@ -42,8 +43,11 @@ import { fetchJson, statusOf, type ProfileResponse } from "@/views/profile/api";
 import { PAGE_GROUPS } from "@/views/profile/ledger";
 import { parseObservations } from "@/views/profile/provenance";
 
-/** The reading column: wide enough for a row, narrow enough to scan. */
-const COLUMN = "mx-auto w-full max-w-[760px]";
+/**
+ * The page runs the Settings hub column (which owns the measure); the detail
+ * groups pair up two to a row once the window is wide enough.
+ */
+const COLUMN = "w-full";
 
 export function ProfileView() {
   const t = useT();
@@ -124,15 +128,17 @@ export function ProfileView() {
         {data && !showSource && (
           <div className="flex flex-col gap-10">
             <ProfileHero data={data} meta={meta} />
-            {PAGE_GROUPS.map((g) => (
-              <FieldGroup
-                key={g.id}
-                id={g.id}
-                fields={g.fields}
-                meta={meta}
-                observations={observations}
-              />
-            ))}
+            <div className="grid grid-cols-1 items-start gap-10 xl:grid-cols-2 xl:gap-x-8">
+              {PAGE_GROUPS.map((g) => (
+                <FieldGroup
+                  key={g.id}
+                  id={g.id}
+                  fields={g.fields}
+                  meta={meta}
+                  observations={observations}
+                />
+              ))}
+            </div>
             <PortraitSection />
             <MemorySection
               name={data.user.name?.trim() || null}

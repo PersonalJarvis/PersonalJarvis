@@ -1,7 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { isTourEvent } from "@/components/onboarding/tourEvents";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent } from "react";
-import { Loader2, Search, X } from "lucide-react";
+import { ArrowLeft, Loader2, Search, X } from "lucide-react";
 import {
   NAV_FOOTER_ITEMS,
   NAV_GROUPS,
@@ -19,8 +19,8 @@ import { apiKeysHealthError } from "@/lib/apiKeysTab";
 import { cn } from "@/lib/utils";
 
 /**
- * The Settings hub — every personal/system section behind one dialog that
- * floats over the user's current section, with a searchable left navigation
+ * The Settings hub — every personal/system section behind one full-window
+ * page over the user's current section, with a searchable left navigation
  * (General · System · Activity) and the selected section on the right:
  *
  *   General: Settings, Keyboard shortcuts, Appshots, My Pets, Profile,
@@ -335,9 +335,16 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
     <div data-testid="settings-hub" className="flex h-full min-h-0 flex-col md:flex-row">
       <aside
         data-testid="settings-hub-sidebar"
-        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-60 md:border-b-0 md:border-r"
+        className="jarvis-nav-surface flex max-h-72 w-full shrink-0 flex-col border-b border-border md:max-h-none md:w-64 md:border-b-0"
       >
         <div className="px-3 pb-2 pt-3">
+          {/* The page covers the whole window, so its way out sits where a
+              full-page settings screen keeps it: first in its own nav. */}
+          <button type="button" onClick={onClose} data-testid="settings-hub-close"
+            className="mb-2 flex h-9 w-full items-center gap-2.5 rounded-md px-3 text-base font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="min-w-0 flex-1 truncate text-left">{t("settings_hub.back_to_app")}</span>
+          </button>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <input type="text" role="searchbox" data-testid="settings-hub-search" value={query} onChange={(event) => setQuery(event.target.value)}
@@ -419,13 +426,11 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
         </nav>
       </aside>
       <div className="jarvis-sheet relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <button type="button" onClick={onClose} aria-label={t("common.close")}
-          data-testid="settings-hub-close"
-          className="absolute right-3 top-3 z-10 grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <X className="h-4 w-4" aria-hidden />
-        </button>
         <div data-testid="settings-hub-content" className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis">
-          <div className="h-full w-full max-w-[2000px]">
+          {/* One measure for every tab: each page runs the full width of this
+              column with its header and body on the same left edge, and the
+              column centres once a very wide window would stretch rows apart. */}
+          <div data-testid="settings-hub-column" className="mx-auto h-full w-full max-w-[1440px]">
             <Suspense fallback={<HubLoadingFallback />}>
               {content === "settings"
                 ? <SettingsTab searchTarget={searchTarget} onSearchTargetHandled={() => setSearchTarget(null)} />
@@ -439,14 +444,16 @@ export function SettingsHubView({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * The hub as a centred window over the current section (the way desktop apps
- * open their preferences), not a page that replaces the whole app. Closing it
- * — the X, Escape or a click on the scrim — returns to the section behind it.
+ * The hub as a full-window page over the current section: it covers the app
+ * sidebar and the stage, wears the same gray ground + rounded reading sheet as
+ * the app shell, and leaves the 32 px window caption (window controls, drag
+ * strip) visible above it. Closing it — the X or Escape — returns to the
+ * section behind it.
  *
- * Centred with `inset-0` + `m-auto` rather than a translate: a transform would
- * turn the dialog into the containing block of every `position: fixed` layer a
- * tab renders inline (an image preview, view-level dialogs) and trap them
- * inside the window instead of covering the screen.
+ * Positioned with `inset-0` rather than a transform: a transform would turn
+ * the dialog into the containing block of every `position: fixed` layer a tab
+ * renders inline (an image preview, view-level dialogs) and trap them inside
+ * the page instead of covering the screen.
  */
 export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
@@ -457,14 +464,17 @@ export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
   // The first-run guide dims the window over this dialog and points into it;
   // a click on its card or its dim must not read as "outside" and close the
   // very page it is pointing at.
+  // The window caption stays live above the page: its controls minimise,
+  // maximise or drag the window, which must not close the hub.
   const nestedOwnsEvent = (event: Event) =>
     isComboboxPanelEvent(event) ||
+    (event.target instanceof Element && event.target.closest('[data-testid="window-caption"]') != null) ||
     content.current?.querySelector('[aria-modal="true"]') != null ||
     isTourEvent(event);
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/65 backdrop-blur-[2px]" />
+        <Dialog.Overlay className="fixed inset-0 z-40 jarvis-nav-surface" />
         <Dialog.Content
           data-testid="settings-hub-dialog"
           ref={content}
@@ -496,7 +506,7 @@ export function SettingsHubDialog({ onClose }: { onClose: () => void }) {
               event.preventDefault();
             }
           }}
-          className="fixed inset-0 z-40 m-auto flex h-[min(86dvh,820px)] w-[min(1040px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-border bg-popover text-foreground shadow-float outline-none"
+          className="jarvis-nav-surface fixed inset-0 z-40 flex flex-col overflow-hidden pt-8 text-foreground outline-none"
         >
           <Dialog.Title className="sr-only">{t("nav.settings")}</Dialog.Title>
           <SettingsHubView onClose={onClose} />

@@ -434,8 +434,8 @@ export function FeedbackView() {
         subtitle={t("feedback.subtitle")}
       />
 
-      <div className="flex flex-1 justify-center p-6">
-        <div className="w-full max-w-md space-y-6 pb-8">
+      <div className="flex flex-1 px-8 pb-10 pt-2">
+        <div className="w-full max-w-form space-y-6">
           {/* What kind of report — this also picks the GitHub issue form. */}
           <div>
             <span
