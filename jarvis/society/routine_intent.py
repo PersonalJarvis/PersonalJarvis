@@ -18,7 +18,7 @@ _CREATE_VERB = re.compile(
 _HOW_TO = re.compile(
     r"\b(?:wie\s+(?:kann|könnte|soll|würde|erstelle)|"  # i18n-allow: input vocabulary
     r"how\s+(?:do|can|to)|"
-    r"cómo\s+(?:puedo|crear))\b",
+    r"cómo\s+(?:puedo|crear)|come\s+(?:posso|potrei|creare|faccio))\b",
     re.IGNORECASE,
 )
 _CONFIRMED_CREATE = re.compile(
@@ -53,7 +53,7 @@ def requests_routine_creation(text: str) -> bool:
     )
 
 
-# Recurrence phrases in English, German and Spanish ("every day at 8").
+# Recurrence phrases in English, German, Spanish and Italian.
 _RECURRENCE = re.compile(
     r"\b(?:every\s+(?:day|morning|evening|night|week|weekday|month|hour|"
     r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+\s+\w+)|"
@@ -68,7 +68,11 @@ _RECURRENCE = re.compile(
     r"lunes|martes|miércoles|jueves|viernes|sábado|domingo|"  # i18n-allow: input vocabulary
     r"\d+\s+\w+)|"
     r"todos\s+los\s+(?:días|dias|lunes)|"  # i18n-allow: input vocabulary
-    r"diariamente|semanalmente)\b",
+    r"diariamente|semanalmente|"
+    r"ogni\s+(?:giorno|mattina|sera|notte|settimana|mese|ora|"
+    r"luned[iì]|marted[iì]|mercoled[iì]|gioved[iì]|venerd[iì]|sabato|domenica|"
+    r"\d+\s+\w+)|tutti\s+i\s+giorni|tutte\s+le\s+mattine|"
+    r"quotidianamente|settimanalmente|mensilmente)\b",
     re.IGNORECASE,
 )
 # The person asks for something to happen, rather than describing a habit.
@@ -79,7 +83,8 @@ _REQUEST_CUE = re.compile(
     r"should|want|please|give|make|create|remind|set\s+up|can\s+you|could\s+you|"
     r"summari[sz]e|brief|tell\s+me|"
     r"quiero|por\s+favor|dame|envía|envia|crea|"  # i18n-allow: input vocabulary
-    r"recuérdame|puedes)\b",  # i18n-allow: input vocabulary
+    r"recuérdame|puedes|voglio|vorrei|per\s+favore|dammi|invia|mandami|"  # i18n-allow
+    r"crea|ricordami|puoi|potresti|riassumi|avvisami)\b",
     re.IGNORECASE,
 )
 
@@ -98,15 +103,17 @@ def requests_recurring_work(text: str) -> bool:
 # clause boundary keeps descriptions ("when X happens, Y happens") out while
 # covering the natural M6 surface ("when a PR merges, ask Scout to ...").
 _EVENT_TRIGGER_REQUEST = re.compile(
-    r"^\s*(?:(?:please|bitte|por\s+favor)\s+)?"
-    r"(?:when(?:ever)?|once|as\s+soon\s+as|wenn|sobald|cuando|en\s+cuanto)\b"
+    r"^\s*(?:(?:please|bitte|por\s+favor|per\s+favore)\s+)?"
+    r"(?:when(?:ever)?|once|as\s+soon\s+as|wenn|sobald|cuando|en\s+cuanto|"
+    r"quando|appena|non\s+appena)\b"
     r"[^?\n]{1,240}?[,;:]\s*"
-    r"(?:(?:please|bitte|por\s+favor)\s+)?"
+    r"(?:(?:please|bitte|por\s+favor|per\s+favore)\s+)?"
     r"(?:ask|have|tell|notify|send|summari[sz]e|check|run|create|make|remind|"
     r"can\s+you|could\s+you|lass|sag|benachrichtig|"  # i18n-allow: input vocabulary
     r"schick|fass|prüf|starte|erstell|erinner|kannst\s+du|"  # i18n-allow: input vocabulary
     r"pide|haz|dile|notifica|env[ií]a|resume|"
-    r"comprueba|ejecuta|crea|recu[eé]rda|puedes)\w*\b",
+    r"comprueba|ejecuta|crea|recu[eé]rda|puedes|chiedi|fai|di|avvisami|"
+    r"invia|mandami|riassumi|controlla|esegui|ricordami|puoi|potresti)\w*\b",
     re.IGNORECASE,
 )
 
