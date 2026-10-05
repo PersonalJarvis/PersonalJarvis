@@ -173,14 +173,21 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
 
 ## Bug #6: pyautogui dependency missing (MEDIUM, dependent)
 
-- **File**: none specific — `jarvis/plugins/tool/type_text.py` or similar
-- **Symptom**: `type_text` returns with
-  `error="pyautogui not available: No module named 'pyautogui'. Native Windows input failed: [WinError 0] Incorrect parameter."`
-- **Root cause**: `pyautogui` is an optional dependency, not installed,
-  and the native Win32 fallback has a separate bug.
-- **Fix**: `pip install pyautogui` or add it to `requirements.txt`.
-  The native fallback is a separate issue (see issue tracker).
-- **Status**: not fixed in this audit; planned for a separate phase.
+- **File**: `jarvis/plugins/tool/type_text.py`
+- **Historical symptom**: `type_text` reported pyautogui missing on installs that
+  did not carry the desktop stack, after the native Windows SendInput path had
+  rejected its malformed INPUT struct.
+- **Current architecture**: this is no longer a base-install defect. `pyautogui`
+  and `mss` are deliberately desktop-only dependencies in
+  `pyproject.toml[project.optional-dependencies].desktop`; the base/headless
+  profile must stay free of display automation packages. Windows now uses the
+  native Unicode SendInput path first, with pyautogui only as a best-effort
+  fallback. Other platforms use the configured CU actuator and degrade
+  explicitly when a desktop input backend is absent.
+- **Status (2026-10-05)**: resolved as an intentional optional dependency.
+  Do **not** move pyautogui into base requirements merely to silence the old
+  error string. Any remaining platform-specific input backend failure should
+  be tracked as a separate bug with a concrete reproduction.
 
 ## Bug #7: STT hallucinations → phantom voice sessions (MEDIUM)
 
