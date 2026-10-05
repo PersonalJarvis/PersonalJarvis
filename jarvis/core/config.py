@@ -3359,6 +3359,27 @@ class VoiceConfig(BaseModel):
     no_first_frame_phrase_floor_s: float | None = None
 
 
+class BrowserVoiceConfig(BaseModel):
+    """``[browser_voice]`` — the browser-microphone voice bridge (``/ws/audio``).
+
+    On a host without its own microphone (a VPS, ``jarvis serve``) the browser
+    that presses Start holds the call: it streams the microphone to
+    ``/ws/audio`` and plays the reply. ``extra="allow"`` so an unknown future
+    key never blocks boot (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Serves the classic STT -> brain -> TTS bridge in PIPELINE mode. Realtime
+    # mode always serves the socket, because it carries the realtime call and
+    # that call's classic fallback, so this switch does not apply there. Read
+    # by ``jarvis.browser_voice.route.browser_voice_enabled`` at connect time.
+    # Default on: before 2026-07-08 a missing section meant enabled, the
+    # headless deployment guide documents it as on, and the socket is behind
+    # the same credential check as every other route (issue #399).
+    enabled: bool = True
+
+
 class CompletenessConfig(BaseModel):
     """Configuration for the utterance-completeness pre-processing classifier.
 
@@ -4669,6 +4690,9 @@ class JarvisConfig(BaseModel):
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    # [browser_voice] — the browser-microphone bridge for hosts without a
+    # microphone of their own (see BrowserVoiceConfig).
+    browser_voice: BrowserVoiceConfig = Field(default_factory=BrowserVoiceConfig)
     # AI Pointer — deictic-gated "what is under the mouse cursor" context.
     # Spec: docs/plans/ai-pointer/DESIGN.md
     pointer: PointerConfig = Field(default_factory=PointerConfig)

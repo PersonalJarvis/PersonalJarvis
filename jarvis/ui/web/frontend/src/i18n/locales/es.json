@@ -715,6 +715,7 @@
     "realtime_pipeline_fallback": "Sistema de voz clásico como alternativa",
     "realtime_unavailable": "Conecta o configura un proveedor de tiempo real",
     "realtime_error": "No se pudo iniciar la voz. Prueba el proveedor activo en API Keys y vuelve a intentarlo.",
+    "browser_voice_error": "No se pudo iniciar la voz. Revisa voz a texto, el Brain y texto a voz en API Keys y vuelve a intentarlo.",
     "realtime_provider_fallback": "{0} dejó de estar disponible, así que la llamada pasó a otro proveedor: la facturación puede cambiar. {1}",
     "realtime_provider_fallback_short": "La llamada dejó {0} y continúa con otro proveedor.",
     "realtime_provider_warning": "El proveedor Realtime informó de un problema recuperable; la llamada continúa.",

@@ -715,6 +715,7 @@
     "realtime_pipeline_fallback": "Classic pipeline fallback",
     "realtime_unavailable": "Connect or configure a Realtime provider",
     "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry.",
+    "browser_voice_error": "Couldn’t start voice. Check speech-to-text, the Brain and text-to-speech under API Keys, then retry.",
     "realtime_provider_fallback": "{0} became unavailable, so the call moved to another provider — billing may differ. {1}",
     "realtime_provider_fallback_short": "The call moved off {0} to another provider.",
     "realtime_provider_warning": "The realtime provider reported a recoverable problem; the call continues.",

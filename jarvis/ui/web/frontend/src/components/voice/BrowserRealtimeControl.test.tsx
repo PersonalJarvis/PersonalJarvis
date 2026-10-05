@@ -3,6 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
 import {
+  browserVoiceCallLive,
+  startBrowserVoiceCall,
+  stopBrowserVoiceCall,
+} from "@/lib/browserVoiceCall";
+import {
   setBrowserVoiceInputOwnership,
   setVoiceInputLevel,
   voiceInputLevelRef,
@@ -28,7 +33,7 @@ const fakes = vi.hoisted(() => ({
     onInputLevel?: (level: number) => void;
     onStatus?: (status: string, payload: Record<string, unknown>) => void;
   },
-  options: null as null | { requiresWebRtcOffer?: boolean },
+  options: null as null | { requiresWebRtcOffer?: boolean; browserAudio?: boolean },
 }));
 
 vi.mock("@/hooks/useCapabilities", () => ({
@@ -474,5 +479,89 @@ describe("BrowserRealtimeControl", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("sidebar.realtime_https_required")).toBeTruthy();
     expect(fakes.connect).not.toHaveBeenCalled();
+  });
+
+  // Issue #399: on a host with no speech pipeline the browser that presses
+  // Start holds the call itself, in pipeline mode through the classic chain.
+  describe("call held by this browser", () => {
+    beforeEach(() => {
+      fakes.mode = "pipeline";
+      fakes.available = false;
+      useEventStore.setState({ toasts: [] });
+    });
+
+    it("starts in pipeline mode with plain PCM and keeps the call through the mode gate", async () => {
+      // A realtime transport pinned in the settings must not leak into a
+      // classic call: it has no WebRTC peer and no browser-audio contract.
+      fakes.requiresWebRtcOffer = true;
+      fakes.browserAudio = true;
+      render(<BrowserRealtimeControl controlOnly />);
+
+      act(() => {
+        expect(startBrowserVoiceCall()).toBe(true);
+      });
+
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      expect(fakes.options).toMatchObject({ requiresWebRtcOffer: false, browserAudio: false });
+      expect(useEventStore.getState().voiceState).toBe("connecting");
+      expect(browserVoiceCallLive()).toBe(true);
+
+      act(() => fakes.callbacks?.onStatus?.("audio_ready", {}));
+      expect(useEventStore.getState().voiceState).toBe("listening");
+      // Pipeline mode hides the realtime surface; it must not hang this up.
+      expect(fakes.disconnect).not.toHaveBeenCalled();
+
+      act(() => {
+        expect(stopBrowserVoiceCall()).toBe(true);
+      });
+      await waitFor(() => expect(fakes.disconnect).toHaveBeenCalledTimes(1));
+      expect(useEventStore.getState().voiceState).toBe("idle");
+      expect(browserVoiceCallLive()).toBe(false);
+    });
+
+    it("reports a failed start as a toast and frees the controls", async () => {
+      fakes.connect.mockRejectedValueOnce(new Error("socket closed"));
+      render(<BrowserRealtimeControl controlOnly />);
+
+      act(() => {
+        startBrowserVoiceCall();
+      });
+
+      await waitFor(() => expect(useEventStore.getState().voiceState).toBe("idle"));
+      // A classic call has no realtime provider to blame; the line points at
+      // the chain it actually runs on.
+      expect(
+        useEventStore.getState().toasts.map(({ kind, message }) => ({ kind, message })),
+      ).toEqual([{ kind: "error", message: "sidebar.browser_voice_error" }]);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(browserVoiceCallLive()).toBe(false);
+    });
+
+    it("shows the server's sentence when the server closes the call", async () => {
+      render(<BrowserRealtimeControl controlOnly />);
+      act(() => {
+        startBrowserVoiceCall();
+      });
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+      act(() =>
+        fakes.callbacks?.onStatus?.("disconnected", {
+          code: 1011,
+          reason: "Voice could not start: a provider is missing. Check API Keys.",
+        }),
+      );
+
+      await waitFor(() => expect(useEventStore.getState().voiceState).toBe("idle"));
+      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toEqual([
+        "Voice could not start: a provider is missing. Check API Keys.",
+      ]);
+      expect(fakes.disconnect).toHaveBeenCalled();
+    });
+
+    it("is owned only by the app-root control", () => {
+      render(<BrowserRealtimeControl />);
+      expect(startBrowserVoiceCall()).toBe(false);
+      expect(stopBrowserVoiceCall()).toBe(false);
+    });
   });
 });
