@@ -95,6 +95,7 @@
       "subtitle": "Agent profile",
       "profile": "Profile & instructions",
       "memory": "Memory files",
+      "look": "Appearance",
       "name": "Name",
       "role": "Role / description",
       "instructions": "System instructions",
