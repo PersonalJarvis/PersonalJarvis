@@ -193,3 +193,23 @@ signing proof still requires hosted runners; local syntax checks cannot prove it
 | Stable release admits a claim before building | `release-gate.yml` |
 | Autofix PRs with a privileged/unprivileged split | not adopted: generated files are regenerated during integration instead |
 | 96-core runners, daily canary tags, Docker/Nix lanes | not adopted: standard runners, releases stay manual, no such artefacts |
+
+## 5. Security scans — `security.yml`, `scorecard.yml`
+
+All free for public repositories, all report into the Security tab beside
+CodeQL's default setup, and none is part of the required `CI gate`:
+
+* **zizmor** audits the workflow files on every pull request and push to
+  main. Accepted exceptions live in `.github/zizmor.yml`, each with its reason;
+  run `zizmor --config .github/zizmor.yml .github/workflows` locally before
+  touching a workflow. Expressions reach a `run:` block through `env:`, never
+  inline, and a checkout keeps its credential only when that job pushes.
+* **dependency-review** fails a pull request that adds a dependency with a
+  known high or critical advisory.
+* **osv-scanner** checks the shipped lockfiles against osv.dev on main and
+  weekly. It reports and never blocks.
+* **OpenSSF Scorecard** publishes a weekly repository security score.
+
+Dependabot covers npm through security updates only. Version updates for the
+frontend stay off for the same reason as pip: a bump also needs a rebuilt
+`dist/` bundle, which Dependabot cannot produce.
