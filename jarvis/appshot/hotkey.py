@@ -237,7 +237,10 @@ class AppshotShortcut:
     @staticmethod
     def _check_combo(hotkey: str) -> ShortcutStatus:
         from jarvis.platform import detect_platform  # noqa: PLC0415
-        from jarvis.platform.probes import has_hotkey  # noqa: PLC0415
+        from jarvis.platform.probes import (  # noqa: PLC0415
+            has_hotkey,
+            hotkey_unavailable_reason,
+        )
         from jarvis.trigger.hotkey import validate_hotkey  # noqa: PLC0415
 
         verdict = validate_hotkey(hotkey)
@@ -252,7 +255,7 @@ class AppshotShortcut:
             return ShortcutStatus(
                 hotkey=hotkey,
                 armed=False,
-                detail="Global shortcuts are not available on this desktop.",
+                detail=hotkey_unavailable_reason(),
             )
         return ShortcutStatus(hotkey=hotkey, armed=True)
 

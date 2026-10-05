@@ -45,6 +45,9 @@ def run(output: Path, language: str = "en") -> int:
     from jarvis.platform.probes import is_wayland
 
     app = QApplication(["Personal Jarvis — Screen recording"])
+    from jarvis.platform.qt_sidecar import hide_from_dock
+
+    hide_from_dock()  # macOS: no "Python" Dock icon for the standby recorder
     app.setQuitOnLastWindowClosed(False)
     labels = LABELS.get(language, LABELS["en"])
 
