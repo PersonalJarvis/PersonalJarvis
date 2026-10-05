@@ -1,0 +1,343 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { ArrowUp, FileText, Image as ImageIcon, Loader2, MessageCircleQuestion, Paperclip, ShieldAlert, Square, X } from "lucide-react";
+import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
+import { runningTurn, type QuestionState, type Timeline, type ToolBlock } from "@/components/agentchat/reduce";
+import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
+import type { ChatAttachment } from "@/lib/agentChatApi";
+import { joinProviderOptions } from "@/store/agentChat";
+import { cn } from "@/lib/utils";
+import { AccessPicker, AgentModelPicker, EffortPicker } from "./ThreadPickers";
+import { threadAgents, useThreadChatStore } from "./threadModel";
+
+/** A message typed while the agent was still working, sent when it is free. */
+interface QueuedMessage {
+  id: number;
+  text: string;
+  attachments: ChatAttachment[];
+}
+
+/** Draft text per thread, so switching threads never loses a half-written message. */
+const drafts = new Map<string, string>();
+
+/** The open question card of the newest turn, if any. */
+function openQuestion(timeline: Timeline): { block: ToolBlock; question: QuestionState } | null {
+  for (let i = timeline.items.length - 1; i >= 0; i--) {
+    const item = timeline.items[i];
+    if (item.type !== "turn") continue;
+    for (const block of item.blocks) {
+      if (block.kind === "tool" && block.question && !block.question.closed) return { block, question: block.question };
+    }
+    return null;
+  }
+  return null;
+}
+
+function ApprovalPanel({ timeline, onDecide }: { timeline: Timeline; onDecide: (id: string, decision: "allow" | "allow_always" | "deny") => void }) {
+  const pending = timeline.pendingApprovals[0];
+  if (!pending) return null;
+  const input = pending.input && typeof pending.input === "object" ? pending.input as Record<string, unknown> : {};
+  const detail = String(input.command ?? input.file_path ?? input.path ?? input.url ?? "");
+  return <div data-testid="thread-approval" className="border-b border-border px-4 py-3">
+    <div className="flex items-start gap-2.5">
+      <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground-strong">Approval needed{timeline.pendingApprovals.length > 1 ? ` (${timeline.pendingApprovals.length})` : ""}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{pending.summary || pending.name}</p>
+        {detail && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-secondary px-2.5 py-1.5 font-mono text-xs text-foreground scrollbar-jarvis">{detail}</pre>}
+      </div>
+    </div>
+    <div className="mt-3 flex flex-wrap justify-end gap-2">
+      <button type="button" onClick={() => onDecide(pending.approvalId, "deny")}
+        className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Decline</button>
+      <button type="button" onClick={() => onDecide(pending.approvalId, "allow_always")}
+        className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Always allow</button>
+      <button type="button" data-testid="thread-approve" onClick={() => onDecide(pending.approvalId, "allow")}
+        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Approve</button>
+    </div>
+  </div>;
+}
+
+function QuestionPanel({ timeline }: { timeline: Timeline }) {
+  const open = openQuestion(timeline);
+  const [text, setText] = useState("");
+  const [error, setError] = useState("");
+  const [sending, setSending] = useState(false);
+  if (!open) return null;
+  const { question } = open;
+  const index = question.answers.findIndex((answer) => answer === null);
+  if (index < 0) return null;
+  const item = question.questions[index];
+  const answer = async (payload: { optionIndex: number } | { text: string }) => {
+    setSending(true);
+    setError("");
+    try {
+      await useThreadChatStore.getState().answerQuestion(question.questionId, index, payload);
+      setText("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  };
+  return <div data-testid="thread-question" className="border-b border-border px-4 py-3">
+    <div className="flex items-start gap-2.5">
+      <MessageCircleQuestion aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+      <div className="min-w-0 flex-1">
+        <p className="text-xs text-muted-foreground">{question.asker || "The agent"} asks{question.questions.length > 1 ? ` · ${index + 1} of ${question.questions.length}` : ""}</p>
+        <p className="mt-0.5 text-sm font-medium text-foreground-strong">{item.question}</p>
+        <div className="mt-2 flex flex-col gap-1">
+          {item.options.map((option, optionIndex) => <button key={optionIndex} type="button" disabled={sending}
+            onClick={() => void answer({ optionIndex })}
+            className="flex w-full items-start gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-secondary disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <span className="min-w-0 flex-1"><span className="text-foreground">{option.label}</span>
+              {option.description && <span className="block text-xs text-muted-foreground">{option.description}</span>}</span>
+            {optionIndex === 0 && <span className="shrink-0 text-xs text-accent">Recommended</span>}
+          </button>)}
+        </div>
+        <form className="mt-2 flex gap-2" onSubmit={(event) => { event.preventDefault(); if (text.trim()) void answer({ text: text.trim() }); }}>
+          <input value={text} onChange={(event) => setText(event.target.value)} placeholder="Or type your own answer" disabled={sending}
+            className="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          <button type="button" disabled={sending} onClick={() => void useThreadChatStore.getState().skipQuestion(question.questionId).catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))}
+            className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary">Skip</button>
+        </form>
+        {error && <p role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
+      </div>
+    </div>
+  </div>;
+}
+
+/**
+ * The thread's composer: a rounded card with the text box, the files that
+ * will go with the message, and one row of picks — agent and model, effort,
+ * access — beside the paperclip and the send button. An approval or a
+ * question the agent is waiting on opens at the top of the card, where the
+ * person's eyes already are.
+ *
+ * `prepareDraft` runs before a NEW thread's first message and says which
+ * folder the thread starts in (its project, or a fresh worktree of it);
+ * returning null cancels the send.
+ */
+export function ThreadComposer({
+  threadKey,
+  prepareDraft,
+  placeholder = "Ask for changes, send follow-ups, or attach images",
+  autoFocusNonce,
+}: {
+  /** Which thread the box is typing for — the session id, or `draft:<project>`. */
+  threadKey: string;
+  prepareDraft: () => Promise<string | null>;
+  placeholder?: string;
+  autoFocusNonce: number;
+}) {
+  const draft = useThreadChatStore((state) => state.draft);
+  const timeline = useThreadChatStore((state) => state.timeline);
+  const activeSessionId = useThreadChatStore((state) => state.activeSessionId);
+  const activeSession = useThreadChatStore((state) => state.activeSession);
+  const catalog = useThreadChatStore((state) => state.catalog);
+  const connections = useThreadChatStore((state) => state.connections);
+  const liveModels = useThreadChatStore((state) => state.liveModels);
+  const busy = useThreadChatStore((state) => state.busy);
+  const lastError = useThreadChatStore((state) => state.lastError);
+  const [value, setValueState] = useState(() => drafts.get(threadKey) ?? "");
+  const [queue, setQueue] = useState<QueuedMessage[]>([]);
+  const [problem, setProblem] = useState("");
+  const [starting, setStarting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+  const queueId = useRef(0);
+
+  const providers = useMemo(
+    () => threadAgents(catalog ? joinProviderOptions(catalog.providers, connections) : []),
+    [catalog, connections],
+  );
+  const provider = providers.find((option) => option.id === draft.provider) ?? null;
+  const running = runningTurn(timeline) !== null || Boolean(activeSession?.running);
+  const started = timeline.items.length > 0;
+
+  // A coding thread only runs on a coding agent: an API row left in the draft
+  // from elsewhere moves to the first connected CLI.
+  useEffect(() => {
+    if (activeSessionId || providers.length === 0) return;
+    if (providers.some((option) => option.id === draft.provider && option.connected)) return;
+    const pick = providers.find((option) => option.connected) ?? providers[0];
+    if (pick && pick.id !== draft.provider) void useThreadChatStore.getState().setDraft({ provider: pick.id });
+  }, [activeSessionId, providers, draft.provider]);
+
+  const setValue = useCallback((next: string) => {
+    setValueState(next);
+    drafts.set(threadKey, next);
+  }, [threadKey]);
+
+  // Another thread: its own half-written text, its own queue.
+  useEffect(() => {
+    setValueState(drafts.get(threadKey) ?? "");
+    setQueue([]);
+    setProblem("");
+  }, [threadKey]);
+
+  useEffect(() => {
+    if (autoFocusNonce > 0) textareaRef.current?.focus();
+  }, [autoFocusNonce]);
+
+  // Grow with the text, up to a third of the window.
+  useEffect(() => {
+    const box = textareaRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight, Math.max(160, window.innerHeight / 3))}px`;
+  }, [value]);
+
+  const files = useChatAttachments(
+    { sessionId: activeSessionId, cwd: draft.cwd, provider: draft.provider, surface: "agent" },
+    (message) => setProblem(message),
+  );
+  const triggers = useMemo(() => provider?.typeahead ?? [], [provider]);
+  const typeahead = useComposerTypeahead(textareaRef, value, setValue, {
+    surface: "agent",
+    provider: draft.provider,
+    cwd: draft.cwd,
+    triggers,
+  });
+
+  const dispatch = useCallback(async (text: string, attachments: ChatAttachment[]) => {
+    const store = useThreadChatStore.getState();
+    if (!store.activeSessionId) {
+      setStarting(true);
+      try {
+        const cwd = await prepareDraft();
+        if (cwd === null) return false;
+        if (cwd !== store.draft.cwd) await store.setDraft({ cwd });
+      } catch (error) {
+        setProblem(error instanceof Error ? error.message : String(error));
+        return false;
+      } finally {
+        setStarting(false);
+      }
+    }
+    await useThreadChatStore.getState().send(text, attachments);
+    return !useThreadChatStore.getState().lastError;
+  }, [prepareDraft]);
+
+  // A queued message goes out the moment the agent is free again.
+  useEffect(() => {
+    if (running || busy || starting || queue.length === 0 || !activeSessionId) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    void dispatch(next.text, next.attachments);
+  }, [running, busy, starting, queue, activeSessionId, dispatch]);
+
+  const submit = async () => {
+    const text = value.trim();
+    if (!text && files.attachments.length === 0) return;
+    if (files.analyzing > 0 || starting) return;
+    if (!provider || !provider.connected) {
+      setProblem("Choose a connected coding agent first.");
+      return;
+    }
+    const attachments = files.attachments;
+    setValue("");
+    files.clear();
+    setProblem("");
+    if (running || busy) {
+      setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
+      return;
+    }
+    const sent = await dispatch(text, attachments);
+    if (!sent && !useThreadChatStore.getState().activeSessionId) {
+      // Nothing was created: give the words back instead of losing them.
+      setValue(text);
+    }
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (typeahead.onKeyDown(event)) return;
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void submit();
+    }
+  };
+
+  const decide = (approvalId: string, decision: "allow" | "allow_always" | "deny") => {
+    void useThreadChatStore.getState().decide(approvalId, decision);
+  };
+
+  const canSend = (value.trim().length > 0 || files.attachments.length > 0) && files.analyzing === 0 && !starting;
+  const error = problem || lastError || "";
+
+  return <div className="mx-auto w-full max-w-3xl">
+    {queue.length > 0 && <div className="mb-2 flex flex-col gap-1 px-2" data-testid="thread-queue">
+      {queue.map((entry) => <div key={entry.id} className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm">
+        <span className="shrink-0 text-xs text-muted-foreground">Queued</span>
+        <span className="min-w-0 flex-1 truncate text-foreground">{entry.text || `${entry.attachments.length} file(s)`}</span>
+        <button type="button" aria-label="Remove queued message" onClick={() => setQueue((current) => current.filter((row) => row.id !== entry.id))}
+          className="rounded p-0.5 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
+      </div>)}
+    </div>}
+    <div ref={cardRef} {...files.dragHandlers}
+      className={cn(
+        "relative overflow-hidden rounded-3xl border border-border bg-card shadow-rim transition-colors focus-within:border-border-strong",
+        files.dragging && "border-accent ring-2 ring-accent/40",
+      )}>
+      <ApprovalPanel timeline={timeline} onDecide={decide} />
+      <QuestionPanel timeline={timeline} />
+      {(files.attachments.length > 0 || files.analyzing > 0) && <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+        {files.attachments.map((file) => <span key={file.name} className="inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground" title={file.note || file.name}>
+          {file.kind === "image" ? <ImageIcon aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <FileText aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+          <span className="truncate">{file.name}</span>
+          <button type="button" aria-label={`Remove ${file.name}`} onClick={() => files.remove(file.name)} className="rounded text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></button>
+        </span>)}
+        {files.analyzing > 0 && <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading {files.analyzing} file{files.analyzing === 1 ? "" : "s"}…</span>}
+      </div>}
+      <textarea ref={textareaRef} value={value} rows={2} data-testid="thread-composer-input"
+        aria-label="Message the coding agent"
+        placeholder={running ? "Queue a follow-up for when the agent is done" : placeholder}
+        onChange={(event) => { setValue(event.target.value); typeahead.refresh(); }}
+        onKeyDown={onKeyDown}
+        onKeyUp={() => typeahead.refresh()}
+        onClick={() => typeahead.refresh()}
+        onBlur={() => typeahead.blur()}
+        onPaste={files.onPaste}
+        className="block max-h-[40vh] min-h-[56px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-base leading-6 text-foreground outline-none placeholder:text-faint-foreground" />
+      <div className="flex items-center gap-1 px-2 pb-2 pt-1">
+        <AgentModelPicker providers={providers} liveModels={liveModels} draft={draft}
+          lockedProvider={started && activeSessionId ? draft.provider : null}
+          onPick={(nextProvider, model) => {
+            const store = useThreadChatStore.getState();
+            void store.setDraft(nextProvider !== draft.provider ? { provider: nextProvider, model } : { model });
+          }} />
+        <EffortPicker provider={provider} draft={draft} liveModels={liveModels}
+          onPick={(effort) => void useThreadChatStore.getState().setDraft({ effort })} />
+        <AccessPicker provider={provider} draft={draft}
+          onPick={(permissionMode) => void useThreadChatStore.getState().setDraft({ permissionMode })} />
+        <div className="ml-auto flex items-center gap-1">
+          <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
+            const picked = Array.from(event.target.files ?? []);
+            if (picked.length) files.attachFiles(picked);
+            event.target.value = "";
+          }} />
+          <button type="button" aria-label="Attach files" title="Attach files or images" onClick={() => fileInput.current?.click()}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Paperclip className="h-4 w-4" />
+          </button>
+          {running && !canSend
+            ? <button type="button" aria-label="Stop the agent" title="Stop" data-testid="thread-stop"
+              onClick={() => void useThreadChatStore.getState().cancel()}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Square className="h-3 w-3 fill-current" />
+            </button>
+            : <button type="button" aria-label={running ? "Queue message" : "Send message"} title={running ? "Queue for when the agent is done" : "Send"}
+              data-testid="thread-send" disabled={!canSend} onClick={() => void submit()}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              {starting || busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
+            </button>}
+        </div>
+      </div>
+    </div>
+    {error && <p role="alert" className="mt-2 px-3 text-xs text-destructive">{error}</p>}
+    <ComposerTypeahead anchorRef={cardRef} open={typeahead.open} trigger={typeahead.token?.trigger ?? null}
+      items={typeahead.items} loading={typeahead.loading} activeIndex={typeahead.activeIndex}
+      onHover={typeahead.setActiveIndex} onPick={typeahead.pick} />
+  </div>;
+}

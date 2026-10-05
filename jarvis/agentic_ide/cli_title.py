@@ -145,7 +145,32 @@ def _recorded(term: Any) -> str:
         return ""
     # Lifetime id, like the recap cache: two workspaces can each hold a "t5".
     pane = str(getattr(term, "history_id", "") or getattr(term, "key", "") or "")
-    key = (pane, session_id)
+    return _cached_title((pane, session_id), agent, session_id, _home(term))
+
+
+def session_title(agent: str, session_id: str, account_id: str = "") -> str:
+    """The title a CLI gave the conversation ``session_id``, or "" when it has none.
+
+    For a chat thread rather than a pane: the thread knows its CLI, the
+    vendor's session id and the subscription seat it runs on, but has no
+    terminal and therefore no window title. Same records, same cache.
+    """
+    try:
+        agent = (agent or "").strip().lower()
+        session_id = (session_id or "").strip()
+        if agent not in ("claude", "codex") or not session_id:
+            return ""
+        if "/" in session_id or "\\" in session_id:
+            return ""
+        home = _account_home(agent, account_id)
+        return _clip(_cached_title(("thread", session_id), agent, session_id, home))
+    except Exception as exc:  # noqa: BLE001 - a title must never break a session list
+        logger.debug("Agentic IDE: CLI title of thread {} unreadable: {}", session_id, exc)
+        return ""
+
+
+def _cached_title(key: tuple[str, str], agent: str, session_id: str, home: Path | None) -> str:
+    """The title cached under ``key``, refreshed from the CLI's record on a slow clock."""
     entry = _records.get(key)
     if entry is None:
         if len(_records) >= MAX_ENTRIES:
@@ -155,7 +180,6 @@ def _recorded(term: Any) -> str:
     if entry.inflight or (entry.checked_at and now - entry.checked_at < RECHECK_S):
         return entry.title
     entry.inflight = True
-    home = _home(term)
 
     def _read() -> None:
         try:
@@ -265,6 +289,24 @@ def _home(term: Any) -> Path | None:
         return agent_accounts.config_dir_for(agent, account)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001 - the default home is the honest fallback
         logger.debug("Agentic IDE: account folder for {} is unknown: {}", agent, exc)
+        return None
+
+
+def _account_home(agent: str, account_id: str) -> Path | None:
+    """The config dir a chat thread's CLI writes its record to.
+
+    A thread with no seat of its own runs on the platform's active account,
+    so that account's folder is where its record lands.
+    """
+    try:
+        from jarvis import agent_accounts
+
+        if agent not in agent_accounts.platforms():
+            return None
+        seat = account_id or agent_accounts.active_account(agent).id  # type: ignore[arg-type]
+        return agent_accounts.config_dir_for(agent, seat)  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001 - the default home is the honest fallback
+        logger.debug("Agentic IDE: account folder for thread on {} is unknown: {}", agent, exc)
         return None
 
 

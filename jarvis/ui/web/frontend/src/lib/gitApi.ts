@@ -132,6 +132,47 @@ export async function inspectGit(folder: string, signal?: AbortSignal): Promise<
   return (await res.json()) as GitRepoInfo;
 }
 
+/** A changed path under a folder, relative to it (`GET /changes`). */
+export interface FolderChange {
+  path: string;
+  status: "modified" | "added" | "deleted" | "untracked" | "conflicted";
+  added: number | null;
+  removed: number | null;
+  is_directory: boolean;
+}
+
+export interface FolderChanges {
+  available: boolean;
+  branch: string;
+  files: FolderChange[];
+  truncated: boolean;
+  reason: string;
+}
+
+export interface FolderDiff {
+  path: string;
+  status: string;
+  binary: boolean;
+  added: number;
+  removed: number;
+  hunks: { header: string; lines: { kind: "add" | "del" | "ctx"; text: string; old_no: number | null; new_no: number | null }[] }[];
+  truncated: boolean;
+}
+
+/** What changed under a folder that no workspace has open — a thread's checkout. */
+export async function fetchFolderChanges(folder: string, signal?: AbortSignal): Promise<FolderChanges> {
+  const res = await fetch(`${BASE}/changes?folder=${encodeURIComponent(folder)}`, { signal });
+  if (!res.ok) throw await failure(res);
+  return (await res.json()) as FolderChanges;
+}
+
+/** How one file under `folder` differs from the last commit. */
+export async function fetchFolderDiff(folder: string, path: string, signal?: AbortSignal): Promise<FolderDiff> {
+  const res = await fetch(`${BASE}/diff?folder=${encodeURIComponent(folder)}&path=${encodeURIComponent(path)}`, { signal });
+  if (!res.ok) throw await failure(res);
+  return (await res.json()) as FolderDiff;
+}
+
 export function prepareGit(folder: string, plan: GitPlan): Promise<GitPrepared> {
   return post<GitPrepared>("/prepare", { folder, mode: plan.mode, branch: plan.branch, base: plan.base });
 }

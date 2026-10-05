@@ -24,6 +24,8 @@ import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSkillsStore } from "@/store/ideSkills";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { ThreadView } from "@/components/agentic/threads/ThreadView";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
@@ -74,6 +76,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
   const paneRequest = useIdeChatStore((state) => state.paneRequest);
   const setStagedPane = useIdeChatStore((state) => state.setStagedPane);
+  // Grid of terminals, or one thread at a time (see store/ideThreads).
+  const layout = useIdeThreadsStore((state) => state.layout);
+  const threads = layout === "threads";
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
@@ -308,6 +313,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
     const found = listing.projects.find((entry) => entry.id === project.id);
+    // In the thread layout a new project starts a thread, not a workspace.
+    if (found && useIdeThreadsStore.getState().layout === "threads") { useIdeThreadsStore.getState().newThread(found.id); setProjectDialog(false); return; }
     if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(found.id)); }
     setProjectDialog(false);
   };
@@ -459,7 +466,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
   // key menu. Pane commands go to the grid that owns the pane; the rest are
   // the same calls the buttons and the sidebar make.
-  const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
+  const hotkeysEnabled = onScreen && !threads && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
   const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
   const sendPaneCommand = (command: PaneCommand) => {
     if (!session || !selected) return;
@@ -549,7 +556,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
-      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {threads && <ThreadView onScreen={onScreen} />}
+      {/* The grid stays mounted behind the threads: its terminals keep running
+          and come back exactly as they were when the layout switches back. */}
+      <div hidden={threads} className="h-full min-h-0">
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -558,6 +569,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
         <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
       </div>}
+      </div>
       </IdeSidePanelFrame>
     </main>
 

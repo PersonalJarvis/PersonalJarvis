@@ -777,9 +777,35 @@ def list_sessions(
             continue
         d = s.to_dict()
         d["running"] = svc.is_running(s.session_id)
+        if s.surface == "agent":
+            d["pending_approvals"] = svc.pending_approvals(s.session_id)
+            d["cli_title"] = _cli_title(svc, s)
         out.append(d)
     _title_jarvis_chats(request, svc, out)
     return {"sessions": out}
+
+
+def _cli_title(svc: Any, session: Any) -> str:
+    """The name the coding CLI gave a thread's conversation itself, or "".
+
+    Claude Code and Codex title their own sessions on their own subscription;
+    a thread shows that name the way a terminal pane does. A title the person
+    typed wins, so the CLI's is only offered while the stored one is still
+    the first message's.
+    """
+    if not session.vendor_session:
+        return ""
+    from jarvis.agent_chat.catalog import provider_row
+    from jarvis.agentic_ide import cli_title
+
+    row = provider_row(session.provider)
+    agent = row.agent if row is not None else ""
+    if agent not in ("claude", "codex"):
+        return ""
+    title = cli_title.session_title(agent, session.vendor_session, session.account_id)
+    if not title or not svc.store.title_is_automatic(session):
+        return ""
+    return title
 
 
 def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:

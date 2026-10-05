@@ -274,6 +274,26 @@ class AgentChatStore:
                 ).fetchall()
         return [self._row_to_session(r) for r in rows]
 
+    def title_is_automatic(self, session: AgentChatSession) -> bool:
+        """Whether ``session``'s title is still the one its first message gave it.
+
+        A title the person typed differs from that; a session with no message
+        yet has nothing to compare and counts as automatic.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload FROM agent_chat_events WHERE session_id = ? "
+                "AND kind IN ('user_message', 'agent_message') ORDER BY seq ASC LIMIT 1",
+                (session.session_id,),
+            ).fetchone()
+        if row is None:
+            return True
+        try:
+            text = str((json.loads(row["payload"]) or {}).get("text") or "")
+        except (TypeError, ValueError, AttributeError):
+            return True
+        return session.title == _title_from(text)
+
     def list_sessions_matching(
         self, prefix: str, suffix: str = "", *, limit: int = 200
     ) -> list[AgentChatSession]:

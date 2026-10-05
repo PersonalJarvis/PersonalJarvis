@@ -3,6 +3,8 @@
 Endpoints (all under ``/api/agentic-ide/git``)::
 
     GET  /inspect             Branch, changes, ahead/behind, branches, worktrees
+    GET  /changes             Changed files under a folder, with line counts
+    GET  /diff                One file's change against the last commit
     GET  /overview            A workspace's branches with merged-into, PR and CI state
     GET  /github/repos        The person's GitHub repositories, for the one-time pick
     PUT  /github/binding      Remember which GitHub repository a workspace folder is
@@ -25,10 +27,12 @@ UI can offer the follow-up it has for that code (``dirty`` → "remove anyway?")
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import git_ops, git_overview, github_link, github_status
+from jarvis.agentic_ide import git_changes, git_ops, git_overview, github_link, github_status
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import account_home, get_registry
 from jarvis.agentic_ide.session_branches import PaneBranchRecord
@@ -75,6 +79,23 @@ def inspect_folder(folder: str = Query(..., min_length=1)) -> dict:
         return git_ops.inspect(folder).to_dict()
     except GitError as exc:
         raise _fail(exc) from exc
+
+
+@router.get("/changes", summary="Changed files under a folder, with line counts")
+def folder_changes(folder: str = Query(..., min_length=1)) -> dict:
+    """What a thread's diff panel lists — the same reading as a workspace's
+    Changes tab, for a folder no workspace has open (a thread's worktree)."""
+    return asdict(git_changes.workspace_changes(folder))
+
+
+@router.get("/diff", summary="How one file under a folder differs from the last commit")
+def folder_file_diff(
+    folder: str = Query(..., min_length=1), path: str = Query(..., min_length=1)
+) -> dict:
+    try:
+        return asdict(git_changes.file_diff(folder, path))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.get("/overview", summary="Branches of a workspace's repository with PR and CI state")

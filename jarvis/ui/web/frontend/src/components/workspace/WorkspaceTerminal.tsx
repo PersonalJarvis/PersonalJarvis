@@ -7,6 +7,7 @@
  * Conventions copied from PtyTerminal: xterm instance in a ref (never state, or
  * it rerenders per chunk), dispose() on unmount (WebGL context cap).
  */
+import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -44,6 +45,18 @@ interface WorkspaceTerminalProps {
   installName?: string;
   /** Plain terminals are pinned to the workspace chosen when the tab opens. */
   workspaceId?: string;
+  /**
+   * Or to a folder of their own — a thread's terminal drawer, whose folder may
+   * be a worktree no workspace has open. Ignored when `workspaceId` is set.
+   */
+  folder?: string;
+  /**
+   * Typed into the shell once, the first time it is ready — a project action
+   * ("npm run dev") opened in a fresh terminal. End it with "\r" to run it.
+   */
+  initialInput?: string;
+  /** No header or frame: the host draws its own tabs around the terminal. */
+  bare?: boolean;
   active?: boolean;
   appearance?: TerminalAppearance;
   /**
@@ -75,6 +88,9 @@ export function WorkspaceTerminal({
   title,
   banner,
   workspaceId,
+  folder,
+  initialInput,
+  bare = false,
   active = true,
   appearance: requestedAppearance,
 }: WorkspaceTerminalProps) {
@@ -97,6 +113,9 @@ export function WorkspaceTerminal({
   // PTY down and restart the installer whenever the string changed identity.
   const bannerRef = useRef(banner);
   bannerRef.current = banner;
+  // Same reason: the input is sent once at `ready`, never a reason to respawn.
+  const initialInputRef = useRef(initialInput);
+  initialInputRef.current = initialInput;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -175,6 +194,7 @@ export function WorkspaceTerminal({
       if (agentName) params.agent = agentName;
       else if (installName) params.install = installName;
       if (workspaceId) params.workspace_id = workspaceId;
+      else if (folder) params.folder = folder;
 
       ws = new WebSocket(buildUrl(paneKey, params));
       ws.onopen = () => {
@@ -197,9 +217,14 @@ export function WorkspaceTerminal({
         }
         if (msg.t === "o") term.write(msg.d ?? "");
         else if (msg.t === "ready") {
+          const firstReady = !everLive;
           everLive = true;
           setStatus("live");
           if (activeRef.current) term.focus();
+          const input = initialInputRef.current;
+          if (firstReady && input && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: "i", d: input }));
+          }
         } else if (msg.t === "exit") {
           setStatus("exited");
           term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
@@ -255,7 +280,7 @@ export function WorkspaceTerminal({
       term.dispose();
       termRef.current = null;
     };
-  }, [paneKey, agentName, installName, workspaceId]);
+  }, [paneKey, agentName, installName, workspaceId, folder]);
 
   useEffect(() => {
     if (!active) return;
@@ -293,10 +318,10 @@ export function WorkspaceTerminal({
   return (
     <div
       {...dragHandlers}
-      className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-border"
+      className={cn("relative flex h-full w-full flex-col overflow-hidden", !bare && "rounded-lg border border-border")}
       style={{ background: PANE_CHROME[appearance].shell }}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-1.5">
+      {!bare && <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-1.5">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono">{title}</span>
@@ -315,7 +340,7 @@ export function WorkspaceTerminal({
             <span className="text-muted-foreground">connecting…</span>
           )}
         </span>
-      </header>
+      </header>}
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
       {dragging && carrying === "skill" && <SkillDropCard skill={skillInFlight} target={title}
         blocked={Boolean(skillInFlight?.multiline) && !termRef.current?.modes.bracketedPasteMode} />}

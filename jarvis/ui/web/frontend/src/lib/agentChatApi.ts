@@ -149,6 +149,12 @@ export interface AgentChatSession {
   preview: string;
   running?: boolean;
   pending_approvals?: string[];
+  /**
+   * The name the coding CLI gave this conversation itself (Claude Code's
+   * session title, Codex's thread name) — set on the IDE's own sessions while
+   * the stored title is still the first message's; absent otherwise.
+   */
+  cli_title?: string;
 }
 
 export const INTERNAL_DELIVERY_STATUSES = ["queued", "delivered", "failed"] as const;
