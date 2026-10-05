@@ -23,6 +23,7 @@ import asyncio
 import base64
 import io
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,8 @@ _LABELS: dict[str, dict[str, str]] = {
         "copied": "Copied",
         "saved": "Saved to Downloads",
         "failed": "That did not work",
+        "no_access": "No permission to save in Downloads",
+        "no_access_mac": "Allow Downloads in Privacy & Security > Files and Folders",
         "gone": "No longer kept",
         "text_copied": "Text copied",
         "no_text": "No text found",
@@ -57,6 +60,8 @@ _LABELS: dict[str, dict[str, str]] = {
         "copied": "Kopiert",  # i18n-allow: product UI string
         "saved": "In Downloads gespeichert",  # i18n-allow: product UI string
         "failed": "Das hat nicht geklappt",  # i18n-allow: product UI string
+        "no_access": "Keine Berechtigung für Downloads",  # i18n-allow: product UI string
+        "no_access_mac": "Downloads in Dateien und Ordner erlauben",  # i18n-allow: UI
         "gone": "Nicht mehr aufbewahrt",  # i18n-allow: product UI string
         "text_copied": "Text kopiert",  # i18n-allow: product UI string
         "no_text": "Kein Text gefunden",  # i18n-allow: product UI string
@@ -72,6 +77,8 @@ _LABELS: dict[str, dict[str, str]] = {
         "copied": "Copiado",  # i18n-allow: product UI string
         "saved": "Guardado en Descargas",  # i18n-allow: product UI string
         "failed": "No ha funcionado",  # i18n-allow: product UI string
+        "no_access": "Sin permiso para guardar en Descargas",  # i18n-allow: product UI string
+        "no_access_mac": "Permite Descargas en Archivos y carpetas",  # i18n-allow: UI
         "gone": "Ya no se conserva",  # i18n-allow: product UI string
         "text_copied": "Texto copiado",  # i18n-allow: product UI string
         "no_text": "No se encontró texto",  # i18n-allow: product UI string
@@ -186,6 +193,11 @@ async def run_card_action(action: str, shot_id: str = "") -> str:
             path = await asyncio.to_thread(save_shot_to_downloads, shot)
             log.info("appshot: card saved %s", path.name)
             return labels["saved"]
+    except PermissionError:
+        # macOS asks once for Downloads (Files and Folders); a "Don't Allow"
+        # lands here, and the card says where to change it.
+        log.warning("appshot: no permission to write into Downloads", exc_info=True)
+        return labels["no_access_mac" if sys.platform == "darwin" else "no_access"]
     except Exception:  # noqa: BLE001 - the card says so; nothing else depends on it
         log.warning("appshot: card action %r failed", action, exc_info=True)
         return labels["failed"]
