@@ -722,7 +722,17 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The gate rides on the executor's per-call tier hook, so the chat
         # card and the queue stay the one approval path.
         picked = {
-            name: cast(Tool, _GatedTool(tool, agent, cap_id, approval_mode, rt))
+            name: cast(
+                Tool,
+                _GatedTool(
+                    tool,
+                    agent,
+                    cap_id,
+                    approval_mode,
+                    rt,
+                    session_id=str(getattr(session, "session_id", "") or ""),
+                ),
+            )
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
