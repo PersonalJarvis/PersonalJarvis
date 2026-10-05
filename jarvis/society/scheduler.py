@@ -252,6 +252,17 @@ class SocietyScheduler:
             room = await rooms.get(room_id)
             if room is None or room.state is not RoomState.RUNNING or not room.live:
                 return
+            target_id = room.inflight_member or room.next_speaker
+            if not target_id:
+                await rooms.fail(room_id, reason=str(FailureReason.INTERNAL_ERROR))
+                return
+            target = await self._roster.resolve(target_id)
+            if target is None or target.state is AgentState.ARCHIVED:
+                await rooms.fail(room_id, reason=str(FailureReason.TARGET_UNKNOWN))
+                return
+            if target.state is AgentState.PAUSED:
+                await rooms.fail(room_id, reason=str(FailureReason.TARGET_PAUSED))
+                return
             had_claim = bool(room.inflight_claim_id)
             if not had_claim and self.active_runs(target.agent_id) >= target.max_concurrent_runs:
                 return
