@@ -157,8 +157,10 @@ own-client stays an expert override only. Every catalog change keeps
 `docs/marketplace/plugin-auth-audit.md` and `scripts/ci/check_plugin_auth_contract.py`
 green; provider error bodies never reach logs, UI, or storage (AP-34).
 Keep `docs/marketplace/plugin-e2e-audit.json` backed by real browser evidence;
-new built-ins require PASS and release qualification uses the auth gate's
-`--require-e2e-pass` option. BLOCKED never means provider-verified or complete.
+new built-ins require PASS, and a plugin ships as `acceptance: "verified"` only
+with a completed PASS; every other one ships labeled "preview" in the app.
+Release qualification runs the auth gate with `--require-e2e-pass`, which also
+makes every PASS ship as verified. BLOCKED never means provider-verified or complete.
 
 The rest of the register, one line each, because code comments cite these
 numbers: never hardcode an Anthropic/Claude client (AP-6); keep awareness and

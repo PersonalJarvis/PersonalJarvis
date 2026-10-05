@@ -118,46 +118,30 @@ def _exercise(
     return result, commands
 
 
-@pytest.mark.parametrize(
-    "ref,strict",
-    [
-        ("refs/tags/v2.9.0", False),
-        ("refs/tags/v2.9.1", True),
-        ("refs/tags/v2.10.0", True),
-        ("refs/tags/v2.9.0-rc.1", True),
-        ("refs/tags/v2.9.00", True),
-        ("refs/heads/v2.9.0", True),
-        ("refs/heads/main", True),
-        ("", True),
-    ],
-)
-def test_plugin_acceptance_exception_is_exactly_one_release(tmp_path, ref, strict):
+_QUALIFY = "Qualify plugin auth and disclose preview plugins"
+
+
+def test_release_qualification_is_strict_with_no_per_tag_exception(tmp_path):
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/ci.yml").read_text("utf-8")
+    assert "refs/tags/v2.9.0" not in workflow  # the one-time exception is gone
     result, commands = _exercise(
         tmp_path,
-        ["Qualify plugin auth with the v2.9.0 exception"],
+        [_QUALIFY],
         workflow_name="ci.yml",
         job_id="release-qualification",
-        RELEASE_REF=ref,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    command = "python scripts/ci/check_plugin_auth_contract.py"
-    assert commands == [command + (" --require-e2e-pass" if strict else "")]
-    summary = tmp_path / "summary.txt"
-    if strict:
-        assert not summary.exists()
-    else:
-        assert "no plugin E2E PASS is asserted" in result.stdout
-        assert "Existing audit results remain unchanged" in summary.read_text("utf-8")
+    assert commands == ["python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass"]
+    assert (tmp_path / "summary.txt").exists()
 
 
-@pytest.mark.parametrize("ref", ["refs/tags/v2.9.0", "refs/tags/v2.9.1"])
-def test_plugin_exception_never_ignores_a_failing_auth_contract(tmp_path, ref):
+def test_release_qualification_fails_on_a_failing_auth_contract(tmp_path):
     result, _commands = _exercise(
         tmp_path,
-        ["Qualify plugin auth with the v2.9.0 exception"],
+        [_QUALIFY],
         workflow_name="ci.yml",
         job_id="release-qualification",
-        RELEASE_REF=ref,
         ADMIT_EXIT="1",
     )
     assert result.returncode != 0

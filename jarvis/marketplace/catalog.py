@@ -175,6 +175,15 @@ CATEGORY_ORDER: tuple[str, ...] = (
 #                      cannot extend; `longevity_note` must say how often
 Longevity = Literal["permanent", "self_renewing", "provider_limited"]
 
+# Whether the full browser journey of a plugin was observed end to end
+# (docs/marketplace/plugin-e2e-audit.json). Rendered as a badge on the card.
+#   verified - a completed PASS row exists for the current auth/execution
+#              configuration; scripts/ci/check_plugin_auth_contract.py
+#              rejects this label on any other row
+#   preview  - shipped, but not yet proven end to end; sign-in may still need
+#              publisher setup. The default, so nothing is verified by omission.
+Acceptance = Literal["verified", "preview"]
+
 
 class PluginSpec(_BaseAuth):
     id: str
@@ -208,6 +217,10 @@ class PluginSpec(_BaseAuth):
     # `provider_limited` ("Google requires re-approval every 7 days while the
     # OAuth app is in Testing mode"), optional otherwise.
     longevity_note: str | None = None
+    # End-to-end acceptance label (see `Acceptance`). Only the seed catalog
+    # sets "verified"; community and uploaded entries carry their own
+    # not-reviewed badges instead.
+    acceptance: Acceptance = "preview"
     # Which `<family>_oauth_client_id` secret pair overrides this plugin's
     # catalog client, for providers where the downloader must register their
     # own OAuth app. Lives here so a new plugin stays a catalog-only change:
