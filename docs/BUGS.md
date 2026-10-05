@@ -12941,14 +12941,14 @@ account, Claude only) → $12.6k API-equivalent across two seats, Codex, Kimi
 and Grok Build; unpriced tokens 16.7M → agy's 1.4M (the one CLI that writes
 no model id, named as such).
 
-**Still open, deliberately.** GLM panes run the Claude binary against z.ai
-with no config dir of their own and are counted as Claude Code at Anthropic
-rates (12× too high) — a spawn-side fix (own `CLAUDE_CONFIG_DIR`), T3. A
-chat turn or mission worker that drives a vendor CLI is counted once by its
-surface and once by the index; latent while the chat store holds one turn,
-needs the vendor session id persisted on both sides. Per-account
-attribution ("which seat burned this") needs an account column. An
-index-state endpoint ("63 % of 12.7 GB read") does not exist yet.
+**Resolved for GLM, remaining cost-audit debt explicit.** GLM panes now
+use a dedicated Claude config root under the active Jarvis data dir and the
+usage index has a distinct `glm-cli` reader identity, so GLM transcripts cannot
+be attributed to the user's Claude Code root. The cost model also prices the
+current Z.ai GLM families separately and labels `glm-cli` as a subscription
+runner. Remaining items are independent: chat/mission CLI usage deduplication
+needs a shared vendor-session identity, per-account attribution needs an
+account column, and an index-state endpoint is still absent.
 
 **Lesson.** A spend report has as many readers as the app has ways to spend,
 and every reader is a place to be wrong in its own way. The audit that found
