@@ -104,7 +104,14 @@ def test_honest_note_when_move_refused_and_stuck_on_secondary(monkeypatch):
 
 
 def test_foreground_window_non_windows_is_title_only(monkeypatch):
+    # An X11 desktop without xdotool degrades to a title-only window. The
+    # display, the session type and xdotool are pinned here instead of read
+    # from the host: on a Linux CI runner without a display the real probes
+    # took the "no window identity" branch and the result was None.
     monkeypatch.setattr(ws, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ws, "is_wayland", lambda: False)
+    monkeypatch.setattr(ws, "display_present", lambda: True)
+    monkeypatch.setattr(ws.shutil, "which", lambda _name, *_args, **_kwargs: None)
     monkeypatch.setattr(ws, "get_foreground_title", lambda: "Some App")
     win = ws.foreground_window()
     assert win is not None
