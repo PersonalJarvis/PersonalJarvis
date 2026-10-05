@@ -391,6 +391,8 @@ class CliTurn:
     tokens_cached: int
     cwd: str
     label: str
+    #: Stable account identity for the transcript root; empty when unknown.
+    account_id: str = ""
     #: What the CLI itself priced the call at, when it does (OpenCode). 0.0
     #: for the seat-driven CLIs, whose bill is derived from the rate tables.
     cost_usd: float = 0.0
@@ -417,6 +419,7 @@ class CliRollup:
     turns: int
     cwd: str
     label: str
+    account_id: str = ""
     cost_usd: float = 0.0
 
 
@@ -1929,7 +1932,7 @@ def entries(
     try:
         for row in conn.execute(
             "SELECT agent, session_id, ts_ms, model, tokens_in, tokens_out, "
-            "       tokens_cached, cwd, label, cost_usd FROM cli_turns "
+            "       tokens_cached, cwd, label, cost_usd, account_id FROM cli_turns "
             "WHERE ts_ms BETWEEN ? AND ? ORDER BY ts_ms",
             (since_ms, until_ms),
         ):
@@ -1943,6 +1946,7 @@ def entries(
                 tokens_cached=_int(row["tokens_cached"]),
                 cwd=str(row["cwd"] or ""),
                 label=str(row["label"] or ""),
+                account_id=str(row["account_id"] or ""),
                 cost_usd=float(row["cost_usd"] or 0.0),
             )
     except sqlite3.Error as exc:
@@ -1972,13 +1976,13 @@ def rollups(
         return
     try:
         for row in conn.execute(
-            "SELECT agent, session_id, model, "
+            "SELECT agent, account_id, session_id, model, "
             "       MIN(ts_ms) AS ts_ms, "
             "       SUM(tokens_in) AS tokens_in, SUM(tokens_out) AS tokens_out, "
             "       SUM(tokens_cached) AS tokens_cached, COUNT(*) AS turns, "
             "       MIN(cwd) AS cwd, MIN(label) AS label, SUM(cost_usd) AS cost_usd "
             "FROM cli_turns WHERE ts_ms BETWEEN ? AND ? "
-            "GROUP BY agent, session_id, model, ts_ms / ? "
+            "GROUP BY agent, account_id, session_id, model, ts_ms / ? "
             "ORDER BY ts_ms",
             (since_ms, until_ms, bucket),
         ):
@@ -1993,6 +1997,7 @@ def rollups(
                 turns=_int(row["turns"]),
                 cwd=str(row["cwd"] or ""),
                 label=str(row["label"] or ""),
+                account_id=str(row["account_id"] or ""),
                 cost_usd=float(row["cost_usd"] or 0.0),
             )
     except sqlite3.Error as exc:
