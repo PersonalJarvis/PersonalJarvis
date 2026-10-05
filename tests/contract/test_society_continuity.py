@@ -200,7 +200,11 @@ async def test_direct_chat_completion_is_reviewed_once(world):
     assert result.success and result.output["hits"]
 
 
-async def test_review_memory_requires_grounded_evidence_and_executor(world):
+async def test_review_memory_requires_grounded_evidence_and_executor(world, monkeypatch):
+    from jarvis.society import review_cadence
+
+    # Review every turn of the person here; the review window has its own tests.
+    monkeypatch.setattr(review_cadence, "REVIEW_EVERY_USER_TURNS", 1)
     rt, svc, session, _ = world
     rt.memory_executor = MemoryExecutor()
 

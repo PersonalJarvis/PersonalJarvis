@@ -37,7 +37,7 @@ from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
 from .delivery import IncomingMessage, incoming_context
-from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
+from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier, now_ms
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
@@ -516,6 +516,12 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
+        if completion.turn.direct_user:
+            # The person's turns are reviewed per window, not per answer.
+            windowed = await self._review_window(session, events)
+            if windowed is None:
+                return
+            events = windowed
         if await asyncio.to_thread(
             self.conversations.queue_review,
             session.session_id,
@@ -524,6 +530,39 @@ class SocietyRuntime:
             direct_user=completion.turn.direct_user,
         ):
             self.background(self.recover_reviews())
+
+    async def _review_window(
+        self, session: Any, events: list[dict[str, Any]]
+    ) -> list[dict[str, Any]] | None:
+        """Add a person's turn to its chat's review window (``review_cadence``).
+
+        Returns the whole window's events when it is due for review, else
+        ``None``. Without a chat store to read the window back, every turn is
+        reviewed on its own, as before.
+        """
+        from .review_cadence import ReviewWindow, window_events
+
+        svc = self._get_chat()
+        store = getattr(svc, "store", None)
+        if store is None or not callable(getattr(store, "list_events", None)):
+            return events
+        key = ReviewWindow.key(session.session_id)
+        window = ReviewWindow.parse(await self.store.get_meta(key, ""))
+        now = now_ms()
+        window.add_turn(events, now)
+        users = [
+            str((e.get("payload") or {}).get("text") or "")
+            for e in window_events(events)
+            if e.get("kind") == "user_message"
+        ]
+        if not window.due(users, now):
+            await self.store.set_meta(key, window.dump())
+            return None
+        await self.store.set_meta(key, "")
+        history = await asyncio.to_thread(
+            store.list_events, session.session_id, after_seq=max(0, window.since_seq - 1)
+        )
+        return window_events(history) or events
 
     async def _complete_message_reply(
         self, session: Any, completion: Any, events: list[dict[str, Any]]

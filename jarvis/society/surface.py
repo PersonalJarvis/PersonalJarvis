@@ -830,7 +830,7 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     browser["auto_start"] = (
         browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
     )
-    learned = rt.skills_for(agent.agent_id).summaries()
+    learned = rt.skills_for(agent.agent_id).for_briefing()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
     except Exception:  # noqa: BLE001 — a vault that cannot be read costs the head, not the turn

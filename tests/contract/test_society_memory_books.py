@@ -123,9 +123,16 @@ async def test_existing_user_notebook_is_preserved_when_legacy_memory_is_split(r
 
 async def test_both_prompt_sections_are_bounded_without_truncating_stored_facts(rt):
     scout = await rt.roster.get("scout")
-    await rt.memory.remember(scout, "Long profile detail. " * 1000, target="user", importance=1)
-    await rt.memory.remember(scout, "Long project detail. " * 1000, target="memory", importance=1)
-    await rt.memory.remember(scout, "Reply always in English.", target="user", importance=10)
+    # The person's own requests are never refused by the notebook limit.
+    await rt.memory.remember(
+        scout, "Long profile detail. " * 1000, target="user", importance=1, origin="user"
+    )
+    await rt.memory.remember(
+        scout, "Long project detail. " * 1000, target="memory", importance=1, origin="user"
+    )
+    await rt.memory.remember(
+        scout, "Reply always in English.", target="user", importance=10, origin="user"
+    )
     prompt = rt.memory.head(scout)
     assert "Your user profile" in prompt and "Your memory" in prompt
     assert "Reply always in English." in prompt

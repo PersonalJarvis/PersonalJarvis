@@ -385,7 +385,8 @@ async def test_correction_at_start_of_large_memory_keeps_its_visible_diff(rt):
     rt.post_chat_notice = post
     agent = await rt.roster.get("scout")
     await rt.memory.remember(agent, "Use paragraphs.")
-    await rt.memory.remember(agent, "Background fact. " * 1800)
+    # The person asked for it: the notebook limit never refuses their own request.
+    await rt.memory.remember(agent, "Background fact. " * 1800, origin="user")
     await rt.memory.remember(
         agent, "Use bullet lists.", operation="replace", old_text="Use paragraphs."
     )
