@@ -8227,10 +8227,15 @@ class SpeechPipeline:
         """Borrow the wake mic or open exactly one fallback session mic."""
         from jarvis.realtime.factory import realtime_browser_audio
 
+        config = getattr(self, "_config", None)
+        # An unpinned engine is resolved from the credentials, so the answer
+        # is read off the voice loop, like the session build.
         browser_media = (
             not getattr(self, "_ptt_mode", False)
             and getattr(self, "_active_voice_mode", None) == "realtime"
-            and realtime_browser_audio(getattr(self, "_config", None))
+            and bool(
+                await _run_voice_critical_thread(lambda: realtime_browser_audio(config))
+            )
         )
         buffer = await self._claim_wake_capture_for_session()
         if browser_media and buffer is None:
@@ -9812,12 +9817,25 @@ class SpeechPipeline:
         """
         from jarvis.realtime.factory import realtime_browser_audio, realtime_handshake_budget_s
 
-        if realtime_browser_audio(self._config):
+        config = self._config
+
+        def _browser_handover_budget_s() -> float | None:
+            """The hand-over budget when the browser owns this call, else ``None``.
+
+            Both answers can read credentials (an unpinned engine is resolved
+            from the keys), so they run off the voice loop together.
+            """
+            if not realtime_browser_audio(config):
+                return None
+            return realtime_handshake_budget_s(config)
+
+        handover_budget_s = await _run_voice_critical_thread(_browser_handover_budget_s)
+        if handover_budget_s is not None:
             from jarvis.live.runtime import run_browser_call
 
             return await run_browser_call(
                 self._bus, self._hangup_event,
-                timeout_s=max(45.0, realtime_handshake_budget_s(self._config) + 5.0),
+                timeout_s=max(45.0, handover_budget_s + 5.0),
                 input_buffer=input_buffer,
                 session_id=self._current_voice_session_id or "",
             )

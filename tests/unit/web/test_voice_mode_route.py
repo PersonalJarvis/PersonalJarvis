@@ -104,8 +104,12 @@ def test_get_voice_mode(monkeypatch):
 
 
 def test_get_voice_mode_reports_browser_offer_capability(monkeypatch):
+    import jarvis.realtime.factory as rf
     from jarvis.ui.web import settings_routes
 
+    # An offer-requiring transport without browser audio. Fixed here, because
+    # without a pin the answer follows the host's real credentials.
+    monkeypatch.setattr(rf, "realtime_browser_audio", lambda _cfg: False)
     monkeypatch.setattr(
         settings_routes,
         "_realtime_available_provider",
@@ -189,6 +193,22 @@ def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
     assert body["active_provider"] == "gemini-live"
     assert body["active_provider_label"] == "Gemini Live"
     assert body["active_model"] == "gemini-3.1-flash-live-preview"
+
+
+def test_get_voice_mode_reports_browser_audio_of_the_automatic_provider(monkeypatch):
+    """Issue #399: a Gemini-only install with no pinned realtime provider
+    reported ``active_provider: gemini-live`` next to ``browser_audio: false``
+    although Gemini Live declares browser audio."""
+    import jarvis.realtime.factory as rf
+
+    def only_gemini(candidates):
+        keys = {c[0] for c in candidates}
+        return "sk-x" if "gemini_api_key" in keys else None
+
+    monkeypatch.setattr(rf, "get_secret_any", only_gemini)
+    body = TestClient(_app(mode="realtime")).get("/api/settings/voice-mode").json()
+    assert body["active_provider"] == "gemini-live"
+    assert body["browser_audio"] is True
 
 
 def test_get_voice_mode_reports_pinned_realtime_model(monkeypatch):

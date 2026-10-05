@@ -88,7 +88,10 @@ def realtime_implicit_usage_fallback_allowed(cfg: Any) -> bool:
 
 
 def _identified_provider_candidates(
-    cfg: Any, *, defer_external_login_probe: bool = False
+    cfg: Any,
+    *,
+    defer_external_login_probe: bool = False,
+    limit: int | None = None,
 ) -> list[tuple[str, Any]]:
     """Instantiate every credential-ready plugin in effective fallback order.
 
@@ -100,6 +103,9 @@ def _identified_provider_candidates(
     Each candidate is paired with the entry-point id it was loaded from, which
     a caller cannot recover from the instance: ``name`` is a provider-chosen
     label and may differ from the id the registry knows.
+
+    ``limit`` stops after that many candidates, so a caller that only needs
+    the provider a call would open first reads no further credentials.
     """
     candidates: list[tuple[str, Any]] = []
     explicit_ids = set(_explicit_provider_ids(cfg))
@@ -168,6 +174,8 @@ def _identified_provider_candidates(
                 )
                 continue
             candidates.append((provider_id, provider))
+            if limit is not None and len(candidates) >= limit:
+                break
         except Exception as exc:  # noqa: BLE001 — one plugin must not brick others
             log.warning("Realtime plugin %s is unavailable: %s", provider_id, exc)
     return candidates
@@ -523,14 +531,37 @@ def realtime_webrtc_start_event_required(cfg: Any) -> bool:
 
 
 def realtime_browser_audio(cfg: Any) -> bool:
-    """Whether the selected engine needs browser echo-cancelled audio."""
+    """Whether the engine a call would open needs browser echo-cancelled audio.
+
+    A pinned primary answers for itself. Without a pin the call opens on the
+    first credential-ready provider in effective order — the one
+    ``build_realtime_session`` builds and ``/api/settings/voice-mode``
+    reports as ``active_provider`` — so that provider's capability decides.
+    Reading the pin alone answered ``False`` for an automatically chosen
+    browser-audio provider such as Gemini Live: the desktop then ran that call
+    on the half-duplex native path and every surface reported the wrong
+    transport (follow-up to issue #399).
+
+    The unpinned answer reads credentials, so callers keep it off the voice
+    and request loops.
+    """
+    if cfg is None:
+        return False
     for provider_id in _explicit_provider_ids(cfg)[:1]:
         try:
             provider = load(_GROUP, provider_id, protocol=RealtimeProvider)
             return bool(getattr(provider, "browser_audio", False))
         except Exception:
             log.warning("Browser audio capability unavailable", exc_info=True)
-    return False
+            return False
+    # The same candidate order the session builder uses, including its refusal
+    # to fall back ambiently behind a pin that is missing or does not load.
+    candidates = _identified_provider_candidates(
+        cfg, defer_external_login_probe=True, limit=1
+    )
+    if not candidates:
+        return False
+    return bool(getattr(candidates[0][1], "browser_audio", False))
 
 
 def build_realtime_session(
