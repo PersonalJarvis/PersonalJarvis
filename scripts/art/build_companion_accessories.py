@@ -360,43 +360,34 @@ def assemble(name, pieces):
 
 
 def rim_piece(part, meta, anchor, outline):
-    """A hood: a band around the silhouette, open below maxY (symbol y)."""
+    """A hood: one closed shell around the head, above maxY (symbol y).
+
+    The grown silhouette is extruded from just behind the face to past the
+    back of the body. Inside the outline the body hides it; beyond it, it is
+    the hood's edge, and its back face covers the back of the head. A closed
+    solid has no open cut ends and no faces that vanish from behind.
+    """
     top, bottom = meta["top"], meta["bottom"]
     scale = 1 / (bottom - top)
     _, ay, k = anchor
-    limit = ay + part["maxY"] * k if "maxY" in part else math.inf
-    outer = offset_polygon(outline, part["w"])
-    inner = offset_polygon(outline, -0.3)
-    y_front, y_back = -0.12, FRONT_M + 0.05
-    bm = bmesh.new()
-
-    def vert(p, y):
-        return bm.verts.new(((p[0] - 20) * scale, y, (bottom - p[1]) * scale))
-
-    n = len(outline)
-    for i in range(n):
-        j = (i + 1) % n
-        if max(outer[i][1], outer[j][1], inner[i][1], inner[j][1]) > limit:
-            continue
-        of, oj, inf, inj = (
-            vert(outer[i], y_front),
-            vert(outer[j], y_front),
-            vert(inner[i], y_front),
-            vert(inner[j], y_front),
-        )
-        ob, obj, inb, injb = (
-            vert(outer[i], y_back),
-            vert(outer[j], y_back),
-            vert(inner[i], y_back),
-            vert(inner[j], y_back),
-        )
-        bm.faces.new((inf, inj, oj, of))
-        bm.faces.new((of, oj, obj, ob))
-        bm.faces.new((ob, obj, injb, inb))
-    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-6)
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    limit = ay + part["maxY"] * k if "maxY" in part else 1e6
+    above = [(-1e3, -1e3), (1e3, -1e3), (1e3, limit), (-1e3, limit)]
+    area = clip_polygon(offset_polygon(outline, part["w"]), above)
+    if len(area) < 3:
+        return bmesh.new()
+    flat = [((x - 20) * scale, (bottom - y) * scale) for x, y in area]
+    bm = extrude_outline(flat, -0.12, FRONT_M + 0.05)
+    bmesh.ops.bevel(
+        bm,
+        geom=bm.edges[:],
+        offset=0.03,
+        segments=2,
+        affect="EDGES",
+        profile=0.5,
+        clamp_overlap=True,
+    )
     for face in bm.faces:
-        face.smooth = True
+        face.smooth = abs(face.normal.y) < 0.99
     return bm
 
 
@@ -427,7 +418,7 @@ def region_pieces(item, shape, meta, outline):
             grow = 0.008 + lift + 0.003 * order
             if len(area) < 3:
                 continue
-            area = offset_polygon(area, (grow + 0.004) / scale)
+            area = offset_polygon(area, (grow + 0.012) / scale)
             depth = (-(FRONT_M + grow), FRONT_M + grow)
         else:
             area = clip_polygon(body_inset, clip)
