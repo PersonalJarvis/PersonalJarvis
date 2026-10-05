@@ -1303,7 +1303,7 @@ async def update_agent_routine(
     agent_id: str, task_id: str, body: RoutineUpdateBody, request: Request
 ) -> dict[str, Any]:
     """Edit an agent's routine without losing its identity or execution history."""
-    from jarvis.society.routines import is_agent_routine, manage_routine
+    from jarvis.society.routines import is_agent_routine, manage_routine, missing_timezone
     from jarvis.tasks.scheduler import TaskNotFound, TaskStateConflict
 
     rt = await _runtime(request)
@@ -1316,12 +1316,15 @@ async def update_agent_routine(
     if scheduler is None:
         raise HTTPException(503, "The task scheduler is unavailable")
     try:
-        await manage_routine(
-            agent,
-            {**body.model_dump(), "task_id": task_id, "operation": "update"},
-            store,
-            scheduler,
-        )
+        with _turn_timezone(request):
+            if missing_timezone(body.schedule):
+                raise HTTPException(422, _TIMEZONE_REQUIRED)
+            await manage_routine(
+                agent,
+                {**body.model_dump(), "task_id": task_id, "operation": "update"},
+                store,
+                scheduler,
+            )
     except TaskNotFound as exc:
         raise HTTPException(404, "Routine not found") from exc
     except TaskStateConflict as exc:
