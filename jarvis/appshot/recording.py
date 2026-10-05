@@ -50,6 +50,7 @@ def recent_recordings() -> list[dict[str, Any]]:
 
 def capability() -> dict[str, Any]:
     from jarvis.platform.probes import display_present, is_wayland
+    from jarvis.platform.qt_sidecar import missing_system_library as qt_missing
 
     detail = ""
     permission = False
@@ -59,6 +60,8 @@ def capability() -> dict[str, Any]:
         detail = "Screen recording requires the desktop capture and video packages."
     elif is_wayland() and importlib.util.find_spec("PySide6.QtMultimedia") is None:
         detail = "Wayland recording requires Qt Multimedia, PipeWire and a ScreenCast portal."
+    elif qt_missing():
+        detail = f"{qt_missing()}."
     elif sys.platform == "darwin":
         from jarvis.platform import screen_access
 

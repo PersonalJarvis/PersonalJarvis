@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import threading
 import time
 from collections import deque
@@ -1547,9 +1546,11 @@ class Renderer(QObject):
         Only on the user's drag; files older than an hour are removed first,
         so the folder never grows (see ``docs/appshots.md``).
         """
-        folder = Path(tempfile.gettempdir()) / "jarvis-appshots"
+        from jarvis.appshot.dragfile import prepare_drag_folder
+
         try:
-            folder.mkdir(parents=True, exist_ok=True)
+            # Private to this user: a shared /tmp is readable by everyone.
+            folder = prepare_drag_folder()
             cutoff = time.time() - _DRAG_FILE_MAX_AGE_S
             for old in folder.glob("appshot-*.png"):
                 with suppress(OSError):  # a file still open elsewhere stays
@@ -1682,6 +1683,9 @@ def run() -> int:
     except Exception as exc:  # noqa: BLE001 — no display / no platform plugin
         sys.stderr.write(f"cu-indicator: no usable display ({exc!r}) — indicator disabled.\n")
         return protocol.EXIT_NO_GUI
+    from jarvis.platform.qt_sidecar import hide_from_dock
+
+    hide_from_dock()  # macOS: no "Python" Dock icon for the resident card
     # All windows are frequently hidden (blank/hide) — that must never
     # terminate the sidecar; only stdin EOF or "quit" does.
     app.setQuitOnLastWindowClosed(False)

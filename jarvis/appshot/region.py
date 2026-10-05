@@ -242,6 +242,11 @@ def picker_capability() -> tuple[bool, str]:
         log.debug("appshot: platform probes unavailable", exc_info=True)
     if importlib.util.find_spec("PySide6") is None:
         return False, "the selection overlay needs PySide6 (the [desktop] extra)"
+    from jarvis.platform.qt_sidecar import missing_system_library  # noqa: PLC0415
+
+    missing = missing_system_library()
+    if missing:
+        return False, missing
     return True, ""
 
 
@@ -292,12 +297,13 @@ def snap_layout() -> dict[str, Any]:
 
 def _spawn(language: str = "en") -> subprocess.Popen[str]:
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+    from jarvis.platform.qt_sidecar import stderr_sink  # noqa: PLC0415
 
     return subprocess.Popen(
         [sys.executable, "-m", "jarvis.appshot.picker", "--lang", language or "en"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_sink("appshot-picker"),
         text=True,
         encoding="utf-8",
         creationflags=NO_WINDOW_CREATIONFLAGS,
@@ -426,7 +432,12 @@ def _exit_message(code: int) -> str:
 
     if code == EXIT_NO_GUI:
         return "An area cannot be selected here: the selection overlay found no usable screen."
-    return f"The selection overlay stopped unexpectedly (exit code {code}). Nothing was captured."
+    from jarvis.platform.qt_sidecar import crash_hint  # noqa: PLC0415
+
+    return (
+        f"The selection overlay stopped unexpectedly (exit code {code}). "
+        f"Nothing was captured.{crash_hint(code, 'appshot-picker')}"
+    )
 
 
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:

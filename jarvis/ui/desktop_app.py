@@ -6156,14 +6156,13 @@ class DesktopApp:
         # lives. Windows and macOS are native; Linux is a logged no-op until its
         # GTK source lands. Never blocks the window.
         try:
-            from pathlib import Path as _Path
-
             from jarvis.appshot.dragfile import drag_folder
+            from jarvis.platform.user_dirs import downloads_dir
             from jarvis.ui.native_drag import install_native_drag
 
             # Downloads for saved files; the appshot drag folder for the
             # editor's "Drag me" handle (jarvis/appshot/dragfile.py).
-            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads", drag_folder()])
+            install_native_drag(allowed_base_dirs=[downloads_dir(), drag_folder()])
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
             pass
 
