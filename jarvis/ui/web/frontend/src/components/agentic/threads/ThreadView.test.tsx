@@ -100,6 +100,13 @@ describe("ThreadView", () => {
     expect(useIdeThreadsStore.getState().projectOf).toEqual({ s1: "p1" });
   });
 
+  it("starts a new thread on the agent and model the person picked last", async () => {
+    localStorage.setItem("jarvis.ide.threadSeat.v1", JSON.stringify({ provider: "claude-api", model: "claude-opus-5-5", effort: "low", permissionMode: "default" }));
+    render(<ThreadView onScreen />);
+    await waitFor(() => expect(useThreadChatStore.getState().draft).toEqual(expect.objectContaining({ provider: "claude-api", model: "claude-opus-5-5", effort: "low" })));
+    await waitFor(() => expect(screen.getByTestId("thread-model-picker").textContent).toContain("Opus 5.5"));
+  });
+
   it("files a thread started in a draft under its project when the person moved on meanwhile", async () => {
     let finishCreate: (row: AgentChatSession) => void = () => {};
     api.createAgentChatSession.mockReturnValue(new Promise<AgentChatSession>((resolve) => { finishCreate = resolve; }));

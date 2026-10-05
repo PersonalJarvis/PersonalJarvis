@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, FolderGit2, GitBranch, Laptop, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Folder, FolderGit2, GitBranch, Loader2 } from "lucide-react";
 import { inspectGit, prepareGit, type GitRepoInfo } from "@/lib/gitApi";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
@@ -9,7 +9,7 @@ import { folderLabel } from "./threadModel";
 /** Where a new thread's agent works: the project's own checkout, or a worktree of its own. */
 export type ThreadCheckout = "current" | "worktree";
 
-const BUTTON = "flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+const BUTTON = "flex h-6 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 /** The repository state behind a folder, refreshed when the folder changes and on demand. */
 export function useGitInfo(folder: string): { info: GitRepoInfo | null; loading: boolean; refresh: () => void } {
@@ -83,16 +83,18 @@ export function ThreadBranchBar({
     }
   };
 
-  return <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-3 pt-1.5" data-testid="thread-branch-bar">
+  // Hangs under the composer card: tucked 16 px beneath it, narrower by the
+  // card's corner radius on each side, its own corners rounded at the bottom.
+  return <div className="relative mx-auto -mt-4 flex w-[calc(100%-2.75rem)] items-center justify-between gap-2 rounded-b-2xl border border-t-0 border-border bg-sidebar pb-1 pe-2 ps-1 pt-5" data-testid="thread-branch-bar">
     {draft
       ? <button ref={checkoutAnchor} type="button" className={BUTTON} disabled={!repo} aria-haspopup="menu" aria-expanded={menu === "checkout"}
         onClick={() => setMenu(menu === "checkout" ? null : "checkout")} title={repo ? "Where the agent works" : "Not a git repository"}>
-        {checkout === "worktree" ? <FolderGit2 aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <Laptop aria-hidden className="h-3.5 w-3.5 shrink-0" />}
+        {checkout === "worktree" ? <FolderGit2 aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <Folder aria-hidden className="h-3.5 w-3.5 shrink-0" />}
         <span className="truncate">{checkout === "worktree" ? "New worktree" : "Current checkout"}</span>
         {repo && <ChevronDown aria-hidden className="h-3 w-3 shrink-0" />}
       </button>
       : <span className={cn(BUTTON, "hover:bg-transparent hover:text-muted-foreground")} title={folder}>
-        {info?.is_worktree ? <FolderGit2 aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <Laptop aria-hidden className="h-3.5 w-3.5 shrink-0" />}
+        {info?.is_worktree ? <FolderGit2 aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <Folder aria-hidden className="h-3.5 w-3.5 shrink-0" />}
         <span className="truncate">{info?.is_worktree ? `Worktree · ${folderLabel(folder)}` : "Current checkout"}</span>
       </span>}
     {repo && <button ref={branchAnchor} type="button" className={BUTTON} disabled={switching || (!draft && locked)}
@@ -107,7 +109,7 @@ export function ThreadBranchBar({
 
     <ThreadPopover anchor={checkoutAnchor} open={menu === "checkout"} onClose={() => setMenu(null)} label="Where the agent works" side="top" width={280}>
       <div role="menu">
-        <ThreadMenuItem icon={<Laptop className="h-3.5 w-3.5" />} selected={checkout === "current"}
+        <ThreadMenuItem icon={<Folder className="h-3.5 w-3.5" />} selected={checkout === "current"}
           label="Current checkout" hint={checkout === "current" ? <Check className="h-3.5 w-3.5" /> : undefined}
           onSelect={() => { onCheckout("current"); setMenu(null); }} />
         <ThreadMenuItem icon={<FolderGit2 className="h-3.5 w-3.5" />} selected={checkout === "worktree"}

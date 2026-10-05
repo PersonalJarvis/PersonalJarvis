@@ -114,3 +114,36 @@ export function folderLabel(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
+
+/** The agent, model, effort and access the person picked last — what every new thread starts on. */
+export interface ThreadSeat {
+  provider: string;
+  model: string;
+  effort: string;
+  permissionMode: string;
+}
+
+const SEAT_KEY = "jarvis.ide.threadSeat.v1";
+
+/** Remember an explicit pick. Opening an old thread never calls this, so it never moves the seat. */
+export function rememberSeat(seat: ThreadSeat): void {
+  if (!seat.provider) return;
+  try {
+    localStorage.setItem(SEAT_KEY, JSON.stringify({
+      provider: seat.provider, model: seat.model, effort: seat.effort, permissionMode: seat.permissionMode,
+    }));
+  } catch { /* storage blocked: new threads start on the provider's defaults */ }
+}
+
+export function rememberedSeat(): ThreadSeat | null {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(SEAT_KEY) ?? "null");
+    if (!raw || typeof raw !== "object") return null;
+    const row = raw as Record<string, unknown>;
+    if (typeof row.provider !== "string" || !row.provider) return null;
+    const text = (value: unknown) => (typeof value === "string" ? value : "");
+    return { provider: row.provider, model: text(row.model), effort: text(row.effort), permissionMode: text(row.permissionMode) };
+  } catch {
+    return null;
+  }
+}

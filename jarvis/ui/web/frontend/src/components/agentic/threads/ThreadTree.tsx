@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Folder, FolderOpen, Loader2, Mic, MoreHorizontal, Pencil, Plus, SquarePen, Trash2, X } from "lucide-react";
+import { Check, Folder, FolderOpen, Loader2, Mic, MoreHorizontal, Pencil, Plus, SquarePlus, Trash2, X } from "lucide-react";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { patchAgentChatSession, type AgentChatSession } from "@/lib/agentChatApi";
 import type { IdeProject } from "@/lib/agenticIdeApi";
@@ -138,16 +138,14 @@ export function ThreadTree() {
             ? <FolderOpen aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
             : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
           <span className="min-w-0 flex-1 truncate">{project.name}</span>
-          {!open && running > 0 && <Loader2 aria-label={`${running} working`} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground group-hover:opacity-0" />}
+          {!open && running > 0 && <Loader2 aria-label={`${running} working`} className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />}
         </button>
-        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
-          <button type="button" aria-label={`New thread in ${project.name}`} title="New thread"
-            data-testid={`thread-new-${project.id}`}
-            onClick={() => { setProjectOpen(project.id, true); newThread(project.id); }}
-            className="rounded p-1 text-muted-foreground hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <SquarePen className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <button type="button" aria-label={`New thread in ${project.name}`} title="New thread"
+          data-testid={`thread-new-${project.id}`}
+          onClick={() => { setProjectOpen(project.id, true); newThread(project.id); }}
+          className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/80 transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <SquarePlus className="h-4 w-4" strokeWidth={1.75} />
+        </button>
       </div>
       {open && <div className="mb-1 flex flex-col gap-px">
         {draftHere && <div aria-current="page"
@@ -261,7 +259,7 @@ export function ThreadTree() {
         : <div role="menu">
           <ThreadMenuItem icon={<Pencil className="h-3.5 w-3.5" />} label="Rename"
             onSelect={() => { setRenaming({ sessionId: menuSession.session_id, title: threadTitle(menuSession) }); setMenu(null); }} />
-          <ThreadMenuItem icon={<SquarePen className="h-3.5 w-3.5" />} label="New thread in this project"
+          <ThreadMenuItem icon={<SquarePlus className="h-3.5 w-3.5" />} label="New thread in this project"
             onSelect={() => { newThread(menu.projectId); setMenu(null); }} />
           <ThreadMenuSeparator />
           <ThreadMenuItem icon={<Trash2 className="h-3.5 w-3.5" />} label="Delete" danger disabled={Boolean(menuSession.running)}

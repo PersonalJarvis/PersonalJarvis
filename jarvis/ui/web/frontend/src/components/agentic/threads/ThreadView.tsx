@@ -6,33 +6,9 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
 import { ThreadBranchBar, type ThreadCheckout } from "./ThreadBranchBar";
 import { ThreadComposer } from "./ThreadComposer";
-import { ThreadDiffPanel } from "./ThreadDiffPanel";
-import { ThreadHeader } from "./ThreadHeader";
 import { ThreadMenuItem, ThreadPopover } from "./ThreadPopover";
-import { ThreadTerminalDrawer, type DrawerTerminal } from "./ThreadTerminalDrawer";
 import { ThreadTimeline } from "./ThreadTimeline";
-import { actionInput, type ProjectAction } from "./projectActions";
-import { projectIdFor, threadTitle, useThreadChatStore } from "./threadModel";
-
-const DRAWER_HEIGHT_KEY = "jarvis.ide.threadDrawerHeight.v1";
-const DIFF_OPEN_KEY = "jarvis.ide.threadDiffOpen.v1";
-
-function storedNumber(key: string, fallback: number): number {
-  try {
-    const value = Number(localStorage.getItem(key));
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-  } catch { return fallback; }
-}
-
-function storedFlag(key: string): boolean {
-  try { return localStorage.getItem(key) === "1"; } catch { return false; }
-}
-
-function storeValue(key: string, value: string): void {
-  try { localStorage.setItem(key, value); } catch { /* a convenience only */ }
-}
-
-let terminalSerial = 0;
+import { projectIdFor, rememberedSeat, useThreadChatStore } from "./threadModel";
 
 /**
  * The IDE's thread layout: one conversation with a coding agent at a time.
@@ -55,15 +31,11 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   const activeSession = useThreadChatStore((state) => state.activeSession);
   const timeline = useThreadChatStore((state) => state.timeline);
   const draft = useThreadChatStore((state) => state.draft);
+  const catalog = useThreadChatStore((state) => state.catalog);
   const lastError = useThreadChatStore((state) => state.lastError);
   const [checkout, setCheckout] = useState<ThreadCheckout>("current");
   const [base, setBase] = useState("");
   const [projectMenu, setProjectMenu] = useState(false);
-  const [terminals, setTerminals] = useState<DrawerTerminal[]>([]);
-  const [activeTerminal, setActiveTerminal] = useState("");
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [drawerHeight, setDrawerHeight] = useState(() => storedNumber(DRAWER_HEIGHT_KEY, 280));
-  const [diffOpen, setDiffOpen] = useState(() => storedFlag(DIFF_OPEN_KEY));
   const [composerHeight, setComposerHeight] = useState(160);
   const composerBox = useRef<HTMLDivElement | null>(null);
   const projectAnchor = useRef<HTMLButtonElement | null>(null);
@@ -106,12 +78,31 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     if (store.activeSessionId || store.timeline.items.length > 0) store.newChat();
   }, [selection.sessionId, selection.projectId, activeSessionId]);
 
-  // A new draft starts in its project's own checkout.
+  // The agents are listed the moment the view opens, not when a menu is.
+  useEffect(() => {
+    const store = useThreadChatStore.getState();
+    if (!store.catalog || store.catalogStale) void store.loadCatalog();
+  }, []);
+
+  // A new draft starts in its project's own checkout, on the agent and model
+  // the person picked last — never on whatever thread happened to be open.
   useEffect(() => {
     if (!isDraft) return;
     setCheckout("current");
     setBase("");
-  }, [isDraft, selection.projectId]);
+    // Never picked here yet: the seat of the newest thread is the last choice made.
+    const store = useThreadChatStore.getState();
+    const cli = new Set((store.catalog?.providers ?? []).filter((row) => row.agent).map((row) => row.id));
+    const newest = [...store.sessions].filter((row) => cli.has(row.provider)).sort((x, y) => y.created_ms - x.created_ms)[0];
+    const seat = rememberedSeat() ?? (newest
+      ? { provider: newest.provider, model: newest.model, effort: newest.effort, permissionMode: newest.permission_mode }
+      : null);
+    const draftNow = useThreadChatStore.getState().draft;
+    if (seat && (seat.provider !== draftNow.provider || seat.model !== draftNow.model
+      || seat.effort !== draftNow.effort || seat.permissionMode !== draftNow.permissionMode)) {
+      void useThreadChatStore.getState().setDraft(seat);
+    }
+  }, [isDraft, selection.projectId, sessions.length > 0, Boolean(catalog)]);
 
   // A draft runs in its project's folder.
   useEffect(() => {
@@ -156,33 +147,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     if (isDraft && !activeSessionId && lastError) startingIn.current = null;
   }, [isDraft, activeSessionId, lastError]);
 
-  const finishedTurns = useMemo(() => timeline.items.filter((item) => item.type === "turn" && item.status !== "running").length, [timeline.items]);
   const running = timeline.items.some((item) => item.type === "turn" && item.status === "running");
-
-  const addTerminal = useCallback((title: string, input?: string) => {
-    if (!folder) return;
-    const id = `thread-term-${Date.now().toString(36)}-${++terminalSerial}`;
-    setTerminals((current) => [...current, { id, title, folder, ...(input ? { input } : {}) }]);
-    setActiveTerminal(id);
-    setDrawerOpen(true);
-  }, [folder]);
-
-  const toggleTerminal = () => {
-    if (drawerOpen) { setDrawerOpen(false); return; }
-    if (!terminals.some((terminal) => terminal.folder === folder)) addTerminal("Terminal");
-    else setDrawerOpen(true);
-  };
-
-  const runAction = (action: ProjectAction) => addTerminal(action.name, actionInput(action.command));
-
-  const closeTerminal = (id: string) => {
-    setTerminals((current) => {
-      const next = current.filter((terminal) => terminal.id !== id);
-      if (id === activeTerminal) setActiveTerminal(next[next.length - 1]?.id ?? "");
-      if (!next.some((terminal) => terminal.folder === folder)) setDrawerOpen(false);
-      return next;
-    });
-  };
 
   if (!project) {
     return <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center" data-testid="thread-view-empty">
@@ -193,59 +158,42 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     </div>;
   }
 
-  // The list row carries the newest title (the CLI's own, or the first
-  // message's); the open session was read before its first message named it.
-  const listed = sessions.find((row) => row.session_id === selection.sessionId);
-  const title = isDraft ? "New thread" : threadTitle(listed ?? session);
   const threadKey = selection.sessionId ?? `draft:${project.id}`;
   const empty = isDraft && timeline.items.length === 0;
 
-  return <div className="flex h-full min-h-0" data-testid="thread-view">
-    <div className="flex min-w-0 flex-1 flex-col">
-      <ThreadHeader projectId={project.id} projectName={project.name} folder={folder} title={title}
-        sessionId={selection.sessionId} terminalOpen={drawerOpen && terminals.some((terminal) => terminal.folder === folder)} onToggleTerminal={toggleTerminal}
-        diffOpen={diffOpen} onToggleDiff={() => { const next = !diffOpen; setDiffOpen(next); storeValue(DIFF_OPEN_KEY, next ? "1" : "0"); }}
-        gitVersion={finishedTurns} onRunAction={runAction} />
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        {empty
-          ? <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-6">
-            <h2 className="text-center text-2xl font-normal tracking-tight text-foreground">
-              What should we build in{" "}
-              <button ref={projectAnchor} type="button" aria-haspopup="menu" aria-expanded={projectMenu} onClick={() => setProjectMenu(!projectMenu)}
-                className="inline-flex items-center gap-1 rounded-md font-semibold text-foreground-strong hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                data-testid="thread-project-picker">
-                {project.name}<ChevronDown aria-hidden className="h-4 w-4 text-muted-foreground" />
-              </button>?
-            </h2>
-            <ThreadPopover anchor={projectAnchor} open={projectMenu} onClose={() => setProjectMenu(false)} label="Projects" width={260}>
-              <div role="menu">
-                {visible.map((entry) => <ThreadMenuItem key={entry.id} label={entry.name} selected={entry.id === project.id}
-                  hint={entry.id === project.id ? <Check className="h-3.5 w-3.5" /> : undefined}
-                  onSelect={() => { setProjectMenu(false); useIdeThreadsStore.getState().newThread(entry.id); }} />)}
-                <ThreadMenuItem icon={<FolderPlus className="h-3.5 w-3.5" />} label="Connect another folder" onSelect={() => { setProjectMenu(false); connectProject(); }} />
-              </div>
-            </ThreadPopover>
-            <div className="mt-6 w-full">
-              <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce + (onScreen ? 1 : 0)} />
-              <ThreadBranchBar folder={folder} draft checkout={checkout} onCheckout={setCheckout} base={base} onBase={setBase} locked={false} />
-            </div>
+  const strip = <ThreadBranchBar folder={folder} draft={isDraft} checkout={checkout} onCheckout={setCheckout}
+    base={base} onBase={setBase} locked={running} />;
+
+  return <div className="relative flex h-full min-h-0 flex-col" data-testid="thread-view">
+    {empty
+      ? <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-5 pb-10">
+        <h2 className="text-center text-2xl font-normal tracking-tight text-foreground sm:text-3xl">
+          What should we build in{" "}
+          <button ref={projectAnchor} type="button" aria-haspopup="menu" aria-expanded={projectMenu} onClick={() => setProjectMenu(!projectMenu)}
+            className="inline-flex items-center gap-1 rounded-md font-semibold text-foreground-strong hover:bg-secondary/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            data-testid="thread-project-picker">
+            {project.name}<ChevronDown aria-hidden className="h-4 w-4 text-muted-foreground" />
+          </button>?
+        </h2>
+        <ThreadPopover anchor={projectAnchor} open={projectMenu} onClose={() => setProjectMenu(false)} label="Projects" width={260}>
+          <div role="menu">
+            {visible.map((entry) => <ThreadMenuItem key={entry.id} label={entry.name} selected={entry.id === project.id}
+              hint={entry.id === project.id ? <Check className="h-3.5 w-3.5" /> : undefined}
+              onSelect={() => { setProjectMenu(false); useIdeThreadsStore.getState().newThread(entry.id); }} />)}
+            <ThreadMenuItem icon={<FolderPlus className="h-3.5 w-3.5" />} label="Connect another folder" onSelect={() => { setProjectMenu(false); connectProject(); }} />
           </div>
-          : <>
-            <ThreadTimeline items={timeline.items} sessionId={selection.sessionId} bottomInset={composerHeight} />
-            <div ref={composerBox} className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-70% to-transparent px-5 pb-3 pt-6">
-              <div className="pointer-events-auto">
-                <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce} />
-                <ThreadBranchBar folder={folder} draft={isDraft} checkout={checkout} onCheckout={setCheckout} base={base} onBase={setBase} locked={running} />
-              </div>
-            </div>
-          </>}
+        </ThreadPopover>
+        <div className="mt-7 w-full">
+          <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce + (onScreen ? 1 : 0)} strip={strip} />
+        </div>
       </div>
-      {terminals.length > 0 && <ThreadTerminalDrawer terminals={terminals} folder={folder} open={drawerOpen} active={activeTerminal} height={drawerHeight}
-        onSelect={setActiveTerminal} onAdd={() => addTerminal("Terminal")} onCloseTab={closeTerminal} onClose={() => setDrawerOpen(false)}
-        onResize={(next) => { setDrawerHeight(next); storeValue(DRAWER_HEIGHT_KEY, String(next)); }} />}
-    </div>
-    {diffOpen && <div className="w-[min(480px,40%)] shrink-0">
-      <ThreadDiffPanel folder={folder} version={finishedTurns} onClose={() => { setDiffOpen(false); storeValue(DIFF_OPEN_KEY, "0"); }} />
-    </div>}
+      : <>
+        <ThreadTimeline items={timeline.items} sessionId={selection.sessionId} bottomInset={composerHeight} />
+        <div ref={composerBox} className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-70% to-transparent px-5 pb-4 pt-6">
+          <div className="pointer-events-auto">
+            <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce} strip={strip} />
+          </div>
+        </div>
+      </>}
   </div>;
 }

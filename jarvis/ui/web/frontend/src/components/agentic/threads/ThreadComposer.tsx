@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { ArrowUp, FileText, Image as ImageIcon, Loader2, MessageCircleQuestion, Paperclip, ShieldAlert, Square, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, Loader2, MessageCircleQuestion, Paperclip, ShieldAlert, Square, X } from "lucide-react";
+import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { runningTurn, type QuestionState, type Timeline, type ToolBlock } from "@/components/agentchat/reduce";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import type { ChatAttachment } from "@/lib/agentChatApi";
-import { joinProviderOptions } from "@/store/agentChat";
+import { joinProviderOptions, type ComposerDraft } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
 import { AccessPicker, AgentModelPicker, EffortPicker } from "./ThreadPickers";
-import { threadAgents, useThreadChatStore } from "./threadModel";
+import { rememberSeat, rememberedSeat, threadAgents, useThreadChatStore } from "./threadModel";
 
 /** A message typed while the agent was still working, sent when it is free. */
 interface QueuedMessage {
@@ -125,12 +126,15 @@ export function ThreadComposer({
   prepareDraft,
   placeholder = "Ask for changes, send follow-ups, or attach images",
   autoFocusNonce,
+  strip,
 }: {
   /** Which thread the box is typing for — the session id, or `draft:<project>`. */
   threadKey: string;
   prepareDraft: () => Promise<string | null>;
   placeholder?: string;
   autoFocusNonce: number;
+  /** The strip that hangs under the card — where the agent works and on which branch. */
+  strip?: ReactNode;
 }) {
   const draft = useThreadChatStore((state) => state.draft);
   const timeline = useThreadChatStore((state) => state.timeline);
@@ -175,8 +179,11 @@ export function ThreadComposer({
   useEffect(() => {
     if (activeSessionId || providers.length === 0) return;
     if (providers.some((option) => option.id === draft.provider && option.connected)) return;
-    const pick = providers.find((option) => option.connected) ?? providers[0];
-    if (pick && pick.id !== draft.provider) void useThreadChatStore.getState().setDraft({ provider: pick.id });
+    const seat = rememberedSeat();
+    const remembered = seat && providers.find((option) => option.id === seat.provider && option.connected);
+    if (remembered && seat) { void useThreadChatStore.getState().setDraft(seat); return; }
+    const first = providers.find((option) => option.connected) ?? providers[0];
+    if (first && first.id !== draft.provider) void useThreadChatStore.getState().setDraft({ provider: first.id });
   }, [activeSessionId, providers, draft.provider]);
 
   const setValue = useCallback((next: string) => {
@@ -284,6 +291,13 @@ export function ThreadComposer({
     }
   };
 
+  // A pick the person made is the seat every new thread starts on.
+  const pick = async (patch: Partial<Pick<ComposerDraft, "provider" | "model" | "effort" | "permissionMode">>) => {
+    const store = useThreadChatStore.getState();
+    await store.setDraft(patch);
+    rememberSeat(useThreadChatStore.getState().draft);
+  };
+
   const decide = (approvalId: string, decision: "allow" | "allow_always" | "deny") => {
     void useThreadChatStore.getState().decide(approvalId, decision);
   };
@@ -304,20 +318,17 @@ export function ThreadComposer({
           className="rounded p-0.5 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
       </div>)}
     </div>}
+    {error && <p role="alert" className="mb-2 px-4 text-xs text-destructive">{error}</p>}
     <div ref={cardRef} {...files.dragHandlers}
       className={cn(
-        "relative overflow-hidden rounded-3xl border border-border bg-card shadow-rim transition-colors focus-within:border-border-strong",
+        "relative z-10 overflow-hidden rounded-3xl border border-border bg-card shadow-[0_8px_24px_-12px_rgb(var(--scrim-rgb)/0.5)] transition-colors focus-within:border-border-strong",
         files.dragging && "border-accent ring-2 ring-accent/40",
       )}>
       <ApprovalPanel timeline={timeline} onDecide={decide} />
       <QuestionPanel timeline={timeline} />
-      {(files.attachments.length > 0 || files.analyzing > 0) && <div className="flex flex-wrap gap-1.5 px-4 pt-3">
-        {files.attachments.map((file) => <span key={file.name} className="inline-flex max-w-[220px] items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground" title={file.note || file.name}>
-          {file.kind === "image" ? <ImageIcon aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <FileText aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-          <span className="truncate">{file.name}</span>
-          <button type="button" aria-label={`Remove ${file.name}`} onClick={() => files.remove(file.name)} className="rounded text-muted-foreground hover:text-foreground"><X className="h-3 w-3" /></button>
-        </span>)}
-        {files.analyzing > 0 && <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />Reading {files.analyzing} file{files.analyzing === 1 ? "" : "s"}…</span>}
+      {(files.attachments.length > 0 || files.analyzing > 0) && <div className="px-3 pt-3 sm:px-4">
+        <ChatAttachmentStrip attachments={files.attachments} analyzing={files.analyzing}
+          onRemove={files.remove} previews={files.previews} />
       </div>}
       <textarea ref={textareaRef} value={value} rows={2} data-testid="thread-composer-input"
         aria-label="Message the coding agent"
@@ -328,43 +339,42 @@ export function ThreadComposer({
         onClick={() => typeahead.refresh()}
         onBlur={() => typeahead.blur()}
         onPaste={files.onPaste}
-        className="block max-h-[40vh] min-h-[56px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-base leading-6 text-foreground outline-none placeholder:text-faint-foreground" />
-      <div className="flex items-center gap-1 px-2 pb-2 pt-1">
+        className="block max-h-[40vh] min-h-[84px] w-full resize-none bg-transparent px-4 pb-2 pt-4 text-base leading-6 text-foreground outline-none placeholder:text-faint-foreground sm:px-5" />
+      <div className="flex min-w-0 items-center justify-between gap-2 px-3 pb-3 sm:px-4 sm:pb-4">
+        <div className="-ms-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]">
         <AgentModelPicker providers={providers} liveModels={liveModels} draft={draft}
           lockedProvider={started && activeSessionId ? draft.provider : null}
-          onPick={(nextProvider, model) => {
-            const store = useThreadChatStore.getState();
-            void store.setDraft(nextProvider !== draft.provider ? { provider: nextProvider, model } : { model });
-          }} />
-        <EffortPicker provider={provider} draft={draft} liveModels={liveModels}
-          onPick={(effort) => void useThreadChatStore.getState().setDraft({ effort })} />
-        <AccessPicker provider={provider} draft={draft}
-          onPick={(permissionMode) => void useThreadChatStore.getState().setDraft({ permissionMode })} />
-        <div className="ml-auto flex items-center gap-1">
+          onPick={(nextProvider, model) => void pick(nextProvider !== draft.provider ? { provider: nextProvider, model } : { model })} />
+        <EffortPicker provider={provider} draft={draft} liveModels={liveModels} separated
+          onPick={(effort) => void pick({ effort })} />
+        <AccessPicker provider={provider} draft={draft} separated
+          onPick={(permissionMode) => void pick({ permissionMode })} />
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
           <input ref={fileInput} type="file" multiple hidden onChange={(event) => {
             const picked = Array.from(event.target.files ?? []);
             if (picked.length) files.attachFiles(picked);
             event.target.value = "";
           }} />
           <button type="button" aria-label="Attach files" title="Attach files or images" onClick={() => fileInput.current?.click()}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            <Paperclip className="h-4 w-4" />
+            className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Paperclip className="h-[18px] w-[18px]" />
           </button>
           {running && !canSend
             ? <button type="button" aria-label="Stop the agent" title="Stop" data-testid="thread-stop"
               onClick={() => { setPaused(true); void useThreadChatStore.getState().cancel(); }}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               <Square className="h-3 w-3 fill-current" />
             </button>
             : <button type="button" aria-label={running ? "Queue message" : "Send message"} title={running ? "Queue for when the agent is done" : "Send"}
               data-testid="thread-send" disabled={!canSend} onClick={() => void submit()}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground transition-opacity hover:opacity-90 disabled:opacity-35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-[0_1px_2px_rgb(var(--accent-rgb)/0.3)] transition-[opacity,transform] duration-150 hover:scale-105 hover:opacity-95 disabled:opacity-40 disabled:hover:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
               {starting || busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
             </button>}
         </div>
       </div>
     </div>
-    {error && <p role="alert" className="mt-2 px-3 text-xs text-destructive">{error}</p>}
+    {strip}
     <ComposerTypeahead anchorRef={cardRef} open={typeahead.open} trigger={typeahead.token?.trigger ?? null}
       items={typeahead.items} loading={typeahead.loading} activeIndex={typeahead.activeIndex}
       onHover={typeahead.setActiveIndex} onPick={typeahead.pick} />

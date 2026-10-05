@@ -1,9 +1,10 @@
 import { useMemo } from "react";
 import { AgentMark } from "@/components/agentic/AgentMark";
-import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
+import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
+import { cn } from "@/lib/utils";
 import type { ComposerDraft, ProviderOption } from "@/store/agentChat";
 
 /**
@@ -12,7 +13,13 @@ import type { ComposerDraft, ProviderOption } from "@/store/agentChat";
  * text buttons until opened; each opens the app's own searchable list.
  */
 
-const TRIGGER = "w-auto max-w-[220px] gap-1.5 bg-transparent px-2 py-1 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground";
+/** One quiet control in the composer's toolbar: 28 px, medium weight, a lift on hover. */
+const TRIGGER = "h-7 w-auto max-w-[240px] gap-1.5 rounded-lg bg-transparent px-2.5 py-0 text-sm font-medium text-foreground-secondary hover:bg-secondary hover:text-foreground";
+
+/** The hairline between two toolbar controls. */
+function Separator() {
+  return <span aria-hidden className="mx-0.5 hidden h-4 w-px shrink-0 bg-border sm:block" />;
+}
 
 /** The name a coding agent goes by, not its API brand ("Claude Code", not "Anthropic Claude"). */
 export function agentName(provider: Pick<ProviderOption, "agent" | "label">): string {
@@ -78,11 +85,12 @@ export function AgentModelPicker({
   return <Combobox ariaLabel="Coding agent and model" testId="thread-model-picker"
     value={`${draft.provider}${SEP}${draft.model}`} groups={groups}
     onChange={(value) => { const [provider, model = ""] = value.split(SEP); onPick(provider, model); }}
-    fallbackLabel={draft.model || "Choose an agent"} searchPlaceholder="Search agents and models"
+    fallbackLabel={draft.model || (providers.length ? "Choose an agent" : "Loading agents…")} searchPlaceholder="Search agents and models"
     triggerHint={false} className={TRIGGER} />;
 }
 
-export function EffortPicker({ provider, draft, liveModels, onPick }: {
+export function EffortPicker({ provider, draft, liveModels, onPick, separated = false }: {
+  separated?: boolean;
   provider: ProviderOption | null;
   draft: ComposerDraft;
   liveModels: Record<string, CuratedModel[]>;
@@ -95,25 +103,43 @@ export function EffortPicker({ provider, draft, liveModels, onPick }: {
     return model?.efforts ?? provider.effort_levels;
   }, [provider, liveModels, draft.model]);
   if (levels.length === 0 || (levels.length === 1 && levels[0] === "")) return null;
-  return <Combobox ariaLabel="Reasoning effort" testId="thread-effort-picker" value={draft.effort}
-    groups={[{ id: "effort", options: levels.map((level) => ({ value: level, label: effortLabel(level, t) })) }]}
-    onChange={onPick} fallbackLabel={effortLabel(draft.effort, t)} triggerHint={false} className={TRIGGER} />;
+  return <>
+    {separated && <Separator />}
+    <Combobox ariaLabel="Reasoning effort" testId="thread-effort-picker" value={draft.effort}
+      groups={[{ id: "effort", options: levels.map((level) => ({ value: level, label: effortLabel(level, t) })) }]}
+      onChange={onPick} fallbackLabel={effortLabel(draft.effort, t)} triggerHint={false} className={TRIGGER} />
+  </>;
 }
 
-export function AccessPicker({ provider, draft, onPick }: {
+export function AccessPicker({ provider, draft, onPick, separated = false }: {
+  separated?: boolean;
   provider: ProviderOption | null;
   draft: ComposerDraft;
   onPick: (mode: string) => void;
 }) {
   const modes = provider?.permission_modes ?? [];
   if (modes.length === 0) return null;
-  return <Combobox ariaLabel="What the agent may do without asking" testId="thread-access-picker" value={draft.permissionMode}
-    groups={[{
-      id: "access",
-      options: modes.map((mode) => {
-        const Icon = permissionModeIcon(mode.id);
-        return { value: mode.id, label: mode.label, hint: mode.description, icon: <Icon aria-hidden className="h-3.5 w-3.5" /> };
-      }),
-    }]}
-    onChange={onPick} fallbackLabel={draft.permissionMode || "Access"} triggerHint={false} className={TRIGGER} />;
+  return <>
+    {separated && <Separator />}
+    <Combobox ariaLabel="What the agent may do without asking" testId="thread-access-picker" value={draft.permissionMode}
+      groups={[{
+        id: "access",
+        label: "Permissions",
+        options: modes.map((mode) => {
+          const Icon = permissionModeIcon(mode.id);
+          const unguarded = isUnguardedPermissionMode(mode.id);
+          // The description is a second line under the name, never a right-hand
+          // hint: a sentence-long hint pushed the name out of a narrow list.
+          return {
+            value: mode.id,
+            label: mode.label,
+            searchText: mode.description,
+            description: mode.description,
+            icon: <Icon aria-hidden className={cn("h-4 w-4 shrink-0", unguarded ? "text-warning" : "text-muted-foreground")} />,
+          };
+        }),
+      }]}
+      onChange={onPick} fallbackLabel={draft.permissionMode || "Access"} triggerHint={false} panelMinWidth={340}
+      className={cn(TRIGGER, isUnguardedPermissionMode(draft.permissionMode) && "text-warning hover:text-warning")} />
+  </>;
 }
