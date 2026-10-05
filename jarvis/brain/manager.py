@@ -3146,12 +3146,14 @@ class BrainManager:
             tier_cfg.fallback_provider
             and tier_cfg.fallback_provider != effective_provider
             and tier_cfg.fallback_provider in (local_config.brain.providers or {})
+            and tier_cfg.fallback_model
         ):
-            resolved_fallback = _resolve_tier_model(
-                tier, tier_cfg.fallback_provider, tier_cfg.fallback_model
+            # Only an explicit fallback_model is a user pin. With no pin, leave
+            # the provider's own model untouched so a live picker/frontier refresh
+            # remains authoritative at turn-build time.
+            local_config.brain.providers[tier_cfg.fallback_provider].model = (
+                tier_cfg.fallback_model
             )
-            if resolved_fallback:
-                local_config.brain.providers[tier_cfg.fallback_provider].model = resolved_fallback
 
         if tier_cfg.fallback_provider_2:
             resolved_fallback_2 = _resolve_tier_model(
