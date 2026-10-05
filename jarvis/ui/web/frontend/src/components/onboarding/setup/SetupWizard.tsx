@@ -8,17 +8,19 @@
  * window blocks: every step past the name can be left for later.
  */
 import { ArrowLeft, ArrowRight, Check, Loader2 } from "lucide-react";
-import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useAutostart } from "@/hooks/useAutostart";
-import { useKeybinds } from "@/hooks/useHotkey";
+import { useKeybinds, validateCombo } from "@/hooks/useHotkey";
 import { useWakeWord } from "@/hooks/useWakeWord";
 import { fill, setUiLanguage, useT, useUiLanguage, type UiLanguage } from "@/i18n";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
+import { formatCombo, validationText } from "@/views/settings/KeybindRow";
+import { useChordCapture } from "@/views/settings/useChordCapture";
 import { GuidePetFigure } from "../pet/GuidePet";
 import { TOUR_LAYER_ATTR } from "../tourEvents";
 import { QuietAction } from "../ui";
@@ -325,9 +327,9 @@ function SettingRow({
   );
 }
 
-/** A key combination as keycaps: "ctrl+alt+j" → Ctrl + Alt + J. */
+/** A key combination as keycaps, labelled the way this keyboard prints them. */
 function Keycaps({ combo }: { combo: string }) {
-  const keys = combo.split("+").map((k) => k.trim()).filter(Boolean);
+  const keys = formatCombo(combo).split(" + ").filter(Boolean);
   return (
     <span className="inline-flex items-center gap-1" data-testid="setup-voice-keys">
       {keys.map((key, i) => (
@@ -335,10 +337,110 @@ function Keycaps({ combo }: { combo: string }) {
           key={`${key}-${i}`}
           className="min-w-6 rounded-md border border-border-strong bg-secondary px-1.5 py-0.5 text-center font-mono text-xs text-foreground shadow-[inset_0_-1px_0_hsl(var(--border-strong))]"
         >
-          {key.length <= 2 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ")}
+          {key}
         </kbd>
       ))}
     </span>
+  );
+}
+
+/**
+ * The Call shortcut, set by pressing it: click the field, hold the keys, let
+ * go. Uses the same recorder as Settings, so swallowed key releases and
+ * modifier-only chords behave the same everywhere. A combo another shortcut
+ * already owns is refused with the reason, before anything is saved.
+ */
+function CallShortcutRow() {
+  const t = useT();
+  const { config, saveKeybind } = useKeybinds();
+  const saved = config?.keybinds?.call?.trim() ?? "";
+  const [capturing, setCapturing] = useState(false);
+  const [live, setLive] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const others = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [action, combo] of Object.entries(config?.keybinds ?? {})) {
+      if (action !== "call" && combo) out[action] = combo;
+    }
+    return out;
+  }, [config]);
+
+  async function commit(combo: string) {
+    setCapturing(false);
+    const next = combo.trim().toLowerCase();
+    const check = validateCombo(next, others);
+    if (check.status === "error") {
+      setLive(null);
+      setMessage(validationText(check, t) ?? t("first_run.voice.call_refused"));
+      return;
+    }
+    if (next === saved) {
+      setLive(null);
+      return;
+    }
+    setSaving(true);
+    try {
+      await saveKeybind("call", next);
+      setMessage(t("first_run.voice.call_saved"));
+    } catch (e) {
+      setMessage((e as Error).message);
+    } finally {
+      setLive(null);
+      setSaving(false);
+    }
+  }
+
+  useChordCapture(capturing, {
+    onPreview: setLive,
+    onCommit: (combo) => void commit(combo),
+    onCancel: () => {
+      setLive(null);
+      setCapturing(false);
+    },
+  });
+
+  const shown = live ?? saved;
+  return (
+    <SettingRow
+      testId="setup-voice-call"
+      title={t("first_run.voice.call_title")}
+      detail={
+        capturing
+          ? t("first_run.voice.call_recording")
+          : (message ?? (saved ? t("first_run.voice.call_detail") : t("first_run.voice.call_none")))
+      }
+      control={
+        <button
+          type="button"
+          onClick={() => {
+            setMessage(null);
+            setLive(null);
+            setCapturing((c) => !c);
+          }}
+          disabled={!config || saving}
+          // App-level chords stand down while this is set, so the keys being
+          // recorded reach the recorder instead of opening something.
+          data-keybind-recording={capturing ? "true" : undefined}
+          aria-label={t("first_run.voice.call_change")}
+          data-testid="setup-voice-call-field"
+          className={cn(
+            "flex min-h-9 min-w-28 items-center justify-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+            capturing
+              ? "border-accent bg-accent-soft"
+              : "border-border-strong bg-background hover:bg-secondary",
+          )}
+        >
+          {shown ? (
+            <Keycaps combo={shown} />
+          ) : (
+            <span className="text-xs text-muted-foreground">{t("first_run.voice.call_press")}</span>
+          )}
+          {saving && <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        </button>
+      }
+    />
   );
 }
 
@@ -350,8 +452,6 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
   const t = useT();
   const { config, setWakeActivation } = useWakeWord();
   const autostart = useAutostart();
-  const { config: keybinds } = useKeybinds();
-  const callCombo = keybinds?.keybinds?.call?.trim() ?? "";
   const assistantName = useEventStore((s) => s.assistantName);
   const [listening, setListening] = useState<boolean | null>(null);
   const [wakeNote, setWakeNote] = useState<string | null>(null);
@@ -405,14 +505,7 @@ function VoiceStep({ preview, onBack, onFinish }: { preview: boolean; onBack: ()
             />
           }
         />
-        {callCombo && (
-          <SettingRow
-            testId="setup-voice-call"
-            title={t("first_run.voice.call_title")}
-            detail={t("first_run.voice.call_detail")}
-            control={<Keycaps combo={callCombo} />}
-          />
-        )}
+        <CallShortcutRow />
         {autostart.config?.supported && (
           <SettingRow
             testId="setup-voice-login"

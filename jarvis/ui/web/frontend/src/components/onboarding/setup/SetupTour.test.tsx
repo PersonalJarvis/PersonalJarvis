@@ -47,7 +47,11 @@ function stubFetch() {
         return reply({ ok: true, phrase: sent.phrase, engine: "auto", resolved_engine: "auto", degraded: false });
       }
       if (url === "/api/settings/wake-word") return reply(wakeWord);
-      if (url === "/api/settings/keybinds") return reply({ keybinds: { call: "ctrl+alt+j" }, defaults: {}, suggestions: [] });
+      if (url === "/api/settings/keybinds" && method === "PUT") {
+        const sent = JSON.parse(String(init?.body)) as { hotkey: string };
+        return reply({ ok: true, action: "call", hotkey: sent.hotkey, persisted: true, restart_required: false });
+      }
+      if (url === "/api/settings/keybinds") return reply({ keybinds: { call: "ctrl+alt+j", dictate: "f8" }, defaults: {}, suggestions: [] });
       if (url === "/api/settings/autostart" && method === "PUT") return reply({ ok: true, enabled: true, supported: true });
       if (url === "/api/settings/autostart") return reply({ enabled: false, supported: true });
       if (url.endsWith("/status") && url in cliStatus) return reply(cliStatus[url]);
@@ -216,6 +220,34 @@ it("ends the window on the voice step and walks the app, then finishes", async (
   expect(seen).toEqual(["chat", "voice", "agents", "ide", "plugins", "wake", "done"]);
   expect(onFinished).toHaveBeenCalledTimes(1);
   expect(useEventStore.getState().activeSection).toBe("chats");
+});
+
+it("sets the Call shortcut by pressing it", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-voice-keys").textContent).toBe("CtrlAltJ"));
+  fireEvent.click(screen.getByTestId("setup-voice-call-field"));
+  expect(screen.getByTestId("setup-voice-call-field").dataset.keybindRecording).toBe("true");
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "Control", code: "ControlLeft", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", ctrlKey: true });
+    fireEvent.keyUp(window, { key: "k", code: "KeyK", ctrlKey: true });
+    fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" });
+  });
+  await waitFor(() => expect(calls.some((c) => c.url === "/api/settings/keybinds" && c.method === "PUT")).toBe(true));
+  const put = calls.find((c) => c.url === "/api/settings/keybinds" && c.method === "PUT");
+  expect(JSON.parse(put!.body!)).toMatchObject({ action: "call", hotkey: "ctrl+k" });
+});
+
+it("refuses a Call shortcut another shortcut already owns", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-keys");
+  fireEvent.click(screen.getByTestId("setup-voice-call-field"));
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "F8", code: "F8" });
+    fireEvent.keyUp(window, { key: "F8", code: "F8" });
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(calls.some((c) => c.url === "/api/settings/keybinds" && c.method === "PUT")).toBe(false);
 });
 
 it("lets the walk be skipped", async () => {
