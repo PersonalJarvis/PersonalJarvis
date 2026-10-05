@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, Loader2, MessageCircleQuestion, ShieldAlert, Square, X } from "lucide-react";
+import { ArrowUp, Hammer, ListChecks, Loader2, MessageCircleQuestion, ShieldAlert, Square, X } from "lucide-react";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
+import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { DictationButton } from "@/components/agentchat/DictationButton";
-import { runningTurn, type QuestionState, type Timeline, type ToolBlock } from "@/components/agentchat/reduce";
+import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem } from "@/components/agentchat/reduce";
 import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { useT } from "@/i18n";
-import type { ChatAttachment } from "@/lib/agentChatApi";
-import { joinProviderOptions, type ComposerDraft } from "@/store/agentChat";
+import type { ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
+import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
 import { AccessPicker, AgentModelPicker, EffortPicker } from "./ThreadPickers";
 import { rememberSeat, rememberedSeat, threadAgents, useThreadChatStore } from "./threadModel";
@@ -39,27 +40,89 @@ function openQuestion(timeline: Timeline): { block: ToolBlock; question: Questio
   return null;
 }
 
+const PLAN_PROSE = cn(
+  "prose prose-neutral max-w-none text-sm leading-6 text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
+  "prose-p:my-1.5 prose-p:text-foreground prose-li:text-foreground prose-headings:text-foreground-strong prose-strong:text-foreground-strong",
+  "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
+);
+
 function ApprovalPanel({ timeline, onDecide }: { timeline: Timeline; onDecide: (id: string, decision: "allow" | "allow_always" | "deny") => void }) {
   const pending = timeline.pendingApprovals[0];
   if (!pending) return null;
   const input = pending.input && typeof pending.input === "object" ? pending.input as Record<string, unknown> : {};
-  const detail = String(input.command ?? input.file_path ?? input.path ?? input.url ?? "");
+  // Claude Code's finished plan asks here too, and the plan itself is what gets approved.
+  const isPlan = pending.name === "ExitPlanMode";
+  const plan = isPlan ? String(input.plan ?? "").trim() : "";
+  const detail = isPlan ? "" : String(input.command ?? input.file_path ?? input.path ?? input.url ?? "");
   return <div data-testid="thread-approval" className="border-b border-border px-4 py-3">
     <div className="flex items-start gap-2.5">
-      <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+      {isPlan
+        ? <ListChecks aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+        : <ShieldAlert aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-warning" />}
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground-strong">Approval needed{timeline.pendingApprovals.length > 1 ? ` (${timeline.pendingApprovals.length})` : ""}</p>
-        <p className="mt-0.5 text-sm text-muted-foreground">{pending.summary || pending.name}</p>
+        <p className="text-sm font-medium text-foreground-strong">{isPlan ? "Plan ready" : "Approval needed"}{timeline.pendingApprovals.length > 1 ? ` (${timeline.pendingApprovals.length})` : ""}</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">{isPlan ? "Build it, or keep planning and say what to change." : pending.summary || pending.name}</p>
+        {plan && <div data-testid="thread-approval-plan" className={cn("mt-2 max-h-72 overflow-auto rounded-md bg-secondary px-3 py-2 scrollbar-jarvis", PLAN_PROSE)}><ChatMarkdown text={plan} /></div>}
         {detail && <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md bg-secondary px-2.5 py-1.5 font-mono text-xs text-foreground scrollbar-jarvis">{detail}</pre>}
       </div>
     </div>
     <div className="mt-3 flex flex-wrap justify-end gap-2">
       <button type="button" onClick={() => onDecide(pending.approvalId, "deny")}
-        className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Decline</button>
-      <button type="button" onClick={() => onDecide(pending.approvalId, "allow_always")}
-        className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Always allow</button>
+        className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{isPlan ? "Keep planning" : "Decline"}</button>
+      {!isPlan && <button type="button" onClick={() => onDecide(pending.approvalId, "allow_always")}
+        className="rounded-lg border border-border px-3 py-1.5 text-sm text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Always allow</button>}
       <button type="button" data-testid="thread-approve" onClick={() => onDecide(pending.approvalId, "allow")}
-        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Approve</button>
+        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{isPlan ? "Build it" : "Approve"}</button>
+    </div>
+  </div>;
+}
+
+/** The newest turn, when it is the timeline's last item and its plan card still waits. */
+function waitingPlan(timeline: Timeline): TurnItem | null {
+  const last = timeline.items[timeline.items.length - 1];
+  return last && last.type === "turn" && last.plan && last.plan.decision === null ? last : null;
+}
+
+/**
+ * Any coding agent's finished plan (jarvis/agent_chat/turn_prompts.py): build
+ * it in the runner's build mode, or keep planning and type what to change.
+ */
+function PlanPanel({ timeline, provider }: { timeline: Timeline; provider: ProviderOption | null }) {
+  const turn = waitingPlan(timeline);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  if (!turn?.plan) return null;
+  const buildMode = turn.plan.buildMode;
+  const mode = provider?.permission_modes?.find((row) => row.id === buildMode);
+  const decide = async (decision: PlanDecision) => {
+    setSending(true);
+    setError("");
+    try {
+      await useThreadChatStore.getState().resolvePlan(turn.id, decision);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  };
+  return <div data-testid="thread-plan" className="border-b border-border px-4 py-3">
+    <div className="flex items-start gap-2.5">
+      <ListChecks aria-hidden className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-foreground-strong">Plan ready</p>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          {mode ? `Build it switches access to ${mode.label} and starts building.` : "Build it starts building."} Or keep planning and type what to change.
+        </p>
+        {error && <p role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
+      </div>
+    </div>
+    <div className="mt-3 flex flex-wrap justify-end gap-2">
+      <button type="button" disabled={sending} onClick={() => void decide("keep")}
+        className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Keep planning</button>
+      <button type="button" data-testid="thread-plan-build" disabled={sending} onClick={() => void decide("build")}
+        className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Hammer aria-hidden className="h-3.5 w-3.5" />Build it
+      </button>
     </div>
   </div>;
 }
@@ -342,6 +405,7 @@ export function ThreadComposer({
       )}>
       <ApprovalPanel timeline={timeline} onDecide={decide} />
       <QuestionPanel timeline={timeline} />
+      {!running && <PlanPanel timeline={timeline} provider={provider} />}
       {(files.attachments.length > 0 || files.analyzing > 0) && <div className="px-3 pt-3 sm:px-4">
         <ChatAttachmentStrip attachments={files.attachments} analyzing={files.analyzing}
           onRemove={files.remove} previews={files.previews} look="thumbnail" />

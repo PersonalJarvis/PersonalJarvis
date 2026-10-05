@@ -551,11 +551,13 @@ function pendingLabel(block: ToolBlock): { icon: ReactNode; text: string } | nul
 /**
  * A finished turn read the short way: everything up to its last step folds
  * behind one "Worked for …" line, and the text written after that step — the
- * answer — stays in view. A turn with no step at all has nothing to fold.
+ * answer — stays in view. A turn with no step at all has nothing to fold. A
+ * card the turn ended on (an end-of-turn question) is no step: it stays with
+ * the answer it belongs to.
  */
 export function foldFinished(rows: ThreadRow[]): { work: ThreadRow[]; answer: ThreadRow[] } {
   let last = -1;
-  rows.forEach((row, index) => { if (row.kind !== "text") last = index; });
+  rows.forEach((row, index) => { if (row.kind === "work") last = index; });
   return { work: rows.slice(0, last + 1), answer: rows.slice(last + 1) };
 }
 

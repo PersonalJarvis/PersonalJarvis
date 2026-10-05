@@ -17,6 +17,8 @@ import {
   answerAgentChatQuestion,
   bindVoiceChat,
   skipAgentChatQuestion,
+  resolveAgentChatPlan,
+  type PlanDecision,
   type QuestionAnswerInput,
   sendAgentChatMessage,
   saveChatSelection,
@@ -180,6 +182,8 @@ export interface AgentChatStore {
   answerQuestion: (questionId: string, index: number, answer: QuestionAnswerInput) => Promise<void>;
   /** Close an agent's card so its recommendations apply; throws so the card can say why. */
   skipQuestion: (questionId: string) => Promise<void>;
+  /** Answer a coding agent's plan card in the active session; throws so the card can say why. */
+  resolvePlan: (turnId: string, decision: PlanDecision) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
   ingest: (event: AgentChatEvent) => void;
   disconnect: () => void;
@@ -828,6 +832,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         const sid = get().activeSessionId;
         if (!sid) throw new Error("no open chat");
         await skipAgentChatQuestion(sid, questionId);
+      },
+
+      resolvePlan: async (turnId, decision) => {
+        const sid = get().activeSessionId;
+        if (!sid) throw new Error("no open chat");
+        await resolveAgentChatPlan(sid, turnId, decision);
       },
 
       ingest: (event) => {

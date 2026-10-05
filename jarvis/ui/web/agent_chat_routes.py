@@ -16,6 +16,8 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/questions/{qid}    {index, option_index} or {index, text} -> answer
                                              one question of an agent's card
     POST   /sessions/{id}/questions/{qid}/skip  close the card: recommendations apply
+    POST   /sessions/{id}/plan               {turn_id, decision: build | keep} -> answer
+                                             a coding agent's plan card
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -267,6 +269,13 @@ class QuestionAnswerBody(BaseModel):
     option_index: int | None = None
     #: ... or the person's own typed answer. Exactly one of the two.
     text: str | None = None
+
+
+class PlanBody(BaseModel):
+    #: The turn whose plan card this answers.
+    turn_id: str
+    #: ``build`` (switch to the build mode and go) or ``keep`` (keep planning).
+    decision: str
 
 
 class PickFolderBody(BaseModel):
@@ -1117,8 +1126,20 @@ async def answer_question(
             option_index=body.option_index,
             text=body.text,
         )
+        if not ok:
+            # Not a card a running turn waits on: an end-of-turn card, whose
+            # answers go to the agent as the next message.
+            ok = await svc.answer_turn_question(
+                session_id,
+                question_id,
+                index=body.index,
+                option_index=body.option_index,
+                text=body.text,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
@@ -1130,9 +1151,32 @@ async def answer_question(
 )
 async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
-    if not svc.skip_question(session_id, question_id):
+    try:
+        ok = svc.skip_question(session_id, question_id) or await svc.skip_turn_question(
+            session_id, question_id
+        )
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
+    if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/plan",
+    summary="Answer a coding agent's plan card: build it, or keep planning",
+)
+async def resolve_plan(session_id: str, body: PlanBody, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = await svc.resolve_turn_plan(session_id, body.turn_id, body.decision)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such open plan")
+    return {"ok": True, "turn_id": body.turn_id, "decision": body.decision}
 
 
 # ------------------------------------------------------------------ attachments

@@ -52,6 +52,24 @@ for an approval and a blue dot for news since it was last opened.
 - Changes, files, git and terminals live in the IDE's side panel, as in the
   grid layout.
 
+## Questions, approvals and plans
+
+Every coding agent gets the same cards at the top of the composer
+(`jarvis/agent_chat/turn_prompts.py`):
+
+| Moment | Claude Code, GLM | Every other CLI (Codex, Antigravity, Grok Build, OpenCode, Kimi, Cursor, DeepSeek Harness) |
+|---|---|---|
+| The agent has a question | Its own `AskUserQuestion` opens the question card mid-turn; the answers go back on the control protocol and it keeps working | It ends its reply with a `jarvis-ask` block (the protocol rides in front of every prompt); the card opens when the turn ends and the answers are the next message |
+| The plan is ready | `ExitPlanMode` opens a plan card with the plan itself; **Build it** switches the thread to the runner's build mode and the same turn starts building | A turn that finished in plan mode opens a plan card; **Build it** switches the thread to the runner's build mode and sends the go-ahead |
+| A tool needs permission | The approval card (Approve, Always allow, Decline) | The CLI cannot ask from a headless run: the access mode decides, as each mode's description says |
+
+The question card offers the agent's options (its recommendation first), a
+typed answer, and Skip, which leaves the open questions to the agent's
+recommendations. **Keep planning** closes a plan card so the person can type
+what to change. A card nobody answered closes when the person sends another
+message instead. Cards are rebuilt from the session's event log, so they
+survive reopening the thread and restarting the app.
+
 ## Platforms
 
 Nothing in the thread layout is OS-specific: paths are compared

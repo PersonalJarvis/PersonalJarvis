@@ -604,6 +604,25 @@ export async function skipAgentChatQuestion(sessionId: string, questionId: strin
   );
 }
 
+/** A coding agent's plan card: `build` switches to building and sends the go-ahead. */
+export type PlanDecision = "build" | "keep";
+
+/** Answer the plan card of `turnId`. */
+export async function resolveAgentChatPlan(
+  sessionId: string,
+  turnId: string,
+  decision: PlanDecision,
+): Promise<void> {
+  await json(
+    await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turn_id: turnId, decision }),
+    }),
+    "plan-failed",
+  );
+}
+
 export async function pickAgentChatFolder(start?: string): Promise<string | null> {
   const data = await json<{ path: string | null; cancelled: boolean }>(
     await fetch("/api/agent-chat/pick-folder", {
