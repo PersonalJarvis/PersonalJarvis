@@ -1181,7 +1181,8 @@
     "card": {
       "learned_review_hint": "Learned private skills remain advisory instructions. Send one to Skills as a draft to review it before global activation.",
       "learned_review": "Review in Skills",
-      "learned_reviewing": "Preparing draft…"
+      "learned_reviewing": "Preparing draft…",
+      "shared_figures": "Shared avatar catalog"
     },
     "screen": {
       "title": "Isolated screen",
