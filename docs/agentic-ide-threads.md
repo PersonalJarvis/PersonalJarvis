@@ -1,7 +1,7 @@
 # Agentic IDE: thread layout
 
-The Agentic IDE has two layouts, switched with the two buttons in the sidebar
-header:
+The Agentic IDE has two layouts, switched with the rounded switch in the
+middle of the window caption:
 
 - **Terminal grid** — workspaces of terminal panes, each running a coding CLI.
 - **Threads** — one conversation with a coding agent at a time.
@@ -32,30 +32,25 @@ for an approval and a blue dot for news since it was last opened.
 
 ## Thread view
 
-- **Header:** project and thread name (double-click renames), project actions
-  (named shell commands run in the terminal drawer), *Open* in an installed
-  editor or the file manager, *Commit & push* (commit, push, pull request via
-  `gh`), and the terminal drawer and diff panel switches.
-- **New thread:** asks what to build in the project; the project name is a
-  picker.
+- **New thread:** the small plus on a project row. The empty thread asks what
+  to build in the project; the project name is a picker.
 - **Conversation:** the person's messages on the right, the agent's answer as
   reading text, the work in between as folded rows ("Ran 3 commands, read 2
   files") that open to each call, its diff or its output. A running turn ends
   in a live "Working for 12s" line; a finished one says how long it worked and
   which files it changed.
-- **Composer:** coding agent and model, reasoning effort, access mode, files and
-  images (drop, paste, paperclip), `/` `@` `$` typeahead where the CLI offers
-  it. An approval or a question the agent waits on opens at the top of the
-  composer. A message sent while the agent works is queued and goes out when it
-  is free.
-- **Under the composer:** a new thread runs in the current checkout or a fresh
-  git worktree, on the branch picked there (the base of the worktree, or the
-  branch to switch the checkout to).
-- **Diff panel:** every changed file under the thread's folder and each file's
-  change against the last commit (`GET /api/agentic-ide/git/changes` and
-  `/diff?folder=&path=`).
-- **Terminal drawer:** shells in the thread's folder
-  (`/api/workspace/pty/{key}?agent=shell&folder=`).
+- **Composer:** one toolbar — coding agent and model, reasoning effort, access
+  mode — beside the paperclip and the send button. A new thread starts on the
+  agent, model, effort and access the person picked last (else the newest
+  thread's). Files and images go in by drop, paste or paperclip; `/` `@` `$`
+  open the typeahead where the CLI offers it. An approval or a question the
+  agent waits on opens at the top of the composer. A message sent while the
+  agent works is queued; after Stop the queue waits.
+- **Under the composer:** a strip that says where the agent works — the
+  current checkout or a fresh git worktree for a new thread — and on which
+  branch (the base of the worktree, or the branch to switch the checkout to).
+- Changes, files, git and terminals live in the IDE's side panel, as in the
+  grid layout.
 
 ## Platforms
 
