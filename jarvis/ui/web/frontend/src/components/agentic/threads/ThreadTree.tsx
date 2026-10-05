@@ -174,6 +174,8 @@ export function ThreadTree() {
             className={cn("group/thread relative flex min-h-8 items-center rounded-md transition-colors hover:bg-muted", (selected || menuOpen) && "bg-muted")}
             onContextMenu={(event) => {
               event.preventDefault();
+              // Keep the app-wide edit menu (EditContextMenu) from opening on top.
+              event.stopPropagation();
               menuAnchor.current = event.currentTarget;
               setMenu({ sessionId: session.session_id, projectId: project.id });
             }}>
