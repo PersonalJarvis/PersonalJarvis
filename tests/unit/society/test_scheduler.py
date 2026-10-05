@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 
 import pytest
 
+from jarvis.society.delivery import DeliveryBusy
 from jarvis.society.events import MsgType, RoomState, SocietyEnvelope, Tier
 from jarvis.society.failure_reasons import FailureReason
 from jarvis.society.rooms import Rooms
@@ -34,6 +36,11 @@ class FakeDeliverer:
 
     async def __call__(self, target: AgentRecord, env: SocietyEnvelope) -> None:
         self.delivered.append((target.agent_id, env.msg_type))
+
+
+class BusyDeliverer(FakeDeliverer):
+    async def __call__(self, target: AgentRecord, env: SocietyEnvelope) -> None:
+        raise DeliveryBusy("canonical chat is busy")
 
 
 class FakeRoomTurn:
@@ -362,6 +369,29 @@ async def test_say_is_delivered_and_capped(world):
         SocietyEnvelope(msg_type=MsgType.SAY, from_agent="scout", to_agent="ghost", trace_id="s")
     )
     assert await _vetoes(store, "s") == [str(FailureReason.TARGET_UNKNOWN)]
+
+
+async def test_busy_delivery_stays_queued_and_is_logged(tmp_path: Path, caplog):
+    store = SocietyStore(tmp_path / "busy-delivery.db")
+    await store.open()
+    roster = Roster(store)
+    await roster.create(name="Scout")
+    await roster.create(name="Archivist")
+    scheduler = SocietyScheduler(store, roster, deliver=BusyDeliverer()).attach()
+    try:
+        event = SocietyEnvelope(
+            msg_type=MsgType.SAY,
+            from_agent="scout",
+            to_agent="archivist",
+            trace_id="busy",
+        )
+        with caplog.at_level(logging.INFO, logger="jarvis.society.scheduler"):
+            await store.append_and_publish(event)
+        assert await store.delivery_status(event.event_id) == "queued"
+        assert "durable queue will retry" in caplog.text
+    finally:
+        scheduler.detach()
+        await store.close()
 
 
 async def test_trace_message_cap(tmp_path: Path):
