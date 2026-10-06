@@ -225,17 +225,49 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
 
         sender = asyncio.create_task(frames())
         commands: asyncio.Queue[tuple[str, dict, str]] = asyncio.Queue(maxsize=256)
+        # Hover motion arrives ~30 times a second. Queued one by one behind a
+        # slower worker round trip it delayed every click by seconds and then
+        # overflowed the queue, so only the newest motion waits, behind input.
+        hover: list[tuple[str, dict, str]] = []
+        hover_ready = asyncio.Event()
+
+        async def next_control() -> tuple[str, dict, str]:
+            while True:
+                if not commands.empty():
+                    return commands.get_nowait()
+                if hover:
+                    hover_ready.clear()
+                    return hover.pop()
+                getter = asyncio.ensure_future(commands.get())
+                waiter = asyncio.ensure_future(hover_ready.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {getter, waiter}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                finally:
+                    waiter.cancel()
+                    if getter not in done:
+                        getter.cancel()
+                if getter in done:
+                    return getter.result()
 
         async def controls() -> None:
             while True:
-                op, args, generation = await commands.get()
+                op, args, generation = await next_control()
+                motion = op == "click" and args.get("move_only") is True
                 try:
                     current = session.state.get("generation", session.generation)
                     if op not in {"takeover", "cancel"} and generation != current:
                         raise ValueError("The browser changed; wait for its new image")
                     result = await live.control(session, owner, op, args)
-                    await send({"kind": "control", "op": op, "ok": True, **result})
+                    if not motion:
+                        await send({"kind": "control", "op": op, "ok": True, **result})
                 except (ValueError, RuntimeError) as exc:
+                    if motion:
+                        # The next motion replaces a stale one; a hover error
+                        # must not overwrite the viewer's visible state.
+                        log.debug("Browser hover motion skipped: %s", exc)
+                        continue
                     # Control errors are returned to the requesting viewer.
                     await send({"kind": "control", "op": op, "ok": False, "error": str(exc)[:500]})
 
@@ -257,7 +289,22 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
             receive = asyncio.create_task(websocket.receive_json())
             try:
                 op, args = validate_control(value)
-                commands.put_nowait((op, args, session.state.get("generation", session.generation)))
+                item = (op, args, session.state.get("generation", session.generation))
+                if op == "click" and args.get("move_only") is True:
+                    hover[:] = [item]
+                    hover_ready.set()
+                else:
+                    # Motion recorded before this input is older than it.
+                    hover.clear()
+                    commands.put_nowait(item)
+            except asyncio.QueueFull:
+                await send(
+                    {
+                        "kind": "control",
+                        "ok": False,
+                        "error": "The browser is still catching up; try that again in a moment.",
+                    }
+                )
             except (ValueError, RuntimeError) as exc:
                 # Invalid controls are visibly rejected without closing a healthy stream.
                 await send({"kind": "control", "ok": False, "error": str(exc)[:500]})
