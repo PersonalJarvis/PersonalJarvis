@@ -386,6 +386,12 @@ class CliPlan:
     #: is over with the working folder and the wall-clock start, and answers
     #: the id the CLI's own store gave the conversation (or None).
     discover: Callable[[Path, float], str | None] | None = None
+    #: An Agent Client Protocol turn (Hermes, OpenClaw — ``runner_acp``): the
+    #: pump hands every stdout object to it instead of a ``_SHAPES`` translator,
+    #: and it writes its own requests on stdin.
+    acp: Any | None = None
+    #: Called once the process is gone (a runtime releasing its Gateway).
+    after_turn: Callable[[], None] | None = None
 
 
 def claude_control_init() -> str:
@@ -1291,7 +1297,9 @@ _CLAUDE_CODE_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "glm-cli"
 
 
 def supports_cli_runner(runner: str) -> bool:
-    return runner in _PLANNERS
+    from jarvis.agent_chat.runner_acp import supports_runner
+
+    return runner in _PLANNERS or supports_runner(runner)
 
 
 # ------------------------------------------------------------ translation
@@ -2890,7 +2898,8 @@ async def _run_cli_once(
     chat_ref = approval_ref(session.session_id)
     cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
-    planner = _PLANNERS[runner]
+    # ``None`` = an external agent runtime, planned asynchronously (runner_acp).
+    planner = _PLANNERS.get(runner)
     status = "done"
     error_text: str | None = None
     usage: dict[str, int] = {}
@@ -2939,15 +2948,28 @@ async def _run_cli_once(
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
-            plan: CliPlan = planner(
-                prompt=planned_prompt,
-                cwd=cwd,
-                model=session.model,
-                effort=effort,
-                permission_mode=session.permission_mode,
-                resume=resume,
-                identity=identity,
-            )
+            plan: CliPlan
+            if planner is None:
+                from jarvis.agent_chat.runner_acp import plan_runtime_turn
+
+                plan = await plan_runtime_turn(
+                    handle,
+                    runner,
+                    prompt=planned_prompt,
+                    cwd=cwd,
+                    resume=resume,
+                    identity=identity,
+                )
+            else:
+                plan = planner(
+                    prompt=planned_prompt,
+                    cwd=cwd,
+                    model=session.model,
+                    effort=effort,
+                    permission_mode=session.permission_mode,
+                    resume=resume,
+                    identity=identity,
+                )
             if getattr(handle, "tools_disabled", False):
                 from .native_control import disable_cli_tools
 
@@ -2994,6 +3016,7 @@ async def _run_cli_once(
     if placement is None and (
         getattr(handle, "goal_turn", False)
         or (session.surface == "society" and session.permission_mode == "plan")
+        or plan.acp is not None
     ):
         from jarvis.core.process_tree import make_process_tree
 
@@ -3032,7 +3055,7 @@ async def _run_cli_once(
                 cwd=str(cwd),
                 env=plan.env,
                 stdin=asyncio.subprocess.PIPE
-                if plan.stdin_text is not None
+                if plan.stdin_text is not None or plan.acp is not None
                 else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -3047,8 +3070,12 @@ async def _run_cli_once(
                 tree.close()
             return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
 
-    make_state, translate = _SHAPES[plan.shape]
-    state: Any = make_state(handle.turn_id, vendor_session)
+    if plan.acp is not None:
+        state: Any = plan.acp
+        translate: Any = None
+    else:
+        make_state, translate = _SHAPES[plan.shape]
+        state = make_state(handle.turn_id, vendor_session)
     # Lines that are not the CLI's JSON — a banner, a warning, the whole
     # answer of a plain-text CLI — shown as they come, and kept as the answer
     # of last resort when the stream said nothing else.
@@ -3091,9 +3118,18 @@ async def _run_cli_once(
             try:
                 obj = json.loads(line)
             except ValueError:
-                await _say_plain(line)
+                if plan.acp is None:
+                    await _say_plain(line)
+                else:
+                    log.debug("agent chat %s: non-ACP stdout line skipped", handle.turn_id)
                 continue
             if not isinstance(obj, dict):
+                continue
+            if plan.acp is not None:
+                await plan.acp.on_message(obj, acp_io)
+                if plan.acp.saw_result:
+                    # The prompt answered; closing stdin lets the runtime exit.
+                    _close_stdin()
                 continue
             if plan.control_init is not None:
                 if obj.get("type") == "control_request":
@@ -3192,6 +3228,9 @@ async def _run_cli_once(
             if plan.control_init is not None:
                 proc.stdin.write(plan.control_init.encode("utf-8"))
                 await proc.stdin.drain()
+            if plan.acp is not None:
+                proc.stdin.write(plan.acp.opening_frame().encode("utf-8"))
+                await proc.stdin.drain()
             if plan.stdin_text is not None:
                 proc.stdin.write(plan.stdin_text.encode("utf-8"))
                 await proc.stdin.drain()
@@ -3205,6 +3244,27 @@ async def _run_cli_once(
     async def _watch_cancel() -> None:
         await handle.cancel.wait()
         _kill(proc)
+
+    class _AcpIO:
+        """What an ACP turn needs from this process: stdin, the chat, the card."""
+
+        async def write(self, frame: dict[str, Any]) -> None:
+            from jarvis.agent_runtimes.acp import frame_line
+
+            await _write_stdin(frame_line(frame))
+
+        async def emit(self, event: dict[str, Any]) -> None:
+            await handle.emit(event)
+
+        async def ask(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+            decision = await handle.request_approval(call_id, name, args, summary)
+            if decision in {"allow", "allow_always"} and bridge is not None:
+                # A Jarvis tool the runtime just asked about reaches the
+                # executor's own gate over MCP next; the person answered once.
+                bridge.note_cli_approval(chat_ref, name)
+            return str(decision)
+
+    acp_io = _AcpIO()
 
     pump = asyncio.create_task(_pump_stdout())
     drain = asyncio.create_task(_drain_stderr())
@@ -3237,6 +3297,8 @@ async def _run_cli_once(
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
                 log.warning("Agent CLI did not reap after cancellation")
+        if plan.after_turn is not None:
+            plan.after_turn()
 
     if handle.cancel.is_set():
         status = "cancelled"

@@ -126,6 +126,17 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
     return provider, model, effort, account_id
 
 
+def _run_runtime(agent: Any, provider: str) -> str:
+    """The run keeps its owner's runtime when the run's model can drive it;
+    a pinned subscription seat runs on Jarvis' own runtime instead."""
+    runtime = str(getattr(agent, "runtime", "") or "jarvis")
+    if runtime == "jarvis":
+        return ""
+    from jarvis.agent_runtimes.model_map import supports
+
+    return runtime if supports(provider) else ""
+
+
 async def run_owned_routine(
     runtime: Any,
     task_id: str,
@@ -153,6 +164,7 @@ async def run_owned_routine(
         cwd=_workspace(cfg, agent),
         permission_mode="bypass",
         title=f"{agent.name} · Routine {task_id}",
+        runtime=_run_runtime(agent, provider),
     )
     # Persist the link before starting work, including runs that fail or are cancelled.
     task_store, _ = runtime.task_services()

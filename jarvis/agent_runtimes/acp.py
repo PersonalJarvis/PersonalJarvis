@@ -145,6 +145,9 @@ class AcpTurn:
     auto_allow: bool = False
     client_name: str = "personal-jarvis"
     client_version: str = ""
+    #: What the chat stores as its vendor session instead of the ACP session
+    #: id (OpenClaw addresses the conversation by a fixed session key).
+    report_session: str | None = None
 
     # --- fields the CLI runner reads after the turn ---
     vendor_session: str | None = None
@@ -163,6 +166,7 @@ class AcpTurn:
     agent_version: str = ""
     can_load: bool = False
 
+    _acp_session: str = field(default="", init=False)
     _replaying: bool = field(default=False, init=False)
     _text_id: str = field(default="", init=False)
     _text_parts: list[str] = field(default_factory=list, init=False)
@@ -258,16 +262,17 @@ class AcpTurn:
                     self._fail(f"ACP session/new failed: {_error_text(error or {})}")
                 return
             res = result if isinstance(result, dict) else {}
-            self.vendor_session = str(res.get("sessionId") or self.resume or "") or None
-            if not self.vendor_session:
+            self._acp_session = str(res.get("sessionId") or self.resume or "")
+            if not self._acp_session:
                 self._fail("ACP session/new returned no session id")
                 return
+            self.vendor_session = self.report_session or self._acp_session
             await io.write(
                 _request(
                     _PROMPT_ID,
                     "session/prompt",
                     {
-                        "sessionId": self.vendor_session,
+                        "sessionId": self._acp_session,
                         "prompt": [{"type": "text", "text": self.prompt_text}],
                     },
                 )
@@ -314,6 +319,10 @@ class AcpTurn:
                 by_kind[kind] = str(option.get("optionId") or "")
         call = params.get("toolCall") if isinstance(params.get("toolCall"), dict) else {}
         call_id = str(call.get("toolCallId") or uuid.uuid4().hex)
+        if call_id not in self.emitted_tool_ids and not self.auto_allow:
+            # The approval card sits on a tool row; give it one.
+            await self._flush_text(io)
+            await self._tool_start(call | {"toolCallId": call_id}, io)
         name = self._tool_names.get(call_id) or _tool_name(call)
         args = call.get("rawInput") if isinstance(call.get("rawInput"), dict) else {}
         summary = str(call.get("title") or name)[:200]

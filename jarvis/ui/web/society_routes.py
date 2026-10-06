@@ -86,6 +86,15 @@ def _validated_chat_runner(
     from jarvis.agent_chat.service import resolve_runner
 
     chosen_runtime = str(runtime if runtime is not None else agent.runtime)
+    if chosen_runtime not in ("", "jarvis"):
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent first.",
+            )
     runner = resolve_runner(provider, surface="society", runtime=chosen_runtime)
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
@@ -322,6 +331,15 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         fields = inherit_creator_fields(fields, creator)
     requested_mode = str(fields.get("approval_mode") or "bypass")
     provider = str(fields.get("provider") or body.provider)
+    if str(fields.get("runtime") or "jarvis") != "jarvis":
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent first.",
+            )
     if provider:
         from jarvis.agent_chat.permissions import society_mode_supported
         from jarvis.agent_chat.service import resolve_runner

@@ -457,6 +457,10 @@ class SocietyRuntime:
                     cleanup.callback(unsubscribe)
                     setattr(self, attribute, None)
             cleanup.push_async_callback(self.coding_supervision.close)
+            # Hermes / OpenClaw agents: their Gateways must not outlive the app.
+            from jarvis.agent_runtimes import stop_all as stop_agent_runtimes
+
+            cleanup.push_async_callback(stop_agent_runtimes)
 
             tasks: set[asyncio.Task[Any]] = set(self._watchers)
             for task in (self._starting_task, self._context_start_task, self._delivery_task):

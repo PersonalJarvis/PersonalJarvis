@@ -47,6 +47,12 @@ replayed during `session/load` is swallowed because the chat already shows it.
   a conversation in a new process and replays it. An unknown id answers
   `session/load` with an empty result, which Jarvis treats as "resume lost" and
   retries fresh with the transcript in front.
+- **Session restore and the key:** Hermes rebuilds a reopened session from the
+  stored `custom` provider and base URL, without the named provider's
+  `key_env`. Jarvis therefore also writes `model.base_url` and passes the key
+  under the name that path reads (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or
+  `<VENDOR>_API_KEY` derived from the host), in that one process' environment
+  only. A keyless local server gets Hermes' `no-key-required` placeholder.
 - **Tool search:** Hermes defers MCP schemas behind its own `tool_search` by
   default. Jarvis keeps that native behaviour; tests switch it off
   (`tools.tool_search: false`) so a scripted model sees the tools.
@@ -93,3 +99,28 @@ OpenAI-compatible model), so no paid key is involved. Verified 2026-10-06 with
 Hermes 0.20.6 and OpenClaw 2026.9.8 on Windows: new session, an MCP tool call
 with the right session header, resume in a new process, unknown-session
 handling.
+
+`scripts/spikes/agent_runtimes_e2e.py hermes|openclaw` runs the same fake
+model through Jarvis' own drivers (profile and config writing, process
+environment, the OpenClaw Gateway supervisor): two turns in one conversation,
+no key written into the runtime's folder, no process left behind.
+
+## Code map
+
+| Piece | Where |
+|---|---|
+| ACP turn client (transport-free) | `jarvis/agent_runtimes/acp.py` |
+| Shared types, child environment, persona text | `jarvis/agent_runtimes/base.py` |
+| Jarvis provider → runtime endpoint and key | `jarvis/agent_runtimes/model_map.py` |
+| Hermes driver | `jarvis/agent_runtimes/hermes.py` |
+| OpenClaw driver and Gateway supervisor | `jarvis/agent_runtimes/openclaw.py` |
+| Turn planning for the chat | `jarvis/agent_chat/runner_acp.py` |
+| Process, pump, rollover, approvals (shared with every CLI seat) | `jarvis/agent_chat/runner_cli.py` |
+| The agent's `runtime` field | `jarvis/society/roster.py`, `society_schema.sql` |
+
+## Routines
+
+A routine run keeps its owner's runtime when the run's model can drive it
+(a pinned subscription seat runs on Jarvis' own runtime instead). On OpenClaw
+each run gets its own Gateway session key, so a run never resets the agent's
+main conversation.
