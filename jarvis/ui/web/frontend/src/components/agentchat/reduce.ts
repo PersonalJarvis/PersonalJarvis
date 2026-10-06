@@ -38,6 +38,8 @@ export interface ReasoningBlock {
   live: boolean;
   /** When the model began to think (drives the live elapsed counter). */
   startedMs: number;
+  /** The model message the thought belongs to, when the runner names one. */
+  messageId?: string;
 }
 
 export interface ApprovalState {
@@ -606,6 +608,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     case "reasoning": {
       const text = str(p.text);
       const durationMs = num(p.duration_ms);
+      const messageId = str(p.message_id) || undefined;
       return updateTurn(base, turnId, (turn) => {
         const last = turn.blocks[turn.blocks.length - 1];
         if (last && last.kind === "reasoning" && last.live) {
@@ -616,6 +619,20 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               text: text || last.text,
               durationMs: durationMs ?? Math.max(0, ev.ts_ms - last.startedMs),
               live: false,
+              ...(messageId ? { messageId } : {}),
+            }),
+          };
+        }
+        // The CLI sends a message's thinking blocks one by one, each event
+        // carrying everything that message thought so far. A later block of
+        // the same message replaces the finished one instead of repeating it.
+        if (messageId && last && last.kind === "reasoning" && last.messageId === messageId) {
+          return {
+            ...turn,
+            blocks: replaceAt(turn.blocks, turn.blocks.length - 1, {
+              ...last,
+              text: text || last.text,
+              durationMs: durationMs ?? last.durationMs,
             }),
           };
         }
@@ -633,6 +650,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               durationMs,
               live: false,
               startedMs: ev.ts_ms - (durationMs ?? 0),
+              ...(messageId ? { messageId } : {}),
             },
           ],
         };

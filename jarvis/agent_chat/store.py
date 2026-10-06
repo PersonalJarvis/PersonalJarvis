@@ -454,6 +454,30 @@ class AgentChatStore:
                 receipt.update(payload)
         return receipt
 
+    def open_turns(self) -> list[tuple[str, str, int, int]]:
+        """Every session whose newest turn never got its ``turn_finished``.
+
+        ``(session_id, turn_id, started_ms, last_ts_ms)``: when the turn began
+        and when the session last heard anything at all.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT e.session_id, json_extract(e.payload, '$.turn_id') AS turn_id, "
+                "e.ts_ms AS started_ms, "
+                "(SELECT MAX(x.ts_ms) FROM agent_chat_events x "
+                " WHERE x.session_id = e.session_id) AS last_ms "
+                "FROM (SELECT session_id, MAX(seq) AS seq FROM agent_chat_events "
+                "      WHERE kind = 'turn_started' GROUP BY session_id) l "
+                "JOIN agent_chat_events e ON e.session_id = l.session_id AND e.seq = l.seq "
+                "WHERE NOT EXISTS (SELECT 1 FROM agent_chat_events f "
+                "  WHERE f.session_id = l.session_id AND f.seq > l.seq "
+                "  AND f.kind = 'turn_finished')"
+            ).fetchall()
+        return [
+            (str(r["session_id"]), str(r["turn_id"] or ""), int(r["started_ms"]), int(r["last_ms"]))
+            for r in rows
+        ]
+
     def turn_terminal(self, session_id: str, turn_id: str) -> dict[str, Any] | None:
         """Read one durable terminal event for an exact owned turn without loading history."""
         with self._lock:
