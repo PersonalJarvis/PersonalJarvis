@@ -54,8 +54,13 @@ replayed during `session/load` is swallowed because the chat already shows it.
   `<VENDOR>_API_KEY` derived from the host), in that one process' environment
   only. A keyless local server gets Hermes' `no-key-required` placeholder.
 - **Tool search:** Hermes defers MCP schemas behind its own `tool_search` by
-  default. Jarvis keeps that native behaviour; tests switch it off
-  (`tools.tool_search: false`) so a scripted model sees the tools.
+  default; OpenClaw does the same for local models. Both are switched off for
+  agent profiles (`tools.tool_search: false`, `tools.toolSearch: false`): in a
+  live turn a 9B local model never found the deferred Jarvis tools, and with
+  them offered directly both runtimes called `society_wiki_note` correctly.
+  The price is prompt size — about 69k input tokens per model call instead of
+  about 27k on a fresh Hermes session (prompt caching covers roughly half of
+  it from the second call on).
 
 ## OpenClaw
 
@@ -99,6 +104,12 @@ OpenAI-compatible model), so no paid key is involved. Verified 2026-10-06 with
 Hermes 0.20.6 and OpenClaw 2026.9.8 on Windows: new session, an MCP tool call
 with the right session header, resume in a new process, unknown-session
 handling.
+
+Live, 2026-10-06, on a headless dev instance with a local Ollama model
+(`qwen3.5:9b`, no cost): a Hermes and an OpenClaw agent answered with the
+agent's Jarvis identity, read a fact from its Jarvis memory after switching
+runtimes, and wrote a new memory entry through `society_wiki_note`; killing
+the app reaped the OpenClaw Gateway.
 
 `scripts/spikes/agent_runtimes_e2e.py hermes|openclaw` runs the same fake
 model through Jarvis' own drivers (profile and config writing, process

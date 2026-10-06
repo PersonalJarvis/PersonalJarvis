@@ -302,7 +302,9 @@ class OpenClawRuntime:
                 }
             },
             "session": {"reset": {"mode": "none"}},
-            "tools": {"deny": denied, "exec": {"mode": exec_mode}},
+            # Jarvis' tools offered directly, never behind OpenClaw's tool search
+            # (on by default for local models; smaller models miss deferred tools).
+            "tools": {"deny": denied, "exec": {"mode": exec_mode}, "toolSearch": False},
         }
         if turn.mcp_url and turn.control_key:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
