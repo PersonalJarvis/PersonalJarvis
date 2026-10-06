@@ -187,3 +187,67 @@ export async function putEditorBackup(
 export async function deleteEditorBackup(workspaceId: string, path: string): Promise<void> {
   await send(`${base(workspaceId)}/editor-state/backup?${query(path)}`, { method: "DELETE" });
 }
+
+export interface SearchMatch {
+  line: number;
+  column: number;
+  length: number;
+  /** The line around the match, possibly trimmed. */
+  preview: string;
+  /** Where the match starts inside `preview`. */
+  preview_start: number;
+}
+
+export interface SearchResult {
+  results: { path: string; matches: SearchMatch[] }[];
+  match_count: number;
+  file_count: number;
+  searched_files: number;
+  truncated: boolean;
+}
+
+export interface SearchQuery {
+  query: string;
+  regex: boolean;
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  include: string;
+  exclude: string;
+}
+
+export function searchWorkspace(workspaceId: string, search: SearchQuery, signal?: AbortSignal): Promise<SearchResult> {
+  const params = new URLSearchParams({
+    q: search.query,
+    regex: String(search.regex),
+    case: String(search.caseSensitive),
+    word: String(search.wholeWord),
+    include: search.include,
+    exclude: search.exclude,
+  });
+  return send<SearchResult>(`${base(workspaceId)}/search?${params.toString()}`, { signal });
+}
+
+export interface ReplaceResult {
+  replaced_files: string[];
+  replacements: number;
+  skipped: { path: string; reason: string }[];
+}
+
+export function replaceInFiles(
+  workspaceId: string,
+  search: SearchQuery,
+  replacement: string,
+  paths: string[],
+): Promise<ReplaceResult> {
+  return send<ReplaceResult>(
+    `${base(workspaceId)}/search/replace`,
+    json("POST", {
+      query: search.query,
+      replacement,
+      regex: search.regex,
+      case_sensitive: search.caseSensitive,
+      whole_word: search.wholeWord,
+      paths,
+    }),
+  );
+}

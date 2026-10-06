@@ -6277,12 +6277,33 @@
       "busy_saving": "Un archivo de ahí aún se está guardando. Inténtalo de nuevo en un momento.",
       "cancel": "Cancelar"
     },
+    "search": {
+      "placeholder": "Buscar en todos los archivos",
+      "replace_placeholder": "Reemplazar por",
+      "match_case": "Coincidir mayúsculas y minúsculas",
+      "whole_word": "Palabra completa",
+      "regex": "Expresión regular",
+      "toggle_replace": "Mostrar u ocultar reemplazar",
+      "replace_all": "Reemplazar todo",
+      "replace_confirm": "¿Reemplazar {count} en {files} archivos?",
+      "filters": "Archivos a incluir o excluir",
+      "include": "Incluir, p. ej. *.py, src",
+      "exclude": "Excluir, p. ej. tests, *.min.js",
+      "summary": "{count} resultados en {files} archivos",
+      "no_results": "Sin resultados.",
+      "searching": "Buscando…",
+      "truncated": "Solo se muestran los primeros resultados; acota la búsqueda.",
+      "replaced": "{count} reemplazos en {files} archivos.",
+      "skipped_dirty": "Se omitieron {count} archivos con cambios sin guardar; guárdalos primero.",
+      "skipped_other": "{count} archivos no se pudieron cambiar."
+    },
     "tabs": {
       "git": "Git",
       "skills": "Skills",
       "agents": "Agentes",
       "files": "Carpeta",
       "changes": "Cambios",
+      "search": "Buscar",
       "subscriptions": "Suscripciones",
       "office": "Jarvis Verse"
     },

@@ -62,6 +62,8 @@ export interface RevealRequest {
   fileKey: string;
   line: number;
   column: number;
+  /** Characters to select from the column on (a search match); 0 = just place the cursor. */
+  length: number;
   nonce: number;
 }
 
@@ -77,6 +79,7 @@ export interface OpenOptions {
   preview?: boolean;
   line?: number;
   column?: number;
+  length?: number;
 }
 
 interface CodeEditorState {
@@ -190,7 +193,9 @@ export const useCodeEditorStore = create<CodeEditorState>((set, get) => ({
       }
       const files = state.files[fileKey] ? state.files : { ...state.files, [fileKey]: newFile(workspaceId, path) };
       const reveal =
-        options.line != null ? { fileKey, line: options.line, column: options.column ?? 1, nonce: ++revealNonce } : state.reveal;
+        options.line != null
+          ? { fileKey, line: options.line, column: options.column ?? 1, length: options.length ?? 0, nonce: ++revealNonce }
+          : state.reveal;
       return {
         tabs,
         files: prune(files, tabs),

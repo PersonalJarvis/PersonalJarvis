@@ -86,6 +86,7 @@ from jarvis.agentic_ide import (
     drops,
     editor_backups,
     file_editing,
+    file_search,
     git_changes,
     layout_tree,
     native_picker,
@@ -1020,6 +1021,17 @@ class EditorBackupRequest(BaseModel):
     text: str
     base_version: str | None = Field(default=None, max_length=128)
     encoding: str = Field(default="utf-8", max_length=40)
+
+
+class ReplaceInFilesRequest(BaseModel):
+    """Replace every match of a search in the given files."""
+
+    query: str = Field(min_length=1, max_length=1000)
+    replacement: str = Field(max_length=10_000)
+    regex: bool = False
+    case_sensitive: bool = False
+    whole_word: bool = False
+    paths: list[str] = Field(min_length=1, max_length=5000)
 
 
 class DeleteWorkspaceEntryRequest(BaseModel):
@@ -2147,6 +2159,60 @@ async def move_workspace_entry(
         log.warning("Agentic IDE editor: rename failed for %s: %s", req.source, exc)
         raise HTTPException(status_code=500, detail="It could not be renamed.") from exc
     return {"workspace_id": workspace_id, "path": moved}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/search",
+    summary="Search the text of every file in a workspace",
+)
+async def search_workspace_files(
+    workspace_id: str,
+    q: Annotated[str, Query(min_length=1, max_length=1000)],
+    regex: bool = False,
+    case: bool = False,
+    word: bool = False,
+    include: Annotated[str, Query(max_length=1000)] = "",
+    exclude: Annotated[str, Query(max_length=1000)] = "",
+) -> dict[str, object]:
+    """Matching lines grouped by file; bounded in matches and time (``truncated``)."""
+    folder = _workspace_folder(workspace_id)
+    options = file_search.SearchOptions(
+        query=q,
+        regex=regex,
+        case_sensitive=case,
+        whole_word=word,
+        include=include,
+        exclude=exclude,
+    )
+    try:
+        answer = await asyncio.to_thread(file_search.search_workspace, folder, options)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, **answer}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/search/replace",
+    summary="Replace a search's matches in chosen files",
+)
+async def replace_in_workspace_files(
+    workspace_id: str, req: ReplaceInFilesRequest
+) -> dict[str, object]:
+    """Each file is rewritten atomically; files that changed meanwhile are skipped."""
+    folder = _workspace_folder(workspace_id)
+    options = file_search.SearchOptions(
+        query=req.query,
+        regex=req.regex,
+        case_sensitive=req.case_sensitive,
+        whole_word=req.whole_word,
+    )
+    try:
+        answer = await asyncio.to_thread(
+            file_search.replace_in_files, folder, options, req.replacement, req.paths
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, **answer}
 
 
 @router.get(

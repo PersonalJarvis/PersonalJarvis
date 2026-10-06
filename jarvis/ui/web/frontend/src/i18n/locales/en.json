@@ -6277,12 +6277,33 @@
       "busy_saving": "A file in there is still saving. Try again in a moment.",
       "cancel": "Cancel"
     },
+    "search": {
+      "placeholder": "Search in all files",
+      "replace_placeholder": "Replace with",
+      "match_case": "Match case",
+      "whole_word": "Whole word",
+      "regex": "Regular expression",
+      "toggle_replace": "Show or hide replace",
+      "replace_all": "Replace all",
+      "replace_confirm": "Replace {count} in {files} files?",
+      "filters": "Files to include or exclude",
+      "include": "Files to include, e.g. *.py, src",
+      "exclude": "Files to exclude, e.g. tests, *.min.js",
+      "summary": "{count} results in {files} files",
+      "no_results": "No results.",
+      "searching": "Searching…",
+      "truncated": "Only the first results are shown; narrow the search.",
+      "replaced": "Replaced {count} in {files} files.",
+      "skipped_dirty": "{count} files with unsaved changes were left out; save them first.",
+      "skipped_other": "{count} files could not be changed."
+    },
     "tabs": {
       "git": "Git",
       "skills": "Skills",
       "agents": "Agents",
       "files": "Folder",
       "changes": "Changes",
+      "search": "Search",
       "subscriptions": "Subscriptions",
       "office": "Jarvis Verse"
     },

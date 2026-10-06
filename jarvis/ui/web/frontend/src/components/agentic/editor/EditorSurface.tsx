@@ -158,7 +158,11 @@ export default function EditorSurface({
     if (!editor || editor.getModel() !== modelOf(tab.fileKey)) return;
     handledReveal.current = reveal.nonce;
     const position = { lineNumber: reveal.line, column: reveal.column };
-    editor.setPosition(position);
+    if (reveal.length > 0) {
+      editor.setSelection(new monaco.Selection(reveal.line, reveal.column, reveal.line, reveal.column + reveal.length));
+    } else {
+      editor.setPosition(position);
+    }
     editor.revealPositionInCenter(position);
     editor.focus();
   }, [reveal, ready, tab.fileKey, tab.mode, tab.key]);

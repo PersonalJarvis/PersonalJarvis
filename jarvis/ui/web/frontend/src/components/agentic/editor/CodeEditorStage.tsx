@@ -28,6 +28,8 @@ import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components
 import { checkDisk, discardFile, languageName, revertFile, saveAll, saveFile } from "./editorModels";
 import { QuickOpen } from "./QuickOpen";
 import { restoreWorkspace } from "./editorPersistence";
+import { SEARCH_FOCUS_EVENT } from "@/components/agentic/sidePanel/search/SearchPanel";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { renderKindOf } from "./fileKinds";
 
 const EditorSurface = lazy(() => import("./EditorSurface"));
@@ -139,6 +141,14 @@ export function CodeEditorStage({
         event.preventDefault();
         event.stopPropagation();
         state.setQuickOpen(true);
+        return;
+      }
+      if (key === "f" && event.shiftKey) {
+        // Search in all files lives in the side panel, like the explorer.
+        event.preventDefault();
+        event.stopPropagation();
+        useIdeSidePanelStore.getState().openTab("search");
+        window.setTimeout(() => window.dispatchEvent(new Event(SEARCH_FOCUS_EVENT)), 0);
         return;
       }
       const host = stage.current;
