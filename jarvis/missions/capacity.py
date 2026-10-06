@@ -128,6 +128,24 @@ class WorkerCapacityUnavailable(RuntimeError):
         self.detail = detail
 
 
+class CriticCapacityUnavailable(RuntimeError):
+    """The critic's own subscription has no capacity (spent window, dead or
+    missing login). Raised instead of grading on another family or a paid
+    key — a worker's paid approval never covers critic calls."""
+
+    def __init__(self, reason: CapacityWaitReason, provider: str, detail: str = "") -> None:
+        super().__init__(f"critic {provider}: {reason}" + (f" ({detail})" if detail else ""))
+        self.reason: CapacityWaitReason = reason
+        self.provider = provider
+        self.detail = detail
+
+
+#: How often a parked "review only" step may hit a critic failure that is NOT
+#: about capacity before the mission fails honestly (critic_unavailable)
+#: instead of waiting forever on a critic that is broken for another reason.
+MAX_REVIEW_RETRIES = 3
+
+
 class CapacityDecisionRejected(RuntimeError):
     """A capacity decision that cannot apply: the mission is no longer
     parked, there is no paid option, or the option changed since it was
@@ -233,6 +251,8 @@ __all__ = [
     "CapacityDecision",
     "CapacityDecisionRejected",
     "CapacityWaitReason",
+    "CriticCapacityUnavailable",
+    "MAX_REVIEW_RETRIES",
     "PaidOffer",
     "PaidOption",
     "WorkerCapacityUnavailable",

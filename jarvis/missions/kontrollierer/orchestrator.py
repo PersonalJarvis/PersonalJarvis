@@ -39,8 +39,10 @@ from typing import Any, Final, Literal
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
 from ..capacity import (
+    MAX_REVIEW_RETRIES,
     CapacityDecision,
     CapacityDecisionRejected,
+    CriticCapacityUnavailable,
     PaidOffer,
     PaidOption,
     WorkerCapacityUnavailable,
@@ -424,6 +426,10 @@ class _ResumeClaim:
     done: frozenset[str]
     restore_dirs: dict[str, Path]
     checkpoint: dict[str, Any]
+    #: Steps whose worker delivered and only the critic is owed.
+    review_only: frozenset[str] = frozenset()
+    #: Non-capacity critic failures so far, per step (bounded retries).
+    review_failures: dict[str, int] | None = None
 
 
 def _plan_from_checkpoint(checkpoint: dict[str, Any] | None) -> MissionPlan | None:
@@ -913,6 +919,11 @@ class Kontrollierer:
         self._resume_family: dict[str, str] = {}
         self._resume_attempt: dict[str, int] = {}
         self._resume_done_before: dict[str, int] = {}
+        # Steps whose worker delivered but whose critic could not run: the
+        # checkpoint marks them "pending_review" so a resume only reviews.
+        # ``_review_failures`` counts non-capacity critic failures per step.
+        self._pending_review: dict[str, set[str]] = {}
+        self._review_failures: dict[str, dict[str, int]] = {}
         # Approved paid runs: the exact offer the user accepted, and what the
         # run has spent so far. In memory on purpose — an approval covers one
         # run of one mission and dies with it (or with the process).
@@ -1115,6 +1126,7 @@ class Kontrollierer:
         *,
         done_task_ids: frozenset[str] = frozenset(),
         restore_dirs: dict[str, Path] | None = None,
+        review_only_task_ids: frozenset[str] = frozenset(),
     ) -> MissionState:
         """Run the plan's open steps, then aggregate every step's outcome.
 
@@ -1155,6 +1167,7 @@ class Kontrollierer:
                 reflections=reflections,
                 sem=sem,
                 restore_dir=restore_dirs.get(step.task_id),
+                review_only=step.task_id in review_only_task_ids,
             )
             task_outcomes.append(outcome)
             step_outcomes[step.task_id] = outcome
@@ -1298,6 +1311,7 @@ class Kontrollierer:
         reflections: ReflectionMemory,
         sem: asyncio.Semaphore,
         restore_dir: Path | None = None,
+        review_only: bool = False,
     ) -> str:
         """Runs a step through the Worker+Critic loop (max MAX_CRITIC_LOOPS).
 
@@ -1383,6 +1397,7 @@ class Kontrollierer:
                     worktree=worktree,
                     reflections=reflections,
                     resumed=restored,
+                    review_only=review_only and restored,
                 )
             finally:
                 # Archive + teardown run in a worker thread (git and file
@@ -1439,6 +1454,7 @@ class Kontrollierer:
         worktree: Path,
         reflections: ReflectionMemory,
         resumed: bool = False,
+        review_only: bool = False,
     ) -> str:
         """Inner critic-loop body. Extracted so the worktree-finally in the
         caller wraps every return path. ``resumed`` means the workspace holds
@@ -1471,7 +1487,7 @@ class Kontrollierer:
         for iteration in range(MAX_CRITIC_LOOPS):
             # Per-iteration: render reflections, spawn worker, capture diff+log
             prior_block = reflections.render_for_worker_prompt(n=3)
-            if resumed and iteration == 0:
+            if resumed and iteration == 0 and not review_only:
                 prior_block = "\n\n".join(b for b in (_RESUME_NOTE, prior_block) if b)
             # Lead every worker prompt with the artifact-language directive so
             # generated code defaults to English regardless of the request
@@ -1526,52 +1542,66 @@ class Kontrollierer:
                 mission_id, MissionState.CRITIQUING, f"iter-{iteration}-start"
             )
 
-            # Worker spawn (real or fake depending on the factory). A factory
-            # that refuses to switch to a billing fallback parks the task.
-            try:
-                worker = self._make_worker(mission_id, step)
-            except WorkerCapacityUnavailable as exc:
-                logger.warning(
-                    "Task %s iter %d: no worker capacity (%s) — parking the "
-                    "mission instead of switching provider",
-                    step.task_id, iteration, exc,
-                )
-                self._capacity_wait[mission_id] = {
-                    "reason": exc.reason,
-                    "provider": exc.provider,
-                    "error_detail": exc.detail or None,
-                }
-                return TaskOutcome.WAITING_CAPACITY
             log_dir = mission_dir / "tasks" / step.task_id[:13] / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-
-            try:
-                # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
-                # across critic iterations. Live repro mission_019e2605
-                # showed that `openclaw` 2026.5.7 prefers the failover chain
-                # persisted in the session-state file over the explicit
-                # `--model` CLI flag on resume — so iter1 silently retried
-                # `openai/gpt-5.5` instead of `xai/grok-4.3` and died with
-                # `chain_exhausted`. The Critic's correction context is
-                # already injected into the worker prompt via
-                # `prior_block` (see line 250), so a fresh session loses
-                # nothing.
-                spawn_result = await self._spawn_worker_collect(
-                    worker=worker,
-                    worker_prompt=worker_prompt,
-                    worktree=worktree,
-                    mission_dir=mission_dir,
-                    log_dir=log_dir,
-                    mission_id=mission_id,
-                    step=step,
-                    iteration=iteration,
-                    resume_session_id=None,
+            if review_only and iteration == 0:
+                # The worker delivered before the mission parked on its
+                # critic: that result is restored in the workspace and its log
+                # is still archived. Only the review is missing — run it, never
+                # the worker again (and never on a paid approval).
+                worker = None
+                spawn_result = self._SpawnResult(
+                    worker_id=f"review-{step.task_id[:13]}",
+                    cost_usd=0.0,
+                    tokens_used=0,
+                    session_id=None,
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception("Task %s iter %d: worker spawn failed", step.task_id, iteration)
-                if iteration == MAX_CRITIC_LOOPS - 1:
-                    return TaskOutcome.ERROR
-                continue
+            else:
+                # Worker spawn (real or fake depending on the factory). A factory
+                # that refuses to switch to a billing fallback parks the task.
+                try:
+                    worker = self._make_worker(mission_id, step)
+                except WorkerCapacityUnavailable as exc:
+                    logger.warning(
+                        "Task %s iter %d: no worker capacity (%s) — parking the "
+                        "mission instead of switching provider",
+                        step.task_id, iteration, exc,
+                    )
+                    self._capacity_wait[mission_id] = {
+                        "reason": exc.reason,
+                        "provider": exc.provider,
+                        "error_detail": exc.detail or None,
+                    }
+                    return TaskOutcome.WAITING_CAPACITY
+                try:
+                    # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
+                    # across critic iterations. Live repro mission_019e2605
+                    # showed that `openclaw` 2026.5.7 prefers the failover chain
+                    # persisted in the session-state file over the explicit
+                    # `--model` CLI flag on resume — so iter1 silently retried
+                    # `openai/gpt-5.5` instead of `xai/grok-4.3` and died with
+                    # `chain_exhausted`. The Critic's correction context is
+                    # already injected into the worker prompt via
+                    # `prior_block` (see line 250), so a fresh session loses
+                    # nothing.
+                    spawn_result = await self._spawn_worker_collect(
+                        worker=worker,
+                        worker_prompt=worker_prompt,
+                        worktree=worktree,
+                        mission_dir=mission_dir,
+                        log_dir=log_dir,
+                        mission_id=mission_id,
+                        step=step,
+                        iteration=iteration,
+                        resume_session_id=None,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Task %s iter %d: worker spawn failed", step.task_id, iteration
+                    )
+                    if iteration == MAX_CRITIC_LOOPS - 1:
+                        return TaskOutcome.ERROR
+                    continue
 
             approval = self._paid_approval.get(mission_id)
             if approval is not None:
@@ -1923,6 +1953,20 @@ class Kontrollierer:
                     env=env,
                     security_tag=_detect_security_tag(step.prompt),
                 )
+            except CriticCapacityUnavailable as exc:
+                # The critic's own subscription has no capacity. The worker's
+                # result is kept (archived with the checkpoint) and only the
+                # review resumes later — no worker re-run, no other family,
+                # no paid critic.
+                logger.warning(
+                    "Task %s iter %d: critic has no capacity (%s) — parking the "
+                    "mission with the review pending",
+                    step.task_id, iteration, exc,
+                )
+                return self._park_for_review(
+                    mission_id, step, exc.reason, exc.provider, exc.detail,
+                    counts_as_failure=False,
+                )
             except CriticTimeout as exc:
                 # A critic timeout is TRANSIENT (the critic also shells out to
                 # `claude` over the same Claude Max OAuth; under concurrent load
@@ -1934,6 +1978,13 @@ class Kontrollierer:
                     "Task %s iter %d: critic timed out (transient, likely OAuth "
                     "contention): %s", step.task_id, iteration, exc,
                 )
+                if not _real_diff_is_empty(diff_text):
+                    # Delivered work is never redone for a critic that did
+                    # not answer: park and review it later (bounded).
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        str(exc)[:200], counts_as_failure=True,
+                    )
                 if iteration == MAX_CRITIC_LOOPS - 1:
                     # No iterations left to retry the critic.
                     return (
@@ -1955,6 +2006,14 @@ class Kontrollierer:
                 continue
             except (CriticSchemaInvalid, CriticVerdictInconsistent) as exc:
                 logger.warning("Task %s iter %d: critic failed: %s", step.task_id, iteration, exc)
+                if not _real_diff_is_empty(diff_text):
+                    # The worker delivered; the critic could not judge it.
+                    # Keep the work, never re-run the worker, review it later
+                    # — and fail honestly once the critic stays broken.
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        str(exc)[:200], counts_as_failure=True,
+                    )
                 # Live forensic 2026-05-16 (mission_019e3288): a Critic
                 # subprocess crash on iter0 (EPERM symlink + Unknown
                 # agent id) currently degrades to `continue` and the
@@ -3183,12 +3242,25 @@ class Kontrollierer:
             await self._manager.store.touch_heartbeat(mission_id, now_ms())
         except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory
             logger.debug("Resume heartbeat failed (non-fatal): %s", hb_exc)
+        review_only: set[str] = set()
+        review_failures: dict[str, int] = {}
+        for entry in checkpoint.get("steps") or []:
+            if not isinstance(entry, dict) or entry.get("task_id") not in plan_ids:
+                continue
+            task_id = str(entry["task_id"])
+            if entry.get("pending_review") is True and task_id not in done:
+                review_only.add(task_id)
+            failures = entry.get("review_failures")
+            if isinstance(failures, int) and failures > 0:
+                review_failures[task_id] = failures
         return _ResumeClaim(
             prompt=view.prompt,
             plan=plan,
             done=frozenset(done),
             restore_dirs=restore_dirs,
             checkpoint=checkpoint,
+            review_only=frozenset(review_only),
+            review_failures=review_failures,
         )
 
     async def _run_claimed_resume(
@@ -3215,6 +3287,8 @@ class Kontrollierer:
             if paid is not None:
                 self._paid_approval[mission_id] = paid
                 self._paid_spent[mission_id] = 0.0
+            if claim.review_failures:
+                self._review_failures[mission_id] = dict(claim.review_failures)
 
             logger.info(
                 "resume_mission: %s resumes on %s — %d/%d step(s) already done, "
@@ -3231,6 +3305,7 @@ class Kontrollierer:
                     claim.plan,
                     done_task_ids=claim.done,
                     restore_dirs=claim.restore_dirs,
+                    review_only_task_ids=claim.review_only,
                 )
             finally:
                 await self._record_paid_usage(mission_id)
@@ -3242,6 +3317,8 @@ class Kontrollierer:
             self._resume_done_before.pop(mission_id, None)
             self._paid_approval.pop(mission_id, None)
             self._paid_spent.pop(mission_id, None)
+            self._pending_review.pop(mission_id, None)
+            self._review_failures.pop(mission_id, None)
 
     # --- Paid-API approval ---------------------------------------------------
 
@@ -3410,6 +3487,57 @@ class Kontrollierer:
         except Exception:  # noqa: BLE001 - the log line above still records it
             logger.exception("Mission %s: paid-usage event could not be stored", mission_id)
 
+    def _drop_review_state(self, mission_id: str) -> None:
+        """Forget a mission's pending-review bookkeeping (terminal paths).
+        ``getattr``: bare test fixtures build the class without __init__."""
+        for attr in ("_pending_review", "_review_failures"):
+            getattr(self, attr, {}).pop(mission_id, None)
+
+    def _critic_family(self) -> str:
+        """The family that grades missions (for the capacity readback)."""
+        family_fn = getattr(self._runner, "critic_family", None)
+        if callable(family_fn):
+            try:
+                return str(family_fn())
+            except Exception:  # noqa: BLE001 - a label only; logged
+                logger.warning("critic family unreadable", exc_info=True)
+        return "claude"
+
+    def _park_for_review(
+        self,
+        mission_id: str,
+        step: Step,
+        reason: str,
+        provider: str,
+        detail: str,
+        *,
+        counts_as_failure: bool,
+    ) -> str:
+        """Park a step whose worker delivered but whose critic could not run.
+
+        The step is marked ``pending_review`` in the checkpoint so a resume
+        runs only the critic on the archived result. Capacity waits are
+        unbounded (the window comes back); other critic failures count, and
+        after ``MAX_REVIEW_RETRIES`` the task fails as critic_unavailable.
+        """
+        failures = self._review_failures.setdefault(mission_id, {})
+        if counts_as_failure:
+            failures[step.task_id] = failures.get(step.task_id, 0) + 1
+            if failures[step.task_id] >= MAX_REVIEW_RETRIES:
+                logger.error(
+                    "Task %s: critic failed %d times on delivered work — "
+                    "surfacing critic_unavailable",
+                    step.task_id, failures[step.task_id],
+                )
+                return TaskOutcome.CRITIC_UNAVAILABLE
+        self._pending_review.setdefault(mission_id, set()).add(step.task_id)
+        self._capacity_wait[mission_id] = {
+            "reason": reason,
+            "provider": provider,
+            "error_detail": detail or None,
+        }
+        return TaskOutcome.WAITING_CAPACITY
+
     def _check_resume_family(self, mission_id: str, worker: Any) -> None:
         """A resumed mission runs only on the provider family it was parked
         on; anything else parks it again instead of switching unasked."""
@@ -3494,6 +3622,8 @@ class Kontrollierer:
         # Answers of approved read-only steps feed the final summary; they go
         # into the checkpoint so a resumed run can still report them.
         task_answers = self._task_answers.pop(mission_id, [])
+        pending_review = self._pending_review.pop(mission_id, set())
+        review_failures = self._review_failures.pop(mission_id, {})
         self._mission_failure_context.pop(mission_id, None)
         attempt = self._resume_attempt.get(mission_id, 0)
         done_before = self._resume_done_before.get(mission_id, 0)
@@ -3520,6 +3650,9 @@ class Kontrollierer:
                 "prompt": step.prompt,
                 "outcome": outcome,
                 "done": outcome == TaskOutcome.APPROVED,
+                # Worker delivered, critic still owed: a resume only reviews.
+                "pending_review": step.task_id in pending_review,
+                "review_failures": review_failures.get(step.task_id, 0),
                 "files_saved": n_files,
                 "artifacts_dir": str(files_dir.parent),
             })
@@ -3590,6 +3723,7 @@ class Kontrollierer:
         # Hygiene: a retried-then-approved mission must not leak a stale
         # worker-failure context into a later run (mirror of _fail_mission).
         self._mission_failure_context.pop(mission_id, None)
+        self._drop_review_state(mission_id)
         transitioned = await self._safe_transition(
             mission_id,
             MissionState.APPROVED,
@@ -3706,6 +3840,7 @@ class Kontrollierer:
         partial_artifacts: list[str] | None = None,
     ) -> None:
         self._task_answers.pop(mission_id, None)  # hygiene: drop captured answers
+        self._drop_review_state(mission_id)
         # Consume the classified worker-failure context (if any) so the
         # terminal MissionFailed event names the real cause instead of the
         # bare mission-level reason (2026-07-06 incident: error_class was
