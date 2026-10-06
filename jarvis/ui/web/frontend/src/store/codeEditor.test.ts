@@ -74,6 +74,26 @@ describe("code editor tabs", () => {
     expect(store().files[fileKeyOf("w1", "srcx/b.ts")].deleted).toBe(false);
   });
 
+  it("restores last run's tabs without bringing the editor forward", () => {
+    store().openFile("w1", "open.ts", { preview: false });
+    useCodeEditorStore.setState({ visible: false });
+    store().restoreTabs(
+      "w1",
+      [
+        { path: "open.ts", mode: "edit", preview: false },
+        { path: "b.md", mode: "diff", preview: true },
+      ],
+      "b.md",
+    );
+    expect(paths()).toEqual(["open.ts", "b.md*"]);
+    expect(store().visible).toBe(false);
+    // A tab that was already active stays active.
+    expect(store().active.w1).toBe(tabKeyOf("edit", fileKeyOf("w1", "open.ts")));
+
+    store().restoreTabs("w2", [{ path: "x.ts", mode: "edit", preview: false }], "x.ts");
+    expect(store().active.w2).toBe(tabKeyOf("edit", fileKeyOf("w2", "x.ts")));
+  });
+
   it("asks the editor to reveal a line", () => {
     store().openFile("w1", "a.ts", { line: 42, column: 3 });
     expect(store().reveal).toMatchObject({ fileKey: fileKeyOf("w1", "a.ts"), line: 42, column: 3 });

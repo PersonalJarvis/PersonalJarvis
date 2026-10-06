@@ -5,6 +5,9 @@ import { useCodeEditorStore, type EditorFile } from "@/store/codeEditor";
 import { viewKindOf } from "./fileKinds";
 import {
   SaveConflictError,
+  deleteEditorBackup,
+  putEditorBackup,
+  type EditorBackup,
   fetchFileVersion,
   fetchHeadText,
   loadTextFile,
@@ -107,7 +110,10 @@ function createEntry(
   const entry: Entry = {
     model,
     saved: saved ? model.getAlternativeVersionId() : -1,
-    listener: model.onDidChangeContent(() => syncDirty(fileKey)),
+    listener: model.onDidChangeContent(() => {
+      syncDirty(fileKey);
+      scheduleBackup(fileKey);
+    }),
   };
   entries.set(fileKey, entry);
   return entry;
@@ -159,6 +165,85 @@ function toast(message: string): void {
   useEventStore.getState().pushToast("error", message);
 }
 
+// ---- Hot exit: unsaved text survives closing the app ----------------------
+
+/** How long typing has to pause before the unsaved text is backed up. */
+const BACKUP_DELAY_MS = 600;
+const backupTimers = new Map<string, number>();
+/** Files that have a backup on the server, so a clean buffer knows to drop it. */
+const backedUp = new Set<string>();
+/** Backups from last run, laid over their file when it loads. */
+const pendingRestores = new Map<string, EditorBackup>();
+
+export function queueRestore(fileKey: string, backup: EditorBackup): void {
+  pendingRestores.set(fileKey, backup);
+  backedUp.add(fileKey);
+}
+
+function sendBackup(fileKey: string, keepalive = false): void {
+  backupTimers.delete(fileKey);
+  const file = store().files[fileKey];
+  const entry = entries.get(fileKey);
+  if (!file || !entry) return;
+  if (file.dirty) {
+    backedUp.add(fileKey);
+    void putEditorBackup(
+      file.workspaceId,
+      { path: file.path, text: entry.model.getValue(), base_version: file.version, encoding: file.encoding },
+      keepalive,
+    ).catch((error: unknown) => console.warn("Editor backup failed:", (error as Error).message));
+  } else {
+    forgetBackup(fileKey);
+  }
+}
+
+function scheduleBackup(fileKey: string): void {
+  window.clearTimeout(backupTimers.get(fileKey));
+  backupTimers.set(fileKey, window.setTimeout(() => sendBackup(fileKey), BACKUP_DELAY_MS));
+}
+
+/** The buffer was saved, reverted or discarded: its backup is no longer needed. */
+function forgetBackup(fileKey: string, file = store().files[fileKey]): void {
+  window.clearTimeout(backupTimers.get(fileKey));
+  backupTimers.delete(fileKey);
+  if (!backedUp.delete(fileKey) || !file) return;
+  void deleteEditorBackup(file.workspaceId, file.path).catch((error: unknown) =>
+    console.warn("Editor backup cleanup failed:", (error as Error).message),
+  );
+}
+
+/** Send every backup still waiting for its typing pause, now (the window is closing). */
+export function flushBackups(): void {
+  for (const fileKey of [...backupTimers.keys()]) {
+    window.clearTimeout(backupTimers.get(fileKey));
+    sendBackup(fileKey, true);
+  }
+}
+
+/**
+ * Lay last run's unsaved text over the freshly loaded file. The buffer keeps
+ * the version the edits were made on, so if the file changed on disk since,
+ * a save meets the usual conflict instead of overwriting the newer file.
+ */
+function applyRestore(fileKey: string, diskVersion: string | null): void {
+  const backup = pendingRestores.get(fileKey);
+  const entry = entries.get(fileKey);
+  if (!backup || !entry) return;
+  pendingRestores.delete(fileKey);
+  const { model } = entry;
+  if (model.getValue() !== backup.text) {
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: backup.text }], () => null);
+    model.pushStackElement();
+  }
+  const changedOnDisk = backup.base_version !== diskVersion;
+  store().patchFile(fileKey, {
+    version: backup.base_version,
+    deleted: diskVersion === null && backup.base_version !== null,
+    conflict: changedOnDisk && diskVersion !== null ? { diskVersion } : null,
+  });
+  syncDirty(fileKey);
+}
+
 /** Load a file's text from disk into its model (or record why it cannot be edited). */
 export async function loadFile(fileKey: string): Promise<void> {
   const file = store().files[fileKey];
@@ -188,6 +273,7 @@ export async function loadFile(fileKey: string): Promise<void> {
       conflict: null,
       dirty: false,
     });
+    applyRestore(fileKey, loaded.version);
   } catch (error) {
     if (!store().files[fileKey]) return;
     // A file deleted on disk (a deleted entry in Changes) opens as an empty
@@ -200,6 +286,7 @@ export async function loadFile(fileKey: string): Promise<void> {
     if (missing && store().files[fileKey] && !entries.has(fileKey)) {
       createEntry(fileKey, file, "", "\n", true);
       store().patchFile(fileKey, { status: "ready", error: "", version: null, deleted: true, dirty: false });
+      applyRestore(fileKey, null);
       return;
     }
     if (store().files[fileKey]) store().patchFile(fileKey, { status: "error", error: (error as Error).message });
@@ -261,6 +348,7 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
       create,
     });
     entry.saved = sent;
+    if (entry.model.getAlternativeVersionId() === sent) forgetBackup(fileKey);
     bumpEpoch(fileKey);
     store().patchFile(fileKey, {
       saving: false,
@@ -327,6 +415,7 @@ export async function revertFile(fileKey: string, { follow = false } = {}): Prom
 
 /** Forget unsaved edits without touching disk (closing with "Don't save"). */
 export function discardFile(fileKey: string): void {
+  forgetBackup(fileKey);
   disposeFile(fileKey);
   if (store().files[fileKey]) store().patchFile(fileKey, { dirty: false, status: "loading" });
 }
@@ -378,7 +467,10 @@ export function moveModels(workspaceId: string, from: string, to: string): void 
     const text = entry.model.getValue();
     const eol = entry.model.getEOL() === "\r\n" ? "\r\n" : "\n";
     const dirty = entry.model.getAlternativeVersionId() !== entry.saved;
+    forgetBackup(fileKey);
     disposeFile(fileKey);
     createEntry(`${prefix}${moved}`, { workspaceId, path: moved }, text, eol, !dirty);
+    // The backup follows the file to its new name once the store has moved it.
+    if (dirty) scheduleBackup(`${prefix}${moved}`);
   }
 }

@@ -140,3 +140,50 @@ export async function deleteEntry(workspaceId: string, path: string, permanent =
   if (!res.ok) throw new Error((await failure(res)).message);
   return (await res.json()) as { trashed: boolean };
 }
+
+export interface EditorTabRecord {
+  path: string;
+  mode: "edit" | "diff";
+  preview: boolean;
+}
+
+export interface EditorBackup {
+  path: string;
+  text: string;
+  /** The file version the unsaved edits were made on; null for a file not on disk. */
+  base_version: string | null;
+  encoding: TextEncoding;
+  saved_at: number;
+}
+
+export interface EditorState {
+  tabs: EditorTabRecord[];
+  active: string | null;
+  backups: EditorBackup[];
+}
+
+export function fetchEditorState(workspaceId: string): Promise<EditorState> {
+  return send<EditorState>(`${base(workspaceId)}/editor-state`);
+}
+
+/** `keepalive` lets the request finish while the window is closing. */
+export async function putEditorTabs(
+  workspaceId: string,
+  tabs: EditorTabRecord[],
+  active: string | null,
+  keepalive = false,
+): Promise<void> {
+  await send(`${base(workspaceId)}/editor-state/tabs`, { ...json("PUT", { tabs, active }), keepalive });
+}
+
+export async function putEditorBackup(
+  workspaceId: string,
+  backup: Omit<EditorBackup, "saved_at">,
+  keepalive = false,
+): Promise<void> {
+  await send(`${base(workspaceId)}/editor-state/backup`, { ...json("PUT", backup), keepalive });
+}
+
+export async function deleteEditorBackup(workspaceId: string, path: string): Promise<void> {
+  await send(`${base(workspaceId)}/editor-state/backup?${query(path)}`, { method: "DELETE" });
+}

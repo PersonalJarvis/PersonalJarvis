@@ -27,6 +27,7 @@ import { absoluteWorkspacePath } from "@/components/agentic/sidePanel/explorer/e
 import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
 import { checkDisk, discardFile, languageName, revertFile, saveAll, saveFile } from "./editorModels";
 import { QuickOpen } from "./QuickOpen";
+import { restoreWorkspace } from "./editorPersistence";
 import { renderKindOf } from "./fileKinds";
 
 const EditorSurface = lazy(() => import("./EditorSurface"));
@@ -91,6 +92,11 @@ export function CodeEditorStage({
   const activeTab = tabs.find((tab) => tab.key === activeKey) ?? tabs[tabs.length - 1] ?? null;
   const activeFile = activeTab ? files[activeTab.fileKey] : undefined;
   const shown = visible && activeTab !== null;
+
+  // Reopen what this workspace had open last run, unsaved text included.
+  useEffect(() => {
+    if (workspaceId) void restoreWorkspace(workspaceId);
+  }, [workspaceId]);
 
   // Closing the last tab hands the stage back to the terminals.
   useEffect(() => {

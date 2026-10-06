@@ -105,6 +105,11 @@ interface CodeEditorState {
   renamePath: (workspaceId: string, from: string, to: string) => void;
   /** After a delete in the explorer: open files under `path` are marked deleted. */
   markDeleted: (workspaceId: string, path: string) => void;
+  /**
+   * Put back the tabs a workspace had open last run, without bringing the
+   * editor forward; tabs already open stay as they are.
+   */
+  restoreTabs: (workspaceId: string, tabs: { path: string; mode: EditorMode; preview: boolean }[], active: string | null) => void;
 }
 
 export const fileKeyOf = (workspaceId: string, path: string) => `${workspaceId}\u0000${path}`;
@@ -285,6 +290,29 @@ export const useCodeEditorStore = create<CodeEditorState>((set, get) => ({
         files,
         active: { ...state.active, [workspaceId]: activeTab >= 0 ? tabs[activeTab].key : (activeKey ?? null) },
       };
+    }),
+
+  restoreTabs: (workspaceId, restored, activePath) =>
+    set((state) => {
+      const known = new Set(state.tabs.map((tab) => tab.key));
+      const files = { ...state.files };
+      const added: EditorTab[] = [];
+      for (const entry of restored) {
+        const fileKey = fileKeyOf(workspaceId, entry.path);
+        const key = tabKeyOf(entry.mode, fileKey);
+        if (known.has(key)) continue;
+        known.add(key);
+        added.push({ key, fileKey, workspaceId, path: entry.path, mode: entry.mode, preview: entry.preview });
+        files[fileKey] ??= newFile(workspaceId, entry.path);
+      }
+      if (added.length === 0) return {};
+      const tabs = [...state.tabs, ...added];
+      const activeKey =
+        state.active[workspaceId] ??
+        added.find((tab) => tab.path === activePath && tab.mode === "edit")?.key ??
+        added.find((tab) => tab.path === activePath)?.key ??
+        added[0].key;
+      return { tabs, files, active: { ...state.active, [workspaceId]: activeKey } };
     }),
 
   markDeleted: (workspaceId, path) =>

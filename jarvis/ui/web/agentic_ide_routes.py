@@ -84,6 +84,7 @@ from jarvis.agentic_ide import (
     change_authors,
     drop_analysis,
     drops,
+    editor_backups,
     file_editing,
     git_changes,
     layout_tree,
@@ -997,6 +998,28 @@ class MoveWorkspaceEntryRequest(BaseModel):
 
     source: str = Field(min_length=1, max_length=4096)
     destination: str = Field(min_length=1, max_length=4096)
+
+
+class EditorTabState(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    mode: Literal["edit", "diff"] = "edit"
+    preview: bool = False
+
+
+class EditorTabsRequest(BaseModel):
+    """The code editor's open tabs for one workspace, in order."""
+
+    tabs: list[EditorTabState] = Field(default_factory=list, max_length=200)
+    active: str | None = Field(default=None, max_length=4096)
+
+
+class EditorBackupRequest(BaseModel):
+    """Unsaved editor text, kept until it is saved or discarded."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str
+    base_version: str | None = Field(default=None, max_length=128)
+    encoding: str = Field(default="utf-8", max_length=40)
 
 
 class DeleteWorkspaceEntryRequest(BaseModel):
@@ -2124,6 +2147,68 @@ async def move_workspace_entry(
         log.warning("Agentic IDE editor: rename failed for %s: %s", req.source, exc)
         raise HTTPException(status_code=500, detail="It could not be renamed.") from exc
     return {"workspace_id": workspace_id, "path": moved}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/editor-state",
+    summary="The code editor's open tabs and unsaved text to restore",
+)
+async def get_editor_state(workspace_id: str) -> dict[str, object]:
+    """What the editor had open, and every buffer that was not saved, last run."""
+    folder = _workspace_folder(workspace_id)
+    state = await asyncio.to_thread(editor_backups.load_state, folder)
+    return {"workspace_id": workspace_id, **state}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/editor-state/tabs",
+    summary="Remember the code editor's open tabs",
+)
+async def put_editor_tabs(workspace_id: str, req: EditorTabsRequest) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(
+            editor_backups.save_tabs,
+            folder,
+            [tab.model_dump() for tab in req.tabs],
+            req.active,
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/editor-state/backup",
+    summary="Keep unsaved editor text across a restart",
+)
+async def put_editor_backup(workspace_id: str, req: EditorBackupRequest) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(
+            editor_backups.save_backup,
+            folder,
+            req.path,
+            req.text,
+            base_version=req.base_version,
+            encoding=req.encoding,
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/editor-state/backup",
+    summary="Forget the unsaved-text backup of one file",
+)
+async def delete_editor_backup(workspace_id: str, path: str) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(editor_backups.drop_backup, folder, path)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
 
 
 @router.post(
