@@ -42,14 +42,25 @@ function diffFor(path: string) {
 }
 
 const urls: string[] = [];
+/** False plays a backend from before the pane route: FastAPI answers 404 "Not Found". */
+let paneRoute = true;
 
 beforeEach(() => {
   urls.length = 0;
+  paneRoute = true;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
     const path = new URL(url, "http://local").searchParams.get("path") ?? "";
-    const body = url.includes("/diff") ? diffFor(path) : url.includes("/changes") ? CHANGES : {};
+    const pane = url.match(/\/terminals\/([^/]+)\/changes/)?.[1];
+    if (pane && !paneRoute) {
+      return new Response(JSON.stringify({ detail: "Not Found" }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }
+    const body = url.includes("/diff")
+      ? diffFor(path)
+      : pane
+        ? { ...CHANGES, files: CHANGES.files.filter((file) => file.authors.some((a) => a.pane === pane)) }
+        : url.includes("/changes") ? CHANGES : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
   useCodeEditorStore.setState({ tabs: [], active: {}, files: {}, visible: false, reveal: null, closed: [] });
@@ -83,6 +94,21 @@ describe("PaneChangesDialog", () => {
     expect(screen.getByTestId("pane-changes-summary").textContent).toContain("1 file");
     expect(urls.some((url) => url.includes("/workspaces/w1/diff") && url.includes("src%2Fapp.ts"))).toBe(true);
     expect(urls.some((url) => url.includes("other.ts"))).toBe(false);
+  });
+
+  it("asks the pane route, not the whole workspace, for the pane's own files", async () => {
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" />);
+    await screen.findAllByTestId("pane-changes-file");
+    expect(urls[0]).toContain("/api/agentic-ide/workspaces/w1/terminals/T1/changes");
+    expect(urls.some((url) => url.endsWith("/workspaces/w1/changes"))).toBe(false);
+  });
+
+  it("falls back to filtering the workspace list on a backend without the pane route", async () => {
+    paneRoute = false;
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" />);
+    await screen.findAllByTestId("pane-changes-file");
+    expect(paths()).toEqual(["src/app.ts"]);
+    expect(urls.some((url) => url.endsWith("/workspaces/w1/changes"))).toBe(true);
   });
 
   it("widens to the whole folder on request", async () => {

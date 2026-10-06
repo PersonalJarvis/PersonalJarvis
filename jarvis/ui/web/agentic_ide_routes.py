@@ -1749,6 +1749,60 @@ async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
 
 
 @router.get(
+    "/workspaces/{workspace_id}/terminals/{name}/changes",
+    response_model=WorkspaceChangesResponse,
+    summary="Uncommitted files one pane's agent wrote in its workspace",
+)
+async def get_pane_changes(workspace_id: str, name: str) -> WorkspaceChangesResponse:
+    """The pane's "Review changes" list: the files its agent's own record
+    names as written, as git sees them now.
+
+    Reads only this pane's record, not every pane's, and filters git's answer
+    to those files before any cap, so a folder full of other changes cannot
+    hide them. A pane whose record cannot be read answers an empty list.
+    """
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    term = next((t for t in session.terminals if t.name == name), None)
+    if term is None:
+        raise HTTPException(status_code=404, detail="Terminal not found.")
+    records = (
+        [
+            change_authors.PaneRecord(
+                pane=term.name,
+                history_id=term.history_id,
+                agent=term.agent,
+                display_name=term.display_name,
+                session_id=term.resume.id,
+                home=account_home(term.agent, term.account),
+                folder=term.folder or session.folder,
+            )
+        ]
+        if term.resume is not None and agent_transcript.can_read(term.agent)
+        else []
+    )
+    authors = await asyncio.to_thread(change_authors.change_authors, session.folder, records)
+    changes = await asyncio.to_thread(
+        git_changes.workspace_changes, session.folder, set(authors)
+    )
+    return WorkspaceChangesResponse(
+        workspace_id=workspace_id,
+        available=changes.available,
+        branch=changes.branch,
+        files=[
+            ChangedFileItem(
+                **asdict(item),
+                authors=[ChangeAuthorItem(**asdict(a)) for a in authors.get(item.path, [])],
+            )
+            for item in changes.files
+        ],
+        truncated=changes.truncated,
+        reason=changes.reason,
+    )
+
+
+@router.get(
     "/workspaces/{workspace_id}/diff",
     response_model=WorkspaceFileDiffResponse,
     summary="How one workspace file differs from the last commit",

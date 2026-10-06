@@ -234,7 +234,7 @@ export function PaneChangesDialog({
                     >
                       {value === "pane"
                         ? t("pane_review.scope_pane")
-                        : changes
+                        : changes?.folderTotal != null
                           ? fill(t("pane_review.scope_folder_count"), { count: changes.folderTotal })
                           : t("pane_review.scope_folder")}
                     </button>

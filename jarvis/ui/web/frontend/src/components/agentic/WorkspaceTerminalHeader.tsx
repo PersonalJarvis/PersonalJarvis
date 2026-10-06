@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
 import { Check, FileDiff, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { loadLocaleChunk } from "@/i18n";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { SessionGitHubBadge } from "./SessionGitHubBadge";
@@ -278,7 +279,7 @@ export function WorkspaceTerminalHeader({
       <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
         {onReviewChanges && <button type="button" data-testid={`pane-review-changes-${name}`} aria-label={`Review changes by ${name}`}
-          title="Review changes" onClick={onReviewChanges} className={action}><FileDiff className="h-[15px] w-[15px]" /></button>}
+          title="Review changes" onClick={onReviewChanges} onPointerEnter={() => void loadLocaleChunk("pane_review")} className={action}><FileDiff className="h-[15px] w-[15px]" /></button>}
         {moreButton}
         {maximizeButton}
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}

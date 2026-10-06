@@ -7,10 +7,11 @@
  *   every uncommitted change in it is this agent's. Read through the folder
  *   routes (`/api/agentic-ide/git/changes` and `/diff`).
  * - A pane in the workspace's shared folder shares it with its neighbours.
- *   The workspace's Changes reading already names, per file, which panes'
- *   agents wrote it (read from each agent's own record), so this pane's
- *   changes are the files that name it. The whole folder stays one toggle away
- *   for a file a shell command wrote, which no agent record names.
+ *   Its own files are the ones its agent's record names as written; the pane
+ *   route reads only that record and filters git's answer to those files
+ *   before any cap, so a folder full of build output cannot hide them. The
+ *   whole folder stays one toggle away for a file a shell command wrote,
+ *   which no agent record names.
  *
  * Only uncommitted work shows: once the agent commits, the change belongs to
  * a commit and the Git tab is where it is read.
@@ -32,8 +33,8 @@ export interface PaneChanges {
   branch: string;
   /** The files in the requested scope. */
   files: ChangedFile[];
-  /** How many uncommitted files the folder has in all — the "whole folder" count. */
-  folderTotal: number;
+  /** How many uncommitted files the folder has in all, when that was read. */
+  folderTotal: number | null;
   /** True when the pane has a checkout of its own: every change there is its own. */
   ownCheckout: boolean;
   truncated: boolean;
@@ -45,6 +46,12 @@ export interface PaneChangesTarget {
   pane: string;
   /** Set only for a pane on its own git worktree. */
   folder?: string;
+}
+
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
 }
 
 async function read<T>(url: string): Promise<T> {
@@ -60,7 +67,7 @@ async function read<T>(url: string): Promise<T> {
     } catch {
       /* keep the status-code message */
     }
-    throw new Error(message);
+    throw new HttpError(message, res.status);
   }
   return (await res.json()) as T;
 }
@@ -104,6 +111,10 @@ export async function fetchPaneChanges(target: PaneChangesTarget, scope: ChangeS
       truncated: body.truncated,
     };
   }
+  if (scope === "pane") {
+    const own = await fetchOwnChanges(target);
+    if (own) return own;
+  }
   const body = await fetchWorkspaceChanges(target.workspaceId);
   return {
     available: body.available,
@@ -111,6 +122,33 @@ export async function fetchPaneChanges(target: PaneChangesTarget, scope: ChangeS
     branch: body.branch,
     files: scope === "pane" ? filesWrittenBy(body.files, target.pane) : body.files,
     folderTotal: body.files.length,
+    ownCheckout: false,
+    truncated: body.truncated,
+  };
+}
+
+/**
+ * The pane route's answer, or null from a backend that predates it (a running
+ * app updates its bundle before its next restart loads the route), which then
+ * reads the whole workspace and filters here instead.
+ */
+async function fetchOwnChanges(target: PaneChangesTarget): Promise<PaneChanges | null> {
+  let body: FolderChangesBody;
+  try {
+    body = await read<FolderChangesBody>(
+      `/api/agentic-ide/workspaces/${encodeURIComponent(target.workspaceId)}/terminals/${encodeURIComponent(target.pane)}/changes`,
+    );
+  } catch (error) {
+    // FastAPI's own "Not Found" means no such route; the route's 404s say what is missing.
+    if (error instanceof HttpError && error.status === 404 && error.message === "Not Found") return null;
+    throw error;
+  }
+  return {
+    available: body.available,
+    reason: body.reason,
+    branch: body.branch,
+    files: body.files,
+    folderTotal: null,
     ownCheckout: false,
     truncated: body.truncated,
   };

@@ -154,8 +154,15 @@ def _count_lines(path: Path) -> int | None:
     return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
 
 
-def workspace_changes(folder: str | Path) -> WorkspaceChanges:
-    """Every changed path under ``folder``, with line counts where cheap."""
+def workspace_changes(folder: str | Path, only: set[str] | None = None) -> WorkspaceChanges:
+    """Every changed path under ``folder``, with line counts where cheap.
+
+    ``only`` narrows the answer to those workspace-relative POSIX paths — one
+    pane's own files. It is applied BEFORE the :data:`MAX_CHANGED_FILES` cap,
+    so a folder full of unrelated untracked files (build output) cannot push
+    the pane's files off the list, and untracked files are then listed one by
+    one, since a pane writes files, not folders.
+    """
     root = Path(folder).expanduser()
     if not root.is_dir():
         return WorkspaceChanges(available=False, reason="The workspace folder is missing.")
@@ -166,8 +173,11 @@ def workspace_changes(folder: str | Path) -> WorkspaceChanges:
     branch_result = _git(["rev-parse", "--abbrev-ref", "HEAD"], root)
     branch = branch_result.stdout.strip() if branch_result and branch_result.returncode == 0 else ""
 
+    if only is not None and not only:
+        return WorkspaceChanges(available=True, branch=branch)
+    untracked = "--untracked-files=normal" if only is None else "--untracked-files=all"
     status = _git(
-        ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=normal", "--", "."],
+        ["status", "--porcelain=v1", "-z", "--no-renames", untracked, "--", "."],
         root,
     )
     if status is None or status.returncode != 0:
@@ -199,6 +209,8 @@ def workspace_changes(folder: str | Path) -> WorkspaceChanges:
         xy, repo_path = record[:2], record[3:]
         rel = _strip_prefix(repo_path, prefix)
         if rel is None or not rel:
+            continue
+        if only is not None and rel not in only:
             continue
         if len(files) >= MAX_CHANGED_FILES:
             truncated = True

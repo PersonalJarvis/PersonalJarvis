@@ -48,6 +48,31 @@ def test_reports_modified_deleted_and_untracked_with_line_counts(repo: Path) -> 
     assert by_path["app/new.py"].added == 2
 
 
+def test_only_narrows_to_named_files_before_the_cap(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A folder of unrelated untracked files (build output) sorts first and
+    # would fill the whole list; the named file must still be found.
+    monkeypatch.setattr(git_changes, "MAX_CHANGED_FILES", 3)
+    for index in range(10):
+        (repo / f"aaa_chunk{index}.js").write_text("x\n", encoding="utf-8")
+    (repo / "app" / "main.py").write_text("changed\n", encoding="utf-8")
+    (repo / "app" / "fresh").mkdir()
+    (repo / "app" / "fresh" / "new.py").write_text("a\n", encoding="utf-8")
+
+    assert git_changes.workspace_changes(repo).truncated
+
+    changes = git_changes.workspace_changes(repo, only={"app/main.py", "app/fresh/new.py"})
+
+    assert not changes.truncated
+    # An untracked folder is listed file by file, so the named file matches.
+    assert [(f.path, f.status) for f in changes.files] == [
+        ("app/fresh/new.py", "untracked"),
+        ("app/main.py", "modified"),
+    ]
+    assert git_changes.workspace_changes(repo, only=set()).files == []
+
+
 def test_a_sub_folder_workspace_sees_only_its_own_changes_relative_to_itself(repo: Path) -> None:
     (repo / "app" / "main.py").write_text("changed\n", encoding="utf-8")
     (repo / "top.txt").write_text("changed\n", encoding="utf-8")
