@@ -5155,9 +5155,15 @@ class Registry:
                 term.name,
             )
             return False
-        # The replayed screen has to follow the real one; otherwise the
-        # transcript keeps wrapping at the old width.
-        if (term.transcript.cols, term.transcript.rows) == (cols, rows):
+        # Already the PTY's size: nothing to resize. Compared against the PTY,
+        # not the transcript — the transcript is a display mirror that can
+        # drift (see `Terminal.pty_cols`), and a request matching only the
+        # mirror was answered "granted" while the agent stayed in another size.
+        if (term.pty_cols, term.pty_rows) == (cols, rows):
+            # The replayed screen has to follow the real one; otherwise the
+            # transcript keeps wrapping at the old width.
+            if (term.transcript.cols, term.transcript.rows) != (cols, rows):
+                term.transcript.resize(cols, rows)
             return True
         clears_before = term.replay.clears
         if not self._pool(term).resize(term.pty_id, cols, rows):

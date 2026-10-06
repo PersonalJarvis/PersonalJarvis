@@ -27,6 +27,7 @@ import { BrandedSelect } from "@/components/ui/select";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useIdeSkillsStore } from "@/store/ideSkills";
 import { useIdeThreadsStore } from "@/store/ideThreads";
 import { ThreadView } from "@/components/agentic/threads/ThreadView";
@@ -89,6 +90,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const ideWorkspace = useIdeChatStore((state) => state.workspace);
   const stagedPane = useIdeChatStore((state) => state.stagedPane);
   const editorShown = useCodeEditorStore((state) => state.visible && state.tabs.some((tab) => tab.workspaceId === ideWorkspace?.id));
+  // A maximized side panel (the Verse) covers the grid, which only turns invisible
+  // and keeps a narrowed tile. Its panes leave the stage so they neither paint
+  // nor size their agents to a strip nobody is reading.
+  const panelCoversGrid = useIdeSidePanelStore((state) => state.open && state.maximized);
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
@@ -577,7 +582,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       {/* The grid stays mounted behind the threads: its terminals keep running
           and come back exactly as they were when the layout switches back. */}
       <div hidden={threads} className="h-full min-h-0">
-      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads && !editorShown} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads && !editorShown && !panelCoversGrid} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
