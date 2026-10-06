@@ -197,9 +197,10 @@ def check_openclaw() -> DependencyStatus:
             name="openclaw",
             present=False,
             install_hint=(
-                "Optional. Only needed if you switch the worker "
-                "provider away from claude-api. Install with "
-                "`npm i -g openclaw` (pin 2026.5.7, see AD-21)."
+                "Optional. Needed for OpenClaw society agents "
+                "(docs/agent-runtimes.md). Install it from the agent's "
+                "Brain settings, or with the official installer; "
+                "2026.9.8 or newer."
             ),
         )
     version = _probe_version(path, "--version")

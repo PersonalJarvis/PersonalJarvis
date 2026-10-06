@@ -20,7 +20,7 @@ async def evaluate_goal(
 ) -> GoalVerdict:
     from .runner_api import TurnHandle, build_brain, supports_api_runner
     from .runner_cli import run_cli_turn
-    from .service import resolve_runner
+    from .service import session_runner
 
     sources = {
         str(e["seq"]): e
@@ -97,7 +97,7 @@ async def evaluate_goal(
                     if hasattr(result, "__await__"):
                         await result
     else:
-        runner = resolve_runner(session.provider, surface=session.surface)
+        runner = session_runner(session)
         if runner not in (
             "claude-cli",
             "glm-cli",

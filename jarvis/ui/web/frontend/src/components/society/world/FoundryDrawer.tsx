@@ -14,6 +14,7 @@ import { Factory, Plus, X } from "lucide-react";
 import { fill, useT, useUiLanguage } from "@/i18n";
 import { AgentSwatch } from "../AgentSwatch";
 import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
+import { isCreateCancelled } from "../create/createAgentStore";
 
 /** How many of the newest agents the drawer lists. */
 const RECENT_LIMIT = 6;
@@ -74,7 +75,9 @@ export function FoundryDrawer({
         if (onSelectAgent) onSelectAgent(agent.agentId);
         else onClose();
       })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err) => {
+        if (!isCreateCancelled(err)) setError(err instanceof Error ? err.message : String(err));
+      })
       .finally(() => setCreating(false));
   }, [creating, quickCreate, onSelectAgent, onClose]);
 

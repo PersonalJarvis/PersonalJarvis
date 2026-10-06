@@ -42,6 +42,9 @@ import { appChord } from "@/store/appChordSettings";
   Lazy for the same reason: the switcher carries every locale for its
   cross-language search, and nobody needs it before the first Ctrl+Space.
 */
+const CreateAgentDialog = lazy(() =>
+  import("@/components/society/create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialogHost })),
+);
 const QuickSwitcher = lazy(() =>
   import("@/components/QuickSwitcher").then((m) => ({ default: m.QuickSwitcher })),
 );
@@ -50,6 +53,7 @@ import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppZoom } from "@/hooks/useAppZoom";
 import { ZoomIndicator } from "@/components/ZoomIndicator";
 import { useQuickSwitcher } from "@/store/quickSwitcher";
+import { useCreateAgentDialog } from "@/components/society/create/createAgentStore";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -128,6 +132,7 @@ export default function App() {
     reach the recorder instead, so a recording session is skipped.
   */
   const switcherOpen = useQuickSwitcher((s) => s.open);
+  const createAgentOpen = useCreateAgentDialog((s) => s.open);
   const switcherEnabled = useQuickSwitchSettings((s) => s.enabled);
   const switcherCombo = useQuickSwitchSettings((s) => s.combo);
   useEffect(() => {
@@ -420,6 +425,12 @@ export default function App() {
             onOpenChange={(next) => (next ? useQuickSwitcher.getState().show() : useQuickSwitcher.getState().hide())}
             initialQuery={useQuickSwitcher.getState().initialQuery}
           />
+        </Suspense>
+      )}
+      {/* Every plus in the agent society opens this; the chunk loads on first use. */}
+      {createAgentOpen && (
+        <Suspense fallback={null}>
+          <CreateAgentDialog />
         </Suspense>
       )}
       {/* Names the level after Ctrl + Plus / Minus, like Chrome's zoom bubble. */}
