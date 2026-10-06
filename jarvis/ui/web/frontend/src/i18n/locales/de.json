@@ -2942,7 +2942,7 @@
     },
     "overlay_style": {
       "title": "Anzeige-Stil",
-      "description": "Die Jarvis Bar hat einen blauen Sprach-Orb und Tasten für einen neuen Textchat, Mikrofon-Stummschaltung, Assistenten-Audio und Anrufe. Wähle alternativ Maskottchen, Sprach-Orb oder Pet, oder Keine zum Ausblenden. Jede schwebende Anzeige lässt sich auf einen Monitor ziehen.",
+      "description": "Die Jarvis Bar hat eine Sprachanzeige zum Sprechen und Tasten für einen neuen Textchat, Mikrofon-Stummschaltung, Assistenten-Audio und Anrufe. Wähle alternativ Maskottchen, Sprach-Orb oder Pet, oder Keine zum Ausblenden. Jede schwebende Anzeige lässt sich auf einen Monitor ziehen.",
       "label": "Stil",
       "save": "Speichern",
       "saved": "Anzeige-Stil gewechselt.",

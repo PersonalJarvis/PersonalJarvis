@@ -146,7 +146,7 @@ def test_hangup_guard_keeps_write_and_audio_controls_available(kind):
     assert events == ["compose", "speaker", "mic"]
 
 
-def test_live_audio_moves_the_sphere_but_idle_stays_still():
+def test_live_audio_moves_the_indicator_but_idle_stays_still():
     painter = renderer.JarvisBarRenderer()
     assert painter.render(0, "listen", 0).tobytes() != painter.render(0, "listen", 1).tobytes()
     assert painter.render(0, "idle", 0).tobytes() == painter.render(3, "idle", 1).tobytes()
@@ -160,3 +160,27 @@ def test_pet_keeps_its_existing_notification_strip():
         controls.render_pet_strip(state).tobytes()
         != renderer.JarvisBarRenderer().render(0, "idle").tobytes()
     )
+
+
+@pytest.mark.parametrize(
+    "motion,level,phase", [("rest", 0, 0), ("voice", 4, 0), ("think", 0, 5)]
+)
+def test_the_bar_shows_the_pets_indicator_not_a_sphere(motion, level, phase):
+    # One talk control for both styles: the bar's pill is the pet's pill, the
+    # only difference is the pen disc where the pet has its bell.
+    layout = controls.pet_strip_layout()
+    shared = {"motion": motion, "level": level, "phase": phase}
+    bar = controls.render_pet_strip(controls.PetStripState(jarvis_bar=True, **shared))
+    pet = controls.render_pet_strip(controls.PetStripState(**shared))
+    assert bar.crop(layout.pill).tobytes() == pet.crop(layout.pill).tobytes()
+
+
+def test_a_mark_replaces_the_indicator_instead_of_covering_it():
+    painter = renderer.JarvisBarRenderer()
+    plain = painter.render(0, "idle")
+    marked = painter.render(0, "idle", prompt_mode=True)
+    # While a voice runs the moving strokes win over the Prompt Mode mark.
+    assert painter.render(0, "listen", 0.6, prompt_mode=True).tobytes() == painter.render(
+        0, "listen", 0.6
+    ).tobytes()
+    assert marked.tobytes() != plain.tobytes()

@@ -2942,7 +2942,7 @@
     },
     "overlay_style": {
       "title": "Display style",
-      "description": "The Jarvis Bar has a blue talk orb and controls for a new text chat, microphone mute, assistant audio and calls. Choose Mascot, Voice orb or Pet for another display style, or None to hide the overlay. Drag any floating style to place it on a monitor.",
+      "description": "The Jarvis Bar has a voice indicator to talk and controls for a new text chat, microphone mute, assistant audio and calls. Choose Mascot, Voice orb or Pet for another display style, or None to hide the overlay. Drag any floating style to place it on a monitor.",
       "label": "Style",
       "save": "Save",
       "saved": "Display style switched.",

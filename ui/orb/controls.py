@@ -619,7 +619,7 @@ class PetStripState:
 
     #: Jarvis's microphone is muted (``VoiceMuteChanged``).
     mic_muted: bool = False
-    #: The canonical bar uses the original pen and blue talk sphere.
+    #: The Jarvis Bar: the pen (a new text chat) replaces the pet's bell.
     jarvis_bar: bool = False
     #: The assistant's voice is muted for this session.
     speaker_muted: bool = False
@@ -1024,45 +1024,7 @@ def _stroke_mask(width: int, height: int) -> Image.Image:
     return mask
 
 
-PET_ORB_REST_SHARE = 0.80
-PET_ORB_PULSE_SHARE = 0.08
 PET_ORB_HIGHLIGHT = (169, 208, 255)
-PET_ORB_MID = (74, 124, 245)
-PET_ORB_RIM = (39, 71, 200)
-PET_ORB_SPECULAR = (230, 241, 255)
-
-def _draw_orb(
-    d: ImageDraw.ImageDraw,
-    cx: float,
-    cy: float,
-    radius: float,
-) -> None:
-    """A glossy sphere: concentric discs drifting toward a top-left light.
-
-    The outermost disc is the deep rim colour, the innermost the highlight; the
-    centres slide toward the light as they shrink, which reads as a lit ball.
-    PIL only — no numpy on this import path.
-    """
-    steps = max(8, int(radius))
-    lx, ly = cx - radius * 0.38, cy - radius * 0.40
-    for k in range(steps, 0, -1):
-        t = k / steps  # 1 at the rim, toward 0 at the light
-        r = radius * t
-        ox = lx + (cx - lx) * t
-        oy = ly + (cy - ly) * t
-        if t > 0.55:
-            color = _lerp(PET_ORB_MID, PET_ORB_RIM, (t - 0.55) / 0.45)
-        else:
-            color = _lerp(PET_ORB_HIGHLIGHT, PET_ORB_MID, t / 0.55)
-        d.ellipse([ox - r, oy - r, ox + r, oy + r], fill=color)
-    shine = radius * 0.16
-    sx, sy = cx - radius * 0.42, cy - radius * 0.46
-    d.ellipse([sx - shine, sy - shine * 0.8, sx + shine, sy + shine * 0.8], fill=PET_ORB_SPECULAR)
-
-def _orb_radius(state: PetStripState, pill_height: float) -> float:
-    pulse = (state.level / PET_LEVEL_STEPS) if state.active or state.motion == "voice" else 0.0
-    share = PET_ORB_REST_SHARE + PET_ORB_PULSE_SHARE * max(0.0, min(1.0, pulse))
-    return pill_height * share / 2.0
 
 
 def _draw_indicator(
@@ -1148,20 +1110,9 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
-            if state.jarvis_bar:
-                _draw_orb(d, cx, cy, _orb_radius(state, h_ss))
-                if state.motion == "think":
-                    radius = h_ss * 0.44
-                    start = state.phase * 360 / PET_THINK_PHASES
-                    d.arc(
-                        [cx - radius, cy - radius, cx + radius, cy + radius],
-                        start,
-                        start + 90,
-                        fill=PET_ORB_HIGHLIGHT,
-                        width=max(1, int(stroke)),
-                    )
-            else:
-                _draw_indicator(layer, cx, cy, h_ss, state)
+            # The pet and the Jarvis Bar share one talk control: the three
+            # strokes that rest, follow the voice and run while Jarvis thinks.
+            _draw_indicator(layer, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)
     return layer.resize((width, height), Image.Resampling.LANCZOS)

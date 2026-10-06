@@ -2942,7 +2942,7 @@
     },
     "overlay_style": {
       "title": "Estilo de visualización",
-      "description": "Jarvis Bar tiene un orbe azul y controles para un nuevo chat de texto, silenciar el micrófono, audio del asistente y llamadas. Elige Mascota, Orbe de voz o Pet para otro estilo, o Ninguno para ocultarlo. Puedes arrastrar cada vista flotante a un monitor.",
+      "description": "Jarvis Bar tiene un indicador de voz para hablar y controles para un nuevo chat de texto, silenciar el micrófono, audio del asistente y llamadas. Elige Mascota, Orbe de voz o Pet para otro estilo, o Ninguno para ocultarlo. Puedes arrastrar cada vista flotante a un monitor.",
       "label": "Estilo",
       "save": "Guardar",
       "saved": "Estilo de visualización cambiado.",
