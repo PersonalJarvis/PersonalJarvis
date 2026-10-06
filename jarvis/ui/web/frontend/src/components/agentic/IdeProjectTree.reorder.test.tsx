@@ -19,6 +19,7 @@ vi.mock("@/lib/agenticIdeApi", () => {
 });
 vi.mock("@/lib/chatLibraryApi", () => ({
   patchProject: vi.fn(async () => ({})),
+  fetchProjectLaunchers: vi.fn(async () => ({ file_manager: false, editors: [], remote_url: null, remote_label: null })),
   openProject: vi.fn(async () => ({ id: "p1" })),
   ChatLibraryError: class extends Error {
     constructor(message: string, readonly status: number) {

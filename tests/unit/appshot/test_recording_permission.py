@@ -64,7 +64,8 @@ def test_the_recording_status_on_a_mac_without_the_grant(
     monkeypatch: pytest.MonkeyPatch, gate
 ) -> None:
     """The status route on macOS: an honest refusal, never an import error."""
-    pytest.importorskip("PySide6.QtMultimedia")
+    # A Linux runner without PulseAudio raises ImportError (libpulse), not ModuleNotFound.
+    pytest.importorskip("PySide6.QtMultimedia", exc_type=ImportError)
     pytest.importorskip("av")
     from jarvis.appshot import recording
 
