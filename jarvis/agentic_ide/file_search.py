@@ -24,6 +24,7 @@ from pathlib import Path
 from .file_editing import (
     EditConflict,
     EditError,
+    _decode,
     list_files,
     read_text_file,
     write_text_file,
@@ -43,7 +44,6 @@ MAX_SEARCH_BYTES = 1024 * 1024
 #: Wall-clock budget for one search.
 SEARCH_BUDGET_S = 8.0
 _PREVIEW_CHARS = 240
-_BINARY_SNIFF_BYTES = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,9 +107,10 @@ def _read_searchable(base: Path, path: str) -> str | None:
         data = target.read_bytes()
     except OSError:
         return None
-    if b"\x00" in data[:_BINARY_SNIFF_BYTES]:
-        return None
-    return data.decode("utf-8", errors="replace")
+    # Read it exactly the way the editor opens it (UTF-8, UTF-16, Windows code
+    # pages, …), so a search finds what the editor shows; binaries stay out.
+    decoded = _decode(data)
+    return decoded[0] if decoded else None
 
 
 def _preview(line: str, start: int, end: int) -> tuple[str, int]:

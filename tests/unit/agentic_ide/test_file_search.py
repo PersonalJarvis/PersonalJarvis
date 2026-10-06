@@ -106,3 +106,17 @@ def test_replace_keeps_crlf_and_reports_unreadable_files(project: Path) -> None:
     answer = replace_in_files(project, SearchOptions("two"), "2", ["win.txt", "logo.bin"])
     assert (project / "win.txt").read_bytes() == b"one\r\n2\r\n"
     assert answer["skipped"] == [{"path": "logo.bin", "reason": "not a text file"}]
+
+
+def test_search_reads_legacy_encodings_like_the_editor(project: Path) -> None:
+    (project / "legacy.txt").write_bytes(
+        "Déjà vu: café crème, naïve façade.\r\n".encode("cp1252") * 3
+    )
+
+    hits = _hits(search_workspace(project, SearchOptions("façade")))
+
+    assert [(path, line) for path, line, _ in hits] == [
+        ("legacy.txt", 1),
+        ("legacy.txt", 2),
+        ("legacy.txt", 3),
+    ]
