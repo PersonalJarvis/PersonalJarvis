@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,7 @@ from .git_changes import (
     _repo_prefix,
     file_diff,
     normalize_workspace_path,
+    untracked_diff,
 )
 
 #: Paths handed to one git call; keeps the command line far below Windows' limit.
@@ -96,41 +98,122 @@ def _status_from_letter(letter: str) -> str:
     return {"A": "added", "D": "deleted"}.get(letter[:1], "modified")
 
 
-def pane_changes(
-    folder: str | Path, paths: set[str], base: str
-) -> tuple[list[ChangedFile], set[str], bool]:
-    """``(files that differ from base, the ones still uncommitted, truncated)`` among ``paths``."""
-    root = Path(folder).expanduser()
-    wanted = sorted(paths)
+#: Most diff lines one listing carries inline; files past it are read one by one on demand.
+MAX_INLINE_DIFF_LINES = 20_000
+
+
+@dataclass(slots=True)
+class PaneListing:
+    """The agent's files as git sees them against ``base``."""
+
+    files: list[ChangedFile] = field(default_factory=list)
+    #: The listed files git still reports as changed or untracked in the working tree.
+    pending: set[str] = field(default_factory=set)
+    truncated: bool = False
+    #: Each listed file's diff, up to :data:`MAX_INLINE_DIFF_LINES` in all.
+    diffs: dict[str, FileDiff] = field(default_factory=dict)
+
+
+def _worktree_state(root: Path, prefix: str, chunk: list[str]) -> tuple[set[str], set[str]]:
+    """(changed or untracked in the working tree, untracked) among ``chunk``."""
+    result = _git(
+        ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--", *chunk],
+        root,
+    )
+    pending: set[str] = set()
+    untracked: set[str] = set()
+    for record in (result.stdout.split("\0") if result and result.returncode == 0 else []):
+        if len(record) < 4 or not record[3:].startswith(prefix):
+            continue
+        path = record[3 + len(prefix) :]
+        pending.add(path)
+        if record[:2] == "??":
+            untracked.add(path)
+    return pending, untracked
+
+
+def _raw_counts(
+    root: Path, base: str, chunk: list[str]
+) -> tuple[dict[str, str], dict[str, tuple[int | None, int | None]]]:
+    """Status word and line counts of each file in ``chunk`` that differs from ``base``."""
+    result = _git(
+        ["diff", "--raw", "--numstat", "-z", "--no-renames", "--relative", base, "--", *chunk],
+        root,
+    )
     status: dict[str, str] = {}
     counts: dict[str, tuple[int | None, int | None]] = {}
-    untracked: set[str] = set()
-    for chunk in _chunks(wanted):
-        named = _git(
-            ["diff", "--name-status", "-z", "--no-renames", "--relative", base, "--", *chunk], root
-        )
-        if named is not None and named.returncode == 0:
-            parts = named.stdout.split("\0")
-            for letter, path in zip(parts[0::2], parts[1::2], strict=False):
-                if path:
-                    status[path] = _status_from_letter(letter)
-        numstat = _git(
-            ["diff", "--numstat", "-z", "--no-renames", "--relative", base, "--", *chunk], root
-        )
-        if numstat is not None and numstat.returncode == 0:
-            for record in numstat.stdout.split("\0"):
-                bits = record.split("\t")
-                if len(bits) == 3:
-                    counts[bits[2]] = (
-                        int(bits[0]) if bits[0].isdigit() else None,
-                        int(bits[1]) if bits[1].isdigit() else None,
-                    )
-        others = _git(["ls-files", "--others", "--exclude-standard", "-z", "--", *chunk], root)
-        if others is not None and others.returncode == 0:
-            untracked.update(path for path in others.stdout.split("\0") if path)
+    tokens = result.stdout.split("\0") if result and result.returncode == 0 else []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.startswith(":") and index + 1 < len(tokens):
+            status[tokens[index + 1]] = _status_from_letter(token.split()[-1])
+            index += 2
+            continue
+        bits = token.split("\t")
+        if len(bits) == 3:
+            counts[bits[2]] = (
+                int(bits[0]) if bits[0].isdigit() else None,
+                int(bits[1]) if bits[1].isdigit() else None,
+            )
+        index += 1
+    return status, counts
 
-    files: list[ChangedFile] = []
-    truncated = False
+
+def _patches(root: Path, base: str, chunk: list[str]) -> dict[str, str]:
+    """``{path: its unified diff against base}`` for the files in ``chunk``, from one git call."""
+    result = _git(
+        ["diff", "--no-color", "--no-ext-diff", "--no-renames", "--relative", "-U3", base]
+        + ["--", *chunk],
+        root,
+    )
+    if result is None or result.returncode != 0:
+        return {}
+    headers = {f"diff --git a/{path} b/{path}": path for path in chunk}
+    patches: dict[str, str] = {}
+    for block in result.stdout.split("\ndiff --git "):
+        text = block if block.startswith("diff --git ") else "diff --git " + block
+        path = headers.get(text.split("\n", 1)[0])
+        if path is not None:
+            patches[path] = text
+    return patches
+
+
+def pane_changes(folder: str | Path, paths: set[str], base: str) -> PaneListing:
+    """The files among ``paths`` that differ from ``base``, with their diffs.
+
+    Three git calls per chunk of paths — working-tree state, status and line
+    counts, and the patch text — run side by side, so a listing costs about
+    one git round trip however many files the agent touched.
+    """
+    root = Path(folder).expanduser()
+    wanted = sorted(paths)
+    _is_repo, prefix, _reason = _repo_prefix(root)
+    pending: set[str] = set()
+    untracked: set[str] = set()
+    status: dict[str, str] = {}
+    counts: dict[str, tuple[int | None, int | None]] = {}
+    patches: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        jobs = [
+            (
+                pool.submit(_worktree_state, root, prefix, chunk),
+                pool.submit(_raw_counts, root, base, chunk),
+                pool.submit(_patches, root, base, chunk),
+            )
+            for chunk in _chunks(wanted)
+        ]
+        for state, raw, patch in jobs:
+            chunk_pending, chunk_untracked = state.result()
+            pending |= chunk_pending
+            untracked |= chunk_untracked
+            chunk_status, chunk_counts = raw.result()
+            status.update(chunk_status)
+            counts.update(chunk_counts)
+            patches.update(patch.result())
+
+    listing = PaneListing(pending=set())
+    budget = MAX_INLINE_DIFF_LINES
     for path in wanted:
         if path in untracked:
             word, added, removed = "untracked", _count_lines(root / path), 0
@@ -139,29 +222,30 @@ def pane_changes(
             added, removed = counts.get(path, (None, None))
         else:
             continue  # the agent's edits to it are gone again, or it never left the base
-        if len(files) >= MAX_CHANGED_FILES:
-            truncated = True
+        if len(listing.files) >= MAX_CHANGED_FILES:
+            listing.truncated = True
             break
-        files.append(ChangedFile(path=path, status=word, added=added, removed=removed))
-    return files, _pending(root, [item.path for item in files]), truncated
-
-
-def _pending(root: Path, paths: list[str]) -> set[str]:
-    """Which of ``paths`` git still reports as changed or untracked in the working tree."""
-    pending: set[str] = set()
-    _is_repo, prefix, _reason = _repo_prefix(root)
-    for chunk in _chunks(paths):
-        status = _git(
-            ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]
-            + ["--", *chunk],
-            root,
-        )
-        if status is None or status.returncode != 0:
+        listing.files.append(ChangedFile(path=path, status=word, added=added, removed=removed))
+        if path in pending:
+            listing.pending.add(path)
+        if budget <= 0:
             continue
-        for record in status.stdout.split("\0"):
-            if len(record) >= 4 and record[3:].startswith(prefix):
-                pending.add(record[3 + len(prefix) :])
-    return pending
+        if word == "untracked":
+            diff = untracked_diff(root, path)
+        else:
+            hunks, d_added, d_removed, binary, cut = _parse_unified(patches.get(path, ""))
+            diff = FileDiff(
+                path=path,
+                status=word,
+                binary=binary,
+                hunks=hunks,
+                added=d_added,
+                removed=d_removed,
+                truncated=cut,
+            )
+        budget -= sum(len(hunk.lines) for hunk in diff.hunks)
+        listing.diffs[path] = diff
+    return listing
 
 
 def pane_file_diff(folder: str | Path, path: str, base: str) -> FileDiff:
@@ -391,6 +475,7 @@ def pane_work(
 __all__ = [
     "BASE_PATTERN",
     "CommitRefs",
+    "PaneListing",
     "PaneWork",
     "agent_commit_refs",
     "commit_files",

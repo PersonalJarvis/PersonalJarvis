@@ -159,10 +159,11 @@ import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
 import { PaneChangesDialog } from "./PaneChangesDialog";
+import { prefetchPaneChanges } from "./paneChangesApi";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { usePaneContextMenu } from "./usePaneContextMenu";
 import { SessionGitHubBadge } from "./SessionGitHubBadge";
-import { useT } from "@/i18n";
+import { loadLocaleChunk, useT } from "@/i18n";
 
 /**
  * How old a delivery may be and still raise its receipt on a fresh connection.
@@ -2810,6 +2811,12 @@ export function AgenticTerminal({
   // A pane whose agent runs on another computer changes files THERE, which
   // this machine's git cannot read — so only a local pane offers the review.
   const reviewChanges = workspaceId && !computerName ? () => setChangesOpen(true) : undefined;
+  const prefetchReview = workspaceId && !computerName
+    ? () => {
+      void loadLocaleChunk("pane_review");
+      prefetchPaneChanges({ workspaceId, pane: name, folder });
+    }
+    : undefined;
   const headerProps = {
     githubStatusEnabled: active,
     contextMenuRequest: paneMenu.request,
@@ -2836,6 +2843,7 @@ export function AgenticTerminal({
     onOpenConversation: () => setHistoryOpen(true),
     onOpenChat,
     onReviewChanges: reviewChanges,
+    onReviewChangesPrefetch: prefetchReview,
     onRestart,
     onFork,
     branch,
@@ -2952,6 +2960,7 @@ export function AgenticTerminal({
         onOpenConversation={() => setHistoryOpen(true)}
         onOpenChat={onOpenChat}
         onReviewChanges={reviewChanges}
+        onReviewChangesPrefetch={prefetchReview}
       />}
       {/*
         What went wrong, kept on screen for as long as it is true — and the one
@@ -3146,6 +3155,7 @@ function PaneHeader({
   onOpenConversation,
   onOpenChat,
   onReviewChanges,
+  onReviewChangesPrefetch,
 }: {
   workspaceId?: string;
   githubStatusEnabled: boolean;
@@ -3181,6 +3191,8 @@ function PaneHeader({
   onOpenChat?: () => void;
   /** Opens the review of every uncommitted change this pane's agent made. */
   onReviewChanges?: () => void;
+  /** Starts reading the review the moment the pointer reaches its button. */
+  onReviewChangesPrefetch?: () => void;
 }) {
   const t = useT();
   const light = appearance === "light";
@@ -3709,6 +3721,7 @@ function PaneHeader({
             label={`Review changes by ${name}`}
             testId={`pane-review-changes-${name}`}
             onClick={onReviewChanges}
+            onHover={onReviewChangesPrefetch}
           >
             <FileDiff className="h-3.5 w-3.5" aria-hidden="true" />
           </PaneAction>
@@ -3881,6 +3894,7 @@ function PaneAction({
   disabled = false,
   expanded,
   onClick,
+  onHover,
   children,
 }: {
   label: string;
@@ -3890,11 +3904,14 @@ function PaneAction({
   /** Set when this button opens a menu — announces its state to a screen reader. */
   expanded?: boolean;
   onClick?: () => void;
+  /** The pointer reached the button: a chance to start work its click will need. */
+  onHover?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
+      onPointerEnter={onHover}
       aria-label={label}
       title={label}
       data-testid={testId}

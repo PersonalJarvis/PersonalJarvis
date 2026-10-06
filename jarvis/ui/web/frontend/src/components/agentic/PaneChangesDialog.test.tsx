@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaneChangesDialog } from "./PaneChangesDialog";
-import { changeTotals, filesWrittenBy } from "./paneChangesApi";
+import { changeTotals, clearPaneChangesCache, filesWrittenBy, prefetchPaneChanges } from "./paneChangesApi";
 import { useCodeEditorStore } from "@/store/codeEditor";
 import en from "@/i18n/locales/pane_review/en.json";
 import de from "@/i18n/locales/pane_review/de.json";
@@ -45,9 +45,14 @@ const urls: string[] = [];
 /** False plays a backend from before the pane route: FastAPI answers 404 "Not Found". */
 let paneRoute = true;
 
+/** True: the pane route sends every diff inline, as the current backend does. */
+let inlineDiffs = false;
+
 beforeEach(() => {
   urls.length = 0;
   paneRoute = true;
+  inlineDiffs = false;
+  clearPaneChangesCache();
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
@@ -67,7 +72,7 @@ beforeEach(() => {
           // The pane route answers committed work too, and marks it.
           files: CHANGES.files
             .filter((file) => file.authors.some((a) => a.pane === pane))
-            .map((file) => ({ ...file, committed: true })),
+            .map((file) => ({ ...file, committed: true, diff: inlineDiffs ? diffFor(file.path) : null })),
         }
         : url.includes("/changes") ? CHANGES : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -118,6 +123,25 @@ describe("PaneChangesDialog", () => {
     await screen.findAllByTestId("pane-changes-file");
     expect(paths()).toEqual(["src/app.ts"]);
     expect(urls.some((url) => url.endsWith("/workspaces/w1/changes"))).toBe(true);
+  });
+
+  it("paints the diffs the list carried without asking for them one by one", async () => {
+    inlineDiffs = true;
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" />);
+    expect(await screen.findByText("new src/app.ts")).toBeTruthy();
+    expect(urls.filter((url) => url.includes("/diff"))).toEqual([]);
+  });
+
+  it("opens already painted after a hover read the changes ahead", async () => {
+    inlineDiffs = true;
+    prefetchPaneChanges({ workspaceId: "w1", pane: "T1" });
+    await waitFor(() => expect(urls.length).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" />);
+    expect(await screen.findByText("new src/app.ts")).toBeTruthy();
+    // The fresh reading is reused, not read a second time.
+    expect(urls.filter((url) => url.includes("/terminals/T1/changes")).length).toBe(1);
+    expect(screen.queryByText("Reading the changes…")).toBeNull();
   });
 
   it("widens to the whole folder on request", async () => {

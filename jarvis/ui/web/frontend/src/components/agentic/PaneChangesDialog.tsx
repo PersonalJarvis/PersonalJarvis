@@ -21,7 +21,8 @@ import { useCodeEditorStore } from "@/store/codeEditor";
 import { usePaneTitle } from "@/store/paneRecaps";
 import {
   changeTotals,
-  fetchPaneChanges,
+  cachedPaneChanges,
+  loadPaneChanges,
   fetchPaneFileDiff,
   type ChangeScope,
   type PaneChanges,
@@ -102,26 +103,37 @@ export function PaneChangesDialog({
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const cards = useRef(new Map<string, HTMLElement>());
 
-  // Read the list, then every file's diff a few at a time. A newer read (a
-  // scope switch, Refresh, closing the dialog) cancels the older one.
+  // Paint the newest reading at once (a hover may have fetched it already),
+  // read again behind it, then fetch only the diffs the list did not carry.
+  // A newer read (a scope switch, Refresh, closing the dialog) cancels the older one.
   useEffect(() => {
     if (!open) return;
     const target: PaneChangesTarget = { workspaceId, pane, folder };
     let cancelled = false;
-    setList({ kind: "loading" });
-    setDiffs({});
+    const show = (changes: PaneChanges) => {
+      setList({ kind: "ready", changes });
+      setDiffs(Object.fromEntries(changes.files.filter((file) => !file.is_directory).map((file) => [
+        file.path,
+        file.diff ? ({ kind: "ready", diff: { workspace_id: workspaceId, path: file.path, ...file.diff } } as DiffState) : ({ kind: "loading" } as DiffState),
+      ])));
+    };
+    const cached = revision === 0 ? cachedPaneChanges(target, scope) : null;
+    if (cached) show(cached);
+    else {
+      setList({ kind: "loading" });
+      setDiffs({});
+    }
     void (async () => {
       let changes: PaneChanges;
       try {
-        changes = await fetchPaneChanges(target, scope);
+        changes = await loadPaneChanges(target, scope, revision > 0);
       } catch (error) {
-        if (!cancelled) setList({ kind: "error", message: error instanceof Error ? error.message : String(error) });
+        if (!cancelled && !cached) setList({ kind: "error", message: error instanceof Error ? error.message : String(error) });
         return;
       }
       if (cancelled) return;
-      setList({ kind: "ready", changes });
-      const queue = changes.files.filter((file) => !file.is_directory).map((file) => file.path);
-      setDiffs(Object.fromEntries(queue.map((path) => [path, { kind: "loading" } as DiffState])));
+      if (changes !== cached) show(changes);
+      const queue = changes.files.filter((file) => !file.is_directory && !file.diff).map((file) => file.path);
       const worker = async () => {
         for (let path = queue.shift(); path !== undefined && !cancelled; path = queue.shift()) {
           let next: DiffState;

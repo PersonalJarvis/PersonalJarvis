@@ -114,6 +114,13 @@ async def test_work_the_agent_already_committed_is_listed(
         ("mine.py", "modified", 1, 1, True)
     ]
     assert answer.since_ms == FIRST_WRITE_MS
+    # The diff travels with the list, so the review paints without another round trip.
+    inline = answer.files[0].diff
+    assert inline is not None
+    assert [(line.kind, line.text) for hunk in inline.hunks for line in hunk.lines] == [
+        ("del", "one"),
+        ("add", "two"),
+    ]
     diff = await routes.get_pane_file_diff("w1", "T1", "mine.py", answer.base)
     assert [(line.kind, line.text) for hunk in diff.hunks for line in hunk.lines] == [
         ("del", "one"),

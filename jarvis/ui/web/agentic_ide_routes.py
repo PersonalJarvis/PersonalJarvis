@@ -61,6 +61,7 @@ import mimetypes
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
@@ -921,30 +922,6 @@ class WorkspaceChangesResponse(BaseModel):
     reason: str = ""
 
 
-class PaneChangedFileItem(ChangedFileItem):
-    """One file a pane's agent changed, compared with the code before its first write."""
-
-    committed: bool = Field(
-        default=False, description="True when nothing of it is left uncommitted."
-    )
-
-
-class PaneChangesResponse(BaseModel):
-    """What one pane's agent changed, committed or not."""
-
-    workspace_id: str
-    available: bool = Field(description="False when git or the repository is not usable.")
-    branch: str = ""
-    files: list[PaneChangedFileItem] = Field(default_factory=list)
-    truncated: bool = False
-    reason: str = ""
-    base: str = Field(default="", description="The commit the files are compared with.")
-    since_ms: int = Field(default=0, description="The agent's first change; 0 when unknown.")
-    generated: int = Field(
-        default=0, description="Generated files (build output) the agent changed, not listed."
-    )
-
-
 class DiffLineItem(BaseModel):
     kind: str = Field(description="'add', 'del' or 'ctx'.")
     text: str
@@ -968,6 +945,44 @@ class WorkspaceFileDiffResponse(BaseModel):
     removed: int = 0
     hunks: list[DiffHunkItem] = Field(default_factory=list)
     truncated: bool = False
+
+
+class PaneFileDiffItem(BaseModel):
+    """One file's diff inside a pane's review listing."""
+
+    status: str
+    binary: bool = False
+    added: int = 0
+    removed: int = 0
+    hunks: list[DiffHunkItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class PaneChangedFileItem(ChangedFileItem):
+    """One file a pane's agent changed, compared with the code before its first write."""
+
+    committed: bool = Field(
+        default=False, description="True when nothing of it is left uncommitted."
+    )
+    diff: PaneFileDiffItem | None = Field(
+        default=None, description="Its diff against the base; null when it is read on demand."
+    )
+
+
+class PaneChangesResponse(BaseModel):
+    """What one pane's agent changed, committed or not."""
+
+    workspace_id: str
+    available: bool = Field(description="False when git or the repository is not usable.")
+    branch: str = ""
+    files: list[PaneChangedFileItem] = Field(default_factory=list)
+    truncated: bool = False
+    reason: str = ""
+    base: str = Field(default="", description="The commit the files are compared with.")
+    since_ms: int = Field(default=0, description="The agent's first change; 0 when unknown.")
+    generated: int = Field(
+        default=0, description="Generated files (build output) the agent changed, not listed."
+    )
 
 
 class WorkspaceFilePreviewResponse(BaseModel):
@@ -1800,7 +1815,7 @@ def _pane_of(workspace_id: str, name: str) -> tuple[Any, Any]:
 
 def _read_pane_changes(
     folder: str, record: change_authors.PaneRecord | None
-) -> tuple[pane_changes.PaneWork, str | None, int, Any]:
+) -> tuple[pane_changes.PaneWork, str | None, int, pane_changes.PaneListing]:
     """(the agent's work, the base it is compared with, generated files left out, listing)."""
     events: list[dict[str, Any]] = []
     if record is not None:
@@ -1812,11 +1827,22 @@ def _read_pane_changes(
         except Exception as exc:  # a record the CLI rewrote mid-read: an empty review this time
             log.info("Pane changes: %s record unreadable: %s", record.pane, exc)
     work = pane_changes.pane_work(folder, events, record.folder if record else None)
-    generated = pane_changes.generated_paths(folder, set(work.files))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        generated_job = pool.submit(pane_changes.generated_paths, folder, set(work.files))
+        base_job = pool.submit(pane_changes.session_base, folder, work.since_ms)
+        generated, base = generated_job.result(), base_job.result()
     wanted = set(work.files) - generated
-    base = pane_changes.session_base(folder, work.since_ms) if wanted else None
-    listed = pane_changes.pane_changes(folder, wanted, base) if base else ([], set(), False)
-    return work, base, len(generated), listed
+    if not wanted or not base:
+        return work, base if wanted else None, len(generated), pane_changes.PaneListing()
+    return work, base, len(generated), pane_changes.pane_changes(folder, wanted, base)
+
+
+def _diff_item(diff: git_changes.FileDiff | None) -> PaneFileDiffItem | None:
+    if diff is None:
+        return None
+    data = asdict(diff)
+    data.pop("path", None)
+    return PaneFileDiffItem(**data)
 
 
 @router.get(
@@ -1835,15 +1861,15 @@ async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
     """
     session, term = _pane_of(workspace_id, name)
     folder = term.folder or session.folder
-    changes = await asyncio.to_thread(git_changes.workspace_changes, folder, set())
+    # The repository check and the record's reading run side by side.
+    changes, (work, base, generated, listing) = await asyncio.gather(
+        asyncio.to_thread(git_changes.workspace_changes, folder, set()),
+        asyncio.to_thread(_read_pane_changes, folder, _pane_record(session, term)),
+    )
     if not changes.available:
         return PaneChangesResponse(
             workspace_id=workspace_id, available=False, reason=changes.reason
         )
-    record = _pane_record(session, term)
-    work, base, generated, (files, pending, truncated) = await asyncio.to_thread(
-        _read_pane_changes, folder, record
-    )
     return PaneChangesResponse(
         workspace_id=workspace_id,
         available=True,
@@ -1860,11 +1886,12 @@ async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
                         last_edit_ms=work.files.get(item.path, 0),
                     )
                 ],
-                committed=item.path not in pending,
+                committed=item.path not in listing.pending,
+                diff=_diff_item(listing.diffs.get(item.path)),
             )
-            for item in files
+            for item in listing.files
         ],
-        truncated=truncated,
+        truncated=listing.truncated,
         base=base or "",
         since_ms=work.since_ms,
         generated=generated,

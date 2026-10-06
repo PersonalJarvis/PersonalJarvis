@@ -345,6 +345,30 @@ def head_text(folder: str | Path, path: str, ref: str = "") -> str | None:
     return result.stdout.removeprefix("﻿")
 
 
+def untracked_diff(root: Path, rel: str) -> FileDiff:
+    """A file git does not track yet, as an all-new diff read from disk."""
+    target = root / rel
+    count = _count_lines(target)
+    if count is None:
+        return FileDiff(path=rel, status="untracked", binary=target.is_file())
+    text = target.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    shown = lines[:MAX_DIFF_LINES]
+    hunk = DiffHunk(
+        header=f"@@ -0,0 +1,{len(lines)} @@",
+        lines=[
+            DiffLine(kind="add", text=line, new_no=index + 1) for index, line in enumerate(shown)
+        ],
+    )
+    return FileDiff(
+        path=rel,
+        status="untracked",
+        hunks=[hunk],
+        added=len(lines),
+        truncated=len(lines) > len(shown),
+    )
+
+
 def file_diff(folder: str | Path, path: str) -> FileDiff:
     """How one file differs from the last commit; an untracked file is all new."""
     rel = normalize_workspace_path(folder, path)
@@ -362,27 +386,7 @@ def file_diff(folder: str | Path, path: str) -> FileDiff:
     word = _status_word(record[:2]) if record else "unchanged"
 
     if word == "untracked":
-        target = root / rel
-        count = _count_lines(target)
-        if count is None:
-            return FileDiff(path=rel, status=word, binary=target.is_file())
-        text = target.read_text(encoding="utf-8", errors="replace")
-        lines = text.splitlines()
-        shown = lines[:MAX_DIFF_LINES]
-        hunk = DiffHunk(
-            header=f"@@ -0,0 +1,{len(lines)} @@",
-            lines=[
-                DiffLine(kind="add", text=line, new_no=index + 1)
-                for index, line in enumerate(shown)
-            ],
-        )
-        return FileDiff(
-            path=rel,
-            status=word,
-            hunks=[hunk],
-            added=len(lines),
-            truncated=len(lines) > len(shown),
-        )
+        return untracked_diff(root, rel)
 
     args = ["diff", "--no-color", "--no-ext-diff", "--no-renames", "-U3"]
     if _has_head(root):
@@ -412,5 +416,6 @@ __all__ = [
     "WorkspaceChanges",
     "file_diff",
     "normalize_workspace_path",
+    "untracked_diff",
     "workspace_changes",
 ]
