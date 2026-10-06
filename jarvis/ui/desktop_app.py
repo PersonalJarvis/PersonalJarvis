@@ -6214,6 +6214,15 @@ class DesktopApp:
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
             pass
 
+        # macOS: Cmd+W goes to the page (closes a code-editor tab) instead of
+        # closing the window; a logged no-op everywhere else. Before start().
+        try:
+            from jarvis.ui.macos_editor_keys import install_macos_editor_keys
+
+            install_macos_editor_keys()
+        except Exception:  # noqa: BLE001, S110 - key routing is never load-bearing
+            pass
+
         # webview.start blocks the main thread. func/args gets called after
         # the first load (pywebview-internal), so evaluate_js hits a
         # DOM-ready context.
