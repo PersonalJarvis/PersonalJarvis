@@ -19,6 +19,7 @@ import {
   type AppshotSettings,
   type AppshotSettingsPatch,
   CARD_SECONDS_CHOICES,
+  KEEP_NEWEST_CHOICES,
   openAppshotEditorWindow,
 } from "@/lib/appshotApi";
 import { gestureFamily } from "@/lib/appshotChord";
@@ -352,6 +353,17 @@ export function AppshotsView() {
     // `editorReady` re-labels the options once the chunk has arrived.
     [t, editorReady],
   );
+  const keepOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      KEEP_NEWEST_CHOICES.map((count) => ({
+        value: String(count),
+        label:
+          count === 0
+            ? t("appshot_editor.keep_all")
+            : t("appshot_editor.keep_option").replace("{0}", String(count)),
+      })),
+    [t, editorReady],
+  );
   const targetOptions = useMemo<BrandedSelectOption[]>(
     () => [
       { value: "auto", label: t("appshots.target_auto") },
@@ -563,6 +575,37 @@ export function AppshotsView() {
                     }
                   />
                 )}
+                {typeof settings.keep_newest === "number" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.keep_label") : ""}
+                    hint={editorReady ? t("appshot_editor.keep_hint") : ""}
+                    control={
+                      <BrandedSelect
+                        value={String(settings.keep_newest)}
+                        options={keepOptions}
+                        ariaLabel={editorReady ? t("appshot_editor.keep_label") : ""}
+                        disabled={saving}
+                        testId="appshots-keep-newest"
+                        onValueChange={(value) => void save({ keep_newest: Number(value) })}
+                      />
+                    }
+                  />
+                )}
+                {typeof settings.copy_to_clipboard === "boolean" && (
+                  <Row
+                    label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                    hint={editorReady ? t("appshot_editor.clipboard_hint") : ""}
+                    control={
+                      <Switch
+                        checked={settings.copy_to_clipboard}
+                        disabled={saving}
+                        aria-label={editorReady ? t("appshot_editor.clipboard_label") : ""}
+                        data-testid="appshots-clipboard"
+                        onCheckedChange={(copy_to_clipboard) => void save({ copy_to_clipboard })}
+                      />
+                    }
+                  />
+                )}
                 <Row
                   label={t("appshots.try_label")}
                   hint={
@@ -570,8 +613,11 @@ export function AppshotsView() {
                       ? t("appshots.try_counting").replace("{0}", String(countdown))
                       : picking
                         ? t("appshots.try_picking")
-                        : !settings.readiness.capture
-                          ? settings.readiness.capture_detail
+                        : settings.readiness.capture === false
+                          ? t("appshots.effect_unavailable").replace(
+                              "{0}",
+                              settings.readiness.capture_detail,
+                            )
                           : t("appshots.try_hint")
                   }
                   control={

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "webflow",
+  "version": "1.0.0",
+  "description": "Sites, CMS collections and pages",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Webflow",
+      "category": "Media & Creativity",
+      "logo_slug": "webflow",
+      "logo_color": "146EF5",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.webflow.com/mcp",
+        "discovery_url": "https://mcp.webflow.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.webflow.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_webflow_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with Webflow and choose the sites Jarvis may access. Publishing changes asks for approval first."
+    }
+  }
+}

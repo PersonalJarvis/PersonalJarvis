@@ -1,11 +1,16 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { Building2, Users } from "lucide-react";
 
-import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
+import {
+  CAPTION_ICON_CLASS, CAPTION_ICON_STROKE, CAPTION_SEGMENT, CAPTION_SEGMENT_OFF, CAPTION_SEGMENT_ON,
+  CAPTION_SEGMENT_PX, CAPTION_THUMB, CAPTION_TRACK,
+} from "@/components/layout/captionSwitch";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
 import { BrowserProfilesButton } from "@/components/society/browser/BrowserProfilesButton";
 import { BUILDING_CARDS, isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
@@ -19,6 +24,12 @@ import { useSocietyChatStore } from "@/components/society/chat/AgentChatPanel";
 import { createSocietyChatGroup, updateSocietyChatGroup, useSocietyChatGroups } from "@/lib/societyChatGroups";
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./lastAgent";
+
+/** The page's two faces, in caption order: the Verse map, then the agent roster. */
+const MODES = [
+  { value: "world", labelKey: "society.world.mode_map", Icon: Building2 },
+  { value: "agents", labelKey: "society.roster.title", Icon: Users },
+] as const;
 
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
@@ -121,12 +132,9 @@ export function SocietyView() {
   }, []);
 
   useEffect(() => {
-    const reset = useSocietyShell.getState().reset;
-    reset();
     // A reload starts in Agents; restore a native window left fullscreen by it.
     if (inDesktopShell()) void setMapFullscreen(false).catch(() => setFullscreenError(true));
     return () => {
-      reset();
       void setMapFullscreen(false).catch((error) => console.warn("Fullscreen exit failed", error));
     };
   }, []);
@@ -159,13 +167,21 @@ export function SocietyView() {
     if (isBuildingPlace(place)) setOpenPlace(place);
   }, []);
 
+  // Icon-only, in the same caption look as the Agentic IDE's switch; the
+  // names live on as the accessible label and the hover title.
+  const modeIndex = MODES.findIndex((item) => item.value === mode);
   const modeSwitch = (
-    <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background/80 p-0.5 backdrop-blur-sm">
-      {(["world", "agents"] as const).map((value) => {
+    <div role="tablist" aria-label={t("society.world.mode_label")} className={CAPTION_TRACK}>
+      <span aria-hidden className={CAPTION_THUMB}
+        style={{ width: CAPTION_SEGMENT_PX, transform: `translateX(${Math.max(0, modeIndex) * CAPTION_SEGMENT_PX}px)` }} />
+      {MODES.map(({ value, labelKey, Icon }) => {
+        const label = t(labelKey);
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
+          aria-label={label} title={label} data-testid={`society-mode-${value}`}
           onClick={() => switchMode(value)}
-          className={`inline-flex h-5 items-center justify-center rounded px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-          {t(value === "world" ? "society.world.mode_map" : "society.roster.title")}
+          style={{ width: CAPTION_SEGMENT_PX }}
+          className={cn(CAPTION_SEGMENT, mode === value ? CAPTION_SEGMENT_ON : CAPTION_SEGMENT_OFF)}>
+          <Icon aria-hidden className={CAPTION_ICON_CLASS} strokeWidth={CAPTION_ICON_STROKE} />
         </button>;
       })}
     </div>
@@ -180,7 +196,7 @@ export function SocietyView() {
             modes — one switch, always centered, always a way back. */}
         {createPortal(
           <div className="pointer-events-none fixed inset-x-0 top-0 z-[140] flex h-8 items-center justify-center" data-testid="mode-switch">
-            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}<BrowserProfilesButton className="h-6" /></div>
+            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}<BrowserProfilesButton iconOnly /></div>
           </div>,
           document.body,
         )}

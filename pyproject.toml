@@ -330,7 +330,9 @@ desktop = [
     # macOS Computer-Use keyboard actuation and Windows AppShot key events.
     # macOS global hotkeys use a listen-only Quartz event tap (BUG-077).
     # Linux retains pyautogui/no-op fallbacks to avoid compiling evdev against
-    # host kernel headers on stock headless images.
+    # host kernel headers on stock headless images. Windows AppShot shortcuts
+    # use key events so brief taps are never polled away. ptyprocess is the
+    # POSIX terminal backend; Windows keeps pywinpty above.
     "pynput>=1.7; sys_platform == 'darwin' or sys_platform == 'win32'",
     "ptyprocess>=0.7; sys_platform != 'win32'",
     # Screen capture (mss) + desktop input automation (pyautogui) — all-platform

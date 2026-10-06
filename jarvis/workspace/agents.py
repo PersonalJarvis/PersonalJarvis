@@ -35,6 +35,7 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from jarvis.clis.prober import CliStatusProber
@@ -1251,8 +1252,20 @@ def _forget_command_catalog() -> None:
         from jarvis.commands.registry import get_registry
 
         get_registry.cache_clear()
-    except Exception:  # noqa: BLE001 - the catalog is not this module's job
-        return
+    except Exception:  # noqa: BLE001, S110 - the catalog is not this module's job
+        pass
+    # The spoken-request parser compiles every entry's spoken names into its
+    # patterns. Rebuilt only when it is already loaded: a first import builds
+    # them from the live registry anyway. Looked up in sys.modules rather than
+    # imported, because this runs INSIDE the registry read the parser's own
+    # rebuild performs.
+    intent = sys.modules.get("jarvis.agentic_ide.intent")
+    refresh = getattr(intent, "refresh_agent_patterns", None)
+    if refresh is not None:
+        try:
+            refresh()
+        except Exception as exc:  # noqa: BLE001 - a stale parser beats a failed registration
+            log.warning("workspace agents: spoken-name patterns not refreshed: %s", exc)
 
 
 def list_agents() -> list[WorkspaceAgent]:
@@ -1262,6 +1275,33 @@ def list_agents() -> list[WorkspaceAgent]:
 
 def get_agent(name: str) -> WorkspaceAgent | None:
     return _registry().get(name)
+
+
+def behind_win_shim(spec: WorkspaceAgent, shim: str) -> tuple[str, ...] | None:
+    """What the Windows ``.cmd`` shim would have launched, launched directly.
+
+    Going through the shim means going through ``cmd.exe``, which wedges a
+    second process between the caller and the agent and re-parses every
+    argument: a line break ends the command there, so a multi-line prompt on
+    argv arrives cut after its first line. When the entry declares where the
+    real thing sits inside the installed package we skip the shim entirely.
+
+    Two shapes exist and the entry says which: a Node script that needs
+    ``node.exe`` in front of it, and a native executable that is simply run.
+    ``None`` whenever the declared path is not actually there — an install
+    laid out differently than expected must fall back, never fail.
+    """
+    if spec.win_shim is None:
+        return None
+    target = Path(shim).resolve().parent.joinpath(*spec.win_shim.relative_path)
+    if not target.is_file():
+        return None
+    if spec.win_shim.kind == "exe":
+        return (str(target),)
+    from jarvis.core.path_augment import resolve_node_executable
+
+    node = resolve_node_executable()
+    return (node, str(target)) if node else None
 
 
 def agent_names() -> tuple[str, ...]:

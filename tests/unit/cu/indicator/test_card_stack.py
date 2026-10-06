@@ -64,10 +64,12 @@ def renderer(qt, monkeypatch):
         snap.finish_now()
 
 
-def _shutter(r, shot_id: str, size: tuple[int, int] = (400, 240)) -> None:
+def _shutter(
+    r, shot_id: str, size: tuple[int, int] = (400, 240), rect: list[float] | None = None
+) -> None:
     """One appshot: the shutter flight, its finished picture, then it lands."""
     r.on_line(protocol.encode_command(
-        protocol.CMD_SNAP, monitor=[], rect=[0.1, 0.1, 0.5, 0.5], thumb=_b64_png(*size)
+        protocol.CMD_SNAP, monitor=[], rect=rect or [0.1, 0.1, 0.5, 0.5], thumb=_b64_png(*size)
     ))
     r.on_line(protocol.encode_command(protocol.CMD_SNAP_IMAGE, image=_b64_png(*size), id=shot_id))
     for snap in list(r._snaps):
@@ -156,10 +158,13 @@ def test_a_gone_card_lets_the_ones_above_it_move_down(renderer) -> None:
 
 
 @needs_qt
-def test_the_stack_holds_at_most_max_cards(renderer) -> None:
+def test_the_stack_holds_at_most_max_cards(renderer, monkeypatch) -> None:
     r, _ = renderer
+    # Flat cards, so the small offscreen screen has room for every slot.
+    module = importlib.import_module("jarvis.cu.indicator.renderer")
+    monkeypatch.setattr(module, "_CARD_MIN_H", 40.0)
     for n in range(protocol.MAX_CARDS + 1):
-        _shutter(r, f"{n:08x}", size=(400, 60))
+        _shutter(r, f"{n:08x}", size=(400, 60), rect=[0.1, 0.1, 0.5, 0.05])
     staying = [card.appshot_id for card in r._cards if not card.leaving]
     assert len(staying) == protocol.MAX_CARDS
     assert "00000000" not in staying, "the oldest card leaves first"

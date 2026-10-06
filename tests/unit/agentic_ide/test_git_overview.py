@@ -203,6 +203,38 @@ def test_a_github_failure_becomes_a_coded_sentence(monkeypatch: pytest.MonkeyPat
     )
 
 
+def test_fetch_lists_every_github_branch_beyond_the_ci_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pages = {
+        None: {"hasNextPage": True, "endCursor": "c1"},
+        "c1": {"hasNextPage": False, "endCursor": "c2"},
+    }
+    seen: list[str | None] = []
+
+    def fake_graphql(token: str, query: str, variables: dict | None = None) -> dict:
+        variables = variables or {}
+        if "pageInfo" not in query:
+            return _payload(
+                [], refs=[{"name": "main", "target": {"oid": "0" * 40, "statusCheckRollup": None}}]
+            )
+        after = variables.get("after")
+        seen.append(after)
+        name = "old-a" if after is None else "old-b"
+        nodes = [
+            {"name": "main", "target": {"oid": "0" * 40, "committedDate": "2026-10-02T00:00:00Z"}},
+            {"name": name, "target": {"oid": "2" * 40, "committedDate": "2026-01-01T00:00:00Z"}},
+        ]
+        return {"data": {"repository": {"refs": {"pageInfo": pages[after], "nodes": nodes}}}}
+
+    monkeypatch.setattr(github_link, "graphql", fake_graphql)
+    snap = git_overview._fetch_github("o/r", "t")
+    assert seen == [None, "c1"]
+    assert set(snap.refs) == {"main", "old-a", "old-b"}
+    assert snap.refs["old-b"][1].state == "none"
+    assert snap.ref_dates["old-a"] == 1_767_225_600
+
+
 # ------------------------------------------------------------------ local git
 
 
@@ -219,6 +251,19 @@ def test_overview_marks_current_default_and_merged_branches(repo: Path) -> None:
     assert by_name["feature/wip"].merged_into == []
     assert by_name["feature/fresh"].merged_into == []
     assert by_name["main"].merged_into == []
+
+
+@needs_git
+def test_branch_checkout_finds_this_folder_and_linked_worktrees(repo: Path, tmp_path: Path) -> None:
+    tree = tmp_path / "fresh-tree"
+    _git(repo, "worktree", "add", "-q", str(tree), "feature/fresh")
+    assert git_overview.branch_checkout(repo, "feature/wip") == repo
+    found = git_overview.branch_checkout(repo, "feature/fresh")
+    assert found is not None and found.resolve() == tree.resolve()
+    # Checked out nowhere, unknown, or a name git never saw: nothing to open.
+    assert git_overview.branch_checkout(repo, "feature/done") is None
+    assert git_overview.branch_checkout(repo, "no/such") is None
+    assert git_overview.branch_checkout(repo, "") is None
 
 
 @needs_git
@@ -264,7 +309,14 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
                 ],
                 refs=[
                     {"name": "main", "target": {"oid": "0" * 40, "statusCheckRollup": None}},
-                    {"name": "only-remote", "target": {"oid": "1" * 40, "statusCheckRollup": None}},
+                    {
+                        "name": "only-remote",
+                        "target": {
+                            "oid": "1" * 40,
+                            "committedDate": "2026-10-01T12:00:00Z",
+                            "statusCheckRollup": None,
+                        },
+                    },
                 ],
             ),
             fetched_at=git_overview.time.time(),
@@ -289,6 +341,8 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
     assert by_name["main"].on_github
     assert [row.name for row in info.remote_branches] == ["only-remote"]
     assert info.remote_branches[0].pull_requests[0].state == "closed"
+    # Remote-only rows carry the tip commit date GitHub reports.
+    assert info.remote_branches[0].committed_at == 1_790_856_000
     assert info.github.available and info.github.repo_url == "https://github.com/o/r"
 
     # A second read inside the TTL reuses the answer instead of calling GitHub again.

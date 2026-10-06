@@ -238,10 +238,10 @@ def test_clipboard_image_picks_the_linux_tool(
         clipboard_image.shutil, "which", lambda name: f"/usr/bin/{name}" if name in tools else None
     )
     monkeypatch.setattr(
-        clipboard_image, "_run", lambda command, data=None: ran.append(command) or True
+        clipboard_image, "_run", lambda command, data=None: (ran.append(command) or True, "")
     )
 
-    ok = clipboard_image._write_linux(_png())  # noqa: SLF001
+    ok = clipboard_image._write_linux(_png()).ok  # noqa: SLF001
 
     assert ok is (expected is not None)
     assert [command[0] for command in ran] == ([f"/usr/bin/{expected}"] if expected else [])

@@ -10,6 +10,7 @@ from jarvis.core.protocols import SupervisorToolDescriptor, ToolResult
 from jarvis.cu.direct import TOOL_DESCRIPTION, tool_schema
 from jarvis.live.state import LiveLedger
 from jarvis.live.tools import LiveTools
+from tests.fakes.fake_subscription_session import AppshotSubscriptionGateway
 
 
 class ComputerGateway:
@@ -48,6 +49,23 @@ def test_computer_is_declared_under_its_own_name(ledger, defer):
     # Exactly one declaration: never a second hashed alias for the same tool.
     aliases = [n for n in declared if runtime._names.get(n) == "computer"]
     assert aliases == []
+
+
+@pytest.mark.parametrize("defer", [True, False])
+def test_appshot_is_declared_once_even_when_other_tools_are_deferred(ledger, defer):
+    gateway = AppshotSubscriptionGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="m")
+    declared = runtime.declarations(defer_catalog=defer)
+    appshot = next(d for d in gateway.catalog() if d.name == "take_appshot")
+    assert [d["parameters"] for d in declared if d["name"] == "take_appshot"] == [
+        appshot.input_schema,
+    ]
+    assert "take_appshot" not in runtime._names.values()
+
+    from jarvis.live.native import _fit_declarations
+
+    # Native providers with a small declaration budget retain the same capture path.
+    assert "take_appshot" in {d["name"] for d in _fit_declarations(declared, 1)}
 
 
 @pytest.mark.asyncio
@@ -101,3 +119,17 @@ def test_backend_instructions_hand_the_screen_to_the_thinking_model():
     ]
     assert "computer tool" in instructions
     assert "no separate computer-use agent" in instructions
+
+
+@pytest.mark.parametrize("auth_mode", ["api_key", "chatgpt_subscription"])
+def test_new_capture_requires_fresh_appshot_evidence_in_both_live_modes(auth_mode):
+    from jarvis.live.config import LiveConfig
+
+    config = LiveConfig(
+        configured=True, auth_mode=auth_mode, backend_model="api-model",
+        subscription_backend_model="subscription-model",
+    )
+    instructions = config.backend_config(language="en", tools=[])["instructions"]
+    assert "call take_appshot for a fresh capture" in instructions
+    assert "only after take_appshot succeeds" in instructions
+    assert "old image as current" in instructions

@@ -67,6 +67,8 @@ class SettingsPatch(BaseModel):
     copy_to_clipboard: bool | None = None
     sound: bool | None = None
     effect: bool | None = None
+    #: Keep only the newest N screenshots and N videos; ``0`` keeps all.
+    keep_newest: int | None = Field(default=None, ge=0, le=1000)
 
 
 class CaptureRequest(BaseModel):
@@ -161,6 +163,7 @@ def _settings_payload() -> dict[str, Any]:
         "copy_to_clipboard": bool(block.copy_to_clipboard),
         "sound": bool(block.sound),
         "effect": bool(block.effect),
+        "keep_newest": max(0, min(int(getattr(block, "keep_newest", 0) or 0), 1000)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "recording_available": bool(encoder.available),
         "recording_detail": encoder.detail,
@@ -223,6 +226,10 @@ async def put_settings(patch: SettingsPatch) -> dict[str, Any]:
     shortcuts = get_shortcuts()
     if shortcuts is not None and (hotkey_patch or "enabled" in changes):
         await shortcuts.reload()
+    if changes.get("keep_newest"):
+        from jarvis.jarvisx.store import get_store  # noqa: PLC0415
+
+        await asyncio.to_thread(get_store().prune, int(changes["keep_newest"]))
     return await asyncio.to_thread(_settings_payload)
 
 

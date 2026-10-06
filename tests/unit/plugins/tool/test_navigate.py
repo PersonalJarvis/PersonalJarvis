@@ -63,9 +63,6 @@ async def test_canonical_id_publishes_navigate(tool: NavigateTool, bus: Recordin
         ("Aufgaben", "agents"),
         ("tasks", "agents"),
         ("notizen", "memory"),
-        ("Kontakte", "contacts"),
-        ("kontakt", "contacts"),
-        ("contacts", "contacts"),
         # The retired Outputs section: its old id and spoken names land on
         # Artifacts, where every run is listed now (2026-08-23).
         ("outputs", "visualization"),
@@ -111,10 +108,11 @@ def test_tool_metadata() -> None:
     assert "socials" in enum and "settings" in enum
 
 
-def test_contacts_section_is_known() -> None:
-    """The Contacts section (Chunk A) is a navigable target."""
-    assert "contacts" in NavigateTool.known_sections()
-    assert "contacts" in NavigateTool.schema["properties"]["section"]["enum"]
+def test_removed_sections_are_unknown() -> None:
+    """Contacts and Local models left the app; neither is a navigable target."""
+    for section in ("contacts", "local-models"):
+        assert section not in NavigateTool.known_sections()
+        assert section not in NavigateTool.schema["properties"]["section"]["enum"]
 
 
 def test_known_sections_match_frontend_section_ids() -> None:

@@ -20,8 +20,21 @@ from jarvis.ui.jarvisbar.null_overlay import NullOverlay
 from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
 from ui.orb import controls
 from ui.orb.overlay import OrbOverlay
+from ui.orb.pet_renderer import PetRenderer
 
 # --- OrbOverlay (never started: no Tk root under pytest) --------------------------
+
+
+def test_wake_wave_reaches_the_pet_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    pet = OrbOverlay(style="pet")
+    pet._renderer = PetRenderer("gigi")
+    pet._renderer.on_mode("listen")
+    calls: list[str] = []
+    monkeypatch.setattr(pet, "_enqueue_ui", lambda fn: fn())
+    monkeypatch.setattr(pet, "_kick_frame", lambda: calls.append("frame"))
+    pet.play_animation("wave")
+    assert pet._renderer._greet_until > 0
+    assert calls == ["frame"]
 
 
 def test_only_the_pet_stays_visible_while_idle_and_wants_status_lines() -> None:

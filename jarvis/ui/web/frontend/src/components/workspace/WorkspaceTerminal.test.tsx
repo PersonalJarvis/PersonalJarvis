@@ -1,92 +1,91 @@
-import { render } from "@testing-library/react";
-import { act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { WorkspaceTerminal } from "./WorkspaceTerminal";
 import { BURST, resetConnectBudgetForTests } from "@/lib/connectBudget";
 
-const sockets = vi.hoisted(() => ({ opened: 0 }));
-
+const terminal = vi.hoisted(() => ({ focus: vi.fn(), dispose: vi.fn(), fit: vi.fn() }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
-    cols = 80;
-    rows = 24;
-    options: Record<string, unknown> = {};
-    loadAddon() {}
-    open() {}
-    write() {}
-    focus() {}
-    onData() { return { dispose() {} }; }
-    dispose() {}
+    cols = 80; rows = 24; options = {};
+    open() {} loadAddon() {} write() {} onData() {}
+    focus = terminal.focus;
+    dispose = terminal.dispose;
   },
 }));
-vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit() {} } }));
+vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = terminal.fit; } }));
 vi.mock("@xterm/addon-web-links", () => ({ WebLinksAddon: class {} }));
-vi.mock("../agentic/terminalNewline", () => ({
-  installNewlineBridge: () => () => undefined,
-}));
-vi.mock("@/hooks/useTheme", () => ({ useThemeValue: () => "dark" }));
-vi.mock("@/lib/terminalFont", () => ({
-  TERMINAL_FONT_STACK: "monospace",
-  syncTerminalFont: () => () => undefined,
-}));
-vi.mock("@/lib/terminalLinks", () => ({
-  activateTerminalLink: () => undefined,
-  TERMINAL_OSC_LINK_HANDLER: {},
-}));
+vi.mock("../agentic/terminalNewline", () => ({ installNewlineBridge: () => () => {} }));
+vi.mock("@/lib/terminalFont", () => ({ TERMINAL_FONT_STACK: "monospace", syncTerminalFont: () => () => {} }));
 
-import { WorkspaceTerminal } from "./WorkspaceTerminal";
-
-class ResizeObserverHarness {
-  observe() {}
-  disconnect() {}
-}
-
-class WebSocketHarness {
+class Socket {
   static OPEN = 1;
-  readyState = 0;
-  onopen: (() => void) | null = null;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: (() => void) | null = null;
-  onclose: ((event: CloseEvent) => void) | null = null;
-  constructor(_url: string) { sockets.opened += 1; }
-  send() {}
-  close() {}
+  static instances: Socket[] = [];
+  readyState = 1;
+  onopen?: () => void;
+  onmessage?: (event: { data: string }) => void;
+  onclose?: (event: { code: number }) => void;
+  close = vi.fn();
+  send = vi.fn();
+  constructor(readonly url: string) { Socket.instances.push(this); }
 }
 
-describe("WorkspaceTerminal connection budget", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    resetConnectBudgetForTests();
-    sockets.opened = 0;
-    vi.stubGlobal("ResizeObserver", ResizeObserverHarness);
-    vi.stubGlobal("WebSocket", WebSocketHarness);
-  });
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.clearAllMocks();
+  resetConnectBudgetForTests();
+  Socket.instances = [];
+  vi.stubGlobal("WebSocket", Socket);
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+});
+afterEach(() => { cleanup(); resetConnectBudgetForTests(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-  afterEach(() => {
-    resetConnectBudgetForTests();
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
+it("pins the shell socket and retains it across tab visibility and appearance changes", () => {
+  const props = { paneKey: "terminal-one", agentName: "shell", workspaceId: "workspace-one", title: "Terminal 1" };
+  const { rerender, unmount } = render(<WorkspaceTerminal {...props} active appearance="dark" />);
+  act(() => vi.runOnlyPendingTimers());
+  const socket = Socket.instances[0];
+  const url = new URL(socket.url);
+  expect(url.searchParams.get("agent")).toBe("shell");
+  expect(url.searchParams.get("workspace_id")).toBe("workspace-one");
+  rerender(<WorkspaceTerminal {...props} active={false} appearance="light" />);
+  terminal.focus.mockClear();
+  act(() => socket.onmessage?.({ data: JSON.stringify({ t: "ready" }) }));
+  expect(terminal.focus).not.toHaveBeenCalled();
+  rerender(<WorkspaceTerminal {...props} active appearance="light" />);
+  act(() => vi.runOnlyPendingTimers());
+  expect(Socket.instances).toHaveLength(1);
+  expect(socket.close).not.toHaveBeenCalled();
+  expect(terminal.focus).toHaveBeenCalled();
+  unmount();
+  expect(socket.close).toHaveBeenCalledOnce();
+  expect(terminal.dispose).toHaveBeenCalledOnce();
+});
 
-  it("paces a burst of workspace terminal mounts", () => {
-    const panes = Array.from({ length: 20 }, (_, index) =>
-      render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
-    );
-    act(() => vi.advanceTimersByTime(0));
-    expect(sockets.opened).toBe(BURST);
-    act(() => vi.advanceTimersByTime(5_000));
-    expect(sockets.opened).toBe(20);
-    panes.forEach((pane) => pane.unmount());
-  });
+it("cancels a queued connection when its tab closes before the budget grants it", () => {
+  const { unmount } = render(<WorkspaceTerminal paneKey="one" agentName="shell" workspaceId="workspace-one" title="Terminal" />);
+  unmount();
+  act(() => vi.runOnlyPendingTimers());
+  expect(Socket.instances).toHaveLength(0);
+});
 
-  it("cancels queued connects when panes unmount", () => {
-    const panes = Array.from({ length: 20 }, (_, index) =>
-      render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
-    );
-    act(() => vi.advanceTimersByTime(0));
-    expect(sockets.opened).toBe(BURST);
-    panes.forEach((pane) => pane.unmount());
-    act(() => vi.advanceTimersByTime(5_000));
-    expect(sockets.opened).toBe(BURST);
-  });
+it("paces a burst of workspace terminal mounts through the shared connect budget", () => {
+  const panes = Array.from({ length: 20 }, (_, index) =>
+    render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
+  );
+  act(() => vi.advanceTimersByTime(0));
+  expect(Socket.instances).toHaveLength(BURST);
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(Socket.instances).toHaveLength(20);
+  panes.forEach((pane) => pane.unmount());
+});
+
+it("cancels queued connects when a burst of panes unmounts", () => {
+  const panes = Array.from({ length: 20 }, (_, index) =>
+    render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
+  );
+  act(() => vi.advanceTimersByTime(0));
+  expect(Socket.instances).toHaveLength(BURST);
+  panes.forEach((pane) => pane.unmount());
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(Socket.instances).toHaveLength(BURST);
 });

@@ -16,6 +16,8 @@ Prefix ``/api/agent-chat``:
     POST   /sessions/{id}/questions/{qid}    {index, option_index} or {index, text} -> answer
                                              one question of an agent's card
     POST   /sessions/{id}/questions/{qid}/skip  close the card: recommendations apply
+    POST   /sessions/{id}/plan               {turn_id, decision: build | keep} -> answer
+                                             a coding agent's plan card
     WS     /sessions/{id}/ws?after=<seq>     snapshot, then live events
     POST   /attachments                      drop/paste/pick files for the next message
     POST   /pick-folder                      the system folder dialog (desktop only)
@@ -270,6 +272,13 @@ class QuestionAnswerBody(BaseModel):
     text: str | None = None
 
 
+class PlanBody(BaseModel):
+    #: The turn whose plan card this answers.
+    turn_id: str
+    #: ``build`` (switch to the build mode and go) or ``keep`` (keep planning).
+    decision: str
+
+
 class PickFolderBody(BaseModel):
     start: str | None = None
 
@@ -403,6 +412,11 @@ def _catalog_rows(
     surface: str, live_models: dict[str, list[dict[str, Any]]]
 ) -> list[dict[str, Any]]:
     """The provider rows for ``surface`` with this machine's runner facts."""
+    from jarvis.agent_chat import agent_provider_prefs
+
+    # The agents' own seats carry the API Keys page's on/off and hidden
+    # models; their pickers filter on them. Other surfaces keep every seat.
+    prefs = agent_provider_prefs.load() if surface == agent_provider_prefs.AGENT_SURFACE else None
     rows: list[dict[str, Any]] = []
     for row in rows_for(surface):
         d = row.to_dict()
@@ -433,6 +447,9 @@ def _catalog_rows(
         # decided here, from the runner, so the box never offers a "/" list
         # to a seat that would read it as plain text.
         d["typeahead"] = list(typeahead.triggers_for(runner, surface))
+        if prefs is not None:
+            d["enabled"] = prefs.enabled(row.id)
+            d["hidden_models"] = list(prefs.hidden(row.id))
         rows.append(d)
     return rows
 
@@ -778,17 +795,45 @@ def list_sessions(
             continue
         d = s.to_dict()
         d["running"] = svc.is_running(s.session_id)
+        if s.surface == "agent":
+            d["pending_approvals"] = svc.pending_approvals(s.session_id)
+            d["cli_title"] = _cli_title(svc, s)
         out.append(d)
-    _title_jarvis_chats(request, svc, out)
+    _title_chats(request, svc, out)
     return {"sessions": out}
 
 
-def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:
-    """Give the Jarvis chats a topic title instead of their first words.
+def _cli_title(svc: Any, session: Any) -> str:
+    """The name the coding CLI gave a thread's conversation itself, or "".
 
-    Only the ``jarvis`` surface — the front page's own history — is retitled;
-    an agent's chat keeps the title its first message gave it. A title the user
-    typed is recognised by the titler and kept.
+    Claude Code and Codex title their own sessions on their own subscription;
+    a thread shows that name the way a terminal pane does. A title the person
+    typed wins, so the CLI's is only offered while the stored one is still
+    the first message's.
+    """
+    if not session.vendor_session:
+        return ""
+    from jarvis.agent_chat.catalog import provider_row
+    from jarvis.agentic_ide import cli_title
+
+    row = provider_row(session.provider)
+    agent = row.agent if row is not None else ""
+    if agent not in ("claude", "codex"):
+        return ""
+    title = cli_title.session_title(agent, session.vendor_session, session.account_id)
+    if not title or not svc.store.title_is_automatic(session):
+        return ""
+    return title
+
+
+def _title_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) -> None:
+    """Give the Jarvis chats and the IDE's threads a topic title, not their first words.
+
+    The ``jarvis`` surface — the front page's own history — and the ``agent``
+    surface — the IDE's threads — are retitled. A thread whose coding CLI named
+    the conversation itself keeps that name (``cli_title``); Claude Code in
+    print mode never writes one, so most threads are named here. A title the
+    user typed is recognised by the titler and kept.
     """
     from jarvis.agent_chat.store import _title_from
     from jarvis.sessions import chat_titles
@@ -796,7 +841,8 @@ def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) 
     now = int(time.time() * 1000)
     requests: list[chat_titles.TitleRequest] = []
     for row in rows:
-        if row.get("surface") != "jarvis":
+        surface = row.get("surface")
+        if not (surface == "jarvis" or (surface == "agent" and not row.get("cli_title"))):
             continue
         sid = str(row["session_id"])
 
@@ -834,7 +880,9 @@ def _title_jarvis_chats(request: Request, svc: Any, rows: list[dict[str, Any]]) 
         return
     for row in rows:
         key = (chat_titles.KIND_TYPED, str(row["session_id"]))
-        if key in titles:
+        # A Jarvis chat with no topic shows as what it is ("Voice chat · 09:42");
+        # a thread keeps its first message rather than an empty row.
+        if key in titles and (titles[key] or row.get("surface") == "jarvis"):
             row["title"] = titles[key]
 
 
@@ -1104,8 +1152,20 @@ async def answer_question(
             option_index=body.option_index,
             text=body.text,
         )
+        if not ok:
+            # Not a card a running turn waits on: an end-of-turn card, whose
+            # answers go to the agent as the next message.
+            ok = await svc.answer_turn_question(
+                session_id,
+                question_id,
+                index=body.index,
+                option_index=body.option_index,
+                text=body.text,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
     if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
@@ -1117,9 +1177,32 @@ async def answer_question(
 )
 async def skip_question(session_id: str, question_id: str, request: Request) -> dict[str, Any]:
     svc = _service(request)
-    if not svc.skip_question(session_id, question_id):
+    try:
+        ok = svc.skip_question(session_id, question_id) or await svc.skip_turn_question(
+            session_id, question_id
+        )
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
+    if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/plan",
+    summary="Answer a coding agent's plan card: build it, or keep planning",
+)
+async def resolve_plan(session_id: str, body: PlanBody, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = await svc.resolve_turn_plan(session_id, body.turn_id, body.decision)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SessionBusy as exc:
+        raise HTTPException(status_code=409, detail="session is busy") from exc
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such open plan")
+    return {"ok": True, "turn_id": body.turn_id, "decision": body.decision}
 
 
 # ------------------------------------------------------------------ attachments
@@ -1191,6 +1274,50 @@ async def attach_files(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return {"attachments": [item.to_dict() for item in found], "cwd": folder}
+
+
+@router.get(
+    "/attachments/file",
+    summary="Show one attached picture or video in the composer",
+    openapi_extra={"x-jarvis-readonly": True},
+)
+async def attachment_file(cwd: str, reference: str) -> Any:
+    """Stream an attached image or video back for the composer's thumbnail.
+
+    A file dragged in by path (the Appshots gallery, Explorer inside the
+    desktop shell) never passes its bytes through the window, so the composer
+    has nothing to draw. ``reference`` is the attachment's own reference from
+    :func:`attach_files`, ``cwd`` the folder that call answered with. Only a
+    picture or video that resolves INSIDE that folder is served — symlinks
+    included — and never SVG, which can carry script.
+    """
+    from fastapi.responses import FileResponse
+
+    from jarvis.agent_chat.media import MEDIA_TYPES
+    from jarvis.agentic_ide import drops
+
+    folder = _validate_cwd(cwd)
+    relative = drops.dereference(reference)
+    if not folder or not relative:
+        raise HTTPException(status_code=404, detail="attachment not found")
+
+    def _resolve() -> Path | None:
+        inside = drops.within_workspace(str(Path(folder) / relative), folder)
+        if inside is None:
+            return None
+        target = Path(folder) / inside
+        return target if target.is_file() else None
+
+    target = await asyncio.to_thread(_resolve)
+    mime = MEDIA_TYPES.get(target.suffix.lower(), "") if target else ""
+    if target is None or not mime.startswith(("image/", "video/")) or mime == "image/svg+xml":
+        raise HTTPException(status_code=404, detail="attachment not found")
+    return FileResponse(
+        target,
+        media_type=mime,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, max-age=300", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 # ------------------------------------------------------------------ folders

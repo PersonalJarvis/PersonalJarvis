@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import threading
 import time
 from collections import deque
@@ -161,6 +160,12 @@ _SNAP_FLY_MS = 430
 _SNAP_TOTAL_MS = _SNAP_FLY_START_MS + _SNAP_FLY_MS
 _SNAP_THUMB_W = 320
 _SNAP_THUMB_MAX_H = 240
+#: The card never gets smaller than this, however thin or tiny the capture:
+#: a 1280x18 strip still lands as a card with room for its buttons. The
+#: picture sits centred on a neutral backdrop and is only ever scaled down.
+_CARD_MIN_W = 200.0
+_CARD_MIN_H = 112.0
+_CARD_BACKDROP = QColor(28, 28, 32, 242)
 _SNAP_MARGIN = 28
 _SNAP_RADIUS = 12.0
 
@@ -251,13 +256,70 @@ def _screen_named(name: str):
     return QGuiApplication.primaryScreen()
 
 
-def _paint_card(painter: QPainter, rect: QRectF, thumb: QImage, radius: float, ring: float) -> None:
-    """The thumbnail with rounded corners and a white ring — flight and card."""
+def _card_geometry(
+    width: float,
+    height: float,
+    *,
+    max_w: float = _SNAP_THUMB_W,
+    max_h: float = _SNAP_THUMB_MAX_H,
+    min_w: float | None = None,
+    min_h: float | None = None,
+) -> tuple[float, float, float, float]:
+    """``(card w, card h, picture w, picture h)`` for a picture of ``width`` x ``height``.
+
+    The picture keeps its aspect and is scaled down to fit, never up: a tiny
+    capture shows at its real size. The card around it is at least
+    ``min_w`` x ``min_h``, so a sliver or a few pixels never vanish.
+    """
+    min_w = _CARD_MIN_W if min_w is None else min_w
+    min_h = _CARD_MIN_H if min_h is None else min_h
+    width, height = max(1.0, float(width)), max(1.0, float(height))
+    scale = min(1.0, max_w / width, max_h / height)
+    pw, ph = width * scale, height * scale
+    return min(max_w, max(pw, min_w)), min(max_h, max(ph, min_h)), pw, ph
+
+
+def _centred(box: QRectF, width: float, height: float) -> QRectF:
+    return QRectF(
+        box.center().x() - width / 2.0, box.center().y() - height / 2.0, width, height
+    )
+
+
+def _paint_card(
+    painter: QPainter,
+    rect: QRectF,
+    thumb: QImage,
+    radius: float,
+    ring: float,
+    picture: QRectF | None = None,
+) -> None:
+    """The thumbnail with rounded corners and a white ring — flight and card.
+
+    ``picture`` is where the image goes inside ``rect``; by default it fills
+    ``rect`` as far as its aspect allows. Whatever it leaves free shows the
+    neutral backdrop instead of a stretched image.
+    """
+    if picture is None and not thumb.isNull():
+        width, height = float(thumb.width()), float(thumb.height())
+        scale = min(rect.width() / width, rect.height() / height)
+        picture = _centred(rect, width * scale, height * scale)
     clip = QPainterPath()
     clip.addRoundedRect(rect, radius, radius)
     painter.save()
     painter.setClipPath(clip)
-    painter.drawImage(rect, thumb)
+    framed = picture is not None and (
+        picture.width() < rect.width() - 0.75 or picture.height() < rect.height() - 0.75
+    )
+    if framed:
+        painter.fillRect(rect, _CARD_BACKDROP)
+    painter.drawImage(picture if picture is not None else rect, thumb)
+    if framed:
+        # A hairline marks where a small picture ends on the backdrop.
+        edge = QPen(QColor(255, 255, 255, 56))
+        edge.setWidthF(1.0)
+        painter.setPen(edge)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(picture.adjusted(-0.5, -0.5, 0.5, 0.5))
     painter.restore()
     if ring > 0.0:
         pen = QPen(QColor(255, 255, 255, int(235 * ring)))
@@ -312,16 +374,10 @@ class _SnapWindow(QWidget):
         w, h = float(screen.geometry().width()), float(screen.geometry().height())
         fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect_frac)
         self._src = QRectF(fx * w, fy * h, max(1.0, fw * w), max(1.0, fh * h))
-        aspect = (
-            thumb.height() / max(1, thumb.width())
-            if not thumb.isNull()
-            else (fh * h) / max(fw * w, 1e-6)
-        )
-        tw = float(_SNAP_THUMB_W)
-        th = tw * aspect
-        if th > _SNAP_THUMB_MAX_H:
-            th = float(_SNAP_THUMB_MAX_H)
-            tw = th / max(aspect, 1e-6)
+        # The captured area is the picture's real size on screen.
+        tw, th, pw, ph = _card_geometry(self._src.width(), self._src.height())
+        #: The picture inside the landed card (the rest is backdrop).
+        self.picture_size = (pw, ph)
         # Land inside the work area, so the card never sits under the taskbar.
         avail = screen.availableGeometry()
         geo = screen.geometry()
@@ -398,6 +454,11 @@ class _SnapWindow(QWidget):
             _lerp(self._src.width(), self._dst.width(), fly),
             _lerp(self._src.height(), self._dst.height(), fly),
         )
+        picture = _centred(
+            rect,
+            _lerp(self._src.width(), self.picture_size[0], fly),
+            _lerp(self._src.height(), self.picture_size[1], fly),
+        )
         if not self._thumb.isNull():
             if fly > 0.0:
                 for spread, alpha in ((10.0, 18), (5.0, 30), (2.0, 46)):
@@ -406,7 +467,7 @@ class _SnapWindow(QWidget):
                     painter.setBrush(QColor(0, 0, 0, int(alpha * fly)))
                     radius = _SNAP_RADIUS * fly + spread
                     painter.drawRoundedRect(shadow, radius, radius)
-            _paint_card(painter, rect, self._thumb, _SNAP_RADIUS * fly, fly)
+            _paint_card(painter, rect, self._thumb, _SNAP_RADIUS * fly, fly, picture)
 
         flash = 1.0 - _ease_out_cubic(t / _SNAP_FLASH_MS)
         if self._flash and flash > 0.0:
@@ -435,12 +496,10 @@ def _drag_preview(thumb: QImage, card: QRectF, grab: QPointF, dpr: float) -> tup
     spot the user pressed, mapped onto the smaller picture, so the picture
     does not jump out from under the pointer.
     """
-    aspect = thumb.height() / max(1, thumb.width()) if not thumb.isNull() else 0.6
-    w = _DRAG_PREVIEW_W
-    h = w * aspect
-    if h > _DRAG_PREVIEW_H:
-        h = _DRAG_PREVIEW_H
-        w = h / max(aspect, 1e-6)
+    w, h, _pw, _ph = _card_geometry(
+        card.width(), card.height(), max_w=_DRAG_PREVIEW_W, max_h=_DRAG_PREVIEW_H,
+        min_w=_DRAG_PREVIEW_W * 0.55, min_h=_DRAG_PREVIEW_H * 0.4,
+    )
     pad = _DRAG_PREVIEW_PAD
     dpr = max(1.0, float(dpr))
     size = QPointF(w + 2 * pad, h + 2 * pad)
@@ -515,23 +574,24 @@ def _drag_copy_cursor(dpr: float) -> QPixmap:
     return canvas
 
 
-def _card_rect(screen, thumb: QImage) -> QRectF:
-    """Where the resting card sits: the bottom-right of ``screen``'s work area.
+def _card_rect(screen, thumb: QImage) -> tuple[QRectF, tuple[float, float]]:
+    """Where the resting card sits, and its picture's size inside it.
 
-    Absolute (virtual-desktop) logical coordinates. Shared by the shutter
-    flight's landing spot and a card that comes back after the editor.
+    The card is at the bottom-right of ``screen``'s work area, in absolute
+    (virtual-desktop) logical coordinates. Used by a card that comes back
+    after the editor; the thumbnail's pixels stand for the picture's size.
     """
-    aspect = thumb.height() / max(1, thumb.width()) if not thumb.isNull() else 0.6
-    tw = float(_SNAP_THUMB_W)
-    th = tw * aspect
-    if th > _SNAP_THUMB_MAX_H:
-        th = float(_SNAP_THUMB_MAX_H)
-        tw = th / max(aspect, 1e-6)
+    dpr = float(screen.devicePixelRatio() or 1.0)
+    natural = (
+        (thumb.width() / dpr, thumb.height() / dpr) if not thumb.isNull() else (320.0, 192.0)
+    )
+    tw, th, pw, ph = _card_geometry(*natural)
     # Inside the work area, so the card never sits under the taskbar.
     avail = screen.availableGeometry()
     right = float(avail.right() + 1)
     bottom = float(avail.bottom() + 1)
-    return QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
+    rect = QRectF(right - tw - _SNAP_MARGIN, bottom - th - _SNAP_MARGIN, tw, th)
+    return rect, (pw, ph)
 
 
 def _stack_tops(
@@ -599,8 +659,11 @@ class _CardWindow(QWidget):
         appshot_id: str = "",
         image: QImage | None = None,
         screen_name: str = "",
+        picture_size: tuple[float, float] | None = None,
     ) -> None:
         super().__init__(None)
+        #: The picture inside the card; ``None`` = as large as its aspect allows.
+        self.picture_size = picture_size
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -839,8 +902,9 @@ class _CardWindow(QWidget):
         self.setWindowOpacity(0.35)
         result = drag.exec(Qt.DropAction.CopyAction)
         self.setWindowOpacity(1.0)
-        if result == Qt.DropAction.IgnoreAction:
-            # Dropped nowhere (or Esc): the card stays.
+        if result == Qt.DropAction.IgnoreAction or self._pinned:
+            # Dropped nowhere (or Esc), or pinned: the card stays. A pinned
+            # card leaves only through its own Close.
             self._hover = False
             self._hot = ""
             self._arm_dismiss(_CARD_AFTER_HOVER_MS)
@@ -904,7 +968,10 @@ class _CardWindow(QWidget):
             painter.setBrush(QColor(0, 0, 0, alpha))
             shadow = rect.adjusted(-spread, -spread + 3, spread, spread + 3)
             painter.drawRoundedRect(shadow, _SNAP_RADIUS + spread, _SNAP_RADIUS + spread)
-        _paint_card(painter, rect, self._thumb, _SNAP_RADIUS, 1.0)
+        picture = (
+            _centred(rect, *self.picture_size) if self.picture_size is not None else None
+        )
+        _paint_card(painter, rect, self._thumb, _SNAP_RADIUS, 1.0, picture)
         if self._status:
             self._paint_scrim(painter, rect, 150)
             self._paint_centered(painter, rect, self._status)
@@ -1308,6 +1375,7 @@ class Renderer(QObject):
         screen_name: str,
         appshot_id: str = "",
         image: QImage | None = None,
+        picture_size: tuple[float, float] | None = None,
     ) -> _CardWindow:
         """A new card at the bottom of the stack; the older ones move up."""
         card = _CardWindow(
@@ -1320,6 +1388,7 @@ class Renderer(QObject):
             appshot_id=appshot_id,
             image=image,
             screen_name=screen_name,
+            picture_size=picture_size,
         )
         self._cards.append(card)
         _emit(protocol.EVENT_CARD, open=True)
@@ -1335,6 +1404,7 @@ class Renderer(QObject):
             screen_name=flight.screen_name,
             appshot_id=flight.appshot_id,
             image=flight.image,
+            picture_size=flight.picture_size,
         ).start()
 
     def _relayout(self) -> None:
@@ -1417,8 +1487,13 @@ class Renderer(QObject):
             self._relayout()
             win.start()
             return
+        rect, picture_size = _card_rect(screen, thumb)
         self._new_card(
-            _card_rect(screen, thumb), thumb, screen_name=screen.name(), appshot_id=appshot_id
+            rect,
+            thumb,
+            screen_name=screen.name(),
+            appshot_id=appshot_id,
+            picture_size=picture_size,
         ).start(slide_in=True)
 
     def card_action(self, card: _CardWindow, action: str) -> None:
@@ -1471,9 +1546,11 @@ class Renderer(QObject):
         Only on the user's drag; files older than an hour are removed first,
         so the folder never grows (see ``docs/appshots.md``).
         """
-        folder = Path(tempfile.gettempdir()) / "jarvis-appshots"
+        from jarvis.appshot.dragfile import prepare_drag_folder
+
         try:
-            folder.mkdir(parents=True, exist_ok=True)
+            # Private to this user: a shared /tmp is readable by everyone.
+            folder = prepare_drag_folder()
             cutoff = time.time() - _DRAG_FILE_MAX_AGE_S
             for old in folder.glob("appshot-*.png"):
                 with suppress(OSError):  # a file still open elsewhere stays
@@ -1606,6 +1683,9 @@ def run() -> int:
     except Exception as exc:  # noqa: BLE001 — no display / no platform plugin
         sys.stderr.write(f"cu-indicator: no usable display ({exc!r}) — indicator disabled.\n")
         return protocol.EXIT_NO_GUI
+    from jarvis.platform.qt_sidecar import hide_from_dock
+
+    hide_from_dock()  # macOS: no "Python" Dock icon for the resident card
     # All windows are frequently hidden (blank/hide) — that must never
     # terminate the sidecar; only stdin EOF or "quit" does.
     app.setQuitOnLastWindowClosed(False)

@@ -160,3 +160,22 @@ export function bindGitHubRepo(workspaceId: string, repo: string): Promise<{ ok:
     body: JSON.stringify({ workspace_id: workspaceId, repo }),
   });
 }
+
+export interface BranchEditors {
+  /** False on a headless host or a remote browser: nothing opens on this screen. */
+  file_manager: boolean;
+  editors: { id: string; label: string }[];
+}
+
+export function fetchBranchEditors(): Promise<BranchEditors> {
+  return call<BranchEditors>(`/api/agentic-ide/git/branch/editors`);
+}
+
+/** Open the folder `branch` is checked out in, in the file manager (`folder`) or an editor. */
+export function openBranchCheckout(workspaceId: string, branch: string, target: string): Promise<{ opened: boolean; path: string }> {
+  return call(`/api/agentic-ide/git/branch/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, branch, target }),
+  });
+}

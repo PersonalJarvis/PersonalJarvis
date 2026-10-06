@@ -918,25 +918,9 @@ def _behind_win_shim(spec: workspace_agents.WorkspaceAgent, shim: str) -> tuple[
 
     ``cmd /c <shim>`` works and stays the fallback, but it wedges a second
     process between the pane and the agent, which costs clean signal delivery
-    and a clean exit. When the entry declares where the real thing sits inside
-    the installed package we skip the shim entirely.
-
-    Two shapes exist and the entry says which: a Node script that needs
-    ``node.exe`` in front of it, and a native executable that is simply run.
-    ``None`` whenever the declared path is not actually there — an install
-    laid out differently than expected must fall back, never fail.
+    and a clean exit (:func:`jarvis.workspace.agents.behind_win_shim`).
     """
-    if spec.win_shim is None:
-        return None
-    target = Path(shim).resolve().parent.joinpath(*spec.win_shim.relative_path)
-    if not target.is_file():
-        return None
-    if spec.win_shim.kind == "exe":
-        return (str(target),)
-    from jarvis.core.path_augment import resolve_node_executable
-
-    node = resolve_node_executable()
-    return (node, str(target)) if node else None
+    return workspace_agents.behind_win_shim(spec, shim)
 
 
 @dataclass(slots=True)

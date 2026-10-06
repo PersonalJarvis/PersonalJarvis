@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "railway",
+  "version": "1.0.0",
+  "description": "Projects, services, deployments and logs",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Railway",
+      "category": "Developer",
+      "logo_slug": "railway",
+      "logo_color": "0B0D0E",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.railway.com/",
+        "discovery_url": "https://mcp.railway.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.railway.com/",
+        "auth_header_template": "Authorization: Bearer ${plugin_railway_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with your Railway account. Deploys and changes ask for approval first."
+    }
+  }
+}

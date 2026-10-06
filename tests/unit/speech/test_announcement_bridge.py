@@ -29,6 +29,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -90,7 +91,7 @@ def _make_pipeline(
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     if player is not None:
         pipeline._player = player  # type: ignore[assignment]
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 @pytest.mark.asyncio
@@ -467,10 +468,9 @@ async def test_jarvis_agent_completion_signal_does_speak_with_summary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_completion_announcement_speaks_after_hangup() -> None:
-    """A kind="completion" announcement must be SPOKEN even after hangup — it is
-    the offloaded answer, a fresh turn. RED before WS3b (the hangup gate drops
-    every announcement regardless of kind)."""
+async def test_completion_announcement_stays_silent_after_hangup() -> None:
+    """After a hang-up the classic TTS voice does not speak a completion —
+    Jarvis never talks out of nowhere (2026-10-05). The result stays in the app."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -486,8 +486,8 @@ async def test_completion_announcement_speaks_after_hangup() -> None:
         )
     )
 
-    assert tts.calls == [("Deine Reise-Recherche ist fertig.", "de-DE")]  # i18n-allow: matches simulated German voice output above
-    assert player.plays == 1
+    assert tts.calls == []
+    assert player.plays == 0
 
 
 @pytest.mark.asyncio
@@ -532,9 +532,9 @@ async def test_plain_late_announcement_still_dropped_after_hangup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_background_completed_speaks_after_hangup() -> None:
-    """An JarvisAgentBackgroundCompleted readback is by definition fresh — it must
-    be spoken even after hangup. RED before WS3b (the hangup gate dropped it)."""
+async def test_background_completed_stays_silent_after_hangup() -> None:
+    """A JarvisAgentBackgroundCompleted readback after a hang-up is not voiced
+    by the classic TTS voice (2026-10-05: no voice out of nowhere)."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -551,10 +551,8 @@ async def test_background_completed_speaks_after_hangup() -> None:
         )
     )
 
-    assert tts.calls == [
-        ("Fertig. Fuenf Recherche-Themen liegen bereit.", "de-DE")  # i18n-allow: matches simulated German voice output above
-    ]
-    assert player.plays == 1
+    assert tts.calls == []
+    assert player.plays == 0
 
 
 @pytest.mark.asyncio

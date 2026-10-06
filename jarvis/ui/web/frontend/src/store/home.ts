@@ -1,8 +1,8 @@
 import { create } from "zustand";
 
 import { readHomeSurface, writeHomeSurface, type HomeSurface } from "@/lib/homeSurface";
-import { detailToMessages, detailToTraces, resumeConversation } from "@/lib/chatsApi";
-import { reduceTranscript, transcriptFromMessages, type TranscriptLine } from "@/lib/homeTranscript";
+import { reduceTranscript, type TranscriptLine } from "@/lib/homeTranscript";
+import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 
 /**
@@ -31,8 +31,8 @@ interface HomeStore {
   voiceSwitchStopping: boolean;
   /**
    * The archived voice chat the front page reopened from the history. Its
-   * calls are recorded into it (jarvis/sessions/continuation.py), so a hangup
-   * keeps it on stage and reloads it instead of opening an empty lane.
+   * calls are recorded into it (jarvis/sessions/continuation.py). A hangup
+   * clears the selection; continuing it again requires a new history click.
    */
   continuedVoiceId: string | null;
   setContinuedVoiceId: (id: string | null) => void;
@@ -47,6 +47,8 @@ interface HomeStore {
    */
   liveReply: string;
   liveSessionId: string | null;
+  /** History row captured when this call starts; navigation cannot reassign it. */
+  liveConversationId: string | null;
   ingest: (name: string, payload: unknown, tsMs: number) => void;
   /**
    * Replace the lane with a stored conversation (a reopened voice session);
@@ -93,22 +95,6 @@ export function reduceLiveReply(current: string, name: string, payload: unknown)
   }
 }
 
-/** Re-read a continued voice chat after a call and put its lines back on stage. */
-async function reloadContinuedVoiceChat(id: string): Promise<void> {
-  try {
-    const detail = await resumeConversation("voice", id);
-    const events = useEventStore.getState();
-    if (events.activeKind !== "voice" || events.activeThreadId !== id) return;
-    const messages = detailToMessages(detail);
-    events.seedThinkingTraces(detailToTraces(detail));
-    events.setMessages(messages);
-    useHomeStore.getState().seedTranscript(transcriptFromMessages(messages));
-  } catch (error) {
-    // The lane keeps what the call showed; the history row has the rest.
-    console.info("Continued voice chat could not be reloaded.", error);
-  }
-}
-
 export const useHomeStore = create<HomeStore>((set, get) => ({
   jarvisCardMode: "voice",
   setJarvisCardMode: (jarvisCardMode) => set({ jarvisCardMode }),
@@ -127,7 +113,11 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
   transcript: [],
   liveReply: "",
   liveSessionId: null,
+  liveConversationId: null,
   ingest: (name, payload, tsMs) => {
+    // Late captions, spoken replies, and tool traces belong to the completed
+    // call. Keep its blank successor empty until a call or selection starts.
+    if (get().freshVoicePending && name !== "VoiceSessionStarted" && name !== "VoiceSessionEnded") return;
     if (name === "VoiceTranscriptUpdated") {
       const sessionId = (payload as { session_id?: string } | null)?.session_id;
       if (get().liveSessionId && sessionId !== get().liveSessionId) return;
@@ -144,28 +134,21 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
       // empty lane; the completed conversation remains in the history rail.
       if (reason !== "realtime_fallback" && reason !== "desktop_fallback") {
         const events = useEventStore.getState();
-        const continued = get().continuedVoiceId;
-        if (
-          continued && events.activeKind === "voice" && events.activeThreadId === continued
-          && !get().voiceSwitchStopping
-        ) {
-          // The call was recorded into the reopened voice chat: it stays on
-          // stage, and its stored lines (now with this call) replace the lane.
-          events.setTranscription("", true);
-          set({ liveReply: "", freshVoicePending: false });
-          void reloadContinuedVoiceChat(continued);
-          return;
-        }
-        if (events.activeKind === "voice" && !get().voiceSwitchStopping) {
+        if (!get().voiceSwitchStopping) {
           events.setActiveConversation("voice", null);
           events.setMessages([]);
           events.seedThinkingTraces({});
+          // Close the old timeline and unbind its backend voice context now,
+          // even when the front page/card is closed. This does not start or
+          // stop a call, so a later wake cannot be cancelled by a reset effect.
+          useAgentChatStore.getState().newChat();
         }
         events.setTranscription("", true);
         // Remember this even while the card is closed. Returning to Jarvis
         // must not restore the last archive selection or the typed surface.
         set({
           transcript: [], liveReply: "", jarvisCardMode: "voice",
+          continuedVoiceId: get().voiceSwitchStopping ? get().continuedVoiceId : null,
           freshVoicePending: !get().voiceSwitchStopping,
           voiceSelectionPending: get().voiceSwitchStopping && get().voiceSelectionPending,
         });
@@ -174,7 +157,15 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
     if (name === "VoiceSessionStarted") {
       // A call already started elsewhere must not be ended on card re-entry.
-      set({ freshVoicePending: false, liveSessionId: (payload as { session_id?: string })?.session_id || null });
+      const sessionId = (payload as { session_id?: string })?.session_id || null;
+      const events = useEventStore.getState();
+      const continued = get().continuedVoiceId;
+      set({
+        freshVoicePending: false,
+        liveSessionId: sessionId,
+        liveConversationId: continued && events.activeKind === "voice" && events.activeThreadId === continued
+          ? continued : sessionId,
+      });
       // Wake words and external call controls start the same voice session as
       // the composer button. Follow that session in the open Jarvis chat
       // without starting another call or navigating away from other work.
@@ -190,5 +181,5 @@ export const useHomeStore = create<HomeStore>((set, get) => ({
     }
   },
   seedTranscript: (lines) => set({ transcript: lines, liveReply: "", freshVoicePending: false }),
-  resetTranscript: () => set({ transcript: [], liveReply: "", liveSessionId: null }),
+  resetTranscript: () => set({ transcript: [], liveReply: "", liveSessionId: null, liveConversationId: null }),
 }));

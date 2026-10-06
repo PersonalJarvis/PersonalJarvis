@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -207,8 +207,8 @@ describe("ChatStage (agent chat)", () => {
     expect(within(composer).getByTestId("composer-model").getAttribute("data-value")).toBe("claude-api\u0001");
     expect(within(composer).getByTestId("composer-effort").getAttribute("data-value")).toBe("high");
     expect(within(composer).getByTestId("composer-permission").getAttribute("data-value")).toBe("acceptEdits");
-    // Claude Code has a plan entry, so the Build | Plan switch is drawn.
-    expect(within(composer).getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+    // No Build | Plan switch on the front page, even for a ladder with a plan entry.
+    expect(within(composer).queryByTestId("composer-plan")).toBeNull();
     // No surface chip, no paperclip: "+" carries attaching.
     expect(within(composer).queryByTestId("composer-surface")).toBeNull();
     expect(within(composer).queryByTestId("composer-attach")).toBeNull();
@@ -517,6 +517,29 @@ describe("ChatStage (agent chat)", () => {
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
+  it("marks the provider's default effort and explains each stance in its menu", async () => {
+    useAgentChatStore.setState({
+      catalog: {
+        ...CATALOG,
+        providers: CATALOG.providers.map((p) => ({
+          ...p,
+          permission_modes: p.permission_modes.map((m) => ({ ...m, description: `What ${m.label} lets through.` })),
+        })),
+      },
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-effort"));
+    const effort = await screen.findByTestId("composer-effort-panel");
+    expect(effort.textContent).toContain("Reasoning");
+    const high = within(effort).getAllByRole("option").find((el) => el.getAttribute("data-value") === "high");
+    expect(high?.textContent).toContain("Default");
+    fireEvent.keyDown(effort, { key: "Escape" });
+
+    fireEvent.click(screen.getByTestId("composer-permission"));
+    const stances = await screen.findByTestId("composer-permission-panel");
+    expect(stances.textContent).toContain("What Auto-accept edits lets through.");
+  });
+
   it("wears one glyph per stance on the unified ladder", async () => {
     // The front page's catalog hands every provider the same four-step ladder
     // (jarvis/agent_chat/permissions.py, surface=jarvis); the composer draws
@@ -553,8 +576,21 @@ describe("ChatStage (agent chat)", () => {
     expect(glyphs[1]).toContain("lucide-file-pen");
     expect(glyphs[2]).toContain("lucide-shield-off");
     expect(new Set(glyphs).size).toBe(glyphs.length);
-    // The plan entry still powers the Build | Plan switch.
-    expect(screen.getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("draws Bypass in the row's plain grey, like every other stance", () => {
+    useAgentChatStore.setState((s) => ({ draft: { ...s.draft, permissionMode: "bypassPermissions" } }));
+    render(<ChatStage />);
+    const pill = screen.getByTestId("composer-permission");
+    expect(pill.getAttribute("data-value")).toBe("bypassPermissions");
+    expect(pill.className).not.toContain("text-warning");
+  });
+
+  it("brings a chat left in Plan back to its build stance, since the front page has no switch", async () => {
+    const setPlan = vi.fn(async () => {});
+    useAgentChatStore.setState((s) => ({ setPlan, draft: { ...s.draft, permissionMode: "plan" } }) as never);
+    render(<ChatStage />);
+    await waitFor(() => expect(setPlan).toHaveBeenCalledWith(false));
   });
 
   it("accepts a prompt through the current rich text composer", () => {

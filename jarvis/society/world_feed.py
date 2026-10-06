@@ -96,6 +96,21 @@ class WorldFeed:
             await self._announce(self._message_event(env))
         elif env.msg_type in ROOM_TYPES:
             await self._announce(self._room_event(env))
+        elif env.msg_type is MsgType.RESULT:
+            await self._announce(self._result_event(env))
+
+    @staticmethod
+    def _result_event(env: SocietyEnvelope) -> Any:
+        from jarvis.core.events import SocietyResultPosted
+
+        status = env.payload.get("status")
+        return SocietyResultPosted(
+            source_layer="society",
+            event_id=env.event_id,
+            agent_id=env.from_agent,
+            status=status if isinstance(status, str) else "",
+            society_trace=env.trace_id,
+        )
 
     @staticmethod
     def _room_of(env: SocietyEnvelope) -> str:

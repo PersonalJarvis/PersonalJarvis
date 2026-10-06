@@ -53,13 +53,13 @@ function fullMeta(): Record<string, unknown> {
 // ----------------------------------------------------------------------
 
 describe("ledger field vocabulary", () => {
-  it("counts 18 fields across the five clusters", () => {
+  it("counts 19 fields across the five clusters", () => {
     const sum = CLUSTER_ORDER.reduce(
       (acc, cid) => acc + CLUSTER_FIELD_KEYS[cid].length,
       0,
     );
-    expect(sum).toBe(18);
-    expect(TOTAL_FIELDS).toBe(18);
+    expect(sum).toBe(19);
+    expect(TOTAL_FIELDS).toBe(19);
   });
 
 });
@@ -129,7 +129,7 @@ describe("isEmptyValue", () => {
 });
 
 describe("countFilled", () => {
-  it("is 0 for an empty meta and 18 for a full meta", () => {
+  it("is 0 for an empty meta and 19 for a full meta", () => {
     expect(countFilled(EMPTY_META)).toBe(0);
     expect(countFilled(fullMeta())).toBe(TOTAL_FIELDS);
   });

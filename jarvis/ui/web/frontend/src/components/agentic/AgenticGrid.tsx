@@ -46,6 +46,7 @@ import { AgenticTerminal, type SplitDirection } from "./AgenticTerminal";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import { TERMINAL_APPEARANCE_KEY, type TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
+import { terminalZoomBindings } from "@/store/appChordSettings";
 import {
   FONT_DEFAULT,
   FONT_KEY,
@@ -654,6 +655,8 @@ export function AgenticGrid({
         // Hidden rather than unmounted when another section is open, so the
         // grid has to be asked whether anyone is looking at it.
         enabled: () => zoomStateRef.current.onScreen,
+        // Read per keystroke: a chord changed in Settings applies at once.
+        bindings: () => terminalZoomBindings(),
         apply: (intent) => {
           const current = zoomStateRef.current.fontSize;
           const next = zoomedFontSize(current, intent);

@@ -4,17 +4,14 @@
  * not import the gate itself — tests mock the gate wholesale.
  */
 
-/** Window event that asks the onboarding gate to replay the app tour. */
+/** Window event that asks the onboarding gate to show the walk through the app alone. */
 export const TOUR_START_EVENT = "jarvis:tour-start";
 
 /**
- * Window event that asks the onboarding gate to replay setup (API keys, agent
- * subscriptions, wake word) as a preview, followed by the app tour.
+ * Window event that asks the onboarding gate to replay setup (name, AI
+ * connections, voice) as a preview, followed by the walk through the app.
  */
 export const SETUP_REPLAY_EVENT = "jarvis:setup-replay";
-
-/** Window event that (re)starts the first-steps guide from its first quest. */
-export const FIRST_STEPS_START_EVENT = "jarvis:first-steps-start";
 
 /** Marks the guide's dim and card, so dialogs can tell its clicks apart. */
 export const TOUR_LAYER_ATTR = "data-tour-layer";

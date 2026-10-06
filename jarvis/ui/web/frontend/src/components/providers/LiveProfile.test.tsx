@@ -168,8 +168,7 @@ function subscriptionSetup({ accountMode = "subscription", catalogFails = false,
 }
 
 async function selectSubscription() {
-  fireEvent.click(await screen.findByRole("combobox", { name: "live.billing_method" }));
-  fireEvent.click(await screen.findByRole("option", { name: "live.subscription_mode" }));
+  fireEvent.click(await screen.findByRole("radio", { name: "providers_page.access_subscription" }));
 }
 
 it("keeps hosted web search editable only for API mode and preserves its setting", async () => {
@@ -187,8 +186,7 @@ it("keeps hosted web search editable only for API mode and preserves its setting
   fireEvent.click(screen.getByRole("button", { name: "live.save" }));
   await waitFor(() => expect(writes).toHaveLength(1));
   expect(writes[0].web_search).toBe(false);
-  fireEvent.click(screen.getByRole("combobox", { name: "live.billing_method" }));
-  fireEvent.click(await screen.findByRole("option", { name: "live.api_key_mode" }));
+  fireEvent.click(screen.getByRole("radio", { name: "providers_page.access_api_key" }));
   expect(screen.getByRole("switch", { name: "live.web_search" }).getAttribute("aria-checked")).toBe("false");
   client.clear();
 });
@@ -196,8 +194,8 @@ it("keeps hosted web search editable only for API mode and preserves its setting
 it("opens a dedicated subscription row in its own mode without rewriting the stored API profile", async () => {
   const { client, writes, onAuthModeChange } = subscriptionSetup({ selectedAuthMode: "chatgpt_subscription" });
   await screen.findByText("live.subscription_connected");
-  expect(screen.queryByRole("combobox", { name: "live.billing_method" })).toBeNull();
-  expect(screen.getByText("GPT Subscription")).toBeTruthy();
+  expect(screen.queryByRole("radiogroup", { name: "live.billing_method" })).toBeNull();
+  expect(screen.getByText("providers_page.access_subscription")).toBeTruthy();
   await waitFor(() => expect(screen.getByRole("combobox", { name: "live.voice" }).textContent).toContain("Cove"));
   expect(onAuthModeChange).toHaveBeenLastCalledWith("chatgpt_subscription", true);
   expect(writes).toHaveLength(0);
@@ -209,7 +207,7 @@ it("saves subscription voice without an API key and preserves the complete API s
   const { client, writes, fetcher, onAuthModeChange } = subscriptionSetup();
   await selectSubscription();
   await screen.findByText("live.subscription_connected");
-  expect(screen.getByText("live.subscription_voice_unverified")).toBeTruthy();
+  expect(screen.queryByText("live.subscription_voice_unverified")).toBeNull();
   expect(screen.queryByText("live.key_required")).toBeNull();
   expect(screen.queryByRole("button", { name: "live.use_for_agents" })).toBeNull();
   await waitFor(() => expect((screen.getByRole("combobox", { name: "live.thinking_model" }) as HTMLButtonElement).disabled).toBe(false));
@@ -228,8 +226,7 @@ it("saves subscription voice without an API key and preserves the complete API s
   expect(fetcher.mock.calls.some(([path]) => path === "/api/live/options?auth_mode=chatgpt_subscription&account_id=codex%3Adefault")).toBe(true);
   await screen.findByText("live.saved");
   expect(onAuthModeChange).toHaveBeenLastCalledWith("chatgpt_subscription", false);
-  fireEvent.click(screen.getByRole("combobox", { name: "live.billing_method" }));
-  fireEvent.click(await screen.findByRole("option", { name: "live.api_key_mode" }));
+  fireEvent.click(screen.getByRole("radio", { name: "providers_page.access_api_key" }));
   expect(screen.getByRole("combobox", { name: "live.voice" }).textContent).toContain("Gleam");
   expect(screen.getByRole("combobox", { name: "live.thinking_model" }).textContent).toContain("API model");
   expect((screen.getByRole("button", { name: "live.save" }) as HTMLButtonElement).disabled).toBe(true);
@@ -272,7 +269,7 @@ it("keeps subscription selection when its catalog fails instead of using API opt
   await screen.findByText("live.options_failed");
   expect((screen.getByRole("combobox", { name: "live.thinking_model" }) as HTMLButtonElement).disabled).toBe(true);
   expect((screen.getByRole("button", { name: "live.save" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(screen.getByRole("combobox", { name: "live.billing_method" }).textContent).toContain("live.subscription_mode");
+  expect(screen.getByRole("radio", { name: "providers_page.access_subscription" }).getAttribute("aria-checked")).toBe("true");
   expect(writes).toHaveLength(0);
   client.clear();
 });

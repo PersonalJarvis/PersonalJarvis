@@ -43,6 +43,7 @@ export const BUILTIN_COMPANIONS: Readonly<Record<string, BuiltinSpec>> = {
   brew: { kind: "model", gait: "hop", heightM: 0.34, modelHeightM: 0.341, strideM: 0.5 },
   mochi: { kind: "model", gait: "bounce", heightM: 0.28, modelHeightM: 0.25, strideM: 0.45 },
   shelly: { kind: "model", gait: "crawl", heightM: 0.36, modelHeightM: 0.4, strideM: 0.28 },
+  cocoa: { kind: "model", gait: "walk", heightM: 0.4, modelHeightM: 0.483, strideM: 0.3 },
 };
 
 /** A drawn pet floats at this height (its voxel figure), metres. */

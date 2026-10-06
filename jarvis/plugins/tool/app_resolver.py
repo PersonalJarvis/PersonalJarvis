@@ -88,6 +88,7 @@ _EXE_ALIASES_WIN = {
 _EXE_ALIASES_DARWIN = {
     "vscode": "Visual Studio Code",
     "code": "Visual Studio Code",
+    "cursor": "Cursor",
     "calc": "Calculator",
     "chrome": "Google Chrome",
     "terminal": "Terminal",

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "paypal": {
+      "type": "streamable-http",
+      "url": "https://mcp.paypal.com/mcp"
+    }
+  }
+}

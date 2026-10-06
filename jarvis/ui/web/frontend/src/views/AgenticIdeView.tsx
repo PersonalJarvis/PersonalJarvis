@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderPlus, Loader2, X } from "lucide-react";
+import { FolderPlus, Loader2, Plus, X } from "lucide-react";
+import { useT } from "@/i18n";
+import { CustomCliDialog } from "@/components/agentic/CustomCliDialog";
 import { ProjectConnectDialog } from "@/components/agentic/ProjectConnectDialog";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
@@ -13,7 +15,8 @@ import { isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
-import { LEADER_PASSTHROUGH, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { appChord } from "@/store/appChordSettings";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -24,6 +27,9 @@ import { BrandedSelect } from "@/components/ui/select";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSkillsStore } from "@/store/ideSkills";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { ThreadView } from "@/components/agentic/threads/ThreadView";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
@@ -74,6 +80,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
   const paneRequest = useIdeChatStore((state) => state.paneRequest);
   const setStagedPane = useIdeChatStore((state) => state.setStagedPane);
+  // Grid of terminals, or one thread at a time (see store/ideThreads).
+  const layout = useIdeThreadsStore((state) => state.layout);
+  const threads = layout === "threads";
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
@@ -92,6 +101,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [gitOpen, setGitOpen] = useState(false);
   const [selected, setSelected] = useState("");
   const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
+  // "Add your own command" from inside the agent picker: the CLI the user wants
+  // is usually missing exactly when they are looking at this list.
+  const [customCliOpen, setCustomCliOpen] = useState(false);
+  const t = useT();
   // Where the next agent opens: split off `splitAnchor` (a pane call-sign) in
   // `splitDirection`, or — with no anchor — the automatic even grid.
   const [splitDirection, setSplitDirection] = useState<PaneSplitDirection>(storedSplitDirection);
@@ -133,7 +146,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [session?.id]);
 
   useEffect(() => {
-    if (!dialogOpen || projectDialog) return;
+    // The custom-CLI form sits above the agent picker and owns its own focus and
+    // Escape; trapping keys for the picker underneath would steal them.
+    if (!dialogOpen || projectDialog || customCliOpen) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
     if (!dialog) return;
@@ -158,7 +173,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => { document.removeEventListener("keydown", onKeyDown, true); previous?.focus(); };
-  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy]);
+  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy, customCliOpen]);
 
   const refresh = useCallback(async (allowDuringActivation = false) => {
     if (((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation)) return;
@@ -216,6 +231,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Report the selected pane: it is the voice/prompt target, and the backend
   // saves it with the workspace so a reopened app restores the focus.
   const sessionId = session?.id ?? "";
+  // The Skills tab pastes into the selected pane when a card's button is used.
+  useEffect(() => {
+    useIdeSkillsStore.getState().setTarget(sessionId && selected ? { workspaceId: sessionId, pane: selected } : null);
+  }, [sessionId, selected]);
+  useEffect(() => () => useIdeSkillsStore.getState().setTarget(null), []);
   useEffect(() => {
     if (!sessionId || !selected) return;
     void syncAgenticIdeSurface({ workspaceId: sessionId, view: "grid", onScreen, terminal: null, promptTarget: selected })
@@ -303,6 +323,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
     const found = listing.projects.find((entry) => entry.id === project.id);
+    // In the thread layout a new project starts a thread, not a workspace.
+    if (found && useIdeThreadsStore.getState().layout === "threads") { useIdeThreadsStore.getState().newThread(found.id); setProjectDialog(false); return; }
     if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(found.id)); }
     setProjectDialog(false);
   };
@@ -454,7 +476,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
   // key menu. Pane commands go to the grid that owns the pane; the rest are
   // the same calls the buttons and the sidebar make.
-  const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
+  const hotkeysEnabled = onScreen && !threads && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
   const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
   const sendPaneCommand = (command: PaneCommand) => {
     if (!session || !selected) return;
@@ -544,7 +566,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
-      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {threads && <ThreadView onScreen={onScreen} />}
+      {/* The grid stays mounted behind the threads: its terminals keep running
+          and come back exactly as they were when the layout switches back. */}
+      <div hidden={threads} className="h-full min-h-0">
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -553,6 +579,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
         <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
       </div>}
+      </div>
       </IdeSidePanelFrame>
     </main>
 
@@ -560,7 +587,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })}
       onPassThrough={() => {
         if (!session || !selected) return;
-        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data: LEADER_PASSTHROUGH };
+        // The control code of the user's leader chord; a leader that is not
+        // Ctrl+letter has none to pass through.
+        const data = leaderPassthrough(appChord("ide_menu"));
+        if (data === null) return;
+        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data };
         window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
       }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
@@ -621,12 +652,25 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}
           </button>)}
+          {/* A command of the user's own, named and marked by them. Once saved
+              it is listed here, in every pane menu, and by its name to voice
+              ("open five Cursor terminals"). */}
+          <button type="button" disabled={busy} data-testid="add-agent-custom-cli" onClick={() => setCustomCliOpen(true)}
+            className="flex min-h-12 items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2 text-left text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Plus className="h-4 w-4" aria-hidden="true" />{t("custom_cli.add_button")}
+          </button>
         </div>
         {busy && agentComputer && <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Copying the folder and starting the agent there. Large folders take a minute.</p>}
         {agentChoices.length === 0 && <p className="text-sm text-muted-foreground">Connect a coding agent in CLIs to continue.</p>}
       </section>
     </div>}
+
+    {/* Outside the picker's backdrop on purpose: a portal still bubbles React
+        events to its parent, and a click in this form must not read as a click
+        on the backdrop that dismisses the picker. */}
+    <CustomCliDialog open={customCliOpen} onOpenChange={setCustomCliOpen}
+      onSaved={() => void fetchIdeAgents(true).then((response) => setAgents(response.agents)).catch((error) => pushToast("error", (error as Error).message))} />
 
     {projectDialog && <ProjectConnectDialog onClose={() => setProjectDialog(false)} onConnect={connect} />}
 

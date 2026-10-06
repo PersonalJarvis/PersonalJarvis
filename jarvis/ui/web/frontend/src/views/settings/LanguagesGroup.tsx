@@ -1,6 +1,4 @@
 import { useEffect } from "react";
-import { Check } from "lucide-react";
-import { cn } from "@/lib/utils";
 import {
   useT,
   useUiLanguage,
@@ -17,16 +15,21 @@ import {
   type ReplyLanguage,
 } from "@/i18n";
 import { LanguageSelect } from "@/components/ui/language-select";
+import {
+  SettingsCard,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+  settingsSelectCls,
+} from "@/views/settings/SettingsLayout";
 
 const UI_OPTIONS: UiLanguage[] = ["en", "de", "es"];
 const REPLY_OPTIONS: ReplyLanguage[] = ["auto", "en", "de", "es"];
 
 /**
- * "Languages" group inside the Settings view — the interface-language and
- * reply-language selectors. Moved here from the former standalone Languages
- * section; the controls, i18n hooks, and i18n keys (``languages_view.*``) are
- * unchanged. The page-level ViewHeader is dropped because this group sits under
- * the Settings header, as the first panel of the view.
+ * "Languages" section of the General settings page: interface language,
+ * voice-recognition language and reply language, one row each with its
+ * dropdown on the right (i18n keys ``languages_view.*``).
  */
 export function LanguagesGroup() {
   const t = useT();
@@ -49,38 +52,32 @@ export function LanguagesGroup() {
   }, []);
 
   return (
-    <div className="space-y-5">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("settings_view.languages_group_title")}
-      </h3>
-
-      <Section
-        title={t("languages_view.ui_section")}
-        hint={t("languages_view.ui_hint")}
-      >
-        {UI_OPTIONS.map((code) => (
-          <LanguageRow
-            key={`ui-${code}`}
-            active={ui === code}
-            label={t(`languages_view.options.${code}.label`)}
-            description={t(`languages_view.options.${code}.description`)}
-            onClick={() => setUiLanguage(code)}
-          />
-        ))}
-      </Section>
-
-      {/*
-        A dropdown, not the row buttons the other two sections use: the
-        recogniser understands ~100 languages, and rendering one card per
-        language would bury the rest of the settings view. The reply and
-        interface languages stay as rows — they have three options each.
-      */}
-      <Section
-        title={t("languages_view.stt_section")}
-        hint={t("languages_view.stt_hint")}
-      >
-        <li>
-          <div className="max-w-xs">
+    <SettingsSection title={t("settings_view.languages_group_title")}>
+      <SettingsCard>
+        <SettingsRow
+          title={t("languages_view.ui_section")}
+          description={t("languages_view.ui_hint")}
+          control={
+            <SettingsSelect
+              value={ui}
+              onValueChange={(code) => setUiLanguage(code as UiLanguage)}
+              ariaLabel={t("languages_view.ui_section")}
+              testId="ui-language"
+              options={UI_OPTIONS.map((code) => ({
+                value: code,
+                label: t(`languages_view.options.${code}.label`),
+              }))}
+            />
+          }
+        />
+        {/*
+          A searchable list: the recogniser understands ~100 languages, while
+          the interface and reply languages have a handful each.
+        */}
+        <SettingsRow
+          title={t("languages_view.stt_section")}
+          description={t("languages_view.stt_hint")}
+          control={
             <LanguageSelect
               value={stt}
               codes={sttChoices}
@@ -88,81 +85,28 @@ export function LanguagesGroup() {
               autoLabel={t("languages_view.options.auto.label")}
               ariaLabel={t("languages_view.stt_section")}
               testId="stt-language"
+              className={settingsSelectCls}
             />
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t("languages_view.stt_options.auto")}
-          </p>
-        </li>
-      </Section>
-
-      <Section
-        title={t("languages_view.reply_section")}
-        hint={t("languages_view.reply_hint")}
-      >
-        {REPLY_OPTIONS.map((code) => (
-          <LanguageRow
-            key={`reply-${code}`}
-            active={reply === code}
-            label={t(`languages_view.options.${code}.label`)}
-            description={t(`languages_view.reply_options.${code}`)}
-            onClick={() => setReplyLanguage(code)}
-          />
-        ))}
-      </Section>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="border-b border-border px-5 py-4">
-        <div className="text-base font-medium text-foreground-strong">{title}</div>
-        <div className="mt-1 text-sm text-muted-foreground">{hint}</div>
-      </div>
-      <ul className="divide-y divide-border px-2 py-1">{children}</ul>
-    </div>
-  );
-}
-
-function LanguageRow({
-  active,
-  label,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        aria-pressed={active}
-        className={cn(
-          "my-1 flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          active ? "bg-secondary" : "hover:bg-secondary",
-        )}
-      >
-        <div className="flex-1">
-          <div className="text-base font-medium text-foreground">{label}</div>
-          <div className="text-sm text-muted-foreground">{description}</div>
-        </div>
-        {active && <Check className="h-4 w-4 shrink-0 text-accent" />}
-      </button>
-    </li>
+          }
+        />
+        <SettingsRow
+          title={t("languages_view.reply_section")}
+          description={t("languages_view.reply_hint")}
+          control={
+            <SettingsSelect
+              value={reply}
+              onValueChange={(code) => setReplyLanguage(code as ReplyLanguage)}
+              ariaLabel={t("languages_view.reply_section")}
+              testId="reply-language"
+              options={REPLY_OPTIONS.map((code) => ({
+                value: code,
+                label: t(`languages_view.options.${code}.label`),
+                description: t(`languages_view.reply_options.${code}`),
+              }))}
+            />
+          }
+        />
+      </SettingsCard>
+    </SettingsSection>
   );
 }

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 /**
  * Master TTS output volume (how loudly Jarvis speaks) from
  * GET /api/settings/tts-volume. The value is a 0.0–1.0 amplitude gain
- * (1.0 = full); the UI renders it as a 0–100% slider. Mirrors useSilenceWindow.
+ * (1.0 = full); the UI renders it as a 0–100% slider. Mirrors useAutostart.
  */
 export interface TtsVolumeConfig {
   volume: number;

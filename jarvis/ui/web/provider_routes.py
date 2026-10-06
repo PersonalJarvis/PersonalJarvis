@@ -1328,6 +1328,18 @@ async def list_providers(request: Request) -> dict[str, Any]:
     return {"providers": await asyncio.to_thread(_build)}
 
 
+@router.get("/providers/families")
+async def list_provider_families() -> dict[str, Any]:
+    """The catalog folded into one entry per company (see ``provider_families``).
+
+    Presence only — never a key value. Built off the event loop: every family
+    reads its key slots from the OS keyring.
+    """
+    from .provider_families import build_families
+
+    return {"families": await asyncio.to_thread(build_families)}
+
+
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
 # timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
 # individual probe; this outer bound guarantees the HTTP response itself. Local

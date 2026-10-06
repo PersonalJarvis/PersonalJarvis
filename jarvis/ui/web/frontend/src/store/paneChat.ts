@@ -684,6 +684,7 @@ export function createPaneChatStore(options: PaneChatStoreOptions) {
       decide: async () => undefined,
       answerQuestion: async () => undefined,
       skipQuestion: async () => undefined,
+      resolvePlan: async () => undefined,
       ingest: (event: AgentChatEvent) => set({ timeline: reduceEvent(get().timeline, event) }),
       disconnect: () => get().stop(),
 

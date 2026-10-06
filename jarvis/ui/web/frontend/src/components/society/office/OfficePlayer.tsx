@@ -22,6 +22,10 @@ import { useOfficeDog } from "./dogLife";
 import { TreatBone } from "./dogProps";
 import { isRunning, useOfficeSettings } from "./officeSettings";
 import { jumpSquash, newJump, pressJump, stepJump } from "./officeJump";
+import { useProgression } from "../progression/progressionStore";
+import { PERSON_SUBJECT } from "../progression/progressionApi";
+import { LevelChip } from "../progression/LevelHud";
+import { useDressedFigure } from "../progression/regalia/dress";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -156,6 +160,12 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   // Seated at Mission Control the camera is the character's eyes: its own figure would block the view.
   const firstPerson = useLeadSeat((s) => !!layout.command && s.seated === layout.command.id);
   const { pressed, run, jumpHeld } = useMoveKeys(awake, interact, onJump);
+  // A level-up of the person's own: the character hops for joy and waves while it stands.
+  useEffect(() => useProgression.subscribe((state, prev) => {
+    if (state.cheerUntil > prev.cheerUntil && !reduced) pressJump(jump);
+  }), [jump, reduced]);
+  const level = useProgression((s) => (s.snapshot ? s.subjects[PERSON_SUBJECT]?.level ?? 1 : null));
+  const dressed = useDressedFigure("person", PERSON_SUBJECT, look);
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
   // character where it was, unless a changed floor plan put that spot in a wall.
@@ -253,7 +263,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       applySeparation(player, separation(player, player.heading, bodiesExcept(null, null)), dt, (q) => isWalkable(grid, q));
     }
     player.moving = moved > 0;
-    drive.current.mode = moved > 0 ? "walk" : "idle";
+    drive.current.mode = moved > 0 ? "walk" : performance.now() < useProgression.getState().cheerUntil ? "wave" : "idle";
     drive.current.speed = moved / Math.max(dt, 1e-3);
     if (group.current) {
       group.current.position.set(player.x, 0, player.z);
@@ -282,12 +292,14 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
       <group ref={body}>
-        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined} />
+        <ToyFigure look={dressed.look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined}
+          regalia={dressed.regalia} />
         {!firstPerson && (
           <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
             <span className="office-plate office-plate-player" data-office-ui>
               <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
               <span className="office-plate-name">{name}</span>
+              {level !== null && <LevelChip kind="person" level={level} />}
             </span>
           </Html>
         )}

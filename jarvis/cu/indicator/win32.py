@@ -112,6 +112,18 @@ def _no_dwm_frame(hwnd: int) -> None:
         log.debug("DWM frame attributes unavailable", exc_info=True)
 
 
+def strip_window_frame(hwnd: int) -> bool:
+    """Drop the grey Windows 11 frame border and corner rounding from ``hwnd``.
+
+    Windows 11 outlines even frameless, transparent windows, which shows as a
+    second grey line around an overlay. A quiet no-op elsewhere.
+    """
+    if _user32() is None or not hwnd:
+        return False
+    _no_dwm_frame(hwnd)
+    return True
+
+
 def exclude_from_capture(hwnd: int) -> bool:
     """Hide ``hwnd`` from all screen capture (BitBlt/mss/OBS/CU frames)."""
     if os.environ.get(CAPTURABLE_ENV, "").strip() in {"1", "true", "yes"}:

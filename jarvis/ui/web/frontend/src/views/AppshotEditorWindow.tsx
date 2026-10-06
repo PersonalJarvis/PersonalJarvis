@@ -31,6 +31,22 @@ export function isAppshotEditorWindow(search: string): boolean {
   return new URLSearchParams(search).get("view") === APPSHOT_EDITOR_VIEW;
 }
 
+/**
+ * Remember which picture this window is on.
+ *
+ * The warm window is opened without an id and pointed later in memory. A
+ * reload of that address (the blank-window watchdog, a rebuilt bundle) would
+ * otherwise come back as the empty gray shell. The address is the backup.
+ */
+function rememberEditorTarget(id: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("appshot");
+  if (id) url.searchParams.set("appshot", id);
+  const next = `${url.pathname}${url.search}${url.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next !== current) window.history.replaceState(null, "", next);
+}
+
 export interface EditorWindowDeps {
   returnCard: (id: string, flyFrom?: EditorExit["flyFrom"]) => Promise<unknown>;
   closeWindow: () => Promise<unknown>;
@@ -73,6 +89,7 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
       const valid = appshotIdFromUrl(`?appshot=${encodeURIComponent(id)}`);
       if (!valid) return false;
       closing.current = false;
+      rememberEditorTarget(valid);
       setAppshotId(valid);
       setSession((n) => n + 1);
       return true;
@@ -93,12 +110,13 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
       .catch(() => undefined)
       .finally(() => {
         setAppshotId("");
+        rememberEditorTarget("");
         void deps.closeWindow().catch(() => undefined);
       });
   }, [appshotId, deps]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-popover" data-testid="appshot-editor-window">
+    <div className="fixed inset-0 overflow-hidden bg-popover" data-testid="appshot-editor-window">
       {appshotId && (
         <AppshotEditor key={session} appshotId={appshotId} onClose={close} variant="window" />
       )}

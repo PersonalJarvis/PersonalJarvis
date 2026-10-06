@@ -200,39 +200,6 @@ def snap_rects_on_screen(
     return out
 
 
-#: Magnifier zoom steps (screen pixels drawn per real pixel) for the wheel.
-MAG_ZOOMS: tuple[int, ...] = (2, 3, 4, 6, 8, 12, 16, 24)
-MAG_DEFAULT_ZOOM = 8
-#: The magnifier's side, in logical pixels, before rounding to whole pixels.
-MAG_BOX_PX = 128.0
-
-
-def step_zoom(current: int, steps: int) -> int:
-    """Move ``steps`` notches along :data:`MAG_ZOOMS` (positive = closer)."""
-    try:
-        index = MAG_ZOOMS.index(current)
-    except ValueError:  # an unknown zoom restarts from the default
-        index = MAG_ZOOMS.index(MAG_DEFAULT_ZOOM)
-    return MAG_ZOOMS[max(0, min(len(MAG_ZOOMS) - 1, index + steps))]
-
-
-def magnifier_layout(zoom: int, scale: float, box_px: float = MAG_BOX_PX) -> tuple[int, float]:
-    """``(source pixels per side, logical px per source pixel)`` for a zoom.
-
-    ``scale`` is device pixels per logical pixel, so one source pixel is drawn
-    ``zoom`` device pixels wide whatever the display scaling. The count covers
-    the whole box (the edge pixels are clipped, so the box keeps one size at
-    every zoom) and is odd, so one pixel sits exactly under the pointer.
-    """
-    import math  # noqa: PLC0415
-
-    cell = max(1.0, float(zoom)) / max(0.1, float(scale))
-    count = max(3, math.ceil(box_px / cell))
-    if count % 2 == 0:
-        count += 1
-    return count, cell
-
-
 def parse_selection(payload: dict[str, Any]) -> Selection | None:
     """A picker ``selection`` event → :class:`Selection` (``None`` = cancelled)."""
     if payload.get("cancelled"):
@@ -276,6 +243,11 @@ def picker_capability() -> tuple[bool, str]:
         log.debug("appshot: platform probes unavailable", exc_info=True)
     if importlib.util.find_spec("PySide6") is None:
         return False, "the selection overlay needs PySide6 (the [desktop] extra)"
+    from jarvis.platform.qt_sidecar import missing_system_library  # noqa: PLC0415
+
+    missing = missing_system_library()
+    if missing:
+        return False, missing
     return True, ""
 
 
@@ -326,12 +298,13 @@ def snap_layout() -> dict[str, Any]:
 
 def _spawn(language: str = "en") -> subprocess.Popen[str]:
     from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+    from jarvis.platform.qt_sidecar import stderr_sink  # noqa: PLC0415
 
     return subprocess.Popen(
         [sys.executable, "-m", "jarvis.appshot.picker", "--lang", language or "en"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        stderr=stderr_sink("appshot-picker"),
         text=True,
         encoding="utf-8",
         creationflags=NO_WINDOW_CREATIONFLAGS,
@@ -445,7 +418,7 @@ def grab_preview(screen: Any) -> Any | None:
 async def pick_region(
     *, timeout_s: float = PICK_TIMEOUT_S, language: str = "en", trace_id: UUID | None = None,
 ) -> Selection | None:
-    """Let the user drag a rectangle. ``None`` = cancelled or timed out.
+    """Let the user drag a rectangle and mark it up. ``None`` = cancelled or timed out.
 
     ``language`` is the toolbar's tooltip language (``[ui].language``).
     Raises :class:`RegionUnavailable` when no picker can run on this host.
@@ -484,7 +457,12 @@ def _exit_message(code: int) -> str:
 
     if code == EXIT_NO_GUI:
         return "An area cannot be selected here: the selection overlay found no usable screen."
-    return f"The selection overlay stopped unexpectedly (exit code {code}). Nothing was captured."
+    from jarvis.platform.qt_sidecar import crash_hint  # noqa: PLC0415
+
+    return (
+        f"The selection overlay stopped unexpectedly (exit code {code}). "
+        f"Nothing was captured.{crash_hint(code, 'appshot-picker')}"
+    )
 
 
 async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | None, bool]:

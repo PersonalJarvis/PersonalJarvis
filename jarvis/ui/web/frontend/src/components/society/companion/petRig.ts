@@ -217,6 +217,62 @@ export function rigPose(pet: CompanionPet, state: RigState, mood: PetMood, out: 
       eyes(out, "shelly", state.blink);
       break;
     }
+    case "cocoa": {
+      // A puppy trot: diagonal pairs swing together and each paw lifts on its way forward.
+      const swing = 0.62 * s;
+      const lift = 0.02 * s;
+      const fold = sleep * (1 - s);
+      const tap = 0.012 * talk * (1 - s);
+      for (const [leg, sign, front] of [["FL", 1, 1], ["BR", 1, 0], ["FR", -1, 1], ["BL", -1, 0]] as const) {
+        const motion = part(out, `cocoa_Leg_${leg}`);
+        motion.rx = sign * swing * Math.sin(p) + (front ? -1.25 : 1.2) * fold;
+        motion.dy = lift * Math.max(0, -sign * Math.cos(p)) - 0.1 * fold
+          + front * tap * Math.max(0, sign * Math.sin(t * TAU * 1.6));
+      }
+      // The tail never stops: a quick wag, faster when walking or talking, lazy asleep.
+      const excite = Math.max(s, talk);
+      const wag = (Math.sin(t * TAU * 2.8) * (1 - excite) + Math.sin(t * TAU * 4.6) * excite) * (1 - sleep)
+        + Math.sin(t * TAU * 0.45) * sleep;
+      const bounce = 0.012 * s * Math.abs(Math.cos(p));
+      const body = part(out, "cocoa_Body");
+      body.dy = bounce - 0.075 * fold;
+      body.rz = 0.035 * s * Math.sin(p);
+      body.rx = 0.07 * work;
+      body.ry = (0.035 + 0.04 * talk) * wag * (1 - sleep);
+      const breath = sleep ? 0.035 * Math.sin(t * 1.3) : 0.018 * Math.sin(t * 2.2) * (1 - s);
+      body.sy = 1 + breath;
+      const tail = part(out, "cocoa_Tail");
+      tail.ry = (0.5 + 0.15 * excite - 0.38 * sleep) * wag;
+      tail.rx = 0.2 * s + 0.2 * talk + 0.25 * work - 0.55 * sleep;
+      tail.dy = body.dy;
+      // Idle curiosity: every few seconds the head tilts to one side and holds.
+      const cycle = t % 7;
+      const curious = cycle < 2.4 ? Math.min(1, 1.8 * Math.sin((cycle / 2.4) * Math.PI)) : 0;
+      const idle = (1 - s) * (1 - sleep) * (1 - work) * (1 - talk);
+      const tilt = 0.32 * curious * idle * (Math.floor(t / 7) % 2 ? 1 : -1);
+      const head = part(out, "cocoa_Head");
+      head.rx = 0.06 * s * Math.sin(2 * p) + work * (0.38 + 0.035 * Math.sin(t * TAU * 4))
+        + 0.22 * sleep + 0.08 * talk * Math.sin(t * TAU * 1.6);
+      head.ry = 0.28 * Math.sin(t * 0.45) * idle * (1 - curious) + 0.28 * work * Math.sin(t * 1.2);
+      head.rz = tilt + 0.14 * talk * Math.sin(t * 2.4);
+      head.dy = 0.8 * bounce - 0.095 * fold - 0.03 * work + 0.1 * breath * sleep;
+      // Panting: the jaw drops while trotting and talking, and the tongue lolls out.
+      const pant = talk * (0.18 + 0.14 * Math.sin(t * TAU * 3.4));
+      part(out, "cocoa_Jaw").rx = 0.1 * s * (1 - talk) + pant;
+      const tongue = part(out, "cocoa_Tongue");
+      tongue.sy = 1 + 0.3 * s + 1.5 * pant - 0.4 * sleep;
+      tongue.sz = 1 + 0.6 * pant;
+      // Floppy ears bounce a beat after every footfall, flap when talking and hang with gravity.
+      const flop = 0.13 * s * (1 + Math.sin(2 * p - 1.2));
+      for (const [side, outward, offset] of [["L", -1, 0], ["R", 1, 0.9]] as const) {
+        const ear = part(out, `cocoa_Ear_${side}`);
+        const flap = 0.28 * talk * (0.5 + 0.5 * Math.sin(t * TAU * 2.2 + offset));
+        ear.rz = outward * (flop + flap + 0.08 * fold) - 0.7 * head.rz;
+        ear.rx = 0.12 * s * Math.sin(2 * p - 0.6) - 0.15 * curious * idle - 0.6 * head.rx;
+      }
+      eyes(out, "cocoa", state.blink);
+      break;
+    }
     default:
       break;
   }

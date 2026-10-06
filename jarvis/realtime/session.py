@@ -3658,6 +3658,9 @@ class RealtimeVoiceSession:
             )
             ready = {
                 "type": "audio_ready",
+                "sound_effects": bool(
+                    getattr(getattr(self._config, "ui", None), "sound_effects", True)
+                ),
                 "provider": self.active_provider,
                 "model": self._active_model,
                 # The call's output language, from the ONE resolver

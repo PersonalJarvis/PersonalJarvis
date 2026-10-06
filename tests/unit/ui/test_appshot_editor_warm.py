@@ -26,8 +26,10 @@ class _Hook:
 
 
 class _Window:
-    def __init__(self, *, page_ready: bool = True) -> None:
+    def __init__(self, *, page_ready: bool = True, width: int = 900, height: int = 600) -> None:
         self.page_ready = page_ready
+        self.width = width
+        self.height = height
         self.events = _Events()
         self.calls: list[str] = []
 
@@ -40,6 +42,11 @@ class _Window:
 
     def show(self) -> None:
         self.calls.append("show")
+
+    def resize(self, width: int, height: int) -> None:
+        self.calls.append(f"resize {width}x{height}")
+        self.width = width
+        self.height = height
 
     def hide(self) -> None:
         self.calls.append("hide")
@@ -88,11 +95,51 @@ def test_a_page_still_loading_is_navigated_then_shown(monkeypatch: pytest.Monkey
     result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
 
     assert result["ok"] is True
-    assert window.calls == [
+    assert window.calls[:3] == [
         "js",
         "load http://127.0.0.1:47821/?view=appshot-editor&solo=1&appshot=a1b2c3d4",
         "show",
     ]
+    # Windows paints a WebView that was created hidden only after a size change.
+    if sys.platform == "win32":
+        assert window.calls[3:] == ["resize 900x601", "resize 900x600"]
+    else:
+        assert window.calls[3:] == []
+
+
+def test_a_script_result_that_is_not_true_still_loads_the_shot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A truthy non-boolean (an error object, a leftover string) is not success.
+
+    Treating it as success skipped navigation and showed the empty gray shell.
+    """
+    app = _app(monkeypatch)
+    window = _Window()
+    window.evaluate_js = lambda _js: window.calls.append("js") or {"pywebview": "still booting"}  # type: ignore[method-assign]
+    app._detached_windows["appshot-editor"] = window  # noqa: SLF001
+
+    result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
+
+    assert result["ok"] is True
+    assert any(call.startswith("load ") and "appshot=a1b2c3d4" in call for call in window.calls)
+    assert "show" in window.calls
+
+
+def test_showing_the_warm_editor_on_windows_nudges_its_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("jarvis.ui.desktop_app.sys.platform", "win32")
+    app = _app(monkeypatch)
+    window = _Window(width=1024, height=662)
+    app._detached_windows["appshot-editor"] = window  # noqa: SLF001
+
+    result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
+
+    assert result["ok"] is True
+    assert window.calls[-2:] == ["resize 1024x663", "resize 1024x662"]
+    assert window.width == 1024
+    assert window.height == 662
 
 
 def test_closing_the_editor_hides_it_and_keeps_it(monkeypatch: pytest.MonkeyPatch) -> None:

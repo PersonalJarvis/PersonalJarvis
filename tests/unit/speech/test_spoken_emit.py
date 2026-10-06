@@ -26,6 +26,7 @@ from jarvis.core.events import ListeningStarted, SpeechSpoken
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import SPOKEN_KINDS
 from jarvis.speech.pipeline import SpeechPipeline, _announcement_spoken_kind
+from tests.fakes.voice_session import open_classic_voice_session
 
 # --- minimal __new__ pipe for the pure _emit_spoken helper -----------------
 
@@ -155,7 +156,7 @@ def _make_speak_pipeline(bus: EventBus) -> SpeechPipeline:
         return False
 
     pipeline._barge_monitor = _never_barge  # type: ignore[assignment]
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 @pytest.mark.asyncio

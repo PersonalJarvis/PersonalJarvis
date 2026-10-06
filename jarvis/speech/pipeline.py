@@ -1995,8 +1995,6 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
     if not incoming:
         return current
 
-    current_words = current.split()
-    incoming_words = incoming.split()
     current_norm = _normalized_partial_words(current)
     incoming_norm = _normalized_partial_words(incoming)
 
@@ -2005,11 +2003,16 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
     if _is_likely_repeated_tail(current_norm, incoming_norm):
         return current
 
-    max_overlap = min(len(current_words), len(incoming_words))
+    max_overlap = min(len(current_norm), len(incoming_norm))
 
     for overlap in range(max_overlap, 0, -1):
         if current_norm[-overlap:] == incoming_norm[:overlap]:
-            return " ".join([*current_words, *incoming_words[overlap:]])
+            # Match and slice the SAME tokens. Whitespace splitting counts
+            # "read-only" once while the comparison counts it twice, which
+            # used to delete the next meaningful word from the live text.
+            spans = list(re.finditer(r"[\w']+", incoming, flags=re.UNICODE))
+            tail = incoming[spans[overlap - 1].end():].lstrip(",.;:!?、。，；：！？").lstrip()
+            return f"{current} {tail}" if tail else current
     if incoming.lower() in current.lower():
         return current
     if current.lower() in incoming.lower():
@@ -2018,11 +2021,11 @@ def _merge_partial_transcript(current: str, incoming: str) -> str:
 
 
 def _normalized_partial_words(text: str) -> list[str]:
-    words = re.findall(r"[\w']+", text.lower(), flags=re.UNICODE)
+    words = re.findall(r"[\w']+", text, flags=re.UNICODE)
     normalized: list[str] = []
     for word in words:
         word = (
-            word.replace("ä", "ae")
+            word.lower().replace("ä", "ae")
             .replace("ö", "oe")
             .replace("ü", "ue")
             .replace("ß", "ss")
@@ -5168,6 +5171,8 @@ class SpeechPipeline:
 
     def _agent_reply_needs_session(self) -> bool:
         if self._live_call() is not None:
+            # A live call is an open, available session of its own; its
+            # pauses decide the timing (``_agent_reply_floor_open``).
             return bool(getattr(self, "_muted", False))
         hangup = getattr(self, "_hangup_event", None)
         return bool(
@@ -5312,6 +5317,8 @@ class SpeechPipeline:
                 or getattr(self, "_agent_reply_inflight", None) is not None
             ):
                 return
+            # A live call has no turn boundary this pipeline sees, so its
+            # parked completion readbacks are offered at the same pauses.
             live = self._live_call() is not None
             event = next((event for event in self._deferred_announcements
                           if self._is_agent_reply(event)
@@ -5336,12 +5343,17 @@ class SpeechPipeline:
                 self._requeue_unvoiced_reply(event)
                 return
 
-    async def _on_announcement(self, event: AnnouncementRequested) -> None:
+    async def _on_announcement(
+        self, event: AnnouncementRequested, *, cancel_heartbeats: bool = True
+    ) -> None:
         """Deliver a readback through the live voice or the classic TTS path.
 
         Agent replies wait for an open call. Interrupt-priority announcements
         retain the existing player-stop behavior. Classic playback uses
-        synthesize() and play_chunks(), the same path as ordinary answers.
+        synthesize() and play_chunks(), the same path as ordinary answers,
+        and only inside an open voice session. ``cancel_heartbeats=False``
+        lets a caller that already retired its own spawn watchdog keep the
+        other missions' heartbeats alive.
         """
         event_kind = getattr(event, "kind", None)
         is_readback = event_kind in _READBACK_KINDS
@@ -5404,6 +5416,9 @@ class SpeechPipeline:
         # preamble / untagged late announcement stays dropped. Live bug
         # 2026-06-14: a heavy research mission's result was silently dropped
         # because the user hung up 13 s after the optimistic ACK.
+        # Since 2026-10-05 a readback passes this gate only to reach a live
+        # call that is still open; the classic-voice gate further down keeps
+        # it silent once no voice session is open.
         if hangup is not None and hangup.is_set() and not is_readback:
             log.info(
                 "Announcement nach Hangup unterdrückt: %r", event.text[:80]
@@ -5413,7 +5428,7 @@ class SpeechPipeline:
         # pending "still on it" heartbeats so a reassurance never lands AFTER the
         # result (the success path does not publish JarvisAgentBackgroundCompleted,
         # so the heartbeat is not otherwise drained on completion). 2026-06-19.
-        if is_readback:
+        if is_readback and cancel_heartbeats:
             self._cancel_spawn_heartbeats()
         log.info(
             "📢 Announcement: %r (prio=%s lang=%s)",
@@ -5731,18 +5746,22 @@ class SpeechPipeline:
         if is_agent_reply and self._agent_reply_needs_session():
             self._defer_agent_reply(event)
             return
-        # Re-check the hangup gate at the moment of SPEAKING, not only at
-        # arrival: the user can hang up during the seconds between the two
-        # (scrub, dedup, the realtime-delivery probe), and the entry check
-        # has already passed by then. A stale ephemeral line then plays into
-        # or right after the ended call as a phantom second voice (forensic
-        # 2026-07-13 18:37: hotkey hang-up landed 1.2 s after the preamble
-        # entered this handler). Owed readbacks still punch through, exactly
-        # like at the entry gate (AD-OE5/OE6).
-        if hangup is not None and hangup.is_set() and not is_readback:
+        # The classic TTS voice speaks only inside a conversation the user
+        # opened. Checked at the moment of SPEAKING, not only at arrival: the
+        # user can hang up during the scrub/dedup/realtime probe above. Every
+        # kind is covered — a mission, routine or sub-agent result that lands
+        # while no session is open, or after a hang-up, is not voiced out of
+        # nowhere (user decision 2026-10-05, replaces the AD-OE6 readback
+        # punch-through). The result stays in the app and in the realtime
+        # announcement memory mirrored at the top of this handler.
+        if not self._classic_voice_session_open():
+            if is_agent_reply:
+                # Owed to the user at the next call, delivered once.
+                self._defer_agent_reply(event)
+                return
             log.info(
-                "Announcement dropped — session hung up while it was being "
-                "prepared: %r",
+                "Announcement not spoken — no open voice session (kind=%s): %r",
+                event_kind or "normal",
                 event.text[:80],
             )
             return
@@ -5839,6 +5858,23 @@ class SpeechPipeline:
         stay silent rather than becoming a second voice inside the same call.
         """
         return self._realtime_voice_handle() is not None
+
+    def _classic_voice_session_open(self) -> bool:
+        """True while the user is in an open classic-pipeline conversation.
+
+        The classic TTS voice may speak an announcement only here. With no
+        session (idle, hung up, or still choosing its engine), a classic
+        readback would be Jarvis talking out of nowhere in a second voice;
+        background results stay in the app and the conversation memory.
+        """
+        hangup = getattr(self, "_hangup_event", None)
+        return bool(
+            getattr(self, "_current_voice_session_id", None) is not None
+            and not (hangup is not None and hangup.is_set())
+            and not getattr(self, "_voice_engine_transitioning", False)
+            and getattr(self, "_turn_state", TurnTakingState.IDLE)
+            is not TurnTakingState.IDLE
+        )
 
     def _schedule_delegation_results(self) -> None:
         """One coalescing task; a user's conversation always keeps the floor."""
@@ -6362,17 +6398,12 @@ class SpeechPipeline:
     async def _on_background_completed(
         self, event: JarvisAgentBackgroundCompleted
     ) -> None:
-        """Proaktive Voice-Ansage wenn ein Background-Jarvis-Agent-Task fertig wird.
+        """Announce a finished background Jarvis-Agent task.
 
-        User-Wunsch 2026-05-11 (Bug-Report Voice-Spawn-Latenz): Completion-
-        Voice-Meldung soll hoerbar sein, damit der User auch dann Bescheid
-        weiss, wenn er zwischenzeitlich anderes gemacht hat. Phrasen sind
-        fix + ohne "Sir" + ohne Engineering-Jargon, damit der Output-Filter
-        (``scrub_for_voice``) nicht den Spruch komplett wegwirft.
-
-        Vorher (2026-04-25 .. 2026-05-10) war dieser Pfad mit einem fruehen
-        ``return`` suppress't — Wunsch damals war "keine standardisierten
-        Bestaetigungs-Phrasen". 2026-05-11 widerrufen.
+        The readback goes through ``_on_announcement`` like every other
+        announcement: an open realtime call speaks it, an open classic
+        session speaks it, and with no open voice session it is not voiced
+        at all (user decision 2026-10-05: no spoken news out of nowhere).
 
         CRIT-5 (2026-05-17): cancel the oldest pending spawn-watchdog --
         FIFO matches the sequential dispatch model. If the watchdog has
@@ -6461,71 +6492,25 @@ class SpeechPipeline:
                 return
         cleaned = scrubbed.cleaned.strip()
         log.info(
-            "Jarvis-Agent background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
+            "Jarvis-Agent background finished (success=%s, duration=%.1fs) — readback: %r",
             event.success, event.duration_s, cleaned,
         )
-        # AD-OE5: this path plays straight to the player, bypassing
-        # ``_on_announcement``. If the user holds the floor, park the readback
-        # as a completion announcement and let the turn-boundary flush replay it
-        # through the choke point (which then emits it to the session log + plays
-        # it). Returning here means it is neither logged-as-spoken nor played
-        # until the floor clears — no barge, no double-emit.
-        if getattr(self, "_turn_state", TurnTakingState.IDLE) in _USER_HOLDS_FLOOR_STATES:
-            self._deferred_announcements.append(
-                AnnouncementRequested(
-                    source_layer="harness.jarvis_agent.background",
-                    text=cleaned,
-                    language=lang,
-                    priority="normal",
-                    kind="subagent",
-                )
-            )
-            log.info(
-                "Background completion deferred — user holds the floor: %r",
-                cleaned[:80],
-            )
-            return
-        # Document the sub-agent readback in the session log — it is voiced
-        # through this background path, not _speak, so it would otherwise be
-        # invisible in the Transcription view. Tagged ``subagent`` so it renders
-        # on the attributed "Jarvis Sub-Agent / Output" track.
-        # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
-        # background result delivered through THIS direct path also hands the
-        # floor back to the user, so ``_active_session`` must keep the mic open
-        # afterward instead of idle-hanging-up seconds later (2026-06-19).
-        self._last_announcement_spoken_monotonic = time.monotonic()
-        # Laufendes Playback stoppen damit die Ansage prompt durchkommt.
-        try:
-            self._player.stop()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Player-Stop vor Background-Ansage fehlgeschlagen: %s", exc)
-        # Animate the mascot/orb for this readback too (same as _on_announcement);
-        # restore DETERMINISTICALLY afterward — IDLE if the user hung up, else
-        # LISTENING. No prior-state capture, so this never races a concurrently
-        # flushed deferred announcement.
-        animate = self._supervisor is not None
-        hangup = getattr(self, "_hangup_event", None)
-        if animate:
-            await self._transition("SPEAKING")
-        self._assistant_work_count = getattr(self, "_assistant_work_count", 0) + 1
-        try:
-            self._register_assistant_speech(cleaned)
-            try:
-                chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
-            except TypeError:
-                chunks = self._tts.synthesize(cleaned)
-            playback_result = await self._player.play_chunks(chunks)
-            self._touch_assistant_speech_activity()
-            if self._playback_confirmed(playback_result):
-                self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Background-completed Voice-Ansage failed: %s", exc)
-        finally:
-            self._assistant_work_count -= 1
-            self._last_announcement_spoken_monotonic = time.monotonic()
-            if animate:
-                hungup = hangup is not None and hangup.is_set()
-                await self._transition("IDLE" if hungup else "LISTENING")
+        # One choke point for every spoken announcement: ``_on_announcement``
+        # hands the readback to an open realtime call, defers it while the
+        # user holds the floor, and never lets the classic TTS voice speak
+        # it outside an open voice session.
+        await self._on_announcement(
+            AnnouncementRequested(
+                source_layer="harness.jarvis_agent.background",
+                text=cleaned,
+                language=lang,
+                priority="normal",
+                kind="subagent",
+            ),
+            # The FIFO pop above retired this mission's own watchdog; a
+            # newer mission that is still running keeps its heartbeat.
+            cancel_heartbeats=False,
+        )
 
     async def _on_spawn_announcement(self, event: JarvisAgentAnnouncement) -> None:
         """Spawn-ACK ist auf User-Wunsch (2026-05-12) deaktiviert.
@@ -9333,6 +9318,8 @@ class SpeechPipeline:
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
             self._session_has_assistant_spoken = False
+            self._listening_cue_started = False
+            self._listening_cue_task: asyncio.Task[None] | None = None
             session_id = str(uuid4())
             self._termination_producer = ""
             self._termination_detail = {}
@@ -9386,11 +9373,9 @@ class SpeechPipeline:
                             self._active_voice_mode,
                         )
                         await self._set_turn_state(TurnTakingState.LISTENING)
-                        # Activation feedback is now visual-only. Playing a
-                        # chime or spoken ACK while a portable desktop mic is
-                        # live forces an impossible choice: discard simultaneous
-                        # user speech or feed speaker echo into STT. The visible
-                        # bar is the truthful zero-loss acknowledgement.
+                        # The selected engine confirms readiness with a brief
+                        # non-speech cue. Never play the legacy spoken ACK or
+                        # pause capture: the opening words are already buffered.
                         hangup_reason = await self._active_session(
                             input_buffer=input_buffer
                         )
@@ -9402,6 +9387,14 @@ class SpeechPipeline:
                 self._termination_producer = "speech.pipeline._state_loop.error"
                 log.exception("Voice session failed: %s", exc)
             finally:
+                cue = getattr(self, "_listening_cue_task", None)
+                if cue is not None:
+                    await cancel_and_reap(
+                        cue,
+                        budget_s=_SESSION_TASK_REAP_BUDGET_S,
+                        heartbeat_s=_SESSION_TASK_REAP_HEARTBEAT_S,
+                    )
+                    self._listening_cue_task = None
                 termination = self._termination_snapshot(hangup_reason)
                 reopen_after_engine_change = bool(
                     getattr(self, "_reopen_after_engine_change", False)
@@ -9519,6 +9512,23 @@ class SpeechPipeline:
             await self._player.play_pcm(pcm, sample_rate=sample_rate)
         except Exception as exc:  # noqa: BLE001
             log.debug("Earcon playback skipped (%s).", exc)
+
+    def _start_listening_cue(self) -> None:
+        """Confirm native capture once, without blocking or suppressing input."""
+        if getattr(self, "_listening_cue_started", False):
+            return
+        self._listening_cue_started = True
+        if (
+            not self._earcons_enabled()
+            or self.is_speaker_muted
+            or getattr(self, "_muted", False)
+            or self._hangup_event.is_set()
+            or self._external_hangup_pending.is_set()
+        ):
+            return
+        self._listening_cue_task = asyncio.create_task(
+            self._play_earcon(CHIME_PCM), name="voice-listening-cue"
+        )
 
     async def _play_ack(self, *, ptt: bool = False) -> None:
         """Play the legacy chime and optional pre-rendered acknowledgement.
@@ -9644,6 +9654,7 @@ class SpeechPipeline:
         async with self._session_input_source(
             input_buffer, discard_suppressed=True
         ) as input_chunks:
+            self._start_listening_cue()
             vad_iter = self._vad.utterances(
                 self._session_input_stream(input_chunks)
             ).__aiter__()
@@ -10183,6 +10194,7 @@ class SpeechPipeline:
                 # already listening (field report 2026-08-06). Say the true
                 # state now: from here the session hears the user.
                 await self._transition("LISTENING")
+                self._start_listening_cue()
             elif kind == "transcript":
                 role = str(message.get("role", ""))
                 if role == "user" and bool(message.get("is_final", False)):

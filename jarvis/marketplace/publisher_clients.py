@@ -56,7 +56,11 @@ ClientSource = Literal["publisher", "own", "catalog", "missing"]
 # Microsoft is one Entra public client named "Personal Jarvis": personal and
 # work/school accounts, loopback PKCE on http://127.0.0.1:43891/oauth/callback,
 # no client secret. One id serves every plugin in the family.
+# GitHub is the "Personal Jarvis" OAuth App owned by the PersonalJarvis
+# organisation: Device Flow enabled, non-expiring user tokens, no client secret
+# (the device flow never sends one).
 SHIPPED_PUBLIC_CLIENT_IDS: dict[str, str] = {
+    "github": "Ov23liaA2KfHbfVOelcx",
     "microsoft": "1986efcb-f871-4ffa-8df7-64c04dd3ab56",
 }
 

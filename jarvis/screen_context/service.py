@@ -32,7 +32,7 @@ import math
 import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -45,6 +45,7 @@ from jarvis.screen_context.models import (
     Degradation,
     DegradationCode,
     IntentVerdict,
+    MasterImage,
     ScreenContext,
     TargetKind,
     TargetReason,
@@ -347,18 +348,39 @@ class ScreenContextService:
 
         return await self.capture(verdict=verdict, trace_id=trace_id)
 
+    async def capture_permission_issue(self) -> tuple[str, str] | None:
+        """``(reason_code, message)`` when the OS would refuse a capture now.
+
+        Silent (it never asks the OS for a grant). The area picker asks this
+        before it freezes the screen: without Screen Recording on macOS the
+        frozen frame is wallpaper only, and the refusal would come only after
+        the user had selected and marked up a fake screen.
+        """
+        issue = await asyncio.to_thread(self._permission_probe)
+        if not issue:
+            return None
+        if isinstance(issue, CapturePermissionIssue):
+            return issue.code, issue.message
+        # Compatibility for injected third-party/test probes that still
+        # implement the original ``str | None`` port contract.
+        return "capture_permission", str(issue)
+
     async def capture(
         self,
         *,
         verdict: IntentVerdict | None = None,
         trace_id: UUID | None = None,
         region: tuple[int, int, int, int] | None = None,
+        master: bool = False,
     ) -> CaptureOutcome:
         """Take exactly one capture. Assumes intent is already established.
 
         ``region`` is a rectangle the user selected by hand, in capture
         coordinates (``displays.monitors()``). It replaces cursor/window
         targeting; permissions, the denylist and redaction apply unchanged.
+        ``master`` also returns :attr:`ScreenContext.master`, the user's
+        full-fidelity copy (HDR at full depth on an HDR monitor), redacted the
+        same way. It rides on the outcome only, never behind the handle.
         """
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
         if self._closed:
@@ -370,16 +392,9 @@ class ScreenContextService:
                 message="Screen Context settings changed before capture could start.",
             )
 
-        permission_issue = await asyncio.to_thread(self._permission_probe)
-        if permission_issue:
-            if isinstance(permission_issue, CapturePermissionIssue):
-                reason_code = permission_issue.code
-                permission_message = permission_issue.message
-            else:
-                # Compatibility for injected third-party/test probes that still
-                # implement the original ``str | None`` port contract.
-                reason_code = "capture_permission"
-                permission_message = str(permission_issue)
+        permission_issue = await self.capture_permission_issue()
+        if permission_issue is not None:
+            reason_code, permission_message = permission_issue
             if reason_code == "capture_permission":
                 # A person started this capture (a spoken request, the bar
                 # button, an appshot gesture), so this is the moment macOS is
@@ -390,7 +405,7 @@ class ScreenContextService:
                     permission_issue = None
                 else:
                     permission_message = refused.user_detail or permission_message
-            if permission_issue:
+            if permission_issue is not None:
                 log.info("screen_context: capture refused — %s", permission_message)
                 return CaptureOutcome(
                     status="refused",
@@ -561,7 +576,11 @@ class ScreenContextService:
                     message=monitor_privacy_error,
                 )
             try:
-                size, rgb = await self._grab(target)
+                master_image = None
+                if master:
+                    size, rgb, master_image = await self._grab_with_master(target)
+                else:
+                    size, rgb = await self._grab(target)
                 # macOS hands back the wallpaper, not an error, for a capture it
                 # does not allow: a blank frame while the state claims granted
                 # is never a success (and opens the permission episode).
@@ -640,6 +659,7 @@ class ScreenContextService:
                 rgb=rgb,
                 degradations=degradations,
                 expected_window_handle=window_handle,
+                master=master_image,
             )
 
             if self._closed:
@@ -654,7 +674,9 @@ class ScreenContextService:
                     ),
                 )
             try:
-                handle_id = self.store(context)
+                # The handle keeps the model's copy only; the master is large
+                # and belongs to this one caller.
+                handle_id = self.store(replace(context, master=None))
             except RuntimeError:
                 return CaptureOutcome(
                     status="refused",
@@ -733,6 +755,47 @@ class ScreenContextService:
             )
         return size, rgb
 
+    async def _grab_with_master(
+        self, target: CaptureTarget
+    ) -> tuple[tuple[int, int], bytes, MasterImage]:
+        """One shutter for both copies: the model's 8-bit frame and the user's master.
+
+        On an HDR or wide-gamut monitor the rectangle is read once at full
+        depth and the 8-bit frame is DERIVED from it (SDR white = sRGB white),
+        so both show the same instant and redaction boxes line up exactly.
+        The privacy path (a denylisted window in the rectangle) and every
+        other monitor keep the normal grab; the master is then that frame
+        plus the monitor's ICC profile.
+        """
+        from jarvis.platform.display_color import display_color  # noqa: PLC0415
+        from jarvis.platform.hdr_grab import grab_extended  # noqa: PLC0415
+        from jarvis.platform.hdr_image import scrgb_to_srgb8  # noqa: PLC0415
+
+        rect_grab = target.window_handle is None or not await asyncio.to_thread(
+            self._rect_privacy_error, target.bbox
+        )
+        if rect_grab:
+            frame = await asyncio.to_thread(grab_extended, target.bbox)
+            if frame is not None:
+                rgb8 = await asyncio.to_thread(
+                    scrgb_to_srgb8, frame.pixels, frame.sdr_white_nits
+                )
+                height, width = rgb8.shape[:2]
+                return (width, height), rgb8.tobytes(), MasterImage(
+                    pixels=frame.pixels,
+                    hdr=True,
+                    sdr_white_nits=frame.sdr_white_nits,
+                    max_nits=frame.max_nits,
+                )
+        size, rgb = await self._grab(target)
+        left, top, width, height = target.bbox
+        colour = await asyncio.to_thread(
+            display_color,
+            target.monitor_name or None,
+            point=(left + width // 2, top + height // 2),
+        )
+        return size, rgb, MasterImage(pixels=None, icc_profile=colour.icc_profile)
+
     def _rect_privacy_error(self, bbox: tuple[int, int, int, int]) -> str | None:
         """Refuse a desktop-rectangle grab a denylisted window could appear in."""
         if not self._settings.denylist:
@@ -796,6 +859,7 @@ class ScreenContextService:
         rgb: bytes,
         degradations: list[Degradation],
         expected_window_handle: int | None,
+        master: MasterImage | None = None,
     ) -> ScreenContext:
         """Read text, redact pixels and text, encode. In that order.
 
@@ -912,6 +976,10 @@ class ScreenContextService:
                     text_hits = text_hits + ocr_hits
                     text_source = "ocr" if text_source == "none" else "accessibility+ocr"
 
+        if master is not None:
+            master = await asyncio.to_thread(
+                _redacted_master, master, image, (*region_hits, *ocr_region_hits)
+            )
         image_bytes, encoded_size = _encode(image)
 
         return ScreenContext(
@@ -928,6 +996,7 @@ class ScreenContextService:
             ),
             degradations=tuple(degradations),
             captured_at_ns=self._wall_clock(),
+            master=master,
         )
 
     def _foreground_still_matches(
@@ -1265,6 +1334,32 @@ def _safe_target_label(target: CaptureTarget) -> str:
     if target.kind is TargetKind.REGION:
         return "selected area"
     return f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
+
+
+def _redacted_master(master: MasterImage, redacted: Any, hits: Any) -> MasterImage:
+    """The master with the same black boxes as the model's frame, at the same pixels.
+
+    An SDR master IS the redacted raw frame. An HDR master gets every hit's
+    region filled with black (scRGB 0) — the boxes were found on the frame
+    derived from it, so they cover the same content. Like PIL's
+    ``rectangle([x, y, x + w, y + h])`` in :mod:`redaction`, the box includes
+    its end row and column.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    if not master.hdr:
+        return replace(master, pixels=np.asarray(redacted.convert("RGB")).copy())
+    pixels = np.array(master.pixels, copy=True)
+    height, width = pixels.shape[:2]
+    for hit in hits:
+        if hit.region is None:
+            continue
+        left, top, w, h = hit.region
+        x0, y0 = max(0, int(left)), max(0, int(top))
+        x1, y1 = min(width, int(left + w) + 1), min(height, int(top + h) + 1)
+        if x1 > x0 and y1 > y0:
+            pixels[y0:y1, x0:x1, :3] = 0
+    return replace(master, pixels=pixels)
 
 
 def _encode(image: Any) -> tuple[bytes, tuple[int, int]]:

@@ -57,6 +57,13 @@ def test_normalize_effort_folds_onto_the_nearest_offered_level(provider, picked,
     assert effort.normalize_effort(provider, picked) == expected
 
 
+def test_effort_note_names_the_level_the_turn_runs_on():
+    assert "Reasoning effort for this turn: medium" in effort.effort_note("claude-api", "medium")
+    assert "provider's own default" in effort.effort_note("grok", "")
+    # A provider without an effort knob is told nothing.
+    assert effort.effort_note("kimi", "") == ""
+
+
 def test_catalog_rows_carry_ladders_and_curated_models_for_cli_runners():
     claude = provider_row("claude-api")
     assert claude is not None and claude.runner == "claude-cli"

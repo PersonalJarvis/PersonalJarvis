@@ -27,9 +27,10 @@ Scope = Literal["window", "region"]
 
 #: Trusted framing in front of the untrusted screen evidence block.
 APPSHOT_PREAMBLE = (
-    "APPSHOT: the user deliberately captured their front window to give you "
-    "context. Use it for their request. If they only asked you to take an "
-    "appshot, confirm it in one short sentence and ask what they want to know."
+    "APPSHOT: a captured snapshot of the user's front window, supplied as context. "
+    "It shows the window at capture time, not a live view. Use it when asked about "
+    "this image. A request to take another appshot requires a fresh successful "
+    "take_appshot call; this earlier image is not evidence of a new capture."
 )
 
 
@@ -74,6 +75,7 @@ def shot_from_context(context: Any, *, trigger: str) -> Appshot:
         ui_text=context.ui_text,
         trigger=trigger,
         taken_at=time.time(),
+        master=getattr(context, "master", None),
     )
 
 
@@ -111,6 +113,15 @@ async def take_appshot(
         service = get_service(bus=bus)
         capture_trace_id = trace_id or uuid.uuid4()
         if scope == "region":
+            # Refuse BEFORE the screens freeze when asking cannot help (a
+            # Wayland portal, say): the frozen frame would be unusable and the
+            # refusal would come only after the user had marked up a fake
+            # screen. A missing Screen Recording grant is not refused here: the
+            # picker asks macOS for it just in time before it starts.
+            check = getattr(service, "capture_permission_issue", None)
+            issue = await check() if check is not None else None
+            if issue is not None and issue[0] != "capture_permission":
+                return AppshotResult(status="refused", reason_code=issue[0], message=issue[1])
             picked = await _pick_area(service, _language(config), trace_id=capture_trace_id)
             if isinstance(picked, AppshotResult):
                 return picked
@@ -125,6 +136,7 @@ async def take_appshot(
                     verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
                     trace_id=capture_trace_id,
                     region=bbox,
+                    master=True,
                 )
             finally:
                 shutter_markup.reset(token)
@@ -132,6 +144,7 @@ async def take_appshot(
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
                 trace_id=capture_trace_id,
+                master=True,
             )
         if outcome.status != "captured" or outcome.context is None:
             return AppshotResult(
@@ -154,7 +167,9 @@ async def take_appshot(
 
     store = get_store()
     store.remember(shot, keep_s=float(config.screen_context.deck_preview_s))
-    await _keep_in_library(shot, config)
+    # The lossless copy encodes in the background: the model's picture and the
+    # card must not wait a second for a 4K HDR PNG. It then goes to the library.
+    _start_master(shot, selection.markup if selection is not None else None, config)
     await _attach_to_card(shot, config)
     delivered_to = "turn"
     if deliver:
@@ -173,9 +188,14 @@ async def take_appshot(
         trigger,
         delivered_to,
     )
+    _start_clipboard_copy(
+        shot, trigger, config, selection.action if selection is not None else "done"
+    )
     if selection is not None and selection.action != "done":
-        await _finish_action(selection.action, shot, bus)
-    return AppshotResult(status="captured", shot=replace(shot, delivered_to=delivered_to))
+        await _finish_action(selection.action, await finished(shot), bus)
+    return AppshotResult(
+        status="captured", shot=replace(shot, delivered_to=delivered_to, master=None)
+    )
 
 
 def _language(config: Any) -> str:
@@ -207,20 +227,107 @@ def _image_size(image: bytes) -> tuple[int, int]:
         return picture.size
 
 
+#: Lossless copies still encoding, by appshot id.
+_MASTERS: dict[str, asyncio.Task[Appshot]] = {}
+#: Appshots the user took on purpose; a look the assistant or a spoken
+#: "what do you see?" took never replaces what the user copied.
+_CLIPBOARD_TRIGGERS = frozenset({"hotkey", "button"})
+_COPIES: set[asyncio.Task[None]] = set()
+
+
+def _start_master(shot: Appshot, markup: Any, config: Any) -> None:
+    """Encode the lossless copy, swap it into the store, then keep it in the library."""
+    if shot.master is None:
+        task = asyncio.create_task(_keep_without_master(shot, config))
+    else:
+        task = asyncio.create_task(_encode_master(shot, markup, config))
+    _MASTERS[shot.id] = task
+    task.add_done_callback(lambda _done, shot_id=shot.id: _MASTERS.pop(shot_id, None))
+
+
+async def _keep_without_master(shot: Appshot, config: Any) -> Appshot:
+    await _keep_in_library(shot, config)
+    return shot
+
+
+async def _encode_master(shot: Appshot, markup: Any, config: Any) -> Appshot:
+    from jarvis.appshot.master import encode_master  # noqa: PLC0415
+
+    try:
+        files = await asyncio.to_thread(encode_master, shot.master, markup)
+        shot = replace(
+            shot, original_png=files.png, hdr_png=files.hdr_png or b"", master=None
+        )
+    except Exception:  # noqa: BLE001 - the model's picture is still kept and shown
+        log.warning("appshot: the lossless copy could not be made", exc_info=True)
+        shot = replace(shot, master=None)
+    store = get_store()
+    store.attach_originals(shot)
+    # A picture edited meanwhile keeps its edit; the library gets what is held.
+    shot = store.get(shot.id) or shot
+    await _keep_in_library(shot, config)
+    return shot
+
+
+async def finished(shot: Appshot) -> Appshot:
+    """``shot`` with its lossless copy, waiting for it when it is still encoding."""
+    task = _MASTERS.get(shot.id)
+    if task is not None:
+        try:
+            return await asyncio.shield(task)
+        except Exception:  # noqa: BLE001 - fall back to the picture we have
+            log.debug("appshot: lossless copy unavailable", exc_info=True)
+    held = get_store().get(shot.id)
+    return held if held is not None else replace(shot, master=None)
+
+
+def _start_clipboard_copy(shot: Appshot, trigger: str, config: Any, action: str) -> None:
+    """Put a shortcut or button appshot on the clipboard, ready for Ctrl/Cmd+V.
+
+    Read from ``[appshot].copy_to_clipboard``. The picker's own Copy already
+    copies, so it is not done twice. Runs in the background: the full-quality
+    picture may still be encoding, and the delivery must not wait for it.
+    """
+    if trigger not in _CLIPBOARD_TRIGGERS or action == "copy":
+        return
+    if not bool(getattr(config.appshot, "copy_to_clipboard", True)):
+        return
+    task = asyncio.create_task(_copy_to_clipboard(shot), name="appshot-clipboard")
+    _COPIES.add(task)
+    task.add_done_callback(_COPIES.discard)
+
+
+async def _copy_to_clipboard(shot: Appshot) -> None:
+    try:
+        from jarvis.appshot.card_actions import as_png  # noqa: PLC0415
+        from jarvis.platform.clipboard_image import copy_image  # noqa: PLC0415
+
+        shot = await finished(shot)
+        png = shot.original_png or await asyncio.to_thread(as_png, shot.image)
+        result = await asyncio.to_thread(copy_image, png)
+        if not result.ok:
+            log.info("appshot: not copied to the clipboard (%s)", result.reason)
+    except Exception:  # noqa: BLE001 - the appshot itself is taken and delivered
+        log.warning("appshot: the clipboard copy failed", exc_info=True)
+
+
 async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:
     """Copy, save or open the appshot, as the picker's toolbar asked."""
     try:
         if action in ("copy", "save"):
-            from jarvis.appshot.card_actions import as_png, save_to_downloads  # noqa: PLC0415
+            from jarvis.appshot.card_actions import (  # noqa: PLC0415
+                as_png,
+                save_shot_to_downloads,
+            )
 
-            png = await asyncio.to_thread(as_png, shot.image)
             if action == "copy":
                 from jarvis.platform.clipboard_image import write_png  # noqa: PLC0415
 
+                png = shot.original_png or await asyncio.to_thread(as_png, shot.image)
                 if not await asyncio.to_thread(write_png, png):
                     log.warning("appshot: the area could not be copied to the clipboard")
             else:
-                path = await asyncio.to_thread(save_to_downloads, png)
+                path = await asyncio.to_thread(save_shot_to_downloads, shot)
                 log.info("appshot: area saved as %s", path.name)
         elif action == "edit":
             from jarvis.appshot.editor_window import open_editor_window  # noqa: PLC0415
@@ -291,9 +398,10 @@ async def _keep_in_library(shot: Appshot, config: Any) -> None:
     """Write the appshot into the gallery's history when ``[appshot].library`` is on."""
     if not bool(getattr(config.appshot, "library", False)):
         return
-    from jarvis.appshot import library  # noqa: PLC0415
+    from jarvis.appshot import library, retention  # noqa: PLC0415
 
-    await asyncio.to_thread(library.save, shot)
+    if await asyncio.to_thread(library.save, shot):
+        await asyncio.to_thread(retention.apply, retention.keep_newest(config))
 
 
 async def keep_edit_in_library(shot: Appshot) -> None:

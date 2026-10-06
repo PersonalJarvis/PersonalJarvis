@@ -376,7 +376,7 @@ class Capture:
         self.displays = Displays()
         self.markup_at_shutter: list = []
 
-    async def capture(self, *, verdict=None, trace_id=None, region=None):
+    async def capture(self, *, verdict=None, trace_id=None, region=None, master=False):
         from jarvis.appshot.effect import shutter_markup
 
         self.markup_at_shutter.append(shutter_markup.get())

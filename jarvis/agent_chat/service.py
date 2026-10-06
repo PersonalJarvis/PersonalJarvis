@@ -32,11 +32,12 @@ from pathlib import Path
 from typing import Any, Final
 
 from jarvis.agent_chat import attachments as chat_attachments
+from jarvis.agent_chat import turn_prompts
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+from jarvis.agent_chat.permissions import default_permission, ladder_key, normalize_permission
 from jarvis.agent_chat.questions import (
     CANCELLED,
     MAX_ASKS_PER_TURN,
@@ -105,6 +106,12 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
         # is only reachable through a stale session or a hand-made request.
         return api_runner if supports_api_runner(row.id) else "unknown"
     if row.id == "claude-api":
+        # The API Keys page can set the agents' Claude to its key instead of
+        # the subscription; that choice narrows the agents' surface only.
+        from jarvis.agent_chat.agent_provider_prefs import forces_api
+
+        if forces_api(row.id, surface):
+            return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner
@@ -1150,6 +1157,16 @@ class AgentChatService:
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
                 self._cancel_questions(session_id)
+                if (
+                    kit.turn_prompts
+                    and origin.direct_user
+                    and control_runner is None
+                    and not native_goal
+                ):
+                    try:
+                        await self._open_turn_prompts(session_id, turn_id, runner)
+                    except Exception:  # noqa: BLE001 — a missing card leaves the reply readable
+                        log.exception("agent chat: end-of-turn card failed for %s", turn_id)
                 if hasattr(self, "_controls"):
                     await self._controls.turn_completed(
                         session_id, turn_id, origin.user_text, origin.direct_user, read_only
@@ -1715,6 +1732,167 @@ class AgentChatService:
                 open_q.closing = CANCELLED
                 open_q.wake.set()
             questions.pop(qid, None)
+
+    # ------------------------------------------------------------ end-of-turn cards
+
+    #: How far back a finished turn's reply is looked for. The question block
+    #: ends the reply, so the newest events always hold it.
+    _TURN_PROMPT_TAIL: Final[int] = 2000
+
+    def _turn_prompt_lock(self) -> asyncio.Lock:
+        # Lazily: a service built without __init__ (test doubles) still works.
+        lock: asyncio.Lock | None = getattr(self, "_prompt_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._prompt_lock = lock
+        return lock
+
+    async def _open_turn_prompts(self, session_id: str, turn_id: str, runner: str) -> None:
+        """After a coding agent's turn: its question card, else its plan card.
+
+        A reply ending in a ``jarvis-ask`` block opens a deferred question
+        card; a finished turn while the session is still in plan mode opens a
+        plan card. Nothing waits on either — the answer is the next message.
+        """
+        events = self.store.list_events(session_id, tail=self._TURN_PROMPT_TAIL)
+        status, text = turn_prompts.turn_reply(events, turn_id)
+        if status != "done":
+            return
+        specs = turn_prompts.parse_ask_block(text)
+        if specs:
+            await self._emit(
+                session_id,
+                make_event(
+                    "question_required",
+                    {
+                        "turn_id": turn_id,
+                        "question_id": uuid.uuid4().hex,
+                        "asker": "",
+                        "questions": [spec.to_payload() for spec in specs],
+                        "deferred": True,
+                    },
+                ),
+            )
+            return
+        session = self.store.get_session(session_id)
+        if session is None or session.permission_mode != "plan" or not text.strip():
+            return
+        build = default_permission(ladder_key(session.surface, runner))
+        if build == "plan":
+            return
+        await self._emit(
+            session_id,
+            make_event("plan_ready", {"turn_id": turn_id, "build_mode": build}),
+        )
+
+    async def answer_turn_question(
+        self,
+        session_id: str,
+        question_id: str,
+        *,
+        index: int = 0,
+        option_index: int | None = None,
+        text: str | None = None,
+    ) -> bool:
+        """The person's answer to one question of an end-of-turn card.
+
+        False for an unknown, closed or already answered question; raises
+        ``ValueError`` for an answer that does not fit. The last answer closes
+        the card and sends the answers to the agent as the next message.
+        """
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            try:
+                answers = turn_prompts.answer(
+                    card, index, option_index=option_index, text=text
+                )
+            except IndexError:  # a stale option index is a no-op click; the caller reports False
+                return False
+            if any(a is None for a in answers):
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "question_progress",
+                        {
+                            "turn_id": card.turn_id,
+                            "question_id": question_id,
+                            "answers": [a.to_payload() if a else None for a in answers],
+                        },
+                    ),
+                )
+                return True
+            final = [a for a in answers if a is not None]
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final)
+        return True
+
+    async def skip_turn_question(self, session_id: str, question_id: str) -> bool:
+        """The person closed an end-of-turn card: the agent's recommendations stand."""
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            final = turn_prompts.skipped(card)
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final)
+        return True
+
+    async def _resolve_turn_question(
+        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+    ) -> None:
+        await self._emit(
+            session_id,
+            make_event(
+                "question_resolved",
+                {
+                    "turn_id": card.turn_id,
+                    "question_id": card.question_id,
+                    "answers": [a.to_payload() for a in answers],
+                },
+            ),
+        )
+
+    async def _send_turn_answer(
+        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+    ) -> None:
+        await self.send(
+            session_id,
+            turn_prompts.answers_prompt(card.specs, answers),
+            display_text=turn_prompts.answers_display(card.specs, answers),
+        )
+
+    async def resolve_turn_plan(self, session_id: str, turn_id: str, decision: str) -> bool:
+        """The person's answer to a plan card: ``build`` or ``keep``.
+
+        ``build`` moves the session to the build mode the card offered and
+        sends the go-ahead as the next message; ``keep`` only closes the card,
+        so the person can tell the agent what to change. False when the card
+        is not open (any more).
+        """
+        if decision not in turn_prompts.PLAN_DECISIONS:
+            raise ValueError(f"decision must be one of {turn_prompts.PLAN_DECISIONS}")
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_plan(self.store.list_events(session_id), turn_id)
+            if card is None:
+                return False
+            await self._emit(
+                session_id,
+                make_event("plan_resolved", {"turn_id": turn_id, "decision": decision}),
+            )
+            if decision == turn_prompts.PLAN_KEEP:
+                return True
+            session = self.store.get_session(session_id)
+            build = card.build_mode
+            if session is not None and build and session.permission_mode != build:
+                self.store.update_session(session_id, permission_mode=build)
+                await self._emit(
+                    session_id,
+                    make_event("session_updated", {"permission_mode": build}),
+                )
+        await self.send(session_id, turn_prompts.PLAN_GO_AHEAD)
+        return True
 
 
 __all__ = [

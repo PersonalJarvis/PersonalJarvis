@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { BrandedSelect, type BrandedSelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import type { KeybindAction, KeybindsConfig, KeybindSaveResult } from "@/hooks/useHotkey";
 import { useT } from "@/i18n";
@@ -27,6 +28,9 @@ import { KeybindRow } from "@/views/settings/KeybindRow";
  * Every control saves on its own with a PUT of just its key; the backend's
  * answer replaces the local copy, so what is on screen is what is stored.
  */
+
+/** Choices for "Delete old captures"; 0 = never. */
+const KEEP_NEWEST_CHOICES = [0, 10, 20, 50, 100] as const;
 
 const HOTKEY_LABEL_KEY: Record<JarvisXHotkeyAction, string> = {
   region: "jarvisx.settings.hotkey_region",
@@ -107,6 +111,18 @@ export function JarvisXSettingsPanel({
       }
     },
     [onSettings, pushToast, settings, t],
+  );
+
+  const keepOptions = useMemo<BrandedSelectOption[]>(
+    () =>
+      KEEP_NEWEST_CHOICES.map((count) => ({
+        value: String(count),
+        label:
+          count === 0
+            ? t("jarvisx.settings.keep_all")
+            : t("jarvisx.settings.keep_option").replace("{0}", String(count)),
+      })),
+    [t],
   );
 
   // The recorder's config shape, filled with this feature's shortcuts.
@@ -373,6 +389,22 @@ export function JarvisXSettingsPanel({
             />
           }
         />
+        {typeof settings.keep_newest === "number" && (
+          <Row
+            label={t("jarvisx.settings.keep_label")}
+            hint={t("jarvisx.settings.keep_hint")}
+            control={
+              <BrandedSelect
+                value={String(settings.keep_newest)}
+                options={keepOptions}
+                ariaLabel={t("jarvisx.settings.keep_label")}
+                disabled={saving}
+                testId="jarvisx-keep-newest"
+                onValueChange={(value) => void save({ keep_newest: Number(value) })}
+              />
+            }
+          />
+        )}
       </Section>
 
       {!settings.recording_available && (

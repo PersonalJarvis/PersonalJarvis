@@ -167,6 +167,29 @@ class ItemStore:
             conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
         return item
 
+    def prune(self, keep: int) -> int:
+        """Keep only the newest ``keep`` screenshots and newest ``keep`` videos.
+
+        ``[jarvisx].keep_newest``: older captures are deleted with their files.
+        ``0`` keeps everything; values are clamped to 0..1000. Returns the count.
+        """
+        keep = max(0, min(int(keep), 1000))
+        if keep == 0:
+            return 0
+        with self._connect() as conn:
+            old = [
+                str(row[0])
+                for kind in ("image", "video")
+                for row in conn.execute(
+                    "SELECT id FROM items WHERE kind = ? ORDER BY rowid DESC LIMIT -1 OFFSET ?",
+                    (kind, keep),
+                ).fetchall()
+            ]
+        removed = sum(1 for item_id in old if self.delete(item_id) is not None)
+        if removed:
+            log.info("jarvisx: deleted %d old capture(s), keeping the newest %d", removed, keep)
+        return removed
+
     # ------------------------------------------------------------------ read
     def get(self, item_id: str) -> Item | None:
         with self._connect() as conn:

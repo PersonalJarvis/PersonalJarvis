@@ -70,13 +70,12 @@ describe("OverlayTaskbarGroup", () => {
     expect(screen.queryByText("settings_view.bar_size.title")).toBeNull();
     expect(screen.getByText("taskbar_view.mute_music.title")).toBeDefined();
   });
-  it("renders the group heading and both sub-headings", () => {
+  it("renders the group heading over the style and behaviour cards", () => {
     render(<OverlayTaskbarGroup />);
     expect(
       screen.getByText("settings_view.overlay_taskbar_group_title"),
     ).toBeDefined();
-    expect(screen.getByText("taskbar_view.appearance_title")).toBeDefined();
-    expect(screen.getByText("taskbar_view.behavior_title")).toBeDefined();
+    expect(screen.getByText("settings_view.overlay_style.title")).toBeDefined();
   });
 
   it("renders the overlay-style panel and all four behavior toggles", () => {

@@ -61,6 +61,8 @@ describe("the appshot editor window", () => {
     };
     render(<AppshotEditorWindow deps={deps} />);
     await screen.findByTestId("appshot-editor-canvas");
+    expect(screen.getByTestId("appshot-editor-window").className).toContain("fixed");
+    expect(screen.getByTestId("appshot-editor-window").className).toContain("inset-0");
     expect(screen.getByTestId("appshot-editor").getAttribute("data-variant")).toBe("window");
 
     fireEvent.click(screen.getByTestId("appshot-editor-close"));
@@ -125,6 +127,7 @@ describe("the appshot editor window", () => {
     act(() => {
       expect(window.__jarvisOpenAppshot!("a1b2c3d4")).toBe(true);
     });
+    expect(window.location.search).toContain("appshot=a1b2c3d4");
     await screen.findByTestId("appshot-editor-canvas");
 
     fireEvent.click(screen.getByTestId("appshot-editor-close"));

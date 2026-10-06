@@ -262,6 +262,7 @@ committed PNGs match the script). User-created pets live in
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
 | `ember` | Ember | A baby dragon: smoke rings while thinking, a fire breath on success, a sooty cough on errors, naps in its eggshell |
+| `cocoa` | Cocoa | A chocolate Labrador puppy: tilts its head to listen, digs while it works, sniffs along a scent trail while searching, does zoomies on success, droops its ears on errors and naps in its dog bed |
 
 ## Adding a pet
 

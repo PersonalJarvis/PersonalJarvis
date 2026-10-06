@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { appZoomCaps } from "@/lib/appZoom";
+import { appChord, useAppChordSettings } from "@/store/appChordSettings";
 import {
   STICKY_ACTIONS, assignAgentKeys, hotkeyHints, isLeaderChord, modeBar, resolveHotkey,
   type HotkeyAgent, type IdeHotkeyAction, type IdeHotkeyStep,
@@ -38,6 +40,7 @@ function Cap({ children }: { children: React.ReactNode }) {
 export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, onPassThrough }: Props) {
   const [view, setView] = useState<View | null>(null);
   const [draft, setDraft] = useState("");
+  const leader = useAppChordSettings((state) => state.bindings.ide_menu);
   const keyed = useMemo(() => assignAgentKeys(agents), [agents]);
   const latest = useRef({ view, keyed, pane, onAction, onPassThrough, enabled });
   latest.current = { view, keyed, pane, onAction, onPassThrough, enabled };
@@ -50,7 +53,8 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
     const onKeyDown = (event: KeyboardEvent) => {
       const { view: current, keyed: agentKeys, enabled: on } = latest.current;
       if (!on || event.isComposing) return;
-      if (isLeaderChord(event)) {
+      // Read per keystroke: a leader changed in Settings applies at once.
+      if (isLeaderChord(event, appChord("ide_menu"))) {
         event.preventDefault();
         event.stopPropagation();
         if (!current) { setView({ menu: "root" }); return; }
@@ -100,8 +104,10 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
 
   if (!view) return null;
 
+  const leaderCaps = leader ? appZoomCaps(leader) : [];
+
   const step: IdeHotkeyStep = view.menu === "rename" ? { menu: "root" } : view;
-  const bar = modeBar(step, keyed);
+  const bar = modeBar(step, keyed, leaderCaps);
   const submitRename = (event: React.FormEvent) => {
     event.preventDefault();
     const name = draft.trim();
@@ -117,7 +123,7 @@ export function IdeHotkeyMenu({ enabled, agents, pane, onAction, onRenamePane, o
       className="pointer-events-auto w-full max-w-3xl rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-xl motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-150">
       <h2 className="mb-3 text-sm font-semibold">All keys</h2>
       <div className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
-        {hotkeyHints({ menu: "root" }, keyed).map((group) => <section key={group.title} className="min-w-0">
+        {hotkeyHints({ menu: "root" }, keyed, leaderCaps).map((group) => <section key={group.title} className="min-w-0">
           <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{group.title}</h3>
           <ul className="space-y-1.5">
             {group.hints.map((hint) => <li key={hint.label} className="flex items-center gap-2 text-sm">

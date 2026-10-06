@@ -22,7 +22,7 @@ import { RoundedBoxGeometry } from "three-stdlib";
 import type { FigureMode } from "../figures/FigureRig";
 import {
   blendPose, copyPose, createPose, poseFor, TOY, TOY_HEIGHT, walkCadence,
-  type HairStyle, type OutfitId, type PoseOptions, type ToyLook, type ToyPose,
+  type HairStyle, type OutfitId, type PoseOptions, type ToyLook, type ToyPose, type UniformStyle,
 } from "./toyFigureModel";
 
 // ---------------------------------------------------------------------------
@@ -319,6 +319,7 @@ const CUFFED: ReadonlySet<OutfitId> = new Set(["suit", "blazer"]);
 
 /** The material of a garment: leather shines, knits and fleece stay soft. */
 function garment(look: ToyLook, color: string): MeshStandardMaterial {
+  if (look.uniform) return matte(color, 0.78);
   if (look.outfit === "leather" && color === look.shirt) return matte(color, 0.32, 0.12);
   if (look.outfit === "quarterzip" || look.outfit === "turtleneck" || look.outfit === "hoodie") return matte(color, 0.95);
   return matte(color);
@@ -331,11 +332,13 @@ const FRONT = TOY.torso.d / 2;
  * The opening of a jacket or vest: a shirt-coloured V (tip down) with lapels
  * along its edges, tilted back to follow the chest's rounded top.
  */
-function VOpening({ look, width, depth, lapel, tie }: { look: ToyLook; width: number; depth: number; lapel: number; tie: boolean }) {
+function VOpening({ look, width, depth, lapel, tie, bow = false, lapelColour }: {
+  look: ToyLook; width: number; depth: number; lapel: number; tie: boolean; bow?: boolean; lapelColour?: string;
+}) {
   const top = 0.285;
   const angle = Math.atan2(width / 2, depth);
   const edge = Math.hypot(width / 2, depth);
-  const shade = garment(look, mix(look.shirt, "#000000", look.outfit === "leather" ? 0.25 : 0.14));
+  const shade = lapelColour ? matte(lapelColour, 0.35) : garment(look, mix(look.shirt, "#000000", look.outfit === "leather" ? 0.25 : 0.14));
   return (
     <group position={[0, top - depth / 2, FRONT - 0.012]} rotation={[-0.22, 0, 0]}>
       {/* A cone of radius r has a face r·√3 wide; scaled flat in z it is a triangle on the chest. */}
@@ -344,6 +347,15 @@ function VOpening({ look, width, depth, lapel, tie }: { look: ToyLook; width: nu
         <mesh key={sx} geometry={GEO.box} material={shade} castShadow
           position={[sx * (width / 4 + lapel * 0.45), 0, 0.02]} rotation={[0, 0, -sx * angle]} scale={[lapel, edge + 0.02, 0.012]} />
       ))}
+      {bow && (
+        <group position={[0, depth / 2 - 0.02, 0.024]}>
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} geometry={GEO.wedge} material={matte(look.shirtAccent, 0.5)} position={[sx * 0.018, 0, 0]}
+              rotation={[0, 0, sx * Math.PI / 2]} scale={[0.014, 0.03, 0.008]} />
+          ))}
+          <mesh geometry={GEO.box} material={matte(look.shirtAccent, 0.5)} scale={[0.012, 0.014, 0.012]} />
+        </group>
+      )}
       {tie && (
         <group position={[0, 0, 0.022]}>
           <mesh geometry={GEO.box} material={matte(look.shirtAccent, 0.5)} position={[0, depth / 2 - 0.018, 0]} scale={[0.03, 0.024, 0.014]} />
@@ -431,6 +443,98 @@ function OutfitDetails({ look }: { look: ToyLook }) {
   }
 }
 
+
+/** A pocket flap with its button, on the chest's front. */
+function PocketFlap({ x, y, colour, button }: { x: number; y: number; colour: string; button: string }) {
+  return (
+    <group position={[x, y, FRONT + 0.003]}>
+      <mesh geometry={GEO.box} material={matte(mix(colour, "#000000", 0.12), 0.8)} scale={[0.07, 0.022, 0.008]} />
+      <mesh geometry={GEO.lowSphere} material={matte(button, 0.35, 0.5)} position={[0, -0.004, 0.006]} scale={[0.0085, 0.0085, 0.005]} />
+    </group>
+  );
+}
+
+/** Everything a uniform adds to the chest: collar, tie, closure, pockets, belt and trims, by its cut. */
+function UniformDetails({ look, u }: { look: ToyLook; u: UniformStyle }) {
+  const metal = matte(u.buttons, 0.32, 0.6);
+  const pockets = (lower: boolean) => (
+    <>
+      {[-1, 1].map((sx) => <PocketFlap key={`c${sx}`} x={sx * 0.072} y={0.15} colour={u.coat} button={u.buttons} />)}
+      {lower && [-1, 1].map((sx) => <PocketFlap key={`l${sx}`} x={sx * 0.075} y={0.07} colour={u.coat} button={u.buttons} />)}
+    </>
+  );
+  const belt = u.belt && (
+    <group position={[0, 0.045, 0]}>
+      <mesh geometry={GEO.box} material={matte(u.belt, 0.6)} position={[0, 0, FRONT + 0.002]} scale={[TOY.torso.w - 0.02, 0.026, 0.01]} />
+      <mesh geometry={GEO.box} material={metal} position={[0, 0, FRONT + 0.008]} scale={[0.032, 0.03, 0.006]} />
+    </group>
+  );
+  switch (u.cut) {
+    case "shirt":
+      return (
+        <group>
+          <VOpening look={look} width={0.07} depth={0.06} lapel={0.026} tie={false} />
+          {/* The tie runs from the knot at the collar down the placket. */}
+          <mesh geometry={GEO.box} material={matte(u.tie, 0.5)} position={[0, 0.262, FRONT + 0.004]} rotation={[-0.3, 0, 0]} scale={[0.03, 0.024, 0.014]} />
+          <mesh geometry={GEO.box} material={matte(u.tie, 0.5)} position={[0, 0.17, FRONT + 0.006]} scale={[0.028, 0.16, 0.008]} />
+          {pockets(false)}
+          {belt}
+        </group>
+      );
+    case "field":
+      return (
+        <group>
+          <mesh geometry={GEO.collar} material={garment(look, u.coat)} position={[0, 0.287, 0]} scale={[1.05, 0.06, 1.05]} castShadow />
+          <mesh geometry={GEO.box} material={garment(look, mix(u.coat, "#000000", 0.1))} position={[0.008, 0.15, FRONT + 0.004]} scale={[0.026, 0.25, 0.008]} />
+          {Array.from({ length: 4 }, (_, i) => (
+            <mesh key={i} geometry={GEO.lowSphere} material={metal} position={[0.008, 0.23 - i * 0.055, FRONT + 0.009]} scale={[0.007, 0.007, 0.004]} />
+          ))}
+          {pockets(true)}
+          {u.tapes && [-1, 1].map((sx) => (
+            <mesh key={sx} geometry={GEO.box} material={matte(u.tapes as string, 0.9)} position={[sx * 0.072, 0.185, FRONT + 0.003]} scale={[0.068, 0.013, 0.006]} />
+          ))}
+          {belt}
+        </group>
+      );
+    case "service":
+      return (
+        <group>
+          <VOpening look={look} width={0.13} depth={0.15} lapel={0.034} tie />
+          {Array.from({ length: 4 }, (_, i) => (
+            <mesh key={i} geometry={GEO.lowSphere} material={metal} position={[0, 0.125 - i * 0.032, FRONT + 0.006]} scale={[0.01, 0.01, 0.006]} />
+          ))}
+          {pockets(true)}
+          {/* "U.S." discs on the collar. */}
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} geometry={GEO.lowSphere} material={metal} position={[sx * 0.085, 0.255, FRONT - 0.02]} scale={[0.011, 0.011, 0.005]} />
+          ))}
+          {belt}
+        </group>
+      );
+    case "mess":
+    default:
+      return (
+        <group>
+          <VOpening look={look} width={0.17} depth={0.2} lapel={0.04} tie={false} bow lapelColour={u.lapels} />
+          {/* Gold studs down the dress shirt and a black cummerbund at the waist. */}
+          {[0, 1, 2].map((i) => (
+            <mesh key={i} geometry={GEO.lowSphere} material={metal} position={[0, 0.205 - i * 0.035, FRONT + 0.004]} scale={[0.007, 0.007, 0.004]} />
+          ))}
+          <mesh geometry={GEO.box} material={matte("#121318", 0.5)} position={[0, 0.06, FRONT - 0.002]} scale={[0.15, 0.05, 0.01]} />
+          {/* Gold buttons either side of the open jacket, joined by a chain. */}
+          {[-1, 1].map((sx) => (
+            <mesh key={sx} geometry={GEO.lowSphere} material={metal} position={[sx * 0.1, 0.1, FRONT + 0.004]} scale={[0.011, 0.011, 0.006]} />
+          ))}
+          <mesh geometry={GEO.box} material={metal} position={[0, 0.1, FRONT + 0.006]} scale={[0.19, 0.0035, 0.004]} />
+          {u.cuffBraid && [-1, 1].map((sx) => (
+            <mesh key={`e${sx}`} geometry={GEO.box} material={matte(u.cuffBraid as string, 0.4, 0.5)} position={[sx * 0.088, 0.17, FRONT + 0.004]}
+              rotation={[0, 0, sx * -0.36]} scale={[0.005, 0.2, 0.004]} />
+          ))}
+        </group>
+      );
+  }
+}
+
 function Eyewear({ look }: { look: ToyLook }) {
   if (look.eyewear === "none") return null;
   const eyeY = HD.y - 0.03;
@@ -460,12 +564,17 @@ type JointRef = MutableRefObject<Group | null>;
  * sleeve over a bare arm; every other outfit has long sleeves ending in a cuff
  * at the wrist (a vest shows the shirt's sleeves, a suit the shirt cuff).
  */
-function Arm({ side, look, shoulder, elbow, holding }: { side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef; holding?: ReactNode }) {
+function Arm({ side, look, shoulder, elbow, holding, sleeve }: {
+  side: 1 | -1; look: ToyLook; shoulder: JointRef; elbow: JointRef; holding?: ReactNode; sleeve?: ReactNode;
+}) {
   const skin = matte(look.skin);
-  const sleeveColour = look.outfit === "vest" ? look.inner : look.shirt;
+  const sleeveColour = look.outfit === "vest" && !look.uniform ? look.inner : look.shirt;
   const cloth = garment(look, sleeveColour);
-  const long = look.outfit !== "tee";
-  const cuff = CUFFED.has(look.outfit) ? matte(look.inner) : garment(look, mix(sleeveColour, "#000000", 0.08));
+  const long = look.outfit !== "tee" || !!look.uniform;
+  const braid = look.uniform?.cuffBraid;
+  const cuff = braid ? matte(braid, 0.4, 0.5)
+    : look.uniform ? garment(look, mix(sleeveColour, "#000000", 0.1))
+    : CUFFED.has(look.outfit) ? matte(look.inner) : garment(look, mix(sleeveColour, "#000000", 0.08));
   const hand = -TOY.foreArm - 0.006;
   return (
     <group ref={shoulder} position={[side * TOY.shoulderX, TOY.shoulderY, 0]}>
@@ -473,6 +582,8 @@ function Arm({ side, look, shoulder, elbow, holding }: { side: 1 | -1; look: Toy
       <mesh geometry={GEO.sphere} material={cloth} position={[-side * 0.008, -0.004, 0]} scale={[TOY.armRadius + 0.012, TOY.armRadius + 0.008, TOY.armRadius + 0.012]} castShadow />
       {!long && <mesh geometry={GEO.sleeve} material={cloth} position={[0, -0.045, 0]} castShadow />}
       <mesh geometry={GEO.upperArm} material={long ? cloth : skin} position={[0, -TOY.upperArm / 2, 0]} castShadow />
+      {/* A rank patch on the outer face of the upper sleeve, bent round the arm. */}
+      {sleeve && <group position={[side * (TOY.armRadius + 0.001), -0.088, 0]} rotation={[0, side * Math.PI / 2, 0]}>{sleeve}</group>}
       <group ref={elbow} position={[0, -TOY.upperArm, 0]}>
         <mesh geometry={GEO.foreArm} material={long ? cloth : skin} position={[0, -TOY.foreArm / 2 + 0.01, 0]} castShadow />
         {long && <mesh geometry={GEO.cuff} material={cuff} position={[0, hand + 0.052, 0]} />}
@@ -487,14 +598,17 @@ function Arm({ side, look, shoulder, elbow, holding }: { side: 1 | -1; look: Toy
 
 function Leg({ side, look, hip, knee, ankle }: { side: 1 | -1; look: ToyLook; hip: JointRef; knee: JointRef; ankle: JointRef }) {
   const pants = matte(look.pants);
+  const stripe = look.uniform?.stripe ? matte(look.uniform.stripe, 0.4, 0.5) : null;
   // Dress shoes are polished with a dark sole; sneakers keep the light rubber sole.
   const dress = DRESS_SHOES.has(look.outfit) && !isLight(look.shoes);
   const sole = matte(dress ? mix(look.shoes, "#000000", 0.45) : isLight(look.shoes) ? mix(look.shoes, "#9a9aa0", 0.25) : SOLE_LIGHT);
   return (
     <group ref={hip} position={[side * TOY.hipX, TOY.hipUp, 0]}>
       <mesh geometry={GEO.thigh} material={pants} position={[0, -TOY.thigh / 2, 0]} castShadow />
+      {stripe && <mesh geometry={GEO.box} material={stripe} position={[side * (TOY.legRadius - 0.002), -TOY.thigh / 2, 0]} scale={[0.006, TOY.thigh + 0.06, 0.018]} />}
       <group ref={knee} position={[0, -TOY.thigh, 0]}>
         <mesh geometry={GEO.shin} material={pants} position={[0, -TOY.shin / 2 + 0.005, 0]} castShadow />
+        {stripe && <mesh geometry={GEO.box} material={stripe} position={[side * 0.054, -TOY.shin / 2 + 0.005, 0]} scale={[0.006, TOY.shin + 0.04, 0.018]} />}
         <group ref={ankle} position={[0, -TOY.shin, 0]}>
           <mesh geometry={GEO.shoe} material={matte(look.shoes, dress ? 0.3 : 0.6)} position={[0, -TOY.sole + 0.0425, (TOY.toe - TOY.heel) / 2]} castShadow />
           <mesh geometry={GEO.sole} material={sole} position={[0, -TOY.sole + 0.011, (TOY.toe - TOY.heel) / 2]} castShadow />
@@ -522,9 +636,31 @@ export interface ToyFigureProps {
   seatHeight?: number;
   /** Something held in the right hand (e.g. a dog treat); the arm then stays raised forward. */
   holding?: ReactNode;
+  /** Rank, decorations and headwear (level rewards); each piece rides the body part it is worn on. */
+  regalia?: FigureRegalia;
+  /** A display mannequin: no face, no hair. */
+  mannequin?: boolean;
 }
 
-export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding }: ToyFigureProps) {
+/**
+ * What a figure wears beyond its outfit. Every slot is in the local space of
+ * the part it rides:
+ * - `sleeve`: on the outer face of each upper sleeve, origin on the arm's surface, front facing outward (+z);
+ * - `shoulder`: on top of each shoulder, origin where it rests, its length along +x pointing outward, top +y;
+ * - `chest`: in the torso's space (front at z = TOY.torso.d / 2);
+ * - `hat`: in the head group's space; the hair then shows only below it.
+ */
+export interface FigureRegalia {
+  sleeve?: ReactNode;
+  shoulder?: ReactNode;
+  chest?: ReactNode;
+  hat?: ReactNode;
+}
+
+/** Where a shoulder piece rests on the torso: over the shoulder cap, sloping down outward. */
+const SHOULDER_REST = { x: 0.15, y: 0.288, slope: 0.22 };
+
+export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeight = 0.52, holding, regalia, mannequin = false }: ToyFigureProps) {
   const holds = useRef(false);
   holds.current = !!holding;
   const scale = heightM / TOY_HEIGHT;
@@ -611,20 +747,29 @@ export function ToyFigure({ look, drive, paused, heightM = TOY_HEIGHT, seatHeigh
   return (
     <group scale={scale}>
       <group ref={pelvis} position={[0, TOY.thigh + TOY.shin + TOY.sole - TOY.hipUp, 0]}>
-        <mesh geometry={GEO.pelvis} material={matte(look.pants)} position={[0, TOY.pelvis.h / 2, 0]} castShadow />
+        {/* A field or service coat covers the hips. */}
+        <mesh geometry={GEO.pelvis} material={look.uniform && (look.uniform.cut === "field" || look.uniform.cut === "service") ? garment(look, look.shirt) : matte(look.pants)}
+          position={[0, TOY.pelvis.h / 2, 0]} castShadow />
         <Leg side={1} look={look} hip={lHip} knee={lKnee} ankle={lAnkle} />
         <Leg side={-1} look={look} hip={rHip} knee={rKnee} ankle={rAnkle} />
         <group ref={torso} position={[0, TOY.hipUp, 0]}>
           <mesh geometry={GEO.chest} material={garment(look, look.shirt)} position={[0, 0.02 + (TOY.torso.h - 0.02) / 2, 0]} castShadow />
-          <OutfitDetails look={look} />
+          {look.uniform ? <UniformDetails look={look} u={look.uniform} /> : <OutfitDetails look={look} />}
           <mesh geometry={GEO.lowSphere} material={matte(look.skin)} position={[0, TOY.neckY - 0.01, 0]} scale={[0.07, 0.04, 0.07]} />
-          <Arm side={1} look={look} shoulder={lShoulder} elbow={lElbow} />
-          <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} holding={holding} />
+          <Arm side={1} look={look} shoulder={lShoulder} elbow={lElbow} sleeve={regalia?.sleeve} />
+          <Arm side={-1} look={look} shoulder={rShoulder} elbow={rElbow} holding={holding} sleeve={regalia?.sleeve} />
+          {regalia?.shoulder && ([1, -1] as const).map((side) => (
+            <group key={side} position={[side * SHOULDER_REST.x, SHOULDER_REST.y, 0]} rotation={[0, side === 1 ? 0 : Math.PI, -SHOULDER_REST.slope]}>
+              {regalia.shoulder}
+            </group>
+          ))}
+          {regalia?.chest}
           <group ref={head} position={[0, TOY.neckY, 0]}>
             <mesh geometry={GEO.sphere} material={matte(look.skin)} position={[0, HD.y, 0]} scale={[HD.rx, HD.ry, HD.rz]} castShadow />
-            <Face look={look} />
-            <Eyewear look={look} />
-            <Hair style={look.hairStyle} look={look} />
+            {!mannequin && <Face look={look} />}
+            {!mannequin && <Eyewear look={look} />}
+            {mannequin ? null : regalia?.hat ? <HairUnderHat color={look.hair} /> : <Hair style={look.hairStyle} look={look} />}
+            {regalia?.hat}
           </group>
         </group>
       </group>

@@ -189,6 +189,9 @@ class PynputBackend:
         # The live set of canonical tokens currently held down.
         self._held: set[str] = set()
         self._permission_check = lambda: True
+        # X11 display for unshifting symbol keys; opened on first need, from
+        # the listener thread only. ``False`` = tried and unavailable.
+        self._x_display: object | None | bool = None
 
     def register(self, bindings, on_event=None) -> None:
         """Stash binding rows as token-set combos. Never raises (AD-6).
@@ -242,10 +245,55 @@ class PynputBackend:
         # (modifiers, F-keys) expose ``.name``.
         char = getattr(key, "char", None)
         if char:
+            if not char.isalnum():
+                # X11 reports the SHIFTED symbol: Shift+9 arrives as "(" (US)
+                # or ")" (German), so "ctrl+shift+9" never matched. Bindings
+                # name the key, so a symbol is mapped back to its base key.
+                base = self._unshifted_char(key)
+                if base:
+                    return base
             return char.lower()
         name = getattr(key, "name", None)
         if name:
             return name.lower()
+        return None
+
+    def _unshifted_char(self, key) -> str | None:
+        """The base (level 0) character of an X11 key, or ``None``.
+
+        pynput's X11 ``KeyCode.vk`` is the keysym. The key that carries this
+        keysym on its SHIFT level, read back one level lower, is the key
+        without Shift — layout-correct, because the X server's own keymap does
+        the mapping. A keysym can sit on several keys ("(" is also a keypad
+        key, on its base level); only a shift-level entry counts. Off X11,
+        without Xlib, or for a symbol that is not shifted, ``None`` keeps the
+        character as reported.
+        """
+        vk = getattr(key, "vk", None)
+        if not isinstance(vk, int) or not sys.platform.startswith("linux"):
+            return None
+        display = self._x_display
+        if display is None:
+            try:
+                from Xlib import display as xdisplay  # noqa: PLC0415
+
+                display = xdisplay.Display()
+            except Exception:  # noqa: BLE001 - no X server or no Xlib: keep the char
+                log.debug("pynput: no X display to unshift symbol keys", exc_info=True)
+                display = False
+            self._x_display = display
+        if display is False:
+            return None
+        try:
+            for keycode, index in display.keysym_to_keycodes(vk):  # type: ignore[union-attr]
+                if index % 2 == 0:  # an unshifted level: this IS a base key
+                    continue
+                base = display.keycode_to_keysym(keycode, index - 1)  # type: ignore[union-attr]
+                # Latin-1 keysyms equal their code point; only printable ASCII maps.
+                if 0x20 < base < 0x7F:
+                    return chr(base).lower()
+        except Exception:  # noqa: BLE001 - an odd keysym keeps its reported char
+            log.debug("pynput: could not unshift keysym %#x", vk, exc_info=True)
         return None
 
     def _on_press_key(self, key) -> None:

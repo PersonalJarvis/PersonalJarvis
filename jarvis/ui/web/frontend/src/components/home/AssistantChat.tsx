@@ -17,8 +17,8 @@ const HomeAgentChat = lazy(() => import("@/components/home/HomeAgentChat"));
  * The front page: ONE chat with the assistant (2026-10-01).
  *
  * Nothing but the conversation — no header row, no side card. An empty chat
- * is a short greeting over the composer in the middle of the page, the way
- * the Claude app opens; the composer itself carries every control,
+ * is a short greeting over the composer in the middle of the page;
+ * the composer itself carries every control,
  * including the round voice-mode button. Voice mode is a state of this
  * chat, not another page: it swaps the typed composer for the voice
  * composer under the spoken transcript (components/home/VoiceStage), whose
@@ -32,15 +32,15 @@ export function AssistantChat() {
   const chatItems = useAgentChatStore((s) => s.timeline.items);
   const seedTranscript = useHomeStore((s) => s.seedTranscript);
   const inVoice = surface === "voice" && !agentChatId;
-  // An archived voice chat on stage owns the lane (store/home.ts reloads it).
+  const freshVoicePending = useHomeStore((s) => s.freshVoicePending);
+  // An explicitly selected archived voice chat owns the lane.
   const voiceThreadOpen = useEventStore((s) => s.activeKind === "voice" && Boolean(s.activeThreadId));
-  // Between calls the voice lane IS the chat on stage. A hangup clears the
-  // lane (store/home.ts); the turns just spoken arrive in the chat a moment
-  // later (the backend files them there), so the lane follows the chat.
+  // Only a selected chat may seed the idle lane. After hangup, delayed chat
+  // updates must not put the completed conversation back on the blank page.
   useEffect(() => {
-    if (!inVoice || voice.live || voiceThreadOpen) return;
+    if (!inVoice || voice.live || voiceThreadOpen || freshVoicePending) return;
     seedTranscript(transcriptFromTimeline(chatItems));
-  }, [chatItems, inVoice, seedTranscript, voice.live, voiceThreadOpen]);
+  }, [chatItems, freshVoicePending, inVoice, seedTranscript, voice.live, voiceThreadOpen]);
   const loading = (
     <div role="status" className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
       {t("common.loading")}

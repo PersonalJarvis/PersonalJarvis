@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   ChevronDown,
+  Columns2,
   Copy,
   Download,
+  FolderOpen,
   GripVertical,
+  ImagePlus,
   Loader2,
+  PictureInPicture2,
   Redo2,
+  RotateCcw,
+  Rows2,
   Trash2,
   Undo2,
   X,
@@ -17,24 +24,43 @@ import { QuickTooltip } from "@/components/ui/tooltip";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { fill, useLocaleChunk, useT } from "@/i18n";
 import { copyAppshotPng } from "@/lib/appshotClipboard";
-import { latestAppshotImageUrl } from "@/lib/appshotApi";
+import {
+  appshotLibraryImageUrl,
+  fetchAppshotLibrary,
+  latestAppshotImageUrl,
+  type AppshotLibraryItem,
+} from "@/lib/appshotApi";
 import {
   ARROW_STYLES,
   BACKGROUND_PRESETS,
   COLORS,
   CROP_RATIOS,
   DEFAULT_BACKGROUND,
+  PLACEMENTS,
   STROKE_LEVELS,
   TOOL_KEYS,
+  addImage,
   bounds,
+  buildScene,
   canvasMeasure,
-  clampRect,
+  clampInto,
   commit,
   constrainEnd,
   counterSize,
+  coversAll,
+  cropHandleAt,
+  cropHandles,
   emptyHistory,
   exportPng,
+  extent,
+  fitRatio,
   frameLayout,
+  moveCrop,
+  resizeCrop,
+  withCrop,
+  type CropHandle,
+  type Placement,
+  type Rect,
   grabScope,
   hitTest,
   isMeaningful,
@@ -76,8 +102,11 @@ import { useEventStore } from "@/store/events";
  * The appshot editor — annotate a capture with select/move, arrow, line,
  * rectangle, filled rectangle, ellipse, draw,
  * highlighter, text (three styles), counter, spotlight, pixelate/blur, crop
- * (free or fixed ratio) and a background frame, with undo/redo and
- * one-letter keys. The result can be copied, saved, or put back in place of
+ * (free or fixed ratio, an adjustable frame with grips) and a background
+ * frame, with undo/redo and one-letter keys. "Add picture" (I) places an
+ * earlier appshot from the gallery, a file, a pasted or a dropped picture
+ * beside, below or on top of this one, so several pictures are marked up and
+ * shared as one. The result can be copied, saved, or put back in place of
  * the appshot so the next message carries the edited picture.
  *
  * Copy goes through the OS clipboard on the desktop (`/api/appshot/clipboard`)
@@ -158,7 +187,38 @@ type Gesture =
   | { kind: "draw"; shape: Draft; start: Point }
   | { kind: "move"; id: number; start: Point; dx: number; dy: number }
   /** A grip of the selected annotation being dragged; `original` as it was. */
-  | { kind: "resize"; id: number; handle: HandleId; original: Op; at: Point };
+  | { kind: "resize"; id: number; handle: HandleId; original: Op; at: Point }
+  /** A grip of the crop frame being dragged. */
+  | { kind: "crop-resize"; handle: CropHandle; original: Rect; at: Point }
+  /** The whole crop frame being dragged. */
+  | { kind: "crop-move"; original: Rect; start: Point; at: Point };
+
+const PLACEMENT_KEY = "jarvis.appshotEditor.placement";
+const isPlacement = (value: unknown): value is Placement =>
+  typeof value === "string" && (PLACEMENTS as readonly string[]).includes(value);
+
+/** A picture of the user's to add: the first image file of a paste or a drop. */
+function imageFile(items: DataTransferItemList | FileList | null | undefined): File | null {
+  if (!items) return null;
+  for (const entry of Array.from(items as ArrayLike<DataTransferItem | File>)) {
+    const file = entry instanceof File ? entry : entry.kind === "file" ? entry.getAsFile() : null;
+    if (file && file.type.startsWith("image/")) return file;
+  }
+  return null;
+}
+
+function insideRect(p: Point, rect: Rect): boolean {
+  return p.x >= rect.x && p.x <= rect.x + rect.w && p.y >= rect.y && p.y <= rect.y + rect.h;
+}
+
+function loadPicture(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("The picture could not be loaded."));
+    img.src = src;
+  });
+}
 
 type LoadState = "loading" | "ready" | "failed";
 
@@ -225,6 +285,17 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     ({ ...readStored(BACKGROUND_KEY, DEFAULT_BACKGROUND, isBackground), enabled: false }),
   );
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Pictures added to this one, by the ``src`` their layers name.
+  const [sources, setSources] = useState<ReadonlyMap<string, HTMLImageElement>>(() => new Map());
+  const blobUrls = useRef<string[]>([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [placement, setPlacementState] = useState<Placement>(() => readStored(PLACEMENT_KEY, "beside" as Placement, isPlacement));
+  const setPlacement = (next: Placement) => {
+    setPlacementState(next);
+    writeStored(PLACEMENT_KEY, next);
+  };
+  const [dropping, setDropping] = useState(false);
   // The text box: state for painting, a ref so a commit reads the latest
   // text without side effects inside a state updater.
   const [typing, setTypingState] = useState<Typing | null>(null);
@@ -304,8 +375,10 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const widths = strokeWidths(iw || 1, ih || 1);
   const width = widths[widthIndex];
   const view = viewport(ops, iw, ih);
-  // While cropping, show the whole picture so a crop can also grow back.
-  const shown = tool === "crop" ? { x: 0, y: 0, w: iw, h: ih } : view;
+  // Everything there is: the first picture and every picture added to it.
+  const area = extent(ops, iw, ih);
+  // While cropping, show all of it so a crop can also grow back.
+  const shown = tool === "crop" ? area : view;
   const framing = tool === "crop" ? { ...background, enabled: false } : background;
   const layout = frameLayout(shown.w || 1, shown.h || 1, framing);
   const fitScale =
@@ -316,6 +389,15 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   const cw = Math.max(1, Math.round(shown.w * scale));
   const ch = Math.max(1, Math.round(shown.h * scale));
   const ratio = CROP_RATIOS.find((entry) => entry.id === cropRatio)?.ratio ?? null;
+  // The crop frame as it looks right now: drawn, reshaped or moved by the drag in progress.
+  const cropRect: Rect =
+    gesture?.kind === "draw" && gesture.shape.kind === "crop"
+      ? gesture.shape.rect
+      : gesture?.kind === "crop-resize"
+        ? resizeCrop(gesture.original, gesture.handle, gesture.at, area, ratio)
+        : gesture?.kind === "crop-move"
+          ? moveCrop(gesture.original, gesture.at.x - gesture.start.x, gesture.at.y - gesture.start.y, area)
+          : view;
 
   // An annotation as it looks right now: moved or reshaped by the drag in progress.
   const live = useCallback(
@@ -351,18 +433,53 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!ctx) return;
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, -shown.x * dpr * scale, -shown.y * dpr * scale);
     ctx.clearRect(shown.x, shown.y, shown.w, shown.h);
-    paintOps(ctx, image, drawn, { width: iw, height: ih });
+    paintOps(ctx, buildScene(image, iw, ih, drawn, sources), drawn);
     if (tool === "crop") {
-      const crop = gesture?.kind === "draw" && gesture.shape.kind === "crop" ? gesture.shape.rect : view;
+      const crop = cropRect;
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.beginPath();
-      ctx.rect(0, 0, iw, ih);
+      ctx.rect(area.x, area.y, area.w, area.h);
       ctx.rect(crop.x, crop.y, crop.w, crop.h);
       ctx.fill("evenodd");
+      // Thirds, to line the picture up.
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1 / scale;
+      ctx.beginPath();
+      for (const third of [1 / 3, 2 / 3]) {
+        ctx.moveTo(crop.x + crop.w * third, crop.y);
+        ctx.lineTo(crop.x + crop.w * third, crop.y + crop.h);
+        ctx.moveTo(crop.x, crop.y + crop.h * third);
+        ctx.lineTo(crop.x + crop.w, crop.y + crop.h * third);
+      }
+      ctx.stroke();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.5 / scale;
       ctx.strokeRect(crop.x, crop.y, crop.w, crop.h);
+      // Grips: an L at each corner, a bar on each edge of a free crop.
+      ctx.lineWidth = 4 / scale;
+      ctx.lineCap = "round";
+      ctx.shadowColor = "rgba(0,0,0,0.5)";
+      ctx.shadowBlur = 3 / scale;
+      const arm = Math.min(18 / scale, crop.w / 3, crop.h / 3);
+      ctx.beginPath();
+      for (const grip of cropHandles(crop, ratio)) {
+        const { x, y } = grip.at;
+        if (grip.id === "n" || grip.id === "s") {
+          ctx.moveTo(x - arm / 2, y);
+          ctx.lineTo(x + arm / 2, y);
+        } else if (grip.id === "e" || grip.id === "w") {
+          ctx.moveTo(x, y - arm / 2);
+          ctx.lineTo(x, y + arm / 2);
+        } else {
+          const sx = grip.id === "nw" || grip.id === "sw" ? 1 : -1;
+          const sy = grip.id === "nw" || grip.id === "ne" ? 1 : -1;
+          ctx.moveTo(x + sx * arm, y);
+          ctx.lineTo(x, y);
+          ctx.lineTo(x, y + sy * arm);
+        }
+      }
+      ctx.stroke();
       ctx.restore();
     }
     if (selectedLive) {
@@ -395,7 +512,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       }
       ctx.restore();
     }
-  }, [image, drawn, gesture, tool, cw, ch, scale, shown.x, shown.y, shown.w, shown.h, iw, ih, view, selectedLive, measure]);
+  }, [image, drawn, tool, cw, ch, scale, shown.x, shown.y, shown.w, shown.h, iw, ih, area, cropRect, ratio, sources, selectedLive, measure]);
 
   // -- editing -------------------------------------------------------------
   const apply = useCallback((next: Op[]) => {
@@ -445,6 +562,71 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     [setBackground],
   );
 
+  // -- crop ------------------------------------------------------------------
+  /** Crop to ``rect``; all of the document (or null) means no crop at all. */
+  const setCrop = useCallback(
+    (rect: Rect | null) => {
+      const next = rect && !coversAll(rect, area) ? rect : null;
+      if (!next && !ops.some((op) => op.kind === "crop")) return;
+      apply(withCrop(ops, next));
+    },
+    [apply, area, ops],
+  );
+
+  /** A fixed ratio reshapes the crop at once: the largest such frame in what is visible. */
+  const chooseRatio = (id: string) => {
+    setCropRatio(id);
+    const next = CROP_RATIOS.find((entry) => entry.id === id)?.ratio ?? null;
+    if (next !== null) setCrop(fitRatio(view, next));
+  };
+
+  // -- more pictures -----------------------------------------------------------
+  // Read when an added picture has finished loading, after other edits may have landed.
+  const opsRef = useRef(ops);
+  opsRef.current = ops;
+
+  useEffect(() => {
+    const urls = blobUrls.current;
+    return () => urls.forEach((url) => URL.revokeObjectURL(url));
+  }, []);
+
+  const addPicture = useCallback(
+    async (src: string) => {
+      if (!image) return;
+      setImporting(true);
+      try {
+        const picture = await loadPicture(src);
+        setSources((current) => new Map(current).set(src, picture));
+        const added = addImage(
+          opsRef.current,
+          iw,
+          ih,
+          { src, width: picture.naturalWidth, height: picture.naturalHeight },
+          placement,
+        );
+        apply(added.ops);
+        setImportOpen(false);
+        // Selected with the select tool, so it can be moved and sized at once.
+        setTool("move");
+        setSelectedId(added.id);
+      } catch {
+        pushToast("error", t("appshot_editor.import_failed"));
+      } finally {
+        setImporting(false);
+      }
+    },
+    [apply, ih, image, iw, placement, pushToast, t],
+  );
+
+  const addFile = useCallback(
+    (file: File) => {
+      const url = URL.createObjectURL(file);
+      blobUrls.current.push(url);
+      void addPicture(url);
+    },
+    [addPicture],
+  );
+
   const toImage = (event: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
     return {
@@ -490,33 +672,47 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     if (!image || event.button !== 0) return;
     const p = toImage(event);
     if (tool === "background") return;
-    if (tool !== "crop") {
-      // A grip of the selected annotation reshapes it; any drawn annotation
-      // under the pointer is taken and moved (the select tool also takes
-      // spotlights and redactions); pen and highlighter only take grips.
-      const scope = grabScope(tool);
-      if (scope !== "none" && selected && selectedLive) {
-        const grip = handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure);
-        if (grip) {
-          event.preventDefault();
-          event.currentTarget.setPointerCapture?.(event.pointerId);
-          setGesture({ kind: "resize", id: selected.id, handle: grip, original: selected, at: p });
-          return;
-        }
+    if (tool === "crop") {
+      // A grip reshapes the crop frame, a press inside it moves it, a press
+      // outside draws a new one.
+      event.preventDefault();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      const grip = cropHandleAt(view, p, (GRIP_RADIUS + 6) / scale, ratio);
+      if (grip) {
+        setGesture({ kind: "crop-resize", handle: grip, original: view, at: p });
+      } else if (!coversAll(view, area) && insideRect(p, view)) {
+        setGesture({ kind: "crop-move", original: view, start: p, at: p });
+      } else {
+        setGesture({ kind: "draw", shape: { kind: "crop", rect: { x: p.x, y: p.y, w: 0, h: 0 } }, start: p });
       }
-      // Spotlights and redactions cover what lies in them, so only the
-      // select tool picks them; with a drawing tool they stay drawable on.
-      const hit = grabbable(p);
-      if (hit) {
+      return;
+    }
+    // A grip of the selected annotation reshapes it; any drawn annotation
+    // under the pointer is taken and moved (the select tool also takes
+    // spotlights, redactions and added pictures); pen and highlighter only
+    // take grips.
+    const scope = grabScope(tool);
+    if (scope !== "none" && selected && selectedLive) {
+      const grip = handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure);
+      if (grip) {
         event.preventDefault();
-        if (typing) commitText();
         event.currentTarget.setPointerCapture?.(event.pointerId);
-        setSelectedId(hit.id);
-        setGesture({ kind: "move", id: hit.id, start: p, dx: 0, dy: 0 });
+        setGesture({ kind: "resize", id: selected.id, handle: grip, original: selected, at: p });
         return;
       }
-      setSelectedId(null);
     }
+    // Spotlights, redactions and added pictures cover what lies in them, so
+    // only the select tool picks them; with a drawing tool they stay drawable on.
+    const hit = grabbable(p);
+    if (hit) {
+      event.preventDefault();
+      if (typing) commitText();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      setSelectedId(hit.id);
+      setGesture({ kind: "move", id: hit.id, start: p, dx: 0, dy: 0 });
+      return;
+    }
+    setSelectedId(null);
     if (tool === "text") {
       // Keep the press from moving focus away: it would blur (and so close)
       // the text box this click is about to open.
@@ -554,11 +750,8 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       case "spotlight":
         shape = { kind: "spotlight", rect: zero };
         break;
-      case "redact":
-        shape = { kind: "redact", rect: zero, mode: redactMode, block: Math.max(8, width * 3) };
-        break;
       default:
-        shape = { kind: "crop", rect: zero };
+        shape = { kind: "redact", rect: zero, mode: redactMode, block: Math.max(8, width * 3) };
     }
     setGesture({ kind: "draw", shape, start: p });
   };
@@ -568,7 +761,12 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     const p = toImage(event);
     if (!current) {
       // Say with the pointer what a press here would do: reshape, move, or draw.
-      if (!image || tool === "crop" || tool === "background") return setHoverCursor(null);
+      if (!image || tool === "background") return setHoverCursor(null);
+      if (tool === "crop") {
+        const cropGrip = cropHandleAt(view, p, (GRIP_RADIUS + 6) / scale, ratio);
+        if (cropGrip) return setHoverCursor(handleCursor(cropGrip));
+        return setHoverCursor(!coversAll(view, area) && insideRect(p, view) ? "move" : null);
+      }
       const grip =
         selectedLive && grabScope(tool) !== "none"
           ? handleAt(selectedLive, p, (GRIP_RADIUS + 4) / scale, measure)
@@ -577,7 +775,7 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       setHoverCursor(grabbable(p) ? "move" : null);
       return;
     }
-    if (current.kind === "resize") {
+    if (current.kind === "resize" || current.kind === "crop-resize" || current.kind === "crop-move") {
       setGesture({ ...current, at: p });
       return;
     }
@@ -610,18 +808,29 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
       }
       return;
     }
+    if (current.kind === "crop-resize") {
+      setCrop(resizeCrop(current.original, current.handle, current.at, area, ratio));
+      return;
+    }
+    if (current.kind === "crop-move") {
+      const dx = current.at.x - current.start.x;
+      const dy = current.at.y - current.start.y;
+      if (dx !== 0 || dy !== 0) setCrop(moveCrop(current.original, dx, dy, area));
+      return;
+    }
     let shape = current.shape;
     if (shape.kind === "crop" || shape.kind === "redact" || shape.kind === "spotlight") {
-      const rect = clampRect(shape.rect, iw, ih);
+      const rect = clampInto(shape.rect, area);
       if (!rect) return;
       shape = { ...shape, rect } as Draft;
     }
     if (!isMeaningful(shape)) return;
-    const id = push(shape);
-    if (shape.kind === "crop") setTool("move");
+    // A crop stays in crop mode with its grips, to be fine-tuned; Enter or
+    // another tool finishes it.
+    if (shape.kind === "crop") return setCrop(shape.rect);
     // Every fresh annotation is selected at once, so its grips are right
     // there (the previous one loses them) and it can be moved again.
-    else setSelectedId(id);
+    setSelectedId(push(shape));
   };
 
   const onDoubleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
@@ -634,8 +843,8 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
   // -- results -------------------------------------------------------------
   const render = useCallback(async () => {
     if (!image) throw new Error(t("appshot_editor.gone"));
-    return await exportPng(image, ops, background);
-  }, [background, image, ops, t]);
+    return await exportPng(image, ops, background, sources);
+  }, [background, image, ops, sources, t]);
 
   const copy = useCallback(async () => {
     setBusy("copy");
@@ -738,12 +947,25 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
         event.preventDefault();
         if (menu) setMenu("");
         else if (confirmDiscard) setConfirmDiscard(false);
+        else if (importOpen) setImportOpen(false);
         else if (gestureRef.current) setGesture(null);
         else if (selectedId !== null) setSelectedId(null);
+        else if (tool === "crop") chooseTool("move");
         else requestClose();
         return;
       }
       if (confirmDiscard) return;
+      if (event.key === "Enter" && !event.shiftKey && !mod && tool === "crop") {
+        // Enter finishes the crop first; the next Enter is Done.
+        event.preventDefault();
+        chooseTool("move");
+        return;
+      }
+      if (!mod && !event.altKey && key === "i") {
+        event.preventDefault();
+        setImportOpen((open) => !open);
+        return;
+      }
       if (mod && key === "z" && !event.shiftKey) {
         event.preventDefault();
         undo();
@@ -777,7 +999,20 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chooseTool, confirmDiscard, copy, menu, nudgeSelected, redo, removeSelected, requestClose, save, scale, selectedId, setGesture, typing, undo, use]);
+  }, [chooseTool, confirmDiscard, copy, importOpen, menu, nudgeSelected, redo, removeSelected, requestClose, save, scale, selectedId, setGesture, tool, typing, undo, use]);
+
+  // A picture pasted while the editor is open joins this one.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      if (typingRef.current || !image) return;
+      const file = imageFile(event.clipboardData?.items);
+      if (!file) return;
+      event.preventDefault();
+      addFile(file);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFile, image]);
 
   // -- drag out --------------------------------------------------------------
   // The handle writes the finished picture to a file only when pressed, then
@@ -852,7 +1087,9 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
         ? label("hint_counter")
         : tool === "spotlight"
           ? label("hint_spotlight")
-          : "";
+          : tool === "crop"
+            ? label("hint_crop")
+            : "";
   const showCapsule = tool === "text" || tool === "redact" || tool === "crop" || tool === "background" || hint !== "";
 
   const toolButton = (name: Tool) => {
@@ -902,6 +1139,24 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
             <div className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
             {toolButton("crop")}
             {toolButton("background")}
+            <div className="mx-0.5 h-5 w-px shrink-0 bg-border" aria-hidden />
+            <QuickTooltip content={`${label("import")} (I)`} side="bottom">
+              <button
+                type="button"
+                aria-label={label("import")}
+                aria-pressed={importOpen}
+                onClick={() => setImportOpen((open) => !open)}
+                disabled={!image}
+                data-testid="appshot-editor-import"
+                className={cn(
+                  "flex h-7 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors",
+                  "hover:bg-foreground/10 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-40",
+                  importOpen && "bg-accent text-accent-foreground hover:bg-accent hover:text-accent-foreground",
+                )}
+              >
+                {importing ? <Loader2 className="h-[17px] w-[17px] animate-spin" aria-hidden /> : <ImagePlus className="h-[17px] w-[17px]" aria-hidden />}
+              </button>
+            </QuickTooltip>
           </div>
 
           {/* Colour (a menu) and size (a slider). */}
@@ -1044,8 +1299,42 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
           </div>
         </div>
 
-        {/* The picture. */}
-        <div className="relative min-h-0 flex-1 bg-background/70">
+        {/* The picture; an image file dropped here joins it. */}
+        <div
+          className="relative min-h-0 flex-1 bg-background/70"
+          onDragOver={(event) => {
+            if (!image || !Array.from(event.dataTransfer.types).includes("Files")) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "copy";
+            setDropping(true);
+          }}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false);
+          }}
+          onDrop={(event) => {
+            setDropping(false);
+            const file = imageFile(event.dataTransfer.files);
+            if (!file || !image) return;
+            event.preventDefault();
+            addFile(file);
+          }}
+        >
+          {dropping && (
+            <div className="pointer-events-none absolute inset-3 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-accent/10 text-sm font-medium text-foreground" data-testid="appshot-editor-drop">
+              {fill(label("import_drop"), { 0: label(`place_${placement}`) })}
+            </div>
+          )}
+          {importOpen && image && (
+            <ImportPanel
+              label={label}
+              placement={placement}
+              onPlacement={setPlacement}
+              busy={importing}
+              onPick={(item) => void addPicture(appshotLibraryImageUrl(item))}
+              onFile={addFile}
+              onClose={() => setImportOpen(false)}
+            />
+          )}
           {/* Floats over the picture, so it never changes the space the picture fits into. */}
           {showCapsule && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-3 pt-3">
@@ -1079,13 +1368,39 @@ export function AppshotEditor({ appshotId, onClose, onApplied, variant = "overla
                   />
                 )}
                 {tool === "crop" && (
-                  <Segmented
-                    label={label("crop_ratio")}
-                    value={cropRatio}
-                    onChange={setCropRatio}
-                    options={CROP_RATIOS.map((entry) => ({ value: entry.id, label: entry.id === "free" ? label("crop_free") : entry.id }))}
-                    testId="appshot-editor-crop-ratio"
-                  />
+                  <>
+                    <Segmented
+                      label={label("crop_ratio")}
+                      value={cropRatio}
+                      onChange={chooseRatio}
+                      options={CROP_RATIOS.map((entry) => ({ value: entry.id, label: entry.id === "free" ? label("crop_free") : entry.id }))}
+                      testId="appshot-editor-crop-ratio"
+                    />
+                    <span className="tabular-nums text-muted-foreground" data-testid="appshot-editor-crop-size">
+                      {Math.round(cropRect.w)} × {Math.round(cropRect.h)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCrop(null)}
+                      disabled={coversAll(view, area)}
+                      data-testid="appshot-editor-crop-reset"
+                      className="flex h-7 items-center gap-1.5 rounded-lg px-2 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" aria-hidden />
+                      {label("crop_reset")}
+                    </button>
+                    <QuickTooltip content={`${label("crop_apply")} (Enter)`} side="bottom">
+                      <button
+                        type="button"
+                        onClick={() => chooseTool("move")}
+                        data-testid="appshot-editor-crop-apply"
+                        className="flex h-7 items-center gap-1.5 rounded-lg bg-accent px-2.5 font-medium text-accent-foreground transition-colors hover:bg-accent/90"
+                      >
+                        <Check className="h-3.5 w-3.5" aria-hidden />
+                        {label("crop_apply")}
+                      </button>
+                    </QuickTooltip>
+                  </>
                 )}
                 {tool === "background" && (
                   <>
@@ -1434,6 +1749,159 @@ function ArrowStyleIcon({ style }: { style: ArrowStyle }) {
         </>
       )}
     </svg>
+  );
+}
+
+const PLACEMENT_ICON: Record<Placement, typeof Columns2> = {
+  beside: Columns2,
+  below: Rows2,
+  over: PictureInPicture2,
+};
+
+/**
+ * "Add picture": where the next picture goes (beside, below, on top), the
+ * user's kept appshots to pick from, and a file from the disk.
+ */
+function ImportPanel({
+  label,
+  placement,
+  onPlacement,
+  busy,
+  onPick,
+  onFile,
+  onClose,
+}: {
+  label: (key: string) => string;
+  placement: Placement;
+  onPlacement: (next: Placement) => void;
+  busy: boolean;
+  onPick: (item: AppshotLibraryItem) => void;
+  onFile: (file: File) => void;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<AppshotLibraryItem[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetchAppshotLibrary()
+      .then((body) => alive && setItems(Array.isArray(body.items) ? body.items : []))
+      .catch(() => {
+        // The gallery is optional here: a file still works without it.
+        if (alive) {
+          setFailed(true);
+          setItems([]);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  return (
+    <div
+      className="absolute bottom-3 right-3 top-3 z-20 flex w-[min(340px,calc(100%-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border bg-popover/95 text-[13px] shadow-2xl backdrop-blur"
+      role="dialog"
+      aria-label={label("import")}
+      data-testid="appshot-editor-import-panel"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+        <p className="font-semibold">{label("import")}</p>
+        <button type="button" onClick={onClose} aria-label={label("close")} className={ROUND_ICON}>
+          <X className="h-4 w-4" aria-hidden />
+        </button>
+      </div>
+      <div className="flex flex-col gap-1.5 border-b border-border px-3 py-2.5">
+        <span className="text-muted-foreground">{label("import_place")}</span>
+        <div className="grid grid-cols-3 gap-1 rounded-lg bg-foreground/10 p-0.5" role="group" aria-label={label("import_place")}>
+          {PLACEMENTS.map((entry) => {
+            const Icon = PLACEMENT_ICON[entry];
+            return (
+              <button
+                key={entry}
+                type="button"
+                aria-pressed={placement === entry}
+                onClick={() => onPlacement(entry)}
+                data-testid={`appshot-editor-place-${entry}`}
+                className={cn(
+                  "flex h-8 items-center justify-center gap-1.5 rounded-md text-muted-foreground transition-colors hover:bg-popover hover:text-foreground",
+                  placement === entry && "bg-popover text-foreground shadow-sm",
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" aria-hidden />
+                {label(`place_${entry}`)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2.5">
+        <p className="mb-2 text-muted-foreground">{label("import_library")}</p>
+        {items === null ? (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            {label("loading")}
+          </div>
+        ) : items.length === 0 ? (
+          <p className="text-muted-foreground" data-testid="appshot-editor-import-empty">
+            {label(failed ? "import_library_failed" : "import_library_empty")}
+          </p>
+        ) : (
+          <ul className="grid grid-cols-2 gap-2" data-testid="appshot-editor-import-list">
+            {items.map((item) => (
+              <li key={`${item.id}:${item.variant}`}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => onPick(item)}
+                  title={item.app_name || item.label}
+                  data-testid="appshot-editor-import-item"
+                  className="group relative block w-full overflow-hidden rounded-lg border border-border bg-background transition-colors hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50"
+                >
+                  <img
+                    src={appshotLibraryImageUrl(item, true)}
+                    alt={item.app_name || item.label}
+                    loading="lazy"
+                    draggable={false}
+                    className="aspect-[4/3] w-full object-cover"
+                  />
+                  {item.variant === "edited" && (
+                    <span className="absolute left-1 top-1 rounded bg-accent px-1.5 py-px text-[11px] font-medium text-accent-foreground">
+                      {label("library_edited_badge")}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="border-t border-border px-3 py-2.5">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          data-testid="appshot-editor-import-file"
+          onChange={(event) => {
+            const file = imageFile(event.currentTarget.files);
+            event.currentTarget.value = "";
+            if (file) onFile(file);
+          }}
+        />
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => fileRef.current?.click()}
+          className="flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-border font-medium transition-colors hover:bg-foreground/10 disabled:opacity-50"
+        >
+          <FolderOpen className="h-4 w-4 text-muted-foreground" aria-hidden />
+          {label("import_file")}
+        </button>
+        <p className="mt-1.5 text-center text-[12px] text-muted-foreground">{label("import_paste_hint")}</p>
+      </div>
+    </div>
   );
 }
 
