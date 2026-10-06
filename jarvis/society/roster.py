@@ -532,6 +532,22 @@ class Roster:
             if await self._store.get_agent_row(candidate) is None:
                 return candidate
 
+    async def _release_archived_name(self, name: str) -> dict[str, Any] | None:
+        """Free ``name`` when only a deleted (archived) agent still holds it.
+
+        Deleting an agent archives its row, and ``name`` is UNIQUE, so the old
+        row would otherwise block the name forever. The archived row keeps its
+        id, history and workspace under a suffixed name. Returns the row that
+        still holds ``name`` (a live agent), or ``None`` once the name is free.
+        """
+        existing = await self._store.get_agent_row_by_name(name)
+        if existing is None or existing.get("state") != str(AgentState.ARCHIVED):
+            return existing
+        await self._store.update_agent(
+            existing["agent_id"], {"name": f"{existing['name']} (deleted {existing['agent_id']})"}
+        )
+        return None
+
     async def create(
         self,
         *,
@@ -544,7 +560,8 @@ class Roster:
         """Create an agent; returns ``(record, created)``.
 
         An existing name adopts the row (``created=False``) and leaves it
-        untouched — the caller decides whether to PATCH. Without a name the
+        untouched — the caller decides whether to PATCH. A deleted (archived)
+        agent never blocks its name: a new agent is created. Without a name the
         agent is created fresh: placeholder name, random id (see module doc).
         """
         async with self._create_lock:
@@ -570,10 +587,15 @@ class Roster:
             agent_id = await self._fresh_agent_id()
         else:
             clean_name = _validate_name(str(name))
-            existing = await self._store.get_agent_row_by_name(clean_name)
+            existing = await self._release_archived_name(clean_name)
             if existing is not None:
                 return await self._hydrate(existing), False
             agent_id = slugify(clean_name)
+            held = await self._store.get_agent_row(agent_id)
+            if held is not None and held.get("state") == str(AgentState.ARCHIVED):
+                # A deleted agent keeps its slug (and its workspace folder);
+                # the new one starts clean under its own id.
+                agent_id = await self._fresh_agent_id()
         if tier_value is Tier.LEAD and agent_id != LEAD_AGENT_ID:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
@@ -659,6 +681,8 @@ class Roster:
             if agent_id == LEAD_AGENT_ID and clean_name != current["name"]:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "Jarvis keeps the lead name")
             existing = await self._store.get_agent_row_by_name(clean_name)
+            if existing is not None and existing["agent_id"] != agent_id:
+                existing = await self._release_archived_name(clean_name)
             if existing is not None and existing["agent_id"] != agent_id:
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, "agent name already exists")
         columns: dict[str, Any] = {}

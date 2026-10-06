@@ -139,6 +139,30 @@ async def test_archive_hides_from_default_list(roster: Roster):
     assert [a.state for a in archived] == [AgentState.ARCHIVED]
 
 
+async def test_deleted_agent_frees_its_name(roster: Roster):
+    old, _ = await roster.create(name="Scout", title="Old scout")
+    await roster.archive(old.agent_id)
+
+    fresh, created = await roster.create(name="scout")
+    assert created is True
+    assert fresh.name == "scout"
+    assert fresh.agent_id != old.agent_id
+    assert fresh.title == ""
+    assert fresh.state is AgentState.ACTIVE
+    # The deleted row keeps its id and history under a released name.
+    kept = await roster.get(old.agent_id)
+    assert kept is not None
+    assert kept.state is AgentState.ARCHIVED
+    assert kept.name != "scout"
+    assert [a.agent_id for a in await roster.list()] == [fresh.agent_id]
+
+    # Renaming onto a deleted agent's name works too.
+    planner, _ = await roster.create(name="Planner")
+    await roster.archive(planner.agent_id)
+    renamed = await roster.update(fresh.agent_id, {"name": "Planner"})
+    assert renamed.name == "Planner"
+
+
 async def test_rename_keeps_identity_and_rejects_duplicate_name(roster: Roster):
     scout, _ = await roster.create(name="Scout")
     await roster.create(name="Planner")
