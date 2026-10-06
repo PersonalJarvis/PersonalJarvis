@@ -89,11 +89,15 @@ every line the CLI prints and streams them to the app.
 - **Another app process takes over** (a second start of the same instance):
   the old process hands its turns over without ending them.
 
+Right after the app starts, it attaches to the host on its own, before any
+window opens a chat, so a waiting approval shows up without delay.
+
 Only thread turns run there. A turn running as Jarvis, a goal turn and a
 helper turn without tools need state inside the app and stay its children.
-A frozen build cannot start the host and keeps the old behaviour. So does
-any process that is not the desktop app or the web launcher, such as tests
-and scripts. Logs: `logs/turn_host.log` in the Jarvis data folder.
+An installed (frozen) build starts the host by running its own executable
+with `--turn-host`, since it has no `python -m`. Processes that are not the
+desktop app or the web launcher, such as tests and scripts, never start or
+attach to the host. Logs: `logs/turn_host.log` in the Jarvis data folder.
 
 ## Platforms
 

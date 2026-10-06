@@ -591,9 +591,16 @@ def _start_host(
     token_env: str = TOKEN_ENV,
     log_path: Path | None = None,
     extra_args: tuple[str, ...] = (),
+    frozen_flag: str | None = None,
 ) -> bool:
-    """Start a detached host process; the turn host reuses this with its own module."""
+    """Start a detached host process; the turn host reuses this with its own module.
+
+    A frozen build has no ``-m``: with ``frozen_flag`` it re-enters its own
+    executable with that flag instead, which ``jarvis/__main__.py`` routes to
+    the host's ``main``.
+    """
     import jarvis
+    from jarvis.core.frozen import is_frozen
     from jarvis.ui.relauncher import spawn_detached
 
     # The host must import THIS jarvis, whichever interpreter path found it.
@@ -604,10 +611,10 @@ def _start_host(
         part for part in (package_root, env.get("PYTHONPATH", "")) if part
     )
     env["PYTHONIOENCODING"] = "utf-8"
+    entry = [frozen_flag] if frozen_flag and is_frozen() else ["-m", module]
     argv = [
         sys.executable,
-        "-m",
-        module,
+        *entry,
         "--state",
         str(state_path),
         "--log",

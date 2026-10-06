@@ -327,3 +327,193 @@ def test_tests_and_scripts_never_reach_the_users_turn_host() -> None:
     host_mode.reset()
     assert not turn_host_client.host_available()
     assert not turn_host_client.may_hold_turns()
+
+
+# Asks for a Bash approval on the control protocol, then reports the answer.
+_ASKING_CHILD = (
+    "import json, sys\n"
+    "ask = {'type': 'control_request', 'request_id': 'r1', 'request': {\n"
+    "    'subtype': 'can_use_tool', 'tool_name': 'Bash',\n"
+    "    'input': {'command': 'ls'}, 'tool_use_id': 'tu1'}}\n"
+    "print(json.dumps(ask), flush=True)\n"
+    "for raw in sys.stdin:\n"
+    "    obj = json.loads(raw) if raw.strip().startswith('{') else {}\n"
+    "    if obj.get('type') != 'control_response':\n"
+    "        continue\n"
+    "    said = obj['response']['response']['behavior']\n"
+    "    text = {'type': 'text', 'text': 'approval: ' + said}\n"
+    "    msg = {'type': 'assistant', 'message': {'id': 'm1', 'content': [text]}}\n"
+    "    print(json.dumps(msg), flush=True)\n"
+    "    end = {'type': 'result', 'subtype': 'success', 'is_error': False, 'usage': {}}\n"
+    "    print(json.dumps(end), flush=True)\n"
+    "    break\n"
+)
+
+
+async def test_an_approval_the_old_app_never_answered_opens_again_after_a_restart(
+    tmp_path: Path,
+) -> None:
+    host, task, port = await _start_host(tmp_path)
+    store = AgentChatStore(":memory:")
+    try:
+        session = store.create_session(
+            provider="claude-api", model="m", effort="medium", cwd=str(tmp_path), surface="agent"
+        )
+        meta = {
+            "session_id": session.session_id,
+            "turn_id": "t5",
+            "runner": "claude-cli",
+            "shape": "claude",
+            "keep_stdin": True,
+            "control": True,
+            "vendor_session": None,
+            "discover": False,
+            "codex_home": "",
+            "cwd": str(tmp_path),
+            "started_at": time.time(),
+        }
+        first = await _client(port)
+        cli = await first.spawn(
+            [sys.executable, "-c", _ASKING_CHILD],
+            cwd=str(tmp_path),
+            env=None,
+            stdin='{"type": "control_request", "request": {"subtype": "initialize"}}\n',
+            keep_stdin=True,
+            meta=meta,
+        )
+        # The old app saw the request and opened its card — then went away.
+        assert b"control_request" in await cli.stdout.readline()
+        first.detach()
+        await asyncio.sleep(0.2)
+
+        second = await _client(port)
+        again = await second.attach(cli.host_id)
+        assert again is not None
+        asked: list[tuple[str, str]] = []
+        events: list[dict[str, Any]] = []
+
+        async def emit(event: dict[str, Any]) -> None:
+            events.append(event)
+
+        async def approve(call_id: str, name: str, _args: Any, _summary: str) -> str:
+            asked.append((call_id, name))
+            return "allow"
+
+        handle = runner_api.TurnHandle(
+            session=session,
+            turn_id="t5",
+            emit=emit,
+            request_approval=approve,
+            cancel=asyncio.Event(),
+        )
+        await asyncio.wait_for(resume_hosted_cli_turn(handle, again), timeout=30)
+
+        assert asked == [("tu1", "Bash")]
+        texts = [e["payload"]["text"] for e in events if e["kind"] == "assistant_text"]
+        assert texts == ["approval: allow"]
+        assert events[-1]["kind"] == "turn_finished"
+        assert events[-1]["payload"]["status"] == "done"
+        second.detach()
+    finally:
+        store.close()
+        await _stop(host, task)
+
+
+def test_a_frozen_build_starts_the_turn_host_from_its_own_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core import frozen
+    from jarvis.terminal import pty_host_client
+    from jarvis.ui import relauncher
+
+    started: list[list[str]] = []
+    monkeypatch.setattr(frozen, "is_frozen", lambda: True)
+    monkeypatch.setattr(
+        pty_host_client,
+        "_start_host_windows",
+        lambda argv, *_rest: started.append(list(argv)) or True,
+    )
+    monkeypatch.setattr(
+        relauncher, "spawn_detached", lambda argv, **_kw: started.append(list(argv))
+    )
+    assert pty_host_client._start_host(
+        tmp_path / "state.json",
+        "tok",
+        module=turn_host_client.MODULE,
+        token_env=turn_host.TOKEN_ENV,
+        log_path=tmp_path / "host.log",
+        extra_args=("--spool", str(tmp_path / "spool")),
+        frozen_flag=turn_host.FROZEN_FLAG,
+    )
+    [argv] = started
+    assert argv[0] == sys.executable
+    assert argv[1:3] == ["--turn-host", "--state"]
+    assert "-m" not in argv
+
+
+def test_the_app_executable_routes_the_turn_host_flag_without_booting_the_app(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    env = {k: v for k, v in __import__("os").environ.items() if k != turn_host.TOKEN_ENV}
+    done = subprocess.run(  # noqa: S603 - our own interpreter, fixed arguments
+        [
+            sys.executable,
+            "-m",
+            "jarvis",
+            "--turn-host",
+            "--state",
+            str(tmp_path / "s.json"),
+            "--spool",
+            str(tmp_path / "spool"),
+        ],
+        capture_output=True,
+        env=env,
+        timeout=60,
+        check=False,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    # The host's own refusal (no token) — the app itself never started.
+    assert done.returncode == 2
+    assert b"no token" in done.stderr
+
+
+async def test_the_app_start_builds_the_chat_service_only_when_the_host_holds_turns(
+    monkeypatch: pytest.MonkeyPatch, app_host_mode: Any
+) -> None:
+    from types import SimpleNamespace
+
+    from jarvis.ui.web import agent_chat_routes
+
+    monkeypatch.setattr(agent_chat_routes, "_REATTACH_DELAY_S", 0.0)
+    built: list[str] = []
+    holds = {"value": False}
+    monkeypatch.setattr(turn_host_client, "may_hold_turns", lambda: holds["value"])
+
+    def factory() -> str:
+        built.append("svc")
+        return "svc"
+
+    state = SimpleNamespace(agent_chat=None, agent_chat_factory=factory)
+    task = agent_chat_routes.schedule_turn_reattach(state)
+    assert task is not None
+    await task
+    assert built == []  # nothing to carry on: the chat stays unbuilt (AP-26)
+
+    holds["value"] = True
+    task = agent_chat_routes.schedule_turn_reattach(state)
+    assert task is not None
+    await task
+    assert built == ["svc"] and state.agent_chat == "svc"
+
+
+def test_the_app_start_does_nothing_outside_a_real_app_process() -> None:
+    from types import SimpleNamespace
+
+    from jarvis.ui.web import agent_chat_routes
+
+    host_mode.reset()
+    assert agent_chat_routes.schedule_turn_reattach(SimpleNamespace()) is None

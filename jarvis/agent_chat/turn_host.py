@@ -1,7 +1,9 @@
 """The turn host — a small process that owns the coding CLIs of thread turns.
 
-Run as ``python -m jarvis.agent_chat.turn_host --state <file> --spool <dir>``.
-Started on demand by :mod:`jarvis.agent_chat.turn_host_client`, never by hand.
+Run as ``python -m jarvis.agent_chat.turn_host --state <file> --spool <dir>``
+(a frozen build: ``<app executable> --turn-host --state ...``, routed by
+``jarvis/__main__.py``). Started on demand by
+:mod:`jarvis.agent_chat.turn_host_client`, never by hand.
 
 ## Why a thread's CLI lives in its own process
 
@@ -68,6 +70,9 @@ from loguru import logger
 #: Bumped only for an incompatible change; a client leaves a host speaking
 #: another version alone (it may hold turns from before an update).
 PROTOCOL_VERSION = 1
+
+#: How a frozen build re-enters its own executable as the turn host.
+FROZEN_FLAG = "--turn-host"
 
 #: Environment variable carrying the auth token. Never on the command line.
 TOKEN_ENV = "JARVIS_TURN_HOST_TOKEN"  # noqa: S105 - a variable name, not a secret

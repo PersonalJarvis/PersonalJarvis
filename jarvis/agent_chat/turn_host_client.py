@@ -29,13 +29,12 @@ import contextlib
 import json
 import logging
 import secrets
-import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .turn_host import MAX_FRAME_BYTES, PROTOCOL_VERSION, TOKEN_ENV
+from .turn_host import FROZEN_FLAG, MAX_FRAME_BYTES, PROTOCOL_VERSION, TOKEN_ENV
 
 log = logging.getLogger(__name__)
 
@@ -92,11 +91,11 @@ def host_available() -> bool:
     on ``agentic_ide.host_mode`` (the same switch that keeps the terminal
     grid's agents in the PTY host). A test, a script or the CLI building an
     agent-chat service never starts or attaches to the user's host. A frozen
-    build has no ``python -m`` to start one with.
+    build starts it by re-entering its own executable (``FROZEN_FLAG``).
     """
     from jarvis.agentic_ide import host_mode
 
-    return host_mode.enabled() and not getattr(sys, "frozen", False)
+    return host_mode.enabled()
 
 
 def _read_state(path: Path) -> dict[str, Any] | None:
@@ -561,6 +560,7 @@ async def _open(*, start: bool) -> TurnHostClient | None:
         token_env=TOKEN_ENV,
         log_path=_log_path(),
         extra_args=("--spool", str(spool_dir())),
+        frozen_flag=FROZEN_FLAG,
     )
     if not started:
         return None

@@ -55,6 +55,13 @@ if len(sys.argv) >= 2 and sys.argv[1] == "--background-service":
 
     raise SystemExit(_launcher_main(sys.argv[1:]))
 
+# The thread turn host of a frozen build, same reason: no ``-m`` to start
+# ``jarvis.agent_chat.turn_host`` with (see turn_host.FROZEN_FLAG).
+if len(sys.argv) >= 2 and sys.argv[1] == "--turn-host":
+    from jarvis.agent_chat.turn_host import main as _turn_host_main
+
+    raise SystemExit(_turn_host_main(sys.argv[2:]))
+
 # Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
 # emojis, ✓/✗). Force utf-8 before printing anything.
 if sys.platform == "win32":

@@ -3255,6 +3255,10 @@ class DesktopApp:
                     from jarvis.agentic_ide.session import schedule_boot_restore
 
                     schedule_boot_restore()
+                    # Carry on the IDE thread turns the turn host kept running.
+                    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+                    schedule_turn_reattach(server.app.state)
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
 
