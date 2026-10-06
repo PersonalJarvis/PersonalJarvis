@@ -1,44 +1,49 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
-  ArrowLeft,
   ChevronRight,
+  ChevronsDownUp,
+  Copy,
   ExternalLink,
+  FilePlus,
   Folder,
   FolderOpen,
+  FolderPlus,
   GitBranch,
   Loader2,
+  Pencil,
   RefreshCw,
   Search,
   SquareArrowOutUpRight,
+  SquarePen,
+  Trash2,
   X,
 } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import {
   attachToTerminal,
-  fetchWorkspaceFilePreview,
   fetchWorkspaceFiles,
   openTerminalTarget,
-  workspaceFileUrl,
   type WorkspaceFileItem,
-  type WorkspaceFilePreviewResponse,
 } from "@/lib/agenticIdeApi";
 import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { createEntry, deleteEntry, moveEntry, TrashUnavailableError } from "@/components/agentic/editor/editorApi";
+import { moveModels } from "@/components/agentic/editor/editorModels";
+import { forgetFileList } from "@/components/agentic/editor/QuickOpen";
+import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
+import { useCodeEditorStore, isUnder } from "@/store/codeEditor";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeExplorerStore, type ExplorerView } from "@/store/ideExplorer";
 import { paneTitleFrom, recapsFor, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
-import { DiffView } from "./DiffView";
 import {
   absoluteWorkspacePath,
-  fetchFileDiff,
   fetchWorkspaceChanges,
   type ChangeAuthor,
   type ChangeStatus,
   type ChangedFile,
-  type FileDiff,
   type WorkspaceChanges,
 } from "./explorerApi";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -65,6 +70,7 @@ const STATUS_LETTER: Record<ChangeStatus, string> = {
 
 const baseName = (path: string) => path.split("/").filter(Boolean).pop() ?? path;
 const parentPath = (path: string) => path.split("/").slice(0, -1).join("/");
+const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
 
 /** Start a drag that a terminal pane turns into a file reference. */
 function startFileDrag(event: DragEvent, absolute: string): void {
@@ -170,25 +176,40 @@ function ChangeAuthors({ authors, workspaceId }: { authors: ChangeAuthor[]; work
   );
 }
 
+function HeaderButton({ label, onClick, children, testId }: { label: string; onClick: () => void; children: ReactNode; testId?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      data-testid={testId}
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {children}
+    </button>
+  );
+}
+
 /**
  * The Changes tab (what the agents changed, and which agent) or the Folder tab
- * (the workspace's folder as a tree); either opens any file's diff — drag a
- * row onto a terminal to reference that file.
+ * (the workspace's folder as a tree). A click opens the file in the code
+ * editor — a changed file as its diff; drag a row onto a terminal to
+ * reference that file.
  */
 export function ExplorerPanel({ view }: { view: ExplorerView }) {
   const t = useT();
   const workspace = useIdeChatStore((state) => state.workspace);
-  const stagedPane = useIdeChatStore((state) => state.stagedPane);
-  const opened = useIdeExplorerStore((state) => state.opened[view]);
-  const openIn = useIdeExplorerStore((state) => state.open);
-  const closeIn = useIdeExplorerStore((state) => state.close);
-  const close = () => closeIn(view);
   // Pane titles for the "changed by" line.
   usePaneRecapPoll();
-  const pushToast = useEventStore((state) => state.pushToast);
   const [filter, setFilter] = useState("");
   const workspaceId = workspace?.id ?? null;
   const { changes, error: changesError, refresh } = useWorkspaceChanges(workspaceId);
+  const [treeNonce, setTreeNonce] = useState(0);
+  const [collapseNonce, setCollapseNonce] = useState(0);
+  const [creating, setCreating] = useState<{ folder: string; kind: "file" | "directory"; nonce: number } | null>(null);
+  const editorTabs = useCodeEditorStore((state) => (workspaceId ? state.tabs.filter((tab) => tab.workspaceId === workspaceId).length : 0));
+  const editorVisible = useCodeEditorStore((state) => state.visible);
 
   const changeMap = useMemo(() => {
     const map = new Map<string, ChangedFile>();
@@ -211,38 +232,10 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
   }
 
   const absolute = (relative: string) => absoluteWorkspacePath(workspace.path, relative);
-  const referenceInPane = async (relative: string) => {
-    if (!stagedPane) return;
-    try {
-      await attachToTerminal(stagedPane, { paths: [absolute(relative)] });
-    } catch (error) {
-      pushToast("error", (error as Error).message);
-    }
-  };
-
-  if (opened && opened.workspaceId === workspaceId) {
-    return (
-      <FileViewer
-        workspaceId={workspaceId}
-        path={opened.path}
-        change={changeMap}
-        onBack={close}
-        onReference={stagedPane ? referenceInPane : undefined}
-        referenceLabel={stagedPane ? fill(t("ide_side_panel.explorer.reference_in"), { pane: stagedPane }) : ""}
-        onOpenExternally={(path) =>
-          void openTerminalTarget(workspaceId, path).catch((error: unknown) =>
-            pushToast("error", (error as Error).message),
-          )
-        }
-        absolute={absolute}
-      />
-    );
-  }
-
   const needle = filter.trim().toLowerCase();
   const changedFiles = (changes?.files ?? []).filter((file) => !needle || file.path.toLowerCase().includes(needle));
-  const openFile = (path: string) => openIn(view, { workspaceId, path });
   const changeCount = changes?.files.length ?? 0;
+  const editor = useCodeEditorStore.getState();
 
   return (
     <section
@@ -252,7 +245,7 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
       className="flex h-full min-h-0 flex-col"
     >
       <div className="shrink-0 space-y-2 border-b border-border/60 px-3 pb-2.5 pt-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 truncate text-sm font-semibold text-foreground" title={workspace.path}>
             {baseName(workspace.path.replace(/\\/g, "/")) || workspace.name}
@@ -274,31 +267,68 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
               {changeCount}
             </span>
           )}
+          <span className="ml-auto flex shrink-0 items-center">
+            {view === "files" && (
+              <>
+                <HeaderButton label={t("ide_side_panel.explorer.new_file")} testId="explorer-new-file" onClick={() => setCreating({ folder: "", kind: "file", nonce: Date.now() })}>
+                  <FilePlus className="h-3.5 w-3.5" aria-hidden />
+                </HeaderButton>
+                <HeaderButton label={t("ide_side_panel.explorer.new_folder")} onClick={() => setCreating({ folder: "", kind: "directory", nonce: Date.now() })}>
+                  <FolderPlus className="h-3.5 w-3.5" aria-hidden />
+                </HeaderButton>
+                <HeaderButton label={t("ide_side_panel.explorer.collapse_all")} onClick={() => setCollapseNonce((value) => value + 1)}>
+                  <ChevronsDownUp className="h-3.5 w-3.5" aria-hidden />
+                </HeaderButton>
+              </>
+            )}
+            <HeaderButton
+              label={t("ide_side_panel.explorer.refresh")}
+              onClick={() => {
+                refresh();
+                setTreeNonce((value) => value + 1);
+                forgetFileList(workspaceId);
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+            </HeaderButton>
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-2.5 focus-within:border-ring">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder={t("ide_side_panel.explorer.filter")}
+              aria-label={t("ide_side_panel.explorer.filter")}
+              className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+            />
+            {filter && (
+              <button type="button" aria-label={t("ide_side_panel.explorer.clear_filter")} onClick={() => setFilter("")} className="text-muted-foreground hover:text-foreground">
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            )}
+          </label>
           <button
             type="button"
-            onClick={refresh}
-            aria-label={t("ide_side_panel.explorer.refresh")}
-            title={t("ide_side_panel.explorer.refresh")}
-            className="ml-auto inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => editor.setQuickOpen(true)}
+            title={t("ide_side_panel.explorer.quick_open_hint")}
+            className="inline-flex h-8 shrink-0 items-center rounded-lg border border-border/60 px-2 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+            Ctrl+P
           </button>
         </div>
-        <label className="flex h-8 items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-2.5 focus-within:border-ring">
-          <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder={t("ide_side_panel.explorer.filter")}
-            aria-label={t("ide_side_panel.explorer.filter")}
-            className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
-          />
-          {filter && (
-            <button type="button" aria-label={t("ide_side_panel.explorer.clear_filter")} onClick={() => setFilter("")} className="text-muted-foreground hover:text-foreground">
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          )}
-        </label>
+        {editorTabs > 0 && !editorVisible && (
+          <button
+            type="button"
+            data-testid="explorer-show-editor"
+            onClick={() => editor.setVisible(true)}
+            className="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-border/60 text-xs text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <SquarePen className="h-3.5 w-3.5" aria-hidden />
+            {fill(t("ide_side_panel.explorer.show_editor"), { count: editorTabs })}
+          </button>
+        )}
       </div>
 
       <div className="scrollbar-jarvis min-h-0 flex-1 overflow-y-auto py-1.5">
@@ -328,7 +358,8 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
                       type="button"
                       draggable
                       onDragStart={(event) => startFileDrag(event, absolute(file.path))}
-                      onClick={() => !file.is_directory && openFile(file.path)}
+                      onClick={() => !file.is_directory && editor.openFile(workspaceId, file.path, { mode: "diff" })}
+                      onDoubleClick={() => !file.is_directory && editor.openFile(workspaceId, file.path, { mode: "diff", preview: false })}
                       data-testid="explorer-change-row"
                       data-path={file.path}
                       title={`${file.path} — ${t("ide_side_panel.explorer.drag_hint")}`}
@@ -372,7 +403,12 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
             filter={needle}
             changeMap={changeMap}
             changedFolders={changedFolders}
-            onOpen={openFile}
+            changesKey={changes?.files.map((file) => `${file.path}:${file.status}`).join("|") ?? ""}
+            reloadNonce={treeNonce}
+            collapseNonce={collapseNonce}
+            creating={creating}
+            onCreatingDone={() => setCreating(null)}
+            onCreate={(folder, kind) => setCreating({ folder, kind, nonce: Date.now() })}
             absolute={absolute}
           />
         )}
@@ -386,17 +422,102 @@ interface TreeProps {
   filter: string;
   changeMap: Map<string, ChangedFile>;
   changedFolders: Set<string>;
-  onOpen: (path: string) => void;
+  /** Changes whenever git's list of changed files does: agents created or deleted something. */
+  changesKey: string;
+  reloadNonce: number;
+  collapseNonce: number;
+  creating: { folder: string; kind: "file" | "directory"; nonce: number } | null;
+  onCreatingDone: () => void;
+  onCreate: (folder: string, kind: "file" | "directory") => void;
   absolute: (relative: string) => string;
 }
 
-/** The folder, one lazily loaded level at a time. */
-function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, absolute }: TreeProps) {
+type Row =
+  | { kind: "item"; item: WorkspaceFileItem; depth: number }
+  | { kind: "create"; folder: string; entry: "file" | "directory"; depth: number };
+
+/** The inline name field for a new entry or a rename. */
+function NameField({
+  initial,
+  depth,
+  icon,
+  onSubmit,
+  onCancel,
+}: {
+  initial: string;
+  depth: number;
+  icon: ReactNode;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const field = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    const input = field.current;
+    if (!input) return;
+    input.focus();
+    // Select the name without its extension, the way a rename usually wants it.
+    const dot = initial.lastIndexOf(".");
+    input.setSelectionRange(0, dot > 0 ? dot : initial.length);
+  }, [initial]);
+  const finish = (submit: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    const value = field.current?.value.trim() ?? "";
+    if (submit && value && value !== initial) onSubmit(value);
+    else onCancel();
+  };
+  return (
+    <div style={{ paddingLeft: 10 + depth * 14 + 20 }} className="flex h-7 items-center gap-1.5 pr-3">
+      {icon}
+      <input
+        ref={field}
+        defaultValue={initial}
+        data-testid="explorer-name-field"
+        onKeyDown={(event) => {
+          event.stopPropagation();
+          if (event.key === "Enter") finish(true);
+          else if (event.key === "Escape") finish(false);
+        }}
+        onBlur={() => finish(true)}
+        className="min-w-0 flex-1 rounded border border-ring bg-background px-1.5 py-0.5 text-[13px] text-foreground outline-none"
+      />
+    </div>
+  );
+}
+
+/** The folder, one lazily loaded level at a time, with the usual file actions. */
+function FileTree({
+  workspaceId,
+  filter,
+  changeMap,
+  changedFolders,
+  changesKey,
+  reloadNonce,
+  collapseNonce,
+  creating,
+  onCreatingDone,
+  onCreate,
+  absolute,
+}: TreeProps) {
   const t = useT();
+  const pushToast = useEventStore((state) => state.pushToast);
+  const stagedPane = useIdeChatStore((state) => state.stagedPane);
+  const activePath = useCodeEditorStore((state) => {
+    const key = state.active[workspaceId];
+    return state.tabs.find((tab) => tab.key === key)?.path ?? null;
+  });
+  const revealed = useIdeExplorerStore((state) => state.revealed);
   const [children, setChildren] = useState<Record<string, WorkspaceFileItem[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set([""]));
   const [loading, setLoading] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ path: string; isDirectory: boolean } | null>(null);
+  const [confirm, setConfirm] = useState<{ path: string; isDirectory: boolean; permanent: boolean } | null>(null);
+  const menuAnchor = useRef<HTMLElement | null>(null);
+  const list = useRef<HTMLUListElement>(null);
   const loaded = useRef<Set<string>>(new Set());
 
   const load = useCallback(
@@ -406,7 +527,7 @@ function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, abso
         const answer = await fetchWorkspaceFiles(workspaceId, path);
         loaded.current.add(path);
         setChildren((current) => ({ ...current, [path]: answer.entries }));
-        if (answer.error) setError(answer.error);
+        setError(answer.error ?? "");
       } catch (err) {
         setError((err as Error).message);
       } finally {
@@ -427,29 +548,172 @@ function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, abso
     void load("");
   }, [load]);
 
+  useEffect(() => {
+    if (collapseNonce) setExpanded(new Set([""]));
+  }, [collapseNonce]);
+
+  // Agents add and delete files all the time: re-read the open folders when
+  // git's picture changes, and on Refresh.
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
+  const reloadOpen = useCallback(() => {
+    for (const path of loaded.current) if (expandedRef.current.has(path)) void load(path);
+  }, [load]);
+  const firstKey = useRef(true);
+  useEffect(() => {
+    if (firstKey.current) {
+      firstKey.current = false;
+      return;
+    }
+    reloadOpen();
+  }, [changesKey, reloadNonce, reloadOpen]);
+
+  const expand = useCallback(
+    (path: string) => {
+      setExpanded((current) => (current.has(path) ? current : new Set(current).add(path)));
+      if (!loaded.current.has(path)) void load(path);
+    },
+    [load],
+  );
+
   const toggle = (path: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else {
-        next.add(path);
-        if (!loaded.current.has(path)) void load(path);
-      }
-      return next;
-    });
+    if (expanded.has(path)) {
+      setExpanded((current) => {
+        const next = new Set(current);
+        next.delete(path);
+        return next;
+      });
+    } else expand(path);
   };
 
-  const rows: { item: WorkspaceFileItem; depth: number }[] = [];
+  // "Reveal in Explorer": open every folder above the path and scroll to it.
+  useEffect(() => {
+    if (!revealed || revealed.workspaceId !== workspaceId) return;
+    const parts = revealed.path.split("/");
+    for (let index = 1; index < parts.length; index += 1) expand(parts.slice(0, index).join("/"));
+    setFocused(revealed.path);
+  }, [revealed, workspaceId, expand]);
+
+  useEffect(() => {
+    if (!focused) return;
+    const rows = list.current?.querySelectorAll<HTMLElement>('[data-testid="explorer-tree-row"]') ?? [];
+    const row = [...rows].find((entry) => entry.dataset.path === focused);
+    row?.scrollIntoView?.({ block: "nearest" });
+  }, [focused, children]);
+
+  // The file on screen in the editor is shown in the tree, folders opened to it.
+  useEffect(() => {
+    if (!activePath) return;
+    const parts = activePath.split("/");
+    for (let index = 1; index < parts.length; index += 1) expand(parts.slice(0, index).join("/"));
+    setFocused(activePath);
+  }, [activePath, expand]);
+
+  // A new entry is typed inside its folder, so that folder must be open.
+  useEffect(() => {
+    if (creating?.folder) expand(creating.folder);
+  }, [creating, expand]);
+
+  const editor = useCodeEditorStore.getState();
+  const fail = (err: unknown) => pushToast("error", (err as Error).message);
+
+  const create = async (folder: string, kind: "file" | "directory", name: string) => {
+    onCreatingDone();
+    const path = joinPath(folder, name.replace(/\\/g, "/"));
+    try {
+      const created = await createEntry(workspaceId, path, kind);
+      forgetFileList(workspaceId);
+      // "a/b/c.ts" may have created folders on the way; re-read from the top one.
+      const top = joinPath(folder, path.slice(folder ? folder.length + 1 : 0).split("/")[0]);
+      await load(folder);
+      if (top !== created.path) expand(top);
+      setFocused(created.path);
+      if (kind === "file") editor.openFile(workspaceId, created.path, { preview: false });
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const rename = async (path: string, name: string) => {
+    setRenaming(null);
+    const destination = joinPath(parentPath(path), name);
+    try {
+      const moved = await moveEntry(workspaceId, path, destination);
+      forgetFileList(workspaceId);
+      moveModels(workspaceId, path, moved.path);
+      editor.renamePath(workspaceId, path, moved.path);
+      setExpanded((current) => {
+        const next = new Set<string>();
+        for (const entry of current) next.add(isUnder(entry, path) ? moved.path + entry.slice(path.length) : entry);
+        return next;
+      });
+      loaded.current = new Set([...loaded.current].filter((entry) => !isUnder(entry, path)));
+      await load(parentPath(path));
+      setFocused(moved.path);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const remove = async (path: string, permanent: boolean) => {
+    setConfirm(null);
+    try {
+      await deleteEntry(workspaceId, path, permanent);
+      forgetFileList(workspaceId);
+      editor.markDeleted(workspaceId, path);
+      await load(parentPath(path));
+    } catch (err) {
+      if (err instanceof TrashUnavailableError) {
+        const isDirectory = (children[parentPath(path)] ?? []).find((entry) => entry.path === path)?.is_directory ?? false;
+        setConfirm({ path, isDirectory, permanent: true });
+      } else fail(err);
+    }
+  };
+
+  const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(fail);
+
+  const rows: Row[] = [];
   const walk = (path: string, depth: number) => {
+    if (creating && creating.folder === path) rows.push({ kind: "create", folder: path, entry: creating.kind, depth });
     for (const item of sortEntries(children[path] ?? [])) {
+      // Only entries that really sit inside this folder; a bad listing must not loop.
+      if (path && !item.path.startsWith(`${path}/`)) continue;
       const matches = !filter || item.name.toLowerCase().includes(filter);
       if (matches || item.is_directory) {
-        if (matches) rows.push({ item, depth });
+        if (matches) rows.push({ kind: "item", item, depth });
         if (item.is_directory && expanded.has(item.path)) walk(item.path, matches ? depth + 1 : depth);
       }
     }
   };
   walk("", 0);
+
+  const onRowKey = (event: ReactKeyboardEvent, item: WorkspaceFileItem) => {
+    if (event.key === "F2") {
+      event.preventDefault();
+      setRenaming(item.path);
+    } else if (event.key === "Delete") {
+      event.preventDefault();
+      setConfirm({ path: item.path, isDirectory: item.is_directory, permanent: false });
+    } else if (event.key === "ArrowRight" && item.is_directory && !expanded.has(item.path)) {
+      event.preventDefault();
+      expand(item.path);
+    } else if (event.key === "ArrowLeft" && item.is_directory && expanded.has(item.path)) {
+      event.preventDefault();
+      toggle(item.path);
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const buttons = [...(list.current?.querySelectorAll<HTMLElement>('[data-testid="explorer-tree-row"]') ?? [])];
+      const index = buttons.indexOf(event.currentTarget as HTMLElement);
+      buttons[index + (event.key === "ArrowDown" ? 1 : -1)]?.focus();
+    }
+  };
+
+  const openMenu = (event: ReactMouseEvent<HTMLElement>, path: string, isDirectory: boolean) => {
+    event.preventDefault();
+    event.stopPropagation();
+    menuAnchor.current = event.currentTarget;
+    setMenu({ path, isDirectory });
+  };
 
   if (!children[""] && loading.has("")) {
     return (
@@ -460,54 +724,206 @@ function FileTree({ workspaceId, filter, changeMap, changedFolders, onOpen, abso
     );
   }
 
+  const menuFolder = menu ? (menu.isDirectory ? menu.path : parentPath(menu.path)) : "";
+  const pick = (action: () => void) => () => {
+    setMenu(null);
+    action();
+  };
+
   return (
-    <ul data-testid="explorer-tree" role="tree" aria-label={t("ide_side_panel.explorer.view_files")}>
-      {error && <li className="px-3 py-2 text-[11px] text-destructive">{error}</li>}
-      {rows.map(({ item, depth }) => {
-        const change = changeMap.get(item.path);
-        const open = expanded.has(item.path);
-        const FolderIcon = open ? FolderOpen : Folder;
-        const hasChangeInside = item.is_directory && changedFolders.has(item.path);
-        return (
-          <li key={item.path} role="treeitem" aria-expanded={item.is_directory ? open : undefined}>
-            <button
-              type="button"
-              draggable
-              onDragStart={(event) => startFileDrag(event, absolute(item.path))}
-              onClick={() => (item.is_directory ? toggle(item.path) : onOpen(item.path))}
-              data-testid="explorer-tree-row"
-              data-path={item.path}
-              title={item.path}
-              style={{ paddingLeft: 10 + depth * 14 }}
-              className="flex h-7 w-full items-center gap-1.5 pr-3 text-left text-[13px] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
-            >
-              <ChevronRight
-                aria-hidden
-                className={cn(
-                  "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
-                  !item.is_directory && "invisible",
-                  open && "rotate-90",
-                )}
-              />
-              {item.is_directory ? (
-                <FolderIcon
-                  aria-hidden
-                  className={cn("h-4 w-4 shrink-0", change ? STATUS_TONE[change.status] : "text-muted-foreground")}
+    <>
+      <ul
+        ref={list}
+        data-testid="explorer-tree"
+        role="tree"
+        aria-label={t("ide_side_panel.explorer.view_files")}
+        className="min-h-full"
+        onContextMenu={(event) => openMenu(event, "", true)}
+      >
+        {error && <li className="px-3 py-2 text-[11px] text-destructive">{error}</li>}
+        {rows.map((row) => {
+          if (row.kind === "create") {
+            return (
+              <li key={`create-${row.folder}`} role="none">
+                <NameField
+                  initial=""
+                  depth={row.depth}
+                  icon={row.entry === "directory" ? <Folder className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> : <FilePlus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
+                  onSubmit={(name) => void create(row.folder, row.entry, name)}
+                  onCancel={onCreatingDone}
                 />
-              ) : (
-                <FileTypeIcon path={item.name} />
-              )}
-              <span className={cn("min-w-0 flex-1 truncate", change ? STATUS_TONE[change.status] : "text-foreground/90")}>
-                {item.name}
-              </span>
-              {loading.has(item.path) && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
-              {hasChangeInside && !change && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success/80" aria-hidden />}
-              {change && <StatusLetter status={change.status} />}
-            </button>
-          </li>
-        );
-      })}
-    </ul>
+              </li>
+            );
+          }
+          const { item, depth } = row;
+          const change = changeMap.get(item.path);
+          const open = expanded.has(item.path);
+          const FolderIcon = open ? FolderOpen : Folder;
+          const hasChangeInside = item.is_directory && changedFolders.has(item.path);
+          const icon = item.is_directory ? (
+            <FolderIcon aria-hidden className={cn("h-4 w-4 shrink-0", change ? STATUS_TONE[change.status] : "text-muted-foreground")} />
+          ) : (
+            <FileTypeIcon path={item.name} />
+          );
+          if (renaming === item.path) {
+            return (
+              <li key={item.path} role="none">
+                <NameField initial={item.name} depth={depth} icon={icon} onSubmit={(name) => void rename(item.path, name)} onCancel={() => setRenaming(null)} />
+              </li>
+            );
+          }
+          const current = !item.is_directory && item.path === activePath;
+          return (
+            <li key={item.path} role="treeitem" aria-expanded={item.is_directory ? open : undefined} aria-selected={current || undefined}>
+              <button
+                type="button"
+                draggable
+                onDragStart={(event) => startFileDrag(event, absolute(item.path))}
+                onClick={() => {
+                  setFocused(item.path);
+                  if (item.is_directory) toggle(item.path);
+                  else editor.openFile(workspaceId, item.path);
+                }}
+                onDoubleClick={() => !item.is_directory && editor.openFile(workspaceId, item.path, { preview: false })}
+                onKeyDown={(event) => onRowKey(event, item)}
+                onContextMenu={(event) => openMenu(event, item.path, item.is_directory)}
+                data-testid="explorer-tree-row"
+                data-path={item.path}
+                data-active={current || undefined}
+                title={item.path}
+                style={{ paddingLeft: 10 + depth * 14 }}
+                className={cn(
+                  "flex h-7 w-full items-center gap-1.5 pr-3 text-left text-[13px] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none",
+                  current && "bg-secondary",
+                  focused === item.path && "ring-1 ring-inset ring-ring/50",
+                )}
+              >
+                <ChevronRight
+                  aria-hidden
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                    !item.is_directory && "invisible",
+                    open && "rotate-90",
+                  )}
+                />
+                {icon}
+                <span className={cn("min-w-0 flex-1 truncate", change ? STATUS_TONE[change.status] : "text-foreground/90")}>{item.name}</span>
+                {loading.has(item.path) && <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
+                {hasChangeInside && !change && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success/80" aria-hidden />}
+                {change && <StatusLetter status={change.status} />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <ThreadPopover anchor={menuAnchor} open={menu !== null} onClose={() => setMenu(null)} label={t("ide_side_panel.explorer.menu_label")} width={240}>
+        {menu && (
+          <div role="menu" data-testid="explorer-menu">
+            <ThreadMenuItem icon={<FilePlus className="h-4 w-4" />} label={t("ide_side_panel.explorer.new_file")} onSelect={pick(() => onCreate(menuFolder, "file"))} />
+            <ThreadMenuItem icon={<FolderPlus className="h-4 w-4" />} label={t("ide_side_panel.explorer.new_folder")} onSelect={pick(() => onCreate(menuFolder, "directory"))} />
+            {menu.path && (
+              <>
+                <ThreadMenuSeparator />
+                {!menu.isDirectory && (
+                  <ThreadMenuItem icon={<SquarePen className="h-4 w-4" />} label={t("ide_side_panel.explorer.open_editor")} onSelect={pick(() => editor.openFile(workspaceId, menu.path, { preview: false }))} />
+                )}
+                {stagedPane && (
+                  <ThreadMenuItem
+                    icon={<SquareArrowOutUpRight className="h-4 w-4" />}
+                    label={fill(t("ide_side_panel.explorer.reference_in"), { pane: stagedPane })}
+                    onSelect={pick(() => void attachToTerminal(stagedPane, { paths: [absolute(menu.path)] }).catch(fail))}
+                  />
+                )}
+                <ThreadMenuItem icon={<ExternalLink className="h-4 w-4" />} label={t("ide_side_panel.explorer.open_externally")} onSelect={pick(() => void openTerminalTarget(workspaceId, menu.path).catch(fail))} />
+                <ThreadMenuSeparator />
+                <ThreadMenuItem icon={<Copy className="h-4 w-4" />} label={t("ide_side_panel.explorer.copy_path")} onSelect={pick(() => copy(absolute(menu.path)))} />
+                <ThreadMenuItem icon={<span aria-hidden />} label={t("ide_side_panel.explorer.copy_relative_path")} onSelect={pick(() => copy(menu.path))} />
+                <ThreadMenuSeparator />
+                <ThreadMenuItem icon={<Pencil className="h-4 w-4" />} label={t("ide_side_panel.explorer.rename")} hint="F2" onSelect={pick(() => setRenaming(menu.path))} />
+                <ThreadMenuItem
+                  icon={<Trash2 className="h-4 w-4" />}
+                  label={t("ide_side_panel.explorer.delete")}
+                  hint="Del"
+                  danger
+                  onSelect={pick(() => setConfirm({ path: menu.path, isDirectory: menu.isDirectory, permanent: false }))}
+                />
+              </>
+            )}
+          </div>
+        )}
+      </ThreadPopover>
+
+      {confirm && (
+        <DeleteDialog
+          name={baseName(confirm.path)}
+          isDirectory={confirm.isDirectory}
+          permanent={confirm.permanent}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void remove(confirm.path, confirm.permanent)}
+        />
+      )}
+    </>
+  );
+}
+
+function DeleteDialog({
+  name,
+  isDirectory,
+  permanent,
+  onConfirm,
+  onCancel,
+}: {
+  name: string;
+  isDirectory: boolean;
+  permanent: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const confirmButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => confirmButton.current?.focus(), []);
+  const title = permanent ? "ide_side_panel.explorer.delete_permanent_title" : isDirectory ? "ide_side_panel.explorer.delete_folder_title" : "ide_side_panel.explorer.delete_file_title";
+  return (
+    <div
+      role="presentation"
+      className="fixed inset-0 z-[86] flex items-center justify-center bg-background/60 p-4"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onCancel();
+        }
+      }}
+    >
+      <section
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="explorer-delete-title"
+        data-testid="explorer-delete-dialog"
+        className="w-full max-w-sm rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-float"
+      >
+        <h2 id="explorer-delete-title" className="text-sm font-semibold text-foreground-strong">
+          {fill(t(title), { file: name })}
+        </h2>
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          {t(permanent ? "ide_side_panel.explorer.delete_permanent_body" : "ide_side_panel.explorer.delete_body")}
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="h-8 rounded-md px-3 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {t("ide_side_panel.explorer.cancel")}
+          </button>
+          <button
+            ref={confirmButton}
+            type="button"
+            onClick={onConfirm}
+            data-testid="explorer-delete-confirm"
+            className="h-8 rounded-md bg-destructive px-3 text-xs font-medium text-destructive-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t(permanent ? "ide_side_panel.explorer.delete_permanent" : "ide_side_panel.explorer.delete")}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -524,146 +940,4 @@ function sortEntries(entries: WorkspaceFileItem[]): WorkspaceFileItem[] {
           ? -1
           : 1,
     );
-}
-
-const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
-
-interface ViewerProps {
-  workspaceId: string;
-  path: string;
-  change: Map<string, ChangedFile>;
-  onBack: () => void;
-  onReference?: (relative: string) => void;
-  referenceLabel: string;
-  onOpenExternally: (path: string) => void;
-  absolute: (relative: string) => string;
-}
-
-/** One file: its diff when it changed, else its contents. */
-function FileViewer({ workspaceId, path, change, onBack, onReference, referenceLabel, onOpenExternally, absolute }: ViewerProps) {
-  const t = useT();
-  const [diff, setDiff] = useState<FileDiff | null>(null);
-  const [preview, setPreview] = useState<WorkspaceFilePreviewResponse | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let alive = true;
-    setDiff(null);
-    setPreview(null);
-    setError("");
-    void (async () => {
-      try {
-        const answer = await fetchFileDiff(workspaceId, path);
-        if (!alive) return;
-        setDiff(answer);
-        if (answer.hunks.length === 0 && !answer.binary && answer.status !== "deleted") {
-          const body = await fetchWorkspaceFilePreview(workspaceId, answer.path);
-          if (alive) setPreview(body);
-        }
-      } catch (err) {
-        if (alive) setError((err as Error).message);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [workspaceId, path]);
-
-  const relative = diff?.path ?? path;
-  const known = change.get(relative);
-  const status = diff && diff.status !== "unchanged" ? diff.status : known?.status;
-
-  return (
-    <section data-testid="explorer-viewer" data-path={relative} className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-border/60 px-2 py-2">
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onBack}
-            aria-label={t("ide_side_panel.explorer.back")}
-            title={t("ide_side_panel.explorer.back")}
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-          </button>
-          <span
-            draggable
-            onDragStart={(event) => startFileDrag(event, absolute(relative))}
-            title={t("ide_side_panel.explorer.drag_hint")}
-            className="flex min-w-0 flex-1 cursor-grab items-center gap-2"
-          >
-            <FileTypeIcon path={relative} />
-            <span className="flex min-w-0 flex-col leading-tight">
-              <span className={cn("truncate text-[13px] font-semibold", status ? STATUS_TONE[status as ChangeStatus] : "text-foreground")}>
-                {baseName(relative)}
-              </span>
-              {parentPath(relative) && <span className="truncate text-[10.5px] text-muted-foreground">{parentPath(relative)}</span>}
-            </span>
-          </span>
-          {diff && (diff.added > 0 || diff.removed > 0) && <ChangeCounts file={diff} />}
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
-          {onReference && (
-            <button
-              type="button"
-              data-testid="explorer-reference"
-              onClick={() => onReference(relative)}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <SquareArrowOutUpRight className="h-3.5 w-3.5" aria-hidden />
-              {referenceLabel}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onOpenExternally(relative)}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 px-2 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-            {t("ide_side_panel.explorer.open_externally")}
-          </button>
-        </div>
-      </div>
-      <div className="scrollbar-jarvis min-h-0 flex-1 overflow-auto">
-        {error ? (
-          <p className="px-4 py-3 text-xs text-destructive">{error}</p>
-        ) : !diff ? (
-          <p className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            {t("ide_side_panel.explorer.loading")}
-          </p>
-        ) : diff.binary ? (
-          IMAGE_EXTENSIONS.test(relative) && diff.status !== "deleted" ? (
-            <img src={workspaceFileUrl(workspaceId, relative)} alt={baseName(relative)} className="m-3 max-w-[calc(100%-24px)] rounded-md border border-border/60" />
-          ) : (
-            <p className="px-4 py-3 text-xs text-muted-foreground">{t("ide_side_panel.explorer.binary")}</p>
-          )
-        ) : diff.hunks.length > 0 ? (
-          <>
-            <DiffView hunks={diff.hunks} />
-            {diff.truncated && <p className="px-4 py-2 text-[11px] text-muted-foreground">{t("ide_side_panel.explorer.truncated")}</p>}
-          </>
-        ) : IMAGE_EXTENSIONS.test(relative) ? (
-          <img src={workspaceFileUrl(workspaceId, relative)} alt={baseName(relative)} className="m-3 max-w-[calc(100%-24px)] rounded-md border border-border/60" />
-        ) : preview?.text != null ? (
-          <div className="min-w-max py-1 font-mono text-[12px] leading-[1.55]">
-            <p className="px-3 pb-1 font-sans text-[11px] text-muted-foreground">{t("ide_side_panel.explorer.unchanged")}</p>
-            {preview.text.split("\n").map((line, index) => (
-              <div key={index} className="flex">
-                <span className="w-10 shrink-0 select-none pr-3 text-right tabular-nums text-muted-foreground/70">{index + 1}</span>
-                <span className="whitespace-pre pr-4 text-foreground/85">{line || " "}</span>
-              </div>
-            ))}
-          </div>
-        ) : preview ? (
-          <p className="px-4 py-3 text-xs text-muted-foreground">{t("ide_side_panel.explorer.binary")}</p>
-        ) : (
-          <p className="flex items-center gap-2 px-4 py-3 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            {t("ide_side_panel.explorer.loading")}
-          </p>
-        )}
-      </div>
-    </section>
-  );
 }
