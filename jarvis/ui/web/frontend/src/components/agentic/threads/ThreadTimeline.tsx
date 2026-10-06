@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowDown, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
+import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
@@ -379,7 +379,12 @@ function clock(ms: number): string {
 }
 
 function UserBubble({ item }: { item: UserItem }) {
+  const t = useT();
   return <div className="group flex flex-col items-end gap-1" data-testid="thread-user-message">
+    {item.author && <div className="flex items-center gap-1.5 pr-1 text-xs text-muted-foreground" data-testid="thread-message-author">
+      <Bot aria-hidden className="h-3.5 w-3.5 shrink-0" />
+      <span className="truncate">{t("society.chat.coding_thread_author").replace("{0}", item.author.name)}</span>
+    </div>}
     <div className="max-w-[80%] rounded-2xl bg-secondary px-4 py-2.5 text-foreground">
       {item.attachments.length > 0 && <div className="mb-2 flex flex-wrap justify-end gap-2">
         {item.attachments.map((file) => file.url && file.kind === "image"

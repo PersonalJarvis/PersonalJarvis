@@ -187,6 +187,8 @@ export interface UserItem {
   /** Files that went in with this message; empty on an ordinary one. */
   attachments: UserAttachment[];
   toolChoices?: ToolChoice[];
+  /** A Jarvis agent wrote this message into a coding thread on the person's behalf. */
+  author?: { agentId: string; name: string };
   tsMs: number;
 }
 
@@ -293,6 +295,14 @@ export const EMPTY_TIMELINE: Timeline = {
 };
 
 /** The attachment receipts off one `user_message`, tolerant of any shape. */
+/** Who wrote a message on the person's behalf (`author` on `user_message`), if anyone. */
+function messageAuthor(raw: unknown): { agentId: string; name: string } | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const row = raw as Record<string, unknown>;
+  const name = typeof row.name === "string" ? row.name : "";
+  return name ? { agentId: typeof row.agent_id === "string" ? row.agent_id : "", name } : undefined;
+}
+
 function userAttachments(raw: unknown): UserAttachment[] {
   if (!Array.isArray(raw)) return [];
   const out: UserAttachment[] = [];
@@ -653,6 +663,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             type: "user",
             id: `u-${seq || ev.ts_ms}`,
             ...(p.origin === "control" ? { origin: "control" as const } : {}),
+            ...(messageAuthor(p.author) ? { author: messageAuthor(p.author) } : {}),
             // `typed` is present only when the message carried files, and it
             // is the person's own sentence; `text` is the composed prompt.
             text: str(p.typed) || str(p.text),
