@@ -438,3 +438,12 @@ def test_a_custom_name_is_reserved_against_pane_call_signs() -> None:
     custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")
     registry.refresh_custom_agents()
     assert "fixturecli" in registry.reserved_call_signs()
+
+
+def test_a_hyphenated_id_stays_a_spoken_alias_and_call_sign() -> None:
+    """A two-word name yields a hyphenated id; it must still be addressable."""
+    entry = custom_clis.create_custom_cli("Acme Coding", "acme")
+    registry.refresh_custom_agents()
+    assert entry.id == "acme-coding"
+    assert registry.spoken_aliases().get("acme-coding") == "acme-coding"
+    assert "acme-coding" in registry.reserved_call_signs()

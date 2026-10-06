@@ -108,6 +108,21 @@ def test_size_units_are_read_the_way_the_catalog_writes_them(
     assert library.parse_tags_html(markup, "x")[0]["size_gb"] == expected
 
 
+def test_tags_parser_prefers_the_rich_duplicate_over_intervening_age_text() -> None:
+    page = (
+        '<a href="/library/qwen3.5:4b">qwen3.5:4b</a>'
+        '<span>unrelated release 1 year ago</span>'
+        '<a href="/library/qwen3.5:4b">'
+        'qwen3.5:4b • 3.4GB • 256K context window • Text, Image input • 7 months ago'
+        '</a>'
+        '<a href="/library/qwen3.5:9b">qwen3.5:9b</a> 6.6GB'
+    )
+    tags = library.parse_tags_html(page, "qwen3.5")
+    small = next(item for item in tags if item["tag"] == "4b")
+    assert small["size_gb"] == 3.4
+    assert small["updated"] == "7 months ago"
+
+
 def test_tags_parser_reads_size_context_and_inputs(tags_page: str) -> None:
     latest = library.parse_tags_html(tags_page, "qwen3.5")[0]
     assert latest["id"] == "qwen3.5:latest"
