@@ -28,6 +28,7 @@ import {
   cleanTitle,
   degreeOf,
   groupOfKind,
+  readableSnippet,
   relativeAge,
   uniqueEdges,
   type LibraryItem,
@@ -120,7 +121,7 @@ export function WikiInspector(props: WikiInspectorProps) {
   const t = useT();
   return (
     <aside
-      className="flex h-full min-h-0 w-[320px] shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar"
+      className="flex h-full min-h-0 w-[280px] shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar 2xl:w-[320px]"
       data-testid={props.selectedSlug ? "wiki-inspector-page" : "wiki-backlinks-placeholder"}
       aria-label={t("wiki_ui.inspector_label")}
     >
@@ -188,7 +189,7 @@ function Block({
     >
       <header className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-base font-semibold text-foreground-strong">{title}</h2>
-        {aside && <div className="text-sm text-foreground-faint">{aside}</div>}
+        {aside && <div className="shrink-0 whitespace-nowrap text-sm text-foreground-faint">{aside}</div>}
       </header>
       {children}
     </section>
@@ -515,20 +516,6 @@ function HubsBlock({
 /* ------------------------------------------------------------------------ */
 /* Page context                                                              */
 /* ------------------------------------------------------------------------ */
-
-const SNIPPET_LINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
-
-/** Backlink snippets arrive with raw `[[target|label]]` markup; show words. */
-export function readableSnippet(snippet: string): string {
-  return snippet
-    .replace(SNIPPET_LINK_RE, (_m, target: string, label?: string) => {
-      const text = (label ?? target).trim();
-      const idx = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\"));
-      return idx >= 0 && !label ? text.slice(idx + 1) : text;
-    })
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function PageContext({
   slug,

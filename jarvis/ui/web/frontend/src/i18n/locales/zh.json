@@ -4184,7 +4184,7 @@
     "health_red": "无法工作",
     "health_unknown": "尚未检查",
     "health_chip_title": "显示记忆状态",
-    "capture_title": "从对话中捕获",
+    "capture_title": "捕获",
     "capture_window": "最近 {0} 小时",
     "capture_quiet": "此时间段内没有捕获任何内容。",
     "hubs_title": "连接最多",

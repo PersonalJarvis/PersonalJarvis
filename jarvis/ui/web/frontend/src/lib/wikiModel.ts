@@ -55,7 +55,7 @@ export function groupOfKind(kind: string | undefined | null): WikiGroupId {
  */
 export function cleanTitle(title: string | null | undefined, fallback = ""): string {
   const raw = (title ?? "").trim();
-  const unquoted = raw.replace(/^["'“‘]+|["'”’]+$/g, "").trim();
+  const unquoted = raw.replace(/^["'\p{Pi}\p{Pf}]+|["'\p{Pi}\p{Pf}]+$/gu, "").trim();
   return unquoted || fallback;
 }
 
@@ -124,7 +124,7 @@ export function matchesFilter(item: LibraryItem, query: string): boolean {
 function normalise(value: string): string {
   return value
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .trim();
 }
@@ -328,4 +328,24 @@ export function traceKindShape(
 /** Shapes drawn hollow — a ring is a circle with its middle left open. */
 export function isHollowShape(shape: KindShape): boolean {
   return shape === "ring";
+}
+
+const SNIPPET_LINK_RE = /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g;
+
+/**
+ * Search and backlink snippets arrive as raw Markdown — `## Goal`, `**x**`,
+ * `[[target|label]]`. Show the words only.
+ */
+export function readableSnippet(snippet: string): string {
+  return snippet
+    .replace(SNIPPET_LINK_RE, (_m, target: string, label?: string) => {
+      if (label) return label.trim();
+      const text = target.trim();
+      const idx = Math.max(text.lastIndexOf("/"), text.lastIndexOf("\\"));
+      return idx >= 0 ? text.slice(idx + 1) : text;
+    })
+    .replace(/(^|\s)#{1,6}\s+/g, "$1")
+    .replace(/\*+|__|`/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }

@@ -18,7 +18,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { Search } from "lucide-react";
 
-import { cleanTitle, groupOfKind, type WikiGroupId } from "@/lib/wikiModel";
+import { cleanTitle, groupOfKind, readableSnippet, type WikiGroupId } from "@/lib/wikiModel";
 import { KindGlyph } from "@/components/wiki/KindGlyph";
 import { useT } from "@/i18n";
 
@@ -235,6 +235,22 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
   });
   const recent = useMemo(() => selectRecentPages(tree), [tree]);
 
+  // The palette's own selection. cmdk picks its first row only when it does
+  // the filtering itself; with the backend ranking the hits it would leave
+  // nothing selected, so Enter right after typing did nothing.
+  const [selectedValue, setSelectedValue] = useState("");
+  const firstValue =
+    debouncedQuery.length === 0
+      ? recent[0]
+        ? `recent:${recent[0].slug}`
+        : ""
+      : data?.ok && data.hits[0]
+        ? `hit:${data.hits[0].slug}`
+        : "";
+  useEffect(() => {
+    setSelectedValue(firstValue);
+  }, [firstValue]);
+
   const handlePick = useCallback(
     (slug: string) => {
       onResultClick(slug);
@@ -249,6 +265,8 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
     <Command.Dialog
       open={open}
       onOpenChange={setOpen}
+      value={selectedValue}
+      onValueChange={setSelectedValue}
       label={t("wiki_search.dialog_label")}
       // The backend already ranked these hits (FTS5/BM25 over full page
       // bodies). cmdk's built-in filter would score them a SECOND time
@@ -350,7 +368,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
                   <span className="ml-auto truncate text-sm text-foreground-faint">{hit.path}</span>
                 </span>
                 <span className="line-clamp-2 pl-5 text-sm text-muted-foreground">
-                  {highlightSnippet(hit.snippet, highlightPattern)}
+                  {highlightSnippet(readableSnippet(hit.snippet), highlightPattern)}
                 </span>
               </Command.Item>
             ))}

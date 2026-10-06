@@ -70,7 +70,7 @@ export function WikiLibrary({
 
   return (
     <aside
-      className="flex h-full min-h-0 w-[272px] shrink-0 flex-col border-r border-border bg-sidebar"
+      className="flex h-full min-h-0 w-[240px] shrink-0 flex-col border-r border-border bg-sidebar 2xl:w-[272px]"
       data-testid="wiki-tree-sidebar"
       aria-label={t("wiki_ui.library_label")}
     >
