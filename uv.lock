@@ -1650,6 +1650,18 @@ wheels = [
 ]
 
 [[package]]
+name = "jedi"
+version = "0.20.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "parso" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/46/b7/a3635f6a2d7cf5b5dd98064fc1d5fbbafcb25477bcea204a3a92145d158b/jedi-0.20.0.tar.gz", hash = "sha256:c3f4ccbd276696f4b19c54618d4fb18f9fc24b0aef02acf704b23f487daa1011", size = 3119416, upload-time = "2026-05-01T23:38:47.814Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/93/242e2eab5fe682ffcb8b0084bde703a41d51e17ee0f3a31ff0d9d813620a/jedi-0.20.0-py2.py3-none-any.whl", hash = "sha256:7bdd9c2634f56713299976f4cbd59cb3fa92165cc5e05ea811fb253480728b67", size = 4884812, upload-time = "2026-05-01T23:38:43.919Z" },
+]
+
+[[package]]
 name = "jeepney"
 version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2775,6 +2787,15 @@ wheels = [
 ]
 
 [[package]]
+name = "parso"
+version = "0.8.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/30/4b/90c937815137d43ce71ba043cd3566221e9df6b9c805f24b5d138c9d40a7/parso-0.8.7.tar.gz", hash = "sha256:eaaac4c9fdd5e9e8852dc778d2d7405897ec510f2a298071453e5e3a07914bb1", size = 401824, upload-time = "2026-05-01T23:13:02.138Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/99/5d/8268b644392ee874ee82a635cd0df1773de230bde356c38de28e298392cc/parso-0.8.7-py2.py3-none-any.whl", hash = "sha256:a8926eb2a1b915486941fdbd31e86a4baf88fe8c210f25f2f35ecec5b574ca1c", size = 107025, upload-time = "2026-05-01T23:12:58.867Z" },
+]
+
+[[package]]
 name = "pathspec"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2806,6 +2827,7 @@ dependencies = [
     { name = "asyncssh", extra = ["bcrypt"] },
     { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
     { name = "av", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "charset-normalizer" },
     { name = "click" },
     { name = "croniter" },
     { name = "cryptography" },
@@ -2816,6 +2838,7 @@ dependencies = [
     { name = "gitpython" },
     { name = "google-genai" },
     { name = "httpx" },
+    { name = "jedi" },
     { name = "jinja2" },
     { name = "json-repair" },
     { name = "keyring" },
@@ -2845,6 +2868,7 @@ dependencies = [
     { name = "rich" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "send2trash" },
     { name = "sounddevice" },
     { name = "structlog" },
     { name = "tenacity" },
@@ -3004,6 +3028,7 @@ requires-dist = [
     { name = "av", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'local-voice'", specifier = "==15.1.0" },
     { name = "av", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'tts-eval'", specifier = "==15.1.0" },
     { name = "av", marker = "(platform_machine != 'ARM64' and extra == 'desktop') or (sys_platform != 'win32' and extra == 'desktop')", specifier = ">=14" },
+    { name = "charset-normalizer", specifier = ">=3.4" },
     { name = "click", specifier = ">=8.1" },
     { name = "comtypes", marker = "sys_platform == 'win32' and extra == 'desktop'", specifier = ">=1.2" },
     { name = "croniter", specifier = ">=6.0" },
@@ -3020,6 +3045,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.100" },
+    { name = "jedi", specifier = ">=0.19" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "json-repair", specifier = ">=0.30" },
     { name = "keyring", specifier = ">=25.5" },
@@ -3079,6 +3105,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "scipy", specifier = ">=1.14" },
+    { name = "send2trash", specifier = ">=1.8.3" },
     { name = "sherpa-onnx", marker = "(platform_machine != 'ARM64' and extra == 'local-voice') or (sys_platform != 'win32' and extra == 'local-voice')", specifier = ">=1.13.3" },
     { name = "sounddevice", specifier = ">=0.5" },
     { name = "structlog", specifier = ">=24.4" },
@@ -4763,6 +4790,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "send2trash"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/f0/184b4b5f8d00f2a92cf96eec8967a3d550b52cf94362dad1100df9e48d57/send2trash-2.1.0.tar.gz", hash = "sha256:1c72b39f09457db3c05ce1d19158c2cbef4c32b8bedd02c155e49282b7ea7459", size = 17255, upload-time = "2026-01-14T06:27:36.056Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/78/504fdd027da3b84ff1aecd9f6957e65f35134534ccc6da8628eb71e76d3f/send2trash-2.1.0-py3-none-any.whl", hash = "sha256:0da2f112e6d6bb22de6aa6daa7e144831a4febf2a87261451c4ad849fe9a873c", size = 17610, upload-time = "2026-01-14T06:27:35.218Z" },
 ]
 
 [[package]]
