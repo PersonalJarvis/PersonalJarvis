@@ -25,9 +25,18 @@ export interface AppActionCatalog {
   count: number;
 }
 
+export type ActionKind = "read" | "change" | "delete";
+
 export interface AppActionHistoryRow {
   action: string;
+  /** A readable name: the catalog's or the voice command's title, else the raw id. */
   title: string;
+  description: string;
+  area: string;
+  /** Empty when the action is no longer known to the app. */
+  kind: ActionKind | "";
+  /** The catalog entry whose permission governs this action, if any. */
+  catalog_id: string | null;
   outcome: "ran" | "failed" | "blocked";
   detail: string;
   via: string;
