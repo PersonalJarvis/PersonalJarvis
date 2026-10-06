@@ -7,14 +7,20 @@ Identity rules (agent-definition §2, §6):
   the one invariant that keeps "one agent, one chat" true forever.
 * ``agent_id`` is a slug derived from the name once and never changes; the
   canonical chat id is ``society:<agent_id>`` (a pure function, no column).
+  An agent created without a name (one-click creation) gets a placeholder
+  name and a random ``agent-<hex>`` id instead, because it names itself from
+  its first conversation and the id must outlive that rename.
+* Every new agent without an explicit avatar gets a random companion look.
 * Exactly one ``lead`` exists and it is Jarvis; creating another lead is
   refused with a typed reason.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import secrets
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
@@ -22,7 +28,7 @@ from typing import Any, Final
 
 from pydantic import ValidationError
 
-from .companion import validate_avatar_companion
+from .companion import random_companion, validate_avatar_companion
 from .events import (
     AgentApprovalMode,
     AgentState,
@@ -43,8 +49,10 @@ __all__ = [
     "Roster",
     "RosterError",
     "PAIR_SESSION_MARKER",
+    "FRESH_NAMES",
     "canonical_session_id",
     "conversation_session_id",
+    "is_fresh",
     "pair_session_id",
     "slugify",
 ]
@@ -54,6 +62,14 @@ LEAD_AGENT_ID: Final[str] = "jarvis"
 _NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[^/\\:@#<>\"'`]{1,40}$")
 _MAX_TITLE: Final[int] = 120
 _MAX_DESCRIPTION: Final[int] = 20_000
+
+#: Placeholder names for an agent created with one click. Short, neutral and
+#: readable in every UI language; the agent proposes its real name in its
+#: first conversation.
+FRESH_NAMES: Final[tuple[str, ...]] = (
+    "Nova", "Juno", "Iris", "Kite", "Lumen", "Sage", "Vega", "Wren", "Orion", "Milo",
+    "Luna", "Finn", "Mira", "Otto", "Ruby", "Theo", "Zara", "Ivy", "Leo", "Nia",
+)
 
 
 class RosterError(ValueError):
@@ -73,6 +89,19 @@ def slugify(name: str) -> str:
     return text or "agent"
 
 
+def is_fresh(agent: AgentRecord) -> bool:
+    """An agent that does not know its role yet: no title and no description.
+
+    One-click creation produces such an agent; its briefing then asks it to
+    introduce itself and propose an identity (agent-definition §6).
+    """
+    return (
+        str(agent.tier) == "specialist"
+        and not agent.title.strip()
+        and not agent.description.strip()
+    )
+
+
 def canonical_session_id(agent_id: str) -> str:
     """The agent's one forever-chat on the agent_chat store."""
     return f"society:{agent_id}"
@@ -81,27 +110,27 @@ def canonical_session_id(agent_id: str) -> str:
 #: Marks the receiver's own chat for one counterpart:
 #: ``society:<receiver>:with:<sender>``.
 PAIR_SESSION_MARKER: Final[str] = ":with:"
-_SLUG_RE: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
 def pair_session_id(agent_id: str, counterpart_id: str) -> str:
-    """The chat ``agent_id`` works in on messages from ``counterpart_id``.
+    """The id of an older conversation chat with ``counterpart_id``.
 
-    Jarvis and the teammates talk in their own conversation, never in the
-    chat a person has with the agent: that chat stays the person's.
+    Before 2026-10-05 Jarvis and teammates talked to an agent in such a side
+    chat. None is created any more; the id only names the ones that exist so
+    they stay readable in the archive.
     """
     return f"{canonical_session_id(agent_id)}{PAIR_SESSION_MARKER}{counterpart_id}"
 
 
 def conversation_session_id(agent_id: str, sender_id: str) -> str:
-    """Where a message from ``sender_id`` to ``agent_id`` runs.
+    """Where a message from ``sender_id`` to ``agent_id`` runs: its one chat.
 
-    The person (``user``) speaks in the agent's canonical chat; Jarvis and
-    every other agent get the pair chat of that sender.
+    A created agent has one endless chat (MASTERPLAN §2.10). Messages from
+    Jarvis and teammates run there too and render as delegation cards; the
+    sender rides on the message itself, not in the session id.
     """
-    if sender_id == "user" or sender_id == agent_id or not _SLUG_RE.fullmatch(sender_id):
-        return canonical_session_id(agent_id)
-    return pair_session_id(agent_id, sender_id)
+    del sender_id  # every sender reaches the same chat
+    return canonical_session_id(agent_id)
 
 
 def _loads(value: Any, default: Any) -> Any:
@@ -446,6 +475,9 @@ class Roster:
         #: is on the very next turn's card.
         self._snapshot: tuple[AgentRecord, ...] = ()
         self._epoch: int = 0
+        #: Serializes creation: the free-name and free-id checks and the
+        #: insert must not interleave between two concurrent creates.
+        self._create_lock = asyncio.Lock()
 
     def snapshot(self) -> list[AgentRecord]:
         """The roster as last read — synchronous, no IO; ``[]`` before the first read."""
@@ -464,10 +496,28 @@ class Roster:
         self._snapshot = tuple(agents)
         self._epoch += 1
 
+    async def _placeholder_name(self) -> str:
+        """A free name from :data:`FRESH_NAMES`, else ``Agent <n>``."""
+        pool = list(FRESH_NAMES)
+        secrets.SystemRandom().shuffle(pool)
+        for candidate in pool:
+            if await self._store.get_agent_row_by_name(candidate) is None:
+                return candidate
+        number = 2
+        while await self._store.get_agent_row_by_name(f"Agent {number}") is not None:
+            number += 1
+        return f"Agent {number}"
+
+    async def _fresh_agent_id(self) -> str:
+        while True:
+            candidate = f"agent-{secrets.token_hex(4)}"
+            if await self._store.get_agent_row(candidate) is None:
+                return candidate
+
     async def create(
         self,
         *,
-        name: str,
+        name: str | None = None,
         title: str = "",
         description: str = "",
         tier: Tier | str = Tier.SPECIALIST,
@@ -476,14 +526,36 @@ class Roster:
         """Create an agent; returns ``(record, created)``.
 
         An existing name adopts the row (``created=False``) and leaves it
-        untouched — the caller decides whether to PATCH.
+        untouched — the caller decides whether to PATCH. Without a name the
+        agent is created fresh: placeholder name, random id (see module doc).
         """
-        clean_name = _validate_name(name)
-        existing = await self._store.get_agent_row_by_name(clean_name)
-        if existing is not None:
-            return await self._hydrate(existing), False
+        async with self._create_lock:
+            return await self._create(
+                name=name, title=title, description=description, tier=tier, **fields
+            )
+
+    async def _create(
+        self,
+        *,
+        name: str | None,
+        title: str,
+        description: str,
+        tier: Tier | str,
+        **fields: Any,
+    ) -> tuple[AgentRecord, bool]:
         tier_value = Tier(_enum(Tier, tier, "tier"))
-        agent_id = slugify(clean_name)
+        unnamed = not str(name or "").strip()
+        if unnamed:
+            if tier_value is Tier.LEAD:
+                raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead is always Jarvis")
+            clean_name = await self._placeholder_name()
+            agent_id = await self._fresh_agent_id()
+        else:
+            clean_name = _validate_name(str(name))
+            existing = await self._store.get_agent_row_by_name(clean_name)
+            if existing is not None:
+                return await self._hydrate(existing), False
+            agent_id = slugify(clean_name)
         if tier_value is Tier.LEAD and agent_id != LEAD_AGENT_ID:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "exactly one lead exists and it is Jarvis"
@@ -524,6 +596,8 @@ class Roster:
         }
         if tier_value is Tier.ORCHESTRATOR:
             row["max_concurrent_runs"] = 3
+        if tier_value is not Tier.LEAD and not fields.get("avatar"):
+            fields = {**fields, "avatar": {"companion": random_companion()}}
         for key, value in fields.items():
             if key not in _EDITABLE or key in ("title", "description", "tier"):
                 raise RosterError(FailureReason.BLOCKED_BY_POLICY, f"unknown field {key}")

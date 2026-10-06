@@ -40,10 +40,10 @@ async def test_two_delegations_return_after_completion_without_blocking_conversa
     assert not live.calls  # Dispatch is acknowledged before either agent has finished.
     pipeline._turn_state = TurnTakingState.USER_SPEAKING
     for name in ("scout", "archivist"):
-        await chat.queues[f"society:{name}:with:jarvis"].put({
+        await chat.queues[f"society:{name}"].put({
             "kind": "assistant_text", "payload": {"text": f"Recorded {name} findings."},
         })
-        await chat.queues[f"society:{name}:with:jarvis"].put({
+        await chat.queues[f"society:{name}"].put({
             "kind": "turn_finished", "payload": {"status": "completed"},
         })
     await asyncio.wait_for(asyncio.gather(*list(runtime._watchers)), timeout=3)
@@ -71,7 +71,7 @@ async def test_agent_question_is_returned_and_turn_end_does_not_claim_success(wo
         text="Which repository do you mean?", trace_id=request.trace_id,
         parent_event_id=request.event_id,
     )
-    await chat.queues["society:scout:with:jarvis"].put({
+    await chat.queues["society:scout"].put({
         "kind": "turn_finished", "payload": {"status": "completed"},
     })
     await asyncio.wait_for(asyncio.gather(*list(runtime._watchers)), timeout=3)

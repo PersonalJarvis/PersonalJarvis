@@ -1,6 +1,7 @@
 """Validated visual companion settings inside the existing avatar JSON envelope."""
 
-from typing import Annotated, Any, Literal
+import secrets
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -8,6 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 # stay open-ended so a look saved by a newer build survives an older one.
 AccessorySlot = Literal["back", "outfit", "neck", "mouth", "face", "head", "held"]
 AccessoryId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,40}$")]
+
+#: Mirrors ``COMPANION_SHAPES`` / ``COMPANION_COLORS`` in the frontend's
+#: ``components/society/companion/appearance.ts`` (parity test pins both).
+COMPANION_SHAPES: Final[tuple[str, ...]] = (
+    "circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop",
+)
+COMPANION_COLORS: Final[tuple[str, ...]] = (
+    "#8b5cf6", "#c5dfd4", "#f2a65a", "#7ab6ef", "#ed91aa", "#b7cb78", "#bba7ed", "#79c7c4",
+)
 
 
 class CompanionAppearance(BaseModel):
@@ -22,6 +32,20 @@ class CompanionAppearance(BaseModel):
     accessories: dict[AccessorySlot, AccessoryId] = Field(default_factory=dict)
     sizeM: float = Field(default=0.5, ge=0.25, le=0.8)
     followDistanceM: float = Field(default=1.0, ge=0.5, le=2.0)
+
+
+def random_companion() -> dict[str, Any]:
+    """A random, valid companion look for a newly created agent."""
+    rng = secrets.SystemRandom()
+    look = CompanionAppearance(
+        shape=rng.choice(COMPANION_SHAPES),  # type: ignore[arg-type]
+        color=rng.choice(COMPANION_COLORS),
+        eyes=rng.choice(("dots", "lines")),  # type: ignore[arg-type]
+    ).model_dump()
+    # A new agent wears nothing yet; store it the way a bare look is stored.
+    if not look.get("accessories"):
+        look.pop("accessories", None)
+    return look
 
 
 def validate_avatar_companion(avatar: dict[str, Any]) -> dict[str, Any]:

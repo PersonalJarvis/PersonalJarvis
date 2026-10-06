@@ -16,7 +16,7 @@ import { BrowserProfilesButton } from "@/components/society/browser/BrowserProfi
 import { BUILDING_CARDS, isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
 import { DeferredSocietyDialog } from "@/components/society/card/DeferredSocietyDialog";
 import type { PlaceId } from "@/components/society/world/islandLayout";
-import { useSocietyRoster } from "@/components/society/data";
+import { useQuickCreateAgent, useSocietyRoster } from "@/components/society/data";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { ChatGroupPanel } from "@/components/society/chat/ChatGroupPanel";
@@ -38,8 +38,6 @@ const JarvisAgentsBoard = lazy(() =>
 // Do not evaluate either dialog's 3D dependencies until someone opens it.
 const loadBuildingDialog = () => import("@/components/society/card/BuildingCardOverlay")
   .then((module) => ({ default: module.BuildingCardOverlay }));
-const loadCreateDialog = () => import("@/components/society/create/CreateAgentDialog")
-  .then((module) => ({ default: module.CreateAgentDialog }));
 
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
@@ -61,6 +59,8 @@ export function SocietyView() {
   const openGroup = groups.find((group) => group.group_id === openGroupId) ?? null;
   const [openAgentId, setOpenAgentId] = useState<string | null>(storedLastAgentId);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const quickCreate = useQuickCreateAgent();
   const [groupError, setGroupError] = useState("");
   const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
 
@@ -117,19 +117,27 @@ export function SocietyView() {
     }
   }, [agents, openAgentId]);
 
-  // The new agent is already on the rail (the create patched the roster), so
-  // it opens straight away — the person's next step is almost always with it.
-  const onCreated = useCallback((agentId: string) => {
-    setCreating(false);
-    selectAgent(agentId);
-  }, [selectAgent]);
-
   const [fullscreenError, setFullscreenError] = useState(false);
   const switchMode = useCallback((next: "agents" | "world") => {
     setMode(next);
     setFullscreenError(false);
     if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
   }, []);
+
+  // One click creates the agent and opens its chat: no form first. The agent
+  // introduces itself there and proposes its own name and role.
+  const createAgent = useCallback(() => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError("");
+    void quickCreate()
+      .then((agent) => {
+        selectAgent(agent.agentId);
+        switchMode("agents");
+      })
+      .catch((error) => setCreateError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setCreating(false));
+  }, [creating, quickCreate, selectAgent, switchMode]);
 
   useEffect(() => {
     // A reload starts in Agents; restore a native window left fullscreen by it.
@@ -141,7 +149,7 @@ export function SocietyView() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace && !creating) switchMode("agents");
+      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace) switchMode("agents");
     };
     const onFullscreen = () => {
       if (!document.fullscreenElement && !inDesktopShell() && !isProtectedMarsInteraction(document.activeElement)) setMode("agents");
@@ -152,7 +160,7 @@ export function SocietyView() {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("fullscreenchange", onFullscreen);
     };
-  }, [mode, creating, switchMode, openPlace]);
+  }, [mode, switchMode, openPlace]);
 
   const onIslandSelect = useCallback((agentId: string | null) => {
     if (agentId) {
@@ -202,13 +210,14 @@ export function SocietyView() {
         )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {groupError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{groupError}</p>}
+        {createError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{createError}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
-            <CanvasActivity.Provider value={!openPlace && !creating}>
+            <CanvasActivity.Provider value={!openPlace}>
               <Suspense fallback={null}>
                 <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")}
-                  onCreateAgent={() => setCreating(true)} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
+                  onCreateAgent={createAgent} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>
@@ -218,19 +227,19 @@ export function SocietyView() {
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         {openGroup ? (
           <ChatGroupPanel group={openGroup} groups={groups} roster={agents} onOpenAgent={selectAgent} onOpenGroup={selectGroup}
-            onCreateAgent={() => setCreating(true)} onDeleted={() => setOpenGroupId(null)}
+            onCreateAgent={createAgent} onDeleted={() => setOpenGroupId(null)}
             onGroupAgents={groupAgents} onAddAgentToGroup={addAgentToGroup} />
         ) : openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
             groups={groups} onSelectGroup={selectGroup}
             onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
-            sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
+            sample={sample} onSelectAgent={selectAgent} onCreate={createAgent}
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
             groups={groups} onOpenGroup={selectGroup}
             onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
-            activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left"
+            activeAgentId={null} onOpen={selectAgent} onCreate={createAgent} side="left"
             className="w-full border-0 jarvis-nav-surface" />
         )}
         </div>
@@ -244,15 +253,9 @@ export function SocietyView() {
           onClose: () => setOpenPlace(null),
           onCreateAgent: () => {
             setOpenPlace(null);
-            setCreating(true);
+            createAgent();
           },
         }}
-      />}
-      {creating && <DeferredSocietyDialog
-        load={loadCreateDialog}
-        title={t("society.create.title")}
-        onClose={() => setCreating(false)}
-        dialogProps={{ open: true, onClose: () => setCreating(false), onCreated }}
       />}
     </div>
   );

@@ -110,7 +110,9 @@ def _validated_chat_runner(
 
 
 class CreateAgentBody(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    #: Empty = one-click creation: placeholder name, random look, and the agent
+    #: proposes its own identity in its first conversation.
+    name: str | None = Field(default=None, max_length=40)
     title: str = ""
     description: str = ""
     tier: str = "specialist"
@@ -443,6 +445,9 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
 
     try:
         session = ensure_session(svc, rt.config(), agent)
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session.session_id)
     except PermissionError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}

@@ -1,10 +1,10 @@
-"""Jarvis and the agents talk in their own conversation chats.
+"""A created agent has one endless chat, and everyone reaches it there.
 
-Live bug 2026-10-02: when Jarvis (or a teammate) messaged an agent, the message
-and the agent's whole work turn landed in the person's own chat with that
-agent. Every sender now gets its own chat on the receiving side,
-``society:<agent>:with:<sender>``, with the agent's full identity: the same
-seat, tools, memory and briefing as the person's chat.
+From 2026-10-02 to 2026-10-05 every sender got its own side chat on the
+receiving agent (``society:<agent>:with:<sender>``). Agents v2 (MASTERPLAN
+§2.10) folds that back into one chat: work from Jarvis and teammates runs in
+``society:<agent>`` and renders as delegation cards. Side chats written before
+the change stay readable and keep resolving to their agent.
 """
 
 from __future__ import annotations
@@ -81,14 +81,11 @@ def _runtime(tmp_path: Path, svc: TurnService) -> SocietyRuntime:
     )
 
 
-def test_session_ids_name_the_owner_and_the_counterpart():
+def test_every_sender_reaches_the_agents_one_chat():
+    for sender in ("jarvis", "nova", "user", ""):
+        assert conversation_session_id("scout", sender) == canonical_session_id("scout")
+    # Older side chats keep their names and still resolve to their agent.
     assert pair_session_id("scout", "jarvis") == "society:scout:with:jarvis"
-    assert conversation_session_id("scout", "jarvis") == "society:scout:with:jarvis"
-    assert conversation_session_id("scout", "nova") == "society:scout:with:nova"
-    # The person always speaks in the agent's own chat.
-    assert conversation_session_id("scout", "user") == canonical_session_id("scout")
-    assert conversation_session_id("scout", "") == "society:scout"
-    # Every chat of an agent resolves to that agent's identity (tools, memory, briefing).
     assert agent_id_of("society:scout:with:jarvis") == "scout"
     assert agent_id_of("society:scout:with:mail-bot") == "scout"
     assert agent_id_of("society:scout:routine:t1:r1") == "scout"
@@ -97,7 +94,7 @@ def test_session_ids_name_the_owner_and_the_counterpart():
     assert counterpart_of("society:scout") is None
 
 
-async def test_jarvis_assignment_runs_in_its_own_chat_not_the_persons(tmp_path: Path):
+async def test_jarvis_assignment_runs_in_the_agents_one_chat(tmp_path: Path):
     svc = TurnService(AgentChatStore(tmp_path / "agent_chat.db"))
     rt = _runtime(tmp_path, svc)
     await rt.ensure_started()
@@ -106,18 +103,19 @@ async def test_jarvis_assignment_runs_in_its_own_chat_not_the_persons(tmp_path: 
         env = await rt.say(
             from_agent="jarvis", to_agent="scout", text="Find a VPS.", msg_type=MsgType.ASSIGN
         )
-        assert [sid for sid, _ in svc.sent] == ["society:scout:with:jarvis"]
-        assert svc.store.get_session("society:scout") is None
-        pair = svc.store.get_session("society:scout:with:jarvis")
-        assert pair is not None and pair.surface == "society"
-        assert pair.provider == "openai" and pair.model == "gpt-5.2"
-        assert pair.title.startswith("Scout · ")
+        assert [sid for sid, _ in svc.sent] == ["society:scout"]
+        assert svc.sent[0][1].startswith("[assignment from jarvis]")
+        assert svc.store.get_session("society:scout:with:jarvis") is None
+        chat = svc.store.get_session("society:scout")
+        assert chat is not None and chat.surface == "society"
+        assert chat.provider == "openai" and chat.model == "gpt-5.2"
+        assert chat.title == "Scout"
 
-        await svc.finish("society:scout:with:jarvis", "Hetzner wins.")
+        await svc.finish("society:scout", "Hetzner wins.")
         await asyncio.sleep(0.05)
         result = (await rt.store.events_for_trace(env.trace_id))[-1]
         assert result.msg_type is MsgType.RESULT
-        assert result.payload["output"] == ["chat:society:scout:with:jarvis"]
+        assert result.payload["output"] == ["chat:society:scout"]
     finally:
         await rt.close()
 
@@ -142,16 +140,16 @@ async def test_messages_wait_while_the_agent_works_in_any_chat(tmp_path: Path):
         await rt.roster.create(name="Scout", provider="openai")
         await rt.roster.create(name="Nova", provider="openai")
         rt.set_deliver(make_deliver_hook(lambda: svc, rt.config))
-        # Scout works in its conversation with Jarvis: Nova's message waits,
-        # so two message turns never share Scout's seat and workspace.
-        svc.busy.add("society:scout:with:jarvis")
+        # Scout works in its chat: Nova's message waits, so two message turns
+        # never share Scout's seat and workspace.
+        svc.busy.add("society:scout")
         await rt.say(from_agent="nova", to_agent="scout", text="second")
         await rt.scheduler.drain_deliveries()
         assert svc.sent == []
         svc.busy.clear()
         await rt.scheduler.drain_deliveries()
-        assert [sid for sid, _ in svc.sent] == ["society:scout:with:nova"]
-        assert svc.store.get_session("society:scout") is None
+        assert [sid for sid, _ in svc.sent] == ["society:scout"]
+        assert svc.store.get_session("society:scout:with:nova") is None
     finally:
         await rt.close()
 
@@ -222,7 +220,7 @@ def test_mcp_session_header_accepts_conversation_chats():
     assert ref("society:scout:with:../x") is None
 
 
-async def test_conversations_route_lists_an_agents_chats(tmp_path: Path):
+async def test_conversations_route_lists_only_older_side_chats(tmp_path: Path):
     import httpx
 
     from jarvis.ui.web import society_routes
@@ -234,6 +232,14 @@ async def test_conversations_route_lists_an_agents_chats(tmp_path: Path):
         await rt.roster.create(name="Scout", provider="openai")
         await rt.roster.create(name="Nova", provider="openai")
         rt.set_deliver(make_deliver_hook(lambda: svc, rt.config))
+        # Side chats written before the one-chat change stay listed and readable.
+        for sid in ("society:scout:with:jarvis", "society:scout:with:nova",
+                    "society:nova:with:jarvis"):
+            svc.store.create_session(
+                session_id=sid, surface="society", provider="openai", model="",
+                effort="", cwd=str(tmp_path), permission_mode="bypass", title=sid,
+            )
+        # New messages never open another side chat.
         for sender, target in (("jarvis", "scout"), ("nova", "scout"), ("jarvis", "nova")):
             await rt.say(from_agent=sender, to_agent=target, text="hi")
         svc.approvals["society:scout:with:nova"] = ["approval-1"]
