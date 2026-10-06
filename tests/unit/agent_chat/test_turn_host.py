@@ -517,3 +517,37 @@ def test_the_app_start_does_nothing_outside_a_real_app_process() -> None:
 
     host_mode.reset()
     assert agent_chat_routes.schedule_turn_reattach(SimpleNamespace()) is None
+
+
+# Prints its result line, then keeps reading stdin until it is closed.
+_RESULT_THEN_WAIT = (
+    "import json, sys\n"
+    "print(json.dumps({'type': 'result', 'subtype': 'success'}), flush=True)\n"
+    "sys.stdin.read()\n"
+)
+
+
+async def test_the_host_closes_stdin_after_the_result_when_no_app_is_attached(
+    tmp_path: Path,
+) -> None:
+    host, task, port = await _start_host(tmp_path)
+    try:
+        client = await _client(port)
+        cli = await client.spawn(
+            [sys.executable, "-c", _RESULT_THEN_WAIT],
+            cwd=str(tmp_path),
+            env=None,
+            stdin="prompt\n",
+            keep_stdin=True,
+            meta={"turn_id": "t6"},
+            close_stdin_on="result",
+        )
+        client.detach()  # the app is gone before the CLI even answered
+        for _ in range(200):
+            turn = host._turns.get(cli.host_id)
+            if turn is not None and turn.exit_code is not None:
+                break
+            await asyncio.sleep(0.05)
+        assert host._turns[cli.host_id].exit_code == 0
+    finally:
+        await _stop(host, task)

@@ -3228,6 +3228,9 @@ async def _run_cli_once(
                 ),
                 keep_stdin=plan.keep_stdin,
                 meta=_hosted_meta(handle, runner, plan, cwd, started_at),
+                # Claude Code keeps reading stdin after its result line; the
+                # host closes it there so the CLI ends with no app attached.
+                close_stdin_on="result" if plan.keep_stdin and plan.shape == "claude" else "",
             )
         if hosted is not None:
             proc = hosted

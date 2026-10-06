@@ -324,6 +324,7 @@ class TurnHostClient:
         stdin: str | None,
         keep_stdin: bool,
         meta: dict[str, Any],
+        close_stdin_on: str = "",
     ) -> HostedCli:
         reply = await self._request(
             {
@@ -333,6 +334,7 @@ class TurnHostClient:
                 "env": dict(env) if env is not None else None,
                 "stdin": stdin,
                 "keep_stdin": keep_stdin,
+                "close_stdin_on": close_stdin_on,
                 "meta": meta,
             }
         )
@@ -614,6 +616,7 @@ async def spawn(
     stdin: str | None,
     keep_stdin: bool,
     meta: dict[str, Any],
+    close_stdin_on: str = "",
 ) -> HostedCli | None:
     """Start ``argv`` in the turn host, or ``None`` when no host can take it."""
     client = await get_client(start=True)
@@ -621,7 +624,13 @@ async def spawn(
         return None
     try:
         return await client.spawn(
-            argv, cwd=cwd, env=env, stdin=stdin, keep_stdin=keep_stdin, meta=meta
+            argv,
+            cwd=cwd,
+            env=env,
+            stdin=stdin,
+            keep_stdin=keep_stdin,
+            meta=meta,
+            close_stdin_on=close_stdin_on,
         )
     except (ConnectionError, RuntimeError, OSError) as exc:
         log.warning("turn host: spawn refused (%s) — the CLI runs in-process", exc)

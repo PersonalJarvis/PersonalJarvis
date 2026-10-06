@@ -111,6 +111,10 @@ class HostedTurn:
     exit_code: int | None = None
     streaming: bool = False
     pumps: list[asyncio.Task[None]] = field(default_factory=list)
+    #: A stdout JSON line of this ``type`` ends the turn: stdin is closed so
+    #: the CLI exits, even with no app attached to do it (Claude Code's
+    #: ``result``; it otherwise waits on its open stdin for ever).
+    close_stdin_on: str = ""
 
     @property
     def alive(self) -> bool:
@@ -397,6 +401,7 @@ class TurnHost:
             started_at=time.time(),
             # The spawning client reads from the first line on.
             streaming=True,
+            close_stdin_on=str(frame.get("close_stdin_on") or ""),
         )
         self._turns[turn.turn_id] = turn
         if stdin_data is not None:
@@ -463,6 +468,8 @@ class TurnHost:
                 continue
             turn.lines.append(text)
             turn.kept_bytes += len(raw)
+            if turn.close_stdin_on and _line_type(text) == turn.close_stdin_on:
+                _close_stdin(turn)
             client = self._client
             if turn.streaming and client is not None and not client.closed:
                 await client.send(
@@ -508,6 +515,17 @@ async def _write_stdin(turn: HostedTurn, text: str) -> None:
         await stdin.drain()
     except (BrokenPipeError, ConnectionResetError, OSError) as exc:
         logger.debug("Turn host: stdin write for {} failed: {}", turn.turn_id, exc)
+
+
+def _line_type(text: str) -> str:
+    """The ``type`` of a JSON stdout line, or "" for anything else."""
+    if '"type"' not in text:
+        return ""
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return ""
+    return str(obj.get("type") or "") if isinstance(obj, dict) else ""
 
 
 def _close_stdin(turn: HostedTurn) -> None:
