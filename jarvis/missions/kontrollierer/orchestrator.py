@@ -3097,7 +3097,7 @@ class Kontrollierer:
             return True
         try:
             worker = await asyncio.to_thread(self._worker_factory, open_steps[0])
-        except WorkerCapacityUnavailable:
+        except WorkerCapacityUnavailable:  # still no capacity: stay parked, ask again next tick
             return False
         except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
             logger.warning(

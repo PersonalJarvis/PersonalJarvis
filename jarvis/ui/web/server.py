@@ -4217,7 +4217,7 @@ class WebServer:
             resume_task.cancel()
             try:
                 await asyncio.wait_for(resume_task, timeout=2.0)
-            except (TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):  # expected while stopping the timer
                 pass
             self._missions_resume_task = None
 

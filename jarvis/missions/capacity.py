@@ -187,7 +187,7 @@ def read_checkpoint(mission_dir: Path) -> dict[str, Any] | None:
     path = mission_dir / CHECKPOINT_NAME
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError:  # no checkpoint is a normal answer, not a failure
         return None
     except (OSError, ValueError):
         log.warning("capacity: unreadable checkpoint %s", path, exc_info=True)
