@@ -3,6 +3,7 @@ import { Star } from "lucide-react";
 
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
+import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { cn } from "@/lib/utils";
 
 /**
@@ -100,6 +101,8 @@ export function ComposerBrainPicker({
   const t = useT();
   const [favorites, toggleFavorite] = useFavoriteModels();
   const [section, setSection] = useState(currentSection);
+  const [providerOrder, moveProvider] = useProviderOrder();
+  const ordered = useMemo(() => orderBy(sections, (s) => s.id, providerOrder), [sections, providerOrder]);
 
   // Every row carries its star; the favourites tab lists the starred rows in
   // the order they were starred.
@@ -174,9 +177,17 @@ export function ComposerBrainPicker({
         <Star className="h-4 w-4 fill-current" aria-hidden />
       </RailButton>
       <span className="mx-1 my-0.5 border-b border-border" aria-hidden />
-      {sections.map((s) => (
+      {ordered.map((s, index) => (
         <RailButton
           key={s.id}
+          reorder={{
+            id: s.id,
+            onMove: (dragged, target) => moveProvider(ordered.map((o) => o.id), dragged, target),
+            onStep: (step) => {
+              const target = ordered[index + step];
+              if (target) moveProvider(ordered.map((o) => o.id), s.id, target.id);
+            },
+          }}
           active={section === s.id}
           label={s.label}
           muted={s.muted}
@@ -219,12 +230,24 @@ export function ComposerBrainPicker({
   );
 }
 
+/** The drag payload a rail mark carries: the provider id it stands for. */
+const RAIL_DRAG = "application/x-jarvis-provider";
+
+export interface RailReorder {
+  id: string;
+  /** Drop `dragged` onto this mark's place. */
+  onMove: (dragged: string, target: string) => void;
+  /** Alt+Arrow: one place up (-1) or down (+1). */
+  onStep: (step: -1 | 1) => void;
+}
+
 export function RailButton({
   active,
   label,
   muted = false,
   onSelect,
   testId,
+  reorder,
   children,
 }: {
   active: boolean;
@@ -232,8 +255,11 @@ export function RailButton({
   muted?: boolean;
   onSelect: () => void;
   testId: string;
+  /** Lets the mark be dragged (or Alt+Arrowed) to another place on the rail. */
+  reorder?: RailReorder;
   children: ReactNode;
 }) {
+  const [dropTarget, setDropTarget] = useState(false);
   return (
     <button
       type="button"
@@ -241,6 +267,32 @@ export function RailButton({
       aria-pressed={active}
       title={label}
       data-testid={testId}
+      draggable={Boolean(reorder)}
+      onDragStart={(event) => {
+        if (!reorder) return;
+        event.dataTransfer.setData(RAIL_DRAG, reorder.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(event) => {
+        if (!reorder || !event.dataTransfer.types.includes(RAIL_DRAG)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropTarget(true);
+      }}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={(event) => {
+        setDropTarget(false);
+        const dragged = event.dataTransfer.getData(RAIL_DRAG);
+        if (!reorder || !dragged) return;
+        event.preventDefault();
+        reorder.onMove(dragged, reorder.id);
+      }}
+      onKeyDown={(event) => {
+        if (!reorder || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        reorder.onStep(event.key === "ArrowUp" ? -1 : 1);
+      }}
       onClick={(event) => {
         onSelect();
         // Back to the search box, so typing right after a rail click searches.
@@ -253,6 +305,7 @@ export function RailButton({
         "relative flex aspect-square w-full shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sheen/[0.08] hover:text-foreground",
         active && "bg-sheen/[0.06] text-foreground",
         muted && "opacity-50",
+        dropTarget && "ring-1 ring-border-strong",
       )}
     >
       {active && (

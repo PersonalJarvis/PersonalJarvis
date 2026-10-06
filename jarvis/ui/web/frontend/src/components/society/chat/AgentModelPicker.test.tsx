@@ -388,3 +388,16 @@ test.each([
   fireEvent.click(within(group).getByRole("menuitemradio", { name: /Default model/ }));
   await waitFor(() => expect(posts[0]).toEqual({ provider: id, model: "", effort: "", account_id: "" }));
 });
+
+test("rail marks move with Alt+Arrow and keep their place on reopen", async () => {
+  localStorage.removeItem("jarvis.chat.providerOrder");
+  mount(); const input = await open();
+  const railOrder = () => screen.getAllByTestId(/^agent-model-rail-(?!favorites)/).map((mark) => mark.getAttribute("data-testid"));
+  expect(railOrder()).toEqual(["agent-model-rail-gemini", "agent-model-rail-openai"]);
+  fireEvent.keyDown(screen.getByTestId("agent-model-rail-openai"), { key: "ArrowUp", altKey: true });
+  expect(railOrder()).toEqual(["agent-model-rail-openai", "agent-model-rail-gemini"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  await open();
+  expect(railOrder()).toEqual(["agent-model-rail-openai", "agent-model-rail-gemini"]);
+  localStorage.removeItem("jarvis.chat.providerOrder");
+});

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
 import { rankModels } from "@/lib/modelRanking";
+import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
@@ -78,7 +79,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const activeSection = section === FAVORITES || groups.some((group) => group.seat.provider.id === section) ? section : groups[0]?.seat.provider.id ?? "";
   const showFavorites = browsing && activeSection === FAVORITES;
   const shownGroups = browsing ? groups.filter((group) => group.seat.provider.id === activeSection) : groups;
-  const railSeats = groups.map((group) => group.seat);
+  const [providerOrder, moveProvider] = useProviderOrder();
+  const railSeats = orderBy(groups.map((group) => group.seat), (seat) => seat.provider.id, providerOrder);
+  const railIds = railSeats.map((seat) => seat.provider.id);
   const starred = useMemo(() => favorites.flatMap((value) => {
     for (const seat of seats) {
       const model = seat.provider.curated_models.find((entry) => brainValue(seat.provider.id, entry.id) === value);
@@ -260,7 +263,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
             <Star className="h-4 w-4 fill-current" aria-hidden />
           </RailButton>
           <span className="mx-1 my-0.5 border-b border-border" aria-hidden />
-          {railSeats.map((seat) => <RailButton key={seat.provider.id} active={browsing && activeSection === seat.provider.id} label={providerTitle(seat, t)}
+          {railSeats.map((seat, index) => <RailButton key={seat.provider.id} active={browsing && activeSection === seat.provider.id} label={providerTitle(seat, t)}
+            reorder={{ id: seat.provider.id, onMove: (dragged, target) => moveProvider(railIds, dragged, target),
+              onStep: (step) => { const target = railIds[index + step]; if (target) moveProvider(railIds, seat.provider.id, target); } }}
             onSelect={() => pickSection(seat.provider.id)} testId={`agent-model-rail-${seat.provider.id}`}>
             <span className="inline-flex scale-[1.3]"><ProviderLogo providerId={seat.provider.id} label={seat.provider.label} size="sm" /></span>
           </RailButton>)}
