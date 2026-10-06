@@ -254,10 +254,13 @@ export default function EditorSurface({
   return (
     <div className="relative h-full min-h-0 w-full" data-testid="code-editor-surface" data-language={languageFor(tab.path)}>
       <div ref={codeHost} onContextMenu={keepContextMenu} className={cn("absolute inset-0", !showCode && "invisible")} />
+      {/* `hidden`, not `invisible`: Monaco's diff widget writes an inline
+          `visibility: visible` on both of its halves, which overrides a hidden
+          parent — the last diff then stayed painted over the next edit tab. */}
       <div
         ref={diffHost}
         onContextMenu={keepContextMenu}
-        className={cn("absolute inset-0", tab.mode !== "diff" && "invisible", !ready && "invisible")}
+        className={cn("absolute inset-0", (tab.mode !== "diff" || !ready) && "hidden")}
       />
       {overlay && <div className="absolute inset-0 bg-background">{overlay}</div>}
     </div>
