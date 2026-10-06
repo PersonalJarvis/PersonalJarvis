@@ -1,17 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { AgentRuntimesResponse } from "@/lib/agentRuntimesApi";
-import type { SocietyAgent } from "../data";
-import { RuntimePicker } from "./RuntimePicker";
+import { RuntimeChoice, RuntimeStatusRow } from "./RuntimePicker";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
-const { updateModel, runtimes, setup } = vi.hoisted(() => ({
-  updateModel: vi.fn(),
+const { runtimes, setup } = vi.hoisted(() => ({
   setup: vi.fn(),
   runtimes: { value: null as unknown },
 }));
-vi.mock("../data", () => ({ useUpdateAgentModel: () => updateModel }));
 vi.mock("@/lib/agentRuntimesApi", () => ({
   fetchAgentRuntimes: () => Promise.resolve(runtimes.value),
   startAgentRuntimeSetup: setup,
@@ -25,68 +23,51 @@ function status(runtime: "hermes" | "openclaw", ready: boolean, installed = read
   };
 }
 
-function mount(agent: Partial<SocietyAgent>, data: AgentRuntimesResponse) {
+function withData(data: AgentRuntimesResponse, node: ReactNode) {
   runtimes.value = data;
-  const full = {
-    agentId: "scout", name: "Scout", provider: "openai", model: "gpt-5.2", effort: "",
-    accountId: "", runtime: "jarvis", computerId: null, ...agent,
-  } as SocietyAgent;
-  return render(
-    <QueryClientProvider client={new QueryClient()}>
-      <RuntimePicker agent={full} />
-    </QueryClientProvider>,
-  );
+  return render(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>);
 }
 
-const READY: AgentRuntimesResponse = {
-  runtimes: [status("hermes", true), status("openclaw", true)] as AgentRuntimesResponse["runtimes"],
-  supported_providers: ["openai", "ollama"],
+const MIXED: AgentRuntimesResponse = {
+  runtimes: [status("hermes", true), status("openclaw", false)] as AgentRuntimesResponse["runtimes"],
+  supported_providers: ["openai"],
 };
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
-describe("RuntimePicker", () => {
-  test("switching keeps the agent's model and names the runtime", async () => {
-    updateModel.mockResolvedValue(undefined);
-    mount({}, READY);
-    const hermes = await screen.findByRole("radio", { name: /society.runtime.hermes$/ });
-    await waitFor(() => expect((hermes as HTMLButtonElement).disabled).toBe(false));
-    fireEvent.click(hermes);
-    await waitFor(() => expect(updateModel).toHaveBeenCalledWith("scout", {
-      provider: "openai", model: "gpt-5.2", effort: "", account_id: "", runtime: "hermes",
-    }));
+describe("RuntimeChoice", () => {
+  test("offers the three runtimes and reports the pick", async () => {
+    const onChange = vi.fn();
+    withData(MIXED, <RuntimeChoice value="jarvis" onChange={onChange} />);
+    fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.hermes" }));
+    expect(onChange).toHaveBeenCalledWith("hermes");
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 
-  test("a subscription model cannot move to an external runtime", async () => {
-    mount({ provider: "openai-codex" }, READY);
-    expect(await screen.findByText("society.runtime.model_hint")).toBeTruthy();
-    const openclaw = screen.getByRole("radio", { name: /society.runtime.openclaw$/ });
-    await waitFor(() => expect((openclaw as HTMLButtonElement).disabled).toBe(true));
-  });
-
-  test("a missing runtime offers its installer", async () => {
+  test("a chosen runtime that is missing offers its installer", async () => {
     setup.mockResolvedValue({});
-    mount({}, {
-      runtimes: [status("hermes", false), status("openclaw", true)] as AgentRuntimesResponse["runtimes"],
-      supported_providers: ["openai"],
-    });
-    const install = await screen.findByRole("button", { name: "society.runtime.install" });
-    expect(screen.getByText("society.runtime.not_installed")).toBeTruthy();
-    fireEvent.click(install);
-    await waitFor(() => expect(setup).toHaveBeenCalledWith("hermes", "install"));
+    withData(MIXED, <RuntimeChoice value="openclaw" onChange={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "society.runtime.install" }));
+    await waitFor(() => expect(setup).toHaveBeenCalledWith("openclaw", "install"));
   });
+});
 
-  test("an outdated runtime offers its updater", async () => {
-    mount({}, {
-      runtimes: [status("hermes", true), status("openclaw", false, true)] as AgentRuntimesResponse["runtimes"],
-      supported_providers: ["openai"],
-    });
+describe("RuntimeStatusRow", () => {
+  test("names the runtime and offers an update when it is outdated", async () => {
+    withData(
+      {
+        runtimes: [status("hermes", false, true), status("openclaw", true)] as AgentRuntimesResponse["runtimes"],
+        supported_providers: [],
+      },
+      <RuntimeStatusRow runtime="hermes" />,
+    );
     expect(await screen.findByRole("button", { name: "society.runtime.update" })).toBeTruthy();
+    expect(screen.getByText(/society\.runtime\.runs_on/)).toBeTruthy();
   });
 
-  test("an agent on another computer stays on Jarvis", async () => {
-    mount({ computerId: "box-1" }, READY);
-    expect(await screen.findByText("society.runtime.remote_hint")).toBeTruthy();
-    await waitFor(() => expect((screen.getByRole("radio", { name: /society.runtime.hermes$/ }) as HTMLButtonElement).disabled).toBe(true));
+  test("a Jarvis agent needs no setup", async () => {
+    withData(MIXED, <RuntimeStatusRow runtime="jarvis" />);
+    expect(await screen.findByText(/society\.runtime\.runs_on/)).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

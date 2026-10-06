@@ -12,7 +12,7 @@ import { useUpdateAgentModel, type SocietyAgent } from "../data";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
-import { RuntimePicker, useAgentRuntimes } from "../card/RuntimePicker";
+import { RuntimeStatusRow, useAgentRuntimes } from "../card/RuntimePicker";
 
 type Submenu = { provider: string; model?: CuratedModel; anchor: DOMRect };
 const menuRow = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-popover-foreground hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none disabled:opacity-45";
@@ -55,9 +55,15 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     // Hermes / OpenClaw run on an API key or a local model, never a subscription CLI.
     if (!external || !supportedKey) return all;
     const supported = new Set(supportedKey.split(","));
-    // A dual row (Claude: subscription CLI or API key) runs on its API key here.
+    // A dual row (Claude: subscription CLI or API key) runs on its API key here,
+    // so the CLI's own aliases ("opusplan", "default") are not models to offer.
     return all.filter((seat) => supported.has(seat.provider.id))
-      .map((seat) => seat.kind === "subscription" ? { ...seat, kind: "api" as const, accounts: [] } : seat);
+      .map((seat) => seat.kind === "subscription" ? {
+        ...seat,
+        kind: "api" as const,
+        accounts: [],
+        provider: { ...seat.provider, curated_models: seat.provider.curated_models.filter((model) => /\d/.test(model.id)) },
+      } : seat);
   }, [options, providers, live, defaultModelLabel, external, supportedKey]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
@@ -203,7 +209,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
         onKeyDown={(event) => moveFocus(event, panel.current)}>
         {agent.tier !== "lead" ? (
           <div className="shrink-0 border-b border-border px-3 py-2.5">
-            <RuntimePicker agent={agent} />
+            <RuntimeStatusRow runtime={agent.runtime ?? "jarvis"} />
           </div>
         ) : null}
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">

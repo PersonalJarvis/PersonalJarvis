@@ -8,6 +8,12 @@ A society agent runs on one of three runtimes:
 | `hermes` | [Hermes Agent](https://github.com/NousResearch/hermes-agent) (NousResearch, MIT) | |
 | `openclaw` | [OpenClaw](https://github.com/openclaw/openclaw) (MIT) | |
 
+The runtime is chosen once, in the "new agent" dialog every plus in the
+society opens (name, runtime, the companion bot that follows the agent), and
+is fixed for the agent's life: the roster refuses a change, because the
+agent's sessions, runtime folder and tools belong to it. The model menu of
+the agent's chat shows the runtime and offers its update when one is due.
+
 The runtime decides which agent loop, native tools and session store a turn
 uses. Everything that makes a Jarvis agent stays in Jarvis and is identical
 on every runtime: the one endless chat, the briefing (identity, standing

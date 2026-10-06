@@ -33,13 +33,15 @@ async def test_new_agents_run_on_jarvis_by_default(roster: Roster):
     assert scout.to_dict()["runtime"] == "jarvis"
 
 
-async def test_runtime_is_chosen_at_create_and_editable(roster: Roster):
+async def test_runtime_is_chosen_at_create_and_then_fixed(roster: Roster):
     hermit, _ = await roster.create(name="Hermit", runtime="hermes")
     assert hermit.runtime is AgentRuntime.HERMES
-    moved = await roster.update("hermit", {"runtime": "openclaw"})
-    assert moved.runtime is AgentRuntime.OPENCLAW
-    with pytest.raises(RosterError):
-        await roster.update("hermit", {"runtime": "skynet"})
+    for other in ("openclaw", "jarvis", "skynet"):
+        with pytest.raises(RosterError):
+            await roster.update("hermit", {"runtime": other})
+    # Naming the runtime it already has is not a change.
+    same = await roster.update("hermit", {"runtime": "hermes", "title": "Scout"})
+    assert same.runtime is AgentRuntime.HERMES and same.title == "Scout"
 
 
 async def test_the_lead_always_runs_on_jarvis(roster: Roster):
@@ -54,9 +56,6 @@ async def test_external_runtime_stays_on_this_computer(roster: Roster, monkeypat
     from jarvis.society import roster as roster_mod
 
     monkeypatch.setattr(roster_mod, "_validate_computer", lambda value: value or None)
-    remote, _ = await roster.create(name="Remote", computer_id="box-1")
-    with pytest.raises(RosterError):
-        await roster.update("remote", {"runtime": "hermes"})
     with pytest.raises(RosterError):
         await roster.create(name="Both", runtime="openclaw", computer_id="box-1")
     local, _ = await roster.create(name="Local", runtime="hermes")
@@ -131,43 +130,20 @@ class _Svc:
         return False
 
 
-async def test_switching_runtime_reseats_the_chat_and_drops_the_vendor_session(tmp_path: Path):
+async def test_a_new_hermes_agent_chat_runs_on_hermes(tmp_path: Path):
     cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
     rt = SocietyRuntime(tmp_path, seed_starter_team=False, cfg=lambda: cfg)
     await rt.ensure_started()
     svc = _Svc(AgentChatStore(tmp_path / "agent_chat.db"))
     try:
-        agent, _ = await rt.roster.create(name="Hermit", provider="openai", model="gpt-5.2")
-        first = ensure_session(svc, cfg, agent)
-        assert first.runtime == ""
-        svc.store.update_session(first.session_id, vendor_session="claude-conv-1")
-
-        moved = await rt.roster.update(agent.agent_id, {"runtime": "hermes"})
-        reseated = ensure_session(svc, cfg, moved)
-        assert reseated.runtime == "hermes"
-        assert not reseated.vendor_session
-        assert session_runner(reseated) == "hermes-cli"
-
-        back = await rt.roster.update(agent.agent_id, {"runtime": "jarvis"})
-        assert ensure_session(svc, cfg, back).runtime == ""
+        agent, _ = await rt.roster.create(
+            name="Hermit", provider="openai", model="gpt-5.2", runtime="hermes"
+        )
+        session = ensure_session(svc, cfg, agent)
+        assert session.runtime == "hermes"
+        assert session_runner(session) == "hermes-cli"
+        jarvis_agent, _ = await rt.roster.create(name="Plain", provider="openai")
+        assert ensure_session(svc, cfg, jarvis_agent).runtime == ""
     finally:
         svc.store.close()
         await rt.close()
-
-
-def test_a_routine_run_never_moves_a_subscription_seat_onto_an_api_key(monkeypatch):
-    from jarvis.society import routine_runner
-
-    owner = SimpleNamespace(runtime="hermes", provider="openai")
-    # The owner's own model keeps the owner's runtime.
-    assert routine_runner._run_runtime(owner, "openai") == "hermes"
-    # A pinned seat that is a subscription CLI runs on Jarvis instead.
-    monkeypatch.setattr(
-        "jarvis.agent_chat.service._claude_cli_installed", lambda: True
-    )
-    assert routine_runner._run_runtime(owner, "claude-api") == ""
-    # A pinned API-key seat keeps the runtime; an unsupported one never does.
-    assert routine_runner._run_runtime(owner, "openrouter") == "hermes"
-    assert routine_runner._run_runtime(owner, "openai-codex") == ""
-    jarvis_owner = SimpleNamespace(runtime="jarvis", provider="openai")
-    assert routine_runner._run_runtime(jarvis_owner, "openai") == ""

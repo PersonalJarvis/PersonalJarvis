@@ -79,13 +79,12 @@ def _validated_chat_runner(
     *,
     approval_mode: str | None = None,
     permission_ceiling: str | None = None,
-    runtime: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
     from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
-    chosen_runtime = str(runtime if runtime is not None else agent.runtime)
+    chosen_runtime = str(agent.runtime)
     if chosen_runtime not in ("", "jarvis"):
         from jarvis.agent_runtimes.model_map import supports
 
@@ -93,7 +92,7 @@ def _validated_chat_runner(
             raise HTTPException(
                 422,
                 "Hermes and OpenClaw run on an API key or a local model. "
-                "Pick one of those for this agent first.",
+                "Pick one of those for this agent.",
             )
     runner = resolve_runner(provider, surface="society", runtime=chosen_runtime)
     mode = approval_mode if approval_mode is not None else (
@@ -147,7 +146,8 @@ class CreateAgentBody(BaseModel):
     browser_allowed_domains: list[str] | None = None
     #: Where the agent runs: "" = this computer, else a connected computer id.
     computer_id: str | None = None
-    #: The agent loop: "jarvis" (default), "hermes" or "openclaw".
+    #: The agent loop, chosen once here and fixed for the agent's life:
+    #: "jarvis" (default), "hermes" or "openclaw".
     runtime: str | None = None
     #: Structured brief (jarvis.society.brief); rendered into ``description``.
     mission: str | None = Field(default=None, max_length=2_000)
@@ -186,8 +186,6 @@ class PatchAgentBody(BaseModel):
     browser_allowed_domains: list[str] | None = None
     #: Where the agent runs: "" = this computer, else a connected computer id.
     computer_id: str | None = None
-    #: The agent loop: "jarvis" (default), "hermes" or "openclaw".
-    runtime: str | None = None
     #: Structured brief (jarvis.society.brief); rendered into ``description``.
     mission: str | None = Field(default=None, max_length=2_000)
     responsibilities: list[str] | None = None
@@ -404,16 +402,13 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if has_brief(brief):
         # A brief rewrites the standing instructions as a whole.
         fields["description"] = compose_description(body.description or "", brief)
-    if any(
-        key in fields for key in ("provider", "approval_mode", "permission_ceiling", "runtime")
-    ):
+    if any(key in fields for key in ("provider", "approval_mode", "permission_ceiling")):
         _validated_chat_runner(
             rt,
             agent,
             body.provider or agent.provider,
             approval_mode=body.approval_mode,
             permission_ceiling=fields.get("permission_ceiling"),
-            runtime=body.runtime,
         )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
@@ -801,9 +796,6 @@ class ModelBody(BaseModel):
     model: str = ""
     effort: str = ""
     account_id: str = ""
-    #: Switch the agent loop with the model ("jarvis" / "hermes" / "openclaw");
-    #: None keeps the current runtime.
-    runtime: str | None = None
 
 
 @router.get("/providers")
@@ -864,7 +856,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
-    target_runner = _validated_chat_runner(rt, agent, body.provider, runtime=body.runtime)
+    target_runner = _validated_chat_runner(rt, agent, body.provider)
     chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),
@@ -872,9 +864,6 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
-    runtime_changed = body.runtime is not None and body.runtime != str(agent.runtime)
-    if body.runtime is not None:
-        fields["runtime"] = body.runtime
     if chat is not None and hasattr(chat, "controls"):
         from jarvis.society.roster import PAIR_SESSION_MARKER
 
@@ -902,12 +891,6 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             reseated = session.session_id
         except PermissionError as exc:
             log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
-        if runtime_changed:
-            # Marks in the one chat where the new agent loop took over.
-            await svc.post_notice(
-                updated.session_id,
-                {"kind": "runtime_changed", "runtime": str(updated.runtime)},
-            )
     return {
         "agent": _agent_row(updated, request),
         "runner": target_runner,

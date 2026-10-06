@@ -786,12 +786,6 @@ function NoticeLine({ item }: { item: NoticeItem }) {
       {t("society.chat.message_not_sent").replace("{0}", item.text)}
     </p>;
   }
-  if (item.kind === "runtime_changed") {
-    const runtime = String(item.data.runtime ?? "jarvis");
-    return <p className="py-1 text-center text-[11px] text-muted-foreground">
-      {t("society.chat.runtime_changed").replace("{0}", t(`society.runtime.${runtime}`))}
-    </p>;
-  }
   if (item.kind === "context_rollover") {
     return <p className="py-1 text-center text-[11px] text-muted-foreground">{t("society.chat.context_rollover")}</p>;
   }

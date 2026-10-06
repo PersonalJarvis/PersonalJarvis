@@ -676,8 +676,13 @@ class Roster:
                 raise RosterError(
                     FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
                 )
-            if key == "runtime" and agent_id == LEAD_AGENT_ID and str(value) != "jarvis":
-                raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead always runs on Jarvis")
+            if key == "runtime" and str(value) != str(current.get("runtime") or "jarvis"):
+                # Chosen once, at creation: the agent's sessions, memory folder
+                # and tools all belong to that runtime.
+                raise RosterError(
+                    FailureReason.BLOCKED_BY_POLICY,
+                    "an agent's runtime is chosen when it is created and cannot change",
+                )
             if key == "tier" and str(value) == str(Tier.LEAD) and agent_id != LEAD_AGENT_ID:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "only Jarvis is the lead")
             if key == "parent_agent_id" and value:

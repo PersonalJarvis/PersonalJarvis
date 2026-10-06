@@ -17,6 +17,9 @@ import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-quer
 import type { MentionPlugin } from "./chat/mentionItems";
 
 import type { AgentApprovalMode, AgentRuntime, Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import type { CompanionAppearance } from "./companion/appearance";
+import { useCreateAgentDialog } from "./create/createAgentStore";
+
 import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
 import { useEventStore } from "@/store/events";
 
@@ -24,6 +27,14 @@ import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/fi
 import { SAMPLE_ROSTER } from "./mockRoster";
 import { beginRetirement, retirementRunning, retirementStageMounted } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
+
+/** The create dialog named an agent that already exists. */
+export class AgentNameTaken extends Error {
+  constructor() {
+    super("An agent with this name already exists");
+    this.name = "AgentNameTaken";
+  }
+}
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
 export type AgentTier = "lead" | "orchestrator" | "specialist";
@@ -187,11 +198,22 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
   ollama: "Ollama (local)",
   "local-openai": "Local server",
+  "claude-api": "Anthropic Claude",
+  grok: "xAI Grok",
+  openrouter: "OpenRouter",
+  nvidia: "NVIDIA NIM",
 };
 
 export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
   const tier = row.tier as AgentTier;
-  const figure = recipeFromAvatar(row.avatar) ?? defaultFigureFor(row.agent_id, tier);
+  // A new agent's avatar may hold only its companion (the backend's random
+  // one, or the create dialog's pick): it rides on the default figure.
+  const stored = recipeFromAvatar(row.avatar);
+  const companion = row.avatar && typeof row.avatar === "object" ? row.avatar.companion : undefined;
+  const figure = stored
+    ?? (companion
+      ? ({ ...defaultFigureFor(row.agent_id, tier), companion } as FigureRecipe)
+      : defaultFigureFor(row.agent_id, tier));
   const runState: AgentRunState =
     row.state === "paused" ? "paused" : ((row.run_state as AgentRunState | undefined) ?? "idle");
   return {
@@ -359,18 +381,44 @@ export function useSocietyCapabilities(enabled = true, mentionOpen = false) {
 }
 
 /**
- * One-click creation (`POST /api/society/agents` with no name): the backend
- * picks a placeholder name, a random look and the lead chat's current seat,
- * and the agent finds its role in its first conversation. A failure throws —
- * there is no local stand-in row, so the person sees the real error.
+ * Every plus in the society: opens the "new agent" dialog (name, runtime,
+ * companion) and settles with the created agent. Closing the dialog rejects
+ * with `CreateAgentCancelled` (`isCreateCancelled`), which is not an error.
  */
 export function useQuickCreateAgent() {
+  return useCallback(() => useCreateAgentDialog.getState().request(), []);
+}
+
+/** What the create dialog sends; every field may be left out. */
+export interface NewAgentChoice {
+  /** Empty = a placeholder name; the agent proposes its own in its first chat. */
+  name?: string;
+  /** Fixed for the agent's life (docs/agent-runtimes.md). */
+  runtime?: AgentRuntime;
+  /** Required for Hermes / OpenClaw: an API-key or local provider. */
+  provider?: string;
+  /** The small companion bot that follows the agent. */
+  companion?: CompanionAppearance;
+}
+
+/**
+ * `POST /api/society/agents`: the backend fills in what is left out (a
+ * placeholder name, a random companion, the lead chat's current seat). A
+ * name that already exists is refused rather than adopting that agent. A
+ * failure throws with the server's own reason — there is no stand-in row.
+ */
+export function useCreateSocietyAgent() {
   const client = useQueryClient();
-  return useCallback(async (): Promise<SocietyAgent> => {
+  return useCallback(async (choice: NewAgentChoice = {}): Promise<SocietyAgent> => {
+    const body: Record<string, unknown> = { tier: "specialist" };
+    if (choice.name?.trim()) body.name = choice.name.trim();
+    if (choice.runtime && choice.runtime !== "jarvis") body.runtime = choice.runtime;
+    if (choice.provider) body.provider = choice.provider;
+    if (choice.companion) body.avatar = { companion: choice.companion };
     const res = await fetch("/api/society/agents", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tier: "specialist" }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
@@ -383,7 +431,8 @@ export function useQuickCreateAgent() {
             : `create ${res.status}`,
       );
     }
-    const created = (await res.json()) as { agent: SocietyAgentRow };
+    const created = (await res.json()) as { agent: SocietyAgentRow; created?: boolean };
+    if (created.created === false) throw new AgentNameTaken();
     // The island owes this row an entrance: it walks out of the foundry.
     announceSpawn(created.agent.agent_id);
     const agent = rowToAgent(created.agent);
