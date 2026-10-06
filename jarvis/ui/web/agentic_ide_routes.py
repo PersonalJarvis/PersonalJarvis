@@ -1994,6 +1994,25 @@ async def get_workspace_text_file(workspace_id: str, path: str) -> dict[str, obj
     return _text_file_response(workspace_id, loaded)
 
 
+@router.get(
+    "/workspaces/{workspace_id}/text-file/version",
+    summary="The current version of one file open in the code editor",
+)
+async def get_workspace_text_file_version(workspace_id: str, path: str) -> dict[str, object]:
+    """What the editor polls to notice that an agent changed an open file.
+
+    ``version`` is null when the file no longer exists.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        version = await asyncio.to_thread(file_editing.file_version, folder, path)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError:
+        version = None
+    return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "version": version}
+
+
 @router.put(
     "/workspaces/{workspace_id}/text-file",
     response_model=WorkspaceTextFileResponse,

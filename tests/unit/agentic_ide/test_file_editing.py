@@ -213,6 +213,22 @@ async def test_routes_load_save_and_report_conflicts(workspace: Path) -> None:
     assert caught.value.detail["current_version"] == saved["version"]
 
 
+async def test_version_route_tracks_changes_and_deletion(workspace: Path) -> None:
+    (workspace / "a.txt").write_text("one\n", encoding="utf-8")
+    loaded = await routes.get_workspace_text_file("workspace-1", "a.txt")
+
+    same = await routes.get_workspace_text_file_version("workspace-1", "a.txt")
+    assert same["version"] == loaded["version"]
+
+    (workspace / "a.txt").write_text("two\n", encoding="utf-8")
+    changed = await routes.get_workspace_text_file_version("workspace-1", "a.txt")
+    assert changed["version"] not in (None, loaded["version"])
+
+    (workspace / "a.txt").unlink()
+    gone = await routes.get_workspace_text_file_version("workspace-1", "a.txt")
+    assert gone["version"] is None
+
+
 async def test_routes_reject_unknown_workspace_and_escapes(workspace: Path) -> None:
     with pytest.raises(HTTPException) as unknown:
         await routes.get_workspace_text_file("nope", "main.py")

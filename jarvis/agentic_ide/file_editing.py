@@ -48,6 +48,7 @@ __all__ = [
     "TrashUnavailable",
     "create_entry",
     "delete_entry",
+    "file_version",
     "list_files",
     "read_text_file",
     "rename_entry",
@@ -165,6 +166,20 @@ def read_text_file(root: str | os.PathLike[str], path: str) -> TextFile:
     except UnicodeDecodeError:
         return TextFile(relative, None, version, size, encoding, "\n", True, False)
     return TextFile(relative, text, version, size, encoding, _detect_eol(text), False, False)
+
+
+def file_version(root: str | os.PathLike[str], path: str) -> str | None:
+    """The current version of one file, or None when it no longer exists.
+
+    What the editor polls to notice an agent's edit to an open file; a file
+    too large to edit reports an empty version, as :func:`read_text_file` does.
+    """
+    _, target = _resolve(root, path)
+    if not target.is_file():
+        return None
+    if target.stat().st_size > MAX_EDITABLE_BYTES:
+        return ""
+    return _version_of(target.read_bytes())
 
 
 def _atomic_write(target: Path, data: bytes) -> None:

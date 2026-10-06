@@ -29,6 +29,9 @@ anyio>=4.14.2
 # malformed vision JSON; without it the repair path silently degrades on
 # every fresh install (found 2026-07-18, was never declared).
 json-repair>=0.30
+# The code editor's delete moves files to the system trash (Recycle Bin,
+# macOS Trash, freedesktop trash) instead of erasing them; pure Python.
+Send2Trash>=1.8.3
 # Keep transitive auth/JWT crypto wheel-installable where the newest release
 # stopped publishing the architecture. KNOWN, ACCEPTED EXPOSURE, re-verified
 # against PyPI on 2026-08-26 (latest 50.0.1): 46.0.3 is the last release with a
