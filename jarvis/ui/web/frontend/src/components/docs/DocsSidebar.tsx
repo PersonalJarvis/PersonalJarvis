@@ -60,7 +60,7 @@ export function DocsSidebar({
   return (
     <aside
       aria-label={t("docs_sidebar.title")}
-      className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-background"
+      className="flex h-full w-64 shrink-0 flex-col"
     >
       <div className="px-4 pb-3 pt-5">
         <SearchTrigger onClick={onOpenSearch} />
@@ -133,7 +133,7 @@ export function DocsSidebar({
         </nav>
       </ScrollArea>
 
-      <div className="border-t border-border px-4 py-3">
+      <div className="px-4 py-3">
         <a
           href={ONLINE_DOCS_URL}
           onClick={(event) => {
@@ -168,9 +168,13 @@ function NavRow({
       aria-current={active ? "page" : undefined}
       title={label}
       className={cn(
-        "block w-full rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
-        "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "jarvis-nav-active font-medium",
+        "block w-full rounded-md px-3 py-1.5 text-left text-base transition-colors",
+        "hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        // The ink is set per state: a muted-ink utility would outrank the
+        // strong ink `.jarvis-nav-active` gives the selected row.
+        active
+          ? "jarvis-nav-active font-medium text-foreground-strong"
+          : "text-muted-foreground hover:text-foreground",
       )}
     >
       <span className="line-clamp-2 break-words">{label}</span>

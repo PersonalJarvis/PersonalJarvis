@@ -89,7 +89,10 @@ export function DocsView() {
   }, []);
 
   return (
-    <div className="flex h-full min-h-0 bg-background">
+    // The window's nav ground runs from the caption down through the docs
+    // navigation; the reading surface is a sheet set into it with a hairline
+    // and a rounded corner — the same split as the app shell beside its nav.
+    <div className="jarvis-nav-surface flex h-full min-h-0">
       <a
         href="#docs-content"
         className="sr-only z-50 rounded-md bg-background px-3 py-2 text-sm text-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus-visible:ring-2 focus-visible:ring-ring"
@@ -102,26 +105,28 @@ export function DocsView() {
         onShowOverview={showOverview}
         onOpenSearch={() => setSearchOpen(true)}
       />
-      <main
-        id="docs-content"
-        ref={contentRef as React.RefObject<HTMLElement>}
-        tabIndex={-1}
-        className="min-w-0 flex-1 overflow-y-auto focus-visible:outline-none"
-      >
-        <div className="mx-auto flex w-full max-w-6xl gap-12 px-10">
-          <div className="min-w-0 flex-1">
-            <DocsContent
-              slug={selectedSlug}
-              onSelect={selectDoc}
-              onShowOverview={showOverview}
-              onOpenSearch={() => setSearchOpen(true)}
-            />
+      <div className="jarvis-sheet flex min-w-0 flex-1">
+        <main
+          id="docs-content"
+          ref={contentRef as React.RefObject<HTMLElement>}
+          tabIndex={-1}
+          className="min-w-0 flex-1 overflow-y-auto focus-visible:outline-none"
+        >
+          <div className="mx-auto flex w-full max-w-6xl gap-12 px-10">
+            <div className="min-w-0 flex-1">
+              <DocsContent
+                slug={selectedSlug}
+                onSelect={selectDoc}
+                onShowOverview={showOverview}
+                onOpenSearch={() => setSearchOpen(true)}
+              />
+            </div>
+            {selectedSlug && (
+              <DocsToc headings={headings} contentRef={contentRef} />
+            )}
           </div>
-          {selectedSlug && (
-            <DocsToc headings={headings} contentRef={contentRef} />
-          )}
-        </div>
-      </main>
+        </main>
+      </div>
 
       <DocsSearchModal
         open={searchOpen}

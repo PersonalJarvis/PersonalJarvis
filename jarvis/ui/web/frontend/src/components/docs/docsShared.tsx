@@ -95,7 +95,7 @@ export function SearchTrigger({
       <span className="flex-1 truncate">
         {size === "lg" ? t("docs.search_hero") : t("docs.search_button")}
       </span>
-      <kbd className="shrink-0 rounded-sm border border-border bg-background px-1.5 py-0.5 font-sans text-xs font-medium text-foreground-faint">
+      <kbd className="shrink-0 rounded-sm border border-border px-1.5 py-0.5 font-sans text-xs font-medium text-foreground-faint">
         {searchShortcutLabel()}
       </kbd>
     </button>
