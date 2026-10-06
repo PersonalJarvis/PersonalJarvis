@@ -17,6 +17,10 @@ updates:
   # platform-universal application lock when refreshing packaging tools.
   - package-ecosystem: pip
     directory: /scripts/ci
+    # New releases wait a week before a PR, so a hijacked publish is
+    # usually caught and yanked before it can reach this repository.
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -29,6 +33,10 @@ updates:
   # review the diff carefully before merging (read TRUST_ROOT.md §7).
   - package-ecosystem: github-actions
     directory: /
+    # New releases wait a week before a PR, so a hijacked publish is
+    # usually caught and yanked before it can reach this repository.
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
@@ -68,6 +76,10 @@ updates:
   # `requirements.in` instructs.
   - package-ecosystem: pip
     directory: /
+    # New releases wait a week before a PR, so a hijacked publish is
+    # usually caught and yanked before it can reach this repository.
+    cooldown:
+      default-days: 7
     schedule:
       interval: weekly
       day: monday
@@ -77,6 +89,28 @@ updates:
     labels:
       - dependencies
       - python
+    commit-message:
+      prefix: deps
+      include: scope
+
+  # Container base images are pinned by digest (multi-arch index) so a
+  # rebuilt image cannot silently change; this keeps those digests current.
+  - package-ecosystem: docker
+    directories: ["/", "/keyproxy", "/board-backend"]
+    cooldown:
+      default-days: 7
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 3
+    groups:
+      base-images:
+        patterns: ["*"]
+    labels:
+      - dependencies
+      - docker
     commit-message:
       prefix: deps
       include: scope
