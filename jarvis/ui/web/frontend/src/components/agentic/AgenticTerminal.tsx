@@ -1212,6 +1212,22 @@ export function AgenticTerminal({
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
     }
+    /*
+     * Did this socket's handshake go out without a size (`UNMEASURED_SIZE`),
+     * with the server's report of the agent's real size still to come?
+     *
+     * The server replays the agent's screen BEFORE it sends that report, and
+     * the screen is addressed by row at the agent's size. Parsed into this
+     * grid first — xterm's constructed 80x24 when the pane mounted hidden or
+     * in a minimized window — every row below the 24th landed on the last one
+     * (the status line written over the prompt box), and the report then grew
+     * the grid with blank rows underneath. Nothing repaired it: the PTY
+     * already had the size the pane went on to ask for, so the agent was never
+     * asked to paint again (reported 2026-10-06, the window reloading while
+     * the IDE showed the thread layout). So output is held until the report
+     * arrives and drawn after the grid has taken it (see `onGeometry`).
+     */
+    let awaitingSizeReport = false;
 
     const report = (status: PaneStatus, detail?: string) => {
       statusRef.current = status;
@@ -1338,7 +1354,10 @@ export function AgenticTerminal({
         return;
       }
       paneVisible = true;
-      flushHeld(afterFlush);
+      // Held output waits for the size report (see `awaitingSizeReport`); its
+      // deadline flush is still armed, so waiting cannot freeze the pane.
+      if (awaitingSizeReport) afterFlush?.();
+      else flushHeld(afterFlush);
     };
 
     const parkPane = () => {
@@ -1500,7 +1519,7 @@ export function AgenticTerminal({
       // at it. Cheap to call per chunk: React bails out on an unchanged value.
       setPainted(true);
       if (!paneVisible) recheckParked();
-      if (paneVisible) {
+      if (paneVisible && !awaitingSizeReport) {
         writeToTerminal(text, afterWrite);
         return;
       }
@@ -1571,7 +1590,10 @@ export function AgenticTerminal({
       // callback, `setTailReady(false)` may not reach the DOM before xterm's
       // write queue starts parsing. Hide the canvas host imperatively BEFORE
       // reset/write; React still mirrors the curtain below for later renders.
-      const curtain = paneVisible && activeRef.current;
+      // A replay waiting for the size report is held (see
+      // `awaitingSizeReport`), and the callback that would lift a curtain
+      // goes with it.
+      const curtain = paneVisible && !awaitingSizeReport && activeRef.current;
       if (curtain) {
         container.style.visibility = "hidden";
         replayCurtainRef.current = true;
@@ -2052,6 +2074,9 @@ export function AgenticTerminal({
      */
     let openedWithClaim = viewerMayOwn();
     const connectSize = () => {
+      // Without a size the server answers with the agent's (see
+      // `awaitingSizeReport`), and output waits for that answer.
+      awaitingSizeReport = true;
       if (!mountMeasured || !measurable()) return UNMEASURED_SIZE;
       let proposed: { cols: number; rows: number } | undefined;
       try {
@@ -2062,6 +2087,7 @@ export function AgenticTerminal({
       const cols = proposed?.cols ?? term.cols;
       const rows = proposed?.rows ?? term.rows;
       if (!Number.isFinite(cols) || !Number.isFinite(rows)) return UNMEASURED_SIZE;
+      awaitingSizeReport = false;
       // The same floors `applyResize` puts on the grid.
       return {
         cols: Math.max(cols, MIN_REAL_COLS),
@@ -2142,6 +2168,19 @@ export function AgenticTerminal({
               /* the terminal is being torn down — nothing left to reconcile */
             }
           };
+          // The report a handshake without a size was waiting for. What this
+          // pane holds — the replayed screen and anything after it — was
+          // drawn at THIS size, so the grid takes it first (see
+          // `awaitingSizeReport`). Something already parsing was flushed
+          // early by the hold's deadline; it keeps the ordinary order below.
+          if (awaitingSizeReport) {
+            awaitingSizeReport = false;
+            if (parsing === 0) {
+              applyGeometry();
+              flushHeld();
+              return;
+            }
+          }
           // A size frame belongs BETWEEN the output before and after it.
           // xterm parses writes asynchronously, and a hidden workspace can
           // still hold older output outside xterm. Resizing immediately made
