@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import tempfile
 import uuid
@@ -27,8 +28,8 @@ from jarvis.agent_runtimes import base, driver  # noqa: E402
 from jarvis.agent_runtimes.acp import AcpTurn, frame_line  # noqa: E402
 from jarvis.agent_runtimes.base import RuntimeTurn  # noqa: E402
 from jarvis.agent_runtimes.model_map import ModelRoute  # noqa: E402
+from jarvis.core.control_key import get_control_key  # noqa: E402
 from tests.fakes.fake_openai_server import MODEL_ID, FakeOpenAIServer  # noqa: E402
-
 
 _STDERR = Path(tempfile.gettempdir()) / "jarvis-runtime-e2e-stderr.log"
 
@@ -108,16 +109,39 @@ async def main(name: str) -> int:
     with FakeOpenAIServer() as server:
         key = "sk-e2e-" + uuid.uuid4().hex
         route = ModelRoute("local-openai", MODEL_ID, server.base_url, "chat_completions", None)
+        # JARVIS_E2E_MCP=<url>|<agent id>: hand the runtime a running Jarvis'
+        # MCP server (a dev instance) and make the fake model call a real tool.
+        mcp = os.environ.get("JARVIS_E2E_MCP", "")
+        mcp_url, _, mcp_agent = mcp.partition("|")
+        agent_id = mcp_agent or "e2e-agent"
         turn = RuntimeTurn(
-            agent_id="e2e-agent",
+            agent_id=agent_id,
             agent_name="Probe",
-            session_id="society:e2e-agent",
+            session_id=f"society:{agent_id}",
             workspace=workspace,
             route=route,
             resume=None,
             auto_approve=True,
+            mcp_url=mcp_url or None,
+            control_key=get_control_key() if mcp_url else None,
         )
-        first, io1 = await _run(name, turn, "first message")
+        opening = (
+            'CALL_TOOL society_wiki_note {"kind": "memory", "target": "user", '
+            '"text": "Favourite food: lasagne (runtime e2e)"}'
+            if mcp_url
+            else "first message"
+        )
+        first, io1 = await _run(name, turn, opening)
+        if server.requests:
+            offered = [
+                (t.get("function") or {}).get("name", "")
+                for t in server.requests[0].get("tools") or []
+            ]
+            print("  offered jarvis tools:", [n for n in offered if "jarvis" in n][:8])
+            print("  offered total:", len(offered), "tool_search" in offered)
+        calls = [e["payload"] for e in io1.events if e["kind"] in ("tool_call", "tool_result")]
+        for call in calls:
+            print("  ", {k: str(v)[-700:] for k, v in call.items() if k in ("name", "output")})
         print("turn 1:", first.status, first.error, repr(first.result_text[:80]))
         print("  vendor session:", first.vendor_session)
         turn.resume = first.vendor_session
@@ -125,7 +149,7 @@ async def main(name: str) -> int:
         print("turn 2:", second.status, second.error, repr(second.result_text[:80]))
         history = len(server.requests[-1].get("messages", [])) if server.requests else 0
         print("  model saw", history, "messages on turn 2")
-        home = tmp / "agent_runtimes" / name / "e2e-agent"
+        home = tmp / "agent_runtimes" / name / agent_id
         written = sorted(p.name for p in home.iterdir())
         print("  runtime home:", written)
         secret_leak = [

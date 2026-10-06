@@ -183,6 +183,10 @@ class HermesRuntime:
             },
             "skills": {"creation_nudge_interval": 0, "project_discovery": False},
             "curator": {"enabled": False},
+            # Jarvis' tools are what make this a Jarvis agent: offered directly,
+            # never deferred behind Hermes' tool search, where smaller models
+            # fail to find them (seen live with a 9B model, 2026-10-06).
+            "tools": {"tool_search": False},
             "auxiliary": {
                 "background_review": {"enabled": False},
                 "title_generation": {"enabled": False},

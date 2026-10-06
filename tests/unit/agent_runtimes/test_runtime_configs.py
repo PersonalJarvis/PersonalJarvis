@@ -89,6 +89,11 @@ def test_hermes_self_learning_extras_stay_off(tmp_path):
     assert config["skills"]["creation_nudge_interval"] == 0
 
 
+def test_hermes_offers_jarvis_tools_directly(tmp_path):
+    """Never deferred behind Hermes' tool search (a 9B model missed them live)."""
+    assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
+
+
 def test_hermes_approvals_follow_the_chat_stance_and_never_the_guardian(tmp_path):
     runtime = HermesRuntime()
     assert runtime.config_for(_turn(tmp_path))["approvals"]["mode"] == "off"
