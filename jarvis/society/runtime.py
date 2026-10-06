@@ -37,7 +37,7 @@ from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
 from .delivery import IncomingMessage, incoming_context
-from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
+from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier, now_ms
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
@@ -516,14 +516,57 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if await asyncio.to_thread(
+        window_key = ""
+        if completion.turn.direct_user:
+            # The person's turns are reviewed per window, not per answer.
+            windowed = await self._review_window(session, events)
+            if windowed is None:
+                return
+            events, window_key = windowed
+        queued = await asyncio.to_thread(
             self.conversations.queue_review,
             session.session_id,
             completion.turn.turn_id,
             events,
             direct_user=completion.turn.direct_user,
-        ):
+        )
+        if window_key:
+            # Cleared only once the review holds the window's evidence durably.
+            await self.store.set_meta(window_key, "")
+        if queued:
             self.background(self.recover_reviews())
+
+    async def _review_window(
+        self, session: Any, events: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], str] | None:
+        """Add a person's turn to its chat's review window (``review_cadence``).
+
+        Returns the whole window's events and its meta key when it is due for
+        review, else ``None``. Without a chat store to read the window back,
+        every turn is reviewed on its own, as before.
+        """
+        from .review_cadence import ReviewWindow, window_events
+
+        svc = self._get_chat()
+        store = getattr(svc, "store", None)
+        if store is None or not callable(getattr(store, "list_events", None)):
+            return events, ""
+        key = ReviewWindow.key(session.session_id)
+        window = ReviewWindow.parse(await self.store.get_meta(key, ""))
+        now = now_ms()
+        window.add_turn(events, now)
+        users = [
+            str((e.get("payload") or {}).get("text") or "")
+            for e in window_events(events)
+            if e.get("kind") == "user_message"
+        ]
+        if not window.due(users, now):
+            await self.store.set_meta(key, window.dump())
+            return None
+        history = await asyncio.to_thread(
+            store.list_events, session.session_id, after_seq=max(0, window.since_seq - 1)
+        )
+        return (window_events(history) or events), key
 
     async def _complete_message_reply(
         self, session: Any, completion: Any, events: list[dict[str, Any]]
@@ -745,16 +788,9 @@ class SocietyRuntime:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
         from .chat_binding import ensure_session, frame_assignment
 
-        sender = await self.roster.get(env.from_agent) if env.from_agent != "user" else None
-        # Work Jarvis or a teammate hands out runs in the target's own
-        # conversation with that sender, never in the person's chat with it.
-        session = ensure_session(
-            svc,
-            self._get_cfg(),
-            target,
-            counterpart=env.from_agent,
-            counterpart_name=sender.name if sender is not None else env.from_agent,
-        )
+        # Work Jarvis or a teammate hands out runs in the agent's one chat; the
+        # chat shows the framed assignment as a delegation card from its sender.
+        session = ensure_session(svc, self._get_cfg(), target)
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)

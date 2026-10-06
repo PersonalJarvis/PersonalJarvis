@@ -404,11 +404,9 @@ async def test_busy_turn_defers_provider_reseat_until_it_finishes(tmp_path: Path
         await rt.close()
 
 
-@pytest.mark.parametrize("first_is_pair", [False, True])
-async def test_direct_chats_of_one_agent_share_a_turn_seat(tmp_path: Path, first_is_pair: bool):
-    import asyncio
-
-    from jarvis.agent_chat.service import AgentChatService, SessionBusy
+async def test_an_older_side_chat_is_read_only(tmp_path: Path):
+    """Side chats from before the one-chat change stay readable, never run."""
+    from jarvis.agent_chat.service import AgentChatService
 
     store = AgentChatStore(tmp_path / "agent_chat.db")
     svc = AgentChatService(store, assistant_name=lambda: "Test")
@@ -417,104 +415,19 @@ async def test_direct_chats_of_one_agent_share_a_turn_seat(tmp_path: Path, first
         tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
     )
     await rt.ensure_started()
-    entered = asyncio.Event()
-    release = asyncio.Event()
     try:
         agent, _ = await rt.roster.create(name="Scout", provider="openai")
-        canonical = ensure_session(svc, cfg, agent)
-        pair = ensure_session(svc, cfg, agent, counterpart="jarvis")
-        first, second = (pair, canonical) if first_is_pair else (canonical, pair)
-
-        async def held_runner(_handle, _text):
-            entered.set()
-            await release.wait()
-
-        await svc.send(
-            first.session_id, "First task", control_runner=held_runner,
-            control_owned=True, direct_user=False,
+        legacy = store.create_session(
+            session_id=f"{agent.session_id}:with:jarvis", surface="society",
+            provider="openai", model="", effort="", cwd=str(tmp_path),
+            permission_mode="bypass", title="Scout · Jarvis",
         )
-        await asyncio.wait_for(entered.wait(), timeout=3)
-        before = store.list_events(second.session_id)
-        with pytest.raises(SessionBusy):
-            await svc.send(
-                second.session_id, "Concurrent task", control_runner=held_runner,
-                control_owned=True, direct_user=False,
-            )
-        assert store.list_events(second.session_id) == before
-
-        release.set()
-        await svc.wait_turn(first.session_id)
-        await svc.send(
-            second.session_id, "Next task", control_runner=held_runner,
-            control_owned=True, direct_user=False,
-        )
-        await svc.wait_turn(second.session_id)
+        with pytest.raises(PermissionError, match="read-only"):
+            await svc.bind_society_session(legacy.session_id)
+        chat = ensure_session(svc, cfg, agent)
+        assert chat.session_id == agent.session_id
+        assert (await svc.bind_society_session(chat.session_id)).session_id == agent.session_id
     finally:
-        release.set()
-        await svc.cancel_all()
-        await rt.close()
-
-
-async def test_pair_cannot_enter_during_canonical_start_and_stop_releases_seat(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-):
-    import asyncio
-
-    from jarvis.agent_chat.service import AgentChatService, SessionBusy
-
-    store = AgentChatStore(tmp_path / "agent_chat.db")
-    svc = AgentChatService(store, assistant_name=lambda: "Test")
-    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
-    rt = SocietyRuntime(
-        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
-    )
-    await rt.ensure_started()
-    entered = asyncio.Event()
-    release = asyncio.Event()
-    original_emit = svc._emit
-
-    async def held_start(session_id, event):
-        await original_emit(session_id, event)
-        if event["kind"] == "turn_started" and session_id == agent.session_id:
-            entered.set()
-            await release.wait()
-
-    monkeypatch.setattr(svc, "_emit", held_start)
-    try:
-        agent, _ = await rt.roster.create(name="Scout", provider="openai")
-        canonical = ensure_session(svc, cfg, agent)
-        pair = ensure_session(svc, cfg, agent, counterpart="jarvis")
-
-        async def fake_runner(_handle, _text):
-            return None
-
-        sending = asyncio.create_task(svc.send(
-            canonical.session_id, "First task", control_runner=fake_runner,
-            control_owned=True, direct_user=False,
-        ))
-        await asyncio.wait_for(entered.wait(), timeout=3)
-        assert svc.is_running(canonical.session_id)
-        assert canonical.session_id in svc.running_session_ids()
-        with pytest.raises(SessionBusy):
-            await svc.send(
-                pair.session_id, "Concurrent task", control_runner=fake_runner,
-                control_owned=True, direct_user=False,
-            )
-        assert store.list_events(pair.session_id) == []
-
-        assert await svc.cancel(canonical.session_id)
-        with pytest.raises(asyncio.CancelledError):
-            await sending
-        assert not svc.is_running(canonical.session_id)
-        assert store.list_events(canonical.session_id)[-1]["payload"]["status"] == "cancelled"
-
-        await svc.send(
-            pair.session_id, "Next task", control_runner=fake_runner,
-            control_owned=True, direct_user=False,
-        )
-        await svc.wait_turn(pair.session_id)
-    finally:
-        release.set()
         await svc.cancel_all()
         await rt.close()
 
@@ -1033,11 +946,10 @@ async def test_deliver_hook_frames_and_sends(world):
         payload={"text": "Where is the VPS note?", "refs": ["wiki:society/archivist/vps.md"]},
     )
     await deliver(scout, env)
-    # A teammate's message runs in Scout's conversation with that teammate,
-    # never in the person's own chat with Scout.
+    # A teammate's message runs in Scout's one chat, as a delegation card.
     assert svc.sent == [
         (
-            "society:scout:with:archivist",
+            "society:scout",
             "[query from Archivist]\nWhere is the VPS note?\nRefs: wiki:society/archivist/vps.md\n"
             f"Message id: {env.event_id}; sender id: archivist\n"
             "Reply to the sender using society_message_agent with kind 'answer'. "
@@ -1046,9 +958,9 @@ async def test_deliver_hook_frames_and_sends(world):
             "messaging connector. No preliminary acknowledgement is needed.",
         )
     ]
-    assert svc.store.get_session("society:scout") is None
-    assert svc.store.get_session("society:scout:with:archivist").title == "Scout · Archivist"
-    svc.busy.add("society:scout:with:archivist")
+    assert svc.store.get_session("society:scout:with:archivist") is None
+    assert svc.store.get_session("society:scout").title == "Scout"
+    svc.busy.add("society:scout")
     with pytest.raises(RuntimeError, match="target busy"):
         await deliver(scout, env)
 
@@ -1082,7 +994,7 @@ async def test_scheduler_delivers_through_the_hook(world):
     await rt.roster.create(name="Archivist", provider="openai")
     rt.set_deliver(make_deliver_hook(lambda: svc, lambda: cfg))
     await rt.say(from_agent="scout", to_agent="archivist", text="ping")
-    assert [s[0] for s in svc.sent] == ["society:archivist:with:scout"]
+    assert [s[0] for s in svc.sent] == ["society:archivist"]
     assert svc.sent[0][1].startswith("[say from Scout]")
 
 

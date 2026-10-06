@@ -1,6 +1,12 @@
-# The Memory House — one shared memory for every agent
+# The Memory House — agent memory on the island
 
-Status: **binding for the memory wave, written 2026-09-02.** Subordinate to
+> **Status (2026-10-05):** the "one shared memory" design below is history. Each agent now keeps
+> private notebooks (`USER.md`, `MEMORY.md`) and private skills; `society/shared/` is reached only
+> through the person's promote action. The current behavior is
+> [`self-learning.md`](self-learning.md); the island building and its checkpoint rules below
+> still apply.
+
+Original status: **binding for the memory wave, written 2026-09-02.** Subordinate to
 [`MASTERPLAN.md`](MASTERPLAN.md) §2/§6 and [`agent-definition.md`](agent-definition.md) §5
 (the Obsidian wiki is the society's shared memory). This document records the deep dive the
 maintainer asked for, the decisions, and the checklist the build follows.

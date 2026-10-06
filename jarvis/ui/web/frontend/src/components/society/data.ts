@@ -136,38 +136,11 @@ export interface SocietyAgent {
   stats: AgentStats;
 }
 
-/** What the creator hands over; everything else is derived or defaulted. */
-export interface NewAgentInput {
-  name: string;
-  title: string;
-  description: string;
-  figure: FigureRecipe;
-  palette: AgentPalette;
-  provider: string;
-  providerLabel: string;
-  model: string;
-  /** "" = the provider's default effort. */
-  effort: string;
-  /** The stored subscription login of a CLI seat; "" = that platform's active account. */
-  accountId: string;
-  /** "" = this computer; otherwise the connected computer the agent runs on. */
-  computerId: string;
-  grantMode: GrantMode;
-  toolGrants: string[];
-  focus: string[];
-  permissionCeiling: PermissionCeiling;
-  approvalMode: AgentApprovalMode;
-  dailyBudgetUsd: number;
-}
-
 export interface RosterData {
   agents: SocietyAgent[];
   /** True while rows come from the sample roster rather than society.db. */
   sample: boolean;
 }
-
-/** Agents created in THIS window while the backend is unreachable — sample data, not persisted. */
-const LOCAL_ROSTER: SocietyAgent[] = [];
 
 /**
  * Sample rows retired in this window. The sample roster is a frozen module
@@ -282,7 +255,7 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   } catch {
     // Unreachable backend: the sample roster below says so on the rail.
   }
-  const rows = [...SAMPLE_ROSTER, ...LOCAL_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
+  const rows = [...SAMPLE_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
   return { agents: rows, sample: true };
 }
 
@@ -382,113 +355,38 @@ export function useSocietyCapabilities(enabled = true, mentionOpen = false) {
     retryInventory: () => { void refetch(); void plugins.refetch(); } };
 }
 
-/** A URL-safe id from a display name, unique against the rows already known. */
-export function slugifyAgentName(name: string, taken: ReadonlySet<string>): string {
-  const base =
-    name
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "agent";
-  let candidate = base;
-  let n = 2;
-  while (taken.has(candidate)) candidate = `${base}-${n++}`;
-  return candidate;
-}
-
 /**
- * Create an agent through `POST /api/society/agents`. When the backend is not
- * there, a sample row is appended for this window so the flow still works.
+ * One-click creation (`POST /api/society/agents` with no name): the backend
+ * picks a placeholder name, a random look and the lead chat's current seat,
+ * and the agent finds its role in its first conversation. A failure throws —
+ * there is no local stand-in row, so the person sees the real error.
  */
-export function useCreateAgent() {
+export function useQuickCreateAgent() {
   const client = useQueryClient();
-  const { data } = useSocietyRoster();
-  return useCallback(
-    async (input: NewAgentInput): Promise<SocietyAgent> => {
-      const body = {
-        name: input.name.trim(),
-        title: input.title.trim(),
-        description: input.description.trim(),
-        tier: "specialist",
-        provider: input.provider || undefined,
-        model: input.model || undefined,
-        effort: input.effort || undefined,
-        account_id: input.accountId || undefined,
-        computer_id: input.computerId || undefined,
-        avatar: input.figure,
-        grant_mode: input.grantMode,
-        grants: input.grantMode === "allowlist" ? input.toolGrants : undefined,
-        focus: input.focus.length ? input.focus : undefined,
-        permission_ceiling: input.permissionCeiling,
-        approval_mode: input.approvalMode,
-        daily_budget_usd: input.dailyBudgetUsd,
-      };
-      try {
-        const res = await fetch("/api/society/agents", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (res.ok) {
-          const created = (await res.json()) as { agent: SocietyAgentRow };
-          // The island owes this row an entrance: it walks out of the foundry.
-          announceSpawn(created.agent.agent_id);
-          const agent = rowToAgent(created.agent);
-          patchRoster(client, (agents) => [
-            ...agents.filter((a) => a.agentId !== agent.agentId),
-            agent,
-          ]);
-          return agent;
-        }
-        if (res.status !== 404 && res.status !== 503) {
-          const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
-          throw new Error(typeof detail?.detail === "string" ? detail.detail : `create ${res.status}`);
-        }
-      } catch (err) {
-        if (err instanceof Error && !/fetch/i.test(err.message)) throw err;
-        // Network failure: fall through to the sample row.
-      }
-      const taken = new Set((data?.agents ?? []).map((a) => a.agentId));
-      const newId = slugifyAgentName(input.name, taken);
-      const agent: SocietyAgent = {
-        agentId: newId,
-        name: input.name.trim(),
-        title: input.title.trim(),
-        description: input.description.trim(),
-        tier: "specialist",
-        provider: input.provider,
-        providerLabel: input.providerLabel,
-        model: input.model,
-        effort: input.effort,
-        figure: input.figure,
-        palette: input.palette,
-        grantMode: input.grantMode,
-        toolGrants: input.toolGrants,
-        focus: input.focus,
-        denies: [],
-        approvalRules: { requireApproval: [], alwaysAllow: [] },
-        permissionCeiling: input.permissionCeiling,
-        approvalMode: input.approvalMode,
-        dailyBudgetUsd: input.dailyBudgetUsd,
-        checkpoint: "idle",
-        state: "idle",
-        lifecycle: "active",
-        createdMs: Date.now(),
-        maxConcurrentRuns: 1,
-        workspaceDir: `society/${newId}/workspace`,
-        wikiNamespace: `society/${newId}/`,
-        chatSessionId: null,
-        routines: [],
-        stats: { runs: 0, totalCostUsd: 0, spentTodayUsd: 0, lastActiveMs: null },
-      };
-      LOCAL_ROSTER.push(agent);
-      announceSpawn(agent.agentId);
-      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
-      return agent;
-    },
-    [client, data],
-  );
+  return useCallback(async (): Promise<SocietyAgent> => {
+    const res = await fetch("/api/society/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tier: "specialist" }),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+      const reason = detail?.detail;
+      throw new Error(
+        typeof reason === "string"
+          ? reason
+          : reason && typeof reason === "object" && "detail" in reason
+            ? String((reason as { detail: unknown }).detail)
+            : `create ${res.status}`,
+      );
+    }
+    const created = (await res.json()) as { agent: SocietyAgentRow };
+    // The island owes this row an entrance: it walks out of the foundry.
+    announceSpawn(created.agent.agent_id);
+    const agent = rowToAgent(created.agent);
+    patchRoster(client, (agents) => [...agents.filter((a) => a.agentId !== agent.agentId), agent]);
+    return agent;
+  }, [client]);
 }
 
 /**
@@ -521,7 +419,7 @@ export function useUpdateAgentDescription() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, description: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -532,6 +430,37 @@ export function useUpdateAgentDescription() {
       } else {
         agent.description = description;
       }
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
+/** The identity an `identity` proposal replaced, as its outcome card carries it. */
+export interface PreviousIdentity {
+  name: string;
+  title: string;
+  description: string;
+  focus: string[];
+  /** Present when the identity also wrote derived approval rules. */
+  approval_rules?: { require_approval: string[]; always_allow: string[] };
+}
+
+/**
+ * Undo an applied `identity` proposal: write the previous name, title,
+ * description, focus and approval rules back. The explicit focus keeps the route from
+ * re-deriving one from the restored text.
+ */
+export function useRestoreIdentity() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agentId: string, previous: PreviousIdentity): Promise<void> => {
+      const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(previous),
+      });
+      if (!res.ok) throw new Error(`identity ${res.status}`);
       await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
     },
     [client],
@@ -586,7 +515,7 @@ export function useUpdateAgentLimits() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, limits: AgentLimits): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       const body = {
         daily_budget_usd: Math.max(0, limits.dailyBudgetUsd),
         permission_ceiling: limits.permissionCeiling,
@@ -617,7 +546,7 @@ export function useSetAgentComputer() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, computerId: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         agent.computerId = computerId || null;
       } else {
@@ -644,7 +573,7 @@ export function useSetAgentPaused() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, paused: boolean): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -678,11 +607,9 @@ export function useRetireAgent() {
   return useCallback(
     async (agent: SocietyAgent, executioner: SocietyAgent | null): Promise<void> => {
       if (agent.tier === "lead") throw new Error("the lead cannot be retired");
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         RETIRED_SAMPLE.add(agent.agentId);
-        const local = LOCAL_ROSTER.indexOf(agent);
-        if (local >= 0) LOCAL_ROSTER.splice(local, 1);
       } else {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "DELETE",

@@ -171,8 +171,9 @@ async def test_resolve_by_id_name_or_slug(roster: Roster):
 
 
 async def test_name_rules(roster: Roster):
-    with pytest.raises(RosterError):
-        await roster.create(name="")
+    # An empty name is one-click creation (placeholder name), not an error.
+    fresh, created = await roster.create(name="")
+    assert created and fresh.name
     with pytest.raises(RosterError):
         await roster.create(name="a/b")
     with pytest.raises(RosterError):

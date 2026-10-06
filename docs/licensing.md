@@ -69,6 +69,11 @@ The bundled Silero VAD model (`jarvis/assets/vad/`) carries its own MIT license
 from its own authors and keeps it — the switch does not touch it, and no
 dependency's terms change either. Nothing is relicensed by being included here.
 
+A few well-separated portions of NousResearch/hermes-agent (MIT, Copyright (c)
+2025 Nous Research) are adapted into the agent code. Each adapted block names
+its upstream file and commit in a header comment; the license text and the list
+of adapted files live in [`third_party/hermes-agent/`](../third_party/hermes-agent/).
+
 ## Still to do at the 2.0 release
 
 - [ ] `homebrew-tap/Formula/personal-jarvis-installer.rb` and

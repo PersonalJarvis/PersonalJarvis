@@ -42,6 +42,8 @@ __all__ = [
 
 RUN_SKILL_TOOL_NAME: Final[str] = "society_run_skill"
 DEFAULT_DAILY_CAP: Final[int] = 3
+#: How many learned skills an agent's briefing lists (the rest: by name).
+BRIEFING_SKILL_LIMIT: Final[int] = 12
 MIN_TOOL_STEPS: Final[int] = 2
 _META_PREFIX: Final[str] = "learn:"
 _DIGEST_CHARS: Final[int] = 4_000
@@ -89,6 +91,16 @@ class AgentSkills:
         self.agent_id = agent_id
         self.root = Path(data_dir) / "society" / agent_id / "skills"
         self._registry: Any | None = None
+        self._usage: Any | None = None
+
+    @property
+    def usage(self) -> Any:
+        """Usage counts and the active/stale/archived lifecycle (``skill_lifecycle``)."""
+        if self._usage is None:
+            from .skill_lifecycle import SkillUsage
+
+            self._usage = SkillUsage(self.root)
+        return self._usage
 
     @property
     def registry(self) -> Any:
@@ -150,20 +162,47 @@ class AgentSkills:
         return target
 
     def summaries(self) -> list[dict[str, str]]:
+        """Every private skill with its lifecycle state, after an aging pass."""
+        from .skill_lifecycle import ACTIVE
+
+        skills = [*self.list_active(), *self.registry.list_drafts()]
+        slugs = [Path(str(skill.path)).parent.name for skill in skills]
+        self.usage.transitions(slugs)
+        usage = self.usage.rows()
         out: list[dict[str, str]] = []
-        for skill in [*self.list_active(), *self.registry.list_drafts()]:
+        for skill, slug in zip(skills, slugs, strict=True):
             fm = getattr(skill, "frontmatter", None)
-            name = str(getattr(fm, "name", None) or Path(str(skill.path)).parent.name)
+            name = str(getattr(fm, "name", None) or slug)
+            row = usage.get(slug, {})
             out.append(
                 {
-                    "slug": Path(str(skill.path)).parent.name,
+                    "slug": slug,
                     "state": str(getattr(skill, "state", "draft")),
                     "name": name,
                     "description": str(getattr(fm, "description", "") or ""),
                     "when_to_use": str(getattr(fm, "when_to_use", "") or ""),
+                    "lifecycle": str(row.get("state") or ACTIVE),
+                    "uses": str(int(row.get("uses", 0) or 0)),
+                    "last_activity_ms": str(
+                        int(row.get("last_activity_ms") or row.get("first_seen_ms") or 0)
+                    ),
                 }
             )
         return sorted(out, key=lambda s: s["slug"])
+
+    def for_briefing(self, limit: int = BRIEFING_SKILL_LIMIT) -> list[dict[str, str]]:
+        """The skills an agent's briefing lists: not archived, most recent first.
+
+        Archived skills stay on disk and runnable by name; the cap keeps a
+        long-lived agent's prompt from growing with every skill it ever wrote.
+        The order changes only when a skill is used or written, so the
+        briefing stays byte-stable between turns otherwise.
+        """
+        from .skill_lifecycle import ARCHIVED
+
+        rows = [row for row in self.summaries() if row["lifecycle"] != ARCHIVED]
+        rows.sort(key=lambda row: (-int(row["last_activity_ms"]), row["slug"]))
+        return rows[:limit]
 
 
 #: ``(agent, skills) -> creator | None``, or an awaitable of that (the real
@@ -331,6 +370,7 @@ class LearningPass:
         self._write_origin(skill_dir, agent, digest)
         await rt.store.set_meta(key, str(used + 1))
         slug = skill_dir.name
+        skills.usage.record(slug, kind="write")
         if receipt:
             await rt.store.set_meta(f"learned:{receipt}", slug)
         await rt.store.append_and_publish(
@@ -446,6 +486,7 @@ class RunLearnedSkillTool:
                 output={"reason": str(FailureReason.INTERNAL_ERROR)},
                 error=f"skill could not be rendered: {exc}",
             )
+        skills.usage.record(Path(str(skill.path)).parent.name)
         directive = (
             "These are your own learned skill's draft procedural notes. Check their applicability "
             "and follow only steps authorized by the current task and your current permissions. "

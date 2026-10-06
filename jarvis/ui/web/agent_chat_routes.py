@@ -1031,14 +1031,20 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
             calendar_zone(body.timezone)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+    from jarvis.agent_chat.send_queue import QueueFull, send_or_queue
+
     svc = _service(request)
     token = client_timezone.set(body.timezone)
     try:
-        turn_id = await svc.send(
-            session_id, body.text, body.attachments, tool_choices=body.tool_choices
+        # A created agent's chat queues a message behind its running turn
+        # instead of refusing it; every other chat answers 409 as before.
+        turn_id, queue_id = await send_or_queue(
+            svc, session_id, body.text, body.attachments, tool_choices=body.tool_choices
         )
     except NoSuchSession as exc:
         raise HTTPException(status_code=404, detail="session not found") from exc
+    except QueueFull as exc:
+        raise HTTPException(status_code=409, detail="too many messages are waiting") from exc
     except SessionBusy as exc:
         raise HTTPException(status_code=409, detail="a turn is already running") from exc
     except PermissionError as exc:
@@ -1047,6 +1053,8 @@ async def post_message(session_id: str, body: MessageBody, request: Request) -> 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         client_timezone.reset(token)
+    if queue_id:
+        return {"turn_id": "", "session_id": session_id, "queued": True, "queue_id": queue_id}
     return {"turn_id": turn_id, "session_id": session_id}
 
 

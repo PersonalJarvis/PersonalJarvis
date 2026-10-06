@@ -1,5 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
-import { ArrowDownLeft, ArrowUpRight, ChevronRight, Clock3 } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, Clock3, Inbox } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useOpenPairConversation } from "@/components/agentchat/PairConversation";
 import type { InternalMessageItem } from "@/components/agentchat/reduce";
@@ -25,6 +25,43 @@ export function ChatActivity({ label, icon, children, failed = false }: {
     </button>
     {open ? <div id={id} className="mx-auto mt-2 max-w-xl rounded-xl bg-secondary px-4 py-3 text-sm leading-relaxed [overflow-wrap:anywhere]">{children}</div> : null}
   </div>;
+}
+
+/** The framed assignment header the backend writes (``frame_assignment``). */
+const ASSIGNMENT_HEADER = /^\[assignment from ([^\]\r\n]+)\]\r?\n/;
+
+/**
+ * Work Jarvis or a teammate handed this agent, as its one chat records it:
+ * ``{sender, task}``, or null for an ordinary message from the person.
+ */
+export function assignmentOf(text: string): { sender: string; task: string } | null {
+  const match = ASSIGNMENT_HEADER.exec(text);
+  if (!match) return null;
+  const body = text.slice(match[0].length);
+  // The task ends where the handoff instructions the backend appends begin.
+  const end = body.search(/\r?\nWhen you are done, end with a handoff:/);
+  return { sender: match[1].trim(), task: (end >= 0 ? body.slice(0, end) : body).trim() };
+}
+
+/** A delegated task in the agent's one chat: folded, sender first, task inside. */
+export function DelegationActivity({ sender, task, roster }: {
+  sender: string; task: string; roster: SocietyAgent[];
+}) {
+  const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const participant = roster.find((agent) => agent.agentId === sender);
+  const name = participant
+    ? societyDisplayName(participant, assistantName)
+    : sender === "jarvis" ? (assistantName || "Jarvis") : sender;
+  return <ChatActivity icon={<Inbox aria-hidden className="h-3.5 w-3.5 shrink-0" />}
+    label={<span className="inline-flex max-w-full items-center gap-2">
+      <span>{t("society.chat.assignment_from").replace("{0}", "")}</span>
+      {participant ? <AgentSwatch agent={participant} size={18} /> : null}
+      <span className="truncate">{name}</span>
+      <span className="truncate">· {task.split(/\r?\n/)[0]}</span>
+    </span>}>
+    <ChatMarkdown text={task} />
+  </ChatActivity>;
 }
 
 export function RoutineActivity({ task, original, onOpen }: { task: string; original: string; onOpen?: () => void }) {

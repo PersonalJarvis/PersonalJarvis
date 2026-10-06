@@ -48,7 +48,7 @@ from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id
+from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
 from .share_tool import ShareTemplateTool
@@ -830,7 +830,7 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     browser["auto_start"] = (
         browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
     )
-    learned = rt.skills_for(agent.agent_id).summaries()
+    learned = rt.skills_for(agent.agent_id).for_briefing()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
     except Exception:  # noqa: BLE001 — a vault that cannot be read costs the head, not the turn
@@ -857,6 +857,19 @@ def _kind_label(kind: CapabilityKind) -> str:
         CapabilityKind.SKILL: "skills",
         CapabilityKind.CORE: "built-in",
     }[kind]
+
+
+#: The introduction frame of a fresh agent (one-click creation): it has a
+#: placeholder name and no role until its person says what it is for.
+FRESH_AGENT_GUIDANCE = (
+    "You were just created and have no role yet; your current name is a placeholder. "
+    "If the person has not said what you are for, greet them in one or two sentences, say "
+    "you are new, and ask what you should take care of. As soon as they tell you, call "
+    "society_propose_change with kind 'identity': a short fitting name, a one-line title, "
+    "and a description written as your standing instructions (goal, responsibilities, "
+    "working style), in the person's language. Then start on the task they gave you. "
+    "Never invent a role the person did not describe."
+)
 
 
 def build_briefing(
@@ -900,6 +913,8 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    if is_fresh(agent):
+        parts.append("## You are new\n" + FRESH_AGENT_GUIDANCE)
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
     parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)

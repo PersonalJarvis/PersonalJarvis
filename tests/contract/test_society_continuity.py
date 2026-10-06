@@ -200,7 +200,11 @@ async def test_direct_chat_completion_is_reviewed_once(world):
     assert result.success and result.output["hits"]
 
 
-async def test_review_memory_requires_grounded_evidence_and_executor(world):
+async def test_review_memory_requires_grounded_evidence_and_executor(world, monkeypatch):
+    from jarvis.society import review_cadence
+
+    # Review every turn of the person here; the review window has its own tests.
+    monkeypatch.setattr(review_cadence, "REVIEW_EVERY_USER_TURNS", 1)
     rt, svc, session, _ = world
     rt.memory_executor = MemoryExecutor()
 
@@ -254,12 +258,14 @@ async def test_routine_uses_current_rules_and_memory(world):
     routine_session_id = kwargs["conversation_id"]
     assert routine_session_id.startswith(f"{session.session_id}:routine:{spec.id}:")
     assert svc.store.get_session(routine_session_id).permission_mode == "bypass"
-    assert all(event["kind"] == "notice" and event["payload"].get("kind") == "memory_updated"
+    assert all(event["kind"] == "notice"
+               and event["payload"].get("kind") in {"memory_updated", "routine_run"}
                for event in svc.store.list_events(session.session_id))
 
     await run_owned_routine(rt, str(spec.id), spec.tags, spec.action.prompt)
     assert brain.calls[-1][1]["conversation_id"] != routine_session_id
-    assert all(event["kind"] == "notice" and event["payload"].get("kind") == "memory_updated"
+    assert all(event["kind"] == "notice"
+               and event["payload"].get("kind") in {"memory_updated", "routine_run"}
                for event in svc.store.list_events(session.session_id))
 
 

@@ -247,4 +247,18 @@ describe("agent-chat reduce: notices", () => {
     );
     expect(orphan.items).toHaveLength(1);
   });
+
+  it("keeps what an identity undo restores on the resolved card", () => {
+    const previous = { name: "Nova", title: "", description: "", focus: [] };
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("notice", { kind: "proposal", proposal_id: "p2", proposal_kind: "identity",
+        summary: "Become Mail Desk", payload: { name: "Mail Desk" }, status: "pending" }),
+      ev("notice", { kind: "proposal_resolved", proposal_id: "p2", proposal_kind: "identity",
+        status: "applied", text: "I am now Mail Desk.", previous }),
+    ]);
+    const card = tl.items[0];
+    if (card.type !== "notice") throw new Error("unreachable");
+    expect(card.resolved).toBe("applied");
+    expect(card.data.previous).toEqual(previous);
+  });
 });
