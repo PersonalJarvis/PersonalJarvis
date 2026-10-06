@@ -4374,7 +4374,11 @@
     "gone": "该 CLI 已不在列表中。",
     "add_title": "你自己的 CLI",
     "add_hint": "列表里没有？用启动命令添加任意终端 CLI。",
-    "add_button": "添加 CLI"
+    "add_button": "添加 CLI",
+    "logo_label": "图标",
+    "optional": "可选",
+    "remove_logo_short": "移除",
+    "save_add": "添加 CLI"
   },
   "workspace_launcher": {
     "wizard": {
