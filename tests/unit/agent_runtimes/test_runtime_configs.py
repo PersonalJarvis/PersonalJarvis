@@ -28,6 +28,20 @@ from jarvis.core.config import override_provider_secrets
 
 _SECRET = "sk-test-" + "123"  # a fake key for assertions
 _TOKEN = "gw-" + "token"
+_GATEWAY = "http://127.0.0.1:47821/api/runtime-gateway/v1"
+
+
+@pytest.fixture
+def gateway_up(monkeypatch):
+    """Jarvis' gateway is listening, and this machine's Agents-tier keys stay out."""
+    import jarvis.core.config as config
+    from jarvis.agent_runtimes import gateway
+
+    monkeypatch.setattr(gateway, "base_url", lambda: _GATEWAY)
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    gateway.reset()
+    yield gateway
+    gateway.reset()
 
 
 def _route(*, key: str | None = _SECRET, transport: str = "chat_completions") -> ModelRoute:
@@ -230,43 +244,48 @@ def _cfg(**providers) -> SimpleNamespace:
     )
 
 
-def test_only_the_chatgpt_subscription_runs_through_jarvis_gateway(monkeypatch):
-    from jarvis.agent_runtimes import gateway
-
+def test_every_provider_runs_through_jarvis_gateway(gateway_up, monkeypatch):
+    gateway = gateway_up
     assert supports("openai") and supports("claude-api") and supports("ollama")
     assert supports("openai-codex") and not supports("grok-build")
-    monkeypatch.setattr(gateway, "base_url", lambda: "http://127.0.0.1:47821/api/runtime-gateway/v1")
+    with override_provider_secrets({"openai": _SECRET}):
+        route = route_for(_cfg(), "openai", "gpt-5.2", agent_id="agent-1")
+    # The runtime gets Jarvis' address and a token for this agent, never the key.
+    assert route.base_url == _GATEWAY and route.transport == "chat_completions"
+    assert route.api_key != _SECRET
+    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "openai")
+    assert route.env() == {KEY_ENV_VAR: route.api_key}
+
+
+def test_the_chatgpt_subscription_speaks_responses(gateway_up, monkeypatch):
+    gateway = gateway_up
     monkeypatch.setattr(gateway, "subscription_ready", lambda account_id="": False)
     with pytest.raises(RouteUnavailable, match="not signed in"):
         route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1")
     monkeypatch.setattr(gateway, "subscription_ready", lambda account_id="": True)
-    gateway.reset()
     route = route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1", account_id="acct")
-    assert route.transport == "responses"
-    assert route.base_url == "http://127.0.0.1:47821/api/runtime-gateway/v1"
-    # The runtime holds a token for this agent, never the subscription login.
-    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "acct")
-    gateway.reset()
+    assert route.transport == "responses" and route.base_url == _GATEWAY
+    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "openai-codex", "acct")
 
 
-def test_an_api_key_provider_routes_with_its_saved_key():
-    with override_provider_secrets({"openai": _SECRET}):
-        route = route_for(_cfg(), "openai", "gpt-5.2")
-    assert route.base_url == "https://api.openai.com/v1"
-    assert route.api_key == _SECRET and route.env() == {KEY_ENV_VAR: _SECRET}
-
-
-def test_a_missing_key_is_reported_in_plain_words():
+def test_a_missing_key_is_reported_in_plain_words(gateway_up):
     with override_provider_secrets({"openrouter": None}), pytest.raises(RouteUnavailable) as err:
         route_for(_cfg(), "openrouter", "some/model")
     assert "API key" in str(err.value)
 
 
-def test_claude_routes_over_the_messages_api():
+def test_a_claude_login_is_not_an_api_key(gateway_up):
+    login = "sk-ant-" + "oat01-" + "x" * 20
+    with override_provider_secrets({"claude-api": login}), pytest.raises(RouteUnavailable):
+        route_for(_cfg(), "claude-api", "claude-sonnet-5")
     with override_provider_secrets({"claude-api": _SECRET}):
-        route = route_for(_cfg(), "claude-api", "claude-sonnet-5")
-    assert route.transport == "anthropic_messages"
-    assert route.base_url == "https://api.anthropic.com"
+        assert route_for(_cfg(), "claude-api", "claude-sonnet-5").transport == "chat_completions"
+
+
+def test_no_route_before_the_gateway_is_up(gateway_up, monkeypatch):
+    monkeypatch.setattr(gateway_up, "base_url", lambda: None)
+    with override_provider_secrets({"openai": _SECRET}), pytest.raises(RouteUnavailable):
+        route_for(_cfg(), "openai", "gpt-5.2")
 
 
 def test_hermes_restore_finds_the_key_under_its_host_name():

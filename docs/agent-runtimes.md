@@ -37,44 +37,63 @@ Nobody installs Hermes or OpenClaw by hand (`jarvis/agent_runtimes/manager.py`):
 
 None of this calls a model, so setup and updates never spend a key.
 
-## Models
+## Models: Jarvis' model gateway
 
-An agent on Hermes or OpenClaw runs on the ChatGPT subscription, on any
-Jarvis provider with an API key, or on a local server (`model_map.py`); the
-dialog lists the ones connected right now, subscriptions first.
+An agent on Hermes or OpenClaw never talks to a model vendor. Its runtime is
+configured with exactly one provider — Jarvis — and Jarvis answers every model
+call with its own provider plugins (`gateway.py`,
+`ui/web/runtime_gateway_routes.py`, routes in `model_map.py`):
 
-**ChatGPT subscription: Jarvis' model gateway** (`gateway.py`,
-`ui/web/runtime_gateway_routes.py`). Handing the subscription login to the
-runtime would make a second program refresh it, and OAuth refresh tokens are
-single-use: whichever refreshed first would break the other, including the
-person's own Codex login. So the runtime never gets the login. Jarvis
-configures it with a custom provider in the OpenAI Responses shape
-(Hermes `transport: responses`, OpenClaw `api: openai-responses`) whose base
-URL is `/api/runtime-gateway/v1` on Jarvis' loopback server, and a per-agent
-token Jarvis mints (`jrg_…`, process environment only). The gateway rebuilds
-each request field by field (model, input, instructions, function tools,
-reasoning effort) and answers it with Jarvis' own subscription client on the
-agent's Codex account, whose refresh is coordinated in one place
-(`live/subscription_auth.py`). Events stream back unchanged; a failure
-mid-stream arrives as `response.failed` with a plain message.
-`SurfaceSecurity` accepts a gateway token on `/api/runtime-gateway/` and
-nowhere else. Hermes finds the key again on session restore through
-`OPENAI_BASE_URL` = the gateway URL (it pairs `OPENAI_API_KEY` with exactly
-that base URL).
+- **One endpoint, two long-stable shapes.** `/api/runtime-gateway/v1` on
+  Jarvis' loopback server: `POST /chat/completions` for every API-key and
+  local provider (Hermes `transport: chat_completions`, OpenClaw
+  `api: openai-completions`), `POST /responses` for the ChatGPT subscription
+  (Hermes `transport: responses`, OpenClaw `api: openai-responses`),
+  `GET /models` from Jarvis' catalog (the subscription asks its account). The
+  runtime config is the same for every provider, which is what keeps it
+  working across Hermes and OpenClaw updates.
+- **Every connected provider works.** The dialog lists what can answer right
+  now — a signed-in subscription first, then each provider with a saved key
+  (the Agents-tier key wins, as for Jarvis' own agents) or a local server
+  with an address. A new provider plugin in Jarvis is new to the runtimes too.
+- **Keys and logins stay in Jarvis.** The runtime gets a per-agent token
+  (`jrg_…`, process environment only); `SurfaceSecurity` accepts it on
+  `/api/runtime-gateway/` and nowhere else. Hermes finds it again on session
+  restore through `OPENAI_BASE_URL` = the gateway URL.
+- **Translation.** A Chat Completions request becomes a `BrainRequest`
+  (system text, messages with tool calls and results, function tools, max
+  tokens, effort); the plugin's stream becomes Chat Completions chunks with
+  tool calls and usage. Gemini's thought signature, which the OpenAI shape has
+  no field for, is kept per tool-call id and sent back with the call. The
+  plugin runs in a task of its own and hands deltas over a queue: its key
+  override and cost caller are context variables, and a streamed response is
+  read by another task.
+- **Failures.** A provider error before the first token becomes an HTTP
+  status the runtime backs off on (429 rate limit, 401 refused key, 502
+  otherwise); after streaming began it is an `error` chunk. Either way the
+  message is Jarvis' own, never the provider's body.
+- **Costs.** Every call goes through the plugin, so it lands in the cost
+  ledger (caller `agent-runtime`).
+- **ChatGPT subscription.** Handing the login to the runtime would make a
+  second program refresh it, and OAuth refresh tokens are single-use:
+  whichever refreshed first would break the other, including the person's
+  own Codex login. The gateway answers with Jarvis' subscription client on the
+  agent's Codex account, whose refresh is coordinated in one place
+  (`live/subscription_auth.py`); a failure mid-stream is `response.failed`.
+- **Claude subscription: not offered.** Its login works only inside Claude
+  Code, and Hermes would bill it as paid extra usage. A Claude login
+  (`sk-ant-oat…`) saved in the Anthropic API-key slot is not an API key, so
+  that slot counts as empty.
 
-**Claude subscription: not offered.** Its login works only inside Claude
-Code, and Hermes would bill it as paid extra usage. A Claude login
-(`sk-ant-oat…`) saved in the Anthropic API-key slot is refused by Anthropic's
-API from these runtimes ("OAuth access token is invalid"), so `route_for`
-treats that slot as empty.
-
-`scripts/spikes/agent_runtimes_subscription_e2e.py hermes|openclaw` runs two
-real turns through the gateway on the subscription (two model calls);
-`--replay` answers from a stand-in in the subscription's event format instead,
-for when the allowance is used up. Verified 2026-10-06 with `--replay` for
-both runtimes (answer streamed, history carried into the second turn), and
-against the live subscription up to its answer: the account had reached its
-usage limit, and that error reached Hermes as `response.failed`.
+`scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
+runs two real turns through the gateway (route built by `route_for`, the real
+guard in front); `--replay` answers the subscription from a stand-in in its
+event format. Verified 2026-10-06: Hermes and OpenClaw on a local Ollama model
+(`qwen3.5:9b`) and on the subscription with `--replay` — answer streamed,
+history carried into the second turn, no error chunk. Against the live
+subscription the account was at its usage limit; that error reached Hermes as
+`response.failed`. API-key providers share the plugin path with Ollama but
+were not called live (no paid test calls).
 
 The runtime decides which agent loop, native tools and session store a turn
 uses. Everything that makes a Jarvis agent stays in Jarvis and is identical
@@ -123,7 +142,8 @@ replayed during `session/load` is swallowed because the chat already shows it.
 - **Config Jarvis writes** (`config.yaml`): `model.provider` / `model.default` /
   `model.base_url`, `terminal.cwd` = the agent workspace, Hermes' own memory
   and skill nudges off (Jarvis owns memory and skills), and `SOUL.md` = the
-  agent's Jarvis briefing. Provider keys go into the process environment only.
+  agent's Jarvis briefing. The only key is the gateway token, in the process
+  environment.
 - **Jarvis tools:** passed per session in `session/new` / `session/load`
   `mcpServers` (HTTP with headers); `HERMES_ACP_SKIP_CONFIGURED_MCP=1` keeps
   any configured servers out. Hermes names them `mcp__jarvis__<tool>`.
@@ -133,10 +153,9 @@ replayed during `session/load` is swallowed because the chat already shows it.
   retries fresh with the transcript in front.
 - **Session restore and the key:** Hermes rebuilds a reopened session from the
   stored `custom` provider and base URL, without the named provider's
-  `key_env`. Jarvis therefore also writes `model.base_url` and passes the key
-  under the name that path reads (`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, or
-  `<VENDOR>_API_KEY` derived from the host), in that one process' environment
-  only. A keyless local server gets Hermes' `no-key-required` placeholder.
+  `key_env`. Jarvis therefore also writes `model.base_url` and passes the
+  gateway token as `OPENAI_API_KEY` with `OPENAI_BASE_URL` = the gateway URL,
+  the pair that path reads, in that one process' environment only.
 - **Tool search:** Hermes defers MCP schemas behind its own `tool_search` by
   default; OpenClaw does the same for local models. Both are switched off for
   agent profiles (`tools.tool_search: false`, `tools.toolSearch: false`): in a

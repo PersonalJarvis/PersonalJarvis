@@ -1,18 +1,20 @@
-"""Live check: a Hermes / OpenClaw agent on the ChatGPT subscription.
+"""Live check: a Hermes / OpenClaw agent through Jarvis' model gateway.
 
-Starts Jarvis' model gateway (``jarvis.ui.web.runtime_gateway_routes``) behind
-the real ``SurfaceSecurity`` guard on a free loopback port, then runs two
+Starts the gateway (``jarvis.ui.web.runtime_gateway_routes``) behind the
+real ``SurfaceSecurity`` guard on a free loopback port, builds the agent's
+route exactly as a chat turn does (``model_map.route_for``), and runs two
 turns of a real runtime through Jarvis' own driver against it. The model
-calls go to the person's ChatGPT subscription through the selected Codex
-account — no API key is used and the runtime never sees the login. Two
-model calls per run; all runtime state lands in a temporary folder.
+calls go to the named Jarvis provider through Jarvis' own plugin (or, for
+``openai-codex``, the ChatGPT subscription); the runtime only ever sees the
+gateway token. Two model calls per run (a runtime may retry); all runtime
+state lands in a temporary folder.
 
-    python scripts/spikes/agent_runtimes_subscription_e2e.py hermes [model]
-    python scripts/spikes/agent_runtimes_subscription_e2e.py openclaw [model]
-    python scripts/spikes/agent_runtimes_subscription_e2e.py hermes --replay
+    python scripts/spikes/agent_runtimes_gateway_e2e.py hermes ollama qwen3.5:9b
+    python scripts/spikes/agent_runtimes_gateway_e2e.py openclaw openai-codex
+    python scripts/spikes/agent_runtimes_gateway_e2e.py hermes openai-codex --replay
 
-``--replay`` keeps ChatGPT out of it (no allowance used): the gateway answers
-from a stand-in in the subscription's own event format.
+``--replay`` keeps ChatGPT out of it (no allowance used): the subscription
+answers from a stand-in in its own event format.
 """
 
 from __future__ import annotations
@@ -33,8 +35,9 @@ from agent_runtimes_e2e import _run  # noqa: E402
 
 from jarvis.agent_runtimes import base, driver, gateway  # noqa: E402
 from jarvis.agent_runtimes.base import RuntimeTurn  # noqa: E402
-from jarvis.agent_runtimes.model_map import ModelRoute  # noqa: E402
+from jarvis.agent_runtimes.model_map import route_for  # noqa: E402
 from jarvis.core import runtime_refs  # noqa: E402
+from jarvis.core.config import load_config  # noqa: E402
 
 
 def _free_port() -> int:
@@ -150,15 +153,12 @@ async def _pick_model(wanted: str) -> str:
     return (light or ids)[0]
 
 
-async def main(name: str, wanted: str) -> int:
-    replay = wanted == "--replay"
-    if replay:
+async def main(name: str, provider: str, wanted: str) -> int:
+    if wanted == "--replay":
         wanted = "gpt-replay"
         upstream = _ReplayUpstream()
         gateway._client = lambda account_id: upstream  # noqa: SLF001 — the spike's stand-in
-    elif not gateway.subscription_ready():
-        print("The ChatGPT subscription is not signed in on this computer.")
-        return 2
+        gateway.subscription_ready = lambda account_id="": True
     tmp = Path(tempfile.mkdtemp(prefix=f"jarvis-{name}-sub-e2e-"))
     base.runtimes_root = lambda: tmp / "agent_runtimes"
     workspace = tmp / "workspace"
@@ -170,15 +170,11 @@ async def main(name: str, wanted: str) -> int:
     port = _free_port()
     _serve(port)
     runtime_refs.set_api_base_url(f"http://127.0.0.1:{port}")
-    model = await _pick_model(wanted)
-    print("model:", model)
-    route = ModelRoute(
-        "openai-codex",
-        model,
-        gateway.base_url() or "",
-        "responses",
-        gateway.grant_token("sub-e2e-agent"),
+    model = await _pick_model(wanted) if provider == "openai-codex" else wanted
+    route = await asyncio.to_thread(
+        route_for, load_config(), provider, model, agent_id="sub-e2e-agent"
     )
+    print("route:", route.provider, route.model, route.transport, route.base_url)
     turn = RuntimeTurn(
         agent_id="sub-e2e-agent",
         agent_name="Probe",
@@ -206,5 +202,5 @@ async def main(name: str, wanted: str) -> int:
 
 
 if __name__ == "__main__":
-    runtime = sys.argv[1] if len(sys.argv) > 1 else "hermes"
-    sys.exit(asyncio.run(main(runtime, sys.argv[2] if len(sys.argv) > 2 else "")))
+    args = [*sys.argv[1:], "", "", ""]
+    sys.exit(asyncio.run(main(args[0] or "hermes", args[1] or "openai-codex", args[2])))

@@ -478,7 +478,6 @@ class WebServer:
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
         from .agent_runtime_routes import router as agent_runtime_router
-        from .runtime_gateway_routes import router as runtime_gateway_router
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
@@ -544,6 +543,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .runtime_gateway_routes import router as runtime_gateway_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
