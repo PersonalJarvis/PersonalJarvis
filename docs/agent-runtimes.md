@@ -39,12 +39,42 @@ None of this calls a model, so setup and updates never spend a key.
 
 ## Models
 
-An agent on Hermes or OpenClaw runs on any Jarvis provider with an API key or
-a local server (`model_map.py`); the dialog lists the ones connected right now.
-Subscription seats (Claude Code, Codex, …) are not offered. A Claude
-subscription login (`sk-ant-oat…`) saved in the Anthropic API-key slot is
-not an API key either: Anthropic's API refuses it from these runtimes
-("OAuth access token is invalid"), so `route_for` treats that slot as empty.
+An agent on Hermes or OpenClaw runs on the ChatGPT subscription, on any
+Jarvis provider with an API key, or on a local server (`model_map.py`); the
+dialog lists the ones connected right now, subscriptions first.
+
+**ChatGPT subscription: Jarvis' model gateway** (`gateway.py`,
+`ui/web/runtime_gateway_routes.py`). Handing the subscription login to the
+runtime would make a second program refresh it, and OAuth refresh tokens are
+single-use: whichever refreshed first would break the other, including the
+person's own Codex login. So the runtime never gets the login. Jarvis
+configures it with a custom provider in the OpenAI Responses shape
+(Hermes `transport: responses`, OpenClaw `api: openai-responses`) whose base
+URL is `/api/runtime-gateway/v1` on Jarvis' loopback server, and a per-agent
+token Jarvis mints (`jrg_…`, process environment only). The gateway rebuilds
+each request field by field (model, input, instructions, function tools,
+reasoning effort) and answers it with Jarvis' own subscription client on the
+agent's Codex account, whose refresh is coordinated in one place
+(`live/subscription_auth.py`). Events stream back unchanged; a failure
+mid-stream arrives as `response.failed` with a plain message.
+`SurfaceSecurity` accepts a gateway token on `/api/runtime-gateway/` and
+nowhere else. Hermes finds the key again on session restore through
+`OPENAI_BASE_URL` = the gateway URL (it pairs `OPENAI_API_KEY` with exactly
+that base URL).
+
+**Claude subscription: not offered.** Its login works only inside Claude
+Code, and Hermes would bill it as paid extra usage. A Claude login
+(`sk-ant-oat…`) saved in the Anthropic API-key slot is refused by Anthropic's
+API from these runtimes ("OAuth access token is invalid"), so `route_for`
+treats that slot as empty.
+
+`scripts/spikes/agent_runtimes_subscription_e2e.py hermes|openclaw` runs two
+real turns through the gateway on the subscription (two model calls);
+`--replay` answers from a stand-in in the subscription's event format instead,
+for when the allowance is used up. Verified 2026-10-06 with `--replay` for
+both runtimes (answer streamed, history carried into the second turn), and
+against the live subscription up to its answer: the account had reached its
+usage limit, and that error reached Hermes as `response.failed`.
 
 The runtime decides which agent loop, native tools and session store a turn
 uses. Everything that makes a Jarvis agent stays in Jarvis and is identical

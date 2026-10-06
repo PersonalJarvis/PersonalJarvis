@@ -41,6 +41,9 @@ export interface AgentRuntimesResponse {
   supported_providers: string[];
   /** Every provider the runtimes can drive once it is connected. */
   all_providers?: string[];
+  /** Providers that run through Jarvis' model gateway on a subscription
+   *  (the account still matters there). */
+  subscription_providers?: string[];
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {

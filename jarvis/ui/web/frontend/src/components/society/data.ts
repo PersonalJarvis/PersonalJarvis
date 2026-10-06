@@ -199,6 +199,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: "Ollama (local)",
   "local-openai": "Local server",
   "claude-api": "Anthropic Claude",
+  "openai-codex": "OpenAI Codex",
   grok: "xAI Grok",
   openrouter: "OpenRouter",
   nvidia: "NVIDIA NIM",

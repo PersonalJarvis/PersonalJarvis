@@ -478,6 +478,7 @@ class WebServer:
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
         from .agent_runtime_routes import router as agent_runtime_router
+        from .runtime_gateway_routes import router as runtime_gateway_router
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
@@ -765,6 +766,7 @@ class WebServer:
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
         app.include_router(agent_runtime_router)
+        app.include_router(runtime_gateway_router)
         from .mars_routes import router as mars_router
 
         app.include_router(mars_router)

@@ -15,7 +15,11 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.agent_runtimes import RUNTIME_NAMES, manager
-from jarvis.agent_runtimes.model_map import supported_providers, usable_providers
+from jarvis.agent_runtimes.model_map import (
+    subscription_providers,
+    supported_providers,
+    usable_providers,
+)
 
 router = APIRouter(prefix="/api/agent-runtimes", tags=["agent-runtimes"])
 
@@ -43,6 +47,7 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
         "runtimes": await manager.statuses(refresh=refresh),
         "supported_providers": list(_USABLE_CACHE[1]),
         "all_providers": sorted(supported_providers()),
+        "subscription_providers": sorted(subscription_providers()),
     }
 
 
