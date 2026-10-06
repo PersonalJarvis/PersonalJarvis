@@ -153,3 +153,21 @@ async def test_switching_runtime_reseats_the_chat_and_drops_the_vendor_session(t
     finally:
         svc.store.close()
         await rt.close()
+
+
+def test_a_routine_run_never_moves_a_subscription_seat_onto_an_api_key(monkeypatch):
+    from jarvis.society import routine_runner
+
+    owner = SimpleNamespace(runtime="hermes", provider="openai")
+    # The owner's own model keeps the owner's runtime.
+    assert routine_runner._run_runtime(owner, "openai") == "hermes"
+    # A pinned seat that is a subscription CLI runs on Jarvis instead.
+    monkeypatch.setattr(
+        "jarvis.agent_chat.service._claude_cli_installed", lambda: True
+    )
+    assert routine_runner._run_runtime(owner, "claude-api") == ""
+    # A pinned API-key seat keeps the runtime; an unsupported one never does.
+    assert routine_runner._run_runtime(owner, "openrouter") == "hermes"
+    assert routine_runner._run_runtime(owner, "openai-codex") == ""
+    jarvis_owner = SimpleNamespace(runtime="jarvis", provider="openai")
+    assert routine_runner._run_runtime(jarvis_owner, "openai") == ""

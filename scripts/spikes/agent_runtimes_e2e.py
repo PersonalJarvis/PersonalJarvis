@@ -91,9 +91,8 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
 
     await asyncio.wait_for(pump(), timeout=180)
     await asyncio.wait_for(proc.wait(), timeout=30)
-    finished = getattr(runtime, "turn_finished", None)
-    if callable(finished):
-        finished(turn.agent_id)
+    if launch.release is not None:
+        launch.release()
     return acp, io
 
 

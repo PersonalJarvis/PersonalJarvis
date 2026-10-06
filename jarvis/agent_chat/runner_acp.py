@@ -121,10 +121,10 @@ async def plan_runtime_turn(
         resume=launch.acp_resume,
         mcp_servers=launch.mcp_servers,
         auto_allow=turn.auto_approve,
+        auto_deny=plan_mode,
         client_version=__version__,
         report_session=launch.vendor_session,
     )
-    finished = getattr(runtime, "turn_finished", None)
     return CliPlan(
         argv=launch.argv,
         env=launch.env,
@@ -133,5 +133,5 @@ async def plan_runtime_turn(
         vendor_session=None,
         keep_stdin=True,
         acp=acp,
-        after_turn=(lambda: finished(agent.agent_id)) if callable(finished) else None,
+        after_turn=launch.release,
     )

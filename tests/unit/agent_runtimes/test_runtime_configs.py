@@ -94,11 +94,12 @@ def test_hermes_offers_jarvis_tools_directly(tmp_path):
     assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
 
 
-def test_hermes_approvals_follow_the_chat_stance_and_never_the_guardian(tmp_path):
+def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):
+    """The stance is answered over ACP, so the file never depends on it."""
     runtime = HermesRuntime()
-    assert runtime.config_for(_turn(tmp_path))["approvals"]["mode"] == "off"
+    bypass = runtime.config_for(_turn(tmp_path))
     asked = runtime.config_for(_turn(tmp_path, auto_approve=False))
-    assert asked["approvals"]["mode"] == "manual"
+    assert bypass["approvals"] == asked["approvals"] == {"mode": "manual"}
 
 
 def test_hermes_denied_shell_disables_its_terminal(tmp_path):
@@ -126,6 +127,14 @@ def test_openclaw_config_keeps_both_keys_out_of_the_file(tmp_path):
     headers = config["mcp"]["servers"]["jarvis"]["headers"]
     assert headers["Authorization"] == "Bearer ${JARVIS_CONTROL_API_KEY}"
     assert headers["X-Jarvis-Chat-Session"] == "society:hermit"
+    run = OpenClawRuntime().config_for(
+        _turn(tmp_path, session_id="society:hermit:routine:t1:abc"), port=1, token=_TOKEN
+    )
+    # A routine run's tool calls carry its own session (approvals, grants).
+    assert (
+        run["mcp"]["servers"]["jarvis"]["headers"]["X-Jarvis-Chat-Session"]
+        == "society:hermit:routine:t1:abc"
+    )
 
 
 def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
@@ -141,15 +150,15 @@ def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     assert config["gateway"]["bind"] == "loopback"
 
 
-def test_openclaw_exec_mode_follows_stance_and_grants(tmp_path):
+def test_openclaw_exec_mode_follows_grants_not_the_stance(tmp_path):
     runtime = OpenClawRuntime()
-    full = runtime.config_for(_turn(tmp_path), port=1, token=_TOKEN)
+    bypass = runtime.config_for(_turn(tmp_path), port=1, token=_TOKEN)
     ask = runtime.config_for(_turn(tmp_path, auto_approve=False), port=1, token=_TOKEN)
     denied = runtime.config_for(
         _turn(tmp_path, denied_native=frozenset({"shell", "web"})), port=1, token=_TOKEN
     )
-    assert full["tools"]["exec"]["mode"] == "full"
-    assert ask["tools"]["exec"]["mode"] == "ask"
+    assert bypass == ask
+    assert bypass["tools"]["exec"]["mode"] == "ask"
     assert denied["tools"]["exec"]["mode"] == "deny"
     assert "browser" in denied["tools"]["deny"]
 
@@ -262,3 +271,28 @@ def test_hermes_model_block_names_the_endpoint_for_session_restore(tmp_path):
     route = ModelRoute("ollama", "qwen3", "http://127.0.0.1:11434/v1", "chat_completions", None)
     local = HermesRuntime().config_for(_turn(tmp_path, route=route))["model"]
     assert local["api_key"] == "no-key-required"
+
+
+def test_routine_runs_use_their_own_runtime_folder():
+    from jarvis.agent_runtimes.base import home_key
+
+    assert home_key("hermit", "society:hermit") == "hermit"
+    assert home_key("hermit", "society:hermit:routine:t1:abc") == "hermit~runs"
+
+
+async def test_turn_slots_run_one_turn_at_a_time():
+    import asyncio
+
+    from jarvis.agent_runtimes.base import TurnSlots
+
+    slots = TurnSlots()
+    release = await slots.acquire("hermit")
+    waiting = asyncio.ensure_future(slots.acquire("hermit"))
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    other = await slots.acquire("hermit~runs")  # another folder is independent
+    release()
+    release()  # releasing twice is harmless
+    second = await asyncio.wait_for(waiting, timeout=1)
+    second()
+    other()

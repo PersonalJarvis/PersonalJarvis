@@ -48,6 +48,8 @@ def _turn(
     mode: str = "bypass",
     answer: str = "allow",
     report_session: str | None = None,
+    argv: list[str] | None = None,
+    released: list[int] | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], list[tuple[str, str]], list[str | None]]:
     resumes: list[str | None] = []
 
@@ -56,7 +58,7 @@ def _turn(
         env = dict(os.environ)
         env["FAKE_ACP_STORE"] = str(tmp_path / "store.json")
         return rc.CliPlan(
-            argv=[sys.executable, str(_AGENT)],
+            argv=argv or [sys.executable, str(_AGENT)],
             env=env,
             stdin_text=None,
             shape="acp",
@@ -68,8 +70,10 @@ def _turn(
                 prompt_text=prompt,
                 resume=resume,
                 auto_allow=handle.session.permission_mode == "bypass",
+                auto_deny=handle.session.permission_mode == "plan",
                 report_session=report_session,
             ),
+            after_turn=(lambda: released.append(1)) if released is not None else None,
         )
 
     monkeypatch.setattr(runner_acp, "plan_runtime_turn", fake_plan)
@@ -177,3 +181,33 @@ def test_a_prompt_error_finishes_the_turn_with_that_error(monkeypatch, tmp_path)
 def test_a_fixed_session_key_is_what_the_chat_keeps(monkeypatch, tmp_path):
     vendor, _, _, _ = _turn(monkeypatch, tmp_path, "hi", report_session="agent:main:main")
     assert vendor == "agent:main:main"
+
+
+def test_plan_mode_refuses_the_runtimes_permission_without_a_card(monkeypatch, tmp_path):
+    _, events, asked, _ = _turn(monkeypatch, tmp_path, "ASK now", mode="plan")
+    assert asked == []
+    assert _texts(events) == ["permission: no"]
+
+
+def test_a_runtime_that_keeps_running_after_its_answer_is_ended(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_EXIT_GRACE_S", 0.5)
+    released: list[int] = []
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "HANG after this", released=released)
+    finished = _finished(events)
+    assert finished["status"] == "done", finished
+    assert finished["duration_ms"] < 60_000
+    assert released == [1]
+
+
+def test_the_turn_slot_is_released_when_the_runtime_cannot_start(monkeypatch, tmp_path):
+    released: list[int] = []
+    missing = str(tmp_path / "no-such-runtime.exe")
+    _, events, _, _ = _turn(monkeypatch, tmp_path, "hi", argv=[missing], released=released)
+    assert _finished(events)["status"] == "error"
+    assert released == [1]
+
+
+def test_the_turn_slot_is_released_once_after_a_normal_turn(monkeypatch, tmp_path):
+    released: list[int] = []
+    _turn(monkeypatch, tmp_path, "hello", released=released)
+    assert released == [1]

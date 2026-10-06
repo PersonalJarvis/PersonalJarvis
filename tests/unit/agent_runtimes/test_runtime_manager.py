@@ -86,6 +86,9 @@ async def test_unknown_runtimes_are_refused(fakes):
 
 
 def test_routes_list_status_and_start_jobs(fakes):
+    import jarvis.ui.web.agent_runtime_routes as routes
+
+    routes._USABLE_CACHE[:] = [float("-inf"), []]
     app = FastAPI()
     app.include_router(router)
     app.state.config = SimpleNamespace(brain=SimpleNamespace(providers={}))

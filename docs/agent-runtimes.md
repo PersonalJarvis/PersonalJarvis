@@ -31,6 +31,22 @@ capabilities are read from the `initialize` answer, not from version strings.
 answering `session/request_permission` from the chat's approval card. History
 replayed during `session/load` is swallowed because the chat already shows it.
 
+## Turns, folders and approvals (both runtimes)
+
+- **One turn at a time per folder.** A runtime's config is written per turn,
+  so the turns of one folder run one after another (`base.TurnSlots`); a turn
+  that waits more than 15 minutes stops with a plain message.
+- **Routine runs get their own folder** (`base.home_key`: `<agent>` for the
+  agent's chat, `<agent>~runs` for every other session). A scheduled run never
+  rewrites the model, tools or session store a chat turn is using, and on
+  OpenClaw it runs on its own Gateway.
+- **Approvals never live in the runtime's config.** Hermes runs with
+  `approvals.mode: manual` and OpenClaw with `tools.exec.mode: ask`; every
+  request reaches Jarvis over ACP and is answered from the chat's stance —
+  Bypass allows without a card, Ask shows the card, Plan refuses.
+- **A finished turn ends.** After the prompt's answer the runtime gets ten
+  seconds to exit on its own, then it is ended; the answer already stands.
+
 ## Hermes
 
 - **Process:** `hermes acp`, one process per turn, stdin EOF ends it (exit 0).
@@ -72,8 +88,10 @@ replayed during `session/load` is swallowed because the chat already shows it.
   (`--url ws://127.0.0.1:<port> --session agent:main:main`). No hand-written
   Gateway WebSocket client: its wire protocol requires an exact version match.
 - **Isolation:** one state directory (`OPENCLAW_STATE_DIR`,
-  `OPENCLAW_CONFIG_PATH`) and one Gateway per agent, on its own loopback port,
-  started on the first turn and stopped after an idle period. Start-up is
+  `OPENCLAW_CONFIG_PATH`) and one Gateway per agent folder, on its own
+  loopback port, started on the first turn and stopped after 15 idle minutes.
+  A changed config restarts the Gateway (with no turn in flight) instead of
+  trusting its file watcher to have reloaded in time. Start-up is
   about 16 s on Windows with the preset (measured with 2026.9.8). The user's
   own `~/.openclaw` and their Gateway service are never touched.
 - **Config Jarvis writes** (`openclaw.json`, only long-stable keys):

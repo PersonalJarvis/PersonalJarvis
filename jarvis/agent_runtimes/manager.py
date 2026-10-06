@@ -149,5 +149,10 @@ async def _run(current: RuntimeJob, argv: list[str]) -> None:
     finally:
         tree.close()
         current.finished_ms = int(time.time() * 1000)
-        target.detect(refresh=True)
+        if current.state == "running":
+            # Cancelled (app shutdown): never leave a job that looks alive.
+            current.state = "failed"
+            current.message = current.message or f"The {current.kind} was interrupted."
         _TASKS.pop(current.runtime, None)
+    # ``--version`` spawns a process: off the event loop.
+    await asyncio.to_thread(target.detect, refresh=True)

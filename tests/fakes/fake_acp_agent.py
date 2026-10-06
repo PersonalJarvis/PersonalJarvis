@@ -17,6 +17,8 @@ What a prompt does depends on its text:
 * contains ``ASK`` — a ``session/request_permission`` first; the answer's
   option id is echoed in the reply;
 * contains ``FAIL`` — the prompt request answers a JSON-RPC error;
+* contains ``HANG`` — answers, then keeps running after stdin closes (a
+  runtime whose child holds the pipe);
 * otherwise — ``echo: <text>`` streamed in two chunks plus a thought.
 
 ``session/load`` of an unknown id answers ``{}`` (Hermes' behaviour).
@@ -27,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -143,6 +146,8 @@ def _prompt(rid: Any, session_id: str, text: str, store: dict[str, list[str]]) -
             },
         }
     )
+    if "HANG" in text:
+        time.sleep(600)
 
 
 def main() -> int:

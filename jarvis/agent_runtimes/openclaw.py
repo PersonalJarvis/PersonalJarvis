@@ -26,6 +26,7 @@ import os
 import secrets
 import socket
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
@@ -36,9 +37,11 @@ from jarvis.agent_runtimes.base import (
     RuntimeStatus,
     RuntimeTurn,
     RuntimeUnavailable,
+    TurnSlots,
     agent_home,
     child_env,
     format_version,
+    home_key,
     is_windows,
     parse_version,
     run_version,
@@ -159,7 +162,8 @@ async def _listening(port: int) -> bool:
 
 @dataclass(slots=True)
 class _Gateway:
-    agent_id: str
+    #: ``home_key``: the agent's chat Gateway, or its routine-runs Gateway.
+    key: str
     home: Path
     port: int
     env_hash: str
@@ -181,6 +185,7 @@ class OpenClawRuntime:
         self._detect = DetectCache()
         self._gateways: dict[str, _Gateway] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._slots = TurnSlots()
         self._reaper: asyncio.Task[None] | None = None
 
     # ----------------------------------------------------------- detection
@@ -277,10 +282,10 @@ class OpenClawRuntime:
         denied = list(_ALWAYS_DENIED)
         if "web" in turn.denied_native:
             denied += ["browser", "web_search", "web_fetch"]
-        if "shell" in turn.denied_native:
-            exec_mode = "deny"
-        else:
-            exec_mode = "full" if turn.auto_approve else "ask"
+        # "ask" relays every exec approval over ACP; Jarvis answers it from the
+        # chat's stance (Bypass allows without a card), so the file does not
+        # change with the stance of whichever turn wrote it.
+        exec_mode = "deny" if "shell" in turn.denied_native else "ask"
         config: dict[str, Any] = {
             "gateway": {
                 "mode": "local",
@@ -316,10 +321,10 @@ class OpenClawRuntime:
                         "transport": "streamable-http",
                         "headers": {
                             "Authorization": f"Bearer ${{{_CONTROL_KEY_ENV}}}",
-                            # The agent's canonical chat: one config for every
-                            # session of this Gateway, so a routine run never
-                            # rewrites it under a running chat turn.
-                            HEADER_NAME: f"society:{turn.agent_id}",
+                            # This turn's chat, so approvals, grants and the
+                            # turn context are that session's. Routine runs use
+                            # their own Gateway (``home_key``).
+                            HEADER_NAME: turn.session_id,
                         },
                     }
                 }
@@ -335,7 +340,23 @@ class OpenClawRuntime:
         launcher = _launcher()
         if launcher is None:
             raise RuntimeUnavailable("OpenClaw is not installed.")
-        home = await asyncio.to_thread(agent_home, NAME, turn.agent_id)
+        key = home_key(turn.agent_id, turn.session_id)
+        # One turn at a time per Gateway: its config is this turn's.
+        release_slot = await self._slots.acquire(key)
+        try:
+            return await self._launch(turn, key, launcher, release_slot)
+        except BaseException:
+            release_slot()
+            raise
+
+    async def _launch(
+        self,
+        turn: RuntimeTurn,
+        key: str,
+        launcher: list[str],
+        release_slot: Callable[[], None],
+    ) -> RuntimeLaunch:
+        home = await asyncio.to_thread(agent_home, NAME, key)
         token = await asyncio.to_thread(_gateway_token, home)
         gateway_env = child_env(
             {
@@ -345,12 +366,18 @@ class OpenClawRuntime:
                 **({_CONTROL_KEY_ENV: turn.control_key} if turn.control_key else {}),
             }
         )
-        port = await self._ensure_gateway(turn, home, token, launcher, gateway_env)
+        gateway = await self._ensure_gateway(turn, key, home, token, launcher, gateway_env)
+
+        def release() -> None:
+            gateway.last_used = time.monotonic()
+            gateway.in_use = max(0, gateway.in_use - 1)
+            release_slot()
+
         argv = [
             *launcher,
             "acp",
             "--url",
-            f"ws://127.0.0.1:{port}",
+            f"ws://127.0.0.1:{gateway.port}",
             "--token-file",
             str(home / "gateway.token"),
             "--session",
@@ -366,48 +393,55 @@ class OpenClawRuntime:
             cwd=turn.workspace,
             acp_resume=None,
             vendor_session=session_key(turn.agent_id, turn.session_id),
+            release=release,
         )
-
-    def turn_finished(self, agent_id: str) -> None:
-        gateway = self._gateways.get(agent_id)
-        if gateway is not None:
-            gateway.in_use = max(0, gateway.in_use - 1)
-            gateway.last_used = time.monotonic()
 
     async def _ensure_gateway(
         self,
         turn: RuntimeTurn,
+        key: str,
         home: Path,
         token: str,
         launcher: list[str],
         env: dict[str, str],
-    ) -> int:
-        lock = self._locks.setdefault(turn.agent_id, asyncio.Lock())
-        async with lock:
+    ) -> _Gateway:
+        """The running Gateway for ``key``, (re)started when anything changed.
+
+        Called with the turn slot held, so no other turn of this Gateway is in
+        flight: a restart never cuts one off. A changed config restarts too —
+        a running Gateway reloads its file on its own schedule, and this
+        turn's settings (model, tools, the MCP session header) must be the
+        ones it runs with.
+        """
+        async with self._gateway_lock(key):
             env_hash = hashlib.sha256(
                 json.dumps(sorted(env.items())).encode("utf-8")
             ).hexdigest()
-            current = self._gateways.get(turn.agent_id)
-            if current is not None and (not current.alive() or current.env_hash != env_hash):
-                # A new key or control key needs a new process environment.
+            current = self._gateways.get(key)
+            port = current.port if current is not None and current.alive() else _free_port()
+            config = self.config_for(turn, port=port, token=token)
+            changed = await asyncio.to_thread(
+                write_json_if_changed, home / "openclaw.json", config
+            )
+            if current is not None and (
+                not current.alive() or current.env_hash != env_hash or changed
+            ):
                 await self._stop_gateway(current)
                 current = None
-            port = current.port if current is not None else _free_port()
-            config = self.config_for(turn, port=port, token=token)
-            await asyncio.to_thread(write_json_if_changed, home / "openclaw.json", config)
             if current is None:
-                current = await self._start_gateway(
-                    turn.agent_id, home, port, env_hash, launcher, env
-                )
-                self._gateways[turn.agent_id] = current
+                current = await self._start_gateway(key, home, port, env_hash, launcher, env)
+                self._gateways[key] = current
             current.in_use += 1
             current.last_used = time.monotonic()
             self._ensure_reaper()
-            return current.port
+            return current
+
+    def _gateway_lock(self, key: str) -> asyncio.Lock:
+        return self._locks.setdefault(key, asyncio.Lock())
 
     async def _start_gateway(
         self,
-        agent_id: str,
+        key: str,
         home: Path,
         port: int,
         env_hash: str,
@@ -420,8 +454,9 @@ class OpenClawRuntime:
         from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
         log_path = home / "gateway.log"
-        handle = log_path.open("ab")
-        tree = make_process_tree(f"openclaw-gateway-{agent_id}")
+        # One run's log at a time: it can quote prompts, so it never grows on.
+        handle = log_path.open("wb")
+        tree = make_process_tree(f"openclaw-gateway-{key}")
         try:
             proc = await asyncio.create_subprocess_exec(
                 *launcher,
@@ -443,22 +478,28 @@ class OpenClawRuntime:
             tree.close()
             raise RuntimeUnavailable(f"OpenClaw could not start: {exc}") from exc
         tree.assign(proc.pid)
-        gateway = _Gateway(agent_id, home, port, env_hash, proc, tree, handle)
-        log.info("agent runtimes: OpenClaw gateway for %s starting on %s", agent_id, port)
-        deadline = time.monotonic() + _START_TIMEOUT_S
-        while time.monotonic() < deadline:
-            if proc.returncode is not None:
-                break
-            if await _listening(port):
-                return gateway
-            await asyncio.sleep(0.5)
+        gateway = _Gateway(key, home, port, env_hash, proc, tree, handle)
+        log.info("agent runtimes: OpenClaw gateway %s starting on %s", key, port)
+        try:
+            deadline = time.monotonic() + _START_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if proc.returncode is not None:
+                    break
+                if await _listening(port):
+                    return gateway
+                await asyncio.sleep(0.5)
+        except BaseException:
+            # A cancelled turn (Stop during a cold start) must not leave a
+            # Gateway behind with the key in its environment.
+            await asyncio.shield(self._stop_gateway(gateway))
+            raise
         returncode = proc.returncode
         await self._stop_gateway(gateway)
         if returncode == _EXIT_CONFIG and not repaired:
             log.warning("agent runtimes: OpenClaw rejected its config; running doctor --fix")
             await _run_doctor(launcher, env, home)
             return await self._start_gateway(
-                agent_id, home, port, env_hash, launcher, env, repaired=True
+                key, home, port, env_hash, launcher, env, repaired=True
             )
         tail = _log_tail(log_path)
         if returncode is None:
@@ -466,7 +507,8 @@ class OpenClawRuntime:
         raise RuntimeUnavailable(f"OpenClaw stopped while starting (exit {returncode})." + tail)
 
     async def _stop_gateway(self, gateway: _Gateway) -> None:
-        self._gateways.pop(gateway.agent_id, None)
+        if self._gateways.get(gateway.key) is gateway:
+            del self._gateways[gateway.key]
         if gateway.proc.returncode is None:
             with contextlib.suppress(ProcessLookupError, OSError):
                 gateway.proc.terminate()
@@ -487,21 +529,21 @@ class OpenClawRuntime:
     async def _reap_idle(self) -> None:
         while self._gateways:
             await asyncio.sleep(60)
-            now = time.monotonic()
-            for gateway in list(self._gateways.values()):
-                idle = now - gateway.last_used
-                if not gateway.alive() or (gateway.in_use == 0 and idle > IDLE_STOP_S):
-                    log.info("agent runtimes: stopping idle OpenClaw gateway %s", gateway.agent_id)
-                    await self._stop_gateway(gateway)
+            for key in list(self._gateways):
+                async with self._gateway_lock(key):
+                    gateway = self._gateways.get(key)
+                    if gateway is None or gateway.in_use > 0:
+                        continue
+                    idle = time.monotonic() - gateway.last_used
+                    if not gateway.alive() or idle > IDLE_STOP_S:
+                        log.info("agent runtimes: stopping idle OpenClaw gateway %s", key)
+                        await self._stop_gateway(gateway)
 
     async def stop(self, agent_id: str | None = None) -> None:
-        targets = [
-            gateway
-            for gateway in list(self._gateways.values())
-            if agent_id is None or gateway.agent_id == agent_id
-        ]
-        for gateway in targets:
-            await self._stop_gateway(gateway)
+        for key, gateway in list(self._gateways.items()):
+            if agent_id is None or key in (agent_id, f"{agent_id}~runs"):
+                async with self._gateway_lock(key):
+                    await self._stop_gateway(gateway)
 
 
 def session_key(agent_id: str, chat_session_id: str) -> str:
@@ -528,7 +570,7 @@ def _gateway_token(home: Path) -> str:
         if token:
             return token
     except OSError:
-        pass
+        pass  # no token yet: mint one below
     token = secrets.token_urlsafe(32)
     write_if_changed(path, token)
     with contextlib.suppress(OSError):

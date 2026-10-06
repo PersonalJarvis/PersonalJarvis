@@ -937,7 +937,11 @@ async def patch_session(
     assert current is not None
     if body.cwd is not None:
         fields["cwd"] = _validate_cwd(body.cwd) or svc.default_cwd(current.surface)
-    runner = resolve_runner(fields.get("provider") or current.provider, surface=current.surface)
+    runner = resolve_runner(
+        fields.get("provider") or current.provider,
+        surface=current.surface,
+        runtime=str(getattr(current, "runtime", "") or ""),
+    )
     ladder = ladder_key(current.surface, runner)
     if body.permission_mode is not None:
         if not is_permission_mode(ladder, body.permission_mode):

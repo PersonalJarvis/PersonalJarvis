@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
@@ -29,10 +30,12 @@ from jarvis.agent_runtimes.base import (
     RuntimeStatus,
     RuntimeTurn,
     RuntimeUnavailable,
+    TurnSlots,
     agent_home,
     child_env,
     first_existing,
     format_version,
+    home_key,
     is_windows,
     parse_version,
     persona_text,
@@ -79,6 +82,7 @@ class HermesRuntime:
 
     def __init__(self) -> None:
         self._detect = DetectCache()
+        self._slots = TurnSlots()
 
     # ----------------------------------------------------------- detection
 
@@ -191,9 +195,11 @@ class HermesRuntime:
                 "background_review": {"enabled": False},
                 "title_generation": {"enabled": False},
             },
-            # "manual" asks over ACP (the chat's approval card); never the
-            # "smart" guardian, which spends model calls of its own.
-            "approvals": {"mode": "off" if turn.auto_approve else "manual"},
+            # "manual" always asks over ACP; Jarvis answers it from the chat's
+            # stance (Bypass allows without a card, Plan refuses), so the file
+            # never depends on which session wrote it last. Never the "smart"
+            # guardian, which spends model calls of its own.
+            "approvals": {"mode": "manual"},
         }
         disabled = sorted(_disabled_toolsets(turn.denied_native))
         if disabled:
@@ -207,7 +213,19 @@ class HermesRuntime:
         binary = _binary()
         if binary is None:
             raise RuntimeUnavailable("Hermes is not installed.")
-        home = await asyncio.to_thread(agent_home, NAME, turn.agent_id)
+        release = await self._slots.acquire(home_key(turn.agent_id, turn.session_id))
+        try:
+            return await self._launch(binary, turn, release)
+        except BaseException:
+            release()
+            raise
+
+    async def _launch(
+        self, binary: str, turn: RuntimeTurn, release: Callable[[], None]
+    ) -> RuntimeLaunch:
+        home = await asyncio.to_thread(
+            agent_home, NAME, home_key(turn.agent_id, turn.session_id)
+        )
         await asyncio.to_thread(self._write_profile, home, turn)
         env = child_env(
             {
@@ -239,6 +257,7 @@ class HermesRuntime:
             cwd=turn.workspace,
             mcp_servers=servers,
             acp_resume=turn.resume,
+            release=release,
         )
 
     def _write_profile(self, home: Path, turn: RuntimeTurn) -> None:

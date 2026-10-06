@@ -15,6 +15,7 @@ the person's own Hermes or OpenClaw setup is never read or changed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -162,6 +164,9 @@ class RuntimeLaunch:
     #: What the chat stores as its vendor session after the turn. ``None`` =
     #: whatever id the ACP session reported.
     vendor_session: str | None = None
+    #: Called exactly once when the turn's process is gone: frees the turn
+    #: slot (and lets an idle Gateway be reaped).
+    release: Callable[[], None] | None = None
 
 
 class AgentRuntimeDriver(Protocol):
@@ -182,6 +187,54 @@ class AgentRuntimeDriver(Protocol):
 
 
 # ------------------------------------------------------------------ helpers
+
+
+#: How long a turn waits for the agent's previous turn on the same runtime.
+_SLOT_WAIT_S: Final[float] = 15 * 60
+
+
+def home_key(agent_id: str, chat_session_id: str) -> str:
+    """Which runtime folder a chat's turns use.
+
+    The agent's one chat has its own folder; every other session of the
+    agent (routine runs) shares a second one. A routine run therefore never
+    rewrites the config, model or session store a chat turn is using.
+    """
+    return agent_id if chat_session_id == f"society:{agent_id}" else f"{agent_id}~runs"
+
+
+class TurnSlots:
+    """One turn at a time per runtime folder.
+
+    The runtime's config is written per turn; two turns sharing one folder
+    would read each other's settings. A turn waits for the previous one
+    (the agent's chat already queues its own messages), and gives up with a
+    plain message after :data:`_SLOT_WAIT_S`.
+    """
+
+    def __init__(self) -> None:
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def lock(self, key: str) -> asyncio.Lock:
+        return self._locks.setdefault(key, asyncio.Lock())
+
+    async def acquire(self, key: str) -> Callable[[], None]:
+        lock = self.lock(key)
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=_SLOT_WAIT_S)
+        except TimeoutError:
+            raise RuntimeUnavailable(
+                "This agent is still busy with another task; try again when it is done."
+            ) from None
+        released = False
+
+        def release() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                lock.release()
+
+        return release
 
 
 def runtimes_root() -> Path:
@@ -214,7 +267,7 @@ def write_if_changed(path: Path, text: str) -> bool:
         if path.read_text(encoding="utf-8") == text:
             return False
     except OSError:
-        pass
+        pass  # no readable file yet: write it below
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
