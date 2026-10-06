@@ -5,6 +5,8 @@ If agents 1-6 haven't merged their files yet, the test skips gracefully.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -55,6 +57,18 @@ async def test_webserver_starts_and_stops(test_config):
         assert getattr(srv, "running", True), "WebServer.running should be True"
     finally:
         await srv.stop()
+
+    # Delayed boot helpers are owned by WebServer and must be gone before the
+    # pytest-asyncio runner starts its own loop teardown.
+    assert srv._anyio_pool_warm_task is None
+    assert srv._deferred_reload_task is None
+    leaked = {
+        task.get_name()
+        for task in asyncio.all_tasks()
+        if task is not asyncio.current_task() and not task.done()
+    }
+    assert "anyio-pool-warm" not in leaked
+    assert "deferred-registry-reload" not in leaked
 
 
 def test_rest_api_health(test_config):
