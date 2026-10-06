@@ -9,7 +9,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { PetMark } from "@/components/pets/PetMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import {
@@ -54,7 +55,7 @@ function setupState(status: AgentRuntimeStatus | undefined): SetupState {
 
 function RuntimeMark({ runtime, label }: { runtime: AgentRuntime; label: string }) {
   return runtime === "jarvis"
-    ? <Bot className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+    ? <PetMark size={16} />
     : <ProviderLogo providerId={runtime} label={label} size="sm" />;
 }
 
