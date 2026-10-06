@@ -189,6 +189,52 @@ describe("Escape takes back a message the agent has not started on", () => {
     expect(screen.getAllByTestId("thread-user-message")).toHaveLength(1);
   });
 
+  it("takes it back when the stored text differs from the box, as a dictated one can", async () => {
+    useIdeThreadsStore.setState({ selection: { projectId: "p1", sessionId: "s1" } });
+    api.fetchAgentChatSessions.mockResolvedValue([sessionRow()]);
+    render(<ThreadView onScreen />);
+    await waitFor(() => expect(useThreadChatStore.getState().activeSessionId).toBe("s1"));
+    feed([["user_message", { text: "earlier" }], ["turn_started", { turn_id: "t0", provider: "claude-api", model: "", effort: "high", runner: "claude-cli" }],
+      ["turn_finished", { turn_id: "t0", status: "done", duration_ms: 10 }]]);
+    const box = screen.getByTestId("thread-composer-input") as HTMLTextAreaElement;
+    const typed = "Ich möchte Favoriten";
+    fireEvent.change(box, { target: { value: typed } });
+    await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
+    await waitFor(() => expect(api.sendAgentChatMessage).toHaveBeenCalled());
+    feed([["user_message", { text: typed.normalize("NFC") }],
+      ["turn_started", { turn_id: "t1", provider: "claude-api", model: "", effort: "high", runner: "claude-cli" }]]);
+
+    await act(async () => { fireEvent.keyDown(box, { key: "Escape" }); });
+
+    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1");
+    expect(box.value).toBe(typed);
+    expect(screen.getAllByTestId("thread-user-message")).toHaveLength(1);
+  });
+
+  it("gets the Escape before another handler can swallow it", async () => {
+    const swallow = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); } };
+    document.addEventListener("keydown", swallow, true);
+    try {
+      const box = await sendWithShot("fix the login");
+      await act(async () => { fireEvent.keyDown(box, { key: "Escape" }); });
+      expect(box.value).toBe("fix the login");
+    } finally {
+      document.removeEventListener("keydown", swallow, true);
+    }
+  });
+
+  it("never hands back an older message once a newer one went out", async () => {
+    const box = await sendWithShot("fix the login");
+    feed([["turn_finished", { turn_id: "t1", status: "done", duration_ms: 10 }],
+      ["user_message", { text: "from the voice mirror" }],
+      ["turn_started", { turn_id: "t2", provider: "claude-api", model: "", effort: "high", runner: "claude-cli" }]]);
+
+    await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
+
+    expect(api.cancelAgentChatTurn).not.toHaveBeenCalled();
+    expect(box.value).toBe("");
+  });
+
   it("leaves the message alone once the agent thought past the window", async () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);

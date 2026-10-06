@@ -30,11 +30,19 @@ const drafts = new Map<string, string>();
 const queues = new Map<string, QueuedMessage[]>();
 
 /**
- * The message sent last, with its files and when it went, so Escape can take
- * it back. Module-level: a thread's first message swaps the empty-thread
- * composer for the timeline one.
+ * The message sent last, with its files, when it went and where the thread
+ * stood then, so Escape can take it back. Module-level: a thread's first
+ * message swaps the empty-thread composer for the timeline one.
  */
-interface SentMessage { text: string; files: HeldFiles; sentMs: number }
+interface SentMessage {
+  text: string;
+  files: HeldFiles;
+  sentMs: number;
+  /** The thread it went to; null when the send creates the thread. */
+  sessionId: string | null;
+  /** The newest event seq the thread had shown before the send. */
+  afterSeq: number;
+}
 let lastSent: SentMessage | null = null;
 
 /** How long after sending Escape still takes a message back once the agent started thinking. */
@@ -45,33 +53,37 @@ function keepSent(next: SentMessage | null): void {
   lastSent = next;
 }
 
+/** The event seq a user item was built from (`u-<seq>`), or 0. */
+function itemSeq(item: UserItem): number {
+  const seq = Number(item.id.slice(2));
+  return Number.isFinite(seq) ? seq : 0;
+}
+
 /**
- * The user item `sent` became, when Escape may still take it back: it is the
- * newest message, and nothing after it is more than the reply still running.
- * While that reply shows no work the message comes back however long the
- * agent takes to connect; once it reasons or writes, only inside
- * RECALL_WINDOW_MS; once it ran a tool, never — that work may have touched
- * files. Matching the text keeps a queued follow-up or another thread from
- * handing back the wrong message.
+ * The user item `sent` became, when Escape may still take it back: the one
+ * message that arrived in its thread after the send, with nothing after it
+ * but the reply still running and the notices around it. While that reply
+ * shows no work the message comes back however long the agent takes to
+ * connect; once it reasons or writes, only inside RECALL_WINDOW_MS; once it
+ * ran a tool, never — that work may have touched files.
+ *
+ * Matched by position, never by text: what the backend stores is not always
+ * byte for byte what the box held (a dictated transcript can come back with
+ * other Unicode forms), and one changed character must not leave the person
+ * with nothing but the Stop button.
  */
-function recallableItem(timeline: Timeline, sent: SentMessage, now: number): UserItem | null {
-  let index = timeline.items.length - 1;
-  while (index >= 0 && timeline.items[index].type !== "user") index -= 1;
-  const asked = timeline.items[index];
-  if (!asked || asked.type !== "user") return null;
-  if (sent.text ? asked.text.trim() !== sent.text : !sameFiles(asked, sent.files)) return null;
-  const after = timeline.items.slice(index + 1);
+function recallableItem(timeline: Timeline, sent: SentMessage, sessionId: string | null, now: number): UserItem | null {
+  if (!sessionId || (sent.sessionId !== null && sent.sessionId !== sessionId)) return null;
+  const fresh = timeline.items.filter((item): item is UserItem => item.type === "user" && itemSeq(item) > sent.afterSeq);
+  if (fresh.length !== 1) return null;
+  const asked = fresh[0];
   const turn = runningTurn(timeline);
-  if (after.some((item) => item !== turn)) return null;
+  const after = timeline.items.slice(timeline.items.indexOf(asked) + 1);
+  if (after.some((item) => item.type === "user" || (item.type === "turn" && item !== turn))) return null;
   if (!turn) return asked;
   if (turn.blocks.some((block) => block.kind === "tool")) return null;
   const working = turn.blocks.some((block) => block.kind !== "text" || block.text.trim());
   return !working || now - sent.sentMs <= RECALL_WINDOW_MS ? asked : null;
-}
-
-function sameFiles(asked: UserItem, files: HeldFiles): boolean {
-  const names = files.attachments.map((item) => item.name).sort().join("|");
-  return names !== "" && asked.attachments.map((item) => item.name).sort().join("|") === names;
 }
 
 /** The open question card of the newest turn, if any. */
@@ -423,7 +435,8 @@ export function ThreadComposer({
       setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
       return;
     }
-    keepSent({ text, files: held, sentMs: Date.now() });
+    const before = useThreadChatStore.getState();
+    keepSent({ text, files: held, sentMs: Date.now(), sessionId: before.activeSessionId, afterSeq: before.timeline.lastSeq });
     const sent = await dispatch(text, attachments);
     if (!sent && !useThreadChatStore.getState().activeSessionId) {
       // Nothing was created: give the words back instead of losing them.
@@ -435,7 +448,7 @@ export function ThreadComposer({
   // thread and puts it, files included, back into the box to edit and send again.
   const recall = useRef<() => boolean>(() => false);
   recall.current = () => {
-    const asked = lastSent && recallableItem(timeline, lastSent, Date.now());
+    const asked = lastSent && recallableItem(timeline, lastSent, activeSessionId, Date.now());
     if (!lastSent || !asked) return false;
     const { text, files: held } = lastSent;
     lastSent = null;
@@ -450,12 +463,17 @@ export function ThreadComposer({
   };
   useEffect(() => {
     if (!onScreen) return;
+    // Capture phase: a handler further down (the IDE's own key layers) must
+    // not swallow the Escape first. It only takes the key in the seconds
+    // after a send, when the message is still recallable.
     const onEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
-      if (recall.current()) event.preventDefault();
+      if (!recall.current()) return;
+      event.preventDefault();
+      event.stopPropagation();
     };
-    window.addEventListener("keydown", onEscape);
-    return () => window.removeEventListener("keydown", onEscape);
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
   }, [onScreen]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
