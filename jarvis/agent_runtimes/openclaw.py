@@ -152,7 +152,7 @@ async def _listening(port: int) -> bool:
         _reader, writer = await asyncio.wait_for(
             asyncio.open_connection("127.0.0.1", port), timeout=2
         )
-    except (OSError, TimeoutError):
+    except (OSError, TimeoutError):  # not listening yet: the caller polls again
         return False
     writer.close()
     with contextlib.suppress(OSError):
@@ -569,8 +569,8 @@ def _gateway_token(home: Path) -> str:
         token = path.read_text(encoding="utf-8").strip()
         if token:
             return token
-    except OSError:
-        pass  # no token yet: mint one below
+    except OSError:  # no token yet: one is minted below
+        pass
     token = secrets.token_urlsafe(32)
     write_if_changed(path, token)
     with contextlib.suppress(OSError):
@@ -604,7 +604,7 @@ async def _run_doctor(launcher: list[str], env: dict[str, str], home: Path) -> N
 def _log_tail(path: Path, lines: int = 6) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError:  # no log to quote: the start error stands on its own
         return ""
     tail = [line for line in text.splitlines() if line.strip()][-lines:]
     return ("\n" + "\n".join(tail)) if tail else ""

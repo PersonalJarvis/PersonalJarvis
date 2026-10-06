@@ -266,8 +266,8 @@ def write_if_changed(path: Path, text: str) -> bool:
     try:
         if path.read_text(encoding="utf-8") == text:
             return False
-    except OSError:
-        pass  # no readable file yet: write it below
+    except OSError:  # no readable file yet: it is written below
+        pass
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
@@ -315,7 +315,7 @@ def first_existing(candidates: list[Path]) -> Path | None:
         try:
             if candidate.is_file():
                 return candidate
-        except OSError:
+        except OSError:  # an unreadable candidate is simply not the install
             continue
     return None
 

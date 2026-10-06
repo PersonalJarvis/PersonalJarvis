@@ -97,7 +97,7 @@ def usable_providers(config: Any) -> list[str]:
     for provider in sorted(_ENDPOINTS):
         try:
             route_for(config, provider, "probe")
-        except RouteUnavailable:
+        except RouteUnavailable:  # not connected: the provider is simply not offered
             continue
         except Exception:  # noqa: BLE001 — one unreadable provider must not empty the list
             log.warning("agent runtimes: provider %s could not be checked", provider, exc_info=True)

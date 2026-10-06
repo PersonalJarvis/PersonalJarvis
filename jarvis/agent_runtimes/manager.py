@@ -65,7 +65,7 @@ def _log_path(runtime: str) -> Any:
 def log_tail(runtime: str, lines: int = 12) -> list[str]:
     try:
         text = _log_path(runtime).read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError:  # no setup has written a log yet: nothing to show
         return []
     return [line for line in text.splitlines() if line.strip()][-lines:]
 
@@ -86,7 +86,7 @@ async def statuses(*, refresh: bool = False) -> list[dict[str, Any]]:
     return out
 
 
-def start(runtime: str, kind: JobKind) -> RuntimeJob:
+async def start(runtime: str, kind: JobKind) -> RuntimeJob:
     """Start an install or update job; returns the running job if one exists."""
     if runtime not in RUNTIME_NAMES:
         raise KeyError(runtime)
@@ -133,7 +133,7 @@ async def _run(current: RuntimeJob, argv: list[str]) -> None:
             tree.assign(proc.pid)
             try:
                 code = await asyncio.wait_for(proc.wait(), timeout=_JOB_TIMEOUT_S)
-            except TimeoutError:
+            except TimeoutError:  # reported through the job's state and message below
                 with contextlib.suppress(ProcessLookupError, OSError):
                     proc.kill()
                 code = -1

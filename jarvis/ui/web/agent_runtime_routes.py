@@ -58,11 +58,11 @@ async def run_agent_runtime_setup(
     """Start the runtime's official installer or updater (person-started only)."""
     if runtime not in RUNTIME_NAMES:
         raise HTTPException(404, f"unknown runtime {runtime!r}")
-    return {"job": manager.start(runtime, action).to_dict()}
+    return {"job": (await manager.start(runtime, action)).to_dict()}
 
 
 @router.get("/{runtime}/job")
-async def agent_runtime_job(runtime: str) -> dict[str, Any]:
+def agent_runtime_job(runtime: str) -> dict[str, Any]:
     """The running or last setup job of one runtime (``null`` when none)."""
     if runtime not in RUNTIME_NAMES:
         raise HTTPException(404, f"unknown runtime {runtime!r}")

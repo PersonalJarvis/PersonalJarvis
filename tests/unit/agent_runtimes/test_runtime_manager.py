@@ -63,9 +63,9 @@ async def _finish(name: str) -> manager.RuntimeJob:
 
 
 async def test_an_install_runs_the_official_command_and_logs_it(fakes):
-    started = manager.start("hermes", "install")
+    started = await manager.start("hermes", "install")
     assert started.state == "running"
-    assert manager.start("hermes", "install") is started  # one job at a time
+    assert await manager.start("hermes", "install") is started  # one job at a time
     done = await _finish("hermes")
     assert done.state == "done" and done.exit_code == 0
     assert any("installing" in line for line in done.to_dict()["log_tail"])
@@ -73,7 +73,7 @@ async def test_an_install_runs_the_official_command_and_logs_it(fakes):
 
 
 async def test_an_update_stops_the_runtime_first_and_reports_a_failure(fakes):
-    manager.start("openclaw", "update")
+    await manager.start("openclaw", "update")
     done = await _finish("openclaw")
     assert fakes["openclaw"].stopped == 1
     assert done.state == "failed" and done.exit_code == 3
@@ -82,7 +82,7 @@ async def test_an_update_stops_the_runtime_first_and_reports_a_failure(fakes):
 
 async def test_unknown_runtimes_are_refused(fakes):
     with pytest.raises(KeyError):
-        manager.start("skynet", "install")
+        await manager.start("skynet", "install")
 
 
 def test_routes_list_status_and_start_jobs(fakes):
