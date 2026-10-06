@@ -1,4 +1,27 @@
 {
+  "apikeys_realtime": {
+    "aria": "Realtime-Stimme",
+    "loading": "Sprach-Provider werden geladen…",
+    "state_ready": "Bereit für dein nächstes Gespräch",
+    "state_call": "Gespräch läuft",
+    "state_connecting": "Verbinde…",
+    "state_backup": "Auf dem Ersatz-Sprachweg",
+    "state_off": "Realtime ist aus",
+    "state_none": "Noch kein Sprach-Provider",
+    "none_hint": "Wähle unten einen Provider und hinterlege seinen Key.",
+    "off_hint": "Deine Stimme läuft noch über die alte klassische Engine. Schalte Realtime ein, um über den Provider unten zu sprechen.",
+    "off_hint_unavailable": "Deine Stimme läuft noch über die alte klassische Engine. Richte unten einen Provider ein und schalte dann Realtime ein.",
+    "turn_on": "Realtime einschalten",
+    "providers_title": "Provider",
+    "providers_desc": "Wer das Live-Gespräch führt. Ein Provider mit gespeichertem Key übernimmt mit einem Klick.",
+    "active": "Aktiv",
+    "use_provider": "{0} verwenden",
+    "settings_desc_live": "Wähle einen OpenAI-Key oder ein ChatGPT-Abo für Sprache und Denken.",
+    "model_voice": "Modell und Stimme",
+    "model_voice_hint": "Gilt ab deinem nächsten Gespräch.",
+    "test_label": "Verbindungstest",
+    "test_hint": "Schickt eine kurze Anfrage, um zu prüfen, ob der Key funktioniert."
+  },
   "live": {
     "subscription_install": "ChatGPT-Anmeldung einrichten",
     "subscription_installing": "ChatGPT-Anmeldung wird vorbereitet…",
@@ -66,29 +89,6 @@
     "custom_model": "Eigene Denkmodell-ID",
     "ready": "Gespeichert & aktiv",
     "save_changes": "Änderungen speichern"
-  },
-  "apikeys_realtime": {
-    "aria": "Realtime-Stimme",
-    "loading": "Sprach-Provider werden geladen…",
-    "state_ready": "Bereit für dein nächstes Gespräch",
-    "state_call": "Gespräch läuft",
-    "state_connecting": "Verbinde…",
-    "state_backup": "Auf dem Ersatz-Sprachweg",
-    "state_off": "Realtime ist aus",
-    "state_none": "Noch kein Sprach-Provider",
-    "none_hint": "Wähle unten einen Provider und hinterlege seinen Key.",
-    "off_hint": "Deine Stimme läuft noch über die alte klassische Engine. Schalte Realtime ein, um über den Provider unten zu sprechen.",
-    "off_hint_unavailable": "Deine Stimme läuft noch über die alte klassische Engine. Richte unten einen Provider ein und schalte dann Realtime ein.",
-    "turn_on": "Realtime einschalten",
-    "providers_title": "Provider",
-    "providers_desc": "Wer das Live-Gespräch führt. Ein Provider mit gespeichertem Key übernimmt mit einem Klick.",
-    "active": "Aktiv",
-    "use_provider": "{0} verwenden",
-    "settings_desc_live": "Wähle einen OpenAI-Key oder ein ChatGPT-Abo für Sprache und Denken.",
-    "model_voice": "Modell und Stimme",
-    "model_voice_hint": "Gilt ab deinem nächsten Gespräch.",
-    "test_label": "Verbindungstest",
-    "test_hint": "Schickt eine kurze Anfrage, um zu prüfen, ob der Key funktioniert."
   },
   "input_isolation": {
     "title": "Diktier- und Tipphilfen erreichen dieses Fenster nicht",
@@ -214,9 +214,7 @@
     "group_system": "System",
     "agent_instructions": "{name}",
     "appshots": "Appshots",
-    "shortcuts": "Tastenkürzel",
     "jarvisx": "Jarvis X",
-    "pets": "Meine Pets",
     "jarvis_actions": "Jarvis-Aktionen",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
@@ -224,7 +222,9 @@
     "voice": "{name} Stimme",
     "voice_shortcuts": "Tastenkürzel",
     "voice_language": "Sprache",
-    "voice_api_keys": "API-Keys"
+    "voice_api_keys": "API-Keys",
+    "shortcuts": "Tastenkürzel",
+    "pets": "Meine Pets"
   },
   "assistant_view": {
     "header_named": "Dein Assistent in {0}, geweckt mit „{1}“.",
@@ -669,10 +669,8 @@
     "recent": "Letzte",
     "pin_chat": "Chat anheften",
     "unpin_chat": "Chat lösen",
-
     "jarvis_tools": "Jarvis Tools",
     "more": "Mehr",
-
     "instance_dev_hint": "Dev-Instanz — eine zweite, frei neustartbare Kopie der App mit eigenen Daten, Ports und eigenem Icon. Die normale App läuft daneben weiter.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -712,10 +710,12 @@
     "realtime_microphone_unavailable": "Dieser Browser kann nicht auf ein Mikrofon zugreifen. Prüfe Browserunterstützung und Geräteeinstellungen.",
     "realtime_audio_worklet_unavailable": "Dieser Browser unterstützt den benötigten Audioprozessor nicht. Aktualisiere den Browser.",
     "realtime_microphone_denied": "Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Website-Einstellungen des Browsers und versuche es erneut.",
+    "realtime_microphone_denied_desktop": "Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Systemeinstellungen deines Computers und versuche es erneut.",
     "realtime_browser_tts_unavailable": "Dieser Browser hat keine nutzbare Systemstimme. Die Antwort bleibt als Text verfügbar; verbinde für Audio einen TTS-Anbieter.",
     "realtime_pipeline_fallback": "Klassische Pipeline als Fallback",
     "realtime_unavailable": "Realtime-Anbieter verbinden oder einrichten",
     "realtime_error": "Die Sprachverbindung konnte nicht gestartet werden. Teste den aktiven Realtime-Anbieter unter API Keys und versuche es erneut.",
+    "browser_voice_error": "Die Sprachverbindung konnte nicht gestartet werden. Prüfe Sprache zu Text, das Brain und Text zu Sprache unter API Keys und versuche es erneut.",
     "realtime_provider_fallback": "{0} war nicht mehr verfügbar, deshalb läuft das Gespräch jetzt über einen anderen Anbieter — die Abrechnung kann abweichen. {1}",
     "realtime_provider_fallback_short": "Das Gespräch hat {0} verlassen und läuft über einen anderen Anbieter.",
     "realtime_provider_warning": "Der Realtime-Anbieter meldet ein behebbares Problem; das Gespräch läuft weiter.",
@@ -1311,6 +1311,8 @@
     "add_upload": "Eigenes Plugin hochladen",
     "add_community": "Aus dem Community-Marketplace",
     "add_marketplace": "Marketplace öffnen",
+    "preview_badge": "Vorschau",
+    "preview_tooltip": "Noch nicht vollständig getestet. Die Anmeldung kann noch zusätzliche Schritte brauchen.",
     "filter_label": "Anzeigen",
     "filter_recommended": "Empfohlen",
     "added": "Hinzugefügt",
@@ -1438,7 +1440,17 @@
     "title": "Run Inspector",
     "subtitle": "Entwickler-Forensik pro Run: Umgebung, Entscheidungen, Latenz, Tool-Ein-/Ausgabe und der rohe Ereignisstrom.",
     "empty": "Wähle einen Run zur Analyse.",
+    "empty_hint": "Wähle links einen Run, um seine Turns, Entscheidungen, Latenz und Rohereignisse zu sehen.",
+    "empty_title": "Noch keine Runs aufgezeichnet",
+    "empty_body": "Jede Sprach- oder Chat-Sitzung erscheint hier mit ihrem vollständigen Analyseverlauf.",
     "unavailable": "Der Run-Recorder ist deaktiviert.",
+    "unavailable_body": "Aktiviere den Run-Recorder in den Einstellungen, um den Ablauf jeder Sitzung aufzuzeichnen.",
+    "search": "Runs suchen…",
+    "no_matches": "Kein Run entspricht dieser Suche.",
+    "no_turns": "Dieser Run enthält keinen abgeschlossenen Turn.",
+    "loading": "Runs werden geladen…",
+    "back": "Zurück",
+    "latency": "Latenz",
     "export_raw": "Roh-Export (JSON)",
     "full_transcript": "Gesamter Gesprächsverlauf",
     "deep_dive": "Metriken & Deep-Dive",
@@ -1453,6 +1465,27 @@
       "tools": "Tools",
       "errors": "Fehler",
       "events": "Ereignisse"
+    },
+    "tab": {
+      "turns": "Turns",
+      "environment": "Umgebung",
+      "metrics": "Metriken",
+      "errors": "Fehler",
+      "session_events": "Sitzungsereignisse"
+    },
+    "errors": {
+      "empty": "Keine Fehler aufgezeichnet."
+    },
+    "metrics": {
+      "think": "Denken",
+      "speak": "Sprechen",
+      "tokens_in": "Eingabe-Tokens",
+      "tokens_out": "Ausgabe-Tokens",
+      "interruptions": "Unterbrechungen",
+      "worst_latency": "Höchste Latenz",
+      "cost_by_provider": "Kosten nach Anbieter",
+      "recorded_events": "Aufgezeichnete Ereignisse",
+      "tool_usage": "Tool-Nutzung"
     },
     "environment": "Run-Umgebung",
     "session_events": "Ereignisse auf Sitzungsebene",
@@ -1483,7 +1516,9 @@
       "cache_hit": "Treffer",
       "cache_miss": "kein Treffer",
       "interrupted": "unterbrochen",
-      "context": "Kontext"
+      "context": "Kontext",
+      "turns": "Turns",
+      "tokens": "Tokens"
     },
     "env": {
       "mode": "Modus",
@@ -2595,87 +2630,62 @@
     "vision_note": "Es werden nur Modelle angezeigt, die Bilder verstehen - Computer-Use liest den Bildschirm über Screenshots, ein reines Text-Modell kann es nicht steuern."
   },
   "permissions": {
-    "group_title": "Datenschutz-Berechtigungen",
-    "title": "macOS-Berechtigungen",
-    "description": "Erteile nur die Systemzugriffe, die für Sprache, Computer-Use, globale Kurzbefehle und Fenstersteuerung nötig sind. Jarvis verändert niemals die macOS-Datenschutzdatenbank.",
-    "loading": "Systemberechtigungen werden geprüft…",
-    "load_failed": "Der aktuelle Berechtigungsstatus konnte nicht gelesen werden.",
-    "refresh": "Erneut prüfen",
-    "not_required": "Auf diesem Betriebssystem sind keine zusätzlichen Desktop-Datenschutzberechtigungen nötig.",
-    "identity_warning": "Starte Personal Jarvis aus seinem App-Bundle, bevor du Zugriff erlaubst. macOS bindet Berechtigungen an die genaue App-Identität.",
-    "restart_required": "Starte Personal Jarvis neu, bevor du den neu erlaubten Zugriff verwendest.",
-    "restart_now": "Jetzt neu starten",
-    "restarting": "Neustart…",
     "restart_failed": "Personal Jarvis konnte nicht neu starten. Beende und öffne es manuell erneut.",
-    "request": "Erlauben",
-    "open_settings": "Einstellungen öffnen",
-    "status": {
-      "granted": "Erlaubt",
-      "not_determined": "Nicht angefragt",
-      "denied": "Abgelehnt",
-      "restricted": "Eingeschränkt",
-      "not_granted": "Nicht erlaubt",
-      "unavailable": "Nicht verfügbar",
-      "not_required": "Nicht erforderlich",
-      "restart_pending": "Neustart ausstehend"
-    },
-    "items": {
-      "microphone": {
-        "title": "Mikrofon",
-        "description": "Erforderlich für Aktivierungswort und lokale Spracheingabe."
+    "toast": {
+      "microphone": "Personal Jarvis braucht Zugriff auf das Mikrofon, um dich zu hören.",
+      "screen_recording": "Personal Jarvis braucht Zugriff auf die Bildschirmaufnahme, um deinen Bildschirm zu sehen.",
+      "accessibility": "Personal Jarvis braucht Zugriff auf die Bedienungshilfen, um andere Apps für dich zu steuern.",
+      "input_monitoring": "Personal Jarvis braucht Zugriff auf die Eingabeüberwachung, damit deine Kürzel auch in anderen Apps funktionieren.",
+      "automation": "Personal Jarvis braucht deine Erlaubnis, eine andere App zu steuern.",
+      "generic": "Personal Jarvis braucht dafür eine weitere Berechtigung.",
+      "restricted": "Dein Mac erlaubt Personal Jarvis den Zugriff auf {what} nicht. Das kann nur ein Administrator ändern.",
+      "restart": "Der Zugriff auf {what} ist an, wirkt aber erst, wenn Personal Jarvis neu startet.",
+      "outside": "Personal Jarvis braucht Zugriff auf {what}; da es nicht als App installiert ist, gibt macOS den Zugriff an die App, die es gestartet hat.",
+      "wake_word": "Das Wake-Word kann nicht zuhören: Der Mikrofonzugriff ist für Personal Jarvis ausgeschaltet.",
+      "action_failed": "Das hat nicht geklappt. Bitte öffne die Systemeinstellungen selbst.",
+      "name": {
+        "microphone": "das Mikrofon",
+        "screen_recording": "die Bildschirmaufnahme",
+        "accessibility": "die Bedienungshilfen",
+        "input_monitoring": "die Eingabeüberwachung",
+        "automation": "die Automation",
+        "generic": "diese Funktion"
       },
-      "screen_recording": {
-        "title": "Bildschirmaufnahme",
-        "description": "Erforderlich, damit Computer-Use alle verbundenen Bildschirme sehen kann."
-      },
-      "accessibility": {
-        "title": "Bedienungshilfen",
-        "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung."
-      },
-      "input_monitoring": {
-        "title": "Eingabeüberwachung",
-        "description": "Erforderlich für globale Tastaturkurzbefehle."
-      },
-      "event_posting": {
-        "title": "Eingabesteuerung",
-        "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann."
-      },
-      "automation": {
-        "title": "Automation (Musik & Spotify)",
-        "description": "Erlaubt Jarvis, Musik und Spotify beim Diktieren leiser zu stellen und danach wieder lauter. Wird einmal pro Player gefragt — ein geschlossener Player wird für den Dialog kurz im Hintergrund geöffnet."
-      },
-      "credential_store": {
-        "title": "Schlüsselbund (API-Keys)",
-        "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet."
+      "action": {
+        "open_settings": "Systemeinstellungen öffnen",
+        "ask_now": "macOS jetzt fragen",
+        "restart": "Beenden und neu öffnen"
       }
     },
-    "banner": {
-      "title": "Aktion nötig: macOS-Berechtigungen fehlen",
-      "impact": "Funktioniert gerade nicht: {0}",
-      "hint": "Erlaube den Zugriff über die Buttons — macOS öffnet für jede Berechtigung direkt die richtige Seite der Systemeinstellungen. {name} prüft automatisch nach.",
-      "collapse": "Details ausblenden",
-      "expand": "Details anzeigen"
-    },
-    "features": {
-      "voice": "Sprache & Aktivierungswort",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Globale Kurzbefehle",
-      "window_control": "Fenstersteuerung",
-      "audio_ducking": "Musik leiser beim Diktieren",
-      "api_keys": "Sichere API-Key-Ablage"
-    },
-    "restart_deferred": "Neu erteilte Freigaben werden mit dem automatischen Neustart am Ende der Einrichtung aktiv - jetzt ist nichts zu tun.",
-    "setup_all": "Alles einrichten",
-    "setup_all_hint": "Ein Klick führt dich durch alle fehlenden Berechtigungen und übernimmt sie am Ende.",
-    "setup_running": "Schritt {0} von {1}: {2}",
-    "setup_wait_prompt": "Beantworte den macOS-Dialog — es geht automatisch weiter.",
-    "setup_wait_settings": "Schalte Personal Jarvis in der gerade geöffneten Systemeinstellungen-Seite ein und komm zurück — es geht automatisch weiter.",
-    "setup_cancel": "Abbrechen",
-    "setup_restarting": "Fertig — Personal Jarvis startet einmal neu, um den neuen Zugriff zu übernehmen.",
-    "setup_timeout": "Einrichtung pausiert: Eine Berechtigung wurde nicht rechtzeitig erteilt. Nutze „Alles einrichten“ jederzeit erneut.",
-    "ask_again": "Erneut fragen",
-    "stale_grant_hint": "macOS fragt für diesen Zugriff nicht mehr nach. Steht der Haken in den Systemeinstellungen schon, gehört er zu einer älteren Version der App — tippe auf „Erneut fragen“ und erlaube den Zugriff danach neu.",
-    "identity_reset": "macOS sieht Personal Jarvis seit dem letzten Neuaufbau der App als neue App an und hat dabei alle erteilten Zugriffe verworfen. Bitte einmal neu erlauben — danach bleiben sie erhalten."
+    "group_title": null,
+    "title": null,
+    "description": null,
+    "loading": null,
+    "load_failed": null,
+    "refresh": null,
+    "not_required": null,
+    "identity_warning": null,
+    "restart_required": null,
+    "restart_now": null,
+    "restarting": null,
+    "request": null,
+    "open_settings": null,
+    "status": null,
+    "items": null,
+    "banner": null,
+    "features": null,
+    "restart_deferred": null,
+    "setup_all": null,
+    "setup_all_hint": null,
+    "setup_running": null,
+    "setup_wait_prompt": null,
+    "setup_wait_settings": null,
+    "setup_cancel": null,
+    "setup_restarting": null,
+    "setup_timeout": null,
+    "ask_again": null,
+    "stale_grant_hint": null,
+    "identity_reset": null
   },
   "settings_hub": {
     "subtitle": "Alles über dich, deine Schlüssel und diese App — an einem Ort.",
@@ -2744,7 +2754,6 @@
     "nav": {
       "languages": "Sprachen",
       "app": "App",
-      "permissions": "Datenschutz-Freigaben",
       "screen_context": "Bildschirmkontext",
       "realtime_voice": "Realtime-Stimme",
       "system_prompt": "Systemprompt",
@@ -5181,7 +5190,7 @@
     "loading": "Der Marketplace wird geladen…",
     "refresh": "Verzeichnis neu laden",
     "open_web": "Webseite",
-    "search_placeholder": "Plugins und Skills durchsuchen…",
+    "search_placeholder": "Plugins, Skills und Agenten durchsuchen…",
     "subtitle_count": "{count} veröffentlichte Einträge",
     "subtitle_revision": "Stand {revision}",
     "filter_all": "Alle",
@@ -5199,7 +5208,7 @@
     "empty": "In dieser Kategorie ist noch nichts veröffentlicht.",
     "empty_search": "Nichts passt zu „{query}“.",
     "empty_clear": "Suche zurücksetzen",
-    "publish_hint": "Etwas gebaut, das andere gebrauchen können? Veröffentlichen ist ein Pull Request auf die offene Registry.",
+    "publish_hint": "Etwas gebaut, das andere brauchen können? Veröffentliche es aus der App unter deinem GitHub-Namen – oder teile einen Agenten über seine Karte.",
     "publish_cta": "Eigenes veröffentlichen",
     "close": "Schließen",
     "kind_plugin": "Plugin",
@@ -5223,7 +5232,19 @@
     "portable_skill": "Portabler Skill — läuft auch in",
     "portable_any": "anderen Agenten, die SKILL.md lesen",
     "seed_conflict": "Ein Plugin dieses Namens liegt der App schon bei. Dieses hier ersetzt es.",
-    "landed_open": "Zeig es mir"
+    "landed_open": "Zeig es mir",
+    "filter_agents": "Agenten",
+    "shelf_agents": "Agenten",
+    "shelf_agents_hint": "Fertige Teammitglieder mit einer Aufgabe und eigenen Anweisungen",
+    "kind_agent": "Agent",
+    "landed_agent": "Er ist jetzt in deinem Team und läuft auf deinem eigenen Modell. Öffne Agenten, um mit ihm zu sprechen.",
+    "agent_model": "Läuft auf deinem eigenen Modell – nichts von den Konten oder Einstellungen des Veröffentlichenden kommt mit.",
+    "agent_focus": "Greift zuerst zu",
+    "agent_asks": "Fragt immer vor",
+    "agent_asks_default": "Er fragt dich, bevor er handelt, bis du das änderst.",
+    "agent_instructions": "Seine festen Anweisungen",
+    "import_agent": "Agenten-Datei importieren",
+    "import_failed": "Die Datei konnte nicht importiert werden: {error}"
   },
   "costs_view": {
     "title": "Kosten & Tokens",
@@ -5416,9 +5437,22 @@
   },
   "society": {
     "groups": {
-      "create": "Neues Agent-Team", "edit": "Agent-Team bearbeiten", "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
-      "name": "Teamname", "members": "Mitglieder", "cancel": "Abbrechen", "save": "Team speichern", "delete": "Gruppe auflösen", "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
-      "left_chat": "Linker Chat", "right_chat": "Rechter Chat", "open": "Öffnen", "open_individual": "Einzelchat von {0} öffnen", "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.", "hold_to_group": "Halten zum Gruppieren", "release_to_group": "Loslassen zum Gruppieren"
+      "create": "Neues Agent-Team",
+      "edit": "Agent-Team bearbeiten",
+      "description": "Agents in einem Eintrag bündeln. Jeder Agent behält seinen eigenen Chat.",
+      "name": "Teamname",
+      "members": "Mitglieder",
+      "cancel": "Abbrechen",
+      "save": "Team speichern",
+      "delete": "Gruppe auflösen",
+      "delete_confirm": "Diese Gruppe auflösen? Die einzelnen Agent-Chats bleiben erhalten.",
+      "left_chat": "Linker Chat",
+      "right_chat": "Rechter Chat",
+      "open": "Öffnen",
+      "open_individual": "Einzelchat von {0} öffnen",
+      "missing_member": "Wähle einen verfügbaren Agent für diesen Chat.",
+      "hold_to_group": "Halten zum Gruppieren",
+      "release_to_group": "Loslassen zum Gruppieren"
     },
     "chat": {
       "placeholder": "Nachricht an {0}",
@@ -5492,6 +5526,14 @@
       "proposal_kind_approval_rule": "Freigaberegeln",
       "proposal_kind_focus": "Werkzeuge, die zuerst genutzt werden",
       "proposal_kind_team": "Teammitglieder",
+      "proposal_kind_identity": "Name und Rolle",
+      "identity_now": "Jetzt {0}",
+      "identity_undo": "Rückgängig",
+      "identity_undone": "Wieder {0}",
+      "assignment_from": "Auftrag von {0}",
+      "message_waiting": "Wartet, bis die aktuelle Aufgabe fertig ist",
+      "message_not_sent": "Nicht gesendet: {0}",
+      "context_rollover": "Frischer Arbeitskontext – Gedächtnis und letzte Nachrichten übernommen",
       "allow_always": "Immer erlauben",
       "history_chats": "Chats",
       "history_voice": "Sprache",
@@ -5932,6 +5974,7 @@
     "unanswered": "Nicht beantwortet – der Durchlauf wurde beendet."
   },
   "work_trace": {
+    "tool_failed": "Eine Tool-Aktion ist fehlgeschlagen",
     "question": "Wartet auf deine Antwort",
     "integration_used": "{service} verwendet",
     "activity_command": "Befehle ausgeführt",
@@ -5990,6 +6033,8 @@
     "show_more": "Mehr anzeigen",
     "show_less": "Weniger anzeigen",
     "took": "Dauer: {duration}",
+    "failed_count_one": "{count} fehlgeschlagen",
+    "failed_count_other": "{count} fehlgeschlagen",
     "act": {
       "command_one": "hat einen Befehl ausgeführt",
       "command_other": "hat Befehle ausgeführt",

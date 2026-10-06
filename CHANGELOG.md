@@ -11,8 +11,374 @@ versioning per [SemVer](https://semver.org/).
 
 ### Changed
 
-- Center API Keys settings and show provider cards in two columns when the
-  window is wide enough, with a single column in narrower windows.
+- Built-in plugins that have not yet passed a full end-to-end sign-in test now show a Preview badge, and releases no longer wait for every plugin to pass that test. A plugin is marked verified only after its complete journey was observed.
+
+---
+
+## [2.9.0] — 2026-10-05
+
+### Added
+
+- Share agents as reusable templates without running a publishing server.
+- Updated desktop interfaces and bundled assets for the integrated release.
+
+### Fixed
+
+- Preserve browser tabs and stable native capture when handing control between a person and an agent.
+- Keep delegated results attached to their originating chat and serialize direct chat sessions.
+- Require a separate confirmation before ending a voice conversation.
+- Bound Windows clipboard reads so dictation cannot remain blocked on delayed clipboard data.
+- Retry brief file locks when saving dictation history so completed restorations are retained.
+- Restore macOS desktop controls and request native permissions at the point of use.
+- Defer optional browser setup on headless installations and repair cross-platform lifecycle behavior.
+- Strengthen execution, credential storage, refresh and release-admission boundaries.
+
+### Known limitations
+
+- Full end-to-end plugin acceptance is deferred for 2.9.0 under a one-time maintainer-approved exception. The 46 outstanding plugin journeys remain unverified, and some sign-ins still require publisher setup. Existing audit results are unchanged; this exception does not apply to later releases.
+
+---
+
+## [2.8.0] — 2026-10-03
+
+### Added
+
+- An editor for appshots, opened from the corner card
+- Draw traces the way the Codex app does
+- Change floors with the elevator doors and a real button panel
+- A clickable, draggable appshot card in the screen corner
+- Make the area picker's magnifier a round lens
+- Ride the elevator from inside the car
+- Put the assistant's files up front as pages with their content
+- Plain magnifier the mouse wheel zooms
+- Add isolated ChatGPT subscription access and in-app sign-in (#322)
+- Elevator panel and ride that feel like a real elevator
+- The assistant's profile section is named after the assistant
+- Bring back the quiet session counts in the project tree
+- Drop the workspace pane limit and the 4x4 grid bound
+- Drop the running marks from the project tree
+- Restyle the project tree as a quiet Codex-style folder list
+- Arcade floor with ten playable retro cabinets
+- The SOUL.md section shows the assistant's whole profile
+- Drag a stack of side-by-side seams as one line from a seam's ends
+- Record the appshot shortcuts and default the area to both Shift keys
+- Give the area picker ShareX's region-capture look
+- Draw turns as a Claude/Codex-style timeline
+- Select an area of the screen on its own shortcut
+- Tell a finished turn's work as a written report
+- Jarvis follows the person as their chosen pet, in 3D
+- Log the JavaScript a hung window is stuck in before recovering it
+- Save "remember this" to MEMORY.md during the conversation
+- The live call keeps SOUL.md current with update_soul
+- Draw the user's pet everywhere the static Gigi image was
+- Replace the thinking comets with thought waves
+- SOUL.md gives the assistant one self-maintained identity
+- Mark voice and typed chats apart in the history
+- Start the local engine when its card is selected
+- Right-click menu with delete on gallery cards
+
+### Changed
+
+- Share one TLS context across every httpx client
+- Import transport plugins off the loop during boot warm
+- Run worktree git work off the event loop
+- Probe openai stream_options lazily, not at import
+
+### Fixed
+
+- Strip preview comments with a plain scan instead of a regex
+- Keep pet lookups inside their folders and strip HTML comments fully
+- Hold every automatic reload during a call or a streaming reply
+- Verify local speech readiness and contain failed workers
+- Keep the async-route and public-docs gates green after the local landing
+- Explain the quiet exception handlers the local commits added
+- Centre the cat torso above its stable floor anchor
+- Keep coding floor agent labels expanded
+- Keep lead pet centred on its floor marker
+- Hold every agent's first prompt until its terminal questions stop
+- Rebuild the arcade floor as clear rooms without lag
+- Keep mission heartbeats out of calls that did not start them
+- Make each shortcut one tidy field like the select beside it
+- Keep the workspace menu off the switching spinner
+- Let Continue through once a wake word is saved
+- Keep the settings labels readable in the Settings dialog
+- Link stacked seams up to 24 px apart and cover the grab zones
+- Continue a reopened voice chat in its own history row
+- Wait for Codex's colour question before typing a prompt
+- Keep the mascot and bar out of captures from their first show
+- Report a crashed area picker and serialize shortcut reloads
+- Sweep a mission at once when its owner process died
+- Stop terminal link detection walking past the buffer end
+- Hide the area controls until the backend knows about them
+- Seat a chat opened by a call on the person's chat model
+- Let take_appshot capture the whole screen on an explicit request
+- Make the size slider glide and resize the pet live
+- Capture the app window, not the mascot or bar overlay
+- Play the shutter flash and sound when the live model looks
+- Show one pet while the answer streams under a live trace
+- Keep tool results readable and long enough to narrate
+- Start spawn-point agents without waiting for a viewer
+- The pet plays its working row while Jarvis thinks or works
+- Read the install dir from sys.path when the prefix is lost
+- Find the worker interpreter when the branded exe stands alone
+- Resolve misheard agent names and route Jarvis agents vs coding panes
+- Give Jarvis and agents their own conversation chats
+- Brief spawned agents to do the work, not a read-only audit
+- Keep shared Google grants alive and flag dead OAuth clients
+- Offer only tool-calling models on the Local voice card
+- Retry the engine copy while Windows holds the new folder
+- Never reload the window under a live voice call
+
+---
+
+## [2.7.1] — 2026-10-02
+
+### Fixed
+
+- Bind federation signatures to their endpoint
+- Close first-contact bot pairing after a setup window
+- Sandbox worker HTML even when opened in a browser tab
+
+---
+
+## [2.7.0] — 2026-10-02
+
+### Added
+
+- **macOS asks when a feature needs a permission.** The first time you use a feature that needs a macOS permission, Personal Jarvis asks right then and macOS shows its own dialog: the microphone at the first dictation, push-to-talk, voice conversation, wake-word switch or microphone check; Screen Recording at the first screen capture you start; Accessibility when Jarvis first has to type, click or focus a window for you; Input Monitoring when you save a global shortcut (or choose the Call shortcut in setup); Music and Spotify control when you switch on "Mute music while dictating" with a player running. Nothing is asked at launch, and Personal Jarvis draws nothing of its own around macOS's dialog. If you say no, only that feature stops, and one short toast says so with one action ("Open System Settings"). Checked against faked macOS frameworks and macOS CI runners, not yet on a Mac of your own.
+- **One short toast after a macOS "no", in English, German and Spanish.** macOS never asks twice and says nothing after a denial, so when a feature you started is blocked by a permission, the app shows one sentence in its normal toast with one action: "Open System Settings", "Ask macOS now" (a development run outside the installed app) or "Quit and reopen" (access is on but needs a restart). It shows once per problem and again whenever you try the feature again after dismissing it, in the main desktop window only, and never for background work; the one exception is the wake word, which you switched on and which tells you once per session when it cannot listen. There is no permissions page, banner, card or inline note.
+- **`jarvis permissions reset <permission>`.** Forgets what macOS recorded for the installed Personal Jarvis app (the downloaded app or the installer's app, or `--bundle-id` for the other one) so macOS asks again on next use. It runs `tccutil` on your Mac behind `--yes`, never touches another app, and prints one line and exits with an error on other systems. The raw `tccutil` commands are in the troubleshooting guide.
+- **macOS permission dialogs in German and Spanish.** New builds of the downloaded app and fresh installs of the installer's app carry German and Spanish versions of the text macOS shows in its permission dialogs (the Apple Events and folder sentences are shorter and name no single app); an installer's app already on your Mac gets them the next time it is rebuilt for another reason, because the bundle version is deliberately not bumped (a bump would reset its permissions). Whether a Mac shows them is not yet tried on a Mac of your own.
+- **Honest checks for silent macOS failures.** A flat wallpaper-only screen capture is refused instead of handed to the model, and five seconds of exact-zero microphone audio produce one "denied or muted" notice. Computer Use pauses while a macOS permission dialog is in front, so an agent never answers one.
+- **A dispatch-only macOS hotkey spike.** A manually started workflow records, on Intel and Apple Silicon runners, whether the native Carbon hotkey calls crash the process. It changes no shipped behaviour.
+
+### Changed
+
+- **Global shortcuts need only Input Monitoring on macOS.** The listen-only shortcut tap no longer also requires Accessibility, is not started at launch unless already allowed, and re-arms in place when you grant access. A restart is suggested only after real typing produced no events, never forced.
+- **macOS permissions are checked silently and read live.** Features check the grant without prompting and act only on a live "granted"; a native request's result is never treated as proof. Identity now decides only who may ask automatically and who may reset, so a terminal-launched run asks for nothing on its own and offers an explicit "Ask macOS now" confirmation in the toast.
+- **The macOS bundles carry one table of usage strings.** The camera, speech and system-administration keys and the camera entitlement, which nothing in Jarvis uses, are removed; Screen Recording, Apple events, Desktop, Documents, Downloads and volumes are described in one place for both the `.dmg` app and the managed app.
+
+### Removed
+
+- **The Settings > Privacy page, the permission card and every inline permission note.** The floating card, the notes in dictation, the wake-word panel, mute-music, Shortcuts, Appshots and voice chat, the "Enable global shortcuts" buttons and tip, the "Mic blocked" line in the sidebar and the Privacy entry in Settings are gone (about 170 translated strings per language); macOS's own dialog and the one toast above replace them. The global-shortcut status that served the Shortcuts note is removed from the keybinds API too.
+- **The permissions banner, "Set up everything" and the setup permissions step.** The app-wide warning banner and its "Not now", the Optional and wanted-row bookkeeping, the guided wizard with its automatic restart, the refresh event and the onboarding permissions step are gone, along with the Music and Spotify consent file and the hidden launch of those apps, the "macOS treats the app as new" identity note and the global restart-required flag. Old leftovers on disk are never read and never prompt; the source installer deletes the two leftover state files on its next run, the downloaded app leaves them in place (harmless).
+
+### Fixed
+
+- **macOS: the wake word, dictation and Computer Use no longer sit dead behind a permission check that never asked macOS.** Protected features used to refuse until the app's own check said "granted", so on a Mac that had never answered a dialog macOS was never asked from the feature, and only a banner, Settings buttons or setup could raise it. The features now ask macOS themselves (see Added). Checked against faked macOS frameworks, not yet on a Mac of your own.
+- **macOS: the downloaded app is recognised as an installed app.** The `.dmg` app was never accepted as one, so (checked against faked macOS frameworks, not yet on a Mac) its microphone, shortcuts and Computer Use stayed disabled even with every permission granted, and no Allow button was offered. It is now recognised, `jarvis permissions` finds it, and `jarvis permissions reset` targets its own permission records.
+- **macOS: the downloaded app is built to be able to use its permissions.** The v2.5.0 image (read on Linux, not run on a Mac) was missing the microphone framework in its frozen archive and was marked background-only in its `Info.plist`. The build now includes the framework, clears the flag, and new checks fail the macOS job if either comes back — including one that boots the built app and asks it for its microphone permission. Built and checked on both macOS CI runners (Apple Silicon and Intel); not yet tried on a Mac of your own.
+- **macOS: the release workflow is prepared to sign and notarize the image.** `packaging/macos/build.sh` now imports the Developer ID certificate secrets the workflow already passed along (rehearsed and run against a stand-in keychain command, not yet end to end). Until the Apple secrets are added the image stays ad-hoc signed: the first launch needs Open Anyway and an update can ask for the permissions again.
+
+---
+
+## [2.6.0] — 2026-10-02
+
+### Added
+
+- A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
+- Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
+- Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
+- A restyled sidebar with search, your most-used agents, every recent chat, and the update button in its footer.
+- Zoom the whole app window with Ctrl + Plus / Minus / 0.
+- Artifacts open on a gallery with live previews.
+- Pets gain new characters (Ember, Pip), idle acts, action states, a pixel-art control strip, thought bubbles, notification cards and a phone button to call Jarvis.
+- Onboarding: the pet walks you through the app right after setup, then offers ten first steps.
+- Routines and chat channels keep running after the app window closes.
+- Jarvis can drive the Agentic IDE by voice and open coding agents in a named workspace.
+
+### Changed
+
+- Scheduling lives on agent routines; the separate Automations section is retired.
+- Routines can be created, paused, resumed or test-run by voice without a second confirmation.
+
+### Fixed
+
+- Dictation works during a live call instead of hanging it up.
+- A new agent's first prompt in the Agentic IDE is reliably submitted.
+- Light-mode terminal panes are crisp and readable.
+- A hung main window recovers on its own instead of waiting forever.
+- Live voice: no hang-up unless you ask, a spoken yes confirms the pending action, and call transcripts are stored while the call runs.
+- Credentials stay out of the app-action catalog.
+- Restore the installation-guide link on the PyPI package page and unblock package publication.
+- Build Linux installers through the official Ubuntu archive when the runner's default mirror stalls.
+- Publish the Debian installer alongside the AppImage and other desktop packages.
+
+---
+
+## [2.5.0] — 2026-10-01
+
+### Added
+
+- Desktop pets with six built-in characters, animated reactions, a compact control strip, and configurable appearance and size.
+- A redesigned profile page and a dedicated Keyboard Shortcuts page in Settings.
+- Quick section switching, an Agentic IDE key menu, and multiple workspace shell tabs.
+- Move running coding terminals between workspaces in the same folder without restarting the agent.
+- Remote agents retain approved Jarvis tools through scoped SSH forwarding.
+
+### Changed
+
+- First-run guidance helps users connect an agent subscription and configure their wake phrase.
+- Agents continue requested work, recover incomplete tool steps, and use question cards when essential information is missing.
+- Background learning and wiki work use the connected agent seat and respect subscription billing boundaries.
+- Provider health indicators read actual call outcomes without sending paid test requests.
+- Built-in routines no longer start scheduled work without the user's setup; edited skills are preserved during migration.
+
+### Fixed
+
+- Native application updates and restarts preserve the installation and return the app to the desktop.
+- Dictation delivery, retained terminal rendering, and delegated result reporting are more reliable.
+- Stricter per-chat approval settings survive changes to agent defaults.
+- Release publishing requires a tag and the newest successful CI result; version bumps keep the dependency lock consistent.
+- Cancelled CI runs release their queued aggregation work, and live realtime tests require explicit opt-in.
+
+---
+
+## [2.4.4] — 2026-09-30
+
+### Added
+
+- **First run inside the real app.** Onboarding is one morphing card plus a
+  guided tour of the app, and the first-run setup happens in the real
+  interface instead of a separate flow.
+- **Minimal IDE tiles.** Agentic IDE panes default to multiplexer-style tiles
+  with a slim title row; the working pane always wears a blue edge, and the
+  classic cards are one click away in Workspace options.
+- **Jarvis Verse spawn point** in the middle of both floors: drop files or
+  open a new workspace from there. Pane nameplates show the coding CLI's logo
+  on two lines, desk monitors draw a pane the way the IDE does, and the pane
+  window wears the minimal tile look.
+- **Windows computers.** A connected Windows machine now works for agents and
+  the IDE, with a Windows-aware setup prompt, readiness check and quit
+  offload; a cancelled turn ends its CLI there.
+
+### Changed
+
+- Background work stays on subscriptions once one is connected; nothing the
+  user did not start bills an API key on its own.
+- Jarvis' learning notebooks stay small and compacted.
+- AGENTS.md is the only agent instructions file.
+
+### Fixed
+
+- Reopening Jarvis right after closing it no longer stalls for minutes.
+- Remote panes come back safely, fork whole, and never read a stale local
+  transcript aloud.
+- The wake word keeps its primary decoder when a slow sibling is demoted.
+- An agent's Chromium starts only when it is needed.
+- The loop watchdog says when a stall is the machine running out of memory.
+- Clicking into a coding agent's output selects its pane; the repository
+  picker closes as soon as a pick is saved.
+
+---
+
+## [2.4.3] — 2026-09-30
+
+### Fixed
+
+- Raise the urllib3 security floor to 2.8.0 (CVE-2026-97687..97689, published
+  after 2.4.2 was tagged). The strict dependency audit refused 2.4.2's signed
+  install scripts on it; 2.4.3 ships everything 2.4.2 contains plus the fixed
+  dependency, the desktop installers and the signed install scripts.
+
+### Changed
+
+- The README hero video shows Agents, Jarvis Verse and the Agentic IDE.
+- Desktop sections load on navigation intent, so switching sections starts
+  sooner.
+
+---
+
+## [2.4.2] — 2026-09-30
+
+### Fixed
+
+- Waiting for a process tree to exit no longer fails on Linux when a process
+  is caught mid-shutdown. psutil 7.2 raised `OSError: [Errno 22]` for such a
+  process; it stopped the Linux desktop installer build for 2.4.1 and could
+  break stopping the local voice server, a mission worker's commands or the
+  uninstaller. 2.4.2 ships the 2.4.1 application with this fix and the
+  desktop installers for Windows, macOS and Linux.
+
+---
+
+## [2.4.1] — 2026-09-30
+
+### Fixed
+
+- Raise the pyjwt security floor to 2.14.0 (locked 2.15.1). pyjwt 2.13.0,
+  pulled in by the MCP SDK and Twilio, carries ten advisories; the
+  sign-installer workflow's strict dependency audit refused 2.4.0 on it, so
+  2.4.0 reached PyPI without signed install scripts. 2.4.1 is the same
+  application with the fixed dependency.
+
+---
+
+## [2.4.0] — 2026-09-30
+
+### Added
+
+- **Jarvis Verse.** The Jarvis agents now live on a walkable 3D office map:
+  toy-style figures with an outfit wardrobe, a lead executive suite, a team
+  meeting room, a break lounge, Mission Control with live Spend, Agents and IDE
+  monitors, and a coding floor (reached by elevator) where every Agentic IDE
+  pane appears as a figure with a live terminal you can type into, opened
+  as a movable, resizable window.
+- **Computers.** Settings > System > Computers connects servers and local VMs
+  over SSH — the connect dialog asks only for the address and works out the
+  way in (key, password or a provider's API; 14 provider presets). IDE panes,
+  workspaces and Jarvis agents can run on a connected computer, chosen when
+  the agent or workspace is added.
+- **Agentic IDE.** Git tab with branches, pull requests and CI state; an
+  explorer with git changes and diffs; fork a coding agent's chat into its own
+  worktree; coding agents keep running across app restarts and resume after a
+  power-off; a live agents side panel; drag-and-drop ordering; up to 16 agents
+  per workspace.
+- **Voice readback.** Jarvis reports back when a pane or agent finishes a job,
+  and the live voice model can reason about those reports on the next call.
+- **Agent chat.** Agents can ask short multiple-choice question series; group
+  chats of several agents; per-agent approval modes (Bypass, Ask, Always ask).
+  New agents start on Bypass; blocks, denied capabilities and explicit
+  require-approval rules still apply.
+- **App actions.** Jarvis can run any app action under a per-action
+  allow / ask / block policy (Settings > Jarvis actions).
+- **Appshots.** Show the assistant the front window on a shortcut, a button or
+  a spoken request.
+- Model discovery through a public feed, so subscription model pickers gain new
+  frontier releases without an app update.
+- Jarvis keeps its own self-learning loop in memory.
+- A restrained, milestone-driven boot splash.
+
+### Changed
+
+- The settings hub opens as a centred dialog over the app; API Keys shows
+  provider cards in two columns on wide windows.
+- The lead agent carries the wake-word name on every surface.
+- Local realtime voice setup: one "apply, test and use" step that starts the
+  selected models with Jarvis.
+- README and product description rewritten around "your computer becomes an AI
+  agent".
+- CI rebuilt as a lane-gated orchestrator with one required `CI gate` check;
+  a release tag is only admitted after `CI gate` passed on that exact commit.
+
+### Removed
+
+- The activity recorder (awareness layer) and its recall tools: it put a
+  snapshot into every turn and summarised work in the background at a token
+  cost the product no longer wants. Old `[awareness]` config tables are
+  ignored.
+
+### Fixed
+
+- The GPT-Live API key is reserved for the voice call; background work runs on
+  subscriptions.
+- Around 110 fixes across the Agentic IDE (glyph soup after maximize, shredded
+  panes after minimize, blank repaint areas), the office map, agent chat,
+  Computers, voice and the desktop shell.
+- Passphrase-protected SSH keys can be added (bcrypt is now a dependency).
+- Silent exception handlers and blocking async routes introduced since 2.3.2
+  are logged, explained or moved off the event loop; native select popups are
+  replaced by the branded dropdown.
 
 ### Removed
 

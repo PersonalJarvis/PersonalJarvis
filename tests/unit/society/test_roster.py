@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.society.events import AgentState, GrantMode, PermissionCeiling, Tier
+from jarvis.society.events import (
+    AgentApprovalMode,
+    AgentState,
+    GrantMode,
+    PermissionCeiling,
+    Tier,
+)
 from jarvis.society.failure_reasons import FailureReason
 from jarvis.society.roster import Roster, RosterError, canonical_session_id, slugify
 from jarvis.society.store import SocietyStore
@@ -40,7 +46,9 @@ async def test_create_then_adopt_by_name(roster: Roster):
     assert scout.tier is Tier.SPECIALIST
     assert scout.state is AgentState.ACTIVE
     assert scout.grant_mode is GrantMode.ALL
-    assert scout.permission_ceiling is PermissionCeiling.MONITOR
+    # New agents default to Bypass under an ask ceiling.
+    assert scout.permission_ceiling is PermissionCeiling.ASK
+    assert scout.approval_mode is AgentApprovalMode.BYPASS
     assert scout.wiki_namespace == "society/scout/"
     assert scout.session_id == "society:scout"
 
@@ -163,8 +171,9 @@ async def test_resolve_by_id_name_or_slug(roster: Roster):
 
 
 async def test_name_rules(roster: Roster):
-    with pytest.raises(RosterError):
-        await roster.create(name="")
+    # An empty name is one-click creation (placeholder name), not an error.
+    fresh, created = await roster.create(name="")
+    assert created and fresh.name
     with pytest.raises(RosterError):
         await roster.create(name="a/b")
     with pytest.raises(RosterError):

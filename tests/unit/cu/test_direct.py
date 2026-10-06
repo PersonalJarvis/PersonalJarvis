@@ -1,4 +1,4 @@
-"""The ``computer`` tool: the live reasoning model operates the screen itself (ADR-0038)."""
+"""The ``computer`` tool: the live reasoning model operates the screen itself (ADR-0039)."""
 
 from __future__ import annotations
 
@@ -457,3 +457,28 @@ async def test_a_click_lets_the_visible_agent_pointer_arrive_and_dip_first(monke
     result = await _click(computer, shot)
     assert result["success"] is True
     assert order == ["press", "click"]
+
+
+@pytest.mark.parametrize("granted", [False, True])
+def test_direct_macos_access_uses_the_just_in_time_service(monkeypatch, granted):
+    from jarvis.platform.permissions import PermissionId, PermissionState
+
+    calls = []
+
+    def ensure(permission, **options):
+        calls.append((permission, options))
+        return SimpleNamespace(
+            granted=granted,
+            agent_detail="" if granted else "[permission_needed:screen_recording] Ask the user.",
+            state=PermissionState.GRANTED if granted else PermissionState.DENIED,
+        )
+
+    monkeypatch.setattr(
+        "jarvis.platform.permission_service.get_permission_service",
+        lambda: SimpleNamespace(ensure=ensure),
+    )
+    missing = direct._macos_missing(("screen_recording",))
+    assert calls == [(PermissionId.SCREEN_RECORDING, {"feature": "computer_use", "wait_s": 0.0})]
+    assert bool(missing) is not granted
+    if not granted:
+        assert "permission_needed" in missing[0][1]

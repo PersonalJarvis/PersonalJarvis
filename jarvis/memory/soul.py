@@ -96,7 +96,7 @@ class Soul:
         except Exception:
             try:
                 os.unlink(tmp_path)
-            except OSError:
+            except OSError:  # best-effort temp cleanup; the original error re-raises
                 pass
             raise
 
@@ -292,7 +292,7 @@ def sync_name(path: str | Path, name: str) -> bool:
         return False
     try:
         return edit_soul(path, lambda soul: soul.set_name(name))
-    except FileNotFoundError:
+    except FileNotFoundError:  # no SOUL.md yet; the prompt directive carries the name
         return False
     except Exception:  # noqa: BLE001 — cosmetic sync; the prompt directive carries the name
         log.warning("SOUL.md: could not record the assistant name", exc_info=True)

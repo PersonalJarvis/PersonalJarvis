@@ -18,7 +18,7 @@ import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { useSocietyRoster, type SocietyAgent } from "../data";
+import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
 import { OfficeScene } from "./OfficeScene";
 import { allDesks, buildOfficeLayout, countStates, MAX_SEATED } from "./officeLayout";
 import { buildNavGrid } from "./officeNav";
@@ -61,7 +61,6 @@ import { LevelHallScreen } from "../progression/hall/LevelHallScreen";
 import "../progression/progression.css";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
-const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
 // Only loaded when someone plays a retro cabinet on the arcade floor.
 const RetroArcadeOverlay = lazy(() => import("../arcade/RetroArcadeOverlay").then((m) => ({ default: m.RetroArcadeOverlay })));
 
@@ -303,15 +302,22 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (coding && !compact) useEventStore.getState().setActiveSection("agentic-ide");
     else onOpenLedger?.();
   }, [coding, compact, onOpenLedger]);
-  // Spawning a Jarvis agent (the spawn point, reception): the host's create dialog, or the office's own
-  // where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
-  const [creating, setCreating] = useState(false);
+  // Spawning a Jarvis agent (the spawn point, reception): the host's one-click create, or the office's
+  // own where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
+  const quickCreate = useQuickCreateAgent();
+  const creatingRef = useRef(false);
   const createAgent = useCallback(() => {
     const store = useOfficeStore.getState();
     store.select(null);
     if (Math.hypot(player.x - layout.arrival.x, player.z - layout.arrival.z) > 4) store.focusOn(layout.arrival);
-    if (onCreateAgent) onCreateAgent(); else setCreating(true);
-  }, [onCreateAgent, layout]);
+    if (onCreateAgent) { onCreateAgent(); return; }
+    // A double click must not create two agents.
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    void quickCreate()
+      .catch((error) => console.warn("Agent creation failed", error))
+      .finally(() => { creatingRef.current = false; });
+  }, [onCreateAgent, layout, quickCreate]);
   const actions = useMemo<OfficeActions>(() => ({
     onOpenAgent: openAgent,
     onOpenLedger: openList, onCreateAgent: createAgent, onOpenGroup,
@@ -511,11 +517,6 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <LevelToasts names={agentNames} agents={jarvisAgents} />
       <LevelHallScreen agents={jarvisAgents} playerName={playerName} petName={petName} playerLook={playerToyLook} />
       <LevelUpBanner playerName={playerName} petName={petName} />
-      {creating && (
-        <Suspense fallback={null}>
-          <CreateAgentDialog open onClose={() => setCreating(false)} onCreated={() => setCreating(false)} />
-        </Suspense>
-      )}
     </section>
   );
 }

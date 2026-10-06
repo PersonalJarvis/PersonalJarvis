@@ -39,6 +39,7 @@ def load_policy() -> dict[str, str]:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
+        # No policy file yet means every action keeps its default.
         return {}
     except (OSError, ValueError):
         log.warning("app-actions: unreadable policy %s — using defaults", path, exc_info=True)

@@ -1,5 +1,12 @@
 import { PairConversationBoundary } from "@/components/agentchat/PairConversation";
-import { AgentMessageActivity, ChatActivity, RoutineActivity, routineTask } from "./ChatActivity";
+import {
+  AgentMessageActivity,
+  ChatActivity,
+  DelegationActivity,
+  RoutineActivity,
+  assignmentOf,
+  routineTask,
+} from "./ChatActivity";
 import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { foldMemoryNotices } from "./memoryNotices";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
@@ -32,7 +39,7 @@ import { AgentConversationsBar } from "./AgentConversations";
 import { MessageSquare, Mic, Paperclip, Plus, RotateCcw, Send, Square } from "lucide-react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 
-import { AgentChatStoreProvider, useAgentChat } from "@/components/agentchat/AgentChatStoreContext";
+import { AgentChatStoreProvider, useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatStoreContext";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
 import { useStickToBottom } from "@/hooks/useStickToBottom";
@@ -61,7 +68,13 @@ import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 
 import { AgentSwatch } from "../AgentSwatch";
-import { useResolveProposal, useSocietyCapabilities, type SocietyAgent } from "../data";
+import {
+  useResolveProposal,
+  useRestoreIdentity,
+  useSocietyCapabilities,
+  type PreviousIdentity,
+  type SocietyAgent,
+} from "../data";
 import { fetchIdeAgents, type AgentStatus } from "@/lib/agenticIdeApi";
 import { CodingProjectChoice } from "./CodingProjectChoice";
 import { MentionPicker } from "./MentionPicker";
@@ -205,6 +218,7 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const openSession = useAgentChat((s) => s.openSession);
@@ -284,6 +298,11 @@ function SpecialistChat({ agent, roster }: AgentChatPanelProps) {
     >
       <AgentConversationsBar agentId={agent.agentId} agentName={agent.name} displayName={displayName} />
       <Transcript key={`${sessionId ?? agent.agentId}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {sessionReady && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError && sessionReady ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -321,6 +340,7 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
   const activeSessionId = useAgentChat((s) => s.activeSessionId);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
+  const socketState = useAgentChat((s) => s.socketState);
   const draft = useAgentChat((s) => s.draft);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
@@ -408,6 +428,11 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
       {header}
       <AgentConversationsBar agentId={agent.agentId} agentName={displayName(agent.agentId, agent.name)} displayName={displayName} />
       <Transcript key={`${activeSessionId ?? ""}:${view.boundaryId}`} items={view.items} agent={agent} roster={roster} onDecide={decide} />
+      {activeSessionId && socketState !== "open" && socketState !== "idle" ? (
+        <p role="status" className="px-4 pb-1 text-xs text-muted-foreground">
+          {t(socketState === "closed" ? "society.chat.reconnecting" : "society.chat.connecting")}
+        </p>
+      ) : null}
       {lastError ? (
         <p role="alert" className="px-4 pb-1 text-xs text-destructive">
           {lastError}
@@ -692,6 +717,8 @@ export function Transcript({
               {stamp ? <TimeStamp ms={stamp} /> : null}
               {item.type === "internal" ? (
                 <AgentMessageActivity item={item} roster={roster} />
+              ) : item.type === "user" && assignmentOf(item.text) ? (
+                <DelegationActivity {...assignmentOf(item.text)!} roster={roster} />
               ) : item.type === "user" ? (
                 <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
               ) : item.type === "turn" ? (
@@ -732,6 +759,30 @@ function TimeStamp({ ms }: { ms: number }) {
 function NoticeLine({ item }: { item: NoticeItem }) {
   const t = useT();
   if (item.kind === "memory_updated") return <MemoryUpdateNotice item={item} />;
+  if (item.kind === "proposal_resolved" && item.data.proposal_kind === "identity") {
+    return <IdentityNotice item={item} />;
+  }
+  if (item.kind === "message_queued") {
+    return <p className="self-end py-1 text-xs text-muted-foreground" data-testid="message-queued">
+      {t("society.chat.message_waiting")} · {item.text}
+    </p>;
+  }
+  if (item.kind === "message_dequeued") {
+    return <p role="alert" className="self-end py-1 text-xs text-destructive">
+      {t("society.chat.message_not_sent").replace("{0}", item.text)}
+    </p>;
+  }
+  if (item.kind === "context_rollover") {
+    return <p className="py-1 text-center text-[11px] text-muted-foreground">{t("society.chat.context_rollover")}</p>;
+  }
+  if (item.kind === "routine_run") {
+    const sessionId = String(item.data.session_id ?? "");
+    const agentId = item.agentId || String(item.data.agent_id ?? "");
+    return <RoutineActivity task={item.text} original={item.text}
+      onOpen={sessionId && agentId ? () => useRoutineNavigation.getState().open({
+        agentId, sessionId, title: item.text, timestamp: item.tsMs,
+      }) : undefined} />;
+  }
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =
     item.kind === "society_result"
@@ -744,6 +795,76 @@ function NoticeLine({ item }: { item: NoticeItem }) {
     <ChatActivity label={headline || item.text.split("\n")[0]} failed={item.status === "blocked" || item.resolved === "failed"}>
       {item.text ? <ChatMarkdown text={item.text} className="leading-relaxed" /> : null}
     </ChatActivity>
+  );
+}
+
+function previousIdentity(data: Record<string, unknown>): PreviousIdentity | null {
+  const raw = data.previous;
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.name !== "string" || !value.name) return null;
+  return {
+    name: value.name,
+    title: typeof value.title === "string" ? value.title : "",
+    description: typeof value.description === "string" ? value.description : "",
+    focus: Array.isArray(value.focus) ? value.focus.map(String) : [],
+    ...(value.approval_rules && typeof value.approval_rules === "object"
+      ? { approval_rules: rulesOf(value.approval_rules as Record<string, unknown>) }
+      : {}),
+  };
+}
+
+function rulesOf(raw: Record<string, unknown>): { require_approval: string[]; always_allow: string[] } {
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  return { require_approval: list(raw.require_approval), always_allow: list(raw.always_allow) };
+}
+
+/**
+ * The agent took a name and role from the conversation. A fresh agent does
+ * this without asking first, so the line offers the way back: Undo restores
+ * the name, title, description and focus it had before.
+ */
+export function IdentityNotice({ item }: { item: NoticeItem }) {
+  const t = useT();
+  const restore = useRestoreIdentity();
+  const previous = previousIdentity(item.data);
+  const [state, setState] = useState<"idle" | "busy" | "undone">("idle");
+  const [error, setError] = useState("");
+  const agentId = item.agentId || String(item.data.agent_id ?? "");
+  const outcome = item.text.split("\n").pop() ?? "";
+  const undo = async () => {
+    if (!previous || !agentId) return;
+    setState("busy");
+    setError("");
+    try {
+      await restore(agentId, previous);
+      setState("undone");
+    } catch (err) {
+      setState("idle");
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const label =
+    state === "undone" && previous
+      ? t("society.chat.identity_undone").replace("{0}", previous.name)
+      : t("society.chat.identity_now").replace("{0}", item.agentName || outcome);
+  return (
+    <div className="flex flex-wrap items-center gap-2 self-start py-1 text-xs text-muted-foreground" data-testid="identity-notice">
+      <span className="font-medium text-foreground">{label}</span>
+      {state !== "undone" && outcome ? <span>{outcome}</span> : null}
+      {previous && agentId && state !== "undone" ? (
+        <button
+          type="button"
+          disabled={state === "busy"}
+          onClick={() => void undo()}
+          className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+        >
+          <RotateCcw size={12} aria-hidden />
+          {t("society.chat.identity_undo")}
+        </button>
+      ) : null}
+      {error ? <span className="text-destructive">{error}</span> : null}
+    </div>
   );
 }
 
@@ -772,6 +893,11 @@ function proposalDetail(kind: string, payload: Record<string, unknown>): string 
       return list(payload.focus);
     case "team":
       return list(payload.names);
+    case "identity":
+      return [payload.name, payload.title, payload.description]
+        .filter((part) => typeof part === "string" && part)
+        .map(String)
+        .join(" — ");
     default:
       return "";
   }
@@ -822,6 +948,7 @@ function ProposalCard({ item }: { item: NoticeItem }) {
         : item.resolved
           ? t("society.chat.proposal_failed")
           : "";
+  if (item.resolved === "applied" && kind === "identity") return <IdentityNotice item={item} />;
   if (item.resolved && item.resolved !== "failed") return <ChatActivity
     label={<>{resolvedLabel} · {kind ? t(`society.chat.proposal_kind_${kind}`) : ""} · {summary}</>}>
     <p className="whitespace-pre-wrap">{detail || summary}</p>
@@ -1011,12 +1138,13 @@ interface ComposerProps {
   provider: string;
   /** Which chat surface the attachments belong to (the front page by default). */
   surface?: AgentChatSurface;
-  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void>;
+  onSend: (text: string, attachments?: ReturnType<typeof useChatAttachments>["attachments"]) => Promise<void | "sent" | "failed" | "stale">;
   onCancel: () => Promise<void>;
 }
 
 export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, surface = "jarvis", onClear, onSend, onCancel }: ComposerProps) {
   const t = useT();
+  const chatStore = useAgentChatApi();
   const [modelSaving, setModelSaving] = useState(false);
   const [value, setValue] = useState("");
   const [plusOpen, setPlusOpen] = useState(false);
@@ -1029,6 +1157,8 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   const composerRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const attachments = useChatAttachments({ sessionId, cwd, provider, surface }, (message) => setProblem(message));
+  const attachmentsRef = useRef(attachments.attachments);
+  attachmentsRef.current = attachments.attachments;
   const commands = useChatCommands({ value, agentId: agent.agentId, onClear,
     attachments: attachments.attachments, attachmentsBusy: attachments.analyzing > 0, onAttachmentsSent: attachments.clear,
     setValue: (next) => { setValue(next); fieldRef.current?.setText(next); },
@@ -1044,6 +1174,9 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
   // `busy` on this composer also covers "session not open yet". Stop is only
   // for a live turn: the HTTP send, or the stream after it (reasoning, tools).
   const live = runningTurn(timeline) !== null || sending;
+  // A created agent's one chat never refuses its person: a message written
+  // while it works waits and starts as its next turn (MASTERPLAN §2.10).
+  const canQueue = surface === "society" && agent.tier !== "lead" && !sending && runningTurn(timeline) !== null;
 
   // "@" completes teammates AND the capability catalog — plugins, MCP
   // servers, CLIs, skills, Jarvis tools — on every agent card, including
@@ -1111,12 +1244,14 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
 
   const submit = async () => {
     const draft = fieldRef.current?.getDraft();
-    const draftText = (draft?.text ?? value).trim();
+    const fullDraft = draft?.text ?? value;
+    const draftText = fullDraft.trim();
     const submittedFolder = codingFolder;
     const selected = selectedTools;
+    const sentAttachments = attachments.attachments;
     const text = draftText;
     if (await commands.execute(text)) return;
-    if (!text || (busy || live) && !commands.canSteer || modelSaving) return;
+    if ((!text && attachments.attachments.length === 0) || (busy || live) && !commands.canSteer && !canQueue || modelSaving || attachments.analyzing > 0) return;
     const chosenIds = new Set((draft?.choices ?? []).map((row) => row.id));
     const chosen = [...chosenIds].map((id) => catalog.find((item) => item.key === id));
     if (chosen.some((item) => !item || !item.connected)) {
@@ -1148,19 +1283,26 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
     const codingHint = codingAssignmentHint(codingSelections, codingFolder);
     if (codingHint) lines.push(codingHint);
     const hint = lines.join("\n");
-    setValue("");
-    fieldRef.current?.clear();
-    setMention(null);
     setProblem(null);
     try {
-      await onSend(hint ? `${text}\n\n${hint}` : text, attachments.attachments);
-      setSelectedTools([]);
-      attachments.clear();
+      const result = await onSend(hint ? `${text}\n\n${hint}` : text, sentAttachments);
+      if (result === "stale" || sessionId && chatStore.getState().activeSessionId !== sessionId) return;
+      const sendError = chatStore.getState().lastError;
+      if (result === "failed" || result === undefined && sendError) throw new Error(sendError ?? t("common.error_generic"));
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setValue("");
+        fieldRef.current?.clear();
+        setMention(null);
+        setSelectedTools([]);
+      }
+      if (attachmentsRef.current === sentAttachments) attachments.clear();
+      else sentAttachments.forEach((file) => attachments.remove(file.name));
     } catch (err) {
-      setValue(draftText);
-      fieldRef.current?.hydrate(draftText, draft?.choices ?? []);
-      setSelectedTools(selected);
-      setCodingFolder(submittedFolder);
+      // The input and files stay in place until the server accepts them.
+      if ((fieldRef.current?.getDraft().text ?? value) === fullDraft) {
+        setSelectedTools(selected);
+        setCodingFolder(submittedFolder);
+      }
       setProblem(err instanceof Error ? err.message : String(err));
     }
   };
@@ -1314,7 +1456,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
           stopLabel={t("society.chat.stop_recording")}
           shape="round"
         />
-        {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+        {live && !commands.isCommand && !((commands.canSteer || canQueue) && value.trim()) ? (
           <button
             type="button"
             onClick={() => void onCancel()}
@@ -1331,7 +1473,7 @@ export function Composer({ agent, mentionable, busy, sessionId, cwd, provider, s
             // While recording, Send ends the dictation and sends once the
             // words land, so it is live before the box holds any text.
             onClick={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
-            disabled={modelSaving || (!value.trim() && selectedTools.length === 0 && !dictation.dictating)}
+            disabled={modelSaving || attachments.analyzing > 0 || (!value.trim() && selectedTools.length === 0 && attachments.attachments.length === 0 && !dictation.dictating)}
             aria-label={t("society.chat.send")}
             data-testid="composer-send"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40"

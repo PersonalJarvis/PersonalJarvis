@@ -11,9 +11,9 @@ Streaming is first-class: every Brain/STT/TTS/Harness response is an
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 from uuid import UUID
 
 from .chat_turn import ChatCompletion as ChatCompletion
@@ -21,6 +21,10 @@ from .chat_turn import ChatTurn as ChatTurn
 from .chat_turn import current_chat_turn as current_chat_turn
 from .trigger_context import RoutineDeferred as RoutineDeferred
 from .trigger_context import current_trigger_path as current_trigger_path
+
+if TYPE_CHECKING:  # pragma: no cover - typing only; the contract has no runtime import
+    from jarvis.platform.permission_service import EnsureResult
+    from jarvis.platform.permissions import PermissionId, PermissionState
 
 
 class ChatControlAdapter(Protocol):
@@ -788,4 +792,79 @@ class MarsStationExecutor(Protocol):
         self, *, agent_id: str, command_id: str, trace_id: str, task_ref: str | None
     ) -> dict[str, Any]:
         """Request cancellation through the owning task service, then report its state."""
+        ...
+
+
+# ----------------------------------------------------------------------
+# PermissionGate (just-in-time OS permissions)
+# ----------------------------------------------------------------------
+
+
+@runtime_checkable
+class PermissionGate(Protocol):
+    """What a feature may ask of the OS-permission layer.
+
+    The concrete implementation is ``jarvis.platform.permission_service``; a
+    consumer receives it through an ``access_gate``-style hook whose default
+    resolves the process singleton, and a test injects
+    ``tests.fakes.fake_permission_service.FakePermissionService``.
+
+    Threading rule: ``check`` is silent, lock-free and never prompts, so the
+    event loop, a Tk callback and an event-tap callback may call it. ``ensure``
+    with ``wait_s > 0`` blocks and belongs on a worker thread; the event loop uses
+    ``ensure_async``. Only ``result.granted`` lets an action proceed: PENDING,
+    NEEDS_SETTINGS, DENIED and UNAVAILABLE never do, and a native request's
+    return value is never evidence of a grant.
+    """
+
+    def check(
+        self, permission: PermissionId | str, *, target: str | None = None
+    ) -> PermissionState:
+        """The live state of one permission; never asks, never publishes."""
+        ...
+
+    def ensure(
+        self,
+        permission: PermissionId | str,
+        *,
+        feature: str,
+        interactive: bool = True,
+        wait_s: float = 0.0,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+        allow_outside_app: bool = False,
+    ) -> EnsureResult:
+        """Make sure a permission is granted, asking macOS at most once per episode."""
+        ...
+
+    async def ensure_async(
+        self,
+        permission: PermissionId | str,
+        *,
+        feature: str,
+        interactive: bool = True,
+        wait_s: float = 0.0,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+        allow_outside_app: bool = False,
+    ) -> EnsureResult:
+        """``ensure`` for the event loop; never pins an executor worker while it waits."""
+        ...
+
+    def ensure_all(
+        self,
+        permissions: Iterable[PermissionId | str],
+        *,
+        feature: str,
+        interactive: bool = True,
+        wait_s: float = 0.0,
+        target: str | None = None,
+        trace_id: UUID | str | None = None,
+        allow_outside_app: bool = False,
+    ) -> list[EnsureResult]:
+        """``ensure`` for several permissions: ONE coalesced episode and ONE event."""
+        ...
+
+    def open_settings(self, permission: PermissionId | str) -> bool:
+        """Open the System Settings pane of a permission; ``False`` when it cannot."""
         ...

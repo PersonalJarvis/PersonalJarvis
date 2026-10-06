@@ -113,7 +113,7 @@ def icc_gamut(profile: bytes | None) -> Gamut:
         if len(tags) != 3:
             return "srgb"
         area = _triangle_area(tags[b"rXYZ"], tags[b"gXYZ"], tags[b"bXYZ"])
-    except (struct.error, ValueError):
+    except (struct.error, ValueError):  # an unparsable ICC profile is treated as plain sRGB
         return "srgb"
     # sRGB's colorants adapted to the profile white D50.
     srgb = _triangle_area((0.6484, 0.3309), (0.3212, 0.5978), (0.1559, 0.0660))
@@ -346,7 +346,7 @@ def _windows_icc(device_name: str) -> bytes | None:
         gdi32.DeleteDC(hdc)
     try:
         data = path.read_bytes()
-    except OSError:
+    except OSError:  # an unreadable profile file means no wide-gamut profile
         return None
     # The generic sRGB profile adds nothing a plain sRGB file does not say.
     return data if len(data) >= 132 and data[36:40] == b"acsp" else None

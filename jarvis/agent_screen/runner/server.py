@@ -65,9 +65,26 @@ class ScreenServer:
     def _get_actuator(self) -> Any:
         if self._actuator is None and not self._actuator_error:
             try:
-                from jarvis.cu.actuate import get_actuator  # noqa: PLC0415
-
+                from jarvis.cu.actuate import (  # noqa: PLC0415
+                    PermissionNeededError,
+                    get_actuator,
+                )
+            except Exception as exc:  # noqa: BLE001 — reported per action
+                # The import itself failed (a missing optional dependency): cache
+                # the real message. Kept apart from the call below so the
+                # ``except PermissionNeededError`` clause never names an unbound
+                # symbol.
+                self._actuator_error = str(exc)
+                raise RuntimeError(self._actuator_error) from exc
+            try:
                 self._actuator = get_actuator()
+            except PermissionNeededError:
+                # Not unavailability: the person may allow Accessibility at any
+                # moment, so this is never cached. The next action asks again
+                # (``get_actuator`` re-reads the live state each call) instead of
+                # failing forever with the first refusal. The error itself carries
+                # the prohibitive "[permission_needed:...]" text for the engine.
+                raise
             except Exception as exc:  # noqa: BLE001 — reported per action
                 self._actuator_error = str(exc)
         if self._actuator is None:

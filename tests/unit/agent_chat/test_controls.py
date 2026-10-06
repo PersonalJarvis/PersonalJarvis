@@ -34,6 +34,10 @@ class FakeService:
     def is_running(self, sid: str) -> bool:
         return sid in self.running
 
+    async def bind_society_session(self, sid: str):
+        # This unit fake has no roster; return its current stored seat.
+        return self.store.get_session(sid)
+
     async def send(self, sid: str, text: str, **kwargs: Any) -> str:
         assert sid not in self.running
         self.sent.append((text, kwargs))
@@ -87,6 +91,24 @@ def request(command: str, arguments: str = "", rid: str = "r1") -> CommandReques
     return CommandRequest(command=command, arguments=arguments, request_id=rid)
 
 
+async def test_rejected_message_cannot_replace_a_newer_control_status() -> None:
+    svc = FakeService()
+    sid = seat(svc)
+    controls = ChatControls(svc, adapters=[])
+    first_revision = await controls.user_message(sid, "Same text")
+    second_revision = await controls.user_message(sid, "Same text")
+    assert first_revision is not None and second_revision is not None
+    assert second_revision > first_revision
+
+    await controls.message_rejected(sid, "Same text", first_revision)
+    state = controls.state(sid)
+    assert state.last_status == "running"
+    assert state.revision == second_revision
+
+    await controls.message_rejected(sid, "Same text", second_revision)
+    assert controls.state(sid).last_status == "failed"
+
+
 def test_plan_build_and_review_preserve_original_permissions_and_history() -> None:
     async def scenario() -> None:
         svc = FakeService()
@@ -99,11 +121,13 @@ def test_plan_build_and_review_preserve_original_permissions_and_history() -> No
         await controls.turn_completed(sid, "1", "Investigate first", True, False)
         assert controls.state(sid).plan == "Actual work product"
         assert controls.state(sid).previous_permission == "ask"
+        assert svc.store.permission_override(sid) == "plan"
         result = await controls.execute(sid, request("message", "@Friend Hello", "r2"))
         assert result.status == "failed" and "Plan mode" in result.error
         await controls.execute(sid, request("build", rid="r3"))
         await svc.wait_turn(sid)
         assert svc.store.get_session(sid).permission_mode == "ask"
+        assert svc.store.permission_override(sid) == "ask"
         await controls.execute(sid, request("review", rid="r4"))
         await svc.wait_turn(sid)
         assert svc.sent[-1][1]["read_only"] is True
@@ -324,9 +348,17 @@ def test_message_uses_executor_exact_text_sender_and_idempotency(monkeypatch: An
             turn_completed=completed,
             browser=SimpleNamespace(live=SimpleNamespace(sessions={})),
         )
+        from jarvis.society import surface as society_surface
+
         monkeypatch.setattr("jarvis.society.runtime.current_runtime", lambda: runtime)
+        monkeypatch.setattr(society_surface, "current_runtime", lambda: runtime)
         monkeypatch.setattr("jarvis.society.agent_tools.MessageAgentTool", MessageTool)
         svc = AgentChatService(AgentChatStore(), bus=lambda: bus)
+
+        async def isolated_session(sid: str, **_kwargs):
+            return svc.store.get_session(sid)
+
+        monkeypatch.setattr(svc, "bind_society_session", isolated_session)
         sid = svc.store.create_session(
             provider="openai",
             model="",

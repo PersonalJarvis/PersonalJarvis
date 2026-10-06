@@ -229,7 +229,7 @@ describe("LanguageTab", () => {
       "es",
     ]);
     // The row's first span is the name in the user's UI language …
-    expect(options.map((o) => o.querySelector("span")?.textContent)).toEqual([
+    expect(options.map((o) => o.querySelector("span > span")?.textContent)).toEqual([
       "Detect automatically",
       "English",
       "German",

@@ -628,7 +628,8 @@ export function AppshotsView() {
                           variant="secondary"
                           size="sm"
                           disabled={
-                            disabled || picking || !settings.readiness.region || countdown !== null
+                            disabled || picking || !settings.readiness.capture ||
+                            !settings.readiness.region || countdown !== null
                           }
                           onClick={() => void tryRegion()}
                           data-testid="appshots-try-region"
@@ -641,7 +642,7 @@ export function AppshotsView() {
                         type="button"
                         variant="secondary"
                         size="sm"
-                        disabled={disabled || picking || countdown !== null}
+                        disabled={disabled || picking || !settings.readiness.capture || countdown !== null}
                         onClick={() => void tryIt()}
                         data-testid="appshots-try"
                       >

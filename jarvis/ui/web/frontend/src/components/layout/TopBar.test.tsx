@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "./TopBar";
 import { useEventStore } from "@/store/events";
@@ -60,6 +60,26 @@ describe("TopBar section navigation", () => {
 });
 
 describe("TopBar caption on every section", () => {
+  it.each([false, true])("leaves native macOS controls to Cocoa (solo=%s)", async (solo) => {
+    useEventStore.setState({ solo });
+    (window as unknown as { pywebview?: { api: object } }).pywebview = { api: {} };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, frameless: false, controls: "none", platform: "darwin" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await act(async () => { render(<TopBar />); });
+      expect(fetchMock).toHaveBeenCalledWith("/api/window/chrome");
+      expect(screen.queryByTestId("window-controls")).toBeNull();
+      fireEvent.doubleClick(screen.getByTestId("window-caption").querySelector(".pywebview-drag-region")!);
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/window/command")).toBe(false);
+    } finally {
+      delete (window as unknown as { pywebview?: unknown }).pywebview;
+    }
+  });
+
   it.each(["chats", "agents", "agentic-ide-classic", "dictation"] as const)(
     "renders the caption on %s",
     (section) => {

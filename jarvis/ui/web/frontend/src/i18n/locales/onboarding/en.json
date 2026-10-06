@@ -80,7 +80,6 @@
         "ide": "Agentic IDE",
         "plugins": "Plugins",
         "wake": "Wake word",
-        "permissions": "Mac permissions",
         "done": "All set"
       },
       "stops": {
@@ -90,7 +89,6 @@
         "ide": "The Agentic IDE runs coding agents such as Claude Code and Codex in real terminals, on your own projects. Type to them directly, or let {name} steer them by voice.",
         "plugins": "Plugins connect {name} to the apps you use: mail, calendar, notes, smart home and more. Each one becomes a new tool, and anything that sends or changes something asks you first.",
         "wake": "Your wake word lives here in Settings. Say \"Hey {name}\" and {name} listens. Change the word, pick its language or test it anytime.",
-        "permissions": "On a Mac, {name} needs your permission for the microphone, the screen and controlling apps. Allow the ones you want here; each row updates by itself.",
         "done": "That's the tour! Talk to {name} whenever you like, and if you're ever stuck, just ask. Settings → App runs this guide again."
       }
     }

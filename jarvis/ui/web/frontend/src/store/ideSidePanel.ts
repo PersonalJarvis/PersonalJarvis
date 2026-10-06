@@ -23,6 +23,15 @@ export const MAX_TERMINAL_TABS = 16;
 
 export const SIDE_PANEL_TAB_IDS: readonly SidePanelTabId[] = ["agents", "changes", "files", "git", "skills", "subscriptions", "office"];
 
+/**
+ * DOM id of the panel host, for the toggle's `aria-controls`.
+ *
+ * It lives here rather than in the panel's module because the toggle sits in
+ * the always-loaded window caption: importing it from `IdeSidePanel` linked the
+ * whole panel (explorer, git overview, agents overview) into the entry chunk.
+ */
+export const SIDE_PANEL_ID = "ide-side-panel";
+
 const OPEN_KEY = "jarvis.agenticIde.sidePanelOpen";
 // v4: the panel starts with Agents alone and the other tabs are added from
 // its "+" menu (maintainer, 2026-09-28); older lists opened every tab.

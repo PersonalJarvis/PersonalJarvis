@@ -3,13 +3,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ToastLayer } from "@/components/ToastLayer";
 import { loadLocaleChunk } from "@/i18n";
 import { AppshotEditor, type EditorExit } from "@/views/AppshotEditor";
-import { AppshotVideoEditor } from "@/views/AppshotVideoEditor";
 
 /**
  * The appshot editor as its own desktop window (`?view=appshot-editor&solo=1
- * &appshot=<id>`), opened by a click on the corner card. Pointed at a screen
- * recording (`&recording=<id>`, or `window.__jarvisOpenRecording`) the same
- * window is the video editor instead.
+ * &appshot=<id>`), opened by a click on the corner card.
  * Nothing of the app is loaded around it.
  *
  * When it closes the appshot goes back into the screen corner
@@ -29,12 +26,6 @@ export function appshotIdFromUrl(search: string): string {
   return /^[0-9a-f]{8,64}$/.test(id) ? id : "";
 }
 
-/** The screen recording this window plays and trims, from its URL; empty when none. */
-export function recordingIdFromUrl(search: string): string {
-  const id = new URLSearchParams(search).get("recording") ?? "";
-  return /^[0-9a-f]{32}$/.test(id) ? id : "";
-}
-
 /** Is this document the editor window rather than the app? */
 export function isAppshotEditorWindow(search: string): boolean {
   return new URLSearchParams(search).get("view") === APPSHOT_EDITOR_VIEW;
@@ -47,11 +38,10 @@ export function isAppshotEditorWindow(search: string): boolean {
  * reload of that address (the blank-window watchdog, a rebuilt bundle) would
  * otherwise come back as the empty gray shell. The address is the backup.
  */
-function rememberEditorTarget(kind: "appshot" | "recording", id: string): void {
+function rememberEditorTarget(id: string): void {
   const url = new URL(window.location.href);
   url.searchParams.delete("appshot");
-  url.searchParams.delete("recording");
-  if (id) url.searchParams.set(kind, id);
+  if (id) url.searchParams.set("appshot", id);
   const next = `${url.pathname}${url.search}${url.hash}`;
   const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
   if (next !== current) window.history.replaceState(null, "", next);
@@ -81,8 +71,6 @@ declare global {
   interface Window {
     /** The desktop shell points the warm (hidden) editor window at an appshot. */
     __jarvisOpenAppshot?: (id: string) => boolean;
-    /** The same window, pointed at a screen recording: it plays and trims it. */
-    __jarvisOpenRecording?: (id: string) => boolean;
   }
 }
 
@@ -91,9 +79,6 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
   // appshot and be pointed at one later (window.__jarvisOpenAppshot), so the
   // editor opens at once instead of booting a fresh window each time.
   const [appshotId, setAppshotId] = useState(() => appshotIdFromUrl(window.location.search));
-  const [recordingId, setRecordingId] = useState(() =>
-    appshotIdFromUrl(window.location.search) ? "" : recordingIdFromUrl(window.location.search),
-  );
   const [session, setSession] = useState(0);
   const closing = useRef(false);
 
@@ -104,25 +89,13 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
       const valid = appshotIdFromUrl(`?appshot=${encodeURIComponent(id)}`);
       if (!valid) return false;
       closing.current = false;
-      rememberEditorTarget("appshot", valid);
-      setRecordingId("");
+      rememberEditorTarget(valid);
       setAppshotId(valid);
-      setSession((n) => n + 1);
-      return true;
-    };
-    window.__jarvisOpenRecording = (id: string) => {
-      const valid = recordingIdFromUrl(`?recording=${encodeURIComponent(id)}`);
-      if (!valid) return false;
-      closing.current = false;
-      rememberEditorTarget("recording", valid);
-      setAppshotId("");
-      setRecordingId(valid);
       setSession((n) => n + 1);
       return true;
     };
     return () => {
       delete window.__jarvisOpenAppshot;
-      delete window.__jarvisOpenRecording;
     };
   }, []);
 
@@ -137,28 +110,15 @@ export function AppshotEditorWindow({ deps = browserDeps }: { deps?: EditorWindo
       .catch(() => undefined)
       .finally(() => {
         setAppshotId("");
-        rememberEditorTarget("appshot", "");
+        rememberEditorTarget("");
         void deps.closeWindow().catch(() => undefined);
       });
   }, [appshotId, deps]);
-
-  // A video has no corner card to return to: closing just hides the window
-  // and forgets the video, so a hidden window never keeps playing or flashes it.
-  const closeVideo = useCallback(() => {
-    if (closing.current) return;
-    closing.current = true;
-    setRecordingId("");
-    rememberEditorTarget("recording", "");
-    void deps.closeWindow().catch(() => undefined);
-  }, [deps]);
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-popover" data-testid="appshot-editor-window">
       {appshotId && (
         <AppshotEditor key={session} appshotId={appshotId} onClose={close} variant="window" />
-      )}
-      {!appshotId && recordingId && (
-        <AppshotVideoEditor key={session} recordingId={recordingId} onClose={closeVideo} />
       )}
       <ToastLayer />
     </div>

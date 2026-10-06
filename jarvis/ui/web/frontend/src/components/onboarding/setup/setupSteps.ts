@@ -69,17 +69,8 @@ export const WALK_STOPS: readonly WalkStop[] = [
   { id: "ide", anchor: "nav-agentic-ide", placement: "right", pet: "thinking" },
   { id: "plugins", anchor: "nav-plugins", placement: "right", pet: "thinking" },
   { id: "wake", anchor: "settings-wake-word", section: "settings", scrollTo: true, placement: "left", pet: "listening" },
-  // macOS asks for permissions one ability at a time; elsewhere Settings is
-  // simply where they could be granted later.
-  {
-    id: "permissions",
-    anchor: "settings-permissions",
-    section: "settings",
-    scrollTo: true,
-    platform: "darwin",
-    placement: "left",
-    pet: "idle",
-  },
+  // There is no permissions stop: macOS asks at the moment a feature needs
+  // its permission, never as a stop of its own on first run.
   { id: "done", section: "chats", surface: "chat", placement: "inside", pet: "success" },
 ];
 

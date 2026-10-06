@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-google_cloud
 description: Search projects and storage; inspect billing accounts and query billing exports
-when_to_use: Use for explicit operations on the connected Google Cloud account.
+when_to_use: Use when the user requests operations on the connected Google Cloud account.
 category: integrations
 plugin_id: google_cloud
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

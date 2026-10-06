@@ -2,7 +2,7 @@
  * Leader-key shortcuts for the Agentic IDE.
  *
  * One chord — Ctrl+B, on every OS, like tmux — opens a small key menu; the
- * next keys pick what happens, the way tmux and herdr work: a mode bar at
+ * next keys pick what happens, with a mode bar at
  * the bottom names the keys, `?` opens the full list. The mode is sticky — it
  * stays on across moves, splits and workspace switches until Esc (or a
  * dialog opening) hands the keyboard back to the terminal. `Ctrl+B, C, →` opens a
@@ -213,7 +213,7 @@ export function resolveHotkey(step: IdeHotkeyStep, event: HotkeyEventLike, agent
   if (event.key === "Escape") return { type: "close" };
   const back: HotkeyOutcome = { type: "step", step: { menu: "root" } };
   if (event.key === "Backspace") return step.menu === "root" ? { type: "unknown" } : back;
-  // The full key list: any key goes back to the mode, as herdr's help does.
+  // The full key list: any key goes back to the mode, without leaving the shortcut mode.
   if (step.menu === "help") return back;
   // Ctrl/Cmd/Alt chords belong to the agent, the app and the OS: they end the
   // mode and go through, so Ctrl+C still reaches the pane.

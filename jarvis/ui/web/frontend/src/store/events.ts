@@ -292,6 +292,30 @@ export interface Toast {
   filePath?: string;
   /** Display name of the saved file (shown next to the actions). */
   filename?: string;
+  /**
+   * One optional button under the message ("Open System Settings"). The layer
+   * runs `onAction` and then closes the toast, unless `keepOpen` is set (an
+   * action that can answer "try again", like a restart that needs a second
+   * press while missions run).
+   */
+  action?: ToastAction;
+}
+
+/** The one button a toast may carry. */
+export interface ToastAction {
+  label: string;
+  onAction: () => void | Promise<void>;
+  /** Leave the toast up after the press (default: it closes). */
+  keepOpen?: boolean;
+}
+
+/** Options of {@link EventStore.pushToast}. */
+export interface PushToastOptions {
+  filePath?: string;
+  filename?: string;
+  action?: ToastAction;
+  /** How long the toast stays, in ms. Default: 3.5 s, or 12 s for a saved file. */
+  ttlMs?: number;
 }
 
 export interface ChatMessage {
@@ -536,11 +560,7 @@ interface EventStore {
   requestWikiPage: (slug: string) => void;
   requestIdePane: (name: string) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
-  pushToast: (
-    kind: Toast["kind"],
-    message: string,
-    opts?: { filePath?: string; filename?: string },
-  ) => void;
+  pushToast: (kind: Toast["kind"], message: string, opts?: PushToastOptions) => void;
   dismissToast: (id: string) => void;
   pushMessage: (m: ChatMessage) => void;
   setMessages: (m: ChatMessage[]) => void;
@@ -574,8 +594,9 @@ interface EventStore {
 const MAX_EVENTS = 500;
 const MAX_MESSAGES = 200;
 const TOAST_TTL_MS = 3500;
-// A file toast carries "Show in folder" / "Open" actions the user must have time
-// to aim at and click — keep it up noticeably longer than a plain notification.
+// A file toast carries "Show in folder" / "Open" actions, and any toast with a
+// button is one the user must have time to aim at and click — keep it up
+// noticeably longer than a plain notification.
 const TOAST_FILE_TTL_MS = 12000;
 // Finished reasoning traces are per-message UI sugar, not history — cap the
 // map so a long session cannot grow it unbounded (insertion order = age).
@@ -689,7 +710,8 @@ export const useEventStore = create<EventStore>((set, get) => ({
 
   pushToast: (kind, message, opts) => {
     const filePath = opts?.filePath;
-    const ttl = filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS;
+    const action = opts?.action;
+    const ttl = opts?.ttlMs ?? (filePath || action ? TOAST_FILE_TTL_MS : TOAST_TTL_MS);
     const now = Date.now();
     const expiresAt = now + ttl;
 
@@ -698,18 +720,20 @@ export const useEventStore = create<EventStore>((set, get) => ({
     // otherwise emit it once per click — and a double click on a card emits it
     // twice more — until the stack buries the control the user needs to press.
     // File toasts are matched on their path too, so two different saved files
-    // stay two separate toasts with their own actions.
+    // stay two separate toasts with their own actions. A repeat that carries a
+    // button also swaps in the newest one (its closure may know more).
     const existing = get().toasts.find(
       (toast) =>
         toast.kind === kind &&
         toast.message === message &&
-        toast.filePath === filePath,
+        toast.filePath === filePath &&
+        toast.action?.label === action?.label,
     );
     if (existing) {
       set((state) => ({
         toasts: state.toasts.map((toast) =>
           toast.id === existing.id
-            ? { ...toast, count: toast.count + 1, ts: now, expiresAt }
+            ? { ...toast, count: toast.count + 1, ts: now, expiresAt, action: action ?? toast.action }
             : toast,
         ),
       }));
@@ -730,6 +754,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
           expiresAt,
           filePath,
           filename: opts?.filename,
+          action,
         },
       ],
     }));

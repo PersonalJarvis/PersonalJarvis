@@ -111,19 +111,24 @@ async def take_appshot(
                 message="Appshots are switched off. Turn them on under Settings > Appshots.",
             )
         service = get_service(bus=bus)
+        capture_trace_id = trace_id or uuid.uuid4()
         if scope == "region":
-            # Refuse BEFORE the screens freeze: without the grant the frozen
-            # frame is wallpaper only (macOS) and the refusal would come after
-            # the user had marked up a fake screen.
+            # Refuse BEFORE the screens freeze when asking cannot help (a
+            # Wayland portal, say): the frozen frame would be unusable and the
+            # refusal would come only after the user had marked up a fake
+            # screen. A missing Screen Recording grant is not refused here: the
+            # picker asks macOS for it just in time before it starts.
             check = getattr(service, "capture_permission_issue", None)
             issue = await check() if check is not None else None
-            if issue is not None:
+            if issue is not None and issue[0] != "capture_permission":
                 return AppshotResult(status="refused", reason_code=issue[0], message=issue[1])
             # The picture is the screen at the press, as the picker shows it
-            # frozen — not whatever a video has played on to by the time the
-            # user finishes selecting.
-            frozen = await service.freeze_screens()
-            picked = await _pick_area(service, _language(config))
+            # frozen, not whatever a video has played on to by the time the
+            # user finishes selecting. Without a live grant a frozen frame would
+            # be wallpaper only, so the area is then grabbed live after the
+            # picker has asked macOS just in time.
+            frozen = None if issue is not None else await service.freeze_screens()
+            picked = await _pick_area(service, _language(config), trace_id=capture_trace_id)
             if isinstance(picked, AppshotResult):
                 return picked
             bbox, selection = picked
@@ -135,7 +140,7 @@ async def take_appshot(
             try:
                 outcome = await service.capture(
                     verdict=IntentVerdict(intent=VisualIntent.SCREEN, evidence=("appshot-region",)),
-                    trace_id=trace_id or uuid.uuid4(),
+                    trace_id=capture_trace_id,
                     region=bbox,
                     master=True,
                     frozen=frozen,
@@ -145,7 +150,7 @@ async def take_appshot(
         else:
             outcome = await service.capture(
                 verdict=IntentVerdict(intent=VisualIntent.WINDOW, evidence=("appshot",)),
-                trace_id=trace_id or uuid.uuid4(),
+                trace_id=capture_trace_id,
                 master=True,
             )
         if outcome.status != "captured" or outcome.context is None:
@@ -347,17 +352,25 @@ async def _finish_action(action: str, shot: Appshot, bus: Any | None) -> None:
         log.warning("appshot: the picker's %r action failed", action, exc_info=True)
 
 
-async def _pick_area(service: Any, language: str = "en") -> tuple[Any, Any] | AppshotResult:
+async def _pick_area(
+    service: Any, language: str = "en", *, trace_id: uuid.UUID | None = None,
+) -> tuple[Any, Any] | AppshotResult:
     """Run the area picker; ``(rectangle, selection)``, or the refusal to return."""
     from jarvis.appshot.region import (  # noqa: PLC0415
         RegionUnavailable,
         pick_region,
         selection_to_bbox,
     )
+    from jarvis.platform.screen_access import ScreenCaptureRefused
 
     try:
-        selection = await pick_region(language=language)
-    except RegionUnavailable as exc:
+        selection = await pick_region(language=language, trace_id=trace_id)
+    except ScreenCaptureRefused as exc:
+        log.info("appshot: area selection refused (%s)", exc.reason or "capture_permission")
+        return AppshotResult(
+            status="refused", reason_code="capture_permission", message=exc.user_detail,
+        )
+    except RegionUnavailable as exc:  # reported to the caller as a refused appshot
         return AppshotResult(status="refused", reason_code="region_unavailable", message=str(exc))
     if selection is None:
         return AppshotResult(

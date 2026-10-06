@@ -131,7 +131,7 @@ def _summary_index(event: dict) -> int:
     """The summary part a reasoning-summary event belongs to (0 when absent)."""
     try:
         return max(0, int(event.get("summary_index") or 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Malformed optional indexes use the first summary part.
         return 0
 
 
@@ -1043,7 +1043,7 @@ class LiveVoiceSession:
             while not self._closed.is_set():
                 try:
                     event = await self._connection.receive()
-                except Exception:
+                except Exception:  # Shutdown is quiet; active failures enter the reporting recovery loop.
                     if self._closing:
                         return
                     self._had_unconfirmed_wire = True

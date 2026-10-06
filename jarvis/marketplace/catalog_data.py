@@ -292,5 +292,12 @@ def load_catalog(path: Path | None = None) -> PluginCatalog:
     return PluginCatalog.model_validate(raw)
 
 
+@lru_cache(maxsize=1)
+def load_seed_catalog() -> PluginCatalog:
+    """Package-owned identities and endpoints, without runtime overrides."""
+    return _read(_PACKAGE_SEED_PATH)
+
+
 def clear_cache() -> None:
     load_catalog.cache_clear()
+    load_seed_catalog.cache_clear()

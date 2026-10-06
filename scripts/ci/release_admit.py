@@ -103,6 +103,16 @@ def latest_ci_run(
     return max(trusted, key=lambda run: (run["id"], run["run_attempt"]), default=None)
 
 
+def latest_gate_state(runs: list[dict]) -> str:
+    """A newer pending or failed attempt supersedes an older green result."""
+    if not runs:
+        return "missing"
+    latest = max(runs, key=lambda run: (int(run.get("id") or 0), int(run.get("run_attempt") or 0)))
+    if latest.get("status") != "completed":
+        return "pending"
+    return "success" if latest.get("conclusion") == "success" else "failure"
+
+
 def gate_state(
     repo: str, sha: str, *, require_qualification: bool = False, tag: str | None = None
 ) -> str:
@@ -121,10 +131,9 @@ def gate_state(
         run = latest_ci_run(runs, repo, sha, tag=tag)
         if run is None:
             return "missing"
-        if run.get("status") != "completed":
-            return "pending"
-        if run.get("conclusion") != "success":
-            return "failure"
+        state = latest_gate_state([run])
+        if state != "success":
+            return state
         jobs = api_pages(
             f"repos/{repo}/actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100",
             "jobs",

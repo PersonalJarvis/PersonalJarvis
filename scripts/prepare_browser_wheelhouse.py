@@ -1,27 +1,20 @@
-"""Build the pinned crypto wheel for Intel Mac packages, never on the user's Mac.
+"""Bundle the reviewed current crypto wheel for Intel Mac packages.
 
 Cryptography 49+ no longer publishes Intel Mac wheels. Keep the current version
-and build a statically linked wheel on the publisher's toolchain instead of
-requiring Rust/Xcode at first run or downgrading the user's crypto dependency.
+and reuse the verified publisher-built wheel instead of requiring Rust/Xcode
+at first run or downgrading the user's crypto dependency.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
 import platform
 import re
-import subprocess
 import sys
-import tempfile
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: E402
-
 
 def crypto_requirement(lock: str) -> str:
     match = re.search(r"^cryptography==[^\n]+(?:\n[ \t]+[^\n]*)*", lock, re.MULTILINE)
@@ -36,15 +29,11 @@ def add_wheel_hash(lock: str, wheel: Path) -> str:
     if not wheel.name.startswith(f"cryptography-{version}-"):
         raise ValueError("Built wheel does not match the locked cryptography version")
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+    if f"--hash=sha256:{digest}" in block:
+        return lock
     first, remainder = block.split("\n", 1)
     replacement = f"{first}\n    --hash=sha256:{digest} \\\n{remainder}"
     return lock.replace(block, replacement, 1)
-
-
-def run(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        argv, check=True, encoding="utf-8", creationflags=NO_WINDOW_CREATIONFLAGS, **kwargs
-    )
 
 
 def unbundled_libraries(links: str, identities: str) -> list[str]:
@@ -69,54 +58,14 @@ def main() -> int:
     wheels.mkdir(exist_ok=True)
     if list(wheels.glob("*.whl")):
         raise RuntimeError("Build the browser wheelhouse in a clean checkout")
-    env = os.environ.copy()
-    env["OPENSSL_STATIC"] = "1"
-    env["OPENSSL_DIR"] = run(["brew", "--prefix", "openssl@3"], capture_output=True).stdout.strip()
-    with tempfile.TemporaryDirectory(prefix="jarvis-browser-wheel-") as scratch:
-        source = Path(scratch) / "source.lock"
-        source.write_text(crypto_requirement(lock) + "\n", encoding="utf-8")
-        run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "wheel",
-                "--no-deps",
-                "--no-cache-dir",
-                "--no-binary",
-                "cryptography",
-                "--require-hashes",
-                "-r",
-                str(source),
-                "--wheel-dir",
-                str(wheels),
-            ],
-            env=env,
-        )
-        built = list(wheels.glob("cryptography-*.whl"))
-        if len(built) != 1:
-            raise RuntimeError("Expected exactly one pinned cryptography wheel")
-        # A wheel linked to Homebrew's shared OpenSSL works only on the builder.
-        # Check the actual Mach-O dependencies before packaging the artifact.
-        with zipfile.ZipFile(built[0]) as archive:
-            binaries = [name for name in archive.namelist() if name.endswith(".so")]
-            if not binaries:
-                raise RuntimeError("Cryptography wheel has no native module")
-            for name in binaries:
-                binary = Path(scratch) / Path(name).name
-                binary.write_bytes(archive.read(name))
-                links = run(["otool", "-L", str(binary)], capture_output=True).stdout
-                identities = run(["otool", "-D", str(binary)], capture_output=True).stdout
-                print(links, flush=True)
-                outside = unbundled_libraries(links, identities)
-                if outside:
-                    raise RuntimeError(
-                        f"Cryptography wheel links non-system shared libraries: {outside}"
-                    )
-        (assets / "requirements-bundled.lock").write_text(
-            add_wheel_hash(lock, built[0]), encoding="utf-8"
-        )
-        print(f"Bundled verified {built[0].name}")
+    from scripts.native_crypto_index import fetch_native_wheel, load_manifest
+
+    version = crypto_requirement(lock).splitlines()[0].split("==", 1)[1].split()[0]
+    if version != load_manifest()["cryptography"]["version"]:
+        raise ValueError("Browser lock and reviewed native crypto version disagree")
+    wheel = fetch_native_wheel("macos-x86_64", wheels)
+    (assets / "requirements-bundled.lock").write_text(add_wheel_hash(lock, wheel), encoding="utf-8")
+    print(f"Bundled verified {wheel.name}")
     return 0
 
 

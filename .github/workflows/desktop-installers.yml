@@ -102,12 +102,14 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # A release build never restores a cache another run could have written.
+          package-manager-cache: false
 
       - name: Install Personal Jarvis (desktop + dev)
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[desktop,dev]"
+          python scripts/pip_install.py -e ".[desktop,dev]"
 
       - name: Install Inno Setup
         shell: pwsh
@@ -210,12 +212,17 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # A release build never restores a cache another run could have written.
+          package-manager-cache: false
 
-      - name: Install Personal Jarvis (desktop + dev)
+      # desktop-macos carries the pyobjc frameworks the permission port loads by
+      # name (AVFoundation, ScreenCaptureKit, ...); without them the frozen app
+      # cannot even read its microphone permission (BUG-222).
+      - name: Install Personal Jarvis (desktop + macOS frameworks + dev)
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[desktop,dev]"
+          python scripts/pip_install.py -e ".[desktop,desktop-macos,dev]"
 
       - name: Import the Developer ID certificate into a temporary keychain
         if: env.HAS_APPLE_SIGNING == 'true'
@@ -257,6 +264,13 @@ jobs:
         run: |
           chmod +x packaging/macos/build.sh
           ./packaging/macos/build.sh
+
+      # The permission port loads pyobjc frameworks by name and the bundle's
+      # Info.plist decides how LaunchServices runs it; neither shows in the
+      # headless smoke test below, so look at the built app itself (BUG-222).
+      - name: Verify the app bundle can use macOS permissions
+        shell: bash
+        run: python scripts/ci/check_frozen_macos_app.py --app "dist/Personal Jarvis.app"
 
       - name: Remove signing credentials even after a failed build
         if: always() && env.HAS_APPLE_SIGNING == 'true'
@@ -328,6 +342,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Use the official Ubuntu archive with bounded network waits
+        shell: bash
+        run: |
+          # The runner's Azure HTTP mirror can stall while the official HTTPS
+          # archive remains healthy. Keep Ubuntu's signed packages and keys.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu' | sudo tee /etc/apt/apt-mirrors.txt > /dev/null
+          fi
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99jarvis-release-network > /dev/null
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -337,12 +362,14 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # A release build never restores a cache another run could have written.
+          package-manager-cache: false
 
       - name: Install Personal Jarvis (desktop + dev)
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[desktop,dev]"
+          python scripts/pip_install.py -e ".[desktop,dev]"
 
       - name: Build the AppImage
         shell: bash

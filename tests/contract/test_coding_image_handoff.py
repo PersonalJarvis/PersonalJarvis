@@ -338,7 +338,9 @@ async def test_changed_image_selection_is_a_new_assignment(delivery):
     # A finished CLI is ready for a second independent work order.
     term.transcript.feed("\x1b[2J\x1b[H❯ ")
     term.last_submit_at = None
-    second = await tool.execute({**args, "image_refs": [refs[1]]}, ctx)
+    reused = await tool.execute({**args, "image_refs": [refs[1]]}, ctx)
+    assert not reused.success  # A spent request ID cannot authorize different bytes.
+    second, _ = await assignment(delivery, ctx, "send", [refs[1]])
     assert second.success, second
     assert second.output["images"][0]["image_ref"] == refs[1]
     assert len(term.prompt_records) == 2

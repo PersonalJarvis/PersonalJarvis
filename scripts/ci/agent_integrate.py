@@ -363,6 +363,14 @@ def update(onto: str, mode: str, resolver_cmd: str, cwd: Path = REPO_ROOT) -> di
         existing = sorted(s for s in specs if (cwd / s).exists())
         if existing:
             git("add", "-A", "--", *existing, cwd=cwd)
+        if "frontend-build" in regen and "frontend-build" not in failed:
+            # The build keeps retired chunks on disk for open windows, and a
+            # fresh clone restarts that grace period, so `add -A` just staged
+            # every earlier build's chunks too. Untrack them; disk is untouched.
+            _sh(
+                [sys.executable, "scripts/ci/check_dist_consistency.py", "--staged", "--prune"],
+                cwd=cwd,
+            )
         staged = git("diff", "--cached", "--name-only", cwd=cwd).stdout.strip()
         if staged:
             commit = git(

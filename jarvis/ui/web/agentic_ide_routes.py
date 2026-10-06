@@ -3694,7 +3694,7 @@ def terminal_report(name: str, lines: int = 40) -> dict:
 
 
 @router.get("/screens", summary="Read-only screen snapshots of several panes")
-async def pane_screens(
+def pane_screens(
     pane: Annotated[
         list[str] | None,
         Query(description="`<workspace_id>:<key>`, repeatable; at most 8 are read."),
@@ -3702,12 +3702,16 @@ async def pane_screens(
 ) -> dict:
     """The visible rows of each requested pane — what the office's monitors draw.
 
-    Unknown panes are omitted rather than failing the whole poll. Async on
-    purpose: the screen buffers are written on the event loop, so reading them
-    there needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`).
+    Unknown panes are omitted rather than failing the whole poll. The screen
+    buffers are written on the event loop, so the read itself hops back onto
+    the loop and needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`);
+    parsing and the response stay in the threadpool.
     """
+    import anyio.from_thread  # noqa: PLC0415 - only this route needs the loop portal
+
     refs = screen_feed.parse_pane_refs(pane or [])
-    return {"screens": screen_feed.collect_screens(get_registry(), refs)}
+    screens = anyio.from_thread.run_sync(screen_feed.collect_screens, get_registry(), refs)
+    return {"screens": screens}
 
 
 @router.get(

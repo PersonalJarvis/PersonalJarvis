@@ -80,7 +80,6 @@
         "ide": "Agentic IDE",
         "plugins": "Plugins",
         "wake": "Palabra de activación",
-        "permissions": "Permisos del Mac",
         "done": "Todo listo"
       },
       "stops": {
@@ -90,7 +89,6 @@
         "ide": "La Agentic IDE ejecuta agentes de programación como Claude Code y Codex en terminales reales, sobre tus propios proyectos. Escríbeles directamente o deja que {name} los dirija por voz.",
         "plugins": "Los plugins conectan {name} con las apps que usas: correo, calendario, notas, hogar inteligente y más. Cada uno se convierte en una herramienta nueva, y todo lo que envía o cambia algo te pregunta antes.",
         "wake": "Tu palabra de activación está aquí, en Ajustes. Di «Hey {name}» y {name} te escucha. Cambia la palabra, elige su idioma o pruébala cuando quieras.",
-        "permissions": "En un Mac, {name} necesita tu permiso para el micrófono, la pantalla y controlar apps. Permite aquí lo que quieras; cada fila se actualiza sola.",
         "done": "¡Ese fue el recorrido! Habla con {name} cuando quieras y, si alguna vez te atascas, pregúntale. En Ajustes → App puedes repetir esta guía."
       }
     }

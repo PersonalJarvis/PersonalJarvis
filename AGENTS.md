@@ -157,8 +157,10 @@ own-client stays an expert override only. Every catalog change keeps
 `docs/marketplace/plugin-auth-audit.md` and `scripts/ci/check_plugin_auth_contract.py`
 green; provider error bodies never reach logs, UI, or storage (AP-34).
 Keep `docs/marketplace/plugin-e2e-audit.json` backed by real browser evidence;
-new built-ins require PASS and release qualification uses the auth gate's
-`--require-e2e-pass` option. BLOCKED never means provider-verified or complete.
+new built-ins require PASS, and a plugin ships as `acceptance: "verified"` only
+with a completed PASS; every other one ships labeled "preview" in the app.
+Release qualification runs the auth gate with `--require-e2e-pass`, which also
+makes every PASS ship as verified. BLOCKED never means provider-verified or complete.
 
 The rest of the register, one line each, because code comments cite these
 numbers: never hardcode an Anthropic/Claude client (AP-6); keep awareness and
@@ -171,8 +173,12 @@ wake upgrade only on the out-of-process inference probe, never on CUDA presence
 (AP-25); verify a wake word on audio energy and candidate shape, never on
 transcript content (AP-27); a WebGL scene releases its context and survives
 losing it (AP-32); a reconnect without jitter and without a shared connect
-budget is an outage of the whole machine, not an app bug (AP-33). Detail and
-history for any of them: `docs/BUGS.md`.
+budget is an outage of the whole machine, not an app bug (AP-33); a macOS
+feature asks the OS at first use, from a user gesture, through
+`jarvis/platform/permission_service.py` — no preflight refuses before the OS was
+asked, nothing is asked at launch, nothing acts without a live grant, an agent
+never answers a system dialog (AP-35; `docs/macos-permissions.md`, ADR-0038).
+Detail and history for any of them: `docs/BUGS.md`.
 
 ## 4. How work ships
 
@@ -242,4 +248,5 @@ voice-ready path.
 **Pointers:** [`docs/architecture-overview.md`](docs/architecture-overview.md) ·
 [`docs/BUGS.md`](docs/BUGS.md) (symptom → cause) · `docs/adr/` ·
 [`docs/os-parity.md`](docs/os-parity.md) ·
+[`docs/macos-permissions.md`](docs/macos-permissions.md) ·
 [`docs/jarvis-cli.md`](docs/jarvis-cli.md).

@@ -38,7 +38,11 @@ from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
-from jarvis.ui.web.artifact_view import ARTIFACT_PAGE_CSP, VIEW_CSP, render_artifact_html
+from jarvis.ui.web.artifact_view import (
+    ARTIFACT_PAGE_CSP,
+    VIEW_HEADER_CSP,
+    render_artifact_html,
+)
 from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
 from jarvis.ui.web.run_plan import build_run_plan
 
@@ -175,7 +179,7 @@ def _parse_slug(name: str) -> dict[str, Any]:
 
             dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
             started_at: float | None = dt.timestamp()
-        except ValueError:
+        except ValueError:  # no parseable timestamp means no start time
             started_at = None
         rough = m.group("utterance").replace("-", " ").strip()
         utterance = rough[:1].upper() + rough[1:] if rough else None
@@ -354,7 +358,7 @@ async def _terminal_outcome_details(
     for event_type, payload_json in rows:
         try:
             payload = json.loads(payload_json or "{}")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # a corrupt event row is skipped; the run renders
             continue
         event_type = str(event_type)
         if event_type == "MissionApproved":
@@ -465,7 +469,7 @@ async def _live_continuation_map(request: Request) -> dict[str, str]:
             continue  # only a LIVE child resolves the run/not-run ambiguity
         try:
             parent = json.loads(payload_json or "{}").get("parent_mission_id")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # a corrupt payload names no parent
             parent = None
         if not parent:
             continue
@@ -579,7 +583,7 @@ async def list_outputs(request: Request) -> OutputsResponse:
         if parsed["started_at"] is None:
             try:
                 parsed["started_at"] = entry.stat().st_mtime
-            except OSError:
+            except OSError:  # an unreadable folder keeps no start time
                 pass
         prefix = dir_to_mission_prefix.get(entry.name)
         # Look up by the mission-id prefix encoded in the dir-name. For
@@ -683,7 +687,7 @@ def _count_deliverables(session_dir: Path) -> int:
                 continue
             try:
                 rel_parts = child.relative_to(session_dir).parts
-            except ValueError:
+            except ValueError:  # a path outside the session is no deliverable
                 continue
             if _is_deliverable_relpath(rel_parts):
                 count += 1
@@ -807,7 +811,7 @@ async def get_output_graph(slug: str, request: Request) -> HTMLResponse:
     return HTMLResponse(
         render_mission_graph_html(data),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -969,7 +973,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
                 continue
             try:
                 stat = child.stat()
-            except OSError:
+            except OSError:  # a file that vanished mid-listing is skipped
                 continue
             rel = "/".join(rel_parts)
             entry: dict[str, Any] = {
@@ -985,7 +989,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
                     if len(preview) > _ARTIFACT_PREVIEW_BYTES:
                         preview = preview[:_ARTIFACT_PREVIEW_BYTES] + "\n…"
                     entry["preview"] = preview
-                except OSError:
+                except OSError:  # an unreadable file just shows no preview
                     pass
             files.append(entry)
             if len(files) >= _ARTIFACT_MAX_LISTING:
@@ -1069,7 +1073,7 @@ async def download_output_artifact(
     # worker-authored artifact cannot execute code against the app.
     active_document_types = {"text/html", "image/svg+xml"}
     if disposition == "inline" and media_type in active_document_types:
-        headers["Content-Security-Policy"] = VIEW_CSP
+        headers["Content-Security-Policy"] = VIEW_HEADER_CSP
     return FileResponse(
         target,
         media_type=media_type or "application/octet-stream",
@@ -1145,7 +1149,7 @@ async def view_output_artifact(slug: str, path: str, request: Request) -> HTMLRe
         # the app's theme rather than the OS's; absent = OS preference.
         render_artifact_html(target.name, text, theme=request.query_params.get("theme")),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1546,7 +1550,7 @@ def _prune_empty_parents(start: Path, stop: Path) -> None:
     while current != stop and current.is_relative_to(stop):
         try:
             current.rmdir()
-        except OSError:
+        except OSError:  # a non-empty or locked folder ends the sweep
             return
         current = current.parent
 

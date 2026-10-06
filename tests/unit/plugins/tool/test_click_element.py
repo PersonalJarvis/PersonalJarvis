@@ -7,6 +7,7 @@ it would have clicked.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -68,7 +69,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, str, bool]
         "jarvis.plugins.tool.click_element._click_windows", _record
     )
     # Force the Windows native path so the recorder is hit on every platform.
-    monkeypatch.setattr("jarvis.plugins.tool.click_element.os.name", "nt")
+    monkeypatch.setattr("jarvis.plugins.tool.click_element.os", SimpleNamespace(name="nt"))
     return calls
 
 

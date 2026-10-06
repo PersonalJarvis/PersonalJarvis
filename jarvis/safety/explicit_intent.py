@@ -1,54 +1,56 @@
-"""Deterministic check: did the USER explicitly ask for the destructive act?
+"""Conservative, target-bound authorization for a single shell deletion.
 
-The Claude-Code permission model, adapted for voice (Ruben's mandate,
-2026-08-08): harmless commands run silently, destructive commands confirm —
-UNLESS the user's own utterance already named the destruction ("lösch den
-Ordner Urlaub"). Asking "do you really want me to delete?" right after the
-user said "delete" is confirmation fatigue, the exact failure the whitelist
-era was built to avoid. The flip side stays protected: when the brain decides
-ON ITS OWN that deleting something is a useful step (the utterance never
-mentioned it), the confirmation fires.
-
-Deliberately dumb: a word-boundary vocabulary match, no LLM (AP-11 — the
-safety path must be deterministic and fast). The vocabulary is speech-input
-vocabulary in de/en/es (AGENTS.md §1 — registered in the german-allowlist);
-it covers DESTRUCTION verbs only. STT-confidence doubts are not this
-module's job: a plausibility-forced confirmation is never skipped (see
-ToolExecutor).
+Free-form mentions, negation, inferred names, relative paths and compound shell
+programs cannot waive confirmation. Only an imperative naming the exact absolute
+operand can do so. Ambiguous requests use the ordinary approval workflow.
 """
+
 from __future__ import annotations
 
 import re
+import sys
+from pathlib import PurePosixPath, PureWindowsPath
 
-# Word stems that only appear when the speaker explicitly asks for deletion,
-# formatting, or a machine power action. Stems (not full words) so German
-# inflection ("lösch", "lösche", "löschst", "gelöscht") matches without a
-# morphology engine; the \w* tail absorbs endings. Compiled once.
-_DESTRUCTION_STEMS: tuple[str, ...] = (
-    # German
-    "lösch", "gelöscht", "entfern", "entfernt", "wegwerfen", "wegschmeiß",
-    "papierkorb", "formatier", "runterfahren", "herunterfahren", "neustart",
-    "neu starten",
-    # English
-    "delete", "remove", "erase", "wipe", "trash", "uninstall", "format",
-    "shut down", "shutdown", "restart", "reboot", "power off",
-    # Spanish
-    "borra", "borrar", "elimina", "eliminar", "quita", "quitar", "formatea",
-    "apaga", "apagar", "reinicia", "reiniciar",
+# No evaluation, globbing, redirection, options, provider paths or quote escapes.
+_PATH = r"(?:[A-Za-z]:[\\/]|/)[\w ./\\-]+"
+_OPERAND = (
+    rf"(?:'(?P<single>{_PATH})'|\"(?P<double>{_PATH})\"|(?P<bare>(?:[A-Za-z]:[\\/]|/)[\w./\\-]+))"
 )
-
-_PATTERN = re.compile(
-    r"\b(?:" + "|".join(re.escape(stem) + r"\w*" for stem in _DESTRUCTION_STEMS) + r")",
+_REQUEST = re.compile(
+    r"(?:(?:please|bitte|por favor)\s+)?"
+    r"(?:delete|remove|erase|lösch|lösche|entferne|borra|elimina)\s+"
+    r"(?:(?:the file|the folder|the directory|die Datei|den Ordner|el archivo|la carpeta)\s+)?"
+    + _OPERAND,
+    re.IGNORECASE,
+)
+_COMMAND = re.compile(
+    r"(?:rm\s+(?:(?:-r|--recursive)\s+)?(?:--\s+)?|Remove-Item\s+(?:-LiteralPath\s+)?)"
+    + _OPERAND
+    + r"(?:\s+-Recurse)?",
     re.IGNORECASE,
 )
 
 
-def utterance_confirms_destruction(utterance: str) -> bool:
-    """True when the utterance itself explicitly asks for a destructive act.
-
-    Empty/whitespace utterances (API calls, missions without a spoken turn)
-    never confirm — the confirmation question stays the default there.
-    """
-    if not utterance or not utterance.strip():
+def command_confirms_destruction(
+    command: str, utterance: str, *, windows: bool | None = None
+) -> bool:
+    """Match one deletion and its exact, literal absolute target, or fail closed."""
+    if any(char.isspace() and char not in " \t" for char in command):
         return False
-    return bool(_PATTERN.search(utterance))
+    request = _REQUEST.fullmatch(utterance.strip())
+    invocation = _COMMAND.fullmatch(command.strip())
+    if request is None or invocation is None:
+        return False
+    requested = next(value for value in request.groups() if value is not None)
+    operand = next(value for value in invocation.groups() if value is not None)
+    # Do not normalize paths: shell/platform semantics can differ. Exact spelling
+    # is required, and an entire filesystem is never implicit consent.
+    if operand != requested or ".." in operand.replace("\\", "/").split("/"):
+        return False
+    if windows is None:
+        windows = sys.platform == "win32"
+    if not windows and "\\" in operand and invocation.group("single") is None:
+        # POSIX unquoted/double-quoted backslashes can change the actual operand.
+        return False
+    path = PureWindowsPath(operand) if windows else PurePosixPath(operand)
+    return path.is_absolute() and str(path) != path.anchor

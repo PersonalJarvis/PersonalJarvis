@@ -11,7 +11,14 @@ import asyncio
 import threading
 import time
 
+import pytest
+
+from jarvis.platform.permission_service import PermissionOutcome
+from jarvis.platform.permissions import PermissionId
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
+from tests.fakes.fake_permission_service import FakePermissionService
+
+pytestmark = pytest.mark.usefixtures("granted_microphone")
 
 
 class _FakeBrain:
@@ -30,7 +37,9 @@ def _pipe(*, state=PipelineState.IDLE, gate=True, ptt=False, brain=None):
     p._ptt_mode = ptt
     p._state = state
     p._call_event = asyncio.Event()
-    p._activation_gate = (lambda: gate)
+    # A deliberate action is judged by the USER gate (not refused), never by the
+    # background wake gate (a live grant).
+    p._user_activation_gate = (lambda: gate)
     p._muted = False
     p._last_wake_keyword = ""
     p._brain = brain
@@ -89,12 +98,19 @@ def test_noop_when_ptt_active() -> None:
     assert not p._call_event.is_set()
 
 
-def test_noop_when_activation_not_allowed_and_does_not_seed() -> None:
+def test_noop_when_the_microphone_is_refused_and_does_not_seed() -> None:
+    """The refusal comes from ``ensure`` (so the card is published), not from the
+    silent user predicate alone: the request must reach the permission layer."""
     brain = _FakeBrain()
     p = _pipe(gate=False, brain=brain)
+    gate = FakePermissionService()
+    gate.script(PermissionId.MICROPHONE, PermissionOutcome.DENIED)
+    p._permission_gate = gate
     assert p.request_voice_session(seed_messages=[("user", "x")]) is False
     assert not p._call_event.is_set()
     assert brain.seeded is None
+    (call,) = gate.ensure_calls(PermissionId.MICROPHONE)
+    assert (call.feature, call.interactive, call.wait_s) == ("voice", True, 0.0)
 
 
 def test_seed_failure_still_arms() -> None:

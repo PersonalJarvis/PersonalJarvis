@@ -90,7 +90,7 @@ def parse_ask_block(text: str) -> tuple[QuestionSpec, ...] | None:
         return None
     try:
         payload = json.loads(matches[-1].group("body"))
-    except ValueError:
+    except ValueError:  # a malformed fence is ordinary model text, not a question card
         return None
     if isinstance(payload, list):
         payload = {"questions": payload}
@@ -98,7 +98,7 @@ def parse_ask_block(text: str) -> tuple[QuestionSpec, ...] | None:
         return None
     try:
         return parse_questions(payload)
-    except ValueError:
+    except ValueError:  # an invalid question block is shown as plain text instead
         return None
 
 
@@ -173,7 +173,7 @@ def open_ask(events: Sequence[dict[str, Any]], question_id: str) -> OpenAsk | No
             ):
                 try:
                     specs = parse_questions({"questions": payload.get("questions") or []})
-                except ValueError:
+                except ValueError:  # a corrupt stored ask is treated as no open question
                     return None
                 found = OpenAsk(question_id, str(payload.get("turn_id") or ""), specs, ())
                 answers = [None] * len(specs)

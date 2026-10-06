@@ -447,18 +447,27 @@ async def test_monitor_capture_fails_closed_when_denylist_cannot_be_verified() -
     assert "could not be verified" in (outcome.message or "")
 
 
-async def test_missing_permission_refuses_before_capturing() -> None:
+async def test_missing_permission_asks_once_then_refuses_before_capturing() -> None:
+    from tests.fakes.fake_permission_service import FakePermissionService
+
     capturer = FakeCapturer()
+    gate = FakePermissionService({"screen_recording": "needs_settings"})
     service = make_service(
         capturer=capturer,
         permission_probe=lambda: "Screen recording permission is missing.",
+        permission_gate=gate,
     )
 
     outcome = await service.capture_for_turn("look at this", locale="en")
 
     assert outcome.status == "refused"
     assert capturer.grabs == []
-    assert "permission" in (outcome.message or "").lower()
+    assert "permission" in (outcome.message or "").lower() or "Screen Recording" in (
+        outcome.message or ""
+    )
+    # The capture a person started is the gesture: it asked, once, and only a live
+    # grant lets it go on (the probe never decides).
+    assert len(gate.ensure_calls("screen_recording")) == 1
 
 
 async def test_disabled_feature_refuses_honestly() -> None:

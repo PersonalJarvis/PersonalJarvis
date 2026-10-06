@@ -136,6 +136,9 @@ jobs:
           [[ "$merged" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing merge commit."; exit 1; }
           git fetch --no-tags origin main:refs/remotes/origin/main
           git checkout --detach "$merged"
+          if [ "$TOKEN_IS_BOT" = "true" ]; then
+            gh workflow run ci.yml --ref main -f full=true -f include_macos=true
+          fi
       - name: Tag the admitted release
         id: tag
         env:
@@ -145,6 +148,7 @@ jobs:
           git merge-base --is-ancestor "$sha" origin/main
           actual="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
           [ "$actual" = "$V" ] || { echo "::error::Merged package version changed."; exit 1; }
+          python scripts/ci/release_admit.py --ci-only --sha "$sha" --repo "$GITHUB_REPOSITORY"
           git config user.name "jarvis-release[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git show-ref --verify --quiet "refs/tags/v$V"; then

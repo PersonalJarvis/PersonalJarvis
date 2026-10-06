@@ -11,8 +11,7 @@
  * broken, not as two surfaces with different features (maintainer, 2026-08-24).
  *
  * The pieces are deliberately the terminal path's own — the same drag tracking
- * (`usePaneFileDrag`), the same payload extraction (`paneDrop`), the same
- * desktop-shell path resolution (`waitForNativeDrop`) — so the two surfaces
+ * (`usePaneFileDrag`) and the same payload extraction (`paneDrop`) so the two surfaces
  * cannot drift into disagreeing about what a drop is. Only the endpoint
  * differs: a chat has no pane to type a path into, so the files are HELD here
  * and travel with the sentence when it is sent.
@@ -27,7 +26,6 @@ import {
   type PaneDropPayload,
 } from "@/components/agentic/paneDrop";
 import { usePaneFileDrag } from "@/components/agentic/paneFileDrag";
-import { waitForNativeDrop } from "@/lib/nativeDrop";
 import {
   attachChatFilesIn,
   attachmentFileUrl,
@@ -216,22 +214,10 @@ export function useChatAttachments(
   const { dragging, handlers: dragHandlers } = usePaneFileDrag(
     useCallback(
       (dt: DataTransfer) => {
-        // Both reads happen BEFORE any await, and they have to: a DataTransfer
-        // empties the moment this handler returns, and the desktop shell only
-        // answers a listener that was already in place when the drop happened.
-        const payload = extractPaneDrop(dt);
-        void waitForNativeDrop().then((detail) => {
-          if (!detail?.paths.length) return void attach(payload);
-          // Inside the desktop shell the host knows where the file really
-          // lies. Prefer that over uploading its bytes — same file, no copy —
-          // and drop the byte copies the shell just accounted for so nothing
-          // is attached twice.
-          const named = new Set(detail.names.map((n) => n.toLowerCase()));
-          return void attach({
-            paths: Array.from(new Set([...payload.paths, ...detail.paths])),
-            files: payload.files.filter((f) => !named.has(f.name.toLowerCase())),
-          });
-        });
+        // Read before returning: browsers clear DataTransfer after this event.
+        // Native path hints are not a file-read grant on every WebView backend;
+        // use the granted File bytes or our own explorer's receipt everywhere.
+        void attach(extractPaneDrop(dt));
       },
       [attach],
     ),

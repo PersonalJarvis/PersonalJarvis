@@ -125,7 +125,7 @@ def _frac(rect: Any) -> tuple[float, float, float, float] | None:
         return None
     try:
         fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Reject malformed region coordinates before rendering.
         return None
     return (fx, fy, fw, fh)
 
@@ -827,7 +827,7 @@ class Renderer(QObject):
             self.finish_selection(None, None)
         try:
             self._select_req = int(payload.get("req", 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # An invalid request identifier cannot correlate a selection result.
             self._select_req = 0
         hint = str(payload.get("hint", ""))
         self._select_windows = [_SelectWindow(s, hint, self) for s in QGuiApplication.screens()]

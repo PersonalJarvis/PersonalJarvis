@@ -251,8 +251,15 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -e . --no-deps
       - run: python -m pip install pyyaml==6.0.3 pydantic loguru python-dotenv packaging rich typer platformdirs click httpx
-      - name: Require real browser auth evidence for release
-        run: python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass
+      - name: Qualify plugin auth and disclose preview plugins
+        shell: bash
+        run: |
+          # A plugin ships as "verified" only with a completed browser journey;
+          # every other one ships labeled "preview" in the app (AGENTS.md section 3).
+          report="$(python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass)"
+          printf '%s\n' "$report"
+          # The last line counts verified and preview plugins for the release.
+          printf '%s\n' "${report##*$'\n'}" >> "$GITHUB_STEP_SUMMARY"
 
   python-fast:
     name: python contracts (fast)
@@ -325,7 +332,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2
+          sudo apt-get update -qq && sudo apt-get install -y -qq libportaudio2 libegl1 libopengl0
           python -m pip install -e ".[dev,telephony]"
       - name: Download the shared duration snapshot
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
@@ -333,14 +340,18 @@ jobs:
           name: ${{ needs.detect.outputs.duration_snapshot }}
       - name: Run shard
         continue-on-error: true
+        env:
+          SHARD: ${{ matrix.shard }}
         run: >-
           python scripts/ci/run_tests_parallel.py tests
-          --shard ${{ matrix.shard }}/6
-          --report out/test-report-linux-${{ matrix.shard }}.json
-          --junit-out out/junit-linux-${{ matrix.shard }}.xml
-          --durations-out out/durations-linux-${{ matrix.shard }}.json
+          --shard "$SHARD/6"
+          --report "out/test-report-linux-$SHARD.json"
+          --junit-out "out/junit-linux-$SHARD.xml"
+          --durations-out "out/durations-linux-$SHARD.json"
       - name: Ratchet (a failure not in the baseline blocks)
-        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-linux.json out/test-report-linux-${{ matrix.shard }}.json
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-linux.json "out/test-report-linux-$SHARD.json"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
@@ -398,16 +409,22 @@ jobs:
       - name: Run shard
         if: steps.pick.outputs.mode != 'none'
         continue-on-error: true
+        env:
+          SHARD: ${{ matrix.shard }}
+          PICK_MODE: ${{ steps.pick.outputs.mode }}
+          PICK_TOTAL: ${{ steps.pick.outputs.total }}
         run: |
           files=()
-          if [ "${{ steps.pick.outputs.mode }}" = "selected" ]; then files=(--files-from out/selected.txt); fi
+          if [ "$PICK_MODE" = "selected" ]; then files=(--files-from out/selected.txt); fi
           python scripts/ci/run_tests_parallel.py tests "${files[@]}" \
-            --shard ${{ matrix.shard }}/${{ steps.pick.outputs.total }} \
-            --report out/test-report-windows-${{ matrix.shard }}.json \
-            --junit-out out/junit-windows-${{ matrix.shard }}.xml
+            --shard "$SHARD/$PICK_TOTAL" \
+            --report "out/test-report-windows-$SHARD.json" \
+            --junit-out "out/junit-windows-$SHARD.xml"
       - name: Ratchet (a failure not in the baseline blocks)
         if: steps.pick.outputs.mode != 'none'
-        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-windows.json out/test-report-windows-${{ matrix.shard }}.json
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python scripts/ci/ratchet_tests.py check --baseline scripts/ci/test-baseline-windows.json "out/test-report-windows-$SHARD.json"
       - name: Upload shard report
         if: always()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
@@ -459,7 +476,8 @@ jobs:
   test-report:
     name: test report + floor
     needs: [detect, tests-linux]
-    if: always() && needs.detect.outputs.python == 'true' && needs.tests-linux.result != 'cancelled'
+    # Preserve failure reporting without keeping superseded PR runs alive.
+    if: ${{ !cancelled() && needs.detect.outputs.python == 'true' && needs.tests-linux.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -566,6 +584,49 @@ jobs:
       - name: Target-resolved portable install matrix
         run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
+  native-crypto-runtime:
+    name: native crypto (${{ matrix.runner }}, Python ${{ matrix.python }})
+    needs: detect
+    if: needs.detect.outputs.deps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15-intel, architecture: x64, python: '3.11'}
+          - {runner: macos-15-intel, architecture: x64, python: '3.14'}
+          - {runner: macos-15, architecture: arm64, python: '3.11'}
+          - {runner: macos-15, architecture: arm64, python: '3.14'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.12'}
+          - {runner: windows-11-arm, architecture: arm64, python: '3.14'}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.architecture }}
+      - name: Fresh hashed base install without crypto compilation
+        run: python scripts/pip_install.py --require-hashes --only-binary=cryptography,asyncssh -r requirements.txt
+      - name: Native security and compatibility contracts
+        shell: bash
+        run: |
+          python -m pip install pytest pytest-asyncio pytest-timeout
+          python -m pytest --confcutdir=tests/contract -q tests/contract/test_native_crypto.py tests/contract/test_native_ssh.py
+      - name: Confirm the published native wheel uses the reviewed OpenSSL
+        if: matrix.runner != 'macos-15'
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          from cryptography.hazmat.backends.openssl.backend import backend
+          expected = json.loads(Path('packaging/native-crypto.json').read_text())['openssl']['version']
+          actual = backend.openssl_version_text()
+          print(actual)
+          assert actual.startswith(f'OpenSSL {expected} '), (actual, expected)
+
   realtime-contract:
     needs: detect
     if: needs.detect.outputs.realtime == 'true'
@@ -588,7 +649,23 @@ jobs:
           python -m pip install -e .
           python -m pip install pytest pytest-asyncio
       - name: Provider-neutral realtime contract
-        run: python -m pytest tests/contract/test_gpt_live.py tests/contract/test_realtime_provider_contract.py tests/contract/test_realtime_reliability_gate.py -q -p no:cacheprovider
+        run: >-
+          python -m pytest
+          tests/contract/test_gpt_live.py
+          tests/contract/test_live_profile_catalog.py
+          tests/contract/test_subscription_access_boundary.py
+          tests/contract/test_subscription_report_pipeline.py
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          tests/unit/live/test_subscription_auth.py
+          tests/unit/live/test_subscription_reasoning.py
+          tests/unit/live/test_subscription_session.py
+          tests/unit/live/test_subscription_wire.py
+          tests/unit/live/test_login_helper.py
+          tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
+          -q -p no:cacheprovider
 
   # The in-app updater on every OS it ships to. Each one replaces a running
   # app differently (Inno handover, .app swap, AppImage swap, git transaction
@@ -690,7 +767,23 @@ jobs:
               raise SystemExit("python:3.11-slim unexpectedly loaded PortAudio")
           PY
       - name: Headless realtime degradation contract
-        run: python -m pytest tests/contract/test_gpt_live.py tests/contract/test_realtime_provider_contract.py tests/contract/test_realtime_reliability_gate.py -q -p no:cacheprovider
+        run: >-
+          python -m pytest
+          tests/contract/test_gpt_live.py
+          tests/contract/test_live_profile_catalog.py
+          tests/contract/test_subscription_access_boundary.py
+          tests/contract/test_subscription_report_pipeline.py
+          tests/contract/test_realtime_provider_contract.py
+          tests/contract/test_realtime_reliability_gate.py
+          tests/unit/live/test_subscription_auth.py
+          tests/unit/live/test_subscription_reasoning.py
+          tests/unit/live/test_subscription_session.py
+          tests/unit/live/test_subscription_wire.py
+          tests/unit/live/test_login_helper.py
+          tests/unit/test_agent_login_flow.py
+          tests/unit/clis/test_prober_cancellation.py
+          tests/unit/ui/web/test_registry_bootstrap_shutdown.py
+          -q -p no:cacheprovider
 
   soak:
     name: realtime contract soak (not release evidence)
@@ -779,6 +872,7 @@ jobs:
       - frontend
       - jarvisctl
       - deps
+      - native-crypto-runtime
       - realtime-contract
       - realtime-slim
       - soak
@@ -787,7 +881,7 @@ jobs:
       - macos-desktop
       - installer
       - updater
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

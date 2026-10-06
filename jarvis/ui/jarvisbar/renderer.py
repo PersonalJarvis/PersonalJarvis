@@ -233,7 +233,7 @@ class JarvisBarRenderer:
             if len(value) != 6:
                 raise ValueError("Expected an RGB color")
             self.accent = tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
-        except (AttributeError, ValueError):
+        except (AttributeError, ValueError):  # An invalid optional accent retains the standard visible highlight.
             self.accent = controls.PET_ORB_HIGHLIGHT
 
     def render(

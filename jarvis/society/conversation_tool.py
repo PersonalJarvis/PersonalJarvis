@@ -42,8 +42,9 @@ class ConversationRecallTool:
             await asyncio.to_thread(archive.ingest, session, events)
         limit = max(1, min(20, int(args.get("limit") or 5)))
         if str(args.get("query") or "").strip():
+            query = str(args["query"])
             hits = await asyncio.to_thread(
-                archive.search, session, str(args["query"]), limit=limit, include_owned=True
+                archive.search, session, query, limit=limit, include_owned=True
             )
             return ToolResult(True, {"hits": hits})
         events = await asyncio.to_thread(
@@ -55,6 +56,8 @@ class ConversationRecallTool:
 
 
 class RoutineListTool:
+    read_only = True
+
     name = "society_routines"
     risk_tier = "safe"
     description = (

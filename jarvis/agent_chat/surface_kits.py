@@ -226,11 +226,9 @@ _KITS: Final[dict[str, SurfaceKit]] = {
     "jarvis": SurfaceKit(
         surface="jarvis",
         brain_runner=True,
-        # No vendor CLI here (maintainer, 2026-08-26). What answers on the
-        # front page is Jarvis' own harness on a provider API behind a key —
-        # one pipeline, one place the model is picked, one usage ledger. A
-        # subscription CLI seat is a coding agent and belongs to the IDE's
-        # chat, where its own loop and its own tools are the point.
+        # Subscription seats may answer here too: the CLI then runs inside the
+        # Jarvis harness (``jarvis_harness``) with Jarvis' tools over MCP, so a
+        # plan bills the subscription instead of a key.
         cli_seats=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,

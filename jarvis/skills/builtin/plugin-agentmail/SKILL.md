@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-agentmail
 description: "Give your agent an inbox: read, send and reply to messages"
-when_to_use: Use for explicit operations on the connected AgentMail account.
+when_to_use: Use when the user requests operations on the connected AgentMail account.
 category: integrations
 plugin_id: agentmail
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

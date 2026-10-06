@@ -9,6 +9,13 @@ export interface VoiceHangupAnswer {
   stopped: boolean;
 }
 
+/**
+ * A failed voice request. `status` lets a caller tell "this host runs no
+ * speech pipeline" (503) apart from a real failure; the message is what the
+ * person reads.
+ */
+export type VoiceRequestError = Error & { status: number };
+
 async function post<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: "POST", cache: "no-store" });
   if (!res.ok) {
@@ -18,10 +25,11 @@ async function post<T>(path: string): Promise<T> {
     } catch {
       /* a non-JSON error body — the status line below still names the failure */
     }
-    if (res.status === 503) {
-      throw new Error("Voice is not running on this computer.");
-    }
-    throw new Error(detail || `Voice request failed (${res.status}).`);
+    const message =
+      res.status === 503
+        ? "Voice is not running on this computer."
+        : detail || `Voice request failed (${res.status}).`;
+    throw Object.assign(new Error(message), { status: res.status }) as VoiceRequestError;
   }
   return (await res.json()) as T;
 }
@@ -119,6 +127,9 @@ export interface VoiceRuntimeState {
   /** The fine-grained state every voice surface renders, straight from the
    *  supervisor. `"idle"` whenever no session is running. */
   voiceState: string;
+  /** No speech pipeline will ever run here (a VPS, `jarvis serve`), and
+   *  /ws/audio accepts a call: the browser that presses Start holds it. */
+  browserCall: boolean;
 }
 
 /**
@@ -140,17 +151,24 @@ export async function fetchVoiceRuntimeState(): Promise<VoiceRuntimeState | null
       available?: unknown;
       state?: unknown;
       voice_state?: unknown;
+      browser_call?: unknown;
     };
     const available = body.available === true;
+    // An older backend without the field never offers a browser-held call.
+    const browserCall = body.browser_call === true;
     if (typeof body.voice_state === "string") {
-      return { available, voiceState: body.voice_state };
+      return { available, voiceState: body.voice_state, browserCall };
     }
     // A backend from before the field existed still answers the coarse
     // question honestly: an idle pipeline IS "no session runs", which is the
     // whole correction this is read for. Anything else stays "unknown" so a
     // live call is never touched on a guess.
     if (typeof body.state === "string") {
-      return { available, voiceState: body.state === "idle" ? "idle" : "unknown" };
+      return {
+        available,
+        voiceState: body.state === "idle" ? "idle" : "unknown",
+        browserCall,
+      };
     }
     return null;
   } catch (error) {

@@ -407,7 +407,7 @@ class Recorder:
                 try:
                     frames.put_nowait((pts, pending))
                     last_pts = pts
-                except queue.Full:
+                except queue.Full:  # Dropped frames are counted and surfaced in the recording result.
                     self._dropped += 1
             if self._stop.is_set() or self._error:
                 return

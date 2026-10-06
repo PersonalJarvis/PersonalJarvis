@@ -24,6 +24,7 @@ import {
 import { openProject } from "@/lib/chatLibraryApi";
 import { useWorkspacePanesStore } from "@/store/workspacePanes";
 import { AgentMark } from "@/components/agentic/AgentMark";
+import { BrandedSelect } from "@/components/ui/select";
 import { paneOccupants, type PaneOccupant } from "./codingFloor";
 import { NewWorkspaceFields, type NewWorkspaceTarget } from "./NewWorkspaceFields";
 import { briefWithFiles, heldPayload, useSpawnFiles, type HeldFile } from "./spawnFiles";
@@ -252,13 +253,15 @@ export function StartAgent() {
       )}
 
       {workspaces.length === 0 ? <p className="office-mc-note">{t("society.office.mission_no_workspace")}</p> : (
-        <label className="office-mc-row">
+        <div className="office-mc-row">
           <span>{t("society.office.mission_workspace")}</span>
-          <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} disabled={running}>
-            {workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}{w.branch ? ` · ${w.branch}` : ""}</option>)}
-            <option value={NEW_WORKSPACE}>{t("society.office.mission_ws_new")}</option>
-          </select>
-        </label>
+          <BrandedSelect value={workspaceId} onValueChange={setWorkspaceId} disabled={running}
+            ariaLabel={t("society.office.mission_workspace")} className="office-mc-select px-2 py-1.5 text-xs"
+            options={[
+              ...workspaces.map((w) => ({ value: w.id, label: w.name, hint: w.branch || undefined })),
+              { value: NEW_WORKSPACE, label: t("society.office.mission_ws_new") },
+            ]} />
+        </div>
       )}
       {creating && (
         <NewWorkspaceFields projects={projects} target={newTarget} onTarget={setNewTarget}

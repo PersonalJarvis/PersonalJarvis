@@ -283,7 +283,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         check = asyncio.ensure_future(probe())
         try:
             ready = bool(await asyncio.wait_for(asyncio.shield(check), _DUPLEX_PROBE_BUDGET_S))
-        except TimeoutError:
+        except TimeoutError:  # a late probe is logged by its callback
             check.add_done_callback(_log_late_probe)
             ready = False
         except Exception:
@@ -402,7 +402,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                         event = await anext(events)
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # Shutdown is quiet; active failures enter the reporting recovery loop.
                         if self._closing:
                             return
                         if await self._wait_for_connection():
@@ -570,7 +570,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             except asyncio.CancelledError:
                 work.cancel()  # cancelling the call still cancels its tool, as before
                 raise
-            except TimeoutError:
+            except TimeoutError:  # a slow tool is released, not dropped
                 result = self._release_slow_tool(work, str(event.tool_name or ""))
             images = take_images(result)
             if self._closing:

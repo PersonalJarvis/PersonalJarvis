@@ -201,6 +201,9 @@ class WorkspaceOrchestrationTool:
         reads = {"inspect", "resolve", "context", "observe"}
         return "safe" if args.get("action") in reads else "monitor"
 
+    def read_only_for_args(self, args: dict) -> bool:
+        return args.get("action") in {"inspect", "resolve", "context", "observe"}
+
     def describe_args(self, args: dict) -> dict:
         return {
             "level": "read" if self.risk_tier_for_args(args) == "safe" else "modify",
@@ -247,6 +250,7 @@ class WorkspaceOrchestrationTool:
                 trace_id=str(ctx.trace_id),
             )
         except ValueError as exc:
+            # Invalid arguments go back to the model as the tool error.
             return ToolResult(success=False, output=None, error=str(exc))
         finally:
             current_delegation_origin.reset(token)

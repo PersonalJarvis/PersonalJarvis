@@ -64,7 +64,7 @@ export function nextAppZoom(level: number, intent: AppZoomIntent): number {
 
 /**
  * Keys whose identity is the character they type, not their position. `?` is
- * one too: Shift+`/` on a US keyboard, Shift+`ß` on a German one — the other
+ * one too: Shift+`/` on a US keyboard, Shift+`ß` on a German one — the other  i18n-allow: names a key cap
  * in-app chords (the shortcut overview) record it through this module.
  */
 const CHARACTER_KEYS = new Set(["plus", "minus", "question"]);

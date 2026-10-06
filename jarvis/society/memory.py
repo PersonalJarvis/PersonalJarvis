@@ -276,8 +276,14 @@ class SocietyMemory:
         entry_id: str = "",
         old_text: str = "",
         importance: int = 5,
+        explicit_request: bool = False,
     ) -> dict[str, Any]:
-        """Write one notebook under its lock and return the actual before/after receipt."""
+        """Write one notebook under its lock and return the actual before/after receipt.
+
+        ``explicit_request`` marks a write the person explicitly asked for; it
+        may pass the notebook's hard limit. Callers derive it from trusted
+        provenance, never from a model's tool arguments.
+        """
         from filelock import Timeout
 
         from jarvis.memory.write_feedback import announce_write
@@ -305,6 +311,7 @@ class SocietyMemory:
                     old_text=old_text,
                     importance=max(0, min(10, int(importance))),
                     origin=self._origin(origin),
+                    allow_over_limit=explicit_request,
                 )
                 written.file, written.changed = result.path.name, result.changed
         except (ValueError, KeyError, TypeError, Timeout) as exc:

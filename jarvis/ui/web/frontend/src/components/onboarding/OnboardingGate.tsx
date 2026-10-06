@@ -26,8 +26,10 @@ function param(name: string): string | null {
  *
  * 1. The setup window: three steps — the assistant's name (its wake word),
  *    connecting an AI (subscriptions and an API key), and how the user
- *    talks to it. Fails open: while loading or on a fetch error the gate
- *    renders nothing, so a broken guide never traps anyone.
+ *    talks to it (macOS permissions are asked later, where a feature needs
+ *    them; no step of setup asks for one). Fails open: while loading or on
+ *    a fetch error the gate renders nothing, so a broken guide never traps
+ *    anyone.
  * 2. The walk: the user's pet walks the app's sections and explains each in
  *    place. When it ends, onboarding is completed and the app restarts once.
  *

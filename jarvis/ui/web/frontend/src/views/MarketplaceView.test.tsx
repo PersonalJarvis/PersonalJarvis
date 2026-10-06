@@ -298,10 +298,10 @@ describe("MarketplaceView", () => {
     // The German strings resolve from the locale file, including the count
     // template whose {count} token this view fills itself.
     expect(await screen.findByText(/2 veröffentlichte Einträge/)).toBeTruthy(); // i18n-allow
-    expect(screen.getByLabelText(/Plugins und Skills durchsuchen/)).toBeTruthy(); // i18n-allow
+    expect(screen.getByLabelText(/Plugins, Skills und Agenten durchsuchen/)).toBeTruthy(); // i18n-allow
 
     setUiLanguage("es");
-    expect(await screen.findByLabelText(/Buscar plugins y skills/)).toBeTruthy(); // i18n-allow
+    expect(await screen.findByLabelText(/Buscar plugins, skills y agentes/)).toBeTruthy(); // i18n-allow
   });
 
   it("opens the public storefront in a real browser", async () => {

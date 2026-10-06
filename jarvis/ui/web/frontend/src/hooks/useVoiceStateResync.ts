@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 
+import { browserVoiceCallLive } from "@/lib/browserVoiceCall";
 import { fetchVoiceRuntimeState } from "@/lib/voiceApi";
 import { useDocumentVisible } from "@/hooks/useDocumentVisible";
 import { useEventStore } from "@/store/events";
@@ -29,6 +30,11 @@ import { useEventStore } from "@/store/events";
  *    field) changes nothing.
  *  * A state that changed while the request was in flight wins — a live event
  *    is newer than the snapshot that was already on its way.
+ *
+ * A call this browser holds itself (a host with no speech pipeline) is left
+ * alone: its own socket drives the state, and the backend's pipeline snapshot
+ * cannot see a classic browser call, so it would end the call's display mid
+ * conversation.
  */
 export function useVoiceStateResync(): void {
   const connected = useEventStore((s) => s.connected);
@@ -40,7 +46,7 @@ export function useVoiceStateResync(): void {
     const before = store.voiceState;
     // Idle is the state this hook corrects TO — nothing to check, and the
     // common case, so the section switch costs no request at all.
-    if (before === "idle") return;
+    if (before === "idle" || browserVoiceCallLive()) return;
 
     const truth = await fetchVoiceRuntimeState();
     if (truth === null) return;
@@ -48,6 +54,7 @@ export function useVoiceStateResync(): void {
 
     const now = useEventStore.getState();
     if (now.voiceState !== before) return; // a live event overtook the snapshot
+    if (browserVoiceCallLive()) return; // a browser call started meanwhile
     now.setVoice("idle");
     // The live-transcript box follows the same session boundary the websocket
     // clears it on; left alone, the last utterance of the dead session sits

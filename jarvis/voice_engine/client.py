@@ -161,7 +161,7 @@ class EngineClient:
                 process.stdin.close()
         try:
             code = await asyncio.wait_for(process.wait(), timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # a worker that ignores shutdown is killed instead
             process.kill()
             code = await process.wait()
         if self._reader_task is not None:

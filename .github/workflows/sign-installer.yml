@@ -848,6 +848,7 @@ jobs:
   #                         provenance `invocation` subject
   # ----------------------------------------------------------------------
   provenance:
+    if: github.ref_type == 'tag'
     needs: sign
     permissions:
       id-token: write
@@ -893,6 +894,7 @@ jobs:
   # attach to a draft; release-finalize.yml alone makes it visible to updaters.
   # ----------------------------------------------------------------------
   release:
+    if: github.ref_type == 'tag'
     needs: [sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 5

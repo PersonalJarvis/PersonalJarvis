@@ -389,7 +389,6 @@ def test_the_lane_puts_the_local_engine_in_front_of_the_configured_provider(
     import jarvis.speech.stt_dictionary as dictionary
     from jarvis.core.config import DictationConfig, STTConfig
     from jarvis.speech.pipeline import SpeechPipeline
-    from jarvis.speech.stt_fallback import FallbackSTT
 
     configured = SimpleNamespace(name="groq-instance")
     built: list[str] = []
@@ -415,7 +414,8 @@ def test_the_lane_puts_the_local_engine_in_front_of_the_configured_provider(
 
     instance = pipe._dictation_stt()
 
-    assert isinstance(instance, FallbackSTT)
+    # Metering can wrap the chain while retaining its transcription protocol.
+    assert callable(instance.transcribe_pcm)
     assert isinstance(instance._primary, LocalFinalSTT)
     assert instance._primary.last_used_model == "small"
     assert instance._alternate_names == ["groq-api", "openai-api"]
@@ -503,7 +503,6 @@ def test_the_switch_keeps_the_configured_provider_in_front(
     import jarvis.speech.stt_dictionary as dictionary
     from jarvis.core.config import DictationConfig, STTConfig
     from jarvis.speech.pipeline import SpeechPipeline
-    from jarvis.speech.stt_fallback import FallbackSTT
 
     configured = SimpleNamespace(name="groq-instance")
     monkeypatch.setattr(stt_plugins, "build_stt_from_config", lambda cfg, **_k: configured)
@@ -520,6 +519,6 @@ def test_the_switch_keeps_the_configured_provider_in_front(
 
     instance = pipe._dictation_stt()
 
-    assert isinstance(instance, FallbackSTT)
+    assert callable(instance.transcribe_pcm)
     assert instance._primary is configured
     assert instance._alternate_names == ["openai-api"]

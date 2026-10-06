@@ -24,7 +24,8 @@ The CLI is a **thin HTTP client over the REST API**, in two layers:
    commands for the common domains: `brain`, `config`, `missions`, `wiki`,
    `sessions`, `skills`, `outputs`, `board`, `costs`, `workflows`, `conductor`,
    `contacts`, `telephony`, `marketplace`, `mcps`, `docs`, `frontier`,
-   `local-models`, plus `auth`, `system`, `tasks`.
+   `local-models`, `clis`, `commands`, `computer-use`, `friends`, `ide`,
+   `permissions`, `socials`, plus `auth`, `system`, `tasks`.
 
 Because the CLI only ever calls the same routes the WebUI calls, it inherits all
 of Jarvis's safety machinery (risk tiers, the atomic config-write pipeline, the
@@ -151,6 +152,48 @@ values rather than rejecting them. Deleting a download is refused with a 409
 while a configured role still points at it, unless `--reassign` names another
 installed model — then the roles are rewritten first, and the delete runs only
 on a valid config. `--json` before the group prints the untouched API payload.
+
+## macOS privacy permissions from the terminal
+
+Personal Jarvis asks macOS for a permission at the moment a feature first needs
+it, never at launch. The `permissions` group is the terminal view of that:
+
+```bash
+jarvis permissions status                          # read only: never prompts, never blocks
+jarvis permissions status --include-automation     # also read Music/Spotify (they must be running)
+jarvis permissions request microphone --yes        # ask now, through the same service the app uses
+jarvis permissions open-settings microphone --yes  # open the matching System Settings pane
+jarvis permissions reset microphone --dry-run      # preview the tccutil command, run nothing
+jarvis permissions reset microphone --yes          # forget macOS's answer so it asks again (macOS only)
+```
+
+`status` prints each permission (`granted`, `not_determined`, `denied`, `restricted`,
+`not_required` off macOS, ...) and `needed`, the features currently waiting on one.
+`request` answers at once with an outcome (`granted`, `pending` while macOS may be
+showing its dialog, `needs_settings`, `denied`, `unavailable`); the person's answer
+arrives afterwards, so run `status` again. A denial is final from macOS's side: it
+does not ask a second time, and `request` does not pretend otherwise. When Jarvis
+is not running as the installed app, `request` asks nothing and says so. The CLI
+only ever asks for the installed app: without the installed bundle `request`
+refuses before anything is sent, and a grant for the app that started Jarvis (a
+terminal, an IDE) can only be confirmed in the Jarvis window, never from the
+CLI. An AI agent driving the CLI must never answer a macOS dialog on the user's
+behalf. Both `request` and `open-settings` are rate limited by
+the server (HTTP 429). Off macOS every permission reads `not_required` and
+`request` does nothing.
+
+`reset` is the way back from a stuck "denied" answer, since macOS never asks twice
+and the app has no permissions page. It runs `/usr/bin/tccutil reset <Service>
+<bundle id>` on this Mac, for the installed app's own bundle id only (the
+installer's `com.personal-jarvis.desktop` or the downloaded app's
+`ai.personaljarvis.desktop`; read from the app's `Info.plist`, or named with
+`--bundle-id` when both are installed), never another app's. It does not go
+through the running app (the app's own reset route refuses scripts on purpose),
+so it works with Jarvis closed; quit and reopen Jarvis afterwards, then use the
+feature and macOS asks again. It needs `--yes` (or `JARVIS_CLI_ASSUME_YES=1`) and
+`--dry-run` prints the exact `tccutil` argv. Off macOS it prints one line and
+exits 1. Permissions without a macOS privacy record (the Keychain) are refused.
+The raw `tccutil` commands are in the troubleshooting guide.
 
 ## Safety model
 

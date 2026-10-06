@@ -6,7 +6,6 @@ import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
-import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
@@ -132,7 +131,6 @@ const SECTIONS: readonly { id: string; render: () => React.ReactNode }[] = [
   { id: "system-prompt", render: () => <SystemPromptGroup /> },
   { id: "music", render: () => <MusicGroup /> },
   { id: "overlay-taskbar", render: () => <OverlayTaskbarGroup /> },
-  { id: "permissions", render: () => <PermissionsPanel /> },
 ];
 
 /** "Autopilot toasts" — the one row of the former "More" group. */

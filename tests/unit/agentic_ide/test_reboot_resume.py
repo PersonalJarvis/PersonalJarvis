@@ -25,6 +25,12 @@ def _no_real_agents(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ide, "agent_argv", lambda name: (f"/usr/bin/{name}",))
     # Every handle points at a conversation that exists, unless a test says not.
     monkeypatch.setattr(ide, "has_conversation", lambda agent, handle, home=None: True)
+    # Fake panes never draw an input line, so the cold-start gate would hold
+    # each slot for its full ceiling. Its slot count follows the CPU count
+    # (2 on a 4-core CI runner), which made a third pane miss the settle
+    # window there. The gate has its own tests; here it must not pace.
+    monkeypatch.setattr(ide, "COLD_START_SETTLE_S", 0.0)
+    monkeypatch.setattr(ide, "COLD_START_HOLD_MAX_S", 0.0)
 
 
 def _pane(index: int, *, running: bool = True, working: bool = False, resume: bool = True):

@@ -383,7 +383,12 @@ async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tre
     assert len(harness.calls) == 1
     assert client.ready is True
     argv, kwargs = harness.calls[0]
-    assert argv[:5] == (
+    codex_offset = argv.index("codex-test")
+    if os.name == "posix":
+        assert any(str(value).endswith("child_lifeline.py") for value in argv[:codex_offset])
+    else:
+        assert codex_offset == 0
+    assert argv[codex_offset:codex_offset + 5] == (
         "codex-test",
         "app-server",
         "--strict-config",
@@ -3340,6 +3345,16 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     import jarvis.core.paths as paths
 
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    if os.name == "posix":
+        # Exercise the Windows runtime layout while retaining real POSIX
+        # private-file checks; Win32 ACL APIs do not exist on this host.
+        def private_fixture_file(descriptor):
+            assert os.fstat(descriptor).st_mode & 0o777 == 0o600
+
+        monkeypatch.setattr(
+            "jarvis.core.exclusive_process_lock._validate_windows_file_security",
+            private_fixture_file,
+        )
     monkeypatch.setattr(transport.sys, "platform", "win32")
     monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
     monkeypatch.setattr(
@@ -3377,6 +3392,11 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     wrapper = f'@echo off\n"{binary}" --codex-run-as-apply-patch %*\n'
     (runtime / "apply_patch.bat").write_text(wrapper, encoding="utf-8")
     (runtime / "applypatch.bat").write_text(wrapper, encoding="utf-8")
+
+    if os.name == "posix":
+        runtime.chmod(0o700)
+        for fixture_file in (home / "installation_id", *runtime.iterdir()):
+            fixture_file.chmod(0o600)
 
     assert (
         transport._validated_subscription_home(

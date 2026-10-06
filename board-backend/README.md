@@ -243,6 +243,7 @@ The schema is additive (`create_all`), data is preserved.
 | Brute force against the admin token | Constant-time comparison + rate limit (10/min/IP). |
 | Replay of old pushes | `payload.ts_ms` must lie within +/- 5 min. |
 | Tampering after signing | Re-canonicalize + Ed25519 verify on the server. |
+| Replaying a signed body at another endpoint | The signed `aud` field must equal `"<METHOD> <path>"` of the receiving route (`board_backend.crypto.signed_audience`); a reaction names the friend's inbound route. Clients and backend must both be on this version. |
 | PII leak on a bug in the local filter | Pydantic `extra='forbid'` on every schema layer. |
 | Compromised container | Non-root user (uid 1000), only `/data` writable. |
 

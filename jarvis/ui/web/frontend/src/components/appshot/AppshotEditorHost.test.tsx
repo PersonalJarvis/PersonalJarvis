@@ -210,7 +210,7 @@ describe("AppshotEditorHost", () => {
     expect(steps()).toBe(3);
   });
 
-  it("keeps pen and counter drawing over what is already there", async () => {
+  it("creates further pen strokes and counters away from selected grips and shapes", async () => {
     render(<AppshotEditorHost />);
     act(() => useAppshotEditor.getState().open("shot-1"));
     const canvas = await screen.findByTestId("appshot-editor-canvas");
@@ -221,14 +221,14 @@ describe("AppshotEditorHost", () => {
       fireEvent.pointerUp(canvas, { clientX: to[0], clientY: to[1], pointerId: id });
     };
 
-    // Two pen strokes, the second starting right on the first.
+    // Two freehand strokes away from the selected annotation's grips.
     fireEvent.keyDown(window, { key: "d" });
     stroke(1, [20, 20], [120, 20]);
-    stroke(2, [120, 20], [120, 90]);
-    // Two counters right beside each other.
+    stroke(2, [20, 120], [120, 120]);
+    // A counter is movable immediately; place the next one outside its hit area.
     fireEvent.keyDown(window, { key: "c" });
     stroke(3, [60, 60], [60, 60]);
-    stroke(4, [64, 62], [64, 62]);
+    stroke(4, [160, 220], [160, 220]);
 
     // Four new marks; nothing was moved or reshaped instead.
     await waitFor(() => expect(undo().disabled).toBe(false));

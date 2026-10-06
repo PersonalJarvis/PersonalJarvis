@@ -120,6 +120,16 @@ class ChatControls:
         )
         origin_token = _command_origin.set(request)
         try:
+            session = self.service.store.get_session(sid)
+            binder = getattr(self.service, "bind_society_session", None)
+            if (
+                request.command
+                not in {"stop", "status", "help", "clear", "history", "model", "routines", "find"}
+                and session is not None
+                and session.surface == "society"
+                and binder is not None
+            ):
+                await binder(sid)
             from jarvis.memory.wiki.secret_guard import contains_secret
 
             if contains_secret(request.arguments):
@@ -338,15 +348,33 @@ class ChatControls:
         from jarvis.core.tool_read_only import set_chat_read_only
 
         from .events import make_event
-        from .permissions import ladder_key, normalize_permission
+        from .permissions import ladder_key, normalize_permission, society_mode_supported
         from .service import resolve_runner
 
         session = self.service.store.get_session(sid)
-        ladder = ladder_key(
-            session.surface, resolve_runner(session.provider, surface=session.surface)
-        )
-        permission = normalize_permission(ladder, permission)
+        runner = resolve_runner(session.provider, surface=session.surface)
+        ladder = ladder_key(session.surface, runner)
+        # /plan is a chat control, not a ladder choice: the Society ladder
+        # (bypass / ask / always ask) has no read-only rung, and folding
+        # "plan" onto it would silently leave the turn able to write.
+        folded = normalize_permission(ladder, permission)
+        if permission in ("plan", "read-only") and folded not in ("plan", "read-only"):
+            folded = "plan"
+        permission = folded
+        if session.surface == "society" and self.service.is_running(sid):
+            raise ValueError("The agent chat is working; stop it before changing permissions")
+        if session.surface == "society" and permission not in ("plan", "read-only"):
+            if not society_mode_supported(runner, permission):
+                raise ValueError(f"{runner} cannot provide an actionable approval for {permission}")
         self.service.store.update_session(sid, permission_mode=permission)
+        if session.surface == "society":
+            self.service.store.set_permission_override(sid, permission)
+            binder = getattr(self.service, "bind_society_session", None)
+            bound = await binder(sid) if binder is not None else session
+            self.service.store.set_permission_override(sid, bound.permission_mode)
+            if bound.permission_mode != permission:
+                raise ValueError("The agent's roster does not permit that chat mode")
+            permission = bound.permission_mode
         state.mode = "plan" if permission in ("plan", "read-only") else "build"
         set_chat_read_only(sid, state.mode == "plan")
         await self.publish(state)
@@ -458,14 +486,14 @@ class ChatControls:
             raise ValueError(completed[-1].error if completed else "Command was interrupted")
         return {"result": completed[-1].output}
 
-    async def user_message(self, sid: str, text: str) -> None:
+    async def user_message(self, sid: str, text: str) -> int | None:
         state = self.state(sid)
         if state.goal and state.goal.native_pending and state.goal.status != "active":
             await self._clear_saved_native(sid)
             state = self.state(sid)
         active = state.goal is not None and state.goal.status == "active"
         if self.service.is_running(sid) and not active:
-            return
+            return None
         if active:
             await self.pause(sid, "User is steering the task")
             state = self.state(sid)
@@ -474,6 +502,31 @@ class ChatControls:
         state.last_request = text
         state.last_status = "running"
         self.store.save(state)
+        return state.revision
+
+    async def message_rejected(self, sid: str, text: str, revision: int) -> None:
+        """Close a control status when validation rejects a message before its turn.
+
+        A later control write owns a newer revision and must not be rolled back.
+        Keep an active goal for a later explicit continuation, but pause it
+        because no runner was admitted for this message.
+        """
+        state = self.state(sid)
+        if (
+            state.revision != revision
+            or state.last_request != text
+            or state.last_status != "running"
+            or self.service.is_running(sid)
+        ):
+            return
+        if state.goal and state.goal.status == "active":
+            state.goal.status = "paused"
+            state.goal.reason = "Message was not started"
+            state.goal.updated_ms = int(time.time() * 1000)
+            state.last_status = "interrupted"
+        else:
+            state.last_status = "failed"
+        await self.publish(state)
 
     async def turn_completed(
         self, sid: str, turn_id: str, text: str, direct_user: bool, read_only: bool

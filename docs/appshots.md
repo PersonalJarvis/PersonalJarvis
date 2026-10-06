@@ -398,12 +398,12 @@ original any-order behaviour.
 
 | | Windows | macOS | Linux/X11 | Wayland / headless |
 |---|---|---|---|---|
-| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
+| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant; a silent check (never a prompt) reports the shortcut unavailable and names the grant when it is missing | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
 | Other shortcuts (incl. the area shortcut) | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
 | Area picker and its marking toolbar | PySide6 overlay; a global Esc also cancels until an area is chosen, because Windows may not hand it keyboard focus until the first click | PySide6 overlay | PySide6 overlay | Unavailable, reason shown on the page; the window appshot still works |
 | Burning the markings into the appshot | Pillow, in the main process (`jarvis/appshot/markup.py`) | same | same | same (no display needed) |
 | Flash + thumbnail | PySide6 overlay, excluded from capture | PySide6 overlay | PySide6 overlay | No overlay; the appshot is still taken where capture works |
-| Capture | Screen Context engine | Needs Screen Recording | X11 | Honest refusal |
+| Capture | Screen Context engine | Needs Screen Recording; macOS asks for it at the first appshot you take | X11 | Honest refusal |
 
 Only the instance that owns ambient duties (the default app, not the dev
 instance) arms the shortcuts.

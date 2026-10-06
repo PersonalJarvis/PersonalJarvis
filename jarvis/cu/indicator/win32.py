@@ -219,7 +219,7 @@ def restore_system_cursor(*, only_if_marked: bool = False) -> bool:
     try:
         marker = _cursor_marker()
         marked = marker.exists()
-    except OSError:
+    except OSError:  # An unreadable ownership marker must not authorize modifying another window.
         marked = False
     if only_if_marked and not marked:
         return False

@@ -117,16 +117,7 @@ class FastBootstrap:
 
     @property
     def app(self) -> Any:
-        """The SECURED bootstrap entry, for tests and external embedders.
-
-        NOT what :meth:`serve` binds. Production serves :meth:`_asgi` directly
-        (see the comment in :meth:`_start_server`): the warming surface is
-        deliberately credential-free — static shell, health, onboarding
-        fastpath, accept-then-close 1013 websockets — and every held request
-        delegates to the real app, which applies its own SurfaceSecurity.
-        This wrapped variant adds the boundary in front of the SAME warming
-        surface for callers that embed the bootstrap somewhere less trusted.
-        """
+        """The shared secured entry for production, tests and embedders."""
         return self._entry_app
 
     def _onboarding_fastpath_allowed(self, scope: dict) -> bool:
@@ -506,17 +497,13 @@ class FastBootstrap:
         # it as ``app(scope)`` and crash. A module-level-style closure is
         # correctly detected as ASGI3.
         #
-        # DELIBERATELY ``_asgi`` and not the secured ``self.app``: the warming
-        # surface must stay credential-free. Gating it on the session cookie
-        # would race the desktop token injection at every boot (AuthGate would
-        # 401 before pywebview delivers the token) and would go dark for
-        # WebKit websockets entirely (BUG-065). Everything held during warm-up
-        # is delegated to the real app afterwards, which enforces its own
-        # SurfaceSecurity — so nothing protected is ever served from here.
+        # Use the same boundary as embedders and tests. Public shell/health
+        # reads and warming websocket 1013 responses remain credential-free;
+        # setup mutations must pass Host, Origin and write authorization.
         _self = self
 
         async def _asgi3(scope: dict, receive: Any, send: Any) -> None:
-            await _self._asgi(scope, receive, send)
+            await _self.app(scope, receive, send)
 
         self._server = uvicorn.Server(
             uvicorn.Config(

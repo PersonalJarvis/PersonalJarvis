@@ -116,6 +116,50 @@ def _agentic_ide_history_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _agent_trust_configs_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep the folder-trust pre-seed out of the developer's real CLI configs.
+
+    Opening a workspace marks its folder as trusted in each coding CLI's own
+    config (``~/.claude.json``, ``$CODEX_HOME/config.toml``, ...). The
+    Agentic-IDE suite already stubbed that out, but the brain and web suites
+    open workspaces too, and every run added its throwaway ``tmp_path`` folders
+    to the real files: one Codex config grew to 1,300+ dead project tables
+    (220 KB). The trust write re-parses that file with a formatting-preserving
+    parser before every open, so each test that opened a workspace then spent
+    seconds in it and a whole test file ran into the timeout.
+
+    Root conftest for the same reason as the history redirect above: the
+    guarantee must not depend on which suite remembered it. The redirect sits
+    on the path resolver, not on ``ensure_trusted`` itself, so modules that
+    imported the function by name are covered and ``test_trust.py`` still
+    exercises the real writer against its own temporary home.
+    """
+    from jarvis.workspace import trust
+
+    fake_home = tmp_path_factory.mktemp("agent-trust-home")
+    base = tmp_path_factory.getbasetemp().resolve()
+    real_config_path = trust._config_path  # noqa: SLF001
+    real_extra_configs = trust._extra_configs  # noqa: SLF001
+
+    def _config_path(spec, home, *, test_mode):  # noqa: ANN001, ANN202
+        if test_mode:
+            return real_config_path(spec, home, test_mode=True)
+        return real_config_path(spec, fake_home, test_mode=True)
+
+    def _extra_configs(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        # An added account's directory is only seeded when a test created it.
+        return [
+            path
+            for path in real_extra_configs(*args, **kwargs)
+            if Path(path).resolve().is_relative_to(base)
+        ]
+
+    monkeypatch.setattr(trust, "_config_path", _config_path)
+    monkeypatch.setattr(trust, "_extra_configs", _extra_configs)
+    yield fake_home
+
+
+@pytest.fixture(autouse=True)
 def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     """Keep every suite away from the developer's real macOS shell databases.
 
@@ -146,6 +190,16 @@ def _macos_shell_registration_in_tmp(tmp_path_factory, monkeypatch):  # noqa: AN
     monkeypatch.setattr(macos_dock, "_DEFAULTS", str(agents / "no-defaults"))
     monkeypatch.setattr(macos_dock, "_KILLALL", str(agents / "no-killall"))
     monkeypatch.setattr(macos_dock, "_marker_path", lambda: agents / "macos-dock-pinned")
+    # The permission port keeps no state file any more; the one place that still
+    # names the two files an earlier build left behind is the one-time cleanup on
+    # the darwin install path, and a suite that reaches it must not delete the
+    # developer's real copies.
+    import jarvis.platform.permissions as permissions
+
+    monkeypatch.setattr(permissions, "_leftover_state_dir", lambda: agents)
+    # The rebuild fingerprint is written into the data directory whenever a darwin
+    # bundle is (re)built; a suite that does so must not skew a real launch's decision.
+    monkeypatch.setattr(mab, "_rebuild_marker_path", lambda: agents / "macos-bundle-rebuild.json")
     yield agents
 
 
@@ -291,6 +345,30 @@ def _reset_entry_point_cache():
     invalidate()
     yield
     invalidate()
+
+
+@pytest.fixture(autouse=True)
+def _reset_permission_service():
+    """Start and end every test with a cold permission service.
+
+    ``jarvis.platform.permission_service`` keeps open episodes, listeners and a
+    bus handle for the life of the process. That is right in production and wrong
+    across tests: an episode one test opened would answer the next test's
+    ``ensure()`` with ``asked=False``, and a listener would outlive the loop it
+    was registered on.
+
+    The module is looked up in ``sys.modules`` and never imported here: a test
+    that never touched the service must not pay for it (or load it on a base
+    install), and a module that is not loaded has nothing to reset.
+    """
+    module = sys.modules.get("jarvis.platform.permission_service")
+    if module is not None:
+        module._reset_for_tests()
+    yield
+    # Re-read: the test itself may have been the first to import the module.
+    module = sys.modules.get("jarvis.platform.permission_service")
+    if module is not None:
+        module._reset_for_tests()
 
 
 @pytest_asyncio.fixture

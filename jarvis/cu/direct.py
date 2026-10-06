@@ -1,6 +1,6 @@
 """Direct computer control: the reasoning model owns the perceive-act-verify loop.
 
-ADR-0038. A continuous voice session (GPT-Live with an API key or a ChatGPT
+ADR-0039. A continuous voice session (GPT-Live with an API key or a ChatGPT
 subscription, Gemini Live, the local engine) no longer hands screen work to a
 second "Tool Model" that runs its own mission. The session's own reasoning
 model calls the ``computer`` tool step by step: every call executes a short
@@ -316,25 +316,20 @@ class Probes:
 
 
 def _macos_missing(permission_ids: tuple[str, ...]) -> list[tuple[str, str]]:
+    from jarvis.platform.permission_service import get_permission_service  # noqa: PLC0415
     from jarvis.platform.permissions import (  # noqa: PLC0415
         _LABELS,
         PermissionId,
-        PermissionState,
-        get_system_permission_port,
     )
 
-    port = get_system_permission_port()
+    service = get_permission_service()
     missing: list[tuple[str, str]] = []
     for raw in permission_ids:
         permission = PermissionId(raw)
-        if port.runtime_access_granted(permission):
+        result = service.ensure(permission, feature="computer_use", wait_s=0.0)
+        if result.granted:
             continue
-        state = port.state(permission)
-        detail = (
-            state.value
-            if state is not PermissionState.GRANTED
-            else "granted to a different app identity; restart Personal Jarvis"
-        )
+        detail = result.agent_detail or result.state.value
         missing.append((_LABELS.get(permission, raw), detail))
     return missing
 
@@ -396,8 +391,9 @@ def readiness(
             return Blocker(
                 "permission_required",
                 "macOS has not granted Personal Jarvis these permissions: "
-                f"{labels}. Open Personal Jarvis Settings > Permissions, or System Settings "
-                "> Privacy & Security, allow Personal Jarvis there, then try again.",
+                f"{labels}. The user can answer the macOS permission prompt or use System "
+                "Settings > Privacy & Security, then try again. Never answer a system "
+                "permission dialog for the user.",
                 tuple(label for label, _ in missing),
             )
         if need_typing and probes.secure_input() is True:
@@ -537,7 +533,7 @@ class DirectComputer:
         """Execute one call and answer with a fresh screenshot (``_image``)."""
         try:
             steps = parse_steps(args)
-        except StepError as exc:
+        except StepError as exc:  # Return the validation error to the requesting model without executing steps.
             return {"success": False, "executed": [], "retryable": True, "error": str(exc)}
         control = self._control(owner, revision)
         try:
@@ -716,7 +712,7 @@ class DirectComputer:
         async def _idle() -> None:
             try:
                 await self._sleep(self._idle_release_s)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # Cancellation is normal when a new call takes ownership of the idle timer.
                 return
             if control.lock.locked():
                 return  # a call is running; its own finally re-arms the timer

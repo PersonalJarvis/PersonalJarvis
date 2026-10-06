@@ -65,8 +65,8 @@ def offer_instead_of_action(request: str, response: str) -> bool:
         return False
     answer = response.strip().lstrip("* ")
     if re.match(
-        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar)\b", answer, re.I  # i18n-allow
-    ):
+        r"(?:I can confirm|Ich kann best[aä]tigen|Puedo confirmar)\b", answer, re.I  # i18n-allow: detect localized confirmation replies
+    ):  # i18n-allow
         return False
     blocking_question = (
         len(answer) <= 400

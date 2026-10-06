@@ -19,7 +19,7 @@ from jarvis.marketplace.auth.oauth_pkce_loopback import (
 )
 from jarvis.marketplace.token_store import Tokens
 
-_ACCESS = "xoxe.xoxp-1-user-access"
+_ACCESS = "xoxe.xoxp-1-user"
 _ROTATED = "xoxe-1-rotated"
 _FIRST = "xoxe-1-first"
 

@@ -10,7 +10,9 @@ License, Version 2.0.
 
 Bundled third-party components keep their own licenses and notices - see
 docs/licensing.md and the license files shipped beside them, for example
-jarvis/assets/vad/LICENSE for the Silero VAD model.
+jarvis/assets/vad/LICENSE for the Silero VAD model, and
+third_party/hermes-agent/LICENSE for portions adapted from
+NousResearch/hermes-agent (MIT, Copyright (c) 2025 Nous Research).
 
 The Agentic IDE thread work log (jarvis/ui/web/frontend/src/components/agentic/threads/
 threadWork.ts, ThreadTimeline.tsx and the live-tool-shine rule in src/index.css)

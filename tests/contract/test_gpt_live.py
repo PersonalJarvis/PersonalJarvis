@@ -547,7 +547,7 @@ def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
     assert not {"click", "computer"} & {d.name for d in gateway.voice_catalog()}
     setting.enabled = True
     names = {d.name for d in gateway.voice_catalog()}
-    # ADR-0038: the live model operates the screen with ``computer``; raw
+    # ADR-0039: the live model operates the screen with ``computer``; raw
     # screen-unit primitives are not offered beside it.
     assert "computer" in names
     assert "click" not in names

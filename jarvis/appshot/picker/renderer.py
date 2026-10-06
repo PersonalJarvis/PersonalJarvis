@@ -53,7 +53,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from jarvis.appshot import picker as wire
 from jarvis.appshot.picker import annotate
 from jarvis.appshot.picker import markup_model as mm
-from jarvis.appshot.region import match_monitor, selection_fractions, snap_rects_on_screen
+from jarvis.appshot.region import grab_preview, match_monitor, selection_fractions, snap_rects_on_screen
 
 #: A light veil before the drag (the picker is armed). While dragging the
 #: veil lifts and the selection itself takes a neutral grey tint instead, so
@@ -1110,12 +1110,7 @@ class Picker(QObject):
 
     @staticmethod
     def _grab(screen) -> QPixmap | None:
-        try:
-            pixmap = screen.grabWindow(0)
-        except Exception:  # noqa: BLE001 - no frozen frame: fall back to a live dim layer
-            sys.stderr.write("appshot-picker: screen grab failed; using a live overlay\n")
-            return None
-        return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
+        return grab_preview(screen)
 
     def set_layout(self, monitors: list[dict], windows: list[list[int]]) -> None:
         for win in self._windows:

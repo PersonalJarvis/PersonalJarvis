@@ -212,6 +212,7 @@ async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, 
     cfg = getattr(brain, "_config", None)
     tools: dict[str, Tool] | None = None
     extra = ""
+    coding_tool: Tool | None = None
     if session.surface == "jarvis":
         from jarvis.society.surface import coding_tool_for_session
 
@@ -228,6 +229,10 @@ async def kit_payload(session: AgentChatSession, brain: Any) -> tuple[dict[str, 
         except Exception as exc:  # noqa: BLE001 - the turn runs without the kit's hands
             log.warning("surface %s: kit tools not built: %s", session.surface, exc, exc_info=True)
             tools = {}
+        if coding_tool is not None:
+            # The kit's own hands replace the folder set; the granted
+            # coding-session control must survive that replacement.
+            tools = {**(tools or {}), coding_tool.name: coding_tool}
     elif kit.tools is not None:
         try:
             tools = kit.tools(cfg, brain)

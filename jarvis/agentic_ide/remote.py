@@ -152,6 +152,7 @@ def git_toplevel(folder: Path) -> Path | None:
     try:
         return Path(_git(folder, "rev-parse", "--show-toplevel"))
     except (MoveError, OSError):
+        # Not a git checkout (or git missing): None is the documented answer.
         return None
 
 
@@ -159,6 +160,7 @@ def _head(top: Path) -> str | None:
     try:
         return _git(top, "rev-parse", "-q", "--verify", "HEAD^{commit}")
     except MoveError:
+        # An unborn repo has no HEAD yet; None is the documented answer.
         return None
 
 
@@ -166,6 +168,7 @@ def _branch(top: Path) -> str | None:
     try:
         name = _git(top, "symbolic-ref", "-q", "--short", "HEAD")
     except MoveError:
+        # Detached HEAD has no branch name; None is the documented answer.
         return None
     return name or None
 
@@ -230,7 +233,7 @@ def _stage_working_tree(top: Path, head: str | None, index: Path) -> tuple[str, 
         try:
             if (top / path).stat().st_size > MAX_FILE_BYTES:
                 held.append(path)
-        except OSError:
+        except OSError:  # vanished since git listed it: nothing to send or hold
             continue
     if held:
         _git_bytes(
@@ -437,6 +440,7 @@ async def push_code(pool: SshPtyPool, local_folder: Path) -> Placement:
                 await asyncio.to_thread(_git, top, "cat-file", "-e", f"{sha}^{{commit}}")
                 present.append(f"^{sha}")
             except MoveError:
+                # The target lacks this commit, so it cannot serve as a bundle base.
                 continue
         try:
             await asyncio.to_thread(_git, top, "bundle", "create", str(bundle), ref, *present)
@@ -473,7 +477,7 @@ def _tar_plan(folder: Path) -> tuple[int, list[str]]:
             relative = path.relative_to(folder).as_posix()
             try:
                 size = path.stat().st_size
-            except OSError:
+            except OSError:  # vanished or unreadable mid-walk: skip that one file
                 continue
             if is_secret_name(name) or size > MAX_FILE_BYTES:
                 held.append(relative)
@@ -560,7 +564,7 @@ def _free_branch(top: Path, prefix: str) -> str:
     while True:
         try:
             _git(top, "rev-parse", "-q", "--verify", f"refs/heads/{candidate}")
-        except MoveError:
+        except MoveError:  # no such branch: the answer this probe looks for
             return candidate
         counter += 1
         candidate = f"{base}-{counter}"
@@ -637,6 +641,7 @@ async def pull_code(
         try:
             await asyncio.to_thread(_git, top, "apply", "--whitespace=nowarn", stdin=patch)
         except MoveError as exc:
+            # The failure is returned to the caller, which shows it to the user.
             return Return(branch=branch, applied=False, message=f"{exc} The work is on {branch}.")
     return Return(
         branch=branch,

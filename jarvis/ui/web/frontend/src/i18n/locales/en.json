@@ -1,4 +1,27 @@
 {
+  "apikeys_realtime": {
+    "aria": "Realtime voice",
+    "loading": "Loading voice providers…",
+    "state_ready": "Ready for your next call",
+    "state_call": "Call in progress",
+    "state_connecting": "Connecting…",
+    "state_backup": "On the backup voice path",
+    "state_off": "Realtime is off",
+    "state_none": "No voice provider yet",
+    "none_hint": "Pick a provider below and add its key.",
+    "off_hint": "Your voice still runs on the retired classic engine. Turn Realtime on to talk through the provider below.",
+    "off_hint_unavailable": "Your voice still runs on the retired classic engine. Set up a provider below, then turn Realtime on.",
+    "turn_on": "Turn on Realtime",
+    "providers_title": "Provider",
+    "providers_desc": "Who powers the live conversation. A provider with a saved key takes over with one click.",
+    "active": "Active",
+    "use_provider": "Use {0}",
+    "settings_desc_live": "Choose an OpenAI key or a ChatGPT subscription for voice and thinking.",
+    "model_voice": "Model and voice",
+    "model_voice_hint": "Applies to your next call.",
+    "test_label": "Connection test",
+    "test_hint": "Sends one short request to check that the key works."
+  },
   "live": {
     "subscription_install": "Set up ChatGPT sign-in",
     "subscription_installing": "Preparing ChatGPT sign-in…",
@@ -66,29 +89,6 @@
     "custom_model": "Custom thinking-model ID",
     "ready": "Saved & active",
     "save_changes": "Save changes"
-  },
-  "apikeys_realtime": {
-    "aria": "Realtime voice",
-    "loading": "Loading voice providers…",
-    "state_ready": "Ready for your next call",
-    "state_call": "Call in progress",
-    "state_connecting": "Connecting…",
-    "state_backup": "On the backup voice path",
-    "state_off": "Realtime is off",
-    "state_none": "No voice provider yet",
-    "none_hint": "Pick a provider below and add its key.",
-    "off_hint": "Your voice still runs on the retired classic engine. Turn Realtime on to talk through the provider below.",
-    "off_hint_unavailable": "Your voice still runs on the retired classic engine. Set up a provider below, then turn Realtime on.",
-    "turn_on": "Turn on Realtime",
-    "providers_title": "Provider",
-    "providers_desc": "Who powers the live conversation. A provider with a saved key takes over with one click.",
-    "active": "Active",
-    "use_provider": "Use {0}",
-    "settings_desc_live": "Choose an OpenAI key or a ChatGPT subscription for voice and thinking.",
-    "model_voice": "Model and voice",
-    "model_voice_hint": "Applies to your next call.",
-    "test_label": "Connection test",
-    "test_hint": "Sends one short request to check that the key works."
   },
   "input_isolation": {
     "title": "Dictation and typing tools can't reach this window",
@@ -214,9 +214,7 @@
     "group_system": "System",
     "agent_instructions": "{name}",
     "appshots": "Appshots",
-    "shortcuts": "Keyboard shortcuts",
     "jarvisx": "Jarvis X",
-    "pets": "My Pets",
     "jarvis_actions": "Jarvis actions",
     "marketplace": "Marketplace",
     "agentic_ide": "Agentic IDE",
@@ -224,7 +222,9 @@
     "voice": "{name} Voice",
     "voice_shortcuts": "Shortcuts",
     "voice_language": "Language",
-    "voice_api_keys": "API Keys"
+    "voice_api_keys": "API Keys",
+    "shortcuts": "Keyboard shortcuts",
+    "pets": "My Pets"
   },
   "assistant_view": {
     "header_named": "Your assistant in {0}, woken by “{1}”.",
@@ -669,10 +669,8 @@
     "recent": "Recent",
     "pin_chat": "Pin chat",
     "unpin_chat": "Unpin chat",
-
     "jarvis_tools": "Jarvis Tools",
     "more": "More",
-
     "instance_dev_hint": "Dev instance — a second, freely restartable copy of the app with its own data, ports and icon. The regular app keeps running beside it.",
     "surface_voice": "Voice",
     "surface_chat": "Chat",
@@ -712,10 +710,12 @@
     "realtime_microphone_unavailable": "This browser cannot access a microphone. Check browser support and device settings.",
     "realtime_audio_worklet_unavailable": "This browser does not support the required audio processor. Update the browser.",
     "realtime_microphone_denied": "Microphone access was denied. Allow it in the browser's site settings, then retry.",
+    "realtime_microphone_denied_desktop": "Microphone access was denied. Allow it in your computer's system settings, then retry.",
     "realtime_browser_tts_unavailable": "This browser has no usable system voice. The answer is still available as text; connect a TTS provider for audio.",
     "realtime_pipeline_fallback": "Classic pipeline fallback",
     "realtime_unavailable": "Connect or configure a Realtime provider",
     "realtime_error": "Couldn’t start voice. Test the active Realtime provider under API Keys, then retry.",
+    "browser_voice_error": "Couldn’t start voice. Check speech-to-text, the Brain and text-to-speech under API Keys, then retry.",
     "realtime_provider_fallback": "{0} became unavailable, so the call moved to another provider — billing may differ. {1}",
     "realtime_provider_fallback_short": "The call moved off {0} to another provider.",
     "realtime_provider_warning": "The realtime provider reported a recoverable problem; the call continues.",
@@ -1311,6 +1311,8 @@
     "add_upload": "Upload your own plugin",
     "add_community": "From the community marketplace",
     "add_marketplace": "Open the Marketplace",
+    "preview_badge": "Preview",
+    "preview_tooltip": "Not yet tested end to end. Signing in may still need extra steps.",
     "filter_label": "Show",
     "filter_recommended": "Recommended",
     "added": "Added",
@@ -2628,87 +2630,62 @@
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
   },
   "permissions": {
-    "group_title": "Privacy permissions",
-    "title": "macOS permissions",
-    "description": "Grant only the system access needed for voice, Computer-Use, global shortcuts, and window control. Jarvis never edits the macOS privacy database.",
-    "loading": "Checking system permissions…",
-    "load_failed": "Could not read the current permission status.",
-    "refresh": "Check again",
-    "not_required": "No extra desktop privacy permissions are required on this operating system.",
-    "identity_warning": "Launch Personal Jarvis from its app bundle before granting access. macOS attaches permissions to the exact app identity.",
-    "restart_required": "Restart Personal Jarvis before using the newly granted access.",
-    "restart_now": "Restart now",
-    "restarting": "Restarting…",
     "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
-    "request": "Allow",
-    "open_settings": "Open Settings",
-    "status": {
-      "granted": "Allowed",
-      "not_determined": "Not requested",
-      "denied": "Denied",
-      "restricted": "Restricted",
-      "not_granted": "Not allowed",
-      "unavailable": "Unavailable",
-      "not_required": "Not required",
-      "restart_pending": "Restart pending"
-    },
-    "items": {
-      "microphone": {
-        "title": "Microphone",
-        "description": "Required for wake-word and local voice input."
+    "toast": {
+      "microphone": "Personal Jarvis needs microphone access to hear you.",
+      "screen_recording": "Personal Jarvis needs screen recording access to see your screen.",
+      "accessibility": "Personal Jarvis needs accessibility access to control other apps for you.",
+      "input_monitoring": "Personal Jarvis needs input monitoring access so your shortcuts work in other apps.",
+      "automation": "Personal Jarvis needs your permission to control another app.",
+      "generic": "Personal Jarvis needs another permission to do that.",
+      "restricted": "Your Mac does not allow Personal Jarvis to use {what}. Only an administrator can change that.",
+      "restart": "Access to {what} is on, but it only works after Personal Jarvis restarts.",
+      "outside": "Personal Jarvis needs access to {what}; as it is not an installed app, macOS gives that access to the app that started it.",
+      "wake_word": "The wake word cannot listen: microphone access is off for Personal Jarvis.",
+      "action_failed": "That did not work. Please open System Settings yourself.",
+      "name": {
+        "microphone": "the microphone",
+        "screen_recording": "screen recording",
+        "accessibility": "accessibility",
+        "input_monitoring": "input monitoring",
+        "automation": "automation",
+        "generic": "this feature"
       },
-      "screen_recording": {
-        "title": "Screen Recording",
-        "description": "Required for Computer-Use to see every connected display."
-      },
-      "accessibility": {
-        "title": "Accessibility",
-        "description": "Required for reliable clicks, typing, focus, and window control."
-      },
-      "input_monitoring": {
-        "title": "Input Monitoring",
-        "description": "Required for global keyboard shortcuts."
-      },
-      "event_posting": {
-        "title": "Input control",
-        "description": "Required for Computer-Use to send mouse and keyboard events."
-      },
-      "automation": {
-        "title": "Automation (Music & Spotify)",
-        "description": "Lets Jarvis turn Music and Spotify down while you dictate and back up afterwards. Asked once per player — a closed player is opened briefly in the background for the dialog."
-      },
-      "credential_store": {
-        "title": "Keychain (API keys)",
-        "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
+      "action": {
+        "open_settings": "Open System Settings",
+        "ask_now": "Ask macOS now",
+        "restart": "Quit and reopen"
       }
     },
-    "banner": {
-      "title": "Action needed: macOS permissions are missing",
-      "impact": "Not working right now: {0}",
-      "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
-      "collapse": "Hide details",
-      "expand": "Show details"
-    },
-    "features": {
-      "voice": "Voice & wake word",
-      "computer_use": "Computer-Use",
-      "global_hotkeys": "Global shortcuts",
-      "window_control": "Window control",
-      "audio_ducking": "Music ducking while dictating",
-      "api_keys": "Secure API-key storage"
-    },
-    "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
-    "setup_all": "Set up everything",
-    "setup_all_hint": "One click walks you through every remaining permission and applies them at the end.",
-    "setup_running": "Step {0} of {1}: {2}",
-    "setup_wait_prompt": "Answer the macOS dialog — this continues on its own.",
-    "setup_wait_settings": "Turn on Personal Jarvis in the System Settings pane that just opened, then come back — this continues on its own.",
-    "setup_cancel": "Stop",
-    "setup_restarting": "All set — Personal Jarvis restarts once to apply the new access.",
-    "setup_timeout": "Setup paused: a permission was not granted in time. Use “Set up everything” again whenever you like.",
-    "ask_again": "Ask again",
-    "stale_grant_hint": "macOS will not ask for this access again. If System Settings already shows it as enabled, that record belongs to an older version of the app — tap “Ask again” and allow access once more.",
-    "identity_reset": "Since the app was last rebuilt, macOS treats Personal Jarvis as a new app and discarded every access you had granted. Please allow them once more — they will stick from then on."
+    "group_title": null,
+    "title": null,
+    "description": null,
+    "loading": null,
+    "load_failed": null,
+    "refresh": null,
+    "not_required": null,
+    "identity_warning": null,
+    "restart_required": null,
+    "restart_now": null,
+    "restarting": null,
+    "request": null,
+    "open_settings": null,
+    "status": null,
+    "items": null,
+    "banner": null,
+    "features": null,
+    "restart_deferred": null,
+    "setup_all": null,
+    "setup_all_hint": null,
+    "setup_running": null,
+    "setup_wait_prompt": null,
+    "setup_wait_settings": null,
+    "setup_cancel": null,
+    "setup_restarting": null,
+    "setup_timeout": null,
+    "ask_again": null,
+    "stale_grant_hint": null,
+    "identity_reset": null
   },
   "settings_hub": {
     "subtitle": "Everything about you, your keys and this app — in one place.",
@@ -2777,7 +2754,6 @@
     "nav": {
       "languages": "Languages",
       "app": "App",
-      "permissions": "Privacy permissions",
       "screen_context": "Screen context",
       "realtime_voice": "Realtime voice",
       "system_prompt": "System prompt",
@@ -5214,7 +5190,7 @@
     "loading": "Loading the marketplace index…",
     "refresh": "Fetch the index again",
     "open_web": "Storefront",
-    "search_placeholder": "Search plugins and skills…",
+    "search_placeholder": "Search plugins, skills and agents…",
     "subtitle_count": "{count} published entries",
     "subtitle_revision": "index {revision}",
     "filter_all": "All",
@@ -5232,7 +5208,7 @@
     "empty": "Nothing is published in this category yet.",
     "empty_search": "Nothing matches “{query}”.",
     "empty_clear": "Clear the search",
-    "publish_hint": "Built something worth sharing? Publishing is a pull request against the open registry.",
+    "publish_hint": "Built something worth sharing? Publish it from the app under your GitHub name — or share an agent from its card.",
     "publish_cta": "Publish yours",
     "close": "Close",
     "kind_plugin": "Plugin",
@@ -5256,7 +5232,19 @@
     "portable_skill": "Portable skill — also runs in",
     "portable_any": "other agents that read SKILL.md",
     "seed_conflict": "A plugin of this name already ships with the app. Installing this one replaces it.",
-    "landed_open": "Show me"
+    "landed_open": "Show me",
+    "filter_agents": "Agents",
+    "shelf_agents": "Agents",
+    "shelf_agents_hint": "Ready-made teammates with a job and their own instructions",
+    "kind_agent": "Agent",
+    "landed_agent": "It is on your team now and runs on your own model. Open Agents to talk to it.",
+    "agent_model": "Runs on your own model — nothing of the publisher's accounts or settings comes with it.",
+    "agent_focus": "Reaches first for",
+    "agent_asks": "Always asks before",
+    "agent_asks_default": "It asks you before it acts until you change that.",
+    "agent_instructions": "Its standing instructions",
+    "import_agent": "Import an agent file",
+    "import_failed": "That file could not be imported: {error}"
   },
   "costs_view": {
     "title": "Spend & Tokens",
@@ -5449,9 +5437,22 @@
   },
   "society": {
     "groups": {
-      "create": "New agent team", "edit": "Edit agent team", "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
-      "name": "Team name", "members": "Members", "cancel": "Cancel", "save": "Save team", "delete": "Ungroup", "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
-      "left_chat": "Left chat", "right_chat": "Right chat", "open": "Open", "open_individual": "Open {0}'s individual chat", "missing_member": "Select an available agent to view this chat.", "hold_to_group": "Hold to group", "release_to_group": "Release to group"
+      "create": "New agent team",
+      "edit": "Edit agent team",
+      "description": "Bundle agents in one sidebar entry. Each agent keeps its own conversation.",
+      "name": "Team name",
+      "members": "Members",
+      "cancel": "Cancel",
+      "save": "Save team",
+      "delete": "Ungroup",
+      "delete_confirm": "Ungroup these agents? Their individual chats will remain.",
+      "left_chat": "Left chat",
+      "right_chat": "Right chat",
+      "open": "Open",
+      "open_individual": "Open {0}'s individual chat",
+      "missing_member": "Select an available agent to view this chat.",
+      "hold_to_group": "Hold to group",
+      "release_to_group": "Release to group"
     },
     "chat": {
       "placeholder": "Message {0}",
@@ -5525,6 +5526,14 @@
       "proposal_kind_approval_rule": "Approval rules",
       "proposal_kind_focus": "Tools to reach for first",
       "proposal_kind_team": "Teammates",
+      "proposal_kind_identity": "Name and role",
+      "identity_now": "Now {0}",
+      "identity_undo": "Undo",
+      "identity_undone": "Back to {0}",
+      "assignment_from": "Task from {0}",
+      "message_waiting": "Waits until the current task is done",
+      "message_not_sent": "Not sent: {0}",
+      "context_rollover": "Fresh working context — memory and recent messages carried over",
       "allow_always": "Always allow",
       "history_chats": "Chats",
       "history_voice": "Voice",
@@ -5965,6 +5974,7 @@
     "unanswered": "Not answered — the turn ended."
   },
   "work_trace": {
+    "tool_failed": "A tool action failed",
     "question": "Waiting for your answer",
     "integration_used": "Used {service}",
     "activity_command": "Ran commands",
@@ -6023,6 +6033,8 @@
     "show_more": "Show more",
     "show_less": "Show less",
     "took": "Took {duration}",
+    "failed_count_one": "{count} failed",
+    "failed_count_other": "{count} failed",
     "act": {
       "command_one": "ran a command",
       "command_other": "ran commands",

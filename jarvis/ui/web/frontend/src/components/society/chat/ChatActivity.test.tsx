@@ -77,13 +77,14 @@ it("keeps live and interrupted conversation tools in the left lane", () => {
   expect(screen.getByTestId("work-trace").className).toMatch(/self-start/);
 });
 
-it("folds a failure with the work, its reason under its line once opened", () => {
+it("keeps a failed tool visible while folding the surrounding work", () => {
   const tool: ToolBlock = { kind: "tool", callId: "a", name: "read_file", input: { path: "report.csv" }, output: "Report contents", isError: false, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={2000} blocks={[
     tool,
     { ...tool, callId: "error", isError: true, output: "Upload failed" },
     { kind: "text", id: "reply", text: "I could not finish." },
   ]} />);
+  expect(screen.getByText("Upload failed")).toBeTruthy();
   expect(screen.getByText("I could not finish.")).toBeTruthy();
   expect(screen.queryByText(/: Upload failed/)).toBeNull();
   openWork();
@@ -97,16 +98,17 @@ it("folds a failure with the work, its reason under its line once opened", () =>
   expect(screen.getByText("Report contents")).toBeTruthy();
 });
 
-it("keeps a pending approval actionable in the conversation style", () => {
+it("keeps failures and pending approvals visible in the conversation style", () => {
   const base: ToolBlock = { kind: "tool", callId: "failure", name: "send_message", input: {}, output: "Delivery failed", isError: true, durationMs: 100, approval: null, startedMs: 0 };
   render(<WorkTrace conversation status="done" startedMs={0} durationMs={1000} blocks={[
     base,
     { ...base, callId: "approval", isError: false, output: null, approval: { approvalId: "ap", summary: "Send this message?", decision: null } },
   ]} onDecide={() => undefined} />);
-  // The failed call says why on its own line; the approval needs a tap.
-  expect(screen.getByText(/: Delivery failed/)).toBeTruthy();
+  expect(screen.getAllByText(/Delivery failed/).length).toBeGreaterThan(0);
   expect(screen.getByText("Send this message?")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+  // With no other work to fold, both items stay in place and need no toggle.
+  expect(screen.queryByTestId("conversation-work-fold")).toBeNull();
 });
 
 it("shows agent message direction and truthful delivery state without preview clutter", () => {

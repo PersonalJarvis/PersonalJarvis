@@ -267,6 +267,33 @@ def test_start_login_raises_when_binary_missing(monkeypatch: pytest.MonkeyPatch)
         svc.start_login()
 
 
+@pytest.mark.parametrize("owned_status", ["ready", "finished"])
+def test_guarded_login_handoff_accepts_owned_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    owned_status: str,
+) -> None:
+    """A completed login still holds its lock while awaiting parent release."""
+    guardian = codex_auth_module._GuardedCodexLoginProcess
+    statuses = iter(["waiting", owned_status])
+    monkeypatch.setattr(guardian, "_read_status", lambda _path: next(statuses))
+    released: list[bool] = []
+
+    class RunningGuardian:
+        def poll(self) -> None:
+            return None
+
+    release = tmp_path / "release"
+    guardian.establish_handoff(
+        RunningGuardian(),
+        tmp_path / "ack",
+        release,
+        lambda: released.append(True),
+    )
+    assert released == [True]
+    assert release.read_text(encoding="utf-8") == "acquire"
+
+
 def test_guarded_login_handoff_runs_real_guardian(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -388,6 +415,16 @@ def test_guarded_windows_login_closes_job_when_guardian_exits(
     def handoff(*_args: object, **_kwargs: object) -> None:
         events.append("handoff")
 
+    def hold_liveness(path):
+        import os
+
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        captured["liveness_fd"] = descriptor
+        return descriptor
+
+    # This fixture exercises the Windows job wrapper, not an OS lock. The
+    # inherited-file and real guardian tests cover native liveness separately.
+    monkeypatch.setattr(codex_mod, "_hold_parent_liveness_lock", hold_liveness)
     monkeypatch.setattr(codex_mod.sys, "platform", "win32")
     monkeypatch.setattr(codex_mod.subprocess, "Popen", spawn)
     monkeypatch.setattr(

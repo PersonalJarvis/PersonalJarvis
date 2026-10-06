@@ -23,6 +23,8 @@ import pytest
 
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline
 
+pytestmark = pytest.mark.usefixtures("granted_microphone")
+
 
 class _StubSTT:
     async def transcribe_pcm(self, pcm: bytes):  # pragma: no cover - never called
@@ -58,7 +60,7 @@ async def test_start_dictation_clears_stale_hangup() -> None:
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        except asyncio.CancelledError:  # noqa: S110 - this fixture just cancelled the task
             pass
 
     assert started is True
@@ -69,9 +71,9 @@ async def test_start_dictation_clears_stale_hangup() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_dictation_does_not_spawn_when_capture_gate_is_closed() -> None:
+async def test_start_dictation_does_not_spawn_when_the_microphone_is_refused() -> None:
     pipe = _make_idle_pipeline()
-    pipe._activation_gate = lambda: False
+    pipe._user_activation_gate = lambda: False
 
     assert pipe.start_dictation() is False
     assert pipe._dictation_task is None

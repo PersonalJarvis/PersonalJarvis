@@ -48,11 +48,12 @@ describe("the walk", () => {
     for (const id of ["chat", "voice", "agents", "ide", "plugins", "wake"]) expect(ids).toContain(id);
   });
 
-  it("has six to seven stops on Windows and Linux, one more on macOS", () => {
-    expect(walkStopsFor("win32").length).toBe(7);
-    expect(walkStopsFor("linux").length).toBe(7);
-    expect(walkStopsFor(null).map((s) => s.id)).not.toContain("permissions");
-    expect(walkStopsFor("darwin").map((s) => s.id)).toContain("permissions");
+  it("has seven stops on every OS and no permissions stop (permissions are asked just in time)", () => {
+    for (const platform of ["win32", "linux", "darwin", null]) {
+      const ids = walkStopsFor(platform).map((s) => s.id);
+      expect(ids.length).toBe(7);
+      expect(ids).not.toContain("permissions");
+    }
   });
 
   it("points only at anchors the app actually sets", () => {
@@ -87,5 +88,10 @@ describe("resumeStep", () => {
     expect(resumeStep(null)).toBe("name");
     expect(resumeStep("keys")).toBe("name");
     expect(resumeStep("welcome")).toBe("name");
+  });
+
+  it("restarts a stored legacy permissions step with the name", () => {
+    // An older build stored "permissions" (macOS only); that step no longer exists.
+    expect(resumeStep("permissions")).toBe("name");
   });
 });

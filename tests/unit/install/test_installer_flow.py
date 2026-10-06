@@ -37,6 +37,43 @@ def test_dry_run_prints_the_numbered_journey(monkeypatch, capsys) -> None:
     assert "Finish & launch" in out
 
 
+@pytest.mark.parametrize(
+    ("args", "auto_headless", "expected_browser"),
+    [
+        (["--headless"], False, False),
+        ([], True, False),
+        (["--with-desktop"], False, True),
+        (["--headless", "--with-desktop"], False, False),
+    ],
+)
+def test_browser_provisioning_respects_headless_profile(
+    monkeypatch, capsys, tmp_path, args, auto_headless, expected_browser
+) -> None:
+    """Headless installs must not launch Chromium or request system packages."""
+    commands: list[list[str]] = []
+    monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(installer, "is_headless_linux", lambda: auto_headless)
+    monkeypatch.setattr(installer, "is_update_run", lambda: False)
+    monkeypatch.setattr(installer, "write_managed_marker", lambda **kwargs: None)
+    for step in (
+        "step_preflight", "step_pip_install", "step_models", "step_cli_links",
+        "step_worker_cli", "step_summary",
+    ):
+        monkeypatch.setattr(installer, step, lambda **kwargs: None)
+    monkeypatch.setattr(installer, "step_desktop_integration", lambda **kwargs: True)
+    monkeypatch.setattr(installer, "step_ui_bundle_check", lambda: True)
+    monkeypatch.setattr(
+        installer, "run_noted", lambda command, **kwargs: commands.append(command)
+    )
+
+    assert installer.main([*args, "--no-launch"]) == 0
+    browser_commands = [
+        command for command in commands if "jarvis.society.browser.install" in command
+    ]
+    assert bool(browser_commands) is expected_browser
+    assert ("Agent browser skipped" in capsys.readouterr().out) is not expected_browser
+
+
 def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     """Design amendment 2026-07-11: Stage 1 may ask only when Python or Git
     is missing. The normal path and all of Stage 2 remain prompt-free."""
@@ -104,6 +141,28 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     out = capsys.readouterr().out
     assert ".[full]" not in out
     assert ".[desktop]" not in out
+
+
+@pytest.mark.parametrize("desktop", [True, False])
+def test_native_crypto_index_reaches_the_installer_profile(monkeypatch, desktop) -> None:
+    from scripts import native_crypto_index
+
+    options = native_crypto_index.pip_options("darwin", "x86_64")
+    monkeypatch.setattr(native_crypto_index, "pip_options", lambda: options)
+    commands = []
+
+    def capture(command, **_kwargs):
+        commands.append(command)
+        return 0
+
+    monkeypatch.setattr(installer, "run_quiet", capture)
+    monkeypatch.setattr(installer, "repair_distribution_metadata", lambda **_kwargs: True)
+    installer.step_pip_install(with_desktop=desktop, with_voice_local=False, dry_run=False)
+    profile = ".[full]" if desktop else "."
+    command = next(
+        command for command in commands if profile in command and "--no-deps" not in command
+    )
+    assert command[command.index("--find-links") + 1] == native_crypto_index.wheel_links_url()
 
 
 @pytest.mark.parametrize("update", [False, True])
@@ -179,7 +238,8 @@ def test_macos_fresh_install_ci_exercises_advertised_full_profile() -> None:
     workflow = (REPO / ".github" / "workflows" / "installer-smoke.yml").read_text(
         encoding="utf-8"
     )
-    assert 'if [ "${{ matrix.os }}" = "macos-latest" ]; then' in workflow
+    assert "MATRIX_OS: ${{ matrix.os }}" in workflow
+    assert 'if [ "$MATRIX_OS" = "macos-latest" ]; then' in workflow
     assert "installer.py --with-desktop --no-launch" in workflow
 
 

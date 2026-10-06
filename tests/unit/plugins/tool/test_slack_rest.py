@@ -356,7 +356,7 @@ async def test_revoked_token_does_not_try_refresh():
 
 @pytest.mark.asyncio
 async def test_provider_error_text_never_reaches_the_result():
-    leaked = "xoxp-LEAKED-value"
+    leaked = "xoxp-LEAKED"
 
     def handler(req):
         return _fail(leaked, detail=leaked)

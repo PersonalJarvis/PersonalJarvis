@@ -50,7 +50,7 @@ async def restart_browser(live: Any, agent: Any) -> None:
                         while not closing.done():
                             try:
                                 await asyncio.shield(closing)
-                            except asyncio.CancelledError:
+                            except asyncio.CancelledError:  # Remember cancellation while joining the shielded browser cleanup.
                                 caller = asyncio.current_task()
                                 if caller is not None and caller.cancelling():
                                     cancelled = True

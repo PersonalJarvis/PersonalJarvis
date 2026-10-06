@@ -96,6 +96,7 @@ REALTIME_WARM_BOOT_DELAY_S = 5.0
 # Both surfaces schedule onto ONE event loop in a desktop boot, so the task
 # name is what keeps that boot from warming the same transports twice.
 REALTIME_WARM_TASK_NAME = "realtime-transport-warm"
+_REGISTRY_BOOTSTRAP_STOP_TIMEOUT_S = 5.0
 
 
 def _is_backend_path(path: str) -> bool:
@@ -131,6 +132,28 @@ class MemoryFactBody(BaseModel):
     category: str = "general"
 
 
+def _is_backend_path(path: str) -> bool:
+    """Paths the SPA catch-all must never claim: the API and the sockets."""
+    return path == "/api" or path.startswith(("/api/", "/ws"))
+
+
+class _SpaFallbackRoute(APIRoute):
+    """The SPA catch-all, invisible to API and socket paths.
+
+    A plain ``GET /{full_path:path}`` partially matches EVERY path, so the
+    router answered an unknown ``POST /api/...`` with 405 and ``Allow: GET`` —
+    pointing a client at a GET that does not exist — and a bare ``GET /api``
+    with the SPA's HTML. Declining backend paths lets the router answer
+    honestly: 404 for a route that does not exist, 405 only for a real route
+    asked with the wrong method.
+    """
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope.get("type") == "http" and _is_backend_path(scope.get("path", "")):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
 
@@ -140,7 +163,10 @@ class WebServer:
     ) -> None:
         self._defer_feature_routes = defer_feature_routes
         self.cfg = cfg
-        self._browser_prepare_task: asyncio.Task[None] | None = None
+        # Deferred boot work belongs to this server instance. Explicit handles
+        # let stop() drain it before pytest/asyncio tears the event loop down.
+        self._anyio_pool_warm_task: asyncio.Task[None] | None = None
+        self._deferred_reload_task: asyncio.Task[None] | None = None
         self.bus = bus if bus is not None else get_default_bus()
         self._clients: dict[str, WebSocket] = {}
         self._client_send_locks: dict[str, asyncio.Lock] = {}
@@ -172,6 +198,8 @@ class WebServer:
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
+        self._cli_bootstrap_task: asyncio.Task[None] | None = None
+        self._plugin_bootstrap_task: asyncio.Task[None] | None = None
         # Marketplace OAuth refresh belongs to the shared WebServer lifecycle,
         # not to one launcher. The actual scheduler is created with call_soon
         # at the end of start(), after the serving/readiness path has returned;
@@ -454,6 +482,7 @@ class WebServer:
         from .antigravity_routes import router as antigravity_router
         from .app_actions_routes import router as app_actions_router
         from .appshot_routes import router as appshot_router
+        from .jarvisx_routes import router as jarvisx_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -631,7 +660,8 @@ class WebServer:
         app.state.telephony_manager = TelephonyManager()
         # Browser-microphone voice bridge (B2): /ws/audio — the headless/VPS
         # voice path via the browser's own mic/speaker, no sounddevice. Always
-        # mounted; gated by [browser_voice].enabled (default on) at connect time.
+        # mounted; checked at connect time: realtime mode always serves it,
+        # pipeline mode while [browser_voice].enabled is on (the default).
         from jarvis.browser_voice.route import router as browser_voice_router
 
         app.include_router(browser_voice_router)
@@ -699,6 +729,7 @@ class WebServer:
         # a button or a spoken request. Captures through Screen Context.
         app.include_router(app_actions_router)
         app.include_router(appshot_router)
+        app.include_router(jarvisx_router)
         # The mission deck's pictures: the last Screen-Context capture (one
         # frame, in memory, TTL) and Computer-Use frames by content hash.
         app.include_router(deck_router)
@@ -850,7 +881,9 @@ class WebServer:
                 return
             logger.info("anyio worker pool warmed: {} thread(s) resident", resident)
 
-        asyncio.create_task(_warm(), name="anyio-pool-warm")
+        self._anyio_pool_warm_task = asyncio.create_task(
+            _warm(), name="anyio-pool-warm"
+        )
 
     async def _voice_ready_watchdog(self, deadline_s: float = 45.0) -> None:
         """Release boot waiters after a failed warm-up without promising speech.
@@ -1145,9 +1178,6 @@ class WebServer:
             # browser can paint after the full FastAPI app has already taken
             # over, so the live app must accept the same POST as an idempotent
             # no-op instead of returning FastAPI's 405 Method Not Allowed.
-            from jarvis.society.browser.install import start_install
-            browser_data = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
-            start_install(browser_data)
             return Response(status_code=204)
 
         @app.get("/api/config")
@@ -2688,6 +2718,15 @@ class WebServer:
         callable (the fast-boot bootstrap in launcher.py serves a holding app on
         the port and delegates to ``self.app`` once this init chain completes).
         """
+        # Just-in-time permissions: the service publishes PermissionNeeded /
+        # PermissionResolved through this bus, from any thread, onto this loop.
+        # FIRST, so a consumer that asks while the rest of start() runs is heard.
+        # It stores two references and probes nothing (AP-26); the desktop app
+        # already did the same right after the ctor, before the speech task.
+        from jarvis.platform.permission_service import attach_bus as _attach_permission_bus
+
+        _attach_permission_bus(self.bus, asyncio.get_running_loop())
+
         await self.prepare_app()
         import uvicorn
 
@@ -2901,35 +2940,8 @@ class WebServer:
                     "DocRegistry watcher start failed — no hot-reload"
                 )
 
-        # Bootstrap the CLI registry asynchronously — probes all catalog CLIs
-        # and builds tool instances. ``asyncio.create_task`` runs the call as
-        # a background task so ``start()`` itself doesn't block.
-        if self._cli_registry is not None:
-
-            async def _bootstrap_clis() -> None:
-                try:
-                    await self._cli_registry.bootstrap()
-                except Exception as exc:  # noqa: BLE001
-                    logger.opt(exception=exc).warning(
-                        "CliToolRegistry bootstrap failed — CLIs view empty"
-                    )
-
-            asyncio.create_task(_bootstrap_clis(), name="cli-registry-bootstrap")
-
-        # Bootstrap the plugin registry asynchronously — opens an in-process
-        # MCPClient per connected plugin and bridges its tools into the
-        # live brain (BrainToolsChanged re-expands). Mirrors the CLI registry.
-        if self._plugin_registry is not None:
-
-            async def _bootstrap_plugins() -> None:
-                try:
-                    await self._plugin_registry.bootstrap()
-                except Exception as exc:  # noqa: BLE001
-                    logger.opt(exception=exc).warning(
-                        "PluginToolRegistry bootstrap failed — plugins worker-only"
-                    )
-
-            asyncio.create_task(_bootstrap_plugins(), name="plugin-registry-bootstrap")
+        # These owners must settle before shutdown closes their registries.
+        self._schedule_registry_bootstraps()
 
         # Board aggregator as a never-ending task. run_forever() does an
         # on-startup run first and then sleeps 6h (Plan §5-A Decision #2).
@@ -3039,18 +3051,9 @@ class WebServer:
         # transport for it.
         self._schedule_realtime_transport_warm()
         self._schedule_appshot_shortcut()
-        # Defer provisioning until the boot chain returns control to the server.
-        # Only the install is prepared here: a Chromium costs hundreds of MB,
-        # so an agent's browser launches when the agent first uses it or the
-        # person opens its view, never pre-warmed at boot.
-        async def prepare_browser() -> None:
-            from jarvis.society.browser import install
-            data_dir = Path(getattr(self.cfg.memory, "data_dir", None) or "data")
-            try:
-                install.start_install(data_dir)
-            except Exception:
-                logger.debug("Browser preparation deferred after failure", exc_info=True)
-        self._browser_prepare_task = asyncio.create_task(prepare_browser(), name="browser-prepare")
+        # Browser provisioning includes a Chromium probe and may need Linux
+        # system libraries. Leave it to explicit browser use/setup; boot and
+        # shell-paint acknowledgements must keep headless installations usable.
         # Existing Mars work recovers with zero clients. The deferred helper
         # performs its existence probe and runtime composition after boot yields.
         from .mars_routes import schedule_mars_resume
@@ -3939,6 +3942,48 @@ class WebServer:
         self.bus.subscribe(DelegationResultReady, self._forward_delegation_to_chat)
         return AgentChatService(store, assistant_name=_name, bus=lambda: self.bus)
 
+    def _schedule_registry_bootstraps(self) -> None:
+        """Start registry discovery after composition without delaying readiness."""
+        async def bootstrap(registry: Any, label: str) -> None:
+            try:
+                await registry.bootstrap()
+            except Exception as exc:  # noqa: BLE001 -- other registries remain usable
+                logger.opt(exception=exc).warning("{} registry bootstrap failed", label)
+
+        for registry, attribute, label in (
+            (self._cli_registry, "_cli_bootstrap_task", "cli"),
+            (self._plugin_registry, "_plugin_bootstrap_task", "plugin"),
+        ):
+            existing = getattr(self, attribute, None)
+            if registry is not None and (existing is None or existing.done()):
+                setattr(self, attribute, asyncio.create_task(
+                    bootstrap(registry, label), name=f"{label}-registry-bootstrap",
+                ))
+
+    async def _stop_registry_bootstraps(self) -> bool:
+        """Cancel both owners before awaiting either one's resource cleanup."""
+        owners = {
+            attribute: task
+            for attribute in ("_cli_bootstrap_task", "_plugin_bootstrap_task")
+            if (task := getattr(self, attribute, None)) is not None
+        }
+        for task in owners.values():
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        if not owners:
+            return True
+        done, pending = await asyncio.wait(
+            set(owners.values()), timeout=_REGISTRY_BOOTSTRAP_STOP_TIMEOUT_S,
+        )
+        for attribute, task in owners.items():
+            if task in done:
+                if not task.cancelled() and (error := task.exception()) is not None:
+                    logger.warning("Registry bootstrap stopped with {}", type(error).__name__)
+                setattr(self, attribute, None)
+        if pending:
+            logger.warning("{} registry bootstrap owner(s) still stopping", len(pending))
+        return not pending
+
     async def stop(self) -> None:
         from jarvis.core import runtime_refs
 
@@ -3965,10 +4010,17 @@ class WebServer:
             # Keep only the type: cleanup failures can contain private payloads.
             mars_shutdown_failure = type(exc).__name__
             logger.warning("Mars station cleanup incomplete ({})", mars_shutdown_failure)
-        if self._browser_prepare_task is not None:
-            self._browser_prepare_task.cancel()
-            await asyncio.gather(self._browser_prepare_task, return_exceptions=True)
-            self._browser_prepare_task = None
+        registry_bootstraps_stopped = await self._stop_registry_bootstraps()
+        # A short-lived server can stop before these delayed boot helpers run.
+        # Own and drain them here instead of leaving asyncio.run()/pytest to
+        # discover them during loop teardown. Stop the deferred registry reload
+        # before its registries are closed below so shutdown cannot race a scan.
+        for attr in ("_anyio_pool_warm_task", "_deferred_reload_task"):
+            task = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
         society = getattr(self.app.state, "society", None)
         society_shutdown_failure: str | None = None
         if society is not None:
@@ -4031,7 +4083,13 @@ class WebServer:
         # AsyncExitStack / subprocess) is closed cleanly. Without this, an
         # in-process restart (--no-lock parallel dev, test teardown) would leave
         # a stale shared handle and leaked MCP sessions.
-        if self._plugin_registry is not None:
+        # A timed-out bootstrap may still hold the registry lock while cleaning
+        # up. Keep both references for a later stop attempt; closing it now can
+        # block indefinitely on that same lock.
+        if (
+            self._plugin_registry is not None
+            and getattr(self, "_plugin_bootstrap_task", None) is None
+        ):
             try:
                 from jarvis.marketplace.plugin_shared import set_active_plugin_registry
 
@@ -4300,6 +4358,8 @@ class WebServer:
             raise RuntimeError(f"mars_station_shutdown_incomplete ({mars_shutdown_failure})")
         if society_shutdown_failure is not None:
             raise RuntimeError(f"society_runtime_shutdown_incomplete ({society_shutdown_failure})")
+        if not registry_bootstraps_stopped:
+            raise RuntimeError("registry_bootstrap_shutdown_incomplete")
 
     @property
     def running(self) -> bool:

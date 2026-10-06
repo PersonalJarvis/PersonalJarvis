@@ -37,7 +37,7 @@ from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
 from .delivery import IncomingMessage, incoming_context
-from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
+from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier, now_ms
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
@@ -80,6 +80,7 @@ class SocietyRuntimeClosed(RuntimeError):
 _LEAD_INCOMING_TYPES: Final[frozenset[MsgType]] = frozenset(
     {MsgType.SAY, MsgType.QUERY, MsgType.ANSWER, MsgType.PROPOSE}
 )
+_WATCH_EVENT_POLL_SECONDS: Final[float] = 2.0
 
 _current: SocietyRuntime | None = None
 
@@ -515,14 +516,57 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if await asyncio.to_thread(
+        window_key = ""
+        if completion.turn.direct_user:
+            # The person's turns are reviewed per window, not per answer.
+            windowed = await self._review_window(session, events)
+            if windowed is None:
+                return
+            events, window_key = windowed
+        queued = await asyncio.to_thread(
             self.conversations.queue_review,
             session.session_id,
             completion.turn.turn_id,
             events,
             direct_user=completion.turn.direct_user,
-        ):
+        )
+        if window_key:
+            # Cleared only once the review holds the window's evidence durably.
+            await self.store.set_meta(window_key, "")
+        if queued:
             self.background(self.recover_reviews())
+
+    async def _review_window(
+        self, session: Any, events: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], str] | None:
+        """Add a person's turn to its chat's review window (``review_cadence``).
+
+        Returns the whole window's events and its meta key when it is due for
+        review, else ``None``. Without a chat store to read the window back,
+        every turn is reviewed on its own, as before.
+        """
+        from .review_cadence import ReviewWindow, window_events
+
+        svc = self._get_chat()
+        store = getattr(svc, "store", None)
+        if store is None or not callable(getattr(store, "list_events", None)):
+            return events, ""
+        key = ReviewWindow.key(session.session_id)
+        window = ReviewWindow.parse(await self.store.get_meta(key, ""))
+        now = now_ms()
+        window.add_turn(events, now)
+        users = [
+            str((e.get("payload") or {}).get("text") or "")
+            for e in window_events(events)
+            if e.get("kind") == "user_message"
+        ]
+        if not window.due(users, now):
+            await self.store.set_meta(key, window.dump())
+            return None
+        history = await asyncio.to_thread(
+            store.list_events, session.session_id, after_seq=max(0, window.since_seq - 1)
+        )
+        return (window_events(history) or events), key
 
     async def _complete_message_reply(
         self, session: Any, completion: Any, events: list[dict[str, Any]]
@@ -744,16 +788,9 @@ class SocietyRuntime:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
         from .chat_binding import ensure_session, frame_assignment
 
-        sender = await self.roster.get(env.from_agent) if env.from_agent != "user" else None
-        # Work Jarvis or a teammate hands out runs in the target's own
-        # conversation with that sender, never in the person's chat with it.
-        session = ensure_session(
-            svc,
-            self._get_cfg(),
-            target,
-            counterpart=env.from_agent,
-            counterpart_name=sender.name if sender is not None else env.from_agent,
-        )
+        # Work Jarvis or a teammate hands out runs in the agent's one chat; the
+        # chat shows the framed assignment as a delegation card from its sender.
+        session = ensure_session(svc, self._get_cfg(), target)
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
@@ -809,46 +846,90 @@ class SocietyRuntime:
         error = ""
         tool_steps: list[str] = []
         used_browser = False
+        last_seq = 0
+        read_failures = 0
         quest_trace = env.trace_id.startswith("quest:")
         try:
             while True:
-                event = await queue.get()
-                kind = event.get("kind")
-                payload = event.get("payload") or {}
-                if payload.get("turn_id") not in (None, turn_id):
-                    continue
-                if kind == "assistant_text":
-                    if payload.get("media_only"):
-                        # A picture row after the answer is not the answer.
-                        continue
-                    final_text = str(payload.get("text") or final_text)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, "", live=final_text)
-                elif kind == "tool_call":
-                    name = str(payload.get("name") or payload.get("tool") or "tool")
-                    summary = str(payload.get("summary") or "")[:120]
-                    step = f"{name}: {summary}" if summary else name
-                    tool_steps.append(step)
-                    if quest_trace:
-                        await self.quests.note_progress(env.trace_id, step)
-                    if name == "society_browser":
-                        used_browser = True
-                elif kind == "error":
-                    if payload.get("display_only"):
-                        # A picture that could not be shown does not undo
-                        # the work (live 2026-10-02: Scout's finished
-                        # research was reported as blocked over two
-                        # missing screenshots).
-                        log.info(
-                            "society: %s turn had a display-only error: %s",
-                            target.name, str(payload.get("message") or "")[:200],
+                try:
+                    events = [
+                        await asyncio.wait_for(queue.get(), timeout=_WATCH_EVENT_POLL_SECONDS)
+                    ]
+                except TimeoutError:
+                    # The service drops a subscriber whose queue overflows. Its
+                    # events remain durable, so recover the missing terminal.
+                    try:
+                        events = await asyncio.to_thread(
+                            svc.store.list_events, session_id, after_seq=last_seq
                         )
-                        continue
-                    status, error = "blocked", str(payload.get("message") or "error")
-                elif kind == "turn_finished":
-                    if payload.get("status") not in (None, "ok", "done", "completed"):
+                    except Exception:  # noqa: BLE001 - a broken chat store must release the slot
+                        read_failures += 1
+                        log.warning(
+                            "society: durable turn recovery failed for %s (%s/3)",
+                            run_id,
+                            read_failures,
+                            exc_info=True,
+                        )
+                        if read_failures < 3:
+                            continue
                         status = "blocked"
-                        error = str(payload.get("error") or payload.get("status") or "")
+                        error = "Agent result could not be recovered from chat history."
+                        try:
+                            await svc.cancel(session_id, expected_turn_id=turn_id)
+                        except Exception:  # noqa: BLE001 - still release the board slot
+                            log.warning(
+                                "society: turn %s could not be cancelled after recovery failure",
+                                run_id,
+                                exc_info=True,
+                            )
+                        break
+                    read_failures = 0
+                else:
+                    read_failures = 0
+                finished = False
+                for event in events:
+                    seq = int(event.get("seq") or 0)
+                    if seq and seq <= last_seq:
+                        continue
+                    last_seq = max(last_seq, seq)
+                    kind = event.get("kind")
+                    payload = event.get("payload") or {}
+                    if payload.get("turn_id") not in (None, turn_id):
+                        continue
+                    if kind == "assistant_text":
+                        if payload.get("media_only"):
+                            continue  # A picture row does not replace the result report.
+                        final_text = str(payload.get("text") or final_text)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, "", live=final_text)
+                    elif kind == "tool_call":
+                        name = str(payload.get("name") or payload.get("tool") or "tool")
+                        summary = str(payload.get("summary") or "")[:120]
+                        step = f"{name}: {summary}" if summary else name
+                        tool_steps.append(step)
+                        if quest_trace:
+                            await self.quests.note_progress(env.trace_id, step)
+                        if name == "society_browser":
+                            used_browser = True
+                    elif kind == "error":
+                        if payload.get("display_only"):
+                            # A picture that could not be shown does not undo
+                            # the work (live 2026-10-02: a finished research
+                            # turn was reported as blocked over two missing
+                            # screenshots).
+                            log.info(
+                                "society: %s turn had a display-only error: %s",
+                                target.name, str(payload.get("message") or "")[:200],
+                            )
+                            continue
+                        status, error = "blocked", str(payload.get("message") or "error")
+                    elif kind == "turn_finished":
+                        if payload.get("status") not in (None, "ok", "done", "completed"):
+                            status = "blocked"
+                            error = str(payload.get("error") or payload.get("status") or "")
+                        finished = True
+                        break
+                if finished:
                     break
         except asyncio.CancelledError:  # Session cancellation is normal shutdown.
             return
@@ -876,6 +957,9 @@ class SocietyRuntime:
         elif questions:
             status = "blocked"
             error = summary = questions[-1].text
+        elif status == "done" and not final_text.strip():
+            status = "blocked"
+            error = summary = "Agent finished without a result report."
         try:
             await self.store.append_and_publish(
                 SocietyEnvelope(
@@ -990,9 +1074,46 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ controls
 
+    async def _cancel_active_society_chats(self) -> None:
+        service = self.chat_service()
+        if service is None or not callable(getattr(service, "cancel", None)):
+            return
+        # AgentChatService exposes is_running but not a public active-id list.
+        # Snapshot its live turns; a store query could miss an older active chat.
+        running = tuple(getattr(service, "_running", {}).items())
+        targets: list[str] = []
+        for session_id, run in running:
+            session = service.store.get_session(session_id)
+            if (
+                session is None
+                or session.surface != "society"
+                or not session_id.startswith("society:")
+            ):
+                continue
+            signal = getattr(service, "signal_cancel", None)
+            if callable(signal):
+                signal(session_id)
+            # The kill switch can be invoked from an agent's own turn. Signal
+            # it, but never await that turn from inside itself.
+            if getattr(run, "task", None) is asyncio.current_task():
+                continue
+            targets.append(session_id)
+        if not targets:
+            return
+        results = await asyncio.gather(
+            *(service.cancel(session_id) for session_id in targets),
+            return_exceptions=True,
+        )
+        for session_id, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                log.warning(
+                    "society kill switch: chat %s did not stop", session_id, exc_info=result
+                )
+
     async def engage_kill_switch(self) -> dict[str, Any]:
         await self.store.set_kill_switch(True)
         halted = await self.scheduler.halt_all()
+        await self._cancel_active_society_chats()
         await self.browser.close()
         settled = 0
         for room in await self.rooms.list(state=RoomState.RUNNING):

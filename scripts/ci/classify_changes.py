@@ -65,6 +65,17 @@ _DEPS_FILES = {
     "requirements.in",
     "requirements.txt",
     "uv.lock",
+    "packaging/native-crypto.json",
+    "packaging/native-crypto-uv.toml",
+    "jarvis/assets/browser/pyproject.toml",
+    "jarvis/assets/browser/requirements.in",
+    "jarvis/assets/browser/requirements.lock",
+    "scripts/native_crypto_index.py",
+    "scripts/pip_install.py",
+    "scripts/build_native_crypto.py",
+    "tests/contract/test_native_crypto.py",
+    "tests/contract/test_native_ssh.py",
+    "jarvis/computers/ssh_packet_guard.py",
 }
 
 _REALTIME_PREFIXES = (
@@ -104,27 +115,70 @@ _BROWSER_FILES = {
 # standalone workflow also matched all of tests/** and jarvis/ui/**, which put
 # three 45-minute macOS jobs behind nearly every PR; the lane keeps the
 # platform code and the exact test files that job runs.
+#
+# The just-in-time permission service is called from many consumers, so the
+# lane also covers every directory that asks for, or acts on, a macOS
+# permission: capture and speech (jarvis/audio/), computer use (jarvis/cu/),
+# screenshots (jarvis/vision/, jarvis/screen_context/), dictation
+# (jarvis/dictation/), global shortcuts (jarvis/trigger/, which includes
+# jarvis/trigger/backends/) and the permission port, the service and window
+# control (jarvis/platform/: permissions.py, permission_service.py,
+# window_state.py). Packaging is covered too: the spec, packaging/macos/ and the
+# single usage-string table both bundles load. The tool plugins that capture or
+# type (screenshot, type_text, verify_localhost), the appshot gesture, the speech
+# diagnosis, the screen-context routes, the CLI relay and the bundle-id constants
+# are consumers too and are listed by file.
 _MACOS_PREFIXES = (
     "install/",
     "jarvis/admin/",
+    "jarvis/appshot/",
     "jarvis/audio/",
     "jarvis/autostart/",
     "jarvis/cu/",
+    "jarvis/dictation/",
     "jarvis/platform/",
+    "jarvis/screen_context/",
     "jarvis/setup/",
     "jarvis/trigger/",
     "jarvis/vision/",
     "jarvis/ui/desktop",
+    "packaging/macos/",
     "tests/unit/platform/",
+    "tests/unit/audio/",
     "tests/unit/autostart/",
     "tests/unit/cu/",
     "tests/unit/setup/",
+    "tests/unit/trigger/",
+    "tests/unit/ui/web/test_permissions_",
     "tests/unit/vision/",
 )
 _MACOS_FILES = {
     "pyproject.toml",
     "uv.lock",
     ".githooks/pre-push",
+    "jarvis.spec",
+    "jarvis/core/macos_privacy_strings.py",
+    "jarvis/core/branding.py",
+    "jarvis/core/events.py",
+    "jarvis/core/protocols.py",
+    "jarvis/cli_ctl/commands/permissions.py",
+    "jarvis/plugins/harness/computer_use.py",
+    "jarvis/plugins/tool/screen_snapshot.py",
+    "jarvis/plugins/tool/type_text.py",
+    "jarvis/plugins/tool/verify_localhost.py",
+    "jarvis/speech/diagnose.py",
+    "jarvis/speech/pipeline.py",
+    "jarvis/tasks/event_catalog.py",
+    "jarvis/ui/web/permissions_routes.py",
+    "jarvis/ui/web/screen_context_routes.py",
+    "jarvis/ui/web/settings_routes.py",
+    "tests/contract/test_permission_service_contract.py",
+    "tests/fakes/fake_permission_service.py",
+    "tests/fakes/fake_tcc.py",
+    "tests/unit/ci/test_check_frozen_macos_app.py",
+    "tests/unit/ci/test_macos_desktop_permission_step.py",
+    "tests/unit/ui/web/test_keybinds_input_monitoring_ask.py",
+    "tests/unit/core/test_permission_events.py",
     "scripts/measure_boot.py",
     "scripts/measure_desktop_boot.py",
 }

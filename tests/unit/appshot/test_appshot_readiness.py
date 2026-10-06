@@ -21,17 +21,16 @@ def desktop(monkeypatch: pytest.MonkeyPatch):
     return gate
 
 
-def test_a_mac_without_screen_recording_is_not_ready(desktop) -> None:
+def test_a_mac_without_screen_recording_is_still_ready(desktop) -> None:
+    """Readiness is backend support, never a permission preflight: macOS asks
+    for Screen Recording just in time, at the first capture."""
     pytest.importorskip("mss")
     desktop(CapturePermissionIssue(code="capture_permission", message="Grant it first."))
 
     readiness = appshot_routes._capability()  # noqa: SLF001
 
-    assert readiness["capture"] is False
-    assert readiness["capture_detail"] == "Grant it first."
-    # The picker would freeze the screens for a capture that is refused.
-    assert readiness["region"] is False
-    assert readiness["region_detail"] == "Grant it first."
+    assert readiness["capture"] is True
+    assert readiness["capture_detail"] == ""
 
 
 def test_a_granted_desktop_is_ready(desktop) -> None:

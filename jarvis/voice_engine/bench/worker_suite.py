@@ -303,7 +303,7 @@ def run_drill(trials: int = 3) -> dict[str, Any]:
                 if psutil.Process(worker_pid).status() == psutil.STATUS_ZOMBIE:
                     gone_after = round(time.monotonic() - killed_at, 2)
                     break
-            except psutil.NoSuchProcess:
+            except psutil.NoSuchProcess:  # the process being gone is exactly what is measured
                 gone_after = round(time.monotonic() - killed_at, 2)
                 break
             time.sleep(0.05)

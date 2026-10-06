@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, Check, ChevronDown, Copy, Download, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandedSelect } from "@/components/ui/select";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
 import { fetchSessionExport, openSessionWith, sessionExportUrl } from "@/components/sessions/api";
 import type { SessionDetail } from "@/components/sessions/types";
@@ -55,9 +56,11 @@ export function TranscriptActions({ detail }: { detail: SessionDetail }) {
       {expanded && (
         <div className="transcript-export" id={panelId}>
           <label htmlFor={`${panelId}-format`}>{t("transcription.format")}</label>
-          <select id={`${panelId}-format`} value={format} onChange={(event) => setFormat(event.target.value as Format)}>
-            <option value="plain">{t("transcription.plain_text")}</option><option value="markdown">Markdown</option><option value="json">JSON</option>
-          </select>
+          <BrandedSelect id={`${panelId}-format`} value={format}
+            ariaLabel={t("transcription.format")}
+            onValueChange={(value) => setFormat(value as Format)}
+            options={[{ value: "plain", label: t("transcription.plain_text") },
+              { value: "markdown", label: "Markdown" }, { value: "json", label: "JSON" }]} />
           <Button variant="secondary" disabled={busy} onClick={() => void perform("download", format)}><Download aria-hidden />{t("transcription.download")}</Button>
           <Button variant="ghost" disabled={busy} onClick={() => void perform("copy", format)}><Copy aria-hidden />{t("turn_card.copy")}</Button>
           {native ? (

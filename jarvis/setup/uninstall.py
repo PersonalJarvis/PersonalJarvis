@@ -49,6 +49,7 @@ from rich.theme import Theme
 
 from jarvis.core import config as cfg
 from jarvis.core.branding import CONFIG_FILE_NAME
+from jarvis.core.process_utils import wait_procs
 from jarvis.setup.wizard import SECRETS
 
 # Same Charcoal + Gold palette as install/installer.py and the first-run wizard,
@@ -282,14 +283,14 @@ def _stop_running_instances(install_dir: Path) -> int:
             proc.terminate()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
-    _gone, alive = psutil.wait_procs(procs, timeout=6)
+    _gone, alive = wait_procs(procs, timeout=6)
     for proc in alive:
         try:
             proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     if alive:
-        _gone, alive = psutil.wait_procs(alive, timeout=4)
+        _gone, alive = wait_procs(alive, timeout=4)
 
     stopped = len(procs) - len(alive)
     if stopped:

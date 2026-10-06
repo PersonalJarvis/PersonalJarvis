@@ -213,7 +213,7 @@ def _retire_unshipped(
         dst_md = dst / "SKILL.md"
         try:
             raw = dst_md.read_bytes()
-        except FileNotFoundError:
+        except FileNotFoundError:  # Already absent: no retired skill remains to remove.
             continue
         except OSError as exc:
             log.warning("retired builtin skill '%s' unreadable, left alone: %s", name, exc)

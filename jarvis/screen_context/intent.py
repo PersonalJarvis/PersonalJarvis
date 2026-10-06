@@ -290,7 +290,7 @@ _SCREEN_INTENT_RE: re.Pattern[str] = re.compile(
     # readily as "Bildschirm" — the miss sent a live turn into a blind
     # tool-loop instead of the one-shot look (voice session 2026-08-06 20:51).
     # i18n-allow: German speech-input matching data
-    r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow: DE input
+    r"|\b(?:auf|an|in)\s+(?:dem|den|meinem|meinen|deinem|deinen|diesem|diesen)"  # i18n-allow
     r"\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
     r"|\bam\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow: DE input
     r"|\bmein(?:en|em)?\s+(?:bildschirm|monitor|screen|display)\b"  # i18n-allow
@@ -365,7 +365,7 @@ _APPSHOT_META_RE: re.Pattern[str] = re.compile(
     rf"\bwhat\s+(?:is|are)\s+(?:an?\s+)?{_APPSHOT_WORD}"
     rf"|\bhow\s+(?:do|does|can|to)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
     # i18n-allow: German speech-input matching data
-    rf"|\bwas\s+(?:ist|sind)\s+(?:ein(?:e)?\s+)?{_APPSHOT_WORD}"
+    rf"|\bwas\s+(?:ist|sind)\s+(?:ein(?:e)?\s+)?{_APPSHOT_WORD}"  # i18n-allow: DE speech input
     rf"|\bwie\s+(?:funktioniert|funktionieren|geht|macht\s+man)\b[^.?!]{{0,48}}{_APPSHOT_WORD}"
     # i18n-allow: Spanish speech-input matching data
     rf"|\bque\s+(?:es|son)\s+(?:un\s+)?{_APPSHOT_WORD}"
@@ -373,9 +373,11 @@ _APPSHOT_META_RE: re.Pattern[str] = re.compile(
     # Opening the Appshots settings page is navigation, not a capture.
     r"|\b(?:open|go\s+to|navigate\s+to|oeffne|geh\s+(?:zu|in|auf)"  # i18n-allow: DE input
     r"|wechsel\s+(?:zu|in)|abre|ve\s+a)\b[^.?!]{0,24}?"
-    rf"(?:the\s+|die\s+|den\s+|los\s+)?{_APPSHOT_WORD}"
-    r"(?:\s+(?:settings|page|section|einstellungen|seite|ajustes|pagina))?\s*(?:$|[.?!;:])"
-    rf"|{_APPSHOT_WORD}[\s-]?(?:settings|page|section|einstellungen|seite|ajustes)\b"
+    rf"(?:the\s+|die\s+|den\s+|los\s+)?{_APPSHOT_WORD}"  # i18n-allow: DE speech input
+    r"(?:\s+(?:settings|page|section|einstellungen|seite"  # i18n-allow
+    r"|ajustes|pagina))?\s*(?:$|[.?!;:])"
+    rf"|{_APPSHOT_WORD}[\s-]?(?:settings|page|section"
+    r"|einstellungen|seite|ajustes)\b"  # i18n-allow
     r")",
     re.IGNORECASE,
 )

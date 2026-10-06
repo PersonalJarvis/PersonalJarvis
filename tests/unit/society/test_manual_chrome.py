@@ -158,7 +158,8 @@ async def test_plain_login_uses_owned_profile_and_no_automation_transport(login)
     args, options = launches[0]
     assert args == [
         instance.executable, f"--user-data-dir={instance.profile.resolve()}", "--new-window",
-        "--no-first-run", "--disable-background-mode", "chrome://newtab/",
+        "--no-first-run", "--disable-background-mode",
+        "--disable-backgrounding-occluded-windows", "chrome://newtab/",
     ]
     assert options["creationflags"] == 0x08000000
     assert options["stdin"] == options["stdout"] == options["stderr"] == subprocess.DEVNULL

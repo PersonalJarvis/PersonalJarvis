@@ -10,6 +10,8 @@ import { useAgentChatStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip";
 import type { AgentChatCatalog, ChatAttachment } from "@/lib/agentChatApi";
+import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { NATIVE_DROP_EVENT } from "@/lib/nativeDrop";
 
 /**
  * Files in the chat composer — the drop, the paste, and what travels with the
@@ -181,26 +183,6 @@ describe("chat composer attachments", () => {
     expect(screen.queryByTestId("composer-drop-overlay")).toBeNull();
   });
 
-  it("draws a picture dropped by path from the backend's copy", async () => {
-    composer();
-    const card = screen.getByTestId("agent-composer");
-    // The Appshots gallery drags a path, never the bytes.
-    const byPath = {
-      ...transfer([]),
-      types: ["text/uri-list"],
-      getData: (type: string) => (type === "text/uri-list" ? "file:///C:/shots/shot.png" : ""),
-    };
-
-    await act(async () => {
-      fireEvent.drop(card, { dataTransfer: byPath });
-    });
-
-    await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png").dataset.media).toBe("image"));
-    const src = screen.getByTestId("chat-attachment-shot.png").querySelector("img")?.getAttribute("src") ?? "";
-    expect(src).toContain("/api/agent-chat/attachments/file?");
-    expect(new URLSearchParams(src.split("?")[1]).get("reference")).toBe(ATTACHMENT.reference);
-  });
-
   it("sends the attachments with the sentence and then holds none", async () => {
     const send = vi.fn(async () => {});
     seed({ send });
@@ -222,6 +204,39 @@ describe("chat composer attachments", () => {
     expect(send).toHaveBeenCalledWith("what is wrong here", [ATTACHMENT]);
     // Cleared on send: the next message must not silently re-send the picture.
     expect(screen.queryByTestId("chat-attachment-shot.png")).toBeNull();
+  });
+
+  it.each([WORKSPACE_PATH_TYPE, "text/uri-list", "text/plain"])(
+    "does not request a local attachment from foreign %s data",
+    async (type) => {
+      composer();
+      await act(async () => {
+        fireEvent.drop(screen.getByTestId("agent-composer"), {
+          dataTransfer: {
+            ...transfer([]),
+            types: [type],
+            getData: (format: string) => format === type ? "file:///private/secret.txt" : "",
+          },
+        });
+      });
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/attachments"))).toBe(false);
+    },
+  );
+
+  it("uses offered bytes even when a native hint names another local file", async () => {
+    vi.stubGlobal("__JARVIS_EMBEDDED_DESKTOP", true);
+    composer();
+    const png = new File(["offered bytes"], "shot.png", { type: "image/png" });
+    await act(async () => {
+      fireEvent.drop(screen.getByTestId("agent-composer"), { dataTransfer: transfer([png]) });
+      window.dispatchEvent(new CustomEvent(NATIVE_DROP_EVENT, {
+        detail: { paths: ["/private/shot.png"], names: ["shot.png"] },
+      }));
+    });
+    await waitFor(() => expect(screen.getByTestId("chat-attachment-shot.png")).toBeDefined());
+    const [, init] = fetchMock.mock.calls.find(([url]) => String(url).includes("/attachments")) as [string, RequestInit];
+    expect((init.body as FormData).get("paths")).toBeNull();
+    expect((init.body as FormData).getAll("files")).toHaveLength(1);
   });
 
   it("lets a picture alone be the whole message", async () => {

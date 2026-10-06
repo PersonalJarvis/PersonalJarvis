@@ -24,7 +24,10 @@ log = logging.getLogger(__name__)
 _MAX_ROUNDS = 24
 _MAX_DELEGATIONS = 4096
 _DELEGATION_TIMEOUT_S = 240.0
-# Operating the screen takes one reasoning round per look (ADR-0038). Once the
+REPORT_START_TIMEOUT_S = 20.0
+REPORT_FINISH_TIMEOUT_S = 90.0
+REPORT_REASONING_TIMEOUT_S = 240.0
+# Operating the screen takes one reasoning round per look (ADR-0039). Once the
 # model uses the computer tool, the request may run this many extra rounds and
 # up to ``[computer_use].mission_timeout_s``.
 _MIN_COMPUTER_ROUNDS = 40
@@ -39,7 +42,7 @@ def _is_computer_call(call: dict) -> bool:
     if name == "call_tool":
         try:
             name = str(json.loads(call.get("arguments") or "{}").get("name") or "")
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError):  # Malformed tool arguments cannot activate the extended computer budget.
             return False
     return name.rsplit(":", 1)[-1] == "computer"
 
@@ -78,6 +81,43 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         self._user_caption_segments: dict[str, None] = {}
         self._assistant_caption_segments: dict[str, None] = {}
         self._subscription_report_excluded_segments: set[str] = set()
+
+    def _report_sent(self) -> None:
+        self._report_state = "sent"
+        self._report_response_id = ""
+        self._cancel_report_timeout()
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_START_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_started(self, response_id: str = "") -> None:
+        if self._report_state != "sent":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "started"
+        self._report_response_id = response_id
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_FINISH_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_finished(self, *, delivered: bool) -> None:
+        if self._report_state != "started":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "done" if delivered else "failed"
+
+    def _cancel_report_timeout(self) -> None:
+        if self._report_timeout is not None:
+            self._report_timeout.cancel()
+            self._report_timeout = None
+
+    def _report_start_timed_out(self) -> None:
+        self._cancel_report_timeout()
+        if not self.report_pending:
+            return
+        self._report_state = "failed"
+        log.warning("Subscription voice did not confirm report delivery before its deadline.")
+        self._notify_pause()
 
     async def handle_control(self, message: dict) -> None:
         if message.get("type") == "cancel_work":
@@ -332,7 +372,11 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
 
     async def _run_client_delegation(self, identifier: str, prompt: str, **kwargs: Any) -> None:
         try:
-            await self._delegate(identifier, prompt, **kwargs)
+            if kwargs.get("application_event"):
+                async with asyncio.timeout(REPORT_REASONING_TIMEOUT_S):
+                    await self._delegate(identifier, prompt, **kwargs)
+            else:
+                await self._delegate(identifier, prompt, **kwargs)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

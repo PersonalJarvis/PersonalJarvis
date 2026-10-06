@@ -148,4 +148,6 @@ def test_the_toolbar_and_the_backend_agree_on_the_bounds() -> None:
     # The default is a named constant too (it is also where Ctrl/Cmd+0 lands),
     # so the parity check pins that definition rather than an inlined literal.
     assert f"const FONT_DEFAULT = {ui_prefs.FONT_DEFAULT};" in grid
-    assert "storedFontSize() ?? FONT_DEFAULT" in grid
+    # Workspace terminals open at one fixed size (maintainer decision
+    # 2026-09-28): a size stored by an older build must not win.
+    assert "return FONT_DEFAULT;" in grid

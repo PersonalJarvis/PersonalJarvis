@@ -9,6 +9,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useT } from "@/i18n";
 import type { IdeProject } from "@/lib/agenticIdeApi";
+import { BrandedSelect } from "@/components/ui/select";
 
 const FolderPicker = lazy(() => import("@/components/agentic/FolderPicker").then((module) => ({ default: module.FolderPicker })));
 
@@ -46,22 +47,23 @@ export function NewWorkspaceFields({ projects, target, onTarget, name, onName, d
 
   return (
     <>
-      <label className="office-mc-row">
+      <div className="office-mc-row" title={target?.path}>
         <span>{t("society.office.mission_ws_folder")}</span>
-        <select value={value} disabled={disabled} title={target?.path}
-          onChange={(e) => {
+        <BrandedSelect value={value} disabled={disabled} ariaLabel={t("society.office.mission_ws_folder")}
+          placeholder={t("society.office.mission_ws_pick")} className="office-mc-select px-2 py-1.5 text-xs"
+          options={[
+            ...projects.map((p) => ({ value: p.id, label: p.name, searchText: p.path })),
+            ...(target && !target.projectId ? [{ value, label: target.label, searchText: target.path }] : []),
+            { value: PICK, label: t("society.office.mission_ws_choose") },
+          ]}
+          onValueChange={(next) => {
             // Picking "choose a folder" leaves the select on what it showed
             // before, so closing the window without a choice changes nothing.
-            if (e.target.value === PICK) { setCandidate(target?.path ?? null); setPicking(true); return; }
-            const project = projects.find((p) => p.id === e.target.value);
+            if (next === PICK) { setCandidate(target?.path ?? null); setPicking(true); return; }
+            const project = projects.find((p) => p.id === next);
             if (project) onTarget({ path: project.path, label: project.name, projectId: project.id });
-          }}>
-          {!target && <option value="" disabled>{t("society.office.mission_ws_pick")}</option>}
-          {projects.map((p) => <option key={p.id} value={p.id} title={p.path}>{p.name}</option>)}
-          {target && !target.projectId && <option value={value} title={target.path}>{target.label}</option>}
-          <option value={PICK}>{t("society.office.mission_ws_choose")}</option>
-        </select>
-      </label>
+          }} />
+      </div>
       <label className="office-mc-row">
         <span>{t("society.office.mission_ws_name")}</span>
         <input className="office-mc-input" value={name} maxLength={80} disabled={disabled}

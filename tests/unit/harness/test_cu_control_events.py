@@ -222,3 +222,63 @@ async def test_concurrent_missions_pair_up(
     assert len(rec.ended) == 2
     assert {e.mission_id for e in rec.started} == {e.mission_id for e in rec.ended}
     assert len({e.mission_id for e in rec.started}) == 2
+
+
+async def test_blocked_permission_sentence_reaches_the_run_registry(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mission result run control reads carries the engine's permission sentence.
+
+    The sentence sits in stderr (a failed mission has no stdout), which the registry
+    does not store; without this the run list shows an empty result for a mission
+    that is waiting for the person to allow something.
+    """
+    from jarvis.harness import cu_run_registry
+
+    cu_run_registry.clear_runs()
+    sentence = "Accessibility is off for Personal Jarvis. Then try the task again."
+    monkeypatch.setattr(
+        cu_mod,
+        "_resolve_run_cu_loop",
+        lambda: _stub_loop(
+            HarnessResult(
+                stderr=(
+                    f"[cu] blocked_permission at step-2: {sentence}\n"
+                    "[cu] mission profile: steps=2 total=1.0s\n"
+                ),
+                exit_code=8,
+                is_final=True,
+            )
+        ),
+    )
+    harness = ComputerUseHarness(context=_ctx(bus))
+    await _invoke_all(harness, HarnessTask(prompt="open Safari", timeout_s=5))
+
+    run = cu_run_registry.list_runs(limit=1)[0]
+    assert run["status"] == "error"
+    assert run["exit_code"] == 8
+    assert run["result_text"] == sentence
+    cu_run_registry.clear_runs()
+
+
+async def test_plain_failure_keeps_an_empty_registry_result(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.harness import cu_run_registry
+
+    cu_run_registry.clear_runs()
+    monkeypatch.setattr(
+        cu_mod,
+        "_resolve_run_cu_loop",
+        lambda: _stub_loop(
+            HarnessResult(
+                stderr="[cu] fail at step-2: no news\n[cu] mission profile: steps=2\n",
+                exit_code=8,
+                is_final=True,
+            )
+        ),
+    )
+    harness = ComputerUseHarness(context=_ctx(bus))
+    await _invoke_all(harness, HarnessTask(prompt="x", timeout_s=5))
+    assert cu_run_registry.list_runs(limit=1)[0]["result_text"] == ""
+    cu_run_registry.clear_runs()

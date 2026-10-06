@@ -40,7 +40,7 @@ def test_put_realtime_options_rejects_values_outside_curated_catalog(
     )
 
     response = TestClient(_app()).put(
-        "/api/providers/openai-realtime/realtime-options",
+        "/api/providers/gemini-live/realtime-options",
         json=payload,
     )
 
@@ -64,19 +64,19 @@ def test_put_realtime_options_allows_fully_omitted_partial_update(
         config_writer, "set_brain_provider_model", unexpected_write
     )
     app = _app()
-    app.state.config.brain.providers["openai-realtime"] = BrainProviderConfig(
-        model="gpt-realtime-2.1",
-        voice="echo",
+    app.state.config.brain.providers["gemini-live"] = BrainProviderConfig(
+        model="gemini-3.1-flash-live-preview",
+        voice="Charon",
     )
 
     response = TestClient(app).put(
-        "/api/providers/openai-realtime/realtime-options",
+        "/api/providers/gemini-live/realtime-options",
         json={},
     )
 
     assert response.status_code == 200
-    assert response.json()["model"] == "gpt-realtime-2.1"
-    assert response.json()["voice"] == "echo"
+    assert response.json()["model"] == "gemini-3.1-flash-live-preview"
+    assert response.json()["voice"] == "Charon"
 
 
 def test_put_realtime_options_keeps_explicit_clear_contract(
@@ -93,7 +93,7 @@ def test_put_realtime_options_keeps_explicit_clear_contract(
     )
 
     response = TestClient(_app()).put(
-        "/api/providers/openai-realtime/realtime-options",
+        "/api/providers/gemini-live/realtime-options",
         json={"model": "", "voice": ""},
     )
 
@@ -108,7 +108,7 @@ def test_get_realtime_options_reports_preview_capability(
     client = TestClient(_app())
 
     api_response = client.get(
-        "/api/providers/openai-realtime/realtime-options"
+        "/api/providers/gemini-live/realtime-options"
     )
     removed_response = client.get(
         "/api/providers/codex-subscription-realtime/realtime-options"

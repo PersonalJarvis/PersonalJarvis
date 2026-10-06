@@ -26,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final, cast
 
-from jarvis.core.protocols import Tool
+from jarvis.core.protocols import Tool, ToolResult
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
     CONVERSATIONAL_RESPONSE_STYLE,
@@ -48,9 +48,10 @@ from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
-from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id
+from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
 from .routine_runner import is_routine_session
 from .runtime import current_runtime
+from .share_tool import ShareTemplateTool
 
 log = logging.getLogger(__name__)
 
@@ -250,34 +251,40 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
         rt = getattr(state, "society", None) or factory()
         state.society = rt
         await rt.ensure_started()
+    try:
+        service = rt.chat_service()
+        store = getattr(service, "store", None)
+        session = store.get_session(session_id) if store is not None else None
+    except Exception:  # noqa: BLE001 — a missing chat provenance must not offer a tool
+        log.warning("society: scoped chat lookup failed for %s", session_id, exc_info=True)
+        return None
+    if session is None or str(getattr(session, "session_id", "") or "") != session_id:
+        return None
+    surface = str(getattr(session, "surface", "") or "")
     agent_id = agent_id_of(session_id)
     if agent_id is None:
-        service = rt.chat_service()
-        session = service.store.get_session(session_id) if service is not None else None
-        if session is None or str(session.surface) != "jarvis":
+        if surface != "jarvis":
             return None
         from .roster import LEAD_AGENT_ID
 
         agent_id = LEAD_AGENT_ID
+    elif surface != SURFACE:
+        return None
     agent = await rt.roster.get(agent_id)
     if agent is None or str(agent.state) != "active":
         return None
-    read_only = str(agent.permission_ceiling) == "safe"
-    service = rt.chat_service()
-    if service is not None:
-        session = service.store.get_session(session_id)
-        if session is None:
-            return None
-        read_only = session.permission_mode in ("plan", "read-only")
-        if read_only and capability != "core:browser":
-            return None
+    read_only = str(agent.permission_ceiling) == "safe" or session.permission_mode in (
+        "plan", "read-only"
+    )
+    if read_only and capability != "core:browser":
+        return None
     tool: Tool
     if capability == "core:browser":
         from .browser.tool import BrowserTool
 
         pick = (
             (session.provider, session.model)
-            if service is not None and getattr(session, "surface", "") == "jarvis"
+            if getattr(session, "surface", "") == "jarvis"
             else None
         )
         tool = cast(
@@ -294,7 +301,18 @@ async def _scoped_tool_for_session(session_id: str, capability: str) -> Tool | N
     )
     if tool.name not in picked:
         return None
-    return cast(Tool, _GatedTool(tool, agent, capability))
+    return cast(
+        Tool,
+        _GatedTool(
+            tool,
+            agent,
+            capability,
+            _effective_approval_mode(agent, session, _permission_override(rt, session)),
+            rt,
+            session=session,
+            requires_grant=True,
+        ),
+    )
 
 
 async def tools_for_cli_session(
@@ -365,6 +383,7 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
             ConversationRecallTool.name: cast(Tool, ConversationRecallTool(rt, agent_id)),
             RoutineListTool.name: cast(Tool, RoutineListTool(rt, agent_id)),
             RoutineInvokeTool.name: cast(Tool, RoutineInvokeTool(rt, agent_id)),
+            ShareTemplateTool.name: cast(Tool, ShareTemplateTool(rt, agent_id)),
             ProposeChangeTool.name: cast(
                 Tool,
                 ProposeChangeTool(
@@ -408,17 +427,49 @@ class _GatedTool:
     """A granted tool wrapped with the agent's approval rules.
 
     The executor asks ``risk_tier_for_args`` before every call; this wrapper
-    answers with ``approvals.decide`` over the roster row's rules and ceiling:
+    answers with ``approvals.decide`` over the bound chat mode, the roster
+    row's rules and ceiling:
     a require-approval match or a call above the ceiling reads as ``ask`` (the
     chat card appears), an always-allow match lets an ask-tier call run, a
     blocked class stays ``block``. Everything else — schema, flags, execute —
     is the inner tool's own.
     """
 
-    def __init__(self, inner: Any, agent: AgentRecord, capability_id: str) -> None:
+    def __init__(
+        self,
+        inner: Any,
+        agent: AgentRecord,
+        capability_id: str,
+        approval_mode: str | None,
+        runtime: Any,
+        *,
+        session: Any = None,
+        requires_grant: bool = False,
+    ) -> None:
         self._inner = inner
         self._agent = agent
         self._capability_id = capability_id
+        self._approval_mode = approval_mode
+        self._runtime = runtime
+        self._session = session
+        self._session_id = str(getattr(session, "session_id", "") or "")
+        self._session_surface = str(getattr(session, "surface", "") or "")
+        self._session_mode = str(getattr(session, "permission_mode", "") or "")
+        try:
+            service = runtime.chat_service()
+            store = getattr(service, "store", None)
+            persisted = store.get_session(self._session_id) if store is not None else None
+        except Exception:  # noqa: BLE001 — a missing persisted policy must fail closed at execution
+            log.warning("society gate: stored chat lookup failed for %s", inner.name, exc_info=True)
+            persisted = None
+        self._persisted_session_mode = (
+            str(getattr(persisted, "permission_mode", "") or "") if persisted is not None else None
+        )
+        self._permission_override = _permission_override(runtime, session)
+        self._permission_ceiling = str(agent.permission_ceiling)
+        self._require_approval = frozenset(agent.approval_rules.get("require_approval", []))
+        self._always_allow = frozenset(agent.approval_rules.get("always_allow", []))
+        self._requires_grant = requires_grant
         self.name = inner.name
         self.description = inner.description
         self.schema = inner.schema
@@ -427,9 +478,7 @@ class _GatedTool:
     def __getattr__(self, item: str) -> Any:
         return getattr(self._inner, item)
 
-    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
-        from .approvals import Verdict, decide
-
+    def _base_tier_for_args(self, args: dict[str, Any]) -> str:
         base = str(self.risk_tier or "monitor")
         hook = getattr(self._inner, "risk_tier_for_args", None)
         if callable(hook):
@@ -440,8 +489,20 @@ class _GatedTool:
                 own = None
             if isinstance(own, str) and own:
                 base = own
+        return base
+
+    def risk_tier_for_args(self, args: dict[str, Any]) -> str | None:
+        from .approvals import Verdict, decide
+
+        base = self._base_tier_for_args(args)
         try:
-            verdict = decide(self._agent, self._capability_id, base, verb=_verb_of(args))
+            verdict = decide(
+                self._agent,
+                self._capability_id,
+                base,
+                verb=_verb_of(args),
+                approval_mode=self._approval_mode,
+            )
         except Exception:  # noqa: BLE001 — the static tier still gates the call
             log.warning("society gate: decide failed for %s", self.name, exc_info=True)
             return base
@@ -454,6 +515,87 @@ class _GatedTool:
         return "monitor" if base == "ask" else base
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> Any:
+        # The catalog was selected at turn start. A pause or kill switch that
+        # arrives while the model is thinking must still stop its next call.
+        if self._requires_grant and (
+            self._session is None
+            or not self._session_id
+            or self._session_surface not in (SURFACE, "jarvis")
+            or self._persisted_session_mode is None
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "chat provenance unavailable")
+        try:
+            halted = await self._runtime.store.kill_switch()
+            live = await self._runtime.roster.get(self._agent.agent_id)
+            service = self._runtime.chat_service()
+            store = getattr(service, "store", None)
+            session = store.get_session(self._session_id) if store is not None else None
+        except Exception:  # noqa: BLE001 — unavailable policy data must not authorize a call
+            log.warning("society gate: live policy lookup failed for %s", self.name, exc_info=True)
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "live permissions unavailable"
+            )
+        if halted:
+            return ToolResult(False, {"reason": "kill_switch"}, "the society is halted")
+        if live is None or str(live.state) != "active":
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "caller is not an active agent"
+            )
+        if self._session_id and (
+            session is None
+            or str(getattr(session, "session_id", "")) != self._session_id
+            or str(getattr(session, "surface", "") or "") != self._session_surface
+            or str(getattr(session, "permission_mode", "") or "")
+            != self._persisted_session_mode
+            or str(getattr(self._session, "permission_mode", "") or "") != self._session_mode
+            or _permission_override(self._runtime, session) != self._permission_override
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "chat permissions changed")
+        if self._session_mode in ("plan", "read-only"):
+            from jarvis.core.tool_read_only import allows_read
+
+            if not allows_read(self._inner, args):
+                return ToolResult(False, {"reason": "blocked_by_policy"}, "read-only turn")
+        if self._requires_grant and self.name not in select_tools(
+            {self.name: self._inner},
+            grant_mode=str(live.grant_mode),
+            grants=live.grants,
+            focus=live.focus,
+            denies=live.denies,
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "tool grant was revoked")
+        # A standing "always allow" may be added by the card that approved
+        # this same call. Other permission edits require a fresh executor pass.
+        rules = live.approval_rules
+        if (
+            str(live.permission_ceiling) != self._permission_ceiling
+            or frozenset(rules.get("require_approval", [])) != self._require_approval
+            or not self._always_allow.issubset(rules.get("always_allow", []))
+            or _effective_approval_mode(live, self._session, self._permission_override)
+            != self._approval_mode
+        ):
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "agent permissions changed")
+        from .approvals import Verdict, decide
+
+        try:
+            verdict = decide(
+                live,
+                self._capability_id,
+                self._base_tier_for_args(args),
+                verb=_verb_of(args),
+                approval_mode=_effective_approval_mode(
+                    live, self._session, self._permission_override
+                ),
+            )
+        except Exception:  # noqa: BLE001 — a broken live policy may not authorize execution
+            log.warning("society gate: live decision failed for %s", self.name, exc_info=True)
+            return ToolResult(
+                False, {"reason": "blocked_by_policy"}, "live permissions unavailable"
+            )
+        if verdict is Verdict.BLOCK:
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "tool class is blocked")
+        if verdict is Verdict.QUEUE and getattr(ctx, "approved_by", None) != "user":
+            return ToolResult(False, {"reason": "blocked_by_policy"}, "fresh approval required")
         return await self._inner.execute(args, ctx)
 
 
@@ -548,6 +690,30 @@ def _workspace_fallback(cfg: Any, agent_id: str) -> Path:
     return data_dir / "society" / agent_id / "workspace"
 
 
+def _permission_override(runtime: Any, session: Any) -> str:
+    service = runtime.chat_service()
+    store = getattr(service, "store", None)
+    lookup = getattr(store, "permission_override", None)
+    session_id = getattr(session, "session_id", "")
+    return str(lookup(session_id) or "") if callable(lookup) and session_id else ""
+
+
+def _effective_approval_mode(
+    agent: AgentRecord, session: Any, override: str = ""
+) -> str | None:
+    """Use a narrower chat choice without widening the agent's roster mode."""
+    if agent.approval_mode is None:
+        # A pre-migration row keeps its ceiling policy until the person chooses
+        # a stricter stance for this chat; the bound mode alone is ambiguous.
+        return override if override in ("ask", "always_ask") else None
+    roster_mode = str(agent.approval_mode)
+    chat_mode = str(getattr(session, "permission_mode", "") or "")
+    strictness = {"bypass": 0, "ask": 1, "always_ask": 2}
+    if chat_mode in strictness and strictness[chat_mode] > strictness[roster_mode]:
+        return chat_mode
+    return roster_mode
+
+
 def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, Tool]] | None:
     rt = current_runtime()
     agent_id = agent_id_of(getattr(session, "session_id", "") or "")
@@ -566,6 +732,7 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
             for n, t in tools.items()
             if n.startswith(_OWN_PREFIX) and getattr(t, "risk_tier", "monitor") == "safe"
         }
+    approval_mode = _effective_approval_mode(agent, session, _permission_override(rt, session))
 
     def _apply(tools: dict[str, Tool]) -> dict[str, Tool]:
         own = {
@@ -585,28 +752,38 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
         # The gate rides on the executor's per-call tier hook, so the chat
         # card and the queue stay the one approval path.
         picked = {
-            name: cast(Tool, _GatedTool(tool, agent, cap_id))
+            name: cast(
+                Tool,
+                _GatedTool(
+                    tool, agent, cap_id, approval_mode, rt,
+                    session=session, requires_grant=True,
+                ),
+            )
             for name, tool in picked.items()
             if (cap_id := capability_id_for_tool(name)) is not None
         }
         ordered: dict[str, Tool] = {}
-        if agent.approval_mode is not None:
-            ordered.update(
-                {
-                    name: cast(
-                        Tool,
-                        _GatedTool(tool, agent, capability_id_for_tool(name) or "core:society"),
-                    )
-                    for name, tool in own.items()
-                    # Asking the user IS the person's decision; gating it
-                    # behind an approval card would ask twice.
-                    if name != ASK_USER_TOOL_NAME
-                }
-            )
-            if ASK_USER_TOOL_NAME in own:
-                ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
-        else:
-            ordered.update(own)
+        ordered.update(
+            {
+                name: cast(
+                    Tool,
+                    _GatedTool(
+                        tool,
+                        agent,
+                        capability_id_for_tool(name) or "core:society",
+                        approval_mode,
+                        rt,
+                        session=session,
+                    ),
+                )
+                for name, tool in own.items()
+                # A legacy row still needs a live gate if its permissions change
+                # mid-turn. Asking the user is never gated behind its own card.
+                if name != ASK_USER_TOOL_NAME
+            }
+        )
+        if ASK_USER_TOOL_NAME in own:
+            ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
         ordered.update(picked)
         return ordered
 
@@ -653,7 +830,7 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     browser["auto_start"] = (
         browser.get("mode") == "own" and rt.browser.live.model_resolver is not None
     )
-    learned = rt.skills_for(agent.agent_id).summaries()
+    learned = rt.skills_for(agent.agent_id).for_briefing()
     try:
         memory = rt.memory.head(agent, root=_vault_root(cfg))
     except Exception:  # noqa: BLE001 — a vault that cannot be read costs the head, not the turn
@@ -680,6 +857,19 @@ def _kind_label(kind: CapabilityKind) -> str:
         CapabilityKind.SKILL: "skills",
         CapabilityKind.CORE: "built-in",
     }[kind]
+
+
+#: The introduction frame of a fresh agent (one-click creation): it has a
+#: placeholder name and no role until its person says what it is for.
+FRESH_AGENT_GUIDANCE = (
+    "You were just created and have no role yet; your current name is a placeholder. "
+    "If the person has not said what you are for, greet them in one or two sentences, say "
+    "you are new, and ask what you should take care of. As soon as they tell you, call "
+    "society_propose_change with kind 'identity': a short fitting name, a one-line title, "
+    "and a description written as your standing instructions (goal, responsibilities, "
+    "working style), in the person's language. Then start on the task they gave you. "
+    "Never invent a role the person did not describe."
+)
 
 
 def build_briefing(
@@ -723,6 +913,8 @@ def build_briefing(
     # API and CLI seats both consume this briefing. Put reply guidance and the
     # keep-going rule before potentially long standing instructions so compact
     # CLI identities retain them (a cancelled tool must not end the task).
+    if is_fresh(agent):
+        parts.append("## You are new\n" + FRESH_AGENT_GUIDANCE)
     parts.append("## Completing the user's task\n" + TASK_EXECUTION_GUIDANCE)
     parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)

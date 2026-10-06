@@ -122,7 +122,8 @@ describe("AppshotLibrary", () => {
     const dt = new FakeDataTransfer();
     fireEvent.dragStart(tile, { dataTransfer: dt });
 
-    expect(dt.getData(WORKSPACE_PATH_TYPE)).toBe(EDITED.path);
+    expect(dt.getData(WORKSPACE_PATH_TYPE)).toMatch(/^[a-f0-9]{64}$/);
+    expect(dt.getData(WORKSPACE_PATH_TYPE)).not.toContain(EDITED.path);
     expect(dt.getData("DownloadURL")).toMatch(/^image\/png:appshot-.*-edited\.png:http/);
     // The drop side (paneDrop, shared by panes and the composer) reads it back verbatim.
     expect(extractPaneDrop(dt as unknown as DataTransfer).paths).toEqual([EDITED.path]);

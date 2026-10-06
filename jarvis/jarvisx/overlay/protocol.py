@@ -105,7 +105,7 @@ def _load(line: str) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(text)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # Malformed helper messages are rejected, never executed.
         return None
     return payload if isinstance(payload, dict) else None
 

@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { ExplorerPanel } from "./ExplorerPanel";
-import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { extractPaneDrop } from "@/components/agentic/paneDrop";
 import { activateTerminalLink } from "@/lib/terminalLinks";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
@@ -89,9 +89,13 @@ describe("ExplorerPanel", () => {
     render(<ExplorerPanel view="changes" />);
     const [row] = await screen.findAllByTestId("explorer-change-row");
     const data: Record<string, string> = {};
-    const dataTransfer = { setData: (type: string, value: string) => { data[type] = value; }, effectAllowed: "" };
+    const dataTransfer = {
+      setData: (type: string, value: string) => { data[type] = value; },
+      getData: (type: string) => data[type] ?? "",
+      effectAllowed: "",
+    };
     fireEvent.dragStart(row, { dataTransfer });
-    expect(data[WORKSPACE_PATH_TYPE]).toBe("/code/app/src/app.ts");
+    expect(extractPaneDrop(dataTransfer as DataTransfer).paths).toEqual(["/code/app/src/app.ts"]);
   });
 
   it("opens a changed file as a diff tab in the code editor", async () => {

@@ -73,6 +73,23 @@ def _assume_yes_env() -> bool:
     return os.environ.get("JARVIS_CLI_ASSUME_YES", "").strip().lower() in _TRUE
 
 
+def require_yes_for_local_action(description: str, *, assume_yes: bool) -> None:
+    """Fail closed unless ``--yes`` (or ``JARVIS_CLI_ASSUME_YES``) authorizes a local action.
+
+    For a curated command that changes this machine directly instead of sending a
+    request (``permissions reset`` runs ``tccutil``): the same rule as a
+    destructive request, so an agent that follows ``--help`` meets the same gate.
+    """
+    if assume_yes or _assume_yes_env():
+        return
+    render.error(
+        f"{description} changes this machine directly; re-run with --yes "
+        "(or set JARVIS_CLI_ASSUME_YES=1) to authorize it, or --dry-run to "
+        "preview exactly what would run."
+    )
+    raise typer.Exit(code=1)
+
+
 def _print_preview(
     method: str, path: str, body: object, auth_attached: bool, *, as_json: bool
 ) -> None:

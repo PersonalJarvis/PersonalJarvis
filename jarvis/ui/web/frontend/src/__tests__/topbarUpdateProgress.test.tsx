@@ -14,7 +14,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { TopBar } from "@/components/layout/TopBar";
+import { UpdateButton } from "@/components/layout/TopBar";
 import { useEventStore } from "@/store/events";
 
 vi.mock("@/lib/bootStagger", () => ({ bootSettled: () => Promise.resolve() }));
@@ -110,7 +110,7 @@ describe("TopBar update progress", () => {
 
   it("shows the percentage the backend reports", async () => {
     mockBackend({ progress: () => progressBody(70), restartOk: false });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => expect(screen.getByText("Updating 70%")).toBeTruthy());
@@ -118,7 +118,7 @@ describe("TopBar update progress", () => {
 
   it("fills the button proportionally to that percentage", async () => {
     mockBackend({ progress: () => progressBody(70), restartOk: false });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => expect(fillWidth()).toBe("70%"));
@@ -127,7 +127,7 @@ describe("TopBar update progress", () => {
   it("follows the percentage upward as the download runs", async () => {
     let percent = 12;
     mockBackend({ progress: () => progressBody(percent), restartOk: false });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => expect(screen.getByText("Updating 12%")).toBeTruthy());
@@ -137,7 +137,7 @@ describe("TopBar update progress", () => {
 
   it("exposes the same percentage to assistive technology", async () => {
     mockBackend({ progress: () => progressBody(70), restartOk: false });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => {
@@ -149,7 +149,7 @@ describe("TopBar update progress", () => {
 
   it("is not a progress bar before an update starts", async () => {
     mockBackend({ progress: () => progressBody(0) });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await screen.findByRole("button", { name: /update available/i });
 
     // A stray role here would announce a bar frozen at 0 % on every launch.
@@ -159,7 +159,7 @@ describe("TopBar update progress", () => {
 
   it("ends on the restart, which no server can report", async () => {
     mockBackend({ progress: () => progressBody(100, { phase: "ready" }) });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => expect(screen.getByText("Restarting…")).toBeTruthy());
@@ -168,7 +168,7 @@ describe("TopBar update progress", () => {
 
   it("drops the bar when the update fails instead of freezing it", async () => {
     mockBackend({ progress: () => progressBody(42), applyOk: false });
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await clickUpdate();
 
     await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
@@ -194,7 +194,7 @@ describe("TopBar update progress", () => {
       }),
     );
 
-    const { unmount } = render(<TopBar />);
+    const { unmount } = render(<UpdateButton placement="sidebar" />);
     await waitFor(() =>
       expect(
         useEventStore.getState().toasts.some((t) => t.message.includes("1.0.1")),
@@ -205,7 +205,7 @@ describe("TopBar update progress", () => {
     // localStorage guard it would re-announce the same install forever.
     useEventStore.setState({ toasts: [] });
     unmount();
-    render(<TopBar />);
+    render(<UpdateButton placement="sidebar" />);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(useEventStore.getState().toasts).toHaveLength(0);
   });

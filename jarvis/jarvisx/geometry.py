@@ -152,7 +152,7 @@ def even_size(width: int, height: int) -> tuple[int, int]:
 def clamp_dismiss_s(value: object) -> int:
     try:
         seconds = int(float(value))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Malformed optional timing retains the standard dismissal duration.
         return 30
     return max(DISMISS_MIN_S, min(DISMISS_MAX_S, seconds))
 

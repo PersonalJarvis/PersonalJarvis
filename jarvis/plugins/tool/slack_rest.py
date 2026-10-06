@@ -779,7 +779,7 @@ class SlackRestTool:
         thread_ts = str(args.get("thread_ts") or "").strip()
         try:
             limit = int(args["limit"]) if args.get("limit") is not None else None
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # the model gets the reason in the tool result
             return ToolResult(success=False, output=None, error="limit must be a number")
         try:
             if action == "search_messages":
@@ -819,7 +819,7 @@ class SlackRestTool:
                 )
             else:
                 return ToolResult(success=False, output=None, error=f"unknown action {action!r}")
-        except _ToolError as exc:
+        except _ToolError as exc:  # the error goes back to the model as the tool result
             if exc.candidates:
                 return ToolResult(
                     success=False,

@@ -1,7 +1,7 @@
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WorkspaceTerminal } from "./WorkspaceTerminal";
-import { resetConnectBudgetForTests } from "@/lib/connectBudget";
+import { BURST, resetConnectBudgetForTests } from "@/lib/connectBudget";
 
 const terminal = vi.hoisted(() => ({ focus: vi.fn(), dispose: vi.fn(), fit: vi.fn() }));
 vi.mock("@xterm/xterm", () => ({
@@ -66,4 +66,26 @@ it("cancels a queued connection when its tab closes before the budget grants it"
   unmount();
   act(() => vi.runOnlyPendingTimers());
   expect(Socket.instances).toHaveLength(0);
+});
+
+it("paces a burst of workspace terminal mounts through the shared connect budget", () => {
+  const panes = Array.from({ length: 20 }, (_, index) =>
+    render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
+  );
+  act(() => vi.advanceTimersByTime(0));
+  expect(Socket.instances).toHaveLength(BURST);
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(Socket.instances).toHaveLength(20);
+  panes.forEach((pane) => pane.unmount());
+});
+
+it("cancels queued connects when a burst of panes unmounts", () => {
+  const panes = Array.from({ length: 20 }, (_, index) =>
+    render(<WorkspaceTerminal paneKey={`pane-${index}`} title={`Pane ${index}`} />),
+  );
+  act(() => vi.advanceTimersByTime(0));
+  expect(Socket.instances).toHaveLength(BURST);
+  panes.forEach((pane) => pane.unmount());
+  act(() => vi.advanceTimersByTime(5_000));
+  expect(Socket.instances).toHaveLength(BURST);
 });

@@ -19,6 +19,13 @@ import { fill, useLocaleChunk, useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { openExternalUrl } from "@/lib/openExternal";
 import { cn } from "@/lib/utils";
+import { PUBLISH_IDENTITY_KEY, usePublishIdentity, type PublishIdentityWire } from "./publishIdentityQuery";
+
+// The identity query itself lives in ./publishIdentityQuery so the always-on
+// sidebar can read who is signed in without linking this module (the sign-in
+// flow, its dialog and the publisher chips) into the entry chunk. Re-exported
+// here so every publishing surface keeps one import.
+export { PUBLISH_IDENTITY_KEY, usePublishIdentity, type PublishIdentityWire };
 
 // ---------------------------------------------------------------------------
 // One identity for everything the app publishes.
@@ -35,10 +42,6 @@ import { cn } from "@/lib/utils";
 // The scope list is empty: the sign-in proves who someone is and grants
 // nothing on their account.
 // ---------------------------------------------------------------------------
-
-// The sidebar reads identity without loading publishing dialogs or mutations.
-import { PUBLISH_IDENTITY_KEY, usePublishIdentity, type PublishIdentityWire } from "@/hooks/usePublishIdentity";
-export { PUBLISH_IDENTITY_KEY, usePublishIdentity, type PublishIdentityWire } from "@/hooks/usePublishIdentity";
 
 interface SigninStartWire {
   flow_id: string;

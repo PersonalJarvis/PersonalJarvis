@@ -177,7 +177,9 @@ async def test_runner_agent_dispatches_to_brain(store: TaskStore):
     seen: dict[str, object] = {}
 
     class _FakeBrain:
-        async def run_task(self, *, prompt: str, allowed_tools, model_tier, trace_id=None):
+        async def run_task(
+            self, *, prompt: str, allowed_tools, model_tier, trace_id=None, prefer_api=False,
+        ):
             seen["prompt"] = prompt
             seen["allowed_tools"] = list(allowed_tools)
             seen["model_tier"] = model_tier
@@ -202,8 +204,11 @@ async def test_runner_agent_dispatches_to_brain(store: TaskStore):
     assert seen["model_tier"] == "deep"
 
 
-async def test_runner_agent_delivers_result_as_announcement(store: TaskStore):
-    """A finished agent task speaks its result via AnnouncementRequested."""
+@pytest.mark.parametrize("announcement", ["", "Briefing ready."])
+async def test_runner_agent_retains_result_and_only_speaks_on_opt_in(
+    store: TaskStore, announcement,
+):
+    """The result stays visible; automatic speech needs an explicit choice."""
     bus = EventBus()
     announced: list[object] = []
 
@@ -214,7 +219,9 @@ async def test_runner_agent_delivers_result_as_announcement(store: TaskStore):
     bus.subscribe_all(_capture)
 
     class _FakeBrain:
-        async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id=None):
+        async def run_task(
+            self, *, prompt, allowed_tools, model_tier, trace_id=None, prefer_api=False,
+        ):
             return "Your briefing: 2 meetings today."
 
     runner = TaskRunner(store=store, bus=bus, agent_brain=_FakeBrain())
@@ -222,10 +229,18 @@ async def test_runner_agent_delivers_result_as_announcement(store: TaskStore):
         title="brief",
         trigger=TriggerAfterDelay(delay_seconds=5.0),
         action=AgentAction(prompt="brief me"),
+        announce_on_success=announcement,
     )
     tid = await store.insert(spec)
     await runner.run(tid)
-    assert any("briefing" in getattr(ev, "text", "").lower() for ev in announced)
+    row = await store.get(tid)
+    assert row["state"] == "completed"
+    assert any(
+        step["payload"].get("event") == "agent_result"
+        and "briefing" in step["payload"].get("text", "").lower()
+        for step in row["steps"]
+    )
+    assert [event.text for event in announced] == ([announcement] if announcement else [])
 
 
 async def test_runner_arms_auto_approver_for_write_grants(store: TaskStore):
@@ -244,7 +259,7 @@ async def test_runner_arms_auto_approver_for_write_grants(store: TaskStore):
     bus.subscribe_all(_cap)
 
     class _Brain:
-        async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id):
+        async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id, prefer_api=False):
             # Simulate the tool loop proposing an ask-tier action mid-turn.
             await bus.publish(
                 ActionApprovalRequired(
@@ -284,7 +299,7 @@ async def test_runner_does_not_auto_approve_read_grants(store: TaskStore):
     bus.subscribe_all(_cap)
 
     class _Brain:
-        async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id):
+        async def run_task(self, *, prompt, allowed_tools, model_tier, trace_id, prefer_api=False):
             await bus.publish(
                 ActionApprovalRequired(
                     trace_id=trace_id, tool_name="gmail", risk_tier="ask"
@@ -310,7 +325,7 @@ async def test_runner_does_not_auto_approve_read_grants(store: TaskStore):
 async def test_runner_agent_without_brain_fails_cleanly(store: TaskStore):
     """No agent brain configured → clean failure, not an unknown-kind crash."""
     bus = EventBus()
-    runner = TaskRunner(store=store, bus=bus)  # no agent_brain
+    runner = TaskRunner(store=store, bus=bus, agent_brain_wait_s=0)  # no agent_brain
     spec = TaskSpec(
         title="brief",
         trigger=TriggerAfterDelay(delay_seconds=5.0),

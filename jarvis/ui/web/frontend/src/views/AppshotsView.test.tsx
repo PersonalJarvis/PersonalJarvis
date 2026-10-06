@@ -141,6 +141,30 @@ describe("AppshotsView", () => {
     expect((tryButton as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByTestId("appshots-sound").hasAttribute("disabled")).toBe(true);
   });
+
+  it("shows why unsupported capture is unavailable and disables both capture actions", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url === "/api/appshot/settings"
+        ? json({ ...SETTINGS, readiness: {
+            ...SETTINGS.readiness, capture: false, capture_detail: "Wayland capture is unavailable.",
+          } })
+        : json({ appshot: null }),
+    );
+    render(<AppshotsView />);
+    const button = await screen.findByTestId("appshots-try");
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("appshots-try-region") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/Wayland capture is unavailable\./)).toBeDefined();
+    expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/permissions"))).toBe(false);
+  });
+
+  it("keeps supported first-use capture available without requesting permissions on mount", async () => {
+    render(<AppshotsView />);
+    const button = await screen.findByTestId("appshots-try-region");
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByTestId("appshots-try") as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/permissions"))).toBe(false);
+  });
 });
 
 describe("AppshotsView area appshots", () => {

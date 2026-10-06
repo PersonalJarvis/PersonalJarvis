@@ -16,6 +16,45 @@ import time
 from typing import Any
 
 log = logging.getLogger(__name__)
+_capture_mta_lock = threading.Lock()
+_capture_mta: tuple[Any, Any] | None = None
+
+
+def _release_capture_mta() -> None:
+    global _capture_mta
+    with _capture_mta_lock:
+        retained, _capture_mta = _capture_mta, None
+    if retained is not None:
+        ole32, cookie = retained
+        if ole32.CoDecrementMTAUsage(cookie) < 0:
+            log.warning("Could not release the browser capture COM apartment")
+
+
+def _ensure_capture_mta() -> None:
+    """Keep cached WGC factories valid across this worker's capture sessions.
+
+    windows-capture 2.0.1 drops its MTA cookie after each session. Its cached
+    WinRT factories can then reference an unloaded apartment on the next
+    start (upstream issue 124). Retain one cookie until this worker exits;
+    individual windows still stop and join all capture and event threads.
+    """
+    global _capture_mta
+    import atexit  # noqa: PLC0415
+    import ctypes  # noqa: PLC0415
+
+    with _capture_mta_lock:
+        if _capture_mta is not None:
+            return
+        ole32 = ctypes.WinDLL("ole32")
+        ole32.CoIncrementMTAUsage.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+        ole32.CoIncrementMTAUsage.restype = ctypes.c_long
+        ole32.CoDecrementMTAUsage.argtypes = [ctypes.c_void_p]
+        ole32.CoDecrementMTAUsage.restype = ctypes.c_long
+        cookie = ctypes.c_void_p()
+        if ole32.CoIncrementMTAUsage(ctypes.byref(cookie)) < 0:
+            raise RuntimeError("The browser capture COM apartment is unavailable")
+        _capture_mta = ole32, cookie
+        atexit.register(_release_capture_mta)
 
 
 def available() -> bool:
@@ -50,6 +89,7 @@ class NativeWindow:
         import ctypes  # noqa: PLC0415
         from ctypes import wintypes  # noqa: PLC0415
 
+        _ensure_capture_mta()
         from windows_capture import WindowsCapture  # type: ignore[import-not-found]
 
         self.ctypes = ctypes

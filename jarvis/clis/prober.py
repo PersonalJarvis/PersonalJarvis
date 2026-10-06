@@ -58,6 +58,49 @@ PROBE_ALL_TIMEOUT_S = CHECK_TIMEOUT_S + AUTH_TIMEOUT_S + 2 * KILL_WAIT_TIMEOUT_S
 PROBE_CONCURRENCY = 6
 
 
+async def _cancel_probes(tasks: list[asyncio.Future[CliStatus]]) -> None:
+    """Cancel and join the sweep's children even when the sweep is cancelled."""
+    if not tasks:
+        return
+
+    async def settle() -> None:
+        for task in tasks:
+            if not task.done() and not getattr(task, "cancelling", lambda: 0)():
+                task.cancel()
+        done, pending = await asyncio.wait(tasks, timeout=KILL_WAIT_TIMEOUT_S)
+        for task in done:
+            if not task.cancelled():
+                task.exception()  # Retrieve failures from children whose caller is gone.
+        if pending:
+            log.warning("%d CLI probe(s) did not finish cancellation", len(pending))
+
+    cleanup = asyncio.create_task(settle(), name="cli-probe-cleanup")
+    interrupted = False
+    while not cleanup.done():
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # Preserve the bounded cleanup owner when the caller is cancelled
+            # during a timeout cleanup, including repeated stop requests.
+            interrupted = True
+    cleanup.result()
+    if interrupted:
+        raise asyncio.CancelledError
+
+
+async def _stop_probe_process(proc: asyncio.subprocess.Process, name: str) -> None:
+    """Reap a cancelled or timed-out probe within the existing cleanup budget."""
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass  # The child exited between the returncode check and kill.
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=KILL_WAIT_TIMEOUT_S)
+    except TimeoutError:
+        log.warning("probe(%s): child did not exit after kill", name)
+
+
 class CliStatusProber:
     async def probe(self, spec: CliSpec) -> CliStatus:
         installed, version, binary_path = await self._probe_binary(spec)
@@ -100,7 +143,11 @@ class CliStatusProber:
                 return await self.probe(spec)
 
         tasks = [asyncio.ensure_future(_gated(spec)) for spec in specs]
-        await asyncio.wait(tasks, timeout=PROBE_ALL_TIMEOUT_S)
+        try:
+            await asyncio.wait(tasks, timeout=PROBE_ALL_TIMEOUT_S)
+        except asyncio.CancelledError:
+            await _cancel_probes(tasks)
+            raise
 
         out: dict[str, CliStatus] = {}
         wedged: list[asyncio.Future[CliStatus]] = []
@@ -127,22 +174,7 @@ class CliStatusProber:
                 out[spec.name] = task.result()
 
         if wedged:
-            # Let the cancellations settle so asyncio does not log "Task was
-            # destroyed but it is pending" — but bounded, because the whole
-            # point here is that these probes do not come back promptly. A
-            # leaked task (and its zombie subprocess) beats a hung sweep,
-            # exactly as in the kill()/wait() path above.
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*wedged, return_exceptions=True),
-                    timeout=KILL_WAIT_TIMEOUT_S,
-                )
-            except TimeoutError:
-                log.warning(
-                    "probe_all: %d probe(s) did not honour cancellation — "
-                    "leaking them instead of blocking the sweep.",
-                    len(wedged),
-                )
+            await _cancel_probes(wedged)
         return out
 
     async def _probe_binary(self, spec: CliSpec) -> tuple[bool, str | None, str | None]:
@@ -165,15 +197,10 @@ class CliStatusProber:
             )
             try:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=CHECK_TIMEOUT_S)
-            except TimeoutError:
-                proc.kill()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=KILL_WAIT_TIMEOUT_S)
-                except TimeoutError:
-                    log.warning(
-                        "probe-binary(%s): child survived kill() — leaking the "
-                        "zombie instead of hanging the probe.", spec.name,
-                    )
+            except (TimeoutError, asyncio.CancelledError) as exc:
+                await _stop_probe_process(proc, spec.name)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
                 return True, None, path
         except FileNotFoundError:
             return False, None, None
@@ -215,15 +242,10 @@ class CliStatusProber:
             )
             try:
                 out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=AUTH_TIMEOUT_S)
-            except TimeoutError:
-                proc.kill()
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=KILL_WAIT_TIMEOUT_S)
-                except TimeoutError:
-                    log.warning(
-                        "probe-auth(%s): child survived kill() — leaking the "
-                        "zombie instead of hanging the probe.", spec.name,
-                    )
+            except (TimeoutError, asyncio.CancelledError) as exc:
+                await _stop_probe_process(proc, spec.name)
+                if isinstance(exc, asyncio.CancelledError):
+                    raise
                 return "unknown"
             exit_code = proc.returncode or 0
         except FileNotFoundError:

@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 48
+page_count: 49
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -23,7 +23,7 @@ pages:
     file: docs/product/start-here/welcome-to-personal-jarvis.md
     title: Welcome to Personal Jarvis
     diataxis: explanation
-    summary: Understand what Personal Jarvis can do, what stays under your control, and where to begin.
+    summary: See how Jarvis turns your computer into an AI agent, what stays under your control, and where to begin.
     authoritative_sources:
       - README.md
       - AGENTS.md
@@ -215,7 +215,7 @@ pages:
     summary: See the difference between conversation history and a detailed run trace, then use both to understand an answer.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/SessionsView.tsx
-      - jarvis/ui/web/frontend/src/views/RunInspectorView.tsx
+      - jarvis/ui/web/frontend/src/components/agentchat/WorkTrace.tsx
       - jarvis/ui/web/sessions_routes.py
       - jarvis/ui/web/diagnostics_routes.py
       - jarvis/sessions/recorder.py
@@ -405,7 +405,7 @@ pages:
     diataxis: howto
     summary: Shape how Jarvis responds without changing providers, memories, or safety rules.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AgentInstructionsView.tsx
+      - jarvis/ui/web/frontend/src/views/AssistantProfileView.tsx
       - jarvis/brain/agent_instructions.py
       - jarvis/brain/persona_loader.py
       - jarvis/brain/JARVIS_PERSONA.md
@@ -754,7 +754,7 @@ pages:
     diataxis: howto
     summary: Let your assistant inspect one requested screen or window with visible capture, privacy filtering, and short-lived memory.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/ScreenContextGroup.tsx
+      - jarvis/ui/web/frontend/src/views/AppshotsView.tsx
       - jarvis/ui/web/screen_context_routes.py
       - jarvis/screen_context/service.py
       - jarvis/screen_context/intent.py
@@ -842,11 +842,15 @@ pages:
     file: docs/product/privacy-safety-and-support/permissions.md
     title: App Permissions
     diataxis: howto
-    summary: Grant only the microphone, screen, accessibility, and input permissions needed for voice, global shortcuts, and Computer Use.
+    summary: See when macOS asks for microphone, screen, accessibility, and input access, and how to change an answer later.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/PermissionsPanel.tsx
+      - jarvis/ui/web/frontend/src/lib/permissionToast.ts
+      - jarvis/ui/web/frontend/src/i18n/locales/en.json
+      - jarvis/cli_ctl/commands/permissions.py
+      - jarvis/core/macos_privacy_strings.py
       - jarvis/ui/web/permissions_routes.py
       - jarvis/platform/permissions.py
+      - jarvis/platform/permission_service.py
       - jarvis/platform/capabilities.py
     related:
       - first-run-setup
@@ -1051,4 +1055,22 @@ pages:
       - configuration-reference
       - troubleshooting
     reader_level: advanced
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 10
+    slug: costs
+    file: docs/product/everyday-use/costs.md
+    title: Spend & Tokens
+    diataxis: howto
+    summary: Understand recorded usage, compare providers, and trace spending to individual runs.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/CostsView.tsx
+      - jarvis/ui/web/costs_routes.py
+    related:
+      - tasks-and-reminders
+      - jarvis-agents
+      - providers-and-api-keys
+    reader_level: beginner
     maturity: stable

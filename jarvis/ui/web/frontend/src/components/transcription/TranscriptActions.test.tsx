@@ -25,7 +25,8 @@ it("opens an export with the remembered native application exactly once", async 
   await act(async () => { await vi.advanceTimersByTimeAsync(4_000); });
   vi.useRealTimers();
   fireEvent.click(screen.getByRole("button", { name: "Export" }));
-  fireEvent.change(screen.getByRole("combobox", { name: "File format" }), { target: { value: "markdown" } });
+  fireEvent.click(screen.getByRole("combobox", { name: "File format" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Markdown" }));
   fireEvent.click(await screen.findByRole("button", { name: "Open with…" }));
   await waitFor(() => expect(requests.filter((r) => r.url.includes("/open-with?"))).toEqual([
     { url: "/api/sessions/voice%2Fone/open-with?format=markdown", body: JSON.stringify({ opener: "editor" }) },

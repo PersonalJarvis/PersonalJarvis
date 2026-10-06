@@ -77,7 +77,7 @@ def _xdg_entry(name: str) -> str | None:
     config_home = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
     try:
         text = (config_home / "user-dirs.dirs").read_text(encoding="utf-8")
-    except OSError:
+    except OSError:  # no user-dirs file is normal; the caller uses its default folder
         return None
     match = re.search(rf'^XDG_{re.escape(name)}_DIR="([^"]*)"', text, re.MULTILINE)
     if not match:

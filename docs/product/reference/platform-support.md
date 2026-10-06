@@ -8,7 +8,7 @@ order: 6
 diataxis: reference
 status: active
 owner: maintainers
-last_reviewed: 2026-07-21
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [platforms, windows, macos, linux, headless, requirements, compatibility]
@@ -107,7 +107,8 @@ backends, an accessibility tree, an overlay, cursor access, and elevation.
 Failed probes report **unavailable** instead of stopping startup.
 
 Windows uses UI Automation and native input. macOS Computer Use needs the
-matching Accessibility and Screen Recording permissions. Linux uses AT-SPI
+matching Accessibility and Screen Recording permissions; macOS asks for them
+the first time Computer Use needs them, not at startup. Linux uses AT-SPI
 when its packages and desktop bus are available. Without a native interface
 tree, screenshots and pixel positions can work but cannot identify controls by
 name.
@@ -118,8 +119,8 @@ name.
 - **Headless:** there is no display to capture or control. Chat, APIs, browser
   views, missions, and file work still run.
 
-On macOS, grant permissions to **Personal Jarvis**, not Terminal or Python, so
-they stay attached to the app bundle. The Bar and mascot use its desktop
+On macOS, answer the permission dialogs for **Personal Jarvis**, not Terminal or
+Python, so they stay attached to the app bundle. The Bar and mascot use its desktop
 companion.
 
 Linux overlays are best effort. With no compatible X11, compositor, and Tk
@@ -138,7 +139,7 @@ surface, Jarvis falls back to the tray or no visible surface; chat continues.
 | Linux AT-SPI packages and desktop bus | Only for native Linux UI labels | Named interface elements for more reliable Computer Use on X11 |
 | Linux global-hotkey backend | Only for global voice shortcuts on X11 | Shortcut capture; it is not part of the current Linux full-profile dependency set |
 | Xcode Command Line Tools on macOS | Required to build the managed desktop launcher | The installer compiles and signs the local app launcher and stops with an installation hint when `clang` is unavailable |
-| macOS privacy grants | Only for the feature named by each grant | Microphone, global shortcuts, screen capture, accessibility, and input control |
+| macOS privacy grants | Only for the feature that needs each one; macOS asks when you first use or switch on that feature (or, for global shortcuts, when you save one) | Microphone, global shortcuts, screen capture, accessibility, and input control |
 | Graphical display | Only for desktop surfaces | Desktop window, overlays, screen capture, and physical Computer Use |
 
 ## Storage and Network Defaults
@@ -225,7 +226,7 @@ capability works.
 
 On a desktop, choose **Settings > Audio devices > Rescan devices** and confirm
 the intended devices appear. Then run the relevant **Test wake word** action,
-macOS permission check, or a reversible Computer Use action.
+check the macOS permissions in **System Settings > Privacy & Security** (or with `jarvis permissions status` when the `jarvis` command is available), or run a reversible Computer Use action.
 
 On headless Linux, open the printed local address and test text chat first.
 Configure authenticated HTTPS access before using a remote browser microphone.
@@ -237,7 +238,7 @@ Configure authenticated HTTPS access before using a remote browser microphone.
 | Python is rejected | Outside 3.11 through 3.14 | Let the installer choose, or install a supported version |
 | Linux opens a server | No X11 or Wayland display | Use the printed address, or install from a graphical session |
 | Linux audio is unavailable | PortAudio, access, or device missing | Install PortAudio, reconnect, then choose **Rescan devices** |
-| A macOS shortcut or screen action fails | Privacy grant missing | Review **Settings > Privacy permissions** and restart when asked |
+| A macOS shortcut or screen action fails | Privacy grant missing or declined | Use the button on the short message Jarvis shows (**Open System Settings**), and a restart only when it says so; `jarvis permissions reset` starts over (see [App Permissions](permissions) if the command is not found) |
 | Linux Computer Use refuses | Wayland or no display | Use X11; text and browser features still work |
 | Linux control names are missing | AT-SPI or its bus is unavailable | Install accessibility packages; pixel fallback may work |
 | A local voice engine is unavailable | No compatible native package | Choose another local, browser, or online speech path |

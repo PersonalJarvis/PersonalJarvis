@@ -178,10 +178,67 @@ async def test_bypass_asks_nothing(tmp_path: Path):
     assert card.asked == []
 
 
+async def test_bypass_still_cards_an_explicit_require_approval_rule(tmp_path: Path):
+    """Society's require-approval rules (``force_ask``) override Bypass."""
+    executor, bridge, _ = _stack()
+    card = _Card("deny")
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def force_ask(name: str, args: dict[str, Any]) -> bool:
+        seen.append((name, dict(args)))
+        return "rm" in str(args.get("command") or "")
+
+    grant = _grant(card, "bypass")
+    grant.force_ask = force_ask
+    bridge.arm(REF, grant)
+    run = ft.folder_tools(tmp_path)["RunCommand"]
+
+    forced = await executor.execute(run, {"command": "rm x"}, config_snapshot=_snapshot())
+    assert not forced.success and forced.error
+    assert forced.error.startswith(APPROVAL_DENIED_PREFIX)
+    assert [a[1] for a in card.asked] == ["RunCommand"]
+    assert seen[0] == ("RunCommand", {"command": "rm x"})
+
+    ran = await executor.execute(run, {"command": "echo hi"}, config_snapshot=_snapshot())
+    assert ran.success, ran.error
+    assert len(card.asked) == 1
+
+
+async def test_require_approval_overrides_remembered_grants_in_every_stance(tmp_path: Path):
+    """An agent's explicit rule still asks after an earlier Always allow."""
+    for stance in ("ask", "bypass"):
+        executor, bridge, _ = _stack()
+        card = _Card("deny")
+        grant = _grant(card, stance, {"RunCommand"})
+        grant.pre_approved.add("RunCommand")
+        grant.force_ask = lambda _name, _args: True
+        bridge.arm(REF, grant)
+
+        run = ft.folder_tools(tmp_path)["RunCommand"]
+        result = await executor.execute(
+            run, {"command": "echo hi"}, config_snapshot=_snapshot()
+        )
+
+        assert not result.success and result.error, stance
+        assert result.error.startswith(APPROVAL_DENIED_PREFIX), stance
+        assert [asked[1] for asked in card.asked] == ["RunCommand"], stance
+
+
+async def test_always_ask_cards_even_a_remembered_tool(tmp_path: Path):
+    executor, bridge, _ = _stack()
+    card = _Card("deny")
+    bridge.arm(REF, _grant(card, "always_ask", {"RunCommand"}))
+    run = ft.folder_tools(tmp_path)["RunCommand"]
+    result = await executor.execute(run, {"command": "echo hi"}, config_snapshot=_snapshot())
+    assert not result.success and result.error
+    assert result.error.startswith(APPROVAL_DENIED_PREFIX)
+    assert [a[1] for a in card.asked] == ["RunCommand"]
+
+
 async def test_blacklist_wins_in_every_stance(tmp_path: Path):
     safety = SafetyConfig()
     safety.blacklist.commands = ["*forbidden-thing*"]  # fnmatch, as in jarvis.toml
-    for stance in ("ask", "accept-edits", "bypass"):
+    for stance in ("ask", "accept-edits", "bypass", "always_ask"):
         executor, bridge, _ = _stack(safety=safety)
         card = _Card("allow")
         bridge.arm(REF, _grant(card, stance))

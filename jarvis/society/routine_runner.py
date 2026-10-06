@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from uuid import uuid4
 
 from .chat_binding import SURFACE, _workspace, pair_for
 from .routines import agent_id_from_tags, routine_seat
+
+log = logging.getLogger(__name__)
 
 #: Marks a per-execution routine chat: ``society:<agent>:routine:<task>:<run>``.
 ROUTINE_SESSION_MARKER = ":routine:"
@@ -160,6 +163,23 @@ async def run_owned_routine(
     # Legacy tasks contain an identity snapshot. The live briefing owns identity now.
     _, separator, original = prompt.partition("\nRoutine:\n")
     task = original if separator else prompt
+    # The run keeps its own seat and chat; the agent's one chat shows a card
+    # that opens it (MASTERPLAN §2.10).
+    title = next((line.strip() for line in task.splitlines() if line.strip()), task_id)
+    try:
+        await runtime.post_chat_notice(
+            agent,
+            {
+                "kind": "routine_run",
+                "task_id": task_id,
+                "session_id": session.session_id,
+                "agent_id": agent.agent_id,
+                "agent_name": agent.name,
+                "text": title[:200],
+            },
+        )
+    except Exception:  # noqa: BLE001 — the card is a projection; the run itself goes on
+        log.warning("society: routine card not posted for %s", agent.agent_id, exc_info=True)
     task = (
         f"Scheduled routine {task_id}. Follow your CURRENT standing instructions.\n"
         "This execution has its own background chat with bypass permissions.\n"
@@ -170,7 +190,7 @@ async def run_owned_routine(
     queue = service.subscribe(session.session_id)
     answer = ""
     try:
-        turn_id = await service.send(session.session_id, task, direct_user=False)
+        turn_id = await service.send(session.session_id, task, direct_user=False, routine_run=True)
         while True:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise asyncio.CancelledError

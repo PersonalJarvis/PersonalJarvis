@@ -96,7 +96,7 @@ def card_rest_ms(config: Any) -> int:
     seconds = getattr(getattr(config, "appshot", None), "card_seconds", 6)
     try:
         value = int(seconds)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid optional timing falls back to the standard card duration.
         value = 6
     return max(0, value) * 1000
 

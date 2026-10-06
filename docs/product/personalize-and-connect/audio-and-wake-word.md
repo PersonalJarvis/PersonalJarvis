@@ -8,7 +8,7 @@ order: 2
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [audio, microphone, speaker, wake-word, voice, pipeline, realtime]
@@ -26,8 +26,9 @@ processed locally even when the later conversation uses hosted speech or AI.
 
 - Connect the headset, microphone, or speakers you want to use.
 - Wait until the desktop app shows **Ready**, not **Voice starting...**.
-- Allow microphone access in the operating system. macOS users should also
-  review **Settings > Privacy permissions**.
+- Allow microphone access in the operating system. On macOS, the first
+  voice feature you use shows Apple's own dialog; if you said no earlier, see
+  [Permissions](permissions) to start over.
 - Never use a password, recovery code, or other secret as a wake phrase.
 
 Voice is optional. Chats and other text features continue on a computer with
@@ -152,8 +153,8 @@ For fewer missed or accidental wakes:
 
 - Windows, macOS, and Linux can use local wake detection when desktop audio and
   compatible packages are available.
-- macOS requires Microphone permission; global shortcuts can also require
-  Accessibility and Input Monitoring.
+- macOS requires Microphone permission; global shortcuts also require Input
+  Monitoring, which macOS asks for when you save a shortcut.
 - Linux global shortcuts need a supported X11 hotkey backend. Wayland normally
   blocks them, so use wake activation or an in-app control.
 - A headless host has no native wake listener, Call shortcut, Dictation target,

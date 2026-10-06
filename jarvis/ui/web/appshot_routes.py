@@ -80,24 +80,24 @@ def _bus(request: Request) -> Any | None:
 
 
 def _capture_capability() -> tuple[bool, str]:
-    """Whether a capture would run right now, and the reason when not.
+    """Whether this desktop can capture at all, and the reason when not.
 
-    Asks what the capture itself checks: a display, the capture package,
-    and the OS gate (Screen Recording on macOS, Wayland on Linux). A page
-    that said "ready" and then refused on Try it was the old behaviour.
+    Asks what the capture backend itself needs: a display, the capture
+    package and an X11 (not Wayland) session. A page that said "ready" and
+    then refused on Try it was the old behaviour. This is backend support,
+    not a permission preflight: a Mac without a grant must retain its capture
+    button so first use can ask the OS.
     """
     import importlib.util  # noqa: PLC0415
 
-    from jarvis.platform.probes import display_present  # noqa: PLC0415
-    from jarvis.screen_context.ports import capture_permission_error  # noqa: PLC0415
+    from jarvis.platform.probes import display_present, is_wayland  # noqa: PLC0415
 
     if not display_present():
         return False, "There is no screen on this computer."
     if importlib.util.find_spec("mss") is None:
         return False, "The screen-capture package is not installed."
-    issue = capture_permission_error()
-    if issue is not None:
-        return False, issue.message
+    if is_wayland():
+        return False, "Appshot capture is not supported on Wayland yet. Use an X11 session."
     return True, ""
 
 
@@ -169,6 +169,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         get_shortcut,
         is_gesture,
         normalize_hotkey,
+        request_saved_shortcut_access,
         shortcuts_conflict,
     )
     from jarvis.core.config import load_config  # noqa: PLC0415
@@ -191,8 +192,12 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
             verdict = validate_hotkey(changes[key])
             if not verdict.ok:
                 raise HTTPException(status_code=400, detail=verdict.reason or "Invalid shortcut.")
-    if any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")):
-        current = configured_hotkeys((await asyncio.to_thread(load_config)).appshot)
+    hotkey_change = any(key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey"))
+    listener_change = enabled is not None or hotkey_change
+    previous = await asyncio.to_thread(load_config) if listener_change else None
+    if previous is not None:
+        current = configured_hotkeys(previous.appshot)
+    if hotkey_change:
         window = changes.get("hotkey", current["window"])
         region = changes.get("region_hotkey", current["region"])
         recording = changes.get("recording_hotkey", current["recording"])
@@ -224,10 +229,18 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         from jarvis.screen_context.turn import reset_service  # noqa: PLC0415
 
         reset_service()
+    if previous is not None:
+        updated = {
+            "window": changes.get("hotkey", current["window"]),
+            "region": changes.get("region_hotkey", current["region"]),
+        }
+        await request_saved_shortcut_access(
+            current, updated,
+            was_enabled=previous.screen_context.enabled,
+            enabled=previous.screen_context.enabled if enabled is None else enabled,
+        )
     shortcut = get_shortcut()
-    if shortcut is not None and any(
-        key in changes for key in ("hotkey", "region_hotkey", "recording_hotkey")
-    ):
+    if shortcut is not None and listener_change:
         await shortcut.reload()
     if changes.get("keep_newest"):
         from jarvis.appshot import retention  # noqa: PLC0415
@@ -407,7 +420,7 @@ def _png_size(data: bytes) -> tuple[int, int] | None:
             if image.format != "PNG":
                 return None
             return int(image.width), int(image.height)
-    except (UnidentifiedImageError, OSError):
+    except (UnidentifiedImageError, OSError):  # not a readable PNG; the caller refuses it
         return None
 
 

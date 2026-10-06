@@ -36,6 +36,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from jarvis.appshot.markup import Markup, parse_markup
 
@@ -209,7 +210,7 @@ def parse_selection(payload: dict[str, Any]) -> Selection | None:
     try:
         info = {key: float(screen[key]) for key in ("x", "y", "w", "h", "dpr")}
         frac = tuple(max(0.0, min(1.0, float(v))) for v in rect)
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError):  # a malformed selection is refused via None
         return None
     if frac[2] <= 0.0 or frac[3] <= 0.0:
         return None
@@ -395,8 +396,27 @@ async def _escape_cancels(proc: subprocess.Popen[str]) -> None:
         log.debug("appshot: global Escape for the area picker unavailable", exc_info=True)
 
 
+def preview_capture_allowed() -> bool:
+    """A picker helper may read its grant silently, but must never request one."""
+    from jarvis.platform.screen_access import screen_recording_state, state_allows_capture
+
+    return state_allows_capture(screen_recording_state(deep=False))
+
+
+def grab_preview(screen: Any) -> Any | None:
+    """Read a preview only with this helper's grant; no Qt import or prompt."""
+    try:
+        if not preview_capture_allowed():
+            return None
+        pixmap = screen.grabWindow(0)
+        return None if pixmap.isNull() or pixmap.width() <= 0 else pixmap
+    except Exception:  # noqa: BLE001 - the picker can dim the live desktop instead
+        log.debug("appshot: preview unavailable; using a live overlay", exc_info=True)
+        return None
+
+
 async def pick_region(
-    *, timeout_s: float = PICK_TIMEOUT_S, language: str = "en"
+    *, timeout_s: float = PICK_TIMEOUT_S, language: str = "en", trace_id: UUID | None = None,
 ) -> Selection | None:
     """Let the user drag a rectangle and mark it up. ``None`` = cancelled or timed out.
 
@@ -411,6 +431,11 @@ async def pick_region(
         raise RegionUnavailable("An area is already being selected. Finish or press Esc first.")
     _picking = True
     try:
+        # This is the user gesture. Ask in the parent before even enumerating
+        # windows or starting a helper that freezes the desktop (AP-35).
+        from jarvis.platform.screen_access import require_screen_recording_async
+
+        await require_screen_recording_async("appshot", trace_id=trace_id)
         token = _language.set(language or "en")
         try:
             payload, code, timed_out = await _run_picker(timeout_s)
@@ -477,7 +502,7 @@ async def _run_picker(timeout_s: float) -> tuple[dict[str, Any] | None, int | No
     try:
         try:
             payload = await asyncio.wait_for(asyncio.shield(reader), timeout=timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # the timeout is reported through timed_out
             timed_out = True
             await asyncio.to_thread(_cancel, proc)
     finally:

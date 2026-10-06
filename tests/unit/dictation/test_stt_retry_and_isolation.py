@@ -443,7 +443,6 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
     import jarvis.plugins.stt as stt_plugins
     import jarvis.speech.pipeline as pipeline_mod
     import jarvis.speech.stt_dictionary as dictionary
-    from jarvis.speech.stt_fallback import FallbackSTT
 
     monkeypatch.setattr(
         stt_plugins, "build_stt_from_config", lambda cfg, **_k: SimpleNamespace()
@@ -466,7 +465,7 @@ def test_the_dictation_provider_arms_the_cross_family_chain(
 
     instance = pipe._dictation_stt()
 
-    assert isinstance(instance, FallbackSTT)
+    assert callable(instance.transcribe_pcm)
     assert instance._alternate_names == ["openai-api", "gemini-api"]
 
 

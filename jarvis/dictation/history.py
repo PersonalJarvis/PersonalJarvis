@@ -479,6 +479,8 @@ class DictationHistory:
             log.debug("dictation statistics write failed", exc_info=True)
 
     def _write(self, entries: list[DictationEntry]) -> None:
+        from jarvis.dictation.stats import _replace_with_retry
+
         payload = {"version": 1, "entries": [e.to_storage_dict() for e in entries]}
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic tempfile + os.replace: a crash mid-write never leaves a torn
@@ -489,12 +491,14 @@ class DictationHistory:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-            os.replace(tmp_name, self._path)
+            # External readers can briefly deny replacement even under our lock.
+            # Retry only this completed snapshot, not the mutation or its counters.
+            _replace_with_retry(tmp_name, self._path)
         except Exception:
             try:
                 os.unlink(tmp_name)
             except OSError:
-                pass
+                pass  # Preserve the original storage error if cleanup also fails.
             raise
 
 

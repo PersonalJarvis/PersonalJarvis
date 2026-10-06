@@ -12,7 +12,7 @@ when_to_use: >-
   VMs, buckets, IAM roles — and gcloud is connected. Reach for the cli_gcloud
   tool, never the browser console.
 category: meta
-tags: [gcloud, google-cloud, cli, billing]
+tags: [gcloud, google-cloud, cli, billing, google cloud, cloud costs, cloud billing, kostet, kosten, cuesta, coste, costos] # i18n-allow: billing search vocabulary
 author: builtin
 license: Apache-2.0
 requires_tools: [cli_gcloud]

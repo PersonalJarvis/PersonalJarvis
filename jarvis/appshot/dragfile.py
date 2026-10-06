@@ -46,7 +46,7 @@ def prepare_drag_folder() -> Path:
         return folder
     try:
         folder.mkdir(mode=0o700, parents=True)
-    except FileExistsError:
+    except FileExistsError:  # an existing folder is fine; its ownership is checked right below
         pass
     info = os.lstat(folder)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():

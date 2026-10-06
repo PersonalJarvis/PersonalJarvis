@@ -25,17 +25,29 @@ _MARKDOWN_EXT = (".md", ".markdown")
 # XSS from artifact content rendered in the app origin.
 VIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:;"
 
+# VIEW_CSP as a response HEADER. The ``sandbox`` directive is honoured only in
+# a header (a <meta> CSP ignores it), and it puts the document in an opaque
+# origin even when it is opened top-level in a browser tab rather than inside
+# the app's sandboxed iframe — so a worker-written file can never act as the
+# app origin, whatever the script-src says.
+VIEW_HEADER_CSP = VIEW_CSP + " sandbox;"
+
 # The artifact-page CSP (``/files/{path}/page`` in outputs_routes): an artifact
 # is a self-contained page a worker wrote to be LOOKED AT and used — tabs,
 # filters, a chart drawn on canvas — so inline scripts run. What stays shut is
 # every way out: no network of any kind (no fetch, no remote script, font,
-# image or frame), no forms posting anywhere, no navigation. The frontend
-# frames such a page with ``sandbox="allow-scripts"`` and WITHOUT
-# ``allow-same-origin``, so the script runs in an opaque origin that cannot
-# reach the app's cookies, storage or API — the same model Claude artifacts
-# use. ``/view`` and inline downloads keep VIEW_CSP: those are arbitrary
-# worker files, not artifacts.
+# image or frame), no forms posting anywhere, no navigation. The script runs in
+# an opaque origin that cannot reach the app's cookies, storage or API — the
+# same model Claude artifacts use. The frontend frames the page with
+# ``sandbox="allow-scripts"``, but "Open in browser" loads the same URL as a
+# top-level tab, where no iframe sandbox exists: there the ``sandbox
+# allow-scripts`` directive below is the ONLY thing keeping the page out of
+# the app origin (without it, one ``window.open('/')`` hands the page a
+# same-origin window whose ``fetch`` reaches every API route). It also blocks
+# popups, forms and top-level navigation. ``/view`` and inline downloads keep
+# VIEW_HEADER_CSP: those are arbitrary worker files, not artifacts.
 ARTIFACT_PAGE_CSP = (
+    "sandbox allow-scripts; "
     "default-src 'none'; "
     "script-src 'unsafe-inline'; "
     "style-src 'unsafe-inline'; "
@@ -118,4 +130,4 @@ def render_artifact_html(filename: str, text: str, *, theme: str | None = None) 
     return _shell(filename, f"<pre>{html.escape(text)}</pre>", theme)
 
 
-__all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "render_artifact_html"]
+__all__ = ["ARTIFACT_PAGE_CSP", "VIEW_CSP", "VIEW_HEADER_CSP", "render_artifact_html"]

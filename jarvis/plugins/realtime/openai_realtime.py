@@ -1683,15 +1683,9 @@ class LocalRealtimeProvider:
     # and quietly routing a call into one the user did not pick is the opposite
     # of what a local card is for.
     implicit_usage_fallback_allowed = False
-    # Eagerly warmed even when configured as a FALLBACK. This card is a local
-    # process: warming costs no account round-trip and no metered tokens,
-    # while its cold start is the longest of any transport (45-90 s of model
-    # loading). Live 2026-08-10: with a subscription primary whose token had
-    # expired, the un-warmed local fallback was still stone cold when the
-    # first call arrived — the call died with "try again in about a minute"
-    # on a machine that could have answered it. The GPU-oversubscription
-    # caveat behind opt-in fallback warming targets stacking MULTIPLE native
-    # model stacks; this is the single local stack the user explicitly chose.
+    # An explicitly configured local fallback must be ready when the primary
+    # fails. The supervisor still gates spawning on local-model enablement
+    # and available hardware; unselected providers are never warmed.
     eager_warm_as_fallback = True
     # Small self-hosted brains prefill the whole instruction block EVERY turn;
     # the full ~24k-char profile cost 7.8 s of LLM time per answer against

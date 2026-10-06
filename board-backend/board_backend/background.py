@@ -102,18 +102,59 @@ class FederationPuller:
         self._http = http_client
         self._owns_http = http_client is None
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._targets: dict[str, tuple[str, int]] = {}
         self._last_results: dict[str, dict[str, Any]] = {}
+        self._changed = asyncio.Event()
+        self._scheduler: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=10.0)
-        # Poll all active friends.
+        self._loop = asyncio.get_running_loop()
+        await self._reconcile()
+        if self._scheduler is None or self._scheduler.done():
+            self._scheduler = asyncio.create_task(self._schedule(), name="fed-scheduler")
+
+    def friends_changed(self) -> None:
+        """Wake the scheduler safely from synchronous route threads."""
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._changed.set)
+
+    async def _schedule(self) -> None:
+        while True:
+            try:
+                await asyncio.wait_for(self._changed.wait(), timeout=60)
+            except TimeoutError:
+                pass  # Periodic reconciliation also catches out-of-band DB edits.
+            self._changed.clear()
+            try:
+                await self._reconcile()
+            except Exception:
+                log.exception("federation scheduler reconciliation failed")
+
+    async def _reconcile(self) -> None:
         with self._sf() as session:
             friends = session.query(Friend).all()
-            for f in friends:
-                self._spawn_for(f)
+            desired = {f"{f.owner_pubkey}|{f.friend_pubkey}": f for f in friends}
+            for key, task in list(self._tasks.items()):
+                friend = desired.get(key)
+                target = (friend.friend_url, friend.pull_interval_s) if friend else None
+                if target != self._targets[key] or task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    del self._tasks[key]
+                    del self._targets[key]
+                    self._last_results.pop(key, None)
+            for friend in friends:
+                self._spawn_for(friend)
 
     async def stop(self) -> None:
+        self._loop = None
+        if self._scheduler is not None:
+            self._scheduler.cancel()
+            await asyncio.gather(self._scheduler, return_exceptions=True)
+            self._scheduler = None
         for t in list(self._tasks.values()):
             t.cancel()
         for t in list(self._tasks.values()):
@@ -122,30 +163,41 @@ class FederationPuller:
             except (asyncio.CancelledError, Exception):
                 pass
         self._tasks.clear()
+        self._targets.clear()
         if self._owns_http and self._http is not None:
             await self._http.aclose()
+            self._http = None
 
     def _spawn_for(self, friend: Friend) -> None:
         key = f"{friend.owner_pubkey}|{friend.friend_pubkey}"
         if key in self._tasks and not self._tasks[key].done():
             return
         self._tasks[key] = asyncio.create_task(
-            self._friend_loop(friend.friend_pubkey, friend.friend_url, friend.pull_interval_s),
+            self._friend_loop(
+                friend.owner_pubkey, friend.friend_pubkey,
+                friend.friend_url, friend.pull_interval_s,
+            ),
             name=f"fed-pull-{friend.friend_pubkey[:8]}",
         )
+        self._targets[key] = (friend.friend_url, friend.pull_interval_s)
 
-    async def _friend_loop(self, friend_pubkey: str, friend_url: str, interval_s: int) -> None:
+    async def _friend_loop(
+        self, owner_pubkey: str, friend_pubkey: str, friend_url: str, interval_s: int,
+    ) -> None:
+        key = f"{owner_pubkey}|{friend_pubkey}"
         while True:
             try:
                 items = await self._pull_once(friend_url)
-                self._last_results[friend_pubkey] = {
+                self._last_results[key] = {
                     "items_count": len(items),
                     "fetched_at": datetime.now(timezone.utc).isoformat(),
+                    "ok": True,
                 }
-                self._update_last_pull(friend_pubkey)
+                self._update_last_pull(owner_pubkey, friend_pubkey)
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
+                self._last_results[key] = {"ok": False, "error": "pull_failed"}
                 log.exception("federation pull from %s failed", friend_url)
             try:
                 await asyncio.sleep(max(60, interval_s))
@@ -153,25 +205,19 @@ class FederationPuller:
                 raise
 
     async def _pull_once(self, friend_url: str) -> list[Any]:
-        """Anonymous pull — the feed itself filters visibility=public.
-
-        For an authenticated friend pull we'd need the local privkey +
-        pubkey, which the backend doesn't have (see the reactions note).
-        Phase D MVP: public items only. Phase D full build-out: the local
-        Jarvis supplies the backend a scoped auth header per friend.
-        """
+        """Pull the explicitly public feed; signed friend data stays separate."""
         assert self._http is not None
-        resp = await self._http.get(f"{friend_url.rstrip('/')}/api/v1/federation/feed",
+        resp = await self._http.get(f"{friend_url.rstrip('/')}/api/v1/federation/public-feed",
                                     params={"sort": "interesting"})
-        if resp.status_code != 200:
-            return []
-        return resp.json().get("items", [])
+        resp.raise_for_status()
+        items = resp.json()["items"]
+        if not isinstance(items, list):
+            raise ValueError("invalid federation feed")
+        return items
 
-    def _update_last_pull(self, friend_pubkey: str) -> None:
+    def _update_last_pull(self, owner_pubkey: str, friend_pubkey: str) -> None:
         with self._sf() as session:
-            row = session.query(Friend).filter(
-                Friend.friend_pubkey == friend_pubkey
-            ).first()
+            row = session.get(Friend, (owner_pubkey, friend_pubkey))
             if row is not None:
                 row.last_pull_at = datetime.now(timezone.utc)
                 session.commit()

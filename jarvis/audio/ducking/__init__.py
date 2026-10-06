@@ -3,8 +3,9 @@
 Lowers other apps' audio for the duration of a voice session and restores it
 afterwards. Windows: per-app session mute via pycaw. macOS: AppleScript volume
 duck of the known players (Music, Spotify) with an opt-in master-output
-fallback. A logged no-op elsewhere so the base headless install boots
-unaffected.
+fallback; the Automation consent it needs is asked once, when the user switches
+the feature on while a player is open, and never during a voice session. A
+logged no-op elsewhere so the base headless install boots unaffected.
 """
 from __future__ import annotations
 

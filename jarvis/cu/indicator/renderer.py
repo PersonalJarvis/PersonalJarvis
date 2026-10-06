@@ -207,7 +207,7 @@ def _flight_origin(raw: object):
         return None
     try:
         x, y, w, h = (float(v) for v in raw)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Reject malformed geometry instead of drawing on an unintended region.
         return None
     if w < 8 or h < 8:
         return None
@@ -1360,7 +1360,7 @@ class Renderer(QObject):
     def _take_card_options(self, payload: dict) -> None:
         try:
             self._card_rest_ms = max(0, int(payload.get("rest_ms", _CARD_REST_MS)))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # Invalid optional timing keeps the standard indicator duration.
             self._card_rest_ms = _CARD_REST_MS
         labels = payload.get("labels")
         self._card_labels = (

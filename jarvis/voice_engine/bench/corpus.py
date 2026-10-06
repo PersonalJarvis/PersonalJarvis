@@ -93,7 +93,7 @@ def _matches(rule: dict[str, Any], actual: Any) -> bool:
         expected = rule["equals"]
         try:
             return float(actual) == float(expected)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # non-numeric values are compared as text instead
             return fold(actual).strip() == fold(expected).strip()
     if "contains" in rule:
         options = rule["contains"]
@@ -132,7 +132,7 @@ def _arguments(call: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(args, str):
         try:
             args = json.loads(args)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError:  # unparseable arguments mean no match, scored by the caller
             return None
     return args if isinstance(args, dict) else None
 

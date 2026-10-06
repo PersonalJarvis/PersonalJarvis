@@ -43,6 +43,7 @@ def _load() -> deque[dict[str, Any]]:
             raw = json.loads(history_path().read_text(encoding="utf-8"))
             rows = [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
         except FileNotFoundError:
+            # No history file yet is the normal first-run state.
             pass
         except (OSError, ValueError):
             log.warning("app-actions: unreadable history — starting empty", exc_info=True)

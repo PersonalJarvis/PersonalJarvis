@@ -100,6 +100,7 @@ describe("Agentic IDE project flow", () => {
     await screen.findByText("Choose a workspace");
     act(() => useIdeProjectsStore.getState().newWorkspace("p1"));
     const dialog = await screen.findByRole("dialog", { name: "New workspace" });
+    // Keeping the checkout is the default, so the git choices sit folded behind one summary line.
     await waitFor(() => expect((within(dialog).getByRole("button", { name: "Git options" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(dialog).getByRole("button", { name: "Git options" }));
     fireEvent.click(await within(dialog).findByRole("radio", { name: /New worktree/ }));
@@ -193,7 +194,8 @@ describe("Agentic IDE project flow", () => {
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
     expect(within(dialog).queryByRole("button", { name: "Codex" })).toBeNull();
     expect(within(dialog).queryByRole("button", { name: "Browser Harness" })).toBeNull();
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T1" } });
+    fireEvent.click(within(dialog).getByRole("combobox", { name: "Split next to" }));
+    fireEvent.click(await within(dialog).findByRole("option", { name: "T1 · Plain Terminal" }));
     fireEvent.click(within(dialog).getByRole("radio", { name: "Split right" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Plain Terminal" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith(
@@ -211,9 +213,12 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
     // Still the automatic grid, so that is what the dialog offers first.
-    expect((within(dialog).getByRole("combobox", { name: "Split next to" }) as HTMLSelectElement).value).toBe("");
+    const anchor = within(dialog).getByRole("combobox", { name: "Split next to" });
+    expect(anchor.getAttribute("data-value")).toBe("");
     expect(within(dialog).queryByRole("radio", { name: "Split left" })).toBeNull();
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Split next to" }), { target: { value: "T2" } });
+    fireEvent.click(anchor);
+    fireEvent.click(await within(dialog).findByRole("option", { name: "T2 · Codex" }));
+    expect(anchor.getAttribute("data-value")).toBe("T2");
     fireEvent.click(within(dialog).getByRole("radio", { name: "Split left" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Codex" }));
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T2", direction: "left" }, { onMessage: expect.any(Function) }));

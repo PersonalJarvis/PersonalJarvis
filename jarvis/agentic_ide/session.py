@@ -4884,6 +4884,7 @@ class Registry:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            # No event loop (shutdown or sync caller): skip the repaint check.
             return
         # One check per pane: a dragged seam resizes many times a second, and
         # only the newest size's repaint is worth waiting for. An older check is

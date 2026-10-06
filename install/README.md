@@ -36,20 +36,74 @@ repair these artifacts, and uninstall removes them again. Developer checkouts
 and headless Linux hosts are deliberately not registered.
 
 On macOS, every launch path enters through the same app bundle so privacy
-grants stay attached to one identity. The source installer builds a native
-py2app alias launcher, signs it with a per-user code-signing certificate it
+grants stay attached to one identity. The source installer compiles a small
+native launcher (`jarvis/setup/macos_stub_launcher.c`) into
+`Personal Jarvis.app`, signs it with a per-user code-signing certificate it
 creates on the first run (macOS asks for the login password once to trust
 it; grants then survive every rebuild and update), verifies the identity from
 inside a LaunchServices process, and preserves the bundle unchanged across
 ordinary updates. Without that certificate the launcher is ad-hoc signed and a
 rebuild costs one round of re-granting. A separately distributed binary still requires the release
-pipeline's Developer-ID signing and notarization. Apple does not permit an installer to
-silently grant Microphone, Screen Recording, Accessibility, Input Monitoring,
-or input-control access. The app therefore presents one explicit button per
-permission during first launch, uses only Apple's native prompt/System Settings
-flows, and remains fully usable for text when the user declines. The installer
-stops instead of claiming success if the full profile or app-bundle registration
-fails.
+pipeline's Developer-ID signing and notarization. The installer stops instead of
+claiming success if the full profile or app-bundle registration fails.
+
+Apple does not permit an installer to silently grant Microphone, Screen
+Recording, Accessibility, Input Monitoring or input-control access, so the
+installer asks for none of them and neither does the first launch. Personal
+Jarvis asks at the moment a feature you start needs a permission: the first
+dictation asks for the microphone, the first screen capture asks for Screen
+Recording, and so on, each through Apple's own dialog or System Settings pane.
+If you decline, only that one feature is unavailable, with one click to the
+right System Settings pane (one short toast offers it), and everything else (typed
+chat included) keeps working. `jarvis permissions reset <permission>` makes macOS ask
+again. This is how the app is built to behave; it has not been exercised on a real
+Mac yet (unverified).
+
+## Current cryptography on every architecture
+
+The installer uses cryptography 50.0.2 or newer and AsyncSSH 2.24.0 or newer
+on every supported architecture. Intel macOS 13+ and Windows ARM64 receive
+hash-pinned native wheels from the project's supplemental package index;
+Apple Silicon, Windows x64 and Linux use upstream PyPI wheels. Users do not
+need Rust or OpenSSL development tools. The full profile and frozen browser
+helper use the same reviewed builds.
+
+For a manual source checkout, use `python scripts/pip_install.py -e '.[full]'`
+to select the supplemental index automatically. A raw `pip` or `pipx` install
+on Intel macOS or Windows ARM64 needs
+`--find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/`
+(pass it through `pipx --pip-args` when using pipx).
+
+Maintainers build both native wheels with the **Native cryptography wheels**
+workflow, which validates source hashes, native architecture, linked system
+libraries and security/compatibility contracts. Record the successful artifacts'
+SHA256 values in `packaging/native-crypto.json`. Generate the static index with
+`python scripts/native_crypto_index.py --artifacts <downloaded-wheels> --output <pages-checkout>`
+and push it to the `native-crypto-index` branch, whose Pages workflow verifies
+the artifact hashes again before deployment. Wait for deployment before regenerating
+the application locks. Preserve older version directories; never replace a
+published wheel. A rebuilt wheel needs a new `build_revision`, even when the
+upstream version is unchanged. Keep the explicit uv index URL and pipx example
+in sync, then run the portable matrix and native runtime CI jobs before merging.
+
+Compile from project metadata so uv applies the **explicit** cryptography source.
+The output uses a flat `--find-links` page for pip; a generic extra index would
+query Pages for every unrelated dependency. The browser sidecar project mirrors
+its `requirements.in`, enforced by `check_requirements_sync.py`.
+
+```bash
+uv pip compile --universal --generate-hashes --emit-find-links \
+  --python-version 3.11 --output-file=requirements.txt pyproject.toml \
+  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --config-file packaging/native-crypto-uv.toml \
+  --default-index https://pypi.org/simple --keyring-provider disabled --no-progress --color never
+uv pip compile jarvis/assets/browser/pyproject.toml --universal --generate-hashes --emit-find-links \
+  --python-version 3.12 --no-header --output-file=jarvis/assets/browser/requirements.lock \
+  --config-file packaging/native-crypto-uv.toml \
+  --find-links https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/cryptography/ \
+  --default-index https://pypi.org/simple --keyring-provider disabled
+uv lock --config-file packaging/native-crypto-uv.toml --default-index https://pypi.org/simple
+```
 
 ## File layout
 

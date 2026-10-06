@@ -95,7 +95,7 @@ describe("key sequences", () => {
     expect(resolveHotkey({ menu: "help" }, press("j"), AGENTS)).toEqual({ type: "step", step: { menu: "root" } });
   });
 
-  it("speaks herdr's keys: V and - split, N/P switch, Shift+N/W/D manage workspaces", () => {
+  it("supports the documented shortcut keys: V and - split, N/P switch, Shift+N/W/D manage workspaces", () => {
     expect(resolveHotkey(ROOT, press("v"), AGENTS)).toEqual({ type: "run", action: { kind: "split", direction: "right" } });
     expect(resolveHotkey(ROOT, { ...press("-"), code: "Minus" }, AGENTS)).toEqual({ type: "run", action: { kind: "split", direction: "down" } });
     expect(resolveHotkey(ROOT, press("n"), AGENTS)).toEqual({ type: "run", action: { kind: "workspace-step", step: 1 } });

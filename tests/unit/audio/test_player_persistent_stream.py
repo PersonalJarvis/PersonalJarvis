@@ -60,6 +60,7 @@ def _make_player(monkeypatch) -> tuple[AudioPlayer, list[str]]:
     player._active_source_rate = None
     player._active_device_rate = None
     player._device_rate_cache = {}
+    player._device_rate_failed = set()
 
     events: list[str] = []
 
@@ -275,6 +276,7 @@ async def test_live_portaudio_write_error_still_propagates(monkeypatch) -> None:
     """Cancellation handling must not hide an active device failure."""
 
     player, _ = _make_player(monkeypatch)
+    monkeypatch.setattr(player_module, "_ranked_output_device_indices", lambda *_: [])
     monkeypatch.setattr(
         player,
         "_write_samples",

@@ -364,7 +364,7 @@ class _Engine:
     async def wait_ready(self, timeout_s: float) -> bool:
         try:
             await asyncio.wait_for(self._ready.wait(), timeout_s)
-        except TimeoutError:
+        except TimeoutError:  # not ready in time is the answer the caller asked for
             return False
         return self.phase == "ready"
 

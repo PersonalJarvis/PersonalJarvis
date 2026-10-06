@@ -1,0 +1,84 @@
+# Supply-chain and workflow security scans.
+#
+# Three free scanners for public repositories. Each one writes into the
+# repository's Security tab (code scanning), next to CodeQL's default setup:
+#
+#   zizmor             audits these workflow files themselves: template
+#                      injection, leaked checkout credentials, dangerous
+#                      triggers, cache poisoning. Accepted exceptions live in
+#                      .github/zizmor.yml with their reason.
+#   dependency-review  on pull requests only: fails when the diff ADDS a
+#                      dependency with a known high or critical advisory.
+#   osv-scanner        scans the shipped lockfiles against osv.dev on main and
+#                      once a week, so an advisory published after a merge
+#                      still surfaces. It reports; it never blocks.
+#
+# None of these is part of the required `CI gate` check. They inform; the
+# ratchet stays the only merge blocker.
+
+name: Security scans
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "41 3 * * 2" # Tuesdays, off the hour
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  zizmor:
+    name: zizmor (workflow audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.30.1"
+          # Low/informational hints (self-repository syntax, ad-hoc pip in the
+          # merge train) stay local-only instead of filling the Security tab.
+          min-severity: medium
+
+  dependency-review:
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  osv-scanner:
+    name: osv-scanner (lockfiles)
+    if: github.event_name != 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+    with:
+      # Only what an installed Jarvis actually runs; the marketing video
+      # projects carry their own lockfiles and ship nothing.
+      scan-args: |-
+        -L requirements.txt
+        -L jarvis/voice_engine/requirements-engine.txt
+        -L keyproxy/requirements.txt
+        -L scripts/ci/requirements-build.txt
+        -L jarvis/ui/web/frontend/package-lock.json
+      fail-on-vuln: false

@@ -32,12 +32,18 @@ parameter is silently ignored by the subprocess machinery.
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import shutil
 import subprocess
 import sys
+import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO
+
+log = logging.getLogger(__name__)
 
 _NULL_STANDARD_STREAMS: list[TextIO] = []
 
@@ -287,6 +293,42 @@ def ensure_normal_process_priority() -> str | None:
         return None
 
 
+def wait_procs(procs: Sequence[Any], timeout: float) -> tuple[list[Any], list[Any]]:
+    """``psutil.wait_procs`` that survives psutil's pidfd race on Linux.
+
+    psutil 7.2 waits on Linux with ``pidfd_open()`` and lets ``EINVAL``
+    through. The kernel answers ``EINVAL`` for a process whose main thread has
+    already exited while other threads still run — a normal moment while a
+    browser or model server shuts down. The whole wait then raised
+    ``OSError: [Errno 22]`` instead of reporting which processes were gone
+    (seen in the Linux installer smoke, 2026-09-30). On that error this polls
+    the same processes until they are gone or ``timeout`` runs out, and
+    returns ``(gone, alive)`` exactly like psutil does.
+    """
+    import psutil  # noqa: PLC0415 — keep psutil off this module's import floor
+
+    try:
+        return psutil.wait_procs(procs, timeout=timeout)
+    except OSError as exc:
+        if exc.errno != errno.EINVAL:
+            raise
+        log.debug("psutil.wait_procs hit the pidfd EINVAL race; polling instead")
+
+    def running(proc: Any) -> bool:
+        try:
+            return bool(proc.is_running()) and proc.status() != psutil.STATUS_ZOMBIE
+        except psutil.Error:  # gone or no longer inspectable: it is not running
+            return False
+
+    deadline = time.monotonic() + max(0.0, timeout)
+    alive = [proc for proc in procs if running(proc)]
+    while alive and time.monotonic() < deadline:
+        time.sleep(0.05)
+        alive = [proc for proc in alive if running(proc)]
+    gone = [proc for proc in procs if proc not in alive]
+    return gone, alive
+
+
 __all__ = [
     "NO_WINDOW_CREATIONFLAGS",
     "disable_windows_app_ghosting",
@@ -294,5 +336,6 @@ __all__ = [
     "ensure_standard_streams",
     "resolve_executable",
     "thread_message_loop_wake_supported",
+    "wait_procs",
     "wake_thread_message_loop",
 ]

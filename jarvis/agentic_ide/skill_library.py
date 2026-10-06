@@ -76,7 +76,20 @@ ICONS: tuple[str, ...] = (
 _LEGACY_ICONS: dict[str, str] = {"sparkles": "auto", "wand": "refactor", "brain": "plan"}
 
 _FRONTMATTER_RE = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
-_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+def _heading_text(line: str) -> str | None:
+    """The text of a Markdown ATX heading line (``## Title ##``), else ``None``.
+
+    Parsed by hand rather than with a regex: a lazy group between optional
+    whitespace runs backtracks quadratically on a long line of spaces.
+    """
+    rest = line.lstrip(" 	")
+    if len(line) - len(rest) > 3:
+        return None
+    marks = len(rest) - len(rest.lstrip("#"))
+    if not 1 <= marks <= 6 or len(rest) == marks or not rest[marks].isspace():
+        return None
+    text = rest[marks:].strip().rstrip("#").rstrip()
+    return text or None
 
 
 def skill_library_path() -> Path:
@@ -132,9 +145,9 @@ def derive_title(content: str, fallback: str = "") -> str:
     else:
         body = content
     for line in body.splitlines():
-        heading = _HEADING_RE.match(line)
+        heading = _heading_text(line)
         if heading:
-            return _clean_line(heading.group(1), MAX_TITLE_LEN)
+            return _clean_line(heading, MAX_TITLE_LEN)
     if fallback.strip():
         return _clean_line(fallback, MAX_TITLE_LEN)
     for line in body.splitlines():
@@ -159,7 +172,7 @@ def derive_description(content: str) -> str:
         if stripped.startswith(("```", "~~~")):
             in_fence = not in_fence
             continue
-        if in_fence or not stripped or _HEADING_RE.match(line):
+        if in_fence or not stripped or _heading_text(line) is not None:
             continue
         if stripped.startswith(("|", "---", "<!--")):
             continue
@@ -203,7 +216,7 @@ class LibrarySkill:
         icon = _LEGACY_ICONS.get(icon, icon)
         try:
             uses = max(0, int(raw.get("use_count") or 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # a hand-edited non-number counts as never used
             uses = 0
         last_used = raw.get("last_used_at")
         return cls(
@@ -259,7 +272,7 @@ class SkillLibrary:
     def list_all(self) -> list[LibrarySkill]:
         try:
             raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
+        except FileNotFoundError:  # no library file yet means an empty library
             return []
         except (OSError, ValueError) as exc:
             log.warning(

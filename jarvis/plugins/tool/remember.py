@@ -54,9 +54,9 @@ class RememberTool:
         said = str(getattr(ctx, "user_utterance", "") or "")
         try:
             change = await asyncio.to_thread(remember_explicitly, fact, evidence=said)
-        except LookupError:
+        except LookupError:  # no MEMORY.md notebook: use the legacy store
             return await self._legacy(fact, str(args.get("category") or "general").strip())
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError) as exc:  # reported to the model as a failed save
             return ToolResult(success=False, output=None, error=f"not saved: {exc}")
         if change is None:
             return ToolResult(success=True, output=f"Already in MEMORY.md: {fact}")

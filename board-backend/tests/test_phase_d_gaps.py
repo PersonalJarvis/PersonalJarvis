@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from board_backend.crypto import canonical_json, generate_keypair, sign
+from board_backend.crypto import canonical_json, generate_keypair, sign, signed_audience
 from board_backend.models import ActivityItem, Friend
 
 
@@ -17,6 +17,7 @@ def _now_ms() -> int:
 
 def _signed(method: str, client: TestClient, path: str, *, priv: str, pub: str,
             payload: dict, params: dict | None = None):
+    payload = {"aud": signed_audience(method, path), **payload}
     body = canonical_json(payload)
     sig = sign(payload, privkey_hex=priv)
     return client.request(

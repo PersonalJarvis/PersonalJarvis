@@ -72,7 +72,7 @@ def load_snapshot() -> dict[str, Any]:
             "cpu_percent": psutil.cpu_percent(interval=1.0),
             "ram_available_gb": round(psutil.virtual_memory().available / 1e9, 1),
         }
-    except ImportError:
+    except ImportError:  # optional module; the report simply omits it
         return {}
 
 
@@ -96,7 +96,7 @@ def describe() -> dict[str, Any]:
         try:
             imported = __import__(module)
             info[f"version_{module}"] = getattr(imported, "__version__", "?")
-        except ImportError:
+        except ImportError:  # optional module; the report records it as absent
             info[f"version_{module}"] = None
     info["load"] = load_snapshot()
     return info

@@ -72,11 +72,47 @@ def _typed_error(exc: RosterError | RoomError) -> HTTPException:
     )
 
 
+def _validated_chat_runner(
+    rt: SocietyRuntime,
+    agent: AgentRecord,
+    provider: str,
+    *,
+    approval_mode: str | None = None,
+    permission_ceiling: str | None = None,
+) -> str:
+    """Reject a runner change that cannot honor the effective chat approval."""
+    from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
+    from jarvis.agent_chat.service import resolve_runner
+
+    runner = resolve_runner(provider, surface="society")
+    mode = approval_mode if approval_mode is not None else (
+        str(agent.approval_mode) if agent.approval_mode is not None else ""
+    )
+    if mode and not society_mode_supported(runner, mode):
+        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
+    ceiling = str(
+        permission_ceiling if permission_ceiling is not None else agent.permission_ceiling
+    )
+    if not mode and ceiling != "safe" and not society_mode_supported(runner, "ask"):
+        raise HTTPException(
+            422, "This runner cannot provide an actionable approval for this legacy agent."
+        )
+    chat = rt.chat_service()
+    if chat is not None and chat.store.get_session(agent.session_id) is not None:
+        override = chat.store.permission_override(agent.session_id)
+        if override and override not in ("plan", "read-only"):
+            if not society_mode_supported(runner, normalize_permission("society", override)):
+                raise HTTPException(422, "This runner cannot honor the chat's approval choice.")
+    return runner
+
+
 # ------------------------------------------------------------------- models
 
 
 class CreateAgentBody(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    #: Empty = one-click creation: placeholder name, random look, and the agent
+    #: proposes its own identity in its first conversation.
+    name: str | None = Field(default=None, max_length=40)
     title: str = ""
     description: str = ""
     tier: str = "specialist"
@@ -345,18 +381,14 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
     if has_brief(brief):
         # A brief rewrites the standing instructions as a whole.
         fields["description"] = compose_description(body.description or "", brief)
-    requested_mode = body.approval_mode or (
-        str(agent.approval_mode) if body.provider and agent.approval_mode else ""
-    )
-    if requested_mode:
-        from jarvis.agent_chat.permissions import society_mode_supported
-        from jarvis.agent_chat.service import resolve_runner
-
-        provider = body.provider or agent.provider
-        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
-            raise HTTPException(
-                422, "This runner cannot provide an actionable approval for that mode."
-            )
+    if any(key in fields for key in ("provider", "approval_mode", "permission_ceiling")):
+        _validated_chat_runner(
+            rt,
+            agent,
+            body.provider or agent.provider,
+            approval_mode=body.approval_mode,
+            permission_ceiling=fields.get("permission_ceiling"),
+        )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
         # derived focus is APPENDED to the existing order (existing first,
@@ -380,8 +412,17 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
         raise _typed_error(exc) from exc
     if "approval_mode" in fields:
         svc = rt.chat_service()
-        if svc is not None and svc.store.get_session(updated.session_id) is not None:
-            svc.store.update_session(updated.session_id, permission_mode=str(updated.approval_mode))
+        if (
+            svc is not None
+            and svc.store.get_session(updated.session_id) is not None
+            and not svc.is_running(updated.session_id)
+        ):
+            from jarvis.society.chat_binding import ensure_session
+
+            # An active turn keeps its pinned seat. An idle one rebinds through
+            # the roster plus any narrower chat override instead of replacing
+            # that override with the card's new default.
+            ensure_session(svc, rt.config(), updated)
     if "state" in fields:
         await rt.checkpoints.refresh(agent.agent_id)
         updated = await rt.roster.get(agent.agent_id) or updated
@@ -404,6 +445,9 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
 
     try:
         session = ensure_session(svc, rt.config(), agent)
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session.session_id)
     except PermissionError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
@@ -735,14 +779,14 @@ class ProviderPrefsBody(BaseModel):
 
 
 @router.get("/provider-prefs", summary="Which providers and models the agents may run on")
-async def get_provider_prefs() -> dict[str, Any]:
+def get_provider_prefs() -> dict[str, Any]:
     from jarvis.agent_chat import agent_provider_prefs
 
     return agent_provider_prefs.load().to_dict()
 
 
 @router.put("/provider-prefs", summary="Turn providers and models on or off for the agents")
-async def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
+def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
     """Merge the given fields into the saved choices; ids outside the
     agents' catalog are refused so a typo cannot hide a seat for good."""
     from jarvis.agent_chat import agent_provider_prefs
@@ -815,8 +859,6 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
     """Move the agent onto another provider / model / effort / subscription seat.
     Its canonical chat is re-seated at once (transcript kept)."""
     from jarvis.agent_chat.catalog import offers
-    from jarvis.agent_chat.permissions import society_mode_supported
-    from jarvis.agent_chat.service import resolve_runner
 
     rt = await _runtime(request)
     agent = await rt.roster.resolve(agent_id)
@@ -827,17 +869,14 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
-    if agent.approval_mode and not society_mode_supported(
-        resolve_runner(body.provider, surface="society"), str(agent.approval_mode)
-    ):
-        raise HTTPException(422, "This runner cannot provide an actionable approval for that mode.")
+    target_runner = _validated_chat_runner(rt, agent, body.provider)
+    chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),
         "model": body.model.strip(),
         "effort": body.effort.strip(),
         "account_id": body.account_id.strip(),
     }
-    chat = rt._get_chat()
     if chat is not None and hasattr(chat, "controls"):
         from jarvis.society.roster import PAIR_SESSION_MARKER
 
@@ -867,7 +906,7 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             log.info("society: %s re-seat deferred: %s", agent.agent_id, exc)
     return {
         "agent": _agent_row(updated, request),
-        "runner": resolve_runner(updated.provider, surface="society"),
+        "runner": target_runner,
         "reseated": reseated,
     }
 
@@ -1635,6 +1674,185 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
         "content": content,
         "updated_ms": updated_ms,
     }
+
+
+# ---------------------------------------------------------------- templates
+#
+# Share an agent as a template, and install one somebody else shared
+# (docs/marketplace/agent-templates.md). The template is always BUILT here from
+# the roster row plus the person's public-version edits — the view never sends
+# a template of its own to publish, so what leaves the machine is exactly what
+# the scrubber in jarvis/society/agent_template.py let through.
+
+
+class ShareDraftBody(BaseModel):
+    """Edits to the public version. ``None`` keeps a field; ``reset`` drops all."""
+
+    summary: str | None = Field(default=None, max_length=500)
+    instructions: str | None = Field(default=None, max_length=20_000)
+    title: str | None = Field(default=None, max_length=120)
+    categories: list[str] | None = Field(default=None, max_length=10)
+    listing_name: str | None = Field(default=None, max_length=64)
+    version: str | None = Field(default=None, max_length=32)
+    reset: bool = False
+
+
+class InstallTemplateBody(BaseModel):
+    template: dict[str, Any]
+
+
+async def _share_draft(rt: SocietyRuntime, agent_id: str) -> tuple[AgentRecord, Any]:
+    from jarvis.society.agent_template import TemplateError, build_draft, load_overlay
+
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return agent, build_draft(agent, load_overlay(rt.data_dir, agent.agent_id))
+    except TemplateError as exc:
+        raise HTTPException(409, {"reason": "not_shareable", "detail": str(exc)}) from exc
+
+
+def _draft_payload(draft: Any) -> dict[str, Any]:
+    from jarvis.society.agent_template import validate_template
+
+    payload: dict[str, Any] = draft.to_dict()
+    payload["errors"] = validate_template(draft.template, draft.listing)
+    return payload
+
+
+@router.get("/agents/{agent_id}/template", openapi_extra={"x-jarvis-readonly": True})
+async def get_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's shareable template: what would be published, and what was cut."""
+    rt = await _runtime(request)
+    _, draft = await _share_draft(rt, agent_id)
+    return _draft_payload(draft)
+
+
+@router.put("/agents/{agent_id}/template")
+async def save_share_template(
+    agent_id: str, body: ShareDraftBody, request: Request
+) -> dict[str, Any]:
+    """Save edits to the public version (never touches the agent itself)."""
+    from jarvis.society.agent_template import load_overlay, save_overlay
+
+    rt = await _runtime(request)
+    agent, _ = await _share_draft(rt, agent_id)
+    if body.reset:
+        # Back to the agent's own text; what was published stays on record.
+        current = load_overlay(rt.data_dir, agent.agent_id)
+        changes: dict[str, Any] = {k: None for k in current if k != "published"}
+    else:
+        changes = body.model_dump(exclude_none=True, exclude={"reset"})
+        # A person editing the text takes it over from the agent's polish.
+        if changes:
+            changes["polished_by"] = None
+    save_overlay(rt.data_dir, agent.agent_id, changes)
+    _, draft = await _share_draft(rt, agent.agent_id)
+    return _draft_payload(draft)
+
+
+# Dangerous: publishes the agent's design publicly under the user's GitHub name.
+@router.post("/agents/{agent_id}/template/publish", openapi_extra={"x-jarvis-dangerous": True})
+async def publish_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """Publish the current draft to the community marketplace as the signed-in user."""
+    from jarvis.marketplace.install_standard import install_block
+    from jarvis.marketplace.publish import SubmitError, submit, validate_draft
+    from jarvis.society.agent_template import save_overlay, submission
+
+    rt = await _runtime(request)
+    agent, draft = await _share_draft(rt, agent_id)
+    normalized, errors = validate_draft(submission(draft.template, draft.listing))
+    if normalized is None:
+        first = errors[0]
+        raise HTTPException(
+            422, {"error": first["error"], "field": first["field"], "errors": errors}
+        )
+    try:
+        result = await submit(normalized)
+    except SubmitError as exc:
+        raise HTTPException(exc.status, {"error": exc.error, "field": exc.field}) from exc
+    published = {
+        "name": normalized["name"],
+        "version": normalized["version"],
+        "url": result.get("issue_url") or result.get("pr_url"),
+    }
+    # The next share starts from the next version; the summary/text edits stay.
+    save_overlay(rt.data_dir, agent.agent_id, {"published": published, "version": None})
+    return {
+        "ok": True,
+        **published,
+        "install": install_block(normalized["name"], "agent"),
+        **result,
+    }
+
+
+async def _free_agent_name(rt: SocietyRuntime, wanted: str) -> str:
+    """``wanted``, or ``wanted 2``, ``wanted 3`` … — the first name not taken.
+
+    The roster ADOPTS an existing name instead of minting a second agent, so
+    installing "Inbox Butler" twice would silently hand back the first one.
+    """
+    base = wanted.strip()[:37].rstrip() or "Agent"
+    candidate = wanted.strip()[:40]
+    for number in range(2, 100):
+        if await rt.roster.resolve(candidate) is None:
+            return candidate
+        candidate = f"{base} {number}"
+    raise HTTPException(409, {"reason": "name_taken", "detail": "pick another name"})
+
+
+async def install_template(template: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Create a NEW agent from a template on this install's own model.
+
+    Shared by the import route below and the marketplace's install-by-name.
+    The agent asks before it acts where its runner can (``approval_mode=ask``):
+    its instructions were written by somebody else, so the person sees its
+    first moves before trusting it with more.
+    """
+    from jarvis.society.agent_template import TemplateError, create_fields
+
+    try:
+        fields = create_fields(template)
+    except TemplateError as exc:
+        raise HTTPException(422, {"reason": "invalid_template", "detail": str(exc)}) from exc
+    rt = await _runtime(request)
+    wanted = fields.pop("name")
+    name = await _free_agent_name(rt, wanted)
+    scope = template.get("knowledge_scope", "shared")
+    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
+    try:
+        created = await create_agent(body, request)
+    except HTTPException as exc:
+        if exc.status_code != 422:
+            raise
+        # This runner cannot hold an approval prompt: the app's default applies.
+        body = CreateAgentBody(name=name, **fields)
+        created = await create_agent(body, request)
+    agent_row = created["agent"]
+    if scope == "own" and agent_row.get("knowledge_scope") != "own":
+        try:
+            updated = await rt.roster.update(agent_row["agent_id"], {"knowledge_scope": "own"})
+        except RosterError as exc:
+            raise _typed_error(exc) from exc
+        agent_row = updated.to_dict()
+    return {
+        "agent": agent_row,
+        "created": bool(created.get("created")),
+        "renamed_from": wanted if name != wanted else None,
+        "readback": created.get("readback", {}),
+    }
+
+
+@router.post("/templates/install")
+async def install_template_route(body: InstallTemplateBody, request: Request) -> dict[str, Any]:
+    """Create a new agent from an agent template (an exported file, pasted JSON)."""
+    template = body.template
+    # Accept a whole marketplace submission as well as the bare template: a
+    # person importing what somebody posted will paste either.
+    if template.get("kind") == "agent" and isinstance(template.get("agent"), dict):
+        template = template["agent"]
+    return await install_template(template, request)
 
 
 # ----------------------------------------------------------------- controls

@@ -33,6 +33,23 @@ def _ctx() -> ExecutionContext:
 # --- macOS (Quartz/AppKit/AX) ----------------------------------------------
 
 
+def _macos_permission_world(monkeypatch, *, trusted: bool):
+    """A darwin FakeTCC behind the REAL port; the process-wide service sits on it.
+
+    ``trusted=False`` leaves the Accessibility dialog on screen unanswered, so a
+    refusal is "the user has not allowed it yet". Nothing here ran on a real Mac:
+    FakeTCC models the OS.
+    """
+    from tests.fakes.fake_tcc import DialogPolicy, FakeTCC, install_port
+
+    tcc = FakeTCC(
+        granted=("accessibility",) if trusted else (),
+        default_policy=DialogPolicy.NEVER_ANSWERED,
+    )
+    install_port(monkeypatch, tcc.port("darwin"))
+    return tcc
+
+
 def _install_fake_macos_apis(
     monkeypatch,
     *,
@@ -40,9 +57,8 @@ def _install_fake_macos_apis(
     minimized=False,
     activate_result=True,
     set_attr_error=None,
+    tcc=None,
 ):
-    from jarvis.platform.permissions import PermissionState
-
     ax_window = object()
     ax_root = object()
     calls: list[tuple] = []
@@ -82,18 +98,8 @@ def _install_fake_macos_apis(
     )
     monkeypatch.setitem(sys.modules, "AppKit", appkit)
     monkeypatch.setitem(sys.modules, "ApplicationServices", services)
-    permission_port = types.SimpleNamespace(
-        runtime_access_granted=lambda _permission_id: trusted,
-        state=lambda _permission_id: (
-            PermissionState.GRANTED
-            if trusted
-            else PermissionState.NOT_GRANTED
-        ),
-    )
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: permission_port,
-    )
+    if tcc is None:
+        _macos_permission_world(monkeypatch, trusted=trusted)
     return calls
 
 
@@ -189,15 +195,43 @@ def test_macos_focus_fails_when_raise_and_frontmost_both_fail(monkeypatch):
     assert "refused to focus" in msg
 
 
-def test_macos_accessibility_denied_message(monkeypatch):
-    _install_fake_macos_apis(monkeypatch, trusted=False)
+def test_macos_focus_without_accessibility_asks_once_and_refuses_with_the_prefix(monkeypatch):
+    """Focusing is an ACTION: the first one asks macOS; nothing is raised until GRANTED."""
+    tcc = _macos_permission_world(monkeypatch, trusted=False)
+    calls = _install_fake_macos_apis(monkeypatch, trusted=False, tcc=tcc)
     monkeypatch.setattr(
         "jarvis.platform.window_state._quartz_window_list",
         lambda **_kwargs: [_mac_window()],
     )
+
     found, msg = _find_and_focus_macos("Editor")
-    assert found is False
-    assert "Accessibility" in msg
+    again, _msg_again = _find_and_focus_macos("Editor")
+
+    assert found is False and again is False
+    assert msg.startswith("[permission_needed:accessibility] ")
+    assert "must not retry" in msg
+    assert len(tcc.requests("accessibility")) == 1  # the second call is inside the cooldown
+    assert not [call for call in calls if call[0] in ("perform", "set")]  # nothing was touched
+    assert tcc.implicit_prompts() == []
+
+
+def test_macos_focus_the_dialog_answer_is_picked_up_without_a_restart(monkeypatch):
+    tcc = _macos_permission_world(monkeypatch, trusted=False)
+    calls = _install_fake_macos_apis(monkeypatch, trusted=False, tcc=tcc)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    assert _find_and_focus_macos("Editor")[0] is False
+
+    tcc.answer("accessibility")  # the user flips the switch
+    from jarvis.platform.permission_service import get_permission_service
+
+    get_permission_service().invalidate()
+    found, msg = _find_and_focus_macos("Editor")
+
+    assert found is True and msg == "My Editor"
+    assert ("perform", "AXRaise") in calls
 
 
 def test_macos_missing_native_frameworks(monkeypatch):

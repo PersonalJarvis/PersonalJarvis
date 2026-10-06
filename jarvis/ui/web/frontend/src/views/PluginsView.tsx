@@ -77,6 +77,9 @@ type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
  *  already know. */
 type Category = string;
 type Longevity = "permanent" | "self_renewing" | "provider_limited";
+/** Mirrors `Acceptance` in jarvis/marketplace/catalog.py: "verified" only
+ *  after a completed end-to-end browser journey, "preview" otherwise. */
+type Acceptance = "verified" | "preview";
 /** Mirrors the backend's REAUTH_* codes (jarvis/marketplace/token_store.py). */
 type ReauthReason =
   | "provider_rejected"
@@ -130,6 +133,7 @@ interface CatalogPlugin {
   featured?: boolean;
   longevity?: Longevity;
   longevity_note?: string | null;
+  acceptance?: Acceptance;
   oauth_client_family?: string | null;
   oauth_client_configured?: boolean;
   auth: { mode: AuthMode; [key: string]: unknown };
@@ -240,6 +244,8 @@ export interface Plugin {
   unavailableReason?: string;
   longevity: Longevity;
   longevityNote?: string;
+  /** Undefined only in hand-built fixtures; the catalog always states it. */
+  acceptance?: Acceptance;
   oauthClientFamily?: string;
   reauthReason?: ReauthReason | string;
   reauthAt?: string;
@@ -277,6 +283,7 @@ function adapt(p: CatalogPlugin): Plugin {
     unavailableReason: p.unavailable_reason ?? undefined,
     longevity: p.longevity ?? "self_renewing",
     longevityNote: p.longevity_note ?? undefined,
+    acceptance: p.acceptance ?? "preview",
     oauthClientFamily: p.oauth_client_family ?? undefined,
     reauthReason: p.reauth_reason ?? undefined,
     reauthAt: p.reauth_at ?? undefined,
@@ -1554,6 +1561,7 @@ function PluginTableRow({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-title font-medium">{plugin.name}</span>
+              <PreviewBadge plugin={plugin} />
               {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
               {plugin.selfUploaded && (
                 <span
@@ -1645,6 +1653,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
         title={plugin.name}
         titleAccessory={
           <>
+            <PreviewBadge plugin={plugin} />
             {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
             {plugin.selfUploaded && (
               <span
@@ -1901,6 +1910,25 @@ export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm"
  *  dies weeks later. `provider_limited` carries a note explaining how often — a
  *  warning without an answer would be worse than none.
  */
+/** "Not yet proven end to end." Built-in plugins only: a marketplace or
+ *  self-uploaded plugin already carries its own not-reviewed badge. Theme
+ *  tokens only, so it reads in light and dark mode. */
+export function PreviewBadge({ plugin }: { plugin: Plugin }) {
+  if (plugin.acceptance !== "preview" || plugin.fromMarketplace || plugin.selfUploaded) {
+    return null;
+  }
+  const title = translate("plugins_view.preview_tooltip");
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      className="shrink-0 rounded-full border border-border px-1.5 text-micro font-medium text-muted-foreground"
+    >
+      {translate("plugins_view.preview_badge")}
+    </span>
+  );
+}
+
 export function LongevityBadge({ plugin }: { plugin: Plugin }) {
   const limited = plugin.longevity === "provider_limited";
   return (

@@ -56,6 +56,6 @@ def read_setup_state(home: Path | None = None) -> dict[str, Any]:
     path = (home or engine_home()) / SETUP_STATE_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # a missing or broken record reads as empty
         return {}
     return data if isinstance(data, dict) else {}

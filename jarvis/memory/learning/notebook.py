@@ -381,7 +381,7 @@ class JarvisNotebook:
         """Small loop bookkeeping (compaction times) next to the notebooks."""
         try:
             data = json.loads((self.folder / STATE_NAME).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # no or unreadable state: start without cooldowns
             return {}
         return data if isinstance(data, dict) else {}
 
@@ -433,7 +433,7 @@ class JarvisNotebook:
         for name in ("USER.md", "MEMORY.md"):
             try:
                 stamps.append((folder / name).stat().st_mtime)
-            except OSError:
+            except OSError:  # missing file: a 0 stamp still marks the change
                 stamps.append(0.0)
         return tuple(stamps)
 
@@ -460,7 +460,7 @@ class JarvisNotebook:
                     raw = path.read_text(encoding="utf-8") if path.is_file() else ""
                     books[target] = parse(body(raw))
                 return books
-        except Timeout:
+        except Timeout:  # a writer holds the books: None tells the caller to skip this read
             return None
 
     def render(self, *, compact: bool = False, books: dict[str, list[Any]] | None = None) -> str:

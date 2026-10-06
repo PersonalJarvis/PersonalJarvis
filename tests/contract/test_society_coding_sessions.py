@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.agent_chat.store import AgentChatStore
 from jarvis.agentic_ide import agent_transcript, control, fleet_actions
 from jarvis.agentic_ide import session as sessions
 from jarvis.agentic_ide.control import CodingSessionControl
@@ -45,12 +46,24 @@ async def rig(tmp_path, monkeypatch):
     gateway = CodingSessionControl(registry)
     runtime._coding_sessions = gateway
     agent, _ = await runtime.roster.create(name="New coding coordinator", grant_mode="all")
+    chat_store = AgentChatStore(tmp_path / "chat-sessions.sqlite3")
+    chat_store.create_session(
+        provider=agent.provider,
+        model=agent.model,
+        effort="medium",
+        cwd=str(tmp_path),
+        permission_mode=str(agent.approval_mode or "ask"),
+        session_id=agent.session_id,
+        surface="society",
+    )
+    runtime._get_chat = lambda: SimpleNamespace(store=chat_store)
     tool = CodingSessionTool(runtime, agent.agent_id)
     try:
         yield registry, manager, gateway, runtime, tool, agent
     finally:
         await registry.close_all()
         await runtime.close()
+        chat_store.close()
 
 
 async def open_one(rig, tmp_path, agent="claude"):
@@ -86,8 +99,26 @@ async def test_new_society_agent_gets_grantable_gated_tool(rig, tmp_path):
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     await society_system_extra(cfg, None, session)
     selected = society_tool_filter(session)(society_tools(cfg, None, session))
+    # A new agent defaults to Bypass under an ask ceiling: the gated tool is
+    # there and opening runs without a card.
+    assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "monitor"
+    assert selected["coding-session"].risk_tier_for_args({"action": "context"}) == "monitor"
+    # An explicit require-approval rule still cards the call under Bypass.
+    await runtime.roster.update(
+        agent.agent_id,
+        {"approval_rules": {"require_approval": ["core:coding-session:open"]}},
+    )
+    await society_system_extra(cfg, None, session)
+    selected = society_tool_filter(session)(society_tools(cfg, None, session))
     assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "ask"
     assert selected["coding-session"].risk_tier_for_args({"action": "context"}) == "monitor"
+    # Ask mode cards the open; a read above safe also waits for the person.
+    await runtime.roster.update(
+        agent.agent_id, {"approval_mode": "ask", "approval_rules": {"require_approval": []}}
+    )
+    await society_system_extra(cfg, None, session)
+    selected = society_tool_filter(session)(society_tools(cfg, None, session))
+    assert selected["coding-session"].risk_tier_for_args({"action": "open"}) == "ask"
     await runtime.roster.update(agent.agent_id, {"denies": ["core:coding-session"]})
     denied = await rig[4].execute({"action": "discover"}, None)
     assert not denied.success
@@ -222,6 +253,8 @@ async def test_subscription_seat_gets_scoped_catalog_and_executor_gate(rig):
     from jarvis.society.surface import coding_tool_for_session
 
     calls = []
+    # The executor gate follows the agent's explicit Ask mode.
+    await rig[3].roster.update(rig[5].agent_id, {"approval_mode": "ask"})
 
     class Executor:
         async def execute(self, tool, arguments, **kwargs):
@@ -399,11 +432,7 @@ async def test_new_registered_cli_is_discovered_and_can_open(rig, tmp_path, monk
 async def test_plan_mode_cannot_use_subscription_gate(rig):
     from jarvis.society.surface import coding_tool_for_session
 
-    rig[3]._get_chat = lambda: SimpleNamespace(
-        store=SimpleNamespace(
-            get_session=lambda session_id: SimpleNamespace(permission_mode="plan"),
-        )
-    )
+    rig[3].chat_service().store.update_session(rig[5].session_id, permission_mode="plan")
     assert await coding_tool_for_session(rig[5].session_id) is None
     assert not (await rig[4].execute({"action": "open", "request_id": "plan"}, None)).success
 
@@ -485,7 +514,7 @@ async def test_jarvis_chat_receives_controller_without_becoming_a_coding_cli(rig
     assert "Read" in tools and "coding-session" in tools
     result = await tools["coding-session"].execute({
         "action": "open", "cwd": str(tmp_path), "agent": "codex", "request_id": "lead-request",
-    }, None)
+    }, SimpleNamespace(approved_by="user"))
     assert result.success and result.output["agent"] == "codex"
     session.permission_mode = "plan"
     tools, _ = await kit_payload(session, SimpleNamespace(_config=None))

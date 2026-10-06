@@ -47,21 +47,21 @@ def _run_helper(
                 errors="replace",
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
-        except (OSError, ValueError):
+        except (OSError, ValueError):  # no dialog tool here: the caller falls back
             return False, -1
         return True, int(getattr(completed, "returncode", 0) or 0)
     try:
         proc = subprocess.Popen(  # noqa: S603 — fixed argv, no shell
             cmd, creationflags=NO_WINDOW_CREATIONFLAGS
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError):  # no dialog tool here: the caller falls back
         return False, -1
     while proc.poll() is None:
         if dismiss.wait(0.2):
             proc.terminate()
             try:
                 proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired:  # ignored terminate: kill is the answer
                 proc.kill()
             return True, -1
     return True, int(proc.returncode or 0)

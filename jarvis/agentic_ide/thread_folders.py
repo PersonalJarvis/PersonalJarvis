@@ -17,7 +17,7 @@ from loguru import logger
 def _resolved(path: str | Path) -> Path | None:
     try:
         return Path(path).expanduser().resolve()
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError):  # unresolvable: not a known folder
         return None
 
 

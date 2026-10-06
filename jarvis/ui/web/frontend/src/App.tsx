@@ -18,7 +18,6 @@ import {
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
-import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
@@ -376,13 +375,9 @@ export default function App() {
             top-left corner so this gray shows in the curve. */}
         <div className="h-8 shrink-0" data-testid="caption-rule" />
         <div className={activeSection === "agents" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
-        {/* App-wide macOS permission alert — topmost so a missing grant is
-            impossible to miss on any view. No-op on other platforms. */}
-        <PermissionsAlertBanner />
         {/* Outside input software (dictation, text expanders, auto-type) cannot
-            reach an elevated window. Sits next to the permission alert because
-            it is the same class of problem: an OS-level gate the user must be
-            told about, since nothing else reports it. */}
+            reach an elevated window: an OS-level gate the user must be told
+            about, since nothing else reports it. */}
         <InputIsolationBanner />
         <TopBar />
         {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}

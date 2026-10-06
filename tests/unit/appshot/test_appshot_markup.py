@@ -432,7 +432,9 @@ async def test_a_marked_area_reaches_the_assistant_with_its_markings(flow) -> No
     result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
 
     assert result.ok
-    assert asked == [{"language": "de"}]
+    assert len(asked) == 1
+    assert asked[0]["language"] == "de"
+    assert isinstance(asked[0]["trace_id"], __import__("uuid").UUID)
     assert capture.markup_at_shutter == [markup]
     assert appshot_service.EDIT_NOTE in result.shot.note
     with Image.open(io.BytesIO(result.shot.image)) as image:

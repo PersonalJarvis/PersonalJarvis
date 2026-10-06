@@ -62,7 +62,9 @@ class LiveConfig(BaseModel):
         """
         if self.auth_mode == "chatgpt_subscription":
             effective = self.for_session().model_copy(update={"auth_mode": "api_key"})
-            session = effective.session_config(language=language, tools=tools, identity=identity)
+            session = effective.session_config(
+                language=language, tools=tools, identity=identity
+            )
             session["delegation"] = {"type": "client"}
             return session
         if not self.configured or not self.backend_model.strip():

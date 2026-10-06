@@ -156,7 +156,7 @@ class JarvisXService:
         elif mode == "window":
             try:
                 bbox, handle, _title = await asyncio.to_thread(capture.front_window)
-            except capture.CaptureError as exc:
+            except capture.CaptureError as exc:  # The capture refusal is returned before taking a screenshot.
                 return Result(False, str(exc))
             from jarvis.appshot.effect import placement  # noqa: PLC0415
 
@@ -173,7 +173,7 @@ class JarvisXService:
 
         try:
             frame = await asyncio.to_thread(self._grab, mode, bbox, handle)
-        except capture.CaptureError as exc:
+        except capture.CaptureError as exc:  # The capture error becomes a visible failure result.
             return Result(False, str(exc))
 
         item, png = await asyncio.to_thread(self._save_image, mode, frame, block.save_dir)
@@ -196,7 +196,7 @@ class JarvisXService:
 
         try:
             selection = await self.overlay.select_region(purpose=purpose)
-        except SelectionUnavailable as exc:
+        except SelectionUnavailable as exc:  # The selection refusal is returned to the caller.
             return str(exc)
         if selection is None:
             return "Cancelled."
@@ -462,7 +462,7 @@ class JarvisXService:
         source = item.edited_path if edited and item.has_edited() else item.path
         try:
             png = await asyncio.to_thread(Path(source).read_bytes)
-        except OSError as exc:
+        except OSError as exc:  # The file read error becomes a visible failure result.
             return Result(False, f"The file could not be read ({exc.strerror or exc}).")
         ok, message = await self._copy_bytes(png)
         return Result(ok, message, item)
@@ -597,7 +597,7 @@ def _atomic_write(target: Path, data: bytes) -> None:
 def _read_bytes(path: str) -> bytes:
     try:
         return Path(path).read_bytes() if path else b""
-    except OSError:
+    except OSError:  # An unavailable optional preview is represented by empty bytes.
         return b""
 
 

@@ -797,12 +797,9 @@ def _http_auth_exception(path: str, method: str) -> bool:
         _is_static_request(path, method)
         or (path == "/api/health" and method == "GET")
         or (path == "/api/ui/shell-painted" and method == "POST")
-        # First-boot contract: onboarding state must answer before any
-        # credential exists (headless fresh install has no token to present).
-        # Only the reads are public: the writes record the user's consent to
-        # the Terms, so they need the same local open access or credential as
-        # every other change. The UI only ever sends them from behind AuthGate.
-        or (path.startswith("/api/onboarding/") and method in _SAFE_HTTP_METHODS)
+        # First-boot reads remain public. Mutations use the same authenticated
+        # session / trusted local-open policy as other application writes.
+        or (method == "GET" and path in {"/api/onboarding/state", "/api/onboarding/terms"})
         or _external_http_auth(path, method)
     )
 

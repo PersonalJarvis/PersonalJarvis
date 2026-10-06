@@ -42,6 +42,11 @@ MACOS_APP_NAME = PRODUCT_NAME
 MACOS_APP_DIR_NAME = f"{MACOS_APP_NAME}.app"
 MACOS_EXECUTABLE_NAME = PRODUCT_COMPACT_NAME
 MACOS_BUNDLE_ID = f"com.{PRODUCT_SLUG}.desktop"
+# The downloadable .dmg (PyInstaller, ``jarvis.spec``) is a second, equally
+# legitimate installed app: its own bundle id and therefore its own macOS
+# privacy grants. ``jarvis.spec`` cannot import this module, so a parity test
+# (``tests/unit/setup/test_macos_dmg_identity.py``) pins its literal to this.
+MACOS_DMG_BUNDLE_ID = f"ai.{PRODUCT_COMPACT_NAME.lower()}.desktop"
 MACOS_AUTOSTART_LABEL = f"com.{PRODUCT_SLUG}.autostart"
 # Common name of the per-user self-signed code-signing certificate the
 # installer creates so the app bundle keeps one TCC identity across rebuilds.
@@ -94,6 +99,7 @@ __all__ = [
     "MACOS_APP_NAME",
     "MACOS_AUTOSTART_LABEL",
     "MACOS_BUNDLE_ID",
+    "MACOS_DMG_BUNDLE_ID",
     "MACOS_EXECUTABLE_NAME",
     "MACOS_SIGNING_IDENTITY_LABEL",
     "MANAGED_INSTALL_MARKER",

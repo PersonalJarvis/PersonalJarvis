@@ -576,7 +576,7 @@ Line length 100. Target `py311`.
 
 ## 21. ADR + Phase doc index
 
-**ADRs in `docs/adr/`** (18 files; duplicate-number cleanup pending):
+**ADRs in `docs/adr/`** (38 files; duplicate-number cleanup pending; the list below covers ADR-0001 to ADR-0015 only):
 
 - ADR-0001 — IPC Named-Pipe HMAC (Admin-Helper)
 - ADR-0002 — UIA Tree Pruning (Vision)

@@ -83,3 +83,12 @@ visible browser, complete any required verification, and confirm that the same
 profile retains its session after browser/app restart and explicit agent
 handoff. Fakes prove routing, state and lifecycle contracts, not provider
 acceptance. No hidden browser was used as a substitute for those checks.
+
+
+## Session restoration after manual control
+
+Explicit handback requests Chrome's previous session when automation reopens the
+owned profile, so open tabs can return without page inspection during sign-in.
+The native contract observes fixture HTTP traffic while the browser is disconnected,
+then checks tab recovery after explicit handback. Unit checks alone do not qualify
+the native transition or real provider authentication.

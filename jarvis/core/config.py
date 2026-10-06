@@ -1027,7 +1027,7 @@ def clamp_pet_scale(value: object) -> float:
     """
     try:
         f = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Invalid saved pet scales use the documented 1.0 default.
         return 1.0
     if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
         return 1.0
@@ -3375,6 +3375,27 @@ class VoiceConfig(BaseModel):
     no_first_frame_phrase_floor_s: float | None = None
 
 
+class BrowserVoiceConfig(BaseModel):
+    """``[browser_voice]`` — the browser-microphone voice bridge (``/ws/audio``).
+
+    On a host without its own microphone (a VPS, ``jarvis serve``) the browser
+    that presses Start holds the call: it streams the microphone to
+    ``/ws/audio`` and plays the reply. ``extra="allow"`` so an unknown future
+    key never blocks boot (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Serves the classic STT -> brain -> TTS bridge in PIPELINE mode. Realtime
+    # mode always serves the socket, because it carries the realtime call and
+    # that call's classic fallback, so this switch does not apply there. Read
+    # by ``jarvis.browser_voice.route.browser_voice_enabled`` at connect time.
+    # Default on: before 2026-07-08 a missing section meant enabled, the
+    # headless deployment guide documents it as on, and the socket is behind
+    # the same credential check as every other route (issue #399).
+    enabled: bool = True
+
+
 class CompletenessConfig(BaseModel):
     """Configuration for the utterance-completeness pre-processing classifier.
 
@@ -4268,6 +4289,12 @@ class MarketplaceConfig(BaseModel):
     # retired, so a stock install offers no Publish button instead of firing
     # a request at a host that answers nothing.
     publish_endpoint: str = ""
+    # The registry repository the in-app Publish flow files submissions to
+    # when no endpoint is configured: an issue opened as the signed-in user,
+    # which the registry's intake workflow validates and publishes
+    # (docs/marketplace/agent-templates.md). This is the default path — it
+    # needs no server. Empty string hides Publish.
+    publish_registry_repo: str = "PersonalJarvis/marketplace"
     # Client id of the marketplace GitHub App (public by design — device flow
     # needs no secret, which is why a downloadable binary can use it).
     publish_github_client_id: str = "Iv23li1YcX62KJO67whO"
@@ -4679,6 +4706,9 @@ class JarvisConfig(BaseModel):
     # Voice-flow knobs (incomplete-prompt completion buffer settings).
     # Spec: docs/superpowers/specs/2026-05-25-incomplete-prompt-completion-design.md
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    # [browser_voice] — the browser-microphone bridge for hosts without a
+    # microphone of their own (see BrowserVoiceConfig).
+    browser_voice: BrowserVoiceConfig = Field(default_factory=BrowserVoiceConfig)
     # AI Pointer — deictic-gated "what is under the mouse cursor" context.
     # Spec: docs/plans/ai-pointer/DESIGN.md
     pointer: PointerConfig = Field(default_factory=PointerConfig)
@@ -5259,9 +5289,10 @@ _PLATFORM_KEYRING_BACKEND: Any | None = None
 # The credential slot whose OS-keyring read failed most recently. On macOS a
 # user who clicks "Deny" on the Keychain prompt lands exactly here: the read
 # raises, the process degrades to the file backend, and only a fresh read of a
-# real existing item makes macOS show the prompt again. The permissions UI
-# replays this slot on a user-initiated retry (a probe on a brand-new item
-# would silently succeed without ever re-prompting).
+# real existing item makes macOS show the prompt again. The credential_store
+# permission request (``jarvis permissions request credential_store``) replays this
+# slot on a user-initiated retry (a probe on a brand-new item would silently
+# succeed without ever re-prompting).
 _LAST_KEYRING_FAILED_SLOT: str | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
@@ -5606,7 +5637,7 @@ def credential_store_backend() -> str:
     Credential Manager / Secret Service) serves reads and writes. ``file``
     means this process degraded to the local 0600 JSON fallback — on macOS
     that is the observable state after the user declined the Keychain prompt.
-    The desktop permissions UI maps this onto its Keychain row.
+    The permission snapshot maps this onto its Keychain row.
     """
     _ensure_keyring_backend()
     try:

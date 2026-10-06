@@ -13,6 +13,7 @@ from jarvis.realtime.factory import (
     _resolve_realtime_provider,
     build_realtime_session,
     realtime_available_provider,
+    realtime_browser_audio,
     realtime_requires_webrtc_offer,
 )
 
@@ -41,6 +42,8 @@ class _OpenAIProvider(_BaseProvider):
 class _GeminiProvider(_BaseProvider):
     name = "gemini-live"
     credential_candidates = (("gemini_api_key", "GEMINI_API_KEY"),)
+    # Mirrors the real adapter: its calls need browser echo-cancelled audio.
+    browser_audio = True
 
 
 class _AcmeProvider(_BaseProvider):
@@ -198,6 +201,52 @@ def test_logged_in_subscription_is_never_an_ambient_candidate(monkeypatch):
 
     assert _provider_candidates(config) == []
     assert realtime_available_provider(config) is None
+
+
+def test_unpinned_browser_audio_follows_the_automatically_chosen_provider(monkeypatch):
+    # Issue #399: a Gemini-only install without a pin opens its call on
+    # Gemini Live, yet browser_audio read only the (absent) pin and said no.
+    _fake_registry(monkeypatch, {"gemini"})
+    config = _cfg(provider="")
+
+    assert realtime_available_provider(config) == "gemini-live"
+    assert realtime_browser_audio(config) is True
+
+
+def test_unpinned_browser_audio_is_false_without_a_ready_provider(monkeypatch):
+    _fake_registry(monkeypatch, set())
+
+    assert realtime_browser_audio(_cfg(provider="")) is False
+    assert realtime_browser_audio(None) is False
+
+
+def test_unpinned_browser_audio_reads_only_up_to_the_first_ready_provider(monkeypatch):
+    # The first installed provider with a key decides; credentials of the
+    # providers behind it are never read on this path.
+    _fake_registry(monkeypatch, {"openai", "gemini"})
+    read: list[str] = []
+    resolve = factory.get_secret_any
+
+    def _spy(candidates):
+        read.append(candidates[0][0])
+        return resolve(candidates)
+
+    monkeypatch.setattr(factory, "get_secret_any", _spy)
+
+    assert realtime_browser_audio(_cfg(provider="")) is False
+    assert read == ["openai_api_key"]
+
+
+def test_pinned_browser_audio_answers_for_the_pin_without_reading_credentials(monkeypatch):
+    _fake_registry(monkeypatch, {"openai", "gemini"})
+
+    def _no_credential_reads(_candidates):
+        raise AssertionError("a pinned provider must answer without reading credentials")
+
+    monkeypatch.setattr(factory, "get_secret_any", _no_credential_reads)
+
+    assert realtime_browser_audio(_cfg(provider="gemini-live")) is True
+    assert realtime_browser_audio(_cfg(provider="openai-realtime")) is False
 
 
 def test_pipeline_mode_never_builds_realtime_session(monkeypatch):
@@ -389,13 +438,14 @@ class _PrespawnProbe:
 
 
 @pytest.mark.asyncio
-async def test_prespawn_reaches_every_explicit_slot(monkeypatch) -> None:
-    """Unlike eager warming, the prestart is position-blind: a stone-cold
-    explicitly configured FALLBACK is what stranded the 2026-08-10 first call
-    when the primary was down. Providers without the capability are skipped
-    (AP-21), and one broken plugin never stops the others."""
+@pytest.mark.parametrize("eager_fallback", [False, True])
+async def test_prespawn_only_starts_primary_and_opted_in_fallback(
+    monkeypatch, eager_fallback
+) -> None:
+    """A process spawn can load a whole GPU stack even without awaiting readiness."""
     primary = _PrespawnProbe()
     fallback = _PrespawnProbe()
+    fallback.eager_warm_as_fallback = eager_fallback
     loaded = {"primary": primary, "plain": _NoWarmProbe(), "fallback": fallback}
 
     def _load(_group, pid, protocol=None):  # noqa: ANN001 - probe shape
@@ -413,7 +463,7 @@ async def test_prespawn_reaches_every_explicit_slot(monkeypatch) -> None:
     await factory.realtime_prespawn_transports(_cfg())
 
     assert primary.calls == 1
-    assert fallback.calls == 1
+    assert fallback.calls == int(eager_fallback)
 
 
 @pytest.mark.asyncio

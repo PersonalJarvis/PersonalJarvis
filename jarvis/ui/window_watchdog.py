@@ -534,7 +534,7 @@ def end_busy_renderers(
     for child in _own_web_view_renderers(psutil):
         try:
             child.cpu_percent(None)
-        except psutil.Error:
+        except psutil.Error:  # a process that exited is skipped
             continue
         candidates.append(child)
     if not candidates:
@@ -571,7 +571,7 @@ def _own_web_view_renderers(psutil: Any) -> list[Any]:
     for browser in psutil.Process().children(recursive=False):
         try:
             browser_args = browser.cmdline()
-        except psutil.Error:
+        except psutil.Error:  # a process that exited is skipped
             continue
         if "--embedded-browser-webview=1" not in browser_args or any(
             a.startswith("--type=") for a in browser_args
@@ -580,7 +580,7 @@ def _own_web_view_renderers(psutil: Any) -> list[Any]:
         for child in browser.children(recursive=False):
             try:
                 args = child.cmdline()
-            except psutil.Error:
+            except psutil.Error:  # a process that exited is skipped
                 continue
             if "--type=renderer" in args and "--extension-process" not in args:
                 renderers.append(child)

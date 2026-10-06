@@ -26,11 +26,10 @@ This surface is deliberately additive: a CLI that cannot mount MCP servers, an
 app whose tool gateway is not up yet, or a brain that has not finished building
 simply runs with less. Nothing here is allowed to make a turn fail.
 
-Currently unreachable, on purpose. No surface seats a CLI as Jarvis since the
-front page's chat went API-only (2026-08-26, ``SurfaceKit.cli_seats``), so
-``run_cli_turn(identity=…)`` is False on every turn today. The service asks the
-kit — ``brain_runner and cli_seats`` — rather than a surface name, so a surface
-that wants both picks this up without a change here. Keep it working.
+The service asks the kit — ``brain_runner and cli_seats`` — rather than a
+surface name. Both the Jarvis chat and every Society agent on a subscription
+seat reach this module: a Society seat hands in the agent's own briefing as
+``prompt_override``, so the CLI answers as that agent, not as Jarvis.
 """
 
 from __future__ import annotations
@@ -501,6 +500,30 @@ def compact_identity(text: str, *, max_chars: int = COMPACT_MAX_CHARS) -> str:
     body = body[:head_room].rstrip()
     body = re.sub(r"\n[^\n]*$", "", body)  # do not cut a line in half
     return f"{body}\n\n…\n\n{SYSTEM_PREAMBLE}"
+
+
+#: A created agent's chat never ends (MASTERPLAN §2.10), but a vendor CLI's own
+#: conversation cannot grow forever. Once the chat has grown this much since the
+#: CLI conversation began (roughly 120k tokens), the next turn starts a fresh
+#: CLI conversation from the agent's briefing, memory and recent transcript.
+SOCIETY_ROLLOVER_CHARS: Final[int] = 480_000
+#: The notice kind that marks where a fresh CLI conversation began.
+ROLLOVER_NOTICE_KIND: Final[str] = "context_rollover"
+
+
+def society_rollover_due(history: list[dict[str, Any]]) -> bool:
+    """Whether the chat outgrew its CLI conversation since the last rollover."""
+    start = 0
+    for index, event in enumerate(history):
+        payload = event.get("payload") or {}
+        if event.get("kind") == "notice" and payload.get("kind") == ROLLOVER_NOTICE_KIND:
+            start = index + 1
+    size = 0
+    for event in history[start:]:
+        size += len(json.dumps(event.get("payload") or {}, ensure_ascii=False))
+        if size > SOCIETY_ROLLOVER_CHARS:
+            return True
+    return False
 
 
 def society_memory_refresh(text: str, *, compact: bool = False) -> str:

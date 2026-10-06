@@ -469,6 +469,12 @@ tests/unit/memory/test_profile_capture.py
 #     write in agent descriptions (de/en) onto capability ids ---
 jarvis/society/focus.py
 
+# --- macOS permission-dialog localisation (2026-10): the German and Spanish
+#     Info.plist usage strings live in the single usage-string table next to
+#     the English ones; macOS shows them in its own permission dialogs on a
+#     German or Spanish system (closed product surface: InfoPlist
+#     localisations). The InfoPlist.strings files are generated from it. ---
+jarvis/core/macos_privacy_strings.py
 # --- Local voice engine bench (2026-10-01): the German speech-input corpus the
 #     P0 bench renders, transcribes and sends to the local LLM (ADR-0037) ---
 jarvis/voice_engine/bench/corpus/de.json

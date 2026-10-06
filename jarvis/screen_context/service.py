@@ -36,6 +36,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from jarvis.platform import screen_access
 from jarvis.screen_context import intent as intent_module
 from jarvis.screen_context import redaction, uitext
 from jarvis.screen_context.last_frame import LastFrameMirror, get_last_frame_mirror
@@ -251,6 +252,7 @@ class ScreenContextService:
         capturer: Any | None = None,
         ui_text_reader: Any | None = None,
         permission_probe: Any | None = None,
+        permission_gate: Any | None = None,
         clock: Any | None = None,
         last_frame_mirror: LastFrameMirror | None = None,
     ) -> None:
@@ -272,7 +274,11 @@ class ScreenContextService:
         self._window_probe = window_probe
         self._capturer = capturer
         self._ui_text_reader = ui_text_reader
+        # The probe is SILENT (it only describes why a capture would not be
+        # allowed); the gate is what asks, and only from ``capture`` below. ``None``
+        # resolves the process permission service per call.
         self._permission_probe = permission_probe or capture_permission_error
+        self._permission_gate = permission_gate
         self._clock = clock or time.monotonic_ns
         self._wall_clock = time.time_ns
         self._handles: dict[str, _Handle] = {}
@@ -527,14 +533,25 @@ class ScreenContextService:
         permission_issue = await self.capture_permission_issue()
         if permission_issue is not None:
             reason_code, permission_message = permission_issue
-            log.info("screen_context: capture refused — %s", permission_message)
-            return CaptureOutcome(
-                status="refused",
-                verdict=verdict,
-                reason_kind="technical",
-                reason_code=reason_code,
-                message=permission_message,
-            )
+            if reason_code == "capture_permission":
+                # A person started this capture (a spoken request, the bar
+                # button, an appshot gesture), so this is the moment macOS is
+                # asked. The probe above never asks and never decides: only a
+                # live GRANTED from the permission service lets the capture go on.
+                refused = await self._ask_for_capture_permission(verdict, trace_id)
+                if refused is None:
+                    permission_issue = None
+                else:
+                    permission_message = refused.user_detail or permission_message
+            if permission_issue is not None:
+                log.info("screen_context: capture refused — %s", permission_message)
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code=reason_code,
+                    message=permission_message,
+                )
 
         # The cursor is sampled ONCE, here, and threaded through. See
         # targeting.resolve_target for why re-reading it later is a race.
@@ -715,6 +732,16 @@ class ScreenContextService:
                     size, rgb, master_image = await self._grab_with_master(target)
                 else:
                     size, rgb = await self._grab(target)
+                # macOS hands back the wallpaper, not an error, for a capture it
+                # does not allow: a blank frame while the state claims granted
+                # is never a success (and opens the permission episode).
+                await asyncio.to_thread(
+                    screen_access.verify_frame_is_real,
+                    size,
+                    rgb,
+                    feature=self._permission_feature(verdict),
+                    gate=self._permission_gate,
+                )
             except CaptureUnavailable as exc:
                 log.info("screen_context: capture failed — %s", exc)
                 return CaptureOutcome(
@@ -723,6 +750,15 @@ class ScreenContextService:
                     reason_kind="technical",
                     reason_code="capture_backend_unavailable",
                     message=str(exc),
+                )
+            except screen_access.ScreenCaptureRefused as exc:
+                log.info("screen_context: capture refused — %s", exc.reason or "permission")
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code="capture_permission",
+                    message=exc.user_detail,
                 )
             except Exception:  # noqa: BLE001 - port bugs stay turn-local
                 log.error("screen_context: unexpected capture failure", exc_info=True)
@@ -820,6 +856,28 @@ class ScreenContextService:
         finally:
             if border:
                 await self._dismiss_indicator(trace_id=event_trace_id)
+
+    @staticmethod
+    def _permission_feature(verdict: IntentVerdict) -> str:
+        """The permission-episode feature of one capture: an appshot says so in its evidence."""
+        appshot_evidence = {"appshot", "appshot-region", "appshot-screen"}
+        return "appshot" if appshot_evidence.intersection(verdict.evidence) else "screen_context"
+
+    async def _ask_for_capture_permission(
+        self, verdict: IntentVerdict, trace_id: UUID | None
+    ) -> screen_access.ScreenCaptureRefused | None:
+        """Ask for Screen Recording (the capture is a gesture). ``None`` = allowed."""
+        try:
+            await screen_access.require_screen_recording_async(
+                self._permission_feature(verdict),
+                gate=self._permission_gate,
+                trace_id=trace_id,
+            )
+        except screen_access.ScreenCaptureRefused as refused:
+            # The caller turns this into the refused outcome the person sees.
+            log.debug("screen_context: permission refused (%s)", refused.reason or "permission")
+            return refused
+        return None
 
     async def _grab(self, target: CaptureTarget) -> tuple[tuple[int, int], bytes]:
         """Grab the target the way the user sees it.

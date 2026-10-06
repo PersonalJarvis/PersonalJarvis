@@ -19,7 +19,7 @@ def test_listing_includes_hidden_and_dependency_directories(tmp_path: Path) -> N
     (tmp_path / "node_modules").mkdir()
     (tmp_path / ".github").mkdir()
     (tmp_path / ".env.example").write_text("TOKEN=\n", encoding="utf-8")
-    (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
+    (tmp_path / "README.md").write_bytes(b"hello\n")
 
     listing = list_workspace_dir(tmp_path)
 
@@ -32,7 +32,7 @@ def test_listing_includes_hidden_and_dependency_directories(tmp_path: Path) -> N
         "README.md",
     ]
     assert [entry.is_directory for entry in listing.entries[:3]] == [True, True, True]
-    assert listing.entries[-1].size == 7
+    assert listing.entries[-1].size == 6
 
 
 def test_nested_listing_keeps_every_path_workspace_relative(tmp_path: Path) -> None:

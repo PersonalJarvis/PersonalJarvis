@@ -378,7 +378,7 @@ def claude_cli_supports_thinking_display(argv_prefix: Sequence[str]) -> bool:
         )
         output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
         supported = proc.returncode != 0 and "--thinking-display" in output
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):  # unprobeable CLI: assume no flag
         supported = False
     _THINKING_DISPLAY_CACHE[key] = supported
     return supported

@@ -275,7 +275,7 @@ def _codex_name_locked(path: Path, session_id: str) -> str:
     index = _codex_indexes.setdefault(str(path), _CodexIndex())
     try:
         size = path.stat().st_size
-    except OSError:
+    except OSError:  # A missing or locked CLI index leaves the live terminal title in use.
         return ""
     if size < index.offset:
         index.offset, index.names = 0, {}
@@ -296,7 +296,7 @@ def _codex_name_locked(path: Path, session_id: str) -> str:
 def _json(line: bytes) -> dict[str, Any]:
     try:
         row = json.loads(line)
-    except ValueError:
+    except ValueError:  # An incomplete CLI record has no usable title; keep the existing title.
         return {}
     return row if isinstance(row, dict) else {}
 

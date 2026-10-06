@@ -6,10 +6,11 @@
  * to idle, an unreadable answer changes nothing, and a live event beats the
  * snapshot that was already in flight.
  */
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVoiceStateResync } from "@/hooks/useVoiceStateResync";
+import { setBrowserVoiceCallLive } from "@/lib/browserVoiceCall";
 import { useEventStore } from "@/store/events";
 
 function Harness() {
@@ -126,5 +127,26 @@ describe("useVoiceStateResync", () => {
 
     await waitFor(() => expect(useEventStore.getState().voiceState).toBe("listening"));
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("leaves a call this browser holds alone on a host with no pipeline", async () => {
+    // Issue #399: the backend snapshot cannot see a classic browser call and
+    // answers "unavailable"; correcting against it would end the call's
+    // display mid conversation.
+    vi.stubGlobal(
+      "fetch",
+      answer({ available: false, state: "unavailable", voice_state: "idle", browser_call: true }),
+    );
+    setBrowserVoiceCallLive(true);
+    try {
+      render(<Harness />);
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(useEventStore.getState().voiceState).toBe("listening");
+      expect(fetch).not.toHaveBeenCalled();
+    } finally {
+      setBrowserVoiceCallLive(false);
+    }
   });
 });

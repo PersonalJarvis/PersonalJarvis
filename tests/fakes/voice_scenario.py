@@ -134,6 +134,8 @@ class ScenarioResult:
 class _ScenarioBridge:
     """Tool bridge that answers exactly what the scenario scripted."""
 
+    has_pending_confirmation = False
+
     def __init__(self, tools: list[ScenarioTool]) -> None:
         self._by_name = {tool.name: tool for tool in tools}
         self.declarations = tuple(

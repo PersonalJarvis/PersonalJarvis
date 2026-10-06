@@ -1,4 +1,4 @@
-"""Live sessions declare ``computer`` directly and never reach a second CU model (ADR-0038)."""
+"""Live sessions declare ``computer`` directly and never reach a second CU model (ADR-0039)."""
 
 from __future__ import annotations
 

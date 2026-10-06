@@ -290,10 +290,12 @@ async def test_slow_tool_releases_the_model_with_an_honest_pending_result(
         assert gateway.finished == []  # the tool itself was not cancelled
         assert session._has_pending_work()  # its receipt is still owed
         release.set()
-        for _ in range(50):
-            if not session._has_pending_work():
-                break
-            await asyncio.sleep(0.01)
+        # Await the released work itself instead of polling a wall clock: its
+        # receipt lands after the tool body returns, which a loaded Windows CI
+        # runner can stretch past half a second.
+        await asyncio.wait_for(
+            asyncio.gather(*[job for job in session._jobs if not job.done()]), 5.0
+        )
         assert gateway.finished == ["search_web"]
         assert not session._has_pending_work()
         assert len(connection.tool_results) == 1  # the late result is not re-sent

@@ -20,7 +20,7 @@ _WIKI_SUBTABLES = [
     ("WikiCuratorConfig", {}),
     ("SessionRollupConfig", {}),
     ("SchedulerConfig", {}),
-    ("VoiceBridgeConfig", {}),
+    ("ExtractorConfig", {}),
     ("WikiMemoryConfig", {}),
     ("WikiIntegrationConfig", {}),
 ]
@@ -43,3 +43,12 @@ def test_wiki_subtable_preserves_unknown_key(class_name: str, base_kwargs: dict)
         f"{class_name} dropped an unknown key — it is missing "
         f"ConfigDict(extra='allow') (AP-16)."
     )
+
+
+def test_retired_voice_bridge_settings_remain_readable_without_an_active_field() -> None:
+    from jarvis.core.config import WikiMemoryConfig
+
+    legacy = {"aggressive_mode": True, "future_unknown_key": 7}
+    config = WikiMemoryConfig.model_validate({"voice_bridge": legacy})
+    assert "voice_bridge" not in WikiMemoryConfig.model_fields
+    assert config.model_dump()["voice_bridge"] == legacy

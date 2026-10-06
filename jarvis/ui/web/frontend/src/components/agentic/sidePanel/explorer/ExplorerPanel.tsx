@@ -26,7 +26,7 @@ import {
   openTerminalTarget,
   type WorkspaceFileItem,
 } from "@/lib/agenticIdeApi";
-import { WORKSPACE_PATH_TYPE } from "@/components/agentic/paneDrop";
+import { setWorkspaceDragPaths } from "@/components/agentic/paneDrop";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { createEntry, deleteEntry, moveEntry, TrashUnavailableError } from "@/components/agentic/editor/editorApi";
 import { moveModels } from "@/components/agentic/editor/editorModels";
@@ -74,7 +74,10 @@ const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}`
 
 /** Start a drag that a terminal pane turns into a file reference. */
 function startFileDrag(event: DragEvent, absolute: string): void {
-  event.dataTransfer.setData(WORKSPACE_PATH_TYPE, absolute);
+  if (!setWorkspaceDragPaths(event.dataTransfer, [absolute])) {
+    event.preventDefault();
+    return;
+  }
   event.dataTransfer.setData("text/plain", absolute);
   event.dataTransfer.effectAllowed = "copy";
 }

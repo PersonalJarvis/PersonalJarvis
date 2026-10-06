@@ -78,7 +78,7 @@ def _parse_frame(payload: Any) -> Frame | None:
     try:
         padding = max(0.0, min(0.25, float(payload.get("padding", 0.08))))
         radius = max(0.0, min(80.0, float(payload.get("radius", 12))))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Reject malformed optional frames without discarding the capture.
         return None
     return Frame(
         preset=str(preset), padding=padding, radius=radius, shadow=bool(payload.get("shadow", True))
@@ -108,7 +108,7 @@ def parse_markup(payload: Any) -> Markup | None:
             continue
         try:
             fx, fy, fw, fh = (max(0.0, min(1.0, float(v))) for v in rect)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # Ignore malformed redaction rectangles instead of drawing unintended geometry.
             continue
         if fw > 0 and fh > 0:
             hides.append(Hide(kind=str(item["kind"]), rect=(fx, fy, fw, fh)))

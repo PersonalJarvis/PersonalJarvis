@@ -27,7 +27,7 @@ def keep_newest(config: Any) -> int:
     value = getattr(getattr(config, "appshot", None), "keep_newest", 0)
     try:
         return max(0, int(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # a hand-edited non-number falls back to keeping everything
         return 0
 
 

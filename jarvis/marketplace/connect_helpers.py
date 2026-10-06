@@ -59,19 +59,27 @@ _OAUTH_CLIENT_FAMILY: dict[str, str] = {
 def oauth_client_family(plugin_id: str) -> str | None:
     """Return the BYO-OAuth-client secret family for a plugin, or ``None``.
 
-    Catalog field first, legacy table second. One resolver so the connect
-    route, the refresh scheduler and the frontend cannot drift apart.
+    Shared secrets belong only to package-owned identities and exact OAuth
+    endpoints. Community metadata and custom endpoints cannot claim a family.
+    The connect, refresh and grant-sharing paths use this same boundary.
     """
     try:
-        from jarvis.marketplace.catalog_data import load_catalog
+        from jarvis.marketplace.catalog_data import load_catalog, load_seed_catalog
 
         spec = load_catalog().by_id(plugin_id)
+        trusted = load_seed_catalog().by_id(plugin_id)
     except Exception:  # noqa: BLE001 - a broken catalog must not break refresh
-        spec = None
-    declared = getattr(spec, "oauth_client_family", None) if spec else None
-    if declared:
-        return str(declared)
-    return _OAUTH_CLIENT_FAMILY.get(plugin_id)
+        log.warning("OAuth family resolution unavailable for %s", plugin_id)
+        return None
+    if spec is None or trusted is None or getattr(spec, "source", None) != "seed":
+        return None
+    for field in ("mode", "authorization_url", "token_url", "device_url", "verify_url"):
+        if getattr(spec.auth, field, None) != getattr(trusted.auth, field, None):
+            return None
+    family = trusted.oauth_client_family or _OAUTH_CLIENT_FAMILY.get(plugin_id)
+    if spec.oauth_client_family not in (None, family):
+        return None
+    return family
 
 
 def is_placeholder_client_id(value: str | None) -> bool:

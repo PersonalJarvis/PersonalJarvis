@@ -116,15 +116,38 @@ async def test_unrelated_events_are_not_hooks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_hook_inside_spacing_waits_for_the_window(tmp_path: Path) -> None:
-    sched, _gen, bio_store, brain = _make(tmp_path, min_spacing_s=0.4)
+async def test_hook_inside_spacing_waits_for_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import datetime, timedelta
+
+    import jarvis.board.scheduler as scheduler_module
+
+    sched, _gen, bio_store, brain = _make(tmp_path, min_spacing_s=3600)
     bio_store.insert("earlier bio", triggered_by="manual")
-    await asyncio.sleep(0.01)
+    generated_at = datetime.fromisoformat(bio_store.latest()["generated_at"])
+    now = [generated_at + timedelta(seconds=1)]
+    sched._clock = lambda: now[0]
+    waiting = asyncio.Event()
+    advance = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def controlled_sleep(delay: float) -> None:
+        if delay > 10:
+            assert delay == pytest.approx(3599)
+            waiting.set()
+            await advance.wait()
+        else:
+            await real_sleep(delay)
+
+    monkeypatch.setattr(scheduler_module.asyncio, "sleep", controlled_sleep)
     sched.start()
     try:
         sched.notify("milestone:centennial")
-        await asyncio.sleep(0.2)
+        await asyncio.wait_for(waiting.wait(), timeout=5)
         assert brain.calls == 0, "generated inside the spacing window"
+        now[0] = generated_at + timedelta(seconds=3601)
+        advance.set()
         await _settle(sched)
         assert brain.calls == 1
         assert bio_store.latest()["triggered_by"] == "milestone:centennial"  # type: ignore[index]

@@ -185,6 +185,8 @@ export function WorkspaceTerminal({
       sendResize();
     });
 
+    // Workspace panes share the same connection budget as the app and IDE
+    // sockets. A grid mounting at once must not bypass the wake-storm cap.
     const cancelConnect = requestConnect(() => {
       if (disposed) return;
       const params: Record<string, string> = {
@@ -196,7 +198,13 @@ export function WorkspaceTerminal({
       if (workspaceId) params.workspace_id = workspaceId;
       else if (folder) params.folder = folder;
 
-      ws = new WebSocket(buildUrl(paneKey, params));
+      try {
+        ws = new WebSocket(buildUrl(paneKey, params));
+      } catch {
+        setStatus("error");
+        setError("Connection to the terminal failed.");
+        return;
+      }
       ws.onopen = () => {
         setStatus("connecting");
         // Push the ACTUAL pane size to the PTY now that we can send. The spawn

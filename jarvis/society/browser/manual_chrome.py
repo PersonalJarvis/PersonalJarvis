@@ -214,7 +214,7 @@ class _WindowArrival:
             self.ready.set()
             if not self.stopping.is_set():
                 pythoncom.PumpMessages()
-        except BaseException as exc:
+        except BaseException as exc:  # The stored exception is re-raised by the thread owner.
             self.error = exc
         finally:
             if hook and not user.UnhookWinEvent(hook):
@@ -335,7 +335,8 @@ class PlainChrome:
             # Keep spawn and ownership assignment atomic against cancellation.
             self.process = subprocess.Popen(  # noqa: ASYNC220
                 [self.executable, f"--user-data-dir={self.profile.resolve()}", "--new-window",
-                 "--no-first-run", "--disable-background-mode", "chrome://newtab/"],
+                 "--no-first-run", "--disable-background-mode",
+                 "--disable-backgrounding-occluded-windows", "chrome://newtab/"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=self.creationflags,
             )

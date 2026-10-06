@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,12 +35,15 @@ def test_pattern_matching():
 
 
 async def test_verdict_order(world):
+    """A pre-migration row (``approval_mode`` NULL) keeps the legacy
+    rules → always-allow → ceiling order."""
     _, roster, _ = world
-    agent, _ = await roster.create(
+    created, _ = await roster.create(
         name="Mailbox",
         permission_ceiling="monitor",
         approval_rules={"require_approval": ["plugin:gmail:send"], "always_allow": ["cli:gh"]},
     )
+    agent = replace(created, approval_mode=None)
     assert decide(agent, "plugin:gmail", "monitor", verb="read") is Verdict.RUN
     assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.QUEUE
     assert decide(agent, "cli:gh", "monitor") is Verdict.RUN
@@ -50,12 +54,58 @@ async def test_verdict_order(world):
     assert decide(agent, "plugin:spotify", "block") is Verdict.BLOCK
 
     strict, _ = await roster.create(name="Reader", permission_ceiling="safe")
+    strict = replace(strict, approval_mode=None)
     assert decide(strict, "core:search-web", "safe") is Verdict.RUN
     assert decide(strict, "plugin:gmail", "monitor") is Verdict.QUEUE
 
     trusting, _ = await roster.create(name="Doer", permission_ceiling="ask")
+    trusting = replace(trusting, approval_mode=None)
     assert decide(trusting, "plugin:gmail", "monitor") is Verdict.RUN
     assert decide(trusting, "plugin:gmail", "ask") is Verdict.QUEUE  # ask still asks a human
+
+
+async def test_verdict_order_per_approval_mode(world):
+    """Explicit modes: require-approval and blocks win in every mode; Bypass
+    runs up to the ceiling and denies above it; Ask queues everything past a
+    safe read; Always ask queues everything, even a standing yes."""
+    _, roster, _ = world
+    rules = {"require_approval": ["plugin:gmail:send"], "always_allow": ["cli:gh"]}
+
+    bypass, _ = await roster.create(name="Bypasser", approval_rules=rules)
+    assert str(bypass.approval_mode) == "bypass"  # the new-agent default
+    assert str(bypass.permission_ceiling) == "ask"
+    assert decide(bypass, "core:search-web", "safe") is Verdict.RUN
+    assert decide(bypass, "plugin:gmail", "monitor", verb="read") is Verdict.RUN
+    assert decide(bypass, "core:run-shell", "ask") is Verdict.RUN
+    assert decide(bypass, "plugin:gmail", "monitor", verb="send") is Verdict.QUEUE
+    assert decide(bypass, "plugin:gmail", "ask", verb="send") is Verdict.QUEUE
+    assert decide(bypass, "plugin:spotify", "block") is Verdict.BLOCK
+    assert decide(bypass, "cli:gh", "block") is Verdict.BLOCK
+
+    capped, _ = await roster.create(
+        name="Capped", permission_ceiling="monitor", approval_rules=rules
+    )
+    assert str(capped.approval_mode) == "bypass"
+    assert decide(capped, "plugin:gmail", "monitor", verb="read") is Verdict.RUN
+    # Bypass removes prompts, not the ceiling: above it the call is denied.
+    assert decide(capped, "core:run-shell", "ask") is Verdict.BLOCK
+    assert decide(capped, "cli:gh", "ask") is Verdict.RUN  # the person's standing yes
+    assert decide(capped, "plugin:gmail", "ask", verb="send") is Verdict.QUEUE
+
+    asker, _ = await roster.create(name="Asker", approval_mode="ask", approval_rules=rules)
+    assert decide(asker, "core:search-web", "safe") is Verdict.RUN
+    assert decide(asker, "plugin:gmail", "monitor", verb="read") is Verdict.QUEUE
+    assert decide(asker, "core:run-shell", "ask") is Verdict.QUEUE
+    assert decide(asker, "cli:gh", "ask") is Verdict.RUN  # standing yes up to ask
+    assert decide(asker, "plugin:gmail", "safe", verb="send") is Verdict.QUEUE
+    assert decide(asker, "plugin:spotify", "block") is Verdict.BLOCK
+
+    always, _ = await roster.create(
+        name="Careful", approval_mode="always_ask", approval_rules=rules
+    )
+    assert decide(always, "core:search-web", "safe") is Verdict.QUEUE
+    assert decide(always, "cli:gh", "monitor") is Verdict.QUEUE  # ignores the standing yes
+    assert decide(always, "plugin:spotify", "block") is Verdict.BLOCK
 
 
 async def test_enqueue_resolve_and_board_projection(world):
@@ -132,12 +182,13 @@ async def test_an_always_allow_pattern_runs_an_ask_tier_call(world):
     """The card's "Always allow" is the person's standing yes: it lifts an
     ask-tier call; a blocked class stays blocked."""
     _, roster, _ = world
-    agent, _ = await roster.create(
-        name="Mailbox",
-        permission_ceiling="ask",
-        approval_rules={"require_approval": [], "always_allow": ["plugin:gmail:send"]},
-    )
-    assert decide(agent, "plugin:gmail", "ask", verb="send") is Verdict.RUN
-    assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.RUN
-    assert decide(agent, "plugin:gmail", "block", verb="send") is Verdict.BLOCK
-    assert decide(agent, "plugin:gmail", "ask", verb="read") is Verdict.QUEUE
+    rules = {"require_approval": [], "always_allow": ["plugin:gmail:send"]}
+    for mode in (None, "ask"):
+        created, _ = await roster.create(
+            name=f"Mailbox {mode}", permission_ceiling="ask", approval_rules=rules
+        )
+        agent = replace(created, approval_mode=mode)
+        assert decide(agent, "plugin:gmail", "ask", verb="send") is Verdict.RUN
+        assert decide(agent, "plugin:gmail", "monitor", verb="send") is Verdict.RUN
+        assert decide(agent, "plugin:gmail", "block", verb="send") is Verdict.BLOCK
+        assert decide(agent, "plugin:gmail", "ask", verb="read") is Verdict.QUEUE

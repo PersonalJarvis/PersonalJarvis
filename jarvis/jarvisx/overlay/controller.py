@@ -89,7 +89,7 @@ def overlay_capability() -> tuple[bool, str]:
             return False, "no display on this host (headless)"
         if is_wayland():
             return False, "Wayland session (no always-on-top overlay surface)"
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # Return the unavailable capability and reason to the UI.
         return False, "platform probes unavailable"
     if importlib.util.find_spec("PySide6") is None:
         return False, "PySide6 is not installed (install the [desktop] extra)"
@@ -174,7 +174,7 @@ class OverlayController:
         escape = asyncio.create_task(self._escape_cancels(req), name="jarvisx-select-esc")
         try:
             return await asyncio.wait_for(future, timeout=_SELECT_TIMEOUT_S)
-        except TimeoutError:
+        except TimeoutError:  # Cancel the expired selection and report no chosen region.
             await asyncio.to_thread(self._send_and_wait, protocol.CMD_CANCEL_SELECT, _ACK_TIMEOUT_S)
             return None
         finally:
@@ -487,7 +487,7 @@ def _selection_from(payload: dict[str, Any]) -> Selection | None:
     try:
         values = tuple(float(v) for v in rect)
         info = {k: float(screen.get(k, 0.0)) for k in ("x", "y", "w", "h", "dpr")}
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # Reject malformed screen geometry from the helper.
         return None
     return Selection(screen=info, rect=(values[0], values[1], values[2], values[3]))
 

@@ -32,7 +32,7 @@ def _options(pairs: list[str]) -> dict[str, Any]:
         key, _, raw = pair.partition("=")
         try:
             options[key] = json.loads(raw)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError:  # a value that is not JSON is kept as a plain string
             options[key] = raw
     return options
 

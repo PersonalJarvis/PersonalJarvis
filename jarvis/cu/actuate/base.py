@@ -21,6 +21,7 @@ import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,32 @@ class ActuationUnavailable(RuntimeError):
     The message is user-actionable and English (artifact rule); the spoken
     readback localizes separately.
     """
+
+
+#: Used only when a gate result carries no sentence of its own (a hand-written stub).
+_PERMISSION_FALLBACK_MSG = (
+    "[permission_needed:accessibility] This action cannot run: Accessibility access "
+    "has not been allowed yet and the user has to allow it. You must not try to "
+    "answer, click or dismiss any macOS system dialog yourself, you must not retry "
+    "this action, and you must not look for a workaround. Tell the user that this "
+    "feature needs the permission and stop."
+)
+
+
+class PermissionNeededError(ActuationUnavailable):
+    """macOS has not granted the Accessibility access that synthetic input needs.
+
+    ``str(exc)`` is the service's AGENT-facing sentence: it starts with
+    ``[permission_needed:accessibility] `` (the prefix the computer-use engine maps
+    to a terminal "blocked on permission" outcome) and forbids a model from
+    answering a system dialog, retrying or looking for a workaround (P9). A caller
+    that talks to a PERSON (dictation) reads ``result.user_detail`` instead. The
+    subclass keeps every existing ``except ActuationUnavailable`` handler working.
+    """
+
+    def __init__(self, result: Any) -> None:
+        self.result = result
+        super().__init__(str(getattr(result, "agent_detail", "") or _PERMISSION_FALLBACK_MSG))
 
 
 @dataclass(frozen=True)
@@ -349,45 +376,43 @@ _NO_BACKEND_MSG = (
 )
 
 
-def _require_macos_input_permissions() -> None:
-    """Fail closed unless macOS currently permits synthetic input.
+def _permission_gate() -> Any:
+    """The permission layer (``PermissionGate``); a test replaces this seam.
 
-    TCC grants can be revoked while Jarvis is running, so this deliberately
-    creates a fresh permission port and probes both grants for every action.
-    No result is cached in the actuator layer.
+    Resolved per call and never cached, so the process singleton can be reset.
+    """
+    from jarvis.platform.permission_service import get_permission_service  # noqa: PLC0415
+
+    return get_permission_service()
+
+
+def _ensure_macos_input_permission(feature: str) -> None:
+    """Ask macOS for the access synthetic input needs, or refuse. No-op off macOS.
+
+    Synthetic input needs Accessibility (``event_posting`` is an alias of it: one
+    switch, one request). This is the just-in-time ask: the tool call that got
+    here was already authorised by ``ToolExecutor.execute()`` (AP-3), so this is
+    not a second authority and no tool can reach ``ensure`` or the native request
+    itself. ``wait_s=0``: the OS dialog is answered later and the watcher reports
+    the grant; a tool body never blocks on a person.
+
+    Only a live GRANTED lets the action proceed. The grant is re-read on every
+    call (a revocation must fail closed); the service caches a grant for about
+    one second, so a click burst does not pay a native read per click.
     """
     if sys.platform != "darwin":
         return
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
 
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        PermissionState,
-        get_system_permission_port,
+    results = _permission_gate().ensure_all(
+        [PermissionId.ACCESSIBILITY], feature=feature, wait_s=0.0
     )
-
-    port = get_system_permission_port()
-    requirements = (
-        (PermissionId.ACCESSIBILITY, "Accessibility"),
-        (PermissionId.EVENT_POSTING, "Input Control"),
-    )
-    missing: list[str] = []
-    for permission_id, label in requirements:
-        if not port.runtime_access_granted(permission_id):
-            state = port.state(permission_id)
-            detail = (
-                state.value
-                if state is not PermissionState.GRANTED
-                else "grant belongs to an unstable app identity or needs restart"
-            )
-            missing.append(f"{label} ({detail})")
-    if missing:
-        joined = ", ".join(missing)
-        raise ActuationUnavailable(
-            "Cannot control the mouse or keyboard on macOS because these "
-            f"permissions are not granted: {joined}. Open Personal Jarvis "
-            "> Settings > Permissions (or System Settings > Privacy & "
-            "Security), grant the listed access, then retry."
-        )
+    for result in results:
+        if not result.granted:
+            raise PermissionNeededError(result)
+    if not results:
+        # An empty answer is not a grant: never act on it.
+        raise PermissionNeededError(None)
 
 
 #: Process-wide backend instance. Building a PosixActuator constructs pynput
@@ -404,13 +429,17 @@ def get_actuator() -> Actuator:
     """Resolve the platform input backend by runtime capability.
 
     Raises :class:`ActuationUnavailable` with an actionable English message
-    when the host cannot receive synthetic input. Never returns a backend
-    that is known-broken for the session type. The permission and session
-    probes run on EVERY call (revocation must fail closed); only the backend
-    construction is reused.
+    when the host cannot receive synthetic input; on macOS without the
+    Accessibility grant that is the :class:`PermissionNeededError` subclass
+    (the first such call also makes macOS show its own dialog). Never returns a
+    backend that is known-broken for the session type. The permission and
+    session probes run on EVERY call (revocation must fail closed); only the
+    backend construction is reused. A caller with a different feature than
+    computer use (dictation paste) asks first with its own feature name, so the
+    permission toast says what the access is for; this call then finds it granted.
     """
     global _ACTUATOR_CACHE
-    _require_macos_input_permissions()
+    _ensure_macos_input_permission("computer_use")
 
     if os.name == "nt":
         from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415

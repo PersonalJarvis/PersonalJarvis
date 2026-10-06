@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from jarvis.voice.action_phrases import (
     action_phrase,
+    cu_blocked_permission_sentence,
     cu_failure_readback,
     resolve_phrase_language,
 )
@@ -324,6 +327,182 @@ class TestElevationPausePhrases:
         gave_up = cu_failure_readback("en", error="exit 5", exit_code=5)
         assert needs_elev != no_view != gave_up
         assert needs_elev != gave_up
+
+
+class TestBlockedPermissionReadback:
+    """A mission stopped by a macOS permission says what is missing and where to allow it.
+
+    The engine writes ``[cu] blocked_permission at step-N: <sentence>`` and ALWAYS
+    appends a ``[cu] mission profile`` line after it. The profile line used to trip
+    the diagnostic gate, so the readback degraded to the generic "an action failed".
+    """
+
+    _SENTENCE = (
+        "Accessibility is off for Personal Jarvis. The user has to turn it on in "
+        "System Settings > Privacy & Security > Accessibility. Then try the task again."
+    )
+    _PROFILE = "[cu] mission profile: steps=3 total=9.5s act=3.0s observe=0.3s plan=1.6s\n"
+
+    def _detail(self, sentence: str | None = None) -> str:
+        return (
+            f"[cu] blocked_permission at step-3: {sentence or self._SENTENCE}\n"
+            + self._PROFILE
+        )
+
+    def test_profile_line_does_not_degrade_to_the_generic_phrase(self) -> None:
+        for lang in ("de", "en", "es"):
+            out = cu_failure_readback(
+                lang, error=None, exit_code=8, detail=self._detail()
+            )
+            assert out != action_phrase("cu_exit_action_failed", lang), out
+            assert out != action_phrase("cu_failed", lang), out
+
+    def test_english_forwards_the_engine_sentence_without_telemetry(self) -> None:
+        out = cu_failure_readback("en", error=None, exit_code=8, detail=self._detail())
+        assert "Accessibility is off for Personal Jarvis." in out
+        assert "Then try the task again." in out
+        assert "mission profile" not in out
+        assert "[cu]" not in out
+        assert not _EXIT_TOKEN_RE.search(out), out
+
+    def test_german_and_spanish_name_the_permission_and_where_to_allow_it(self) -> None:
+        de = cu_failure_readback("de", error=None, exit_code=8, detail=self._detail())
+        es = cu_failure_readback("es", error=None, exit_code=8, detail=self._detail())
+        assert "Bedienungshilfen" in de  # i18n-allow: asserts the German phrase
+        assert "Accesibilidad" in es
+        assert "Datenschutz" in de  # i18n-allow: the Settings path is spoken, not just the name
+        assert "Privacidad" in es
+        for out in (de, es):
+            assert ">" not in out and "&" not in out  # separators become words
+            assert "[cu]" not in out
+            assert "steps=" not in out
+
+    def test_english_is_addressed_to_the_listener_and_the_path_is_speakable(self) -> None:
+        out = cu_failure_readback("en", error=None, exit_code=8, detail=self._detail())
+        assert "You have to turn it on" in out
+        assert "the user" not in out.lower()
+        assert ">" not in out and "&" not in out
+        assert "System Settings, then Privacy and Security, then Accessibility" in out
+
+    def test_screen_recording_is_named_by_keyword(self) -> None:
+        sentence = (
+            "Screen Recording access is off for Personal Jarvis. The user has to turn it "
+            "on in System Settings > Privacy & Security > Screen & System Audio Recording."
+        )
+        de = cu_failure_readback(
+            "de", error=None, exit_code=8, detail=self._detail(sentence)
+        )
+        assert "Bildschirm" in de  # i18n-allow: asserts the German phrase
+
+    def test_system_dialog_asks_the_person_to_answer_it(self) -> None:
+        sentence = (
+            "A macOS system dialog is open. Personal Jarvis never answers system dialogs "
+            "for you: answer it yourself, then try the task again."
+        )
+        en = cu_failure_readback("en", error=None, exit_code=8, detail=self._detail(sentence))
+        de = cu_failure_readback("de", error=None, exit_code=8, detail=self._detail(sentence))
+        assert "system dialog" in en
+        assert de == action_phrase("cu_blocked_dialog", "de")
+
+    def test_restricted_permission_is_explained_not_asked_for(self) -> None:
+        sentence = (
+            "Accessibility access is restricted on this Mac by a profile or a parental "
+            "control, so Personal Jarvis cannot use it. This cannot be changed from the app."
+        )
+        de = cu_failure_readback("de", error=None, exit_code=8, detail=self._detail(sentence))
+        assert de == action_phrase("cu_blocked_restricted", "de")
+
+    def test_unrecognised_sentence_falls_back_to_the_fixed_phrase_in_de_and_es(self) -> None:
+        sentence = "A macOS permission is needed to continue, so the task stopped."
+        for lang in ("de", "es"):
+            out = cu_failure_readback(
+                lang, error=None, exit_code=8, detail=self._detail(sentence)
+            )
+            assert out == action_phrase("cu_blocked_generic", lang)
+
+    def test_noisy_sentence_is_dropped_for_the_fixed_phrase(self) -> None:
+        # A sentence that smells like telemetry or a path is never spoken verbatim.
+        noisy = "steps=3 total=9.5s act=3.0s C:\\Users\\x\\frame.png"
+        assert cu_blocked_permission_sentence(self._detail(noisy)) == ""
+        out = cu_failure_readback("en", error=None, exit_code=8, detail=self._detail(noisy))
+        assert out == action_phrase("cu_blocked_generic", "en")
+        assert "frame.png" not in out
+
+    def test_token_is_only_honoured_on_the_tool_failure_exit_code(self) -> None:
+        out = cu_failure_readback("en", error=None, exit_code=5, detail=self._detail())
+        assert self._SENTENCE not in out
+
+    def test_blocked_line_may_sit_anywhere_in_stderr(self) -> None:
+        detail = "[cu] cannot see the screen: boom\n" + self._detail()
+        assert cu_blocked_permission_sentence(detail) == self._SENTENCE
+
+    def test_other_failures_are_not_mistaken_for_a_block(self) -> None:
+        other = "[cu] fail at step-2: no news\n" + self._PROFILE
+        assert cu_blocked_permission_sentence(other) is None
+        assert cu_blocked_permission_sentence(None) is None
+        out = cu_failure_readback("en", error=None, exit_code=8, detail=self._PROFILE)
+        assert out == action_phrase("cu_exit_action_failed", "en")
+
+    @pytest.mark.parametrize("lang", ["de", "es"])
+    @pytest.mark.parametrize(
+        "permission",
+        ["screen_recording", "accessibility", "input_monitoring", "microphone", "automation"],
+    )
+    @pytest.mark.parametrize(
+        "reason, asking, phrase",
+        [
+            ("restart_hint", False, "cu_blocked_restart_hint"),
+            ("unavailable", False, "cu_blocked_unavailable"),
+            ("not_determined", True, "cu_blocked_waiting"),
+            ("needs_settings", True, "cu_blocked_waiting"),
+        ],
+    )
+    def test_the_remedy_follows_the_reason_not_only_the_permission(
+        self, lang: str, permission: str, reason: str, asking: bool, phrase: str
+    ) -> None:
+        # The engine's own sentence, built from the service's fixed templates, so a
+        # reworded template breaks this test instead of silently degrading the voice.
+        from jarvis.platform.permission_service import user_detail_for
+        from jarvis.platform.permissions import PermissionId
+
+        sentence = user_detail_for(PermissionId(permission), reason, asking=asking)
+        out = cu_failure_readback(lang, error=None, exit_code=8, detail=self._detail(sentence))
+        assert out.startswith(action_phrase(phrase, lang, permission="@@").split("@@")[0]), out
+        # Never the "allow it in Settings" advice for a grant that is on / a dialog
+        # that is open / a permission that cannot be asked for.
+        assert out != action_phrase("cu_blocked_generic", lang)
+        assert "Settings" not in out and "Ajustes" not in out and "Systemeinstellungen" not in out
+
+    @pytest.mark.parametrize("lang", ["de", "es"])
+    def test_a_switch_that_is_off_still_says_where_to_allow_it(self, lang: str) -> None:
+        from jarvis.platform.permission_service import user_detail_for
+        from jarvis.platform.permissions import PermissionId
+
+        sentence = user_detail_for(PermissionId.MICROPHONE, "denied")
+        out = cu_failure_readback(lang, error=None, exit_code=8, detail=self._detail(sentence))
+        assert out.startswith(
+            action_phrase("cu_blocked_permission", lang, permission="@@", pane="##").split("@@")[0]
+        ), out
+        assert "Mikrofon" in out or "Micrófono" in out  # i18n-allow: asserts the phrase
+
+    def test_every_blocked_phrase_exists_in_all_languages(self) -> None:
+        for key in (
+            "cu_blocked_permission",
+            "cu_blocked_dialog",
+            "cu_blocked_restricted",
+            "cu_blocked_generic",
+            "cu_blocked_restart_hint",
+            "cu_blocked_unavailable",
+            "cu_blocked_waiting",
+        ):
+            texts = {
+                lang: action_phrase(
+                    key, lang, sentence="S.", permission="P", pane="Pane"
+                )
+                for lang in ("de", "en", "es")
+            }
+            assert len(set(texts.values())) == 3, key
+            assert all(len(text) > 10 for text in texts.values()), key
 
 
 class TestCuSuccessReadback:

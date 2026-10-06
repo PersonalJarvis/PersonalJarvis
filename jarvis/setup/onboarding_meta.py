@@ -22,6 +22,10 @@ CURRENT_TERMS_VERSION = "1.0"
 # walk is one persisted step; onboarding completes, with its one unconditional
 # fresh restart (onboarding_routes._schedule_fresh_restart), when it ends, so
 # the wake-word and macOS permission changes made during setup take effect.
+# There is NO permissions step (just-in-time permissions, AP-35): nothing asks
+# macOS for anything during first run except where a switch IS the gesture.
+# A stored legacy step id (e.g. "permissions") resumes at "name" (frontend
+# ``resumeStep``); the backend never validates the stored id.
 ONBOARDING_STEPS: list[str] = [
     "name",
     "connect",

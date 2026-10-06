@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+from jarvis.agent_chat.store import AgentChatStore
 from jarvis.society.browser import install
 from jarvis.society.browser import live as live_module
 from jarvis.society.browser.tool import BrowserTool
@@ -28,7 +29,11 @@ async def cold_browser(tmp_path, monkeypatch):
     monkeypatch.setattr(install, "runner_path", lambda: Path(browser_start_runner.__file__))
     monkeypatch.setattr(install, "browser_executable", lambda _: Path("unused-browser"))
     monkeypatch.setattr("jarvis.core.config.get_jarvis_agent_secret", lambda _: None)
-    runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
+    chat_store = AgentChatStore(tmp_path / "chat.sqlite")
+    runtime = SocietyRuntime(
+        tmp_path, seed_starter_team=False,
+        chat_service=lambda: SimpleNamespace(store=chat_store),
+    )
     await runtime.ensure_started()
     await runtime.roster.create(name="Scout", provider="ollama", model="fixture")
 
@@ -43,6 +48,7 @@ async def cold_browser(tmp_path, monkeypatch):
         yield runtime, installs
     finally:
         await runtime.close()
+        chat_store.close()
 
 
 @pytest.mark.parametrize("session_id", ["society:scout", "society:scout:routine:task:run"])
@@ -50,7 +56,10 @@ async def test_cold_agent_and_routine_start_reuse_and_reopen_browser(
     cold_browser, tmp_path, session_id
 ):
     runtime, installs = cold_browser
-    session = SimpleNamespace(session_id=session_id, cwd=str(tmp_path), permission_mode="bypass")
+    session = runtime.chat_service().store.create_session(
+        session_id=session_id, surface="society", provider="ollama", model="fixture",
+        effort="", cwd=str(tmp_path), permission_mode="bypass",
+    )
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     briefing = await society_system_extra(cfg, None, session)
     assert "starts the browser automatically" in briefing

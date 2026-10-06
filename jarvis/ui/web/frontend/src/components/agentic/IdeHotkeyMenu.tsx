@@ -26,7 +26,7 @@ function Cap({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The IDE's key mode, modelled on herdr's prefix mode.
+ * The IDE's persistent keyboard shortcut mode.
  *
  * Ctrl+B turns it on — one press, nothing to hold — and a bar at the bottom
  * says so and names the keys. It stays on across moves, splits and workspace

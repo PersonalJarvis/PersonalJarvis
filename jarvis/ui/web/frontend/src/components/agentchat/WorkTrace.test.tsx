@@ -203,6 +203,34 @@ describe("work trace", () => {
     expect(splitConversationTurn([tool("a"), reply("done", "Ready."), failed]).after).toEqual([failed]);
   });
 
+  it("keeps a failed tool and its outcome visible after a conversation completes", () => {
+    const failed = tool("err", { isError: true, output: "Upload failed" });
+    const { container } = render(<WorkTrace {...props} conversation blocks={[tool("a"), failed, reply("done", "I prepared a draft.")]} />);
+    expect(screen.getByText("Upload failed")).toBeTruthy();
+    expect(container.querySelector('[data-trace-tool="err"]')).toBeTruthy();
+    expect(screen.getByTestId("tool-failure-warning").textContent).toContain("A tool action failed");
+    expect(screen.getByRole("status").textContent).toContain("A tool action failed");
+    expect(screen.getAllByRole("status").at(-1)?.textContent).toContain("Done");
+    const fold = screen.getByTestId("conversation-work-fold").querySelector("button")!;
+    fireEvent.click(fold);
+    // Open, the timeline takes over; its header and the warning still name the failure.
+    expect(fold.textContent).toContain("1 failed");
+    expect(screen.getByTestId("tool-failure-warning")).toBeTruthy();
+  });
+
+  it("keeps a failed question poll visible after a conversation completes", () => {
+    const failedPoll = tool("poll", {
+      name: "society_ask_user",
+      input: { wait_for: "closed-question" },
+      isError: true,
+      output: "The question is closed.",
+    });
+    const { container } = render(<WorkTrace {...props} conversation blocks={[tool("a"), failedPoll, reply("done", "I could not get an answer.")]} />);
+    expect(container.querySelector('[data-trace-tool="poll"]')).toBeTruthy();
+    expect(screen.getByText("The question is closed.")).toBeTruthy();
+    expect(screen.getByTestId("tool-failure-warning")).toBeTruthy();
+  });
+
   it("treats a tool-only turn as work", () => {
     expect(splitConversationTurn([tool("a")])).toEqual({ work: [tool("a")], answer: [], after: [] });
   });

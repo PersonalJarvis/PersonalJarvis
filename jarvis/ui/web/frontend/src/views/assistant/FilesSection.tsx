@@ -30,10 +30,26 @@ export function useFileMeta(): (file: SoulFile) => string {
   };
 }
 
+/**
+ * Drops HTML comments. The preview renders as plain text, so this is about
+ * readability, not safety; an unclosed comment hides the rest of the line.
+ */
+function withoutComments(text: string): string {
+  let out = "";
+  let at = 0;
+  for (;;) {
+    const start = text.indexOf("<!--", at);
+    if (start < 0) return out + text.slice(at);
+    out += text.slice(at, start);
+    const end = text.indexOf("-->", start + 4);
+    if (end < 0) return out;
+    at = end + 3;
+  }
+}
+
 /** Inline Markdown made readable: emphasis markers and comments dropped. */
 function clean(line: string): string {
-  return line
-    .replace(/<!--.*?-->/g, "")
+  return withoutComments(line)
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/(^|\s)_([^_]+)_(?=[\s.,;:!?]|$)/g, "$1$2")
     .replace(/^_|_$/g, "")
@@ -57,7 +73,7 @@ export function previewLines(file: SoulFile, max = 4): string[] {
   };
   for (const raw of file.content.split("\n")) {
     const trimmed = raw.trim();
-    if (!trimmed || trimmed.startsWith("#") || /^<!--.*-->$/.test(trimmed)) {
+    if (!trimmed || trimmed.startsWith("#") || (trimmed.startsWith("<!--") && trimmed.endsWith("-->"))) {
       flush();
     } else if (/^[-*]\s+/.test(trimmed)) {
       flush();

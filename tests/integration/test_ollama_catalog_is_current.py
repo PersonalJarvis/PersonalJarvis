@@ -57,8 +57,6 @@ _SHORTLIST_2026_08_24 = (
     "qwen3.6:27b",
     "muse-glimmer:30b",
     "ornith:35b",
-    "embeddinggemma",
-    "qwen3-embedding:4b",
 )
 
 _RUNTIME_OLLAMA_MODELS = tuple(
@@ -83,7 +81,7 @@ def _manifest(client: httpx.Client, model: str) -> httpx.Response:
 def registry() -> httpx.Client:
     with httpx.Client(timeout=15.0) as client:
         try:
-            probe = _manifest(client, "qwen3-embedding:4b")
+            probe = _manifest(client, RECOMMENDED_MODELS[0].id)
         except Exception as exc:  # noqa: BLE001 — offline is a skip, not a failure
             pytest.skip(f"Ollama registry unreachable: {type(exc).__name__} {exc}")
         if probe.status_code != 200:
@@ -136,6 +134,9 @@ def test_runtime_default_is_not_a_year_old(model_id, registry) -> None:
 def _assert_model_is_current(model_id: str, registry: httpx.Client) -> None:
     name, _, requested_tag = model_id.partition(":")
     response = registry.get(f"https://ollama.com/library/{name}/tags")
+    if response.status_code >= 500:
+        # An ollama.com outage says nothing about our defaults; a 404 still fails.
+        pytest.skip(f"ollama.com answered {response.status_code} for {name}")
     assert response.status_code == 200
     tags = parse_tags_html(response.text, name)
     tag = requested_tag or "latest"

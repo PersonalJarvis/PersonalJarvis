@@ -118,6 +118,7 @@ def accept(request: Request, payload: PairAcceptRequest) -> PairAcceptResponse:
 
         session.commit()
 
+    _notify_puller(request)
     public_url = _public_url_for_owner(request)
     return PairAcceptResponse(
         accepted=True,
@@ -180,6 +181,7 @@ def update_friend(
         row.pull_interval_s = body.pull_interval_s
         session.commit()
         session.refresh(row)
+        _notify_puller(request)
         return FriendItem(
             pubkey=row.friend_pubkey,
             url=row.friend_url,
@@ -193,6 +195,12 @@ def update_friend(
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+def _notify_puller(request: Request) -> None:
+    puller = getattr(request.app.state, "federation_puller", None)
+    if puller is not None:
+        puller.friends_changed()
+
 
 def _aware(dt: datetime) -> datetime:
     """SQLite returns datetimes without a tz — we add UTC."""

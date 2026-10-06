@@ -238,3 +238,19 @@ def test_same_turn_correction_cannot_confirm_or_leave_a_stale_request():
     guard.arm("request")
     assert guard.observe("hang up, no, keep talking", "request") == ""
     assert guard.observe("yes", "answer") == ""
+
+
+@pytest.mark.parametrize("answer, expected", [
+    ("yes", "confirmed"),
+    ("no", "cancelled"),
+    ("yes, but keep talking", ""),
+    ("no, please explain", ""),
+    ("explain yes", ""),
+    ("explain no", ""),
+])
+def test_padded_confirmation_still_requires_the_complete_answer(answer, expected):
+    guard = HangupConfirmation()
+    guard.arm("request")
+    padding = " \t\n" * 1000
+    assert guard.observe(padding + answer + padding, "answer") == expected
+    assert guard.observe("yes", "later-approval") == ""

@@ -69,7 +69,7 @@ describe("WorkspaceBar file drops", () => {
     expect(onDropFiles.mock.calls[0][0]).toBe("w2");
   });
 
-  it("hands over the paths the drag carried", () => {
+  it("does not turn a URI supplied by another page into a local file read", () => {
     const onDropFiles = vi.fn();
     render(<WorkspaceBar {...base} onDropFiles={onDropFiles} />);
 
@@ -77,7 +77,7 @@ describe("WorkspaceBar file drops", () => {
       dataTransfer: transfer(["Files"]),
     });
 
-    expect(onDropFiles.mock.calls[0][1].paths).toEqual(["C:/shot.png"]);
+    expect(onDropFiles.mock.calls[0][1].paths).toEqual([]);
   });
 
   it("ignores a drag carrying only selected text", () => {

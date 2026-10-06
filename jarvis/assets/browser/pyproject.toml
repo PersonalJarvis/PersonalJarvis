@@ -1,0 +1,20 @@
+# Resolver-only metadata for the isolated Python 3.12 browser environment.
+# requirements.in mirrors these dependencies; the dependency-sync gate checks it.
+[project]
+name = "personal-jarvis-browser-lock"
+version = "0"
+requires-python = ">=3.12"
+dependencies = [
+  "browser-use==0.13.10",
+  "playwright==1.62.0",
+  "windows-capture==2.0.1 ; sys_platform == 'win32'",
+  "cryptography>=50.0.2",
+]
+
+[tool.uv.sources]
+cryptography = { index = "native-crypto" }
+
+[[tool.uv.index]]
+name = "native-crypto"
+url = "https://personaljarvis.github.io/PersonalJarvis/native-crypto/50.0.2-1/simple/"
+explicit = true

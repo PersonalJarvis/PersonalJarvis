@@ -105,7 +105,7 @@ def decode_command(line: str) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(line)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled sidecar line is no message
         return None
     if not isinstance(payload, dict):
         return None
@@ -127,7 +127,7 @@ def decode_event(line: str) -> dict[str, Any] | None:
     """Parse one stdout line as a known event; ``None`` otherwise."""
     try:
         payload = json.loads(line.strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled line is no event
         return None
     if isinstance(payload, dict) and payload.get("event") in ALL_EVENTS:
         return payload
@@ -138,7 +138,7 @@ def decode_ack(line: str) -> str | None:
     """Parse one ack line from the sidecar; ``None`` if it isn't one."""
     try:
         payload = json.loads(line.strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled line is no ack
         return None
     if isinstance(payload, dict) and isinstance(payload.get("ok"), str):
         return payload["ok"]

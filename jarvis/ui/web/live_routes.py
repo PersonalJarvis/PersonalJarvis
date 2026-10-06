@@ -21,7 +21,6 @@ async def get_live_login_helper() -> dict:
     return await asyncio.to_thread(login_helper_status)
 
 
-
 @router.post("/login-helper", summary="Install the verified native ChatGPT login helper")
 async def install_live_login_helper(request: Request) -> dict:
     """Provision Codex without Node after an explicit install action."""
@@ -60,7 +59,6 @@ async def install_live_login_helper(request: Request) -> dict:
         await asyncio.gather(watcher, return_exceptions=True)
 
 
-
 @router.get("/options", summary="List available thinking models and Live voices")
 async def get_live_options(
     auth_mode: Literal["api_key", "chatgpt_subscription"] = "api_key",
@@ -89,8 +87,10 @@ async def get_live_options(
             await reasoning.aclose()
             await auth.aclose()
         return {
-            "models": models, "source": "chatgpt_subscription",
-            "efforts": ["", *effort_levels("openai")], "voices": list(SUBSCRIPTION_VOICES),
+            "models": models,
+            "source": "chatgpt_subscription",
+            "efforts": ["", *effort_levels("openai")],
+            "voices": list(SUBSCRIPTION_VOICES),
         }
     catalog = await shared_catalog().list_models("openai")
     return {
@@ -152,7 +152,8 @@ async def get_live_profile(request: Request) -> dict:
         "active": getattr(cfg.brain.realtime, "provider", "") == profile.provider_id,
         "agent_configured": cfg.brain.worker is not None,
         "subscription": {
-            "account_id": status["account_id"], "account_connected": status["connected"],
+            "account_id": status["account_id"],
+            "account_connected": status["connected"],
             "voice_status": "unverified" if status["connected"] else "unavailable",
             "reason": status["reason"],
         },

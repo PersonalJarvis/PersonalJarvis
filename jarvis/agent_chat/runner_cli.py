@@ -750,14 +750,12 @@ def agy_model_args(
         # Default model: agy accepts ``--effort`` alone.
         return ["--effort", effort] if effort in _AGY_EFFORT_SUFFIXES else []
     row = by_id.get(model)
+    if (row is None or not row.get("efforts")) and _is_base_gemini_id(model):
+        # A newer Gemini base id still requires --effort when discovery failed
+        # or returned a bare id without its suffixed variants.
+        level = effort if effort in _AGY_EFFORT_SUFFIXES else _AGY_DEFAULT_EFFORT
+        return ["--model", model, "--effort", level]
     if row is None:
-        if _is_base_gemini_id(model):
-            # A Gemini release newer than the catalog Jarvis holds (live
-            # 2026-09: "gemini-3.8-flash" in a routine). agy refuses a base id
-            # without a level ("requires --effort"), and nobody picks efforts
-            # by hand, so the chosen one or agy's own default is filled in.
-            level = effort if effort in _AGY_EFFORT_SUFFIXES else _AGY_DEFAULT_EFFORT
-            return ["--model", model, "--effort", level]
         # A suffixed or non-Gemini unknown id: pass it through untouched.
         return ["--model", model]
     ladder = list(row.get("efforts") or [])
@@ -2780,6 +2778,24 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    if (
+        resume
+        and identity
+        and session.surface == "society"
+        and jarvis_harness.society_rollover_due(handle.history)
+    ):
+        # One endless chat, bounded CLI conversations: start fresh from the
+        # briefing, memory and recent transcript, and mark where it began.
+        resume = None
+        await handle.emit(
+            make_event(
+                "notice",
+                {
+                    "kind": jarvis_harness.ROLLOVER_NOTICE_KIND,
+                    "text": "Started a fresh working context from memory and recent messages.",
+                },
+            )
+        )
     from jarvis.agent_chat.task_recovery import ToolRecovery, blocks_automatic_recovery
 
     recovery = ToolRecovery()
@@ -2943,7 +2959,11 @@ async def run_cli_turn(
 
 def _agy_effective_effort(model: str, effort: str) -> str:
     """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
-    args = agy_model_args(model, effort, _agy_catalog_cached())
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        rows = None
+    args = agy_model_args(model, effort, rows)
     return args[args.index("--effort") + 1] if "--effort" in args else ""
 
 
@@ -3279,7 +3299,7 @@ async def _run_cli_once(
         rows = raw if isinstance(raw, list) else []
         try:
             specs = parse_questions({"questions": rows})
-        except ValueError as exc:
+        except ValueError as exc:  # the error text goes back to the model in the deny message
             return {
                 "behavior": "deny",
                 "message": f"Invalid questions ({exc}). Ask 1-4 questions with 2-4 options each.",

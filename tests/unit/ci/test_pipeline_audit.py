@@ -400,7 +400,7 @@ def test_all_shards_consume_the_same_detect_output_including_partial_reruns():
 
 def test_release_ci_targets_tag_with_all_platforms():
     steps = workflows()["release-cut.yml"]["jobs"]["cut"]["steps"]
-    dispatch = next(s["run"] for s in steps if "gh workflow run ci.yml" in s.get("run", ""))
+    dispatch = next(s["run"] for s in steps if s.get("name") == "Dispatch the publishing workflows on the tag")
     assert 'ci.yml --ref "v$V" -f full=true -f include_macos=true' in dispatch
 
 

@@ -45,6 +45,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from jarvis.core.path_safety import contained_path
 from jarvis.platform import detect_platform, user_dirs
 
 # Reuse the proven collision-avoidance helper from the sessions save path
@@ -136,7 +137,7 @@ async def save_to_downloads(
     filename = _safe_basename(body.filename)
     downloads = user_dirs.downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
-    target = _avoid_collision(downloads / filename)
+    target = _avoid_collision(contained_path(downloads, filename))
 
     target.write_bytes(data)
     log.info("DownloadSave: %s (%d bytes)", target, len(data))

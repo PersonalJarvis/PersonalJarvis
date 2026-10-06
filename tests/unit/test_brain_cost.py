@@ -178,3 +178,18 @@ def test_grok_cache_reads_bill_at_a_quarter() -> None:
 
     assert cache_read_fraction("grok-4.6-build") == 0.25
     assert cache_read_fraction("gpt-5.5") == 0.10
+
+
+def test_zai_glm_rates_do_not_inherit_anthropic_pricing() -> None:
+    from jarvis.brain.cost import calculate_cost_usd
+
+    assert calculate_cost_usd("glm-4.6", 1_000_000, 1_000_000) == pytest.approx(2.80)
+    assert calculate_cost_usd("glm-5.1", 1_000_000, 1_000_000) == pytest.approx(5.80)
+    assert calculate_cost_usd("glm-4.7-flash", 1_000_000, 1_000_000) == 0.0
+
+
+def test_zai_glm_cache_reads_use_twenty_percent_of_input_rate() -> None:
+    from jarvis.brain.cost import cache_read_fraction, calculate_cost_usd
+
+    assert cache_read_fraction("glm-5.3") == pytest.approx(0.20)
+    assert calculate_cost_usd("glm-5.3", 0, 0, 1_000_000) == pytest.approx(0.28)

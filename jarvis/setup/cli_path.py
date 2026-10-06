@@ -150,7 +150,7 @@ def add_profile_block(path: Path) -> bool:
     """Append the PATH block to ``path``. Returns False when already present."""
     try:
         existing = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except FileNotFoundError:  # A missing shell profile is created with the managed PATH block.
         existing = ""
     if PROFILE_MARKER in existing:
         return False
@@ -165,7 +165,7 @@ def remove_profile_block(path: Path) -> bool:
     """Delete the block :func:`add_profile_block` wrote. False when absent."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (FileNotFoundError, UnicodeDecodeError):
+    except (FileNotFoundError, UnicodeDecodeError):  # An absent or unreadable profile cannot contain a removable managed block.
         return False
     kept: list[str] = []
     skip_next = False
@@ -203,7 +203,7 @@ class UserPathStore:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
             try:
                 value, kind = winreg.QueryValueEx(key, "Path")
-            except FileNotFoundError:
+            except FileNotFoundError:  # A missing user PATH value is the empty starting configuration.
                 return "", None
         return str(value), int(kind)
 
@@ -274,11 +274,11 @@ def _copy_launcher(source: Path, target: Path) -> bool:
     try:
         if target.read_bytes() == data:
             return False
-    except FileNotFoundError:
+    except FileNotFoundError:  # No existing launcher means there is nothing to preserve before creation.
         pass
     try:
         target.write_bytes(data)
-    except PermissionError:
+    except PermissionError:  # A running Windows launcher is renamed before its replacement is written.
         stale = target.with_name(target.name + _STALE_SUFFIX)
         stale.unlink(missing_ok=True)
         target.rename(stale)
@@ -297,7 +297,7 @@ def _sweep_stale_launchers(directory: Path) -> None:
 def _link_points_into(link: Path, root: Path) -> bool:
     try:
         return link.is_symlink() and root.resolve() in link.resolve().parents
-    except OSError:
+    except OSError:  # Unverifiable links are treated as foreign and preserved.
         return False
 
 

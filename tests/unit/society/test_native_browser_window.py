@@ -29,6 +29,51 @@ def scene(monkeypatch):
     window.close()
 
 
+def test_capture_apartment_survives_window_sessions_and_releases_once(monkeypatch):
+    import atexit
+    import ctypes
+
+    retained, released, cleanup = [], [], []
+
+    def increment(pointer):
+        pointer._obj.value = 123
+        retained.append(123)
+        return 0
+
+    ole32 = SimpleNamespace(
+        CoIncrementMTAUsage=NativeCall(increment),
+        CoDecrementMTAUsage=NativeCall(lambda cookie: released.append(cookie.value) or 0),
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", lambda _: ole32, raising=False)
+    monkeypatch.setattr(atexit, "register", cleanup.append)
+    monkeypatch.setattr(native_window, "_capture_mta", None)
+    native_window._ensure_capture_mta()
+    native_window._ensure_capture_mta()
+    assert retained == [123] and not released
+    assert cleanup == [native_window._release_capture_mta]
+    cleanup[0]()
+    cleanup[0]()
+    assert released == [123]
+
+
+def test_failed_capture_apartment_can_retry_without_retaining_a_cookie(monkeypatch):
+    import atexit
+    import ctypes
+
+    cleanup = []
+    ole32 = SimpleNamespace(
+        CoIncrementMTAUsage=NativeCall(lambda _: -1),
+        CoDecrementMTAUsage=NativeCall(lambda _: pytest.fail("No cookie was acquired")),
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", lambda _: ole32, raising=False)
+    monkeypatch.setattr(atexit, "register", cleanup.append)
+    monkeypatch.setattr(native_window, "_capture_mta", None)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="COM apartment"):
+            native_window._ensure_capture_mta()
+    assert native_window._capture_mta is None and not cleanup
+
+
 def popup(window, desktop, hwnd=2, **kwargs):
     desktop.add(hwnd, **kwargs)
     window._events.put_nowait(hwnd)

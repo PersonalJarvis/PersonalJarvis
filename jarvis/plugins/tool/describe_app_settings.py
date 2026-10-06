@@ -24,6 +24,8 @@ log = logging.getLogger(__name__)
 class DescribeAppSettingsTool:
     """Read-only overview of the live Desktop App configuration."""
 
+    read_only = True
+
     name: ClassVar[str] = "describe-app-settings"
     risk_tier: ClassVar[str] = "safe"
     description: ClassVar[str] = (

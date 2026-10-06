@@ -26,8 +26,17 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
 | `test report + floor` | Proves the six Linux shards cover every discovered file exactly once, enforces the min-passed floor, and on main refreshes the duration cache. Detection freezes one shared duration snapshot for all shards, including partial reruns. | `scripts/ci/ratchet_tests.py` |
 | Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
-| `release qualification` | Tag CI requires a full run with macOS and the real browser-auth E2E evidence gate. Ordinary branch/PR/nightly CI skips this release-only requirement. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
+| `release qualification` | Tag CI requires a full run with macOS and the browser-auth E2E evidence gate: a plugin labeled verified needs a completed journey, every completed journey ships as verified, and every other plugin ships labeled preview. The step summary counts both. Ordinary branch/PR/nightly CI skips this release-only job. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
 | `CI gate` | Aggregates every job. **The only required check.** A missing or skipped selected lane fails. Unselected lanes may skip; nightly is strict except event-specific jobs. | `scripts/ci/required_results.py` |
+
+The realtime lane runs the subscription authentication, direct reasoning,
+voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
+macOS and Linux, including the slim container without system audio. These
+focused tests are strict: they do not use the broad-suite failure baseline.
+Their fake credentials and transports also prove that a selected subscription
+cannot fall through to a retained API-key provider when its account is absent
+or unavailable. They make no paid inference calls. Real-account voice tests
+remain separate acceptance evidence.
 
 ### Known failures: the ratchet
 
@@ -51,6 +60,20 @@ Static gates include repository workflow policy (immutable action pins, the
 complete aggregate dependency graph, tag-only PyPI publication and draft-only
 asset producers). CI additionally runs pinned Actionlint for workflow syntax,
 expressions and action inputs.
+
+### Dispatch-only evidence runs
+
+`.github/workflows/macos-hotkey-spike.yml` runs only on `workflow_dispatch`: it is
+in no lane, no schedule and not in the `CI gate`. It runs
+`scripts/ci/macos_carbon_hotkey_spike.py` on an Intel and an Apple Silicon macOS runner
+(optionally `macos-26`, whose label for this repository is unverified). The script
+records the TCC context first, then runs each risky Carbon `RegisterEventHotKey`
+variant in a child process so a native crash becomes data, not a failed job. It is
+runner evidence only: runners pre-grant TCC to their tools, show no dialog and have no
+physical keyboard, so its result never decides a default on its own (the flip rule is
+in `macos-permissions.md`, section 4.15). It ran once from the feature branch as run
+`36954304202` at commit `59749f859` on `macos-15` (arm64) and `macos-15-intel` (harness green;
+the recorded result and its limits are in `macos-permissions.md`, section 4.15).
 
 ### Concurrency
 
@@ -170,3 +193,23 @@ signing proof still requires hosted runners; local syntax checks cannot prove it
 | Stable release admits a claim before building | `release-gate.yml` |
 | Autofix PRs with a privileged/unprivileged split | not adopted: generated files are regenerated during integration instead |
 | 96-core runners, daily canary tags, Docker/Nix lanes | not adopted: standard runners, releases stay manual, no such artefacts |
+
+## 5. Security scans — `security.yml`, `scorecard.yml`
+
+All free for public repositories, all report into the Security tab beside
+CodeQL's default setup, and none is part of the required `CI gate`:
+
+* **zizmor** audits the workflow files on every pull request and push to
+  main. Accepted exceptions live in `.github/zizmor.yml`, each with its reason;
+  run `zizmor --config .github/zizmor.yml .github/workflows` locally before
+  touching a workflow. Expressions reach a `run:` block through `env:`, never
+  inline, and a checkout keeps its credential only when that job pushes.
+* **dependency-review** fails a pull request that adds a dependency with a
+  known high or critical advisory.
+* **osv-scanner** checks the shipped lockfiles against osv.dev on main and
+  weekly. It reports and never blocks.
+* **OpenSSF Scorecard** publishes a weekly repository security score.
+
+Dependabot covers npm through security updates only. Version updates for the
+frontend stay off for the same reason as pip: a bump also needs a rebuilt
+`dist/` bundle, which Dependabot cannot produce.

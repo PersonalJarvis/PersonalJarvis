@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -56,6 +57,51 @@ def no_cli(monkeypatch: pytest.MonkeyPatch):
     from jarvis.agent_chat import service as svc_mod
 
     monkeypatch.setattr(svc_mod, "_claude_cli_installed", lambda: False)
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "expected_runner"),
+    [("ollama", "local-model", "brain"), ("openai-codex", "codex-model", "codex-cli")],
+)
+async def test_chat_pick_survives_a_different_global_worker(
+    tmp_path, monkeypatch, provider, model, expected_runner
+):
+    from jarvis.agent_chat import service as svc_mod
+    from jarvis.core import runtime_refs, task_agent
+
+    global_manager = SimpleNamespace(
+        _config=SimpleNamespace(brain=SimpleNamespace(worker=SimpleNamespace(
+            provider="claude-api", model="other-model", reasoning_effort="high"
+        )))
+    )
+    monkeypatch.setattr(runtime_refs, "get_brain_manager", lambda: global_manager)
+    probed = []
+
+    async def seat(selected):
+        probed.append(selected)
+        return None
+
+    monkeypatch.setattr(task_agent, "subscription_seat_off_loop", seat)
+    calls = []
+
+    async def run(handle, text, runner="brain", **kwargs):
+        calls.append((handle.session.provider, handle.session.model, runner))
+        await handle.emit(make_event("turn_finished", {
+            "turn_id": handle.turn_id, "status": "done", "usage": {},
+        }))
+
+    monkeypatch.setattr(svc_mod, "run_brain_turn", run)
+    monkeypatch.setattr(svc_mod, "run_cli_turn", run)
+    svc = _service(None)
+    session = _jarvis_session(svc, tmp_path, provider=provider, model=model, effort="")
+    q = svc.subscribe(session.session_id)
+    await svc.send(session.session_id, "hi")
+    events = await _drain(q, "turn_finished")
+    assert calls == [(provider, model, expected_runner)]
+    assert probed == [provider]
+    assert svc.store.get_session(session.session_id).provider == provider
+    started = next(e for e in events if e["kind"] == "turn_started")["payload"]
+    assert started["provider"] == provider
 
 
 async def test_a_jarvis_turn_runs_on_the_brain_with_the_sessions_pick(

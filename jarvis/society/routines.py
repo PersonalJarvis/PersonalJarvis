@@ -210,6 +210,7 @@ def next_run_readback(due_at_ns: int | None, timezone: str | None) -> str | None
         try:
             when = when.astimezone(calendar_zone(timezone))
         except ValueError:
+            # Unknown zone name: show the time in UTC and label it so.
             timezone = "UTC"
     label = timezone or "UTC"
     return f"{when:%a %Y-%m-%d %H:%M} ({label})"
@@ -344,6 +345,7 @@ def _summary(row: dict[str, Any]) -> dict[str, Any]:
         try:
             spec = json.loads(raw) if isinstance(raw, str) else dict(raw)
         except ValueError:
+            # A corrupt stored spec shows as an empty routine, not a crash.
             spec = {}
     action = spec.get("action") or {}
     return {

@@ -12,7 +12,8 @@ every 50 ms, no hook, no tap:
   Control). Needs the same Input Monitoring grant as every other global
   shortcut; without it the read stays false and nothing fires, so
   :func:`make_probe` reports the shortcut unavailable and names the grant
-  instead of arming a watcher that can never fire.
+  instead of arming a watcher that can never fire. That check is a silent
+  read; the gesture itself never triggers a permission request.
 * Linux/X11: ``XQueryKeymap`` through python-xlib (pynput's own dependency).
 * Wayland, headless, missing packages: :func:`make_probe` returns ``None``
   with the reason, and the caller reports the shortcut as unavailable.
@@ -109,12 +110,22 @@ def _x11_probe(family: str) -> Probe | None:
 def _macos_input_monitoring_missing() -> str:
     """Why macOS would read every key as up, or ``""`` when the grant is live."""
     try:
+        from jarvis.platform.permission_service import (  # noqa: PLC0415
+            get_permission_service,
+        )
         from jarvis.platform.permissions import (  # noqa: PLC0415
             PermissionId,
-            get_system_permission_port,
+            PermissionState,
         )
 
-        if get_system_permission_port().runtime_access_granted(PermissionId.INPUT_MONITORING):
+        # A silent read: it never shows a dialog. UNAVAILABLE means the probe
+        # could not answer, so the watcher arms and the key read decides.
+        state = get_permission_service().check(PermissionId.INPUT_MONITORING)
+        if state in (
+            PermissionState.GRANTED,
+            PermissionState.NOT_REQUIRED,
+            PermissionState.UNAVAILABLE,
+        ):
             return ""
     except Exception:  # noqa: BLE001 - an unanswerable probe arms; the read decides
         log.debug("appshot: Input Monitoring probe failed", exc_info=True)

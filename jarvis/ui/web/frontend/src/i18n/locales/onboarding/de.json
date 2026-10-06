@@ -80,7 +80,6 @@
         "ide": "Agentic IDE",
         "plugins": "Plugins",
         "wake": "Weckwort",
-        "permissions": "Mac-Berechtigungen",
         "done": "Fertig"
       },
       "stops": {
@@ -90,7 +89,6 @@
         "ide": "Die Agentic IDE lässt Coding-Agents wie Claude Code und Codex in echten Terminals an deinen eigenen Projekten arbeiten. Schreib ihnen direkt, oder lass {name} sie per Stimme steuern.",
         "plugins": "Plugins verbinden {name} mit den Apps, die du nutzt: Mail, Kalender, Notizen, Smart Home und mehr. Jedes wird zu einem neuen Werkzeug, und alles, was etwas sendet oder ändert, fragt dich vorher.",
         "wake": "Dein Weckwort findest du hier in den Einstellungen. Sag „Hey {name}“, und {name} hört zu. Ändere das Wort, wähle seine Sprache oder teste es jederzeit.",
-        "permissions": "Auf einem Mac braucht {name} deine Erlaubnis für Mikrofon, Bildschirm und die Steuerung von Apps. Erlaube hier, was du möchtest; jede Zeile aktualisiert sich von selbst.",
         "done": "Das war der Rundgang! Sprich mit {name}, wann immer du willst, und wenn du mal nicht weiterweißt, frag einfach. Unter Einstellungen → App startest du diese Einführung erneut."
       }
     }
