@@ -16036,8 +16036,8 @@ never has; the only browser-side start was the desktop's realtime hand-over
 (`BrowserVoiceRequested`). (3) The visible browser-microphone card that could
 start a call itself left the sidebar on 2026-09-12 (`51b4d4015`). The issue's
 note that Gemini Live lacks browser audio is not the cause: the provider
-declares it; `browser_audio` in `/api/settings/voice-mode` reads only an
-explicitly pinned realtime provider.
+declares it; `browser_audio` in `/api/settings/voice-mode` read only an
+explicitly pinned realtime provider (fixed separately as BUG-232).
 
 **Fix.** `BrowserVoiceConfig(enabled=True)` is now `JarvisConfig.browser_voice`;
 `browser_voice_enabled(cfg)` serves the classic bridge in pipeline mode by
@@ -16050,3 +16050,27 @@ Guards: `tests/unit/web/test_voice_mode_route.py`,
 `tests/unit/browser_voice/test_route.py`,
 `tests/unit/ui/test_voice_call_routes.py`, `useVoiceCall.test.tsx`,
 `BrowserRealtimeControl.test.tsx`.
+
+## BUG-232: an unpinned browser-audio engine ran on the desktop's half-duplex path and was reported as "no browser audio" (MEDIUM, FIXED 2026-10-05)
+
+**Symptom.** With no `[brain.realtime].provider` pinned, a Gemini-only install
+showed `active_provider: gemini-live` next to `browser_audio: false` in
+`GET /api/settings/voice-mode` (seen in GitHub issue #399). On the desktop the
+same call ran on the native half-duplex path instead of the browser hand-over
+that a pinned Gemini Live call takes.
+
+**Cause.** `realtime_browser_audio(cfg)` read only the explicitly pinned
+primary. Without a pin, the session builder opens on the first
+credential-ready provider in effective order, so the transport decision and
+the provider the call actually used disagreed for every unpinned install.
+
+**Fix.** Without a pin, `realtime_browser_audio` reads the capability of the
+first credential-ready provider (`_identified_provider_candidates(...,
+limit=1)`: the same order and the same refusal rules as
+`build_realtime_session`); a pinned primary still answers for itself without
+reading credentials. The settings route and both pipeline call sites now read
+it off their loops. Speech-suite tests pick the transport as a keyless host
+does (`tests/unit/speech/conftest.py`), so a developer's real key no longer
+flips desktop-path tests. Guards: `tests/unit/realtime/test_factory.py`,
+`tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/speech/test_realtime_mode.py`.
