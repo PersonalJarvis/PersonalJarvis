@@ -26,10 +26,11 @@ import {
   type ChangeScope,
   type PaneChanges,
   type PaneChangesTarget,
+  type ReviewFile,
 } from "./paneChangesApi";
 import { DiffView } from "./sidePanel/explorer/DiffView";
 import { FileTypeIcon } from "./sidePanel/explorer/FileTypeIcon";
-import type { ChangeStatus, ChangedFile, FileDiff as FileDiffBody } from "./sidePanel/explorer/explorerApi";
+import type { ChangeStatus, FileDiff as FileDiffBody } from "./sidePanel/explorer/explorerApi";
 
 /** How many diffs are read at once — enough to fill the screen fast, few enough to leave git alone. */
 const DIFF_CONCURRENCY = 4;
@@ -125,7 +126,7 @@ export function PaneChangesDialog({
         for (let path = queue.shift(); path !== undefined && !cancelled; path = queue.shift()) {
           let next: DiffState;
           try {
-            next = { kind: "ready", diff: await fetchPaneFileDiff(target, path) };
+            next = { kind: "ready", diff: await fetchPaneFileDiff(target, path, changes.base) };
           } catch (error) {
             next = { kind: "error", message: error instanceof Error ? error.message : String(error) };
           }
@@ -199,14 +200,21 @@ export function PaneChangesDialog({
                 </Dialog.Title>
               </div>
               <Dialog.Description className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
-                {folder ? (
-                  <span className="inline-flex min-w-0 items-center gap-1">
+                {folder && (
+                  <span className="inline-flex min-w-0 items-center gap-1 font-mono">
                     <GitBranch className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    {fill(t("pane_review.description_worktree"), { branch: branch || changes?.branch || "" })}
+                    {branch || changes?.branch}
                   </span>
-                ) : (
-                  <span>{t(scope === "pane" ? "pane_review.description_pane" : "pane_review.description_folder")}</span>
                 )}
+                <span>
+                  {scope === "folder" && !folder
+                    ? t("pane_review.description_folder")
+                    : changes?.base
+                      ? changes.sinceMs > 0
+                        ? fill(t("pane_review.description_since"), { time: new Date(changes.sinceMs).toLocaleString() })
+                        : t("pane_review.description_pane")
+                      : t("pane_review.description_uncommitted")}
+                </span>
                 {changes && files.length > 0 && (
                   <span data-testid="pane-changes-summary" className="inline-flex items-center gap-2 text-foreground-secondary">
                     <span aria-hidden="true">·</span>
@@ -282,7 +290,7 @@ export function PaneChangesDialog({
                 {t(scope === "pane" || folder ? "pane_review.empty_pane" : "pane_review.empty_folder")}
               </p>
               <p className="max-w-md text-xs text-muted-foreground">
-                {t(scope === "pane" && !folder ? "pane_review.empty_pane_hint" : "pane_review.empty_hint")}
+                {t(scope === "pane" || folder ? "pane_review.empty_pane_hint" : "pane_review.empty_hint")}
               </p>
             </div>
           ) : (
@@ -361,7 +369,7 @@ function FileCard({
   onOpen,
   cardRef,
 }: {
-  file: ChangedFile;
+  file: ReviewFile;
   diff: DiffState | undefined;
   collapsed: boolean;
   onToggle: () => void;
@@ -401,6 +409,17 @@ function FileCard({
         <span className={cn("shrink-0 text-[11px] font-medium", STATUS_TONE[file.status])}>
           {t(`pane_review.status.${file.status}`)}
         </span>
+        {file.committed !== undefined && (
+          <span
+            data-testid="pane-changes-commit-state"
+            className={cn(
+              "shrink-0 rounded px-1.5 py-px text-[10.5px]",
+              file.committed ? "bg-muted text-muted-foreground" : "bg-warning/15 text-warning",
+            )}
+          >
+            {t(file.committed ? "pane_review.committed" : "pane_review.pending")}
+          </span>
+        )}
         <Counts added={ready ? ready.added : file.added} removed={ready ? ready.removed : file.removed} />
         {onOpen && (
           <button

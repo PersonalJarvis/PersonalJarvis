@@ -1,28 +1,37 @@
-"""The endpoint behind a pane's "Review changes" dialog.
+"""The endpoints behind a pane's "Review changes" dialog.
 
-It must list the files the pane's OWN agent wrote, and find them even when
-the folder holds more uncommitted files than one answer carries — a shared
-working tree with thousands of untracked build chunks once filled the whole
-list and left the dialog saying the agent had changed nothing.
+They must list everything the pane's OWN agent changed — work it already
+committed as well as work still pending, because coding agents commit as they
+go — and compare it with the code as it stood before the agent's first write.
+A folder full of other uncommitted files must not hide them.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
-from jarvis.agentic_ide import agent_transcript, change_authors, git_changes
+from jarvis.agentic_ide import agent_transcript, change_authors
 from jarvis.ui.web import agentic_ide_routes as routes
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
 
+NOW = int(time.time())
+#: The agent's first write, between the starting commit and its own commit.
+FIRST_WRITE_MS = (NOW - 50) * 1000
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+def _git(cwd: Path, *args: str, at: int | None = None) -> None:
+    env = dict(os.environ)
+    if at is not None:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"@{at} +0000"
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
 
 
 @pytest.fixture
@@ -34,7 +43,7 @@ def repo(tmp_path: Path) -> Path:
     (tmp_path / "mine.py").write_text("one\n", encoding="utf-8")
     (tmp_path / "theirs.py").write_text("one\n", encoding="utf-8")
     _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "init")
+    _git(tmp_path, "commit", "-q", "-m", "init", at=NOW - 100)
     return tmp_path
 
 
@@ -54,7 +63,7 @@ def _write(path: str, call_id: str) -> list[dict]:
     return [
         {
             "kind": "tool_call",
-            "ts_ms": 5,
+            "ts_ms": FIRST_WRITE_MS,
             "payload": {"call_id": call_id, "name": "Edit", "input": {"file_path": path}},
         },
         {"kind": "tool_result", "payload": {"call_id": call_id, "is_error": False}},
@@ -73,22 +82,40 @@ def workspace(repo: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     return session
 
 
-async def test_lists_only_the_panes_own_files_past_a_full_folder(
-    repo: Path, workspace: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+async def test_work_the_agent_already_committed_is_listed(
+    repo: Path, workspace: SimpleNamespace
 ) -> None:
-    monkeypatch.setattr(git_changes, "MAX_CHANGED_FILES", 2)
-    for index in range(5):
-        (repo / f"aaa_chunk{index}.js").write_text("x\n", encoding="utf-8")
     (repo / "mine.py").write_text("two\n", encoding="utf-8")
     (repo / "theirs.py").write_text("two\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "agent work", at=NOW - 10)
 
     answer = await routes.get_pane_changes("w1", "T1")
 
-    assert [(f.path, [a.pane for a in f.authors]) for f in answer.files] == [("mine.py", ["T1"])]
-    assert not answer.truncated
+    assert [(f.path, f.status, f.added, f.removed, f.committed) for f in answer.files] == [
+        ("mine.py", "modified", 1, 1, True)
+    ]
+    assert answer.since_ms == FIRST_WRITE_MS
+    diff = await routes.get_pane_file_diff("w1", "T1", "mine.py", answer.base)
+    assert [(line.kind, line.text) for hunk in diff.hunks for line in hunk.lines] == [
+        ("del", "one"),
+        ("add", "two"),
+    ]
 
 
-async def test_a_pane_that_wrote_nothing_gets_an_empty_list(
+async def test_pending_work_is_marked_not_committed_and_noise_does_not_hide_it(
+    repo: Path, workspace: SimpleNamespace
+) -> None:
+    for index in range(600):
+        (repo / f"aaa_chunk{index}.js").write_text("x\n", encoding="utf-8")
+    (repo / "mine.py").write_text("two\n", encoding="utf-8")
+
+    answer = await routes.get_pane_changes("w1", "T1")
+
+    assert [(f.path, f.committed) for f in answer.files] == [("mine.py", False)]
+    assert [a.pane for a in answer.files[0].authors] == ["T1"]
+
+
+async def test_a_file_back_to_its_old_text_is_not_listed(
     repo: Path, workspace: SimpleNamespace
 ) -> None:
     (repo / "theirs.py").write_text("two\n", encoding="utf-8")
@@ -97,6 +124,12 @@ async def test_a_pane_that_wrote_nothing_gets_an_empty_list(
 
     assert answer.available
     assert answer.files == []
+
+
+async def test_a_diff_refuses_a_base_that_is_not_a_commit_id(workspace: SimpleNamespace) -> None:
+    with pytest.raises(HTTPException) as refused:
+        await routes.get_pane_file_diff("w1", "T1", "mine.py", "HEAD; rm -rf")
+    assert refused.value.status_code == 400
 
 
 async def test_unknown_workspace_or_pane_is_a_404(workspace: SimpleNamespace) -> None:

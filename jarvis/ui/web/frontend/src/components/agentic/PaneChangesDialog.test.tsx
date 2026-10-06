@@ -59,7 +59,15 @@ beforeEach(() => {
     const body = url.includes("/diff")
       ? diffFor(path)
       : pane
-        ? { ...CHANGES, files: CHANGES.files.filter((file) => file.authors.some((a) => a.pane === pane)) }
+        ? {
+          ...CHANGES,
+          base: "abc1234",
+          since_ms: 1_700_000_000_000,
+          // The pane route answers committed work too, and marks it.
+          files: CHANGES.files
+            .filter((file) => file.authors.some((a) => a.pane === pane))
+            .map((file) => ({ ...file, committed: true })),
+        }
         : url.includes("/changes") ? CHANGES : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
@@ -92,7 +100,7 @@ describe("PaneChangesDialog", () => {
     expect(paths()).toEqual(["src/app.ts"]);
     expect(await screen.findByText("new src/app.ts")).toBeTruthy();
     expect(screen.getByTestId("pane-changes-summary").textContent).toContain("1 file");
-    expect(urls.some((url) => url.includes("/workspaces/w1/diff") && url.includes("src%2Fapp.ts"))).toBe(true);
+    expect(urls.some((url) => url.includes("/terminals/T1/diff") && url.includes("src%2Fapp.ts"))).toBe(true);
     expect(urls.some((url) => url.includes("other.ts"))).toBe(false);
   });
 
@@ -123,12 +131,30 @@ describe("PaneChangesDialog", () => {
     expect(await screen.findByTestId("pane-changes-empty")).toBeTruthy();
   });
 
-  it("reads a worktree pane's own checkout through the folder routes", async () => {
+  it("shows committed work and diffs it against the base the list answered", async () => {
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" />);
+    const [card] = await screen.findAllByTestId("pane-changes-file");
+    expect(within(card).getByTestId("pane-changes-commit-state").textContent).toBe("Committed");
+    await screen.findByText("new src/app.ts");
+    expect(urls.some((url) => url.includes("/terminals/T1/diff?path=src%2Fapp.ts&base=abc1234"))).toBe(true);
+    expect(screen.getByText(/compared with the code before its first edit/)).toBeTruthy();
+  });
+
+  it("asks the pane route for a worktree pane too", async () => {
+    render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T1" folder="/code/app-wt" branch="feat/x" />);
+    await screen.findAllByTestId("pane-changes-file");
+    expect(urls[0]).toContain("/workspaces/w1/terminals/T1/changes");
+    expect(screen.getByText("feat/x")).toBeTruthy();
+    expect(screen.queryByTestId("pane-changes-scope-folder")).toBeNull();
+  });
+
+  it("reads a worktree pane's own checkout through the folder routes on an older backend", async () => {
+    paneRoute = false;
     render(<PaneChangesDialog open onOpenChange={() => {}} workspaceId="w1" pane="T3" folder="/code/app-wt" branch="feat/x" />);
     await screen.findAllByTestId("pane-changes-file");
     // Every change in its own checkout is its own, record or not.
     expect(paths()).toEqual(["src/app.ts", "src/other.ts", "notes.md"]);
-    expect(urls[0]).toContain("/api/agentic-ide/git/changes?folder=%2Fcode%2Fapp-wt");
+    expect(urls[1]).toContain("/api/agentic-ide/git/changes?folder=%2Fcode%2Fapp-wt");
     await waitFor(() => expect(urls.filter((url) => url.includes("/api/agentic-ide/git/diff?folder=")).length).toBe(3));
     expect(screen.queryByTestId("pane-changes-scope-folder")).toBeNull();
     expect(screen.queryByLabelText("Open in the editor")).toBeNull();

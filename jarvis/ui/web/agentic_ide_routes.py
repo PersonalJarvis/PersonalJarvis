@@ -91,6 +91,7 @@ from jarvis.agentic_ide import (
     layout_tree,
     native_picker,
     notifications,
+    pane_changes,
     prompt_attachments,
     prompt_history,
     recap_engine,
@@ -918,6 +919,27 @@ class WorkspaceChangesResponse(BaseModel):
     files: list[ChangedFileItem] = Field(default_factory=list)
     truncated: bool = False
     reason: str = ""
+
+
+class PaneChangedFileItem(ChangedFileItem):
+    """One file a pane's agent changed, compared with the code before its first write."""
+
+    committed: bool = Field(
+        default=False, description="True when nothing of it is left uncommitted."
+    )
+
+
+class PaneChangesResponse(BaseModel):
+    """What one pane's agent changed, committed or not."""
+
+    workspace_id: str
+    available: bool = Field(description="False when git or the repository is not usable.")
+    branch: str = ""
+    files: list[PaneChangedFileItem] = Field(default_factory=list)
+    truncated: bool = False
+    reason: str = ""
+    base: str = Field(default="", description="The commit the files are compared with.")
+    since_ms: int = Field(default=0, description="The agent's first write; 0 when unknown.")
 
 
 class DiffLineItem(BaseModel):
@@ -1748,58 +1770,99 @@ async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
     )
 
 
-@router.get(
-    "/workspaces/{workspace_id}/terminals/{name}/changes",
-    response_model=WorkspaceChangesResponse,
-    summary="Uncommitted files one pane's agent wrote in its workspace",
-)
-async def get_pane_changes(workspace_id: str, name: str) -> WorkspaceChangesResponse:
-    """The pane's "Review changes" list: the files its agent's own record
-    names as written, as git sees them now.
+def _pane_record(session: Any, term: Any) -> change_authors.PaneRecord | None:
+    """What reading this pane's agent record needs; None when there is no readable record."""
+    if term.resume is None or not agent_transcript.can_read(term.agent):
+        return None
+    return change_authors.PaneRecord(
+        pane=term.name,
+        history_id=term.history_id,
+        agent=term.agent,
+        display_name=term.display_name,
+        session_id=term.resume.id,
+        home=account_home(term.agent, term.account),
+        folder=term.folder or session.folder,
+    )
 
-    Reads only this pane's record, not every pane's, and filters git's answer
-    to those files before any cap, so a folder full of other changes cannot
-    hide them. A pane whose record cannot be read answers an empty list.
-    """
+
+def _pane_of(workspace_id: str, name: str) -> tuple[Any, Any]:
     session = get_registry().get(workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
     term = next((t for t in session.terminals if t.name == name), None)
     if term is None:
         raise HTTPException(status_code=404, detail="Terminal not found.")
-    records = (
-        [
-            change_authors.PaneRecord(
-                pane=term.name,
-                history_id=term.history_id,
-                agent=term.agent,
-                display_name=term.display_name,
-                session_id=term.resume.id,
-                home=account_home(term.agent, term.account),
-                folder=term.folder or session.folder,
-            )
-        ]
-        if term.resume is not None and agent_transcript.can_read(term.agent)
-        else []
+    return session, term
+
+
+def _read_pane_changes(
+    folder: str, record: change_authors.PaneRecord | None
+) -> tuple[dict[str, list[change_authors.ChangeAuthor]], int, str | None, Any]:
+    authors = change_authors.change_authors(folder, [record] if record else [])
+    since = change_authors.first_write_ms(folder, record) if record else 0
+    base = pane_changes.session_base(folder, since) if authors else None
+    listed = pane_changes.pane_changes(folder, set(authors), base) if base else ([], set(), False)
+    return authors, since, base, listed
+
+
+@router.get(
+    "/workspaces/{workspace_id}/terminals/{name}/changes",
+    response_model=PaneChangesResponse,
+    summary="Every file one pane's agent changed, committed or not",
+)
+async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
+    """The pane's "Review changes" list.
+
+    The files are the ones its agent's own record names as written; each is
+    compared with the code before the agent's first write (``base``), so work
+    it already committed shows as well as work still pending. A pane on its
+    own worktree is read in that worktree. A pane whose record cannot be read
+    answers an empty list.
+    """
+    session, term = _pane_of(workspace_id, name)
+    folder = term.folder or session.folder
+    changes = await asyncio.to_thread(git_changes.workspace_changes, folder, set())
+    if not changes.available:
+        return PaneChangesResponse(
+            workspace_id=workspace_id, available=False, reason=changes.reason
+        )
+    authors, since, base, (files, pending, truncated) = await asyncio.to_thread(
+        _read_pane_changes, folder, _pane_record(session, term)
     )
-    authors = await asyncio.to_thread(change_authors.change_authors, session.folder, records)
-    changes = await asyncio.to_thread(
-        git_changes.workspace_changes, session.folder, set(authors)
-    )
-    return WorkspaceChangesResponse(
+    return PaneChangesResponse(
         workspace_id=workspace_id,
-        available=changes.available,
+        available=True,
         branch=changes.branch,
         files=[
-            ChangedFileItem(
+            PaneChangedFileItem(
                 **asdict(item),
                 authors=[ChangeAuthorItem(**asdict(a)) for a in authors.get(item.path, [])],
+                committed=item.path not in pending,
             )
-            for item in changes.files
+            for item in files
         ],
-        truncated=changes.truncated,
-        reason=changes.reason,
+        truncated=truncated,
+        base=base or "",
+        since_ms=since,
     )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/terminals/{name}/diff",
+    response_model=WorkspaceFileDiffResponse,
+    summary="How one file a pane's agent changed differs from the code before it",
+)
+async def get_pane_file_diff(
+    workspace_id: str, name: str, path: str, base: str
+) -> WorkspaceFileDiffResponse:
+    """One file of the pane's review, against the ``base`` its list answered."""
+    session, term = _pane_of(workspace_id, name)
+    folder = term.folder or session.folder
+    try:
+        diff = await asyncio.to_thread(pane_changes.pane_file_diff, folder, path, base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return WorkspaceFileDiffResponse(workspace_id=workspace_id, **asdict(diff))
 
 
 @router.get(

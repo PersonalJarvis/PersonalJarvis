@@ -1,9 +1,10 @@
 {
   "pane_review": {
     "title": "Änderungen prüfen: {name}",
-    "description_pane": "Jede Datei, die dieser Agent geändert und noch nicht committet hat, mit ihrem Unterschied zum letzten Commit.",
+    "description_pane": "Jede Datei, die dieser Agent geändert hat, committet oder nicht, verglichen mit dem Code vor seiner ersten Änderung.",
+    "description_since": "Jede Datei, die dieser Agent geändert hat, committet oder nicht, verglichen mit dem Code vor seiner ersten Änderung ({time}).",
+    "description_uncommitted": "Jede Datei, die dieser Agent geändert und noch nicht committet hat.",
     "description_folder": "Jede noch nicht committete Datei in diesem Ordner, egal wer sie geändert hat.",
-    "description_worktree": "Alles, was auf {branch} noch nicht committet ist, der eigenen Arbeitskopie dieses Agenten.",
     "files_one": "1 Datei",
     "files_other": "{count} Dateien",
     "scope_label": "Welche Änderungen angezeigt werden",
@@ -17,8 +18,8 @@
     "load_failed": "Die Änderungen konnten nicht gelesen werden: {error}",
     "diff_failed": "Dieser Unterschied konnte nicht gelesen werden: {error}",
     "unavailable": "Änderungen können hier nicht angezeigt werden: {reason}",
-    "empty_pane": "Dieser Agent hat keine offenen Änderungen.",
-    "empty_pane_hint": "Was er schon committet hat, steht im Git-Tab. Eine Datei, die ein Shell-Befehl geändert hat, steht unter „Ganzer Ordner“.",
+    "empty_pane": "Dieser Agent hat noch keine Dateien geändert.",
+    "empty_pane_hint": "Es zählen nur Dateien, die er selbst bearbeitet hat. Eine Datei, die ein Shell-Befehl geändert hat, steht unter „Ganzer Ordner“, solange sie nicht committet ist.",
     "empty_folder": "In diesem Ordner ist nichts unkommittet.",
     "empty_hint": "Was schon committet ist, steht im Git-Tab.",
     "file_list": "Geänderte Dateien",
@@ -36,6 +37,8 @@
       "untracked": "Neu",
       "deleted": "Gelöscht",
       "conflicted": "Konflikt"
-    }
+    },
+    "committed": "Committet",
+    "pending": "Nicht committet"
   }
 }

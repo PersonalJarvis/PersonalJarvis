@@ -1,20 +1,20 @@
 /**
  * What one pane's coding agent changed, for the pane's "Review changes" dialog.
  *
- * Two places a pane's work can live, and each has its own honest reading:
+ * "This agent" is everything the agent changed, committed or not. Agents
+ * commit as they go, so the working tree's leftovers are usually empty by the
+ * time someone looks. The pane route takes the files the agent's own record
+ * names as written and compares each with the code before the agent's first
+ * write (`base`), so committed work, pending work and new files all show.
+ * A pane on its own worktree is read in that worktree.
  *
- * - A pane on its own git worktree (a worktree fork) owns that checkout, so
- *   every uncommitted change in it is this agent's. Read through the folder
- *   routes (`/api/agentic-ide/git/changes` and `/diff`).
- * - A pane in the workspace's shared folder shares it with its neighbours.
- *   Its own files are the ones its agent's record names as written; the pane
- *   route reads only that record and filters git's answer to those files
- *   before any cap, so a folder full of build output cannot hide them. The
- *   whole folder stays one toggle away for a file a shell command wrote,
- *   which no agent record names.
+ * "Whole folder" is everything uncommitted in the shared folder, whoever
+ * wrote it — the way to see a file a shell command changed, which no agent
+ * record names.
  *
- * Only uncommitted work shows: once the agent commits, the change belongs to
- * a commit and the Git tab is where it is read.
+ * A backend older than the pane route (a running app updates its bundle
+ * before its next restart loads new routes) gets the older reading: the
+ * uncommitted files, filtered here.
  */
 import {
   fetchFileDiff,
@@ -26,18 +26,28 @@ import {
 /** Which files the dialog lists: this pane's own, or everything uncommitted in its folder. */
 export type ChangeScope = "pane" | "folder";
 
+/** A listed file; `committed` is set by the pane route only. */
+export interface ReviewFile extends ChangedFile {
+  /** True when nothing of the change is left uncommitted. */
+  committed?: boolean;
+}
+
 export interface PaneChanges {
   available: boolean;
   /** Why `available` is false, in one plain sentence from the backend. */
   reason: string;
   branch: string;
   /** The files in the requested scope. */
-  files: ChangedFile[];
+  files: ReviewFile[];
   /** How many uncommitted files the folder has in all, when that was read. */
   folderTotal: number | null;
   /** True when the pane has a checkout of its own: every change there is its own. */
   ownCheckout: boolean;
   truncated: boolean;
+  /** The commit the pane's files are compared with; empty for an uncommitted-only reading. */
+  base: string;
+  /** When the agent first wrote a file (epoch ms); 0 when unknown. */
+  sinceMs: number;
 }
 
 /** Where a pane's work lives: its own worktree folder, else the workspace's shared one. */
@@ -72,12 +82,14 @@ async function read<T>(url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-interface FolderChangesBody {
+interface ChangesBody {
   available: boolean;
   branch: string;
-  files: ChangedFile[];
+  files: ReviewFile[];
   truncated: boolean;
   reason: string;
+  base?: string;
+  since_ms?: number;
 }
 
 /** The files whose agent records name `pane` as a writer. Directories are kept only when named too. */
@@ -96,65 +108,46 @@ export function changeTotals(files: readonly ChangedFile[]): { added: number; re
   return { added, removed };
 }
 
+const paneUrl = (target: PaneChangesTarget, tail: string) =>
+  `/api/agentic-ide/workspaces/${encodeURIComponent(target.workspaceId)}/terminals/${encodeURIComponent(target.pane)}/${tail}`;
+
+function reading(body: ChangesBody, extra: Pick<PaneChanges, "folderTotal" | "ownCheckout">, files = body.files): PaneChanges {
+  return {
+    available: body.available,
+    reason: body.reason,
+    branch: body.branch,
+    files,
+    truncated: body.truncated,
+    base: body.base ?? "",
+    sinceMs: body.since_ms ?? 0,
+    ...extra,
+  };
+}
+
 export async function fetchPaneChanges(target: PaneChangesTarget, scope: ChangeScope): Promise<PaneChanges> {
+  const ownCheckout = Boolean(target.folder);
+  if (scope === "pane" || ownCheckout) {
+    try {
+      return reading(await read<ChangesBody>(paneUrl(target, "changes")), { folderTotal: null, ownCheckout });
+    } catch (error) {
+      // FastAPI's own "Not Found" means no such route; the route's 404s say what is missing.
+      if (!(error instanceof HttpError && error.status === 404 && error.message === "Not Found")) throw error;
+    }
+  }
   if (target.folder) {
-    const body = await read<FolderChangesBody>(
+    const body = await read<ChangesBody>(
       `/api/agentic-ide/git/changes?${new URLSearchParams({ folder: target.folder }).toString()}`,
     );
-    return {
-      available: body.available,
-      reason: body.reason,
-      branch: body.branch,
-      files: body.files,
-      folderTotal: body.files.length,
-      ownCheckout: true,
-      truncated: body.truncated,
-    };
-  }
-  if (scope === "pane") {
-    const own = await fetchOwnChanges(target);
-    if (own) return own;
+    return reading(body, { folderTotal: body.files.length, ownCheckout });
   }
   const body = await fetchWorkspaceChanges(target.workspaceId);
-  return {
-    available: body.available,
-    reason: body.reason,
-    branch: body.branch,
-    files: scope === "pane" ? filesWrittenBy(body.files, target.pane) : body.files,
-    folderTotal: body.files.length,
-    ownCheckout: false,
-    truncated: body.truncated,
-  };
+  const files = scope === "pane" ? filesWrittenBy(body.files, target.pane) : body.files;
+  return reading(body, { folderTotal: body.files.length, ownCheckout }, files);
 }
 
-/**
- * The pane route's answer, or null from a backend that predates it (a running
- * app updates its bundle before its next restart loads the route), which then
- * reads the whole workspace and filters here instead.
- */
-async function fetchOwnChanges(target: PaneChangesTarget): Promise<PaneChanges | null> {
-  let body: FolderChangesBody;
-  try {
-    body = await read<FolderChangesBody>(
-      `/api/agentic-ide/workspaces/${encodeURIComponent(target.workspaceId)}/terminals/${encodeURIComponent(target.pane)}/changes`,
-    );
-  } catch (error) {
-    // FastAPI's own "Not Found" means no such route; the route's 404s say what is missing.
-    if (error instanceof HttpError && error.status === 404 && error.message === "Not Found") return null;
-    throw error;
-  }
-  return {
-    available: body.available,
-    reason: body.reason,
-    branch: body.branch,
-    files: body.files,
-    folderTotal: null,
-    ownCheckout: false,
-    truncated: body.truncated,
-  };
-}
-
-export function fetchPaneFileDiff(target: PaneChangesTarget, path: string): Promise<FileDiff> {
+/** One file's diff: against `base` when the pane route gave one, else against the last commit. */
+export function fetchPaneFileDiff(target: PaneChangesTarget, path: string, base = ""): Promise<FileDiff> {
+  if (base) return read<FileDiff>(`${paneUrl(target, "diff")}?${new URLSearchParams({ path, base }).toString()}`);
   if (target.folder) {
     return read<FileDiff>(
       `/api/agentic-ide/git/diff?${new URLSearchParams({ folder: target.folder, path }).toString()}`,
