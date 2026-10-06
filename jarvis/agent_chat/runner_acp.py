@@ -12,6 +12,7 @@ driver in ``jarvis.agent_runtimes``). The turn itself is driven over ACP by
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from pathlib import Path
 from typing import Any
@@ -127,7 +128,16 @@ async def plan_runtime_turn(
     if agent is None:
         raise CliUnavailable(f"{runtime_name.title()} runs society agents only.")
     try:
-        route = await asyncio.to_thread(route_for, _config(), session.provider, session.model)
+        route = await asyncio.to_thread(
+            functools.partial(
+                route_for,
+                _config(),
+                session.provider,
+                session.model,
+                agent_id=agent.agent_id,
+                account_id=getattr(session, "account_id", "") or "",
+            )
+        )
     except RouteUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
     plan_mode = session.permission_mode in ("plan", "read-only")

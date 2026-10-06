@@ -264,11 +264,10 @@ class OpenClawRuntime:
             "baseUrl": route.base_url,
             # A keyless local server still needs a non-empty value.
             "apiKey": f"${{{KEY_ENV_VAR}}}" if route.api_key else "local",
-            "api": (
-                "anthropic-messages"
-                if route.transport == "anthropic_messages"
-                else "openai-completions"
-            ),
+            "api": {
+                "anthropic_messages": "anthropic-messages",
+                "responses": "openai-responses",
+            }.get(route.transport, "openai-completions"),
             "models": [
                 {
                     "id": route.model,

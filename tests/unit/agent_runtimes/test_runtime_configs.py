@@ -169,6 +169,12 @@ def test_openclaw_anthropic_route_uses_the_messages_adapter(tmp_path):
     assert config["models"]["providers"]["jarvis"]["api"] == "anthropic-messages"
 
 
+def test_openclaw_subscription_route_uses_the_responses_adapter(tmp_path):
+    route = _route(transport="responses")
+    config = OpenClawRuntime().config_for(_turn(tmp_path, route=route), port=1, token=_TOKEN)
+    assert config["models"]["providers"]["jarvis"]["api"] == "openai-responses"
+
+
 def test_openclaw_without_tools_writes_no_mcp_server(tmp_path):
     config = OpenClawRuntime().config_for(
         _turn(tmp_path, mcp_url=None, control_key=None), port=1, token=_TOKEN
@@ -224,11 +230,23 @@ def _cfg(**providers) -> SimpleNamespace:
     )
 
 
-def test_subscription_seats_are_not_offered():
+def test_only_the_chatgpt_subscription_runs_through_jarvis_gateway(monkeypatch):
+    from jarvis.agent_runtimes import gateway
+
     assert supports("openai") and supports("claude-api") and supports("ollama")
-    assert not supports("openai-codex") and not supports("grok-build")
-    with pytest.raises(RouteUnavailable):
-        route_for(_cfg(), "openai-codex", "gpt-5.5")
+    assert supports("openai-codex") and not supports("grok-build")
+    monkeypatch.setattr(gateway, "base_url", lambda: "http://127.0.0.1:47821/api/runtime-gateway/v1")
+    monkeypatch.setattr(gateway, "subscription_ready", lambda account_id="": False)
+    with pytest.raises(RouteUnavailable, match="not signed in"):
+        route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1")
+    monkeypatch.setattr(gateway, "subscription_ready", lambda account_id="": True)
+    gateway.reset()
+    route = route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1", account_id="acct")
+    assert route.transport == "responses"
+    assert route.base_url == "http://127.0.0.1:47821/api/runtime-gateway/v1"
+    # The runtime holds a token for this agent, never the subscription login.
+    assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "acct")
+    gateway.reset()
 
 
 def test_an_api_key_provider_routes_with_its_saved_key():
@@ -261,7 +279,12 @@ def test_hermes_restore_finds_the_key_under_its_host_name():
     assert _restore_key_aliases("https://integrate.api.nvidia.com/v1", "k") == {
         "NVIDIA_API_KEY": "k"
     }
-    assert _restore_key_aliases("http://127.0.0.1:11434/v1", "k") == {}
+    # Jarvis' own gateway: the key pairs with exactly that base URL.
+    assert _restore_key_aliases("http://127.0.0.1:47821/api/runtime-gateway/v1", "k") == {
+        "OPENAI_BASE_URL": "http://127.0.0.1:47821/api/runtime-gateway/v1",
+        "OPENAI_API_KEY": "k",
+    }
+    assert _restore_key_aliases("http://127.0.0.1:11434/v1", None) == {}
     assert _restore_key_aliases("https://api.openai.com/v1", None) == {}
 
 

@@ -9,10 +9,12 @@ is expressed through it: the endpoint comes from
 proxy included) and the key travels only in the runtime process' environment
 as :data:`KEY_ENV_VAR` — never in a file (AP-12).
 
-Subscription seats (Claude Code, Codex, …) are not offered: driving those
-logins from another vendor's agent loop is not a path Jarvis can keep
-working across updates, and Hermes would bill a Claude Max login as paid
-extra usage. Vertex needs service-account auth neither runtime receives here.
+The ChatGPT subscription (``openai-codex``) runs through Jarvis' own model
+gateway (``gateway.py``): the runtime gets a Responses endpoint on Jarvis'
+loopback server and a per-agent token, never the login. A Claude
+subscription is not offered: its login works only inside Claude Code, and
+Hermes would bill it as paid extra usage. Vertex needs service-account auth
+neither runtime receives here.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from typing import Any, Final, Literal
 
 log = logging.getLogger(__name__)
 
-Transport = Literal["chat_completions", "anthropic_messages"]
+Transport = Literal["chat_completions", "anthropic_messages", "responses"]
 
 #: The environment variable both runtimes read the model key from.
 KEY_ENV_VAR: Final[str] = "JARVIS_RUNTIME_API_KEY"
@@ -43,6 +45,8 @@ class _Endpoint:
     keyless: bool = False
     #: Appended to a configured server root (local servers store the root).
     path_suffix: str = ""
+    #: Served by Jarvis' own model gateway on the person's subscription.
+    subscription: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
@@ -57,6 +61,7 @@ _ENDPOINTS: Final[dict[str, _Endpoint]] = {
     ),
     "ollama": _Endpoint("chat_completions", None, keyless=True, path_suffix="/v1"),
     "local-openai": _Endpoint("chat_completions", None, keyless=True, path_suffix="/v1"),
+    "openai-codex": _Endpoint("responses", None, subscription=True),
 }
 
 
@@ -85,6 +90,11 @@ def supported_providers() -> frozenset[str]:
     return frozenset(_ENDPOINTS)
 
 
+def subscription_providers() -> frozenset[str]:
+    """Providers served by Jarvis' model gateway on the person's subscription."""
+    return frozenset(name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription)
+
+
 def supports(provider: str) -> bool:
     return provider in _ENDPOINTS
 
@@ -97,8 +107,16 @@ def usable_providers(config: Any) -> list[str]:
     subscription without an Anthropic API key never looks like a choice.
     """
     usable: list[str] = []
-    for provider in sorted(_ENDPOINTS):
+    # Subscriptions first: they spend no API key.
+    for provider in sorted(_ENDPOINTS, key=lambda name: (not _ENDPOINTS[name].subscription, name)):
         try:
+            if _ENDPOINTS[provider].subscription:
+                from jarvis.agent_runtimes import gateway
+
+                if not gateway.subscription_ready():
+                    continue
+                usable.append(provider)
+                continue
             route_for(config, provider, "probe")
         except RouteUnavailable:  # not connected: the provider is simply not offered
             continue
@@ -131,13 +149,53 @@ def _local_root(provider: str, configured: str | None) -> str | None:
     return None
 
 
-def route_for(config: Any, provider: str, model: str) -> ModelRoute:
-    """Resolve the endpoint, key and model. Blocking (keyring): call in a thread."""
+def _subscription_route(
+    config: Any, provider: str, model: str, *, agent_id: str, account_id: str
+) -> ModelRoute:
+    from jarvis.agent_runtimes import gateway
+
+    base_url = gateway.base_url()
+    if not base_url:
+        raise RouteUnavailable("Jarvis' model gateway is not up yet. Try again in a moment.")
+    if not gateway.subscription_ready(account_id):
+        raise RouteUnavailable(
+            "The ChatGPT subscription is not signed in. Connect it in Settings → API keys first."
+        )
+    chosen = model.strip() or _default_model(config, provider)
+    if not chosen:
+        # The agent was created without a model: Codex's own first pick.
+        from jarvis.agent_chat.catalog import CODEX_FALLBACK_MODELS
+
+        chosen = CODEX_FALLBACK_MODELS[0].id if CODEX_FALLBACK_MODELS else ""
+    if not chosen:
+        raise RouteUnavailable("Choose a ChatGPT model for this agent first.")
+    return ModelRoute(
+        provider=provider,
+        model=chosen,
+        base_url=base_url,
+        transport="responses",
+        api_key=gateway.grant_token(agent_id, account_id),
+    )
+
+
+def route_for(
+    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = ""
+) -> ModelRoute:
+    """Resolve the endpoint, key and model. Blocking (keyring): call in a thread.
+
+    ``agent_id`` / ``account_id`` matter only for the subscription route: the
+    gateway token speaks for that agent on that Codex account.
+    """
     endpoint = _ENDPOINTS.get(provider)
     if endpoint is None:
         raise RouteUnavailable(
             f"The {provider or 'selected'} seat cannot drive Hermes or OpenClaw. "
-            "Pick a model that runs on an API key or a local server."
+            "Pick a model that runs on an API key, a local server or the ChatGPT "
+            "subscription."
+        )
+    if endpoint.subscription:
+        return _subscription_route(
+            config, provider, model, agent_id=agent_id, account_id=account_id
         )
     from jarvis.core.config import resolve_provider_endpoint
 

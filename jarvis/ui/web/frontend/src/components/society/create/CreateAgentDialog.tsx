@@ -25,6 +25,7 @@ const CompanionEditor = lazy(() =>
 
 /** Provider ids the runtimes route (`jarvis/agent_runtimes/model_map.py`). */
 const PROVIDER_NAMES: Record<string, string> = {
+  "openai-codex": "OpenAI Codex",
   "claude-api": "Anthropic Claude",
   openai: "OpenAI",
   gemini: "Google Gemini",

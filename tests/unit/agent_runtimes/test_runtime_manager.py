@@ -156,7 +156,8 @@ def test_routes_list_status_and_start_jobs(fakes):
     assert "openai" in body["supported_providers"]
     assert "claude-api" not in body["supported_providers"]
     assert "claude-api" in body["all_providers"]
-    assert "openai-codex" not in body["all_providers"]
+    assert "openai-codex" in body["all_providers"]
+    assert body["subscription_providers"] == ["openai-codex"]
     rows = body["runtimes"]
     assert [row["runtime"] for row in rows] == ["hermes", "openclaw"]
     assert rows[0]["ready"] is True and rows[0]["job"] is None

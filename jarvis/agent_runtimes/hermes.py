@@ -282,6 +282,10 @@ def _restore_key_aliases(base_url: str, api_key: str | None) -> dict[str, str]:
     if not api_key:
         return {}
     host = (urlsplit(base_url).hostname or "").lower()
+    if host in ("127.0.0.1", "localhost", "::1"):
+        # Jarvis' own model gateway: Hermes pairs OPENAI_API_KEY with exactly
+        # the OPENAI_BASE_URL it was issued for, and with no other host.
+        return {"OPENAI_BASE_URL": base_url, "OPENAI_API_KEY": api_key}
     if not host or host[-1].isdigit() or "." not in host:
         return {}
     if host == "openai.com" or host.endswith(".openai.com"):
