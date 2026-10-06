@@ -219,8 +219,9 @@ class WorkspaceOrchestrator:
                 "", "", "", {}, 0, deduplicate_unconfirmed=True,
             )
             self._ledger_compatible = callable(getattr(ledger, "operation", None))
-        except (TypeError, ValueError):
-            # Surface a restart requirement below instead of a partial dispatch.
+        except (AttributeError, TypeError, ValueError):
+            # No ledger (resolve-only use) or an old one: surface a restart
+            # requirement below instead of a partial dispatch.
             self._ledger_compatible = False
         # request_id -> (target IDs, issued at, prompt sent under it or "")
         self._issued: dict[str, tuple[dict[str, str], float, str]] = {}

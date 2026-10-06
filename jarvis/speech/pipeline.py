@@ -9523,7 +9523,10 @@ class SpeechPipeline:
             or self.is_speaker_muted
             or getattr(self, "_muted", False)
             or self._hangup_event.is_set()
-            or self._external_hangup_pending.is_set()
+            # Read defensively: a pipeline assembled without __init__ (the realtime
+            # handshake test doubles) has no external-hangup flag yet.
+            or (pending := getattr(self, "_external_hangup_pending", None)) is not None
+            and pending.is_set()
         ):
             return
         self._listening_cue_task = asyncio.create_task(

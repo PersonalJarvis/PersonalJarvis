@@ -251,33 +251,6 @@ jobs:
           while IFS= read -r original; do keychains+=("$original"); done < "$RUNNER_TEMP/jarvis-original-keychains.txt"
           security list-keychains -d user -s "${keychains[@]}"
 
-      - name: Import the Developer ID certificate into a temporary keychain
-        if: env.HAS_APPLE_SIGNING == 'true'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          set -euo pipefail
-          umask 077
-          : "${APPLE_CERTIFICATE_P12_BASE64:?Signing requires the publisher certificate}"
-          : "${APPLE_CERTIFICATE_PASSWORD:?Signing requires the certificate password}"
-          keychain="$RUNNER_TEMP/jarvis-signing.keychain-db"
-          certificate="$RUNNER_TEMP/jarvis-signing.p12"
-          trap 'rm -f "$certificate"' EXIT
-          security list-keychains -d user | sed -e 's/^ *"//' -e 's/" *$//' > "$RUNNER_TEMP/jarvis-original-keychains.txt"
-          printf '%s' "$APPLE_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
-          password="$(openssl rand -hex 32)"
-          echo "::add-mask::$password"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
-          keychains=("$keychain")
-          while IFS= read -r original; do keychains+=("$original"); done < "$RUNNER_TEMP/jarvis-original-keychains.txt"
-          security list-keychains -d user -s "${keychains[@]}"
-
       # The script decides what to do with these: with them it codesigns with
       # the Developer ID identity and notarizes; without them it ad-hoc signs,
       # skips notarization and prints a one-line notice.

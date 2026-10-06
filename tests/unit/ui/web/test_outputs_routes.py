@@ -54,6 +54,15 @@ def _reset_openers_cache_between_tests():
     outputs_routes._reset_openers_cache()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_editor_installs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Editor detection probes standard install paths first; keep the test
+    machine's own VS Code or Cursor out so only the stubbed resolver decides."""
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(outputs_routes, "_editor_install_candidates", lambda app_id: [])
+
+
 # --- Stubs -------------------------------------------------------------------
 
 
