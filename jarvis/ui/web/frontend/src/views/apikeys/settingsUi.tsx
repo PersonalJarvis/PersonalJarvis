@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef, ReactNode } from "react";
+import { type ComponentPropsWithoutRef, type ReactNode, useId } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,10 +25,15 @@ export function SettingsSection({
   plain?: boolean;
   children: ReactNode;
 }) {
+  // The title names the section, so assistive tech lists it as a region.
+  const headingId = useId();
   return (
-    <section {...props} className={cn("space-y-2.5", className)}>
+    <section aria-labelledby={headingId} {...props} className={cn("space-y-2.5", className)}>
       <div className="flex min-h-7 items-center justify-between gap-4 px-1">
-        <h2 className="flex min-h-7 min-w-0 items-center gap-2 text-sm font-normal text-foreground/70">
+        <h2
+          id={headingId}
+          className="flex min-h-7 min-w-0 items-center gap-2 text-sm font-normal text-foreground/70"
+        >
           {icon}
           <span className="truncate">{title}</span>
         </h2>

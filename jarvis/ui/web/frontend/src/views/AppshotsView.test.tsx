@@ -154,7 +154,7 @@ describe("AppshotsView", () => {
     const button = await screen.findByTestId("appshots-try");
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("appshots-try-region") as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Wayland capture is unavailable.")).toBeDefined();
+    expect(screen.getByText(/Wayland capture is unavailable\./)).toBeDefined();
     expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/permissions"))).toBe(false);
   });
 

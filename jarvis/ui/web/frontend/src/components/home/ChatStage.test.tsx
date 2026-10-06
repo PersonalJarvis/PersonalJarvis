@@ -501,19 +501,17 @@ describe("ChatStage (agent chat)", () => {
 
   it("draws a different glyph per permission mode in the pill and the list", async () => {
     render(<ChatStage />);
+    // The labelled pick row draws no glyph on the pill; the list carries them.
     const pill = screen.getByTestId("composer-permission");
-    // acceptEdits wears the pen, not the column's shield.
-    expect(pill.querySelector("svg.lucide-file-pen")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const glyphs = within(panel)
       .getAllByRole("option")
       .map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    // default → question shield, acceptEdits → pen, bypass → shield off; plan lives on the switch.
-    expect(glyphs.some((c) => c.includes("lucide-shield-question"))).toBe(true);
+    // default → hand, acceptEdits → pen, bypass → warning shield; plan lives on the switch.
+    expect(glyphs.some((c) => c.includes("lucide-hand"))).toBe(true);
     expect(glyphs.some((c) => c.includes("lucide-file-pen"))).toBe(true);
-    expect(glyphs.some((c) => c.includes("lucide-shield-off"))).toBe(true);
+    expect(glyphs.some((c) => c.includes("lucide-shield-alert"))).toBe(true);
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 
@@ -564,17 +562,15 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
     const pill = screen.getByTestId("composer-permission");
     expect(pill.getAttribute("data-value")).toBe("ask");
-    expect(pill.querySelector("svg.lucide-shield-question")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const rows = within(panel).getAllByRole("option");
     // Plan is the switch next door, so the list holds the other three.
     expect(rows.map((el) => el.getAttribute("data-value"))).toEqual(["ask", "accept-edits", "bypass"]);
     const glyphs = rows.map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    expect(glyphs[0]).toContain("lucide-shield-question");
+    expect(glyphs[0]).toContain("lucide-hand");
     expect(glyphs[1]).toContain("lucide-file-pen");
-    expect(glyphs[2]).toContain("lucide-shield-off");
+    expect(glyphs[2]).toContain("lucide-shield-alert");
     expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 

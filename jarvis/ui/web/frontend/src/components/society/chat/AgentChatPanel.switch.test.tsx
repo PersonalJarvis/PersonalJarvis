@@ -40,7 +40,9 @@ vi.mock("@/components/agentchat/useComposerDictation", () => ({
   useComposerDictation: () => ({ dictating: false, stop() {}, toggle() {} }),
 }));
 vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () => null }));
-vi.mock("@/components/agentchat/useChatAttachments", () => ({
+vi.mock("@/components/agentchat/useChatAttachments", async (importOriginal) => ({
+  // The pure helpers (attachmentMedia, ...) stay real; only the hook is scripted.
+  ...(await importOriginal<typeof import("@/components/agentchat/useChatAttachments")>()),
   useChatAttachments: () => ({
     attachments: attachmentState.current,
     analyzing: 0,

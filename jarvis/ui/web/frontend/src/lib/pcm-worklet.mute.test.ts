@@ -8,6 +8,8 @@ it("flushes queued PCM on mute and never replays samples received while muted", 
     process: (inputs: Float32Array[][], outputs: Float32Array[][]) => void;
   }>();
   vi.stubGlobal("sampleRate", 24000);
+  // The AudioWorklet global clock the timed playback queue reads.
+  vi.stubGlobal("currentTime", 0);
   vi.stubGlobal("registerProcessor", (name: string, ctor: unknown) => processors.set(name, ctor as never));
   vi.stubGlobal("AudioWorkletProcessor", class {
     port = { onmessage: null, postMessage: vi.fn() };
