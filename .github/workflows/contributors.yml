@@ -33,8 +33,9 @@ on:
     types: [closed]
   workflow_dispatch:
 
+# Read-only by default; the job below asks for the push it makes.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   # One constant group, NOT keyed on the ref: every run of this job pushes to
@@ -51,6 +52,8 @@ jobs:
     if: github.event_name != 'pull_request_target' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

@@ -325,7 +325,9 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # Capability, not a provider id (AP-21): the surface must not call a start
     # attempt dead while the backend is still inside a budget it declared.
     handshake_budget_s = await asyncio.to_thread(_realtime_handshake_budget_s, cfg)
-    browser_audio = realtime_browser_audio(cfg)
+    # Without a pin the answer follows the first credential-ready provider,
+    # which reads credentials — off the loop like the lookups above.
+    browser_audio = await asyncio.to_thread(realtime_browser_audio, cfg)
     transport_offer_ready = (
         None if browser_audio else await _realtime_transport_offer_ready(requires_webrtc_offer)
     )
