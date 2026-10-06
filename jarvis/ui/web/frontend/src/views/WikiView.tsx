@@ -251,7 +251,7 @@ export function WikiView(): JSX.Element {
               type="button"
               onClick={() => searchRef.current?.open()}
               data-testid="wiki-search-trigger"
-              className="flex h-8 w-60 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-sm text-foreground-faint transition-colors hover:border-border-strong hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex h-8 w-48 items-center gap-2 2xl:w-60 rounded-md border border-border bg-background px-2.5 text-sm text-foreground-faint transition-colors hover:border-border-strong hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
               <span className="flex-1 truncate text-left">{t("wiki_ui.search_placeholder")}</span>

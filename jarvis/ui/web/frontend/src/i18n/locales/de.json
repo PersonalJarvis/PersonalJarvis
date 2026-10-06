@@ -4182,7 +4182,7 @@
     "health_red": "Funktioniert nicht",
     "health_unknown": "Noch nicht geprüft",
     "health_chip_title": "Zustand des Gedächtnisses anzeigen",
-    "capture_title": "Aus Gesprächen erfasst",
+    "capture_title": "Erfassung",
     "capture_window": "letzte {0} Std.",
     "capture_quiet": "In diesem Zeitraum wurde nichts erfasst.",
     "hubs_title": "Am stärksten vernetzt",

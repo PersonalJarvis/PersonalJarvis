@@ -4182,7 +4182,7 @@
     "health_red": "Not working",
     "health_unknown": "Not checked yet",
     "health_chip_title": "Show memory health",
-    "capture_title": "Captured from conversations",
+    "capture_title": "Capture",
     "capture_window": "last {0} h",
     "capture_quiet": "Nothing was captured in this window.",
     "hubs_title": "Most connected",
