@@ -4211,7 +4211,11 @@
     "subtitle_curated": "kuratiert {0}",
     "stage_label": "Gedächtniskarte und Seite",
     "tab_map": "Gedächtniskarte",
-    "close_page": "Seite schließen"
+    "close_page": "Seite schließen",
+    "inspector_collapse": "Seitenleiste ausblenden",
+    "inspector_expand": "Seitenleiste einblenden",
+    "inspector_overview": "Überblick",
+    "inspector_page": "Diese Seite"
   },
   "skill_create_dialog": {
     "title": "Skill erstellen",

@@ -6,10 +6,11 @@
  * client-side projection of that contract.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WikiView } from "@/views/WikiView";
+import { useWikiPanelStore } from "@/store/wikiPanel";
 import { PageRenderer, preprocessWikilinks } from "@/components/wiki/PageRenderer";
 import { PageHeader } from "@/components/wiki/PageHeader";
 import type {
@@ -275,6 +276,19 @@ describe("WikiView — populated tree", () => {
     expect(workspace.getAttribute("data-graph-expanded")).toBe("false");
     expect(screen.queryByTestId("wiki-tree-sidebar")).not.toBeNull();
     expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
+  });
+
+  it("hides the side panel when the caption toggle closes it", async () => {
+    useWikiPanelStore.setState({ open: false });
+    try {
+      renderWithClient(<WikiView />);
+      await screen.findByTestId("wiki-folder-entity");
+      expect(screen.queryByTestId("wiki-backlinks-placeholder")).toBeNull();
+      act(() => useWikiPanelStore.getState().setOpen(true));
+      expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
+    } finally {
+      useWikiPanelStore.setState({ open: true });
+    }
   });
 
   it("clicking a leaf in the tree switches to the page tab and loads the page", async () => {

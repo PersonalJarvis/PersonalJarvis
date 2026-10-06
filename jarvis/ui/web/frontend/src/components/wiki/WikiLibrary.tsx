@@ -35,6 +35,8 @@ export interface WikiLibraryProps {
   isError: boolean;
   selectedSlug: string | null;
   onSelect: (slug: string) => void;
+  /** Drawn above the filter: the section's title, stats and search. */
+  header?: ReactNode;
 }
 
 export function WikiLibrary({
@@ -43,6 +45,7 @@ export function WikiLibrary({
   isError,
   selectedSlug,
   onSelect,
+  header,
 }: WikiLibraryProps) {
   const t = useT();
   const language = useUiLanguage();
@@ -70,11 +73,12 @@ export function WikiLibrary({
 
   return (
     <aside
-      className="flex h-full min-h-0 w-[240px] shrink-0 flex-col border-r border-border bg-sidebar 2xl:w-[272px]"
+      className="flex h-full min-h-0 w-[264px] shrink-0 flex-col"
       data-testid="wiki-tree-sidebar"
       aria-label={t("wiki_ui.library_label")}
     >
-      <div className="shrink-0 p-3">
+      {header}
+      <div className="shrink-0 px-3 pb-2">
         <div className="relative">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-foreground-faint"
@@ -91,9 +95,9 @@ export function WikiLibrary({
             aria-label={t("wiki_ui.filter_placeholder")}
             data-testid="wiki-library-filter"
             className={cn(
-              "h-8 w-full rounded-md border border-border bg-background pl-8 pr-7 text-sm text-foreground",
+              "h-8 w-full rounded-lg border border-transparent bg-transparent pl-8 pr-7 text-sm text-foreground hover:bg-secondary/60",
               "placeholder:text-foreground-faint [&::-webkit-search-cancel-button]:hidden",
-              "transition-colors focus-visible:border-accent focus-visible:outline-none",
+              "transition-colors focus-visible:border-border focus-visible:bg-input focus-visible:outline-none",
             )}
           />
           {filtering && (
@@ -227,10 +231,10 @@ function Row({
       data-testid={testId}
       title={item.title}
       className={cn(
-        "flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-base transition-colors",
+        "flex h-8 w-full items-center gap-2.5 rounded-lg px-2 text-left text-base transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active
-          ? "bg-accent-soft text-foreground-strong"
+          ? "bg-secondary text-foreground-strong"
           : "text-foreground-secondary hover:bg-secondary hover:text-foreground",
       )}
     >

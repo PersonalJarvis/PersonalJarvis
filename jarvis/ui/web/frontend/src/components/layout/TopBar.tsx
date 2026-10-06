@@ -15,6 +15,7 @@ import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
 import { IDE_SECTIONS } from "@/lib/ideSections";
 import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
+import { WikiInspectorToggle } from "@/components/wiki/WikiInspectorToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 
 /**
@@ -98,6 +99,7 @@ export function TopBar() {
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
         <IdeCaptionPanelToggle />
+        <WikiCaptionPanelToggle />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}
@@ -120,6 +122,12 @@ function IdeCaptionSwitch() {
       <IdeLayoutSwitch className="pointer-events-auto" />
     </div>
   );
+}
+
+/** The Wiki inspector's open / close button, only on the Wiki section. */
+function WikiCaptionPanelToggle() {
+  const onWiki = useEventStore((s) => s.activeSection === "memory");
+  return onWiki ? <WikiInspectorToggle /> : null;
 }
 
 /** The IDE side panel's open / close button, only on the IDE. */

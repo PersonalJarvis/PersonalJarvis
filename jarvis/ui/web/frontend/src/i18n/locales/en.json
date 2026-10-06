@@ -4211,7 +4211,11 @@
     "subtitle_curated": "curated {0}",
     "stage_label": "Memory map and page",
     "tab_map": "Memory map",
-    "close_page": "Close page"
+    "close_page": "Close page",
+    "inspector_collapse": "Hide the side panel",
+    "inspector_expand": "Show the side panel",
+    "inspector_overview": "Overview",
+    "inspector_page": "This page"
   },
   "skill_create_dialog": {
     "title": "Create skill",

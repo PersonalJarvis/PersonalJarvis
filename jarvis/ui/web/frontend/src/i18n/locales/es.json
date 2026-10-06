@@ -4211,7 +4211,11 @@
     "subtitle_curated": "curada {0}",
     "stage_label": "Mapa de memoria y página",
     "tab_map": "Mapa de memoria",
-    "close_page": "Cerrar página"
+    "close_page": "Cerrar página",
+    "inspector_collapse": "Ocultar el panel lateral",
+    "inspector_expand": "Mostrar el panel lateral",
+    "inspector_overview": "Resumen",
+    "inspector_page": "Esta página"
   },
   "skill_create_dialog": {
     "title": "Crear habilidad",

@@ -10,7 +10,7 @@
  *
  *   ┌───────────┬──────────────────────────────┬────────────┐
  *   │  library  │  stage: memory map | page    │ inspector  │
- *   │  272 px   │  (fills the rest)            │  320 px    │
+ *   │  264 px   │  (fills the rest)            │  300 px    │
  *   └───────────┴──────────────────────────────┴────────────┘
  *
  * The library finds a page, the stage shows it (or the whole vault as a
@@ -21,10 +21,10 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { BookOpen, Maximize2, Minimize2, Network, Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
-import { ViewHeader } from "@/views/ChatsView";
 import { cn } from "@/lib/utils";
 import { useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
+import { useWikiPanelStore } from "@/store/wikiPanel";
 import {
   fetchWikiHealth,
   fetchWikiTree,
@@ -80,6 +80,8 @@ export function WikiView(): JSX.Element {
   const [isReindexing, setIsReindexing] = useState(false);
   const [reindexError, setReindexError] = useState<string | null>(null);
   const searchRef = useRef<WikiSearchHandle>(null);
+  const inspectorOpen = useWikiPanelStore((s) => s.open);
+  const setInspectorOpen = useWikiPanelStore((s) => s.setOpen);
 
   // A staged "open this page" request from another section (e.g. the Contacts
   // detail's wiki link). `seq` bumps on every request, so re-opening the same
@@ -230,7 +232,6 @@ export function WikiView(): JSX.Element {
       : [
           t("wiki_ui.subtitle_pages").replace("{0}", formatCount(totalPages, language)),
           t("wiki_ui.subtitle_links").replace("{0}", formatCount(totalLinks, language)),
-          curated ? t("wiki_ui.subtitle_curated").replace("{0}", curated) : "",
         ]
           .filter(Boolean)
           .join(" · ");
@@ -239,53 +240,50 @@ export function WikiView(): JSX.Element {
     ? itemsBySlug.get(selectedSlug)?.title ?? cleanTitle(selectedSlug)
     : "";
 
-  return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="wiki-view">
-      <ViewHeader
-        icon={<BookOpen className="h-4 w-4" />}
-        title={t("wiki_ui.title")}
-        subtitle={subtitle}
-        right={
-          <>
-            <button
-              type="button"
-              onClick={() => searchRef.current?.open()}
-              data-testid="wiki-search-trigger"
-              className="flex h-8 w-48 items-center gap-2 2xl:w-60 rounded-md border border-border bg-background px-2.5 text-sm text-foreground-faint transition-colors hover:border-border-strong hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
-              <span className="flex-1 truncate text-left">{t("wiki_ui.search_placeholder")}</span>
-              <kbd className="rounded-sm border border-border px-1.5 font-mono text-xs leading-5">
-                {IS_MAC ? "⌘K" : "Ctrl K"}
-              </kbd>
-            </button>
-            <button
-              type="button"
-              onClick={closePage}
-              data-testid="wiki-health-chip"
-              data-visual={healthQuery.isLoading ? "loading" : healthVisual}
-              title={t("wiki_ui.health_chip_title")}
-              className="inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            >
-              <span
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  healthQuery.isLoading ? "animate-pulse bg-faint-foreground" : HEALTH_DOT_STYLE[healthVisual],
-                )}
-                aria-hidden
-              />
-              {healthQuery.isLoading ? t("wiki_health.checking") : t(HEALTH_LABEL_KEY[healthVisual])}
-            </button>
-            <ObsidianStatus
-              onOpenSetup={(s) => {
-                setSetupHint(s);
-                setDialogOpen(true);
-              }}
-            />
-          </>
-        }
-      />
+  const inspector = (
+    <WikiInspector
+      selectedSlug={selectedSlug}
+      itemsBySlug={itemsBySlug}
+      health={health}
+      healthLoading={healthQuery.isLoading}
+      isReindexing={isReindexing}
+      reindexError={reindexError}
+      onReindex={handleReindex}
+      onSelect={handleSelect}
+    />
+  );
 
+  const healthChip = (
+    <button
+      type="button"
+      onClick={() => {
+        closePage();
+        setInspectorOpen(true);
+      }}
+      data-testid="wiki-health-chip"
+      data-visual={healthQuery.isLoading ? "loading" : healthVisual}
+      title={t("wiki_ui.health_chip_title")}
+      className="inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+    >
+      <span
+        className={cn(
+          "h-2 w-2 rounded-full",
+          healthQuery.isLoading ? "animate-pulse bg-faint-foreground" : HEALTH_DOT_STYLE[healthVisual],
+        )}
+        aria-hidden
+      />
+      {healthQuery.isLoading ? t("wiki_health.checking") : t(HEALTH_LABEL_KEY[healthVisual])}
+    </button>
+  );
+
+  // The section is drawn the way the Agentic IDE is: the window's gray ground
+  // carries the navigation column (title, search, the page library), and the
+  // working surface is one sheet in the room colour with a hairline rim and a
+  // rounded top-left corner. Inside the sheet the stage and the inspector are
+  // separated by a rule, and the inspector sits one step lighter — the IDE's
+  // side panel. Every region has an edge; nothing bleeds into its neighbour.
+  return (
+    <div className="flex h-full min-h-0 bg-sidebar" data-testid="wiki-view">
       {dialogOpen && setupHint && (
         <ObsidianSetupDialog
           open={dialogOpen}
@@ -306,130 +304,155 @@ export function WikiView(): JSX.Element {
 
       <WikiSearch ref={searchRef} onResultClick={handleSelect} />
 
-      {treeQuery.isError ? (
-        <div className="flex flex-1 items-center justify-center border-t border-border p-6">
-          <p role="alert" className="max-w-reading text-base text-destructive" data-testid="wiki-tree-error">
-            {t("wiki_view.load_error")}
-          </p>
-        </div>
-      ) : !treeQuery.isLoading && totalPages === 0 ? (
-        // An empty vault can itself be a symptom (a failed bootstrap writes
-        // nothing), so the health rail stays beside the empty state.
-        <div className="flex min-h-0 flex-1 overflow-hidden border-t border-border">
-          <div className="flex min-w-0 flex-1 items-center justify-center p-6">
-            <WikiEmptyState />
-          </div>
-          <WikiInspector
-            selectedSlug={null}
-            itemsBySlug={itemsBySlug}
-            health={health}
-            healthLoading={healthQuery.isLoading}
-            isReindexing={isReindexing}
-            reindexError={reindexError}
-            onReindex={handleReindex}
-            onSelect={handleSelect}
-          />
-        </div>
-      ) : (
-        <div
-          id="wiki-workspace"
-          className={cn(
-            "flex min-h-0 flex-1 overflow-hidden border-t border-border",
-            // Expanded means the whole window: the map is the one thing in
-            // this app that gets better the more room it has.
-            isGraphExpanded && "fixed inset-0 z-[100] border-t-0 bg-background",
-          )}
-          data-testid="wiki-workspace"
-          data-graph-expanded={isGraphExpanded ? "true" : "false"}
-        >
-          {!isGraphExpanded && (
-            <WikiLibrary
-              folders={folders}
-              isLoading={treeQuery.isLoading}
-              isError={treeQuery.isError}
-              selectedSlug={selectedSlug}
-              onSelect={handleSelect}
-            />
-          )}
-
-          <section className="flex min-w-0 flex-1 flex-col" aria-label={t("wiki_ui.stage_label")}>
-            <div className="flex h-11 shrink-0 items-stretch gap-1 border-b border-border px-3">
-              <StageTab
-                active={centreTab === "graph"}
-                onClick={() => setCentreTab("graph")}
-                icon={<Network className="h-3.5 w-3.5" aria-hidden />}
-                label={t("wiki_ui.tab_map")}
-                testId="wiki-tab-graph"
-              />
-              {selectedSlug && (
-                <StageTab
-                  active={centreTab === "page"}
-                  onClick={() => {
-                    setCentreTab("page");
-                    setIsGraphExpanded(false);
-                  }}
-                  label={selectedTitle}
-                  testId="wiki-tab-page"
-                  onClose={closePage}
-                  closeLabel={t("wiki_ui.close_page")}
-                />
+      {!isGraphExpanded && (
+        <WikiLibrary
+          folders={folders}
+          isLoading={treeQuery.isLoading}
+          isError={treeQuery.isError}
+          selectedSlug={selectedSlug}
+          onSelect={handleSelect}
+          header={
+            <div className="px-4 pb-3 pt-3">
+              <div className="flex items-center gap-2.5">
+                <BookOpen className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <h1 className="truncate text-lg font-semibold text-foreground-strong">{t("wiki_ui.title")}</h1>
+              </div>
+              <p className="mt-1 truncate text-sm text-muted-foreground" title={subtitle} data-testid="wiki-subtitle">
+                {subtitle}
+              </p>
+              {curated && totalPages > 0 && (
+                <p className="truncate text-sm text-foreground-faint">
+                  {t("wiki_ui.subtitle_curated").replace("{0}", curated)}
+                </p>
               )}
-              {centreTab === "graph" && (
-                <button
-                  type="button"
-                  className="ml-auto inline-flex h-8 items-center gap-1.5 self-center rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => setIsGraphExpanded((expanded) => !expanded)}
-                  aria-controls="wiki-workspace"
-                  aria-expanded={isGraphExpanded}
-                  aria-label={t(
-                    isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
-                  )}
-                  title={t(
-                    isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
-                  )}
-                  data-testid="wiki-graph-expand-toggle"
-                >
-                  {isGraphExpanded ? (
-                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
-                  ) : (
-                    <Maximize2 className="h-3.5 w-3.5" aria-hidden />
-                  )}
-                  <span>{t(isGraphExpanded ? "wiki_graph.restore" : "wiki_graph.expand")}</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => searchRef.current?.open()}
+                data-testid="wiki-search-trigger"
+                className="mt-4 flex h-8 w-full items-center gap-2 rounded-lg border border-border bg-input px-2.5 text-sm text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="flex-1 truncate text-left">{t("wiki_ui.search_placeholder")}</span>
+                <span className="flex shrink-0 items-center gap-0.5" aria-hidden>
+                  {(IS_MAC ? ["⌘", "K"] : ["Ctrl", "K"]).map((key) => (
+                    <kbd key={key} className="rounded border border-border bg-background px-1 font-sans text-xs leading-4 text-muted-foreground">
+                      {key}
+                    </kbd>
+                  ))}
+                </span>
+              </button>
             </div>
-
-            <div
-              className={cn(
-                "relative min-h-0 flex-1",
-                centreTab === "page" ? "overflow-y-auto" : "overflow-hidden",
-              )}
-            >
-              {centreTab === "graph" && (
-                <Suspense fallback={<GraphSkeleton />}>
-                  <WikiGraph onNodeClick={handleSelect} highlightSlug={selectedSlug ?? undefined} />
-                </Suspense>
-              )}
-              {centreTab === "page" && selectedSlug && (
-                <PageRenderer key={selectedSlug} slug={selectedSlug} onWikilinkClick={handleSelect} />
-              )}
-            </div>
-          </section>
-
-          {!isGraphExpanded && (
-            <WikiInspector
-              selectedSlug={selectedSlug}
-              itemsBySlug={itemsBySlug}
-              health={health}
-              healthLoading={healthQuery.isLoading}
-              isReindexing={isReindexing}
-              reindexError={reindexError}
-              onReindex={handleReindex}
-              onSelect={handleSelect}
-            />
-          )}
-        </div>
+          }
+        />
       )}
+
+      <div
+        id="wiki-workspace"
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background",
+          isGraphExpanded
+            ? // Expanded means the whole window: the map is the one thing in
+              // this app that gets better the more room it has.
+              "fixed inset-0 z-[100]"
+            : "rounded-tl-xl border-l border-t border-border",
+        )}
+        data-testid="wiki-workspace"
+        data-graph-expanded={isGraphExpanded ? "true" : "false"}
+      >
+        {treeQuery.isError ? (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <p role="alert" className="max-w-reading text-base text-destructive" data-testid="wiki-tree-error">
+              {t("wiki_view.load_error")}
+            </p>
+          </div>
+        ) : !treeQuery.isLoading && totalPages === 0 ? (
+          // An empty vault can itself be a symptom (a failed bootstrap writes
+          // nothing), so the health rail stays beside the empty state.
+          <div className="flex min-h-0 flex-1">
+            <div className="flex min-w-0 flex-1 items-center justify-center p-6">
+              <WikiEmptyState />
+            </div>
+            {inspectorOpen && inspector}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1">
+            <section className="flex min-w-0 flex-1 flex-col" aria-label={t("wiki_ui.stage_label")}>
+              <div className="flex h-11 shrink-0 items-stretch gap-1 border-b border-border px-3">
+                <StageTab
+                  active={centreTab === "graph"}
+                  onClick={() => setCentreTab("graph")}
+                  icon={<Network className="h-3.5 w-3.5" aria-hidden />}
+                  label={t("wiki_ui.tab_map")}
+                  testId="wiki-tab-graph"
+                />
+                {selectedSlug && (
+                  <StageTab
+                    active={centreTab === "page"}
+                    onClick={() => {
+                      setCentreTab("page");
+                      setIsGraphExpanded(false);
+                    }}
+                    label={selectedTitle}
+                    testId="wiki-tab-page"
+                    onClose={closePage}
+                    closeLabel={t("wiki_ui.close_page")}
+                  />
+                )}
+                <div className="ml-auto flex items-center gap-1 self-center">
+                  {healthChip}
+                  <ObsidianStatus
+                    onOpenSetup={(s) => {
+                      setSetupHint(s);
+                      setDialogOpen(true);
+                    }}
+                  />
+                  {centreTab === "graph" && (
+                    <button
+                      type="button"
+                      className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => setIsGraphExpanded((expanded) => !expanded)}
+                      aria-controls="wiki-workspace"
+                      aria-expanded={isGraphExpanded}
+                      aria-label={t(
+                        isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
+                      )}
+                      title={t(
+                        isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
+                      )}
+                      data-testid="wiki-graph-expand-toggle"
+                    >
+                      {isGraphExpanded ? (
+                        <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                      ) : (
+                        <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                      )}
+                      <span>{t(isGraphExpanded ? "wiki_graph.restore" : "wiki_graph.expand")}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className={cn(
+                  "relative min-h-0 flex-1",
+                  centreTab === "page" ? "overflow-y-auto" : "overflow-hidden",
+                )}
+              >
+                {centreTab === "graph" && (
+                  <Suspense fallback={<GraphSkeleton />}>
+                    <WikiGraph onNodeClick={handleSelect} highlightSlug={selectedSlug ?? undefined} />
+                  </Suspense>
+                )}
+                {centreTab === "page" && selectedSlug && (
+                  <PageRenderer key={selectedSlug} slug={selectedSlug} onWikilinkClick={handleSelect} />
+                )}
+              </div>
+            </section>
+
+            {!isGraphExpanded && inspectorOpen && inspector}
+          </div>
+        )}
+      </div>
 
       {toast && (
         <div

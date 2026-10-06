@@ -12,7 +12,7 @@
  */
 import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { Activity, ArrowUpRight, FileText, RefreshCw } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT, useUiLanguage } from "@/i18n";
@@ -34,6 +34,7 @@ import {
   type LibraryItem,
 } from "@/lib/wikiModel";
 import { KindGlyph } from "@/components/wiki/KindGlyph";
+import { WIKI_INSPECTOR_ID } from "@/store/wikiPanel";
 
 export type WikiHealthVisual = "green" | "amber" | "red" | "unknown";
 
@@ -119,21 +120,33 @@ export interface WikiInspectorProps {
 
 export function WikiInspector(props: WikiInspectorProps) {
   const t = useT();
+  const onPage = Boolean(props.selectedSlug);
+  const HeadIcon = onPage ? FileText : Activity;
+  // The Agentic IDE's side panel, in the Wiki: one step lighter than the
+  // stage, a rule on its left edge, and a 44 px head that lines up with the
+  // stage's own tab bar so the two read as one row.
   return (
     <aside
-      className="flex h-full min-h-0 w-[280px] shrink-0 flex-col overflow-y-auto border-l border-border bg-sidebar 2xl:w-[320px]"
-      data-testid={props.selectedSlug ? "wiki-inspector-page" : "wiki-backlinks-placeholder"}
+      id={WIKI_INSPECTOR_ID}
+      className="flex h-full min-h-0 w-[300px] shrink-0 flex-col border-l border-border bg-card/40"
+      data-testid={onPage ? "wiki-inspector-page" : "wiki-backlinks-placeholder"}
       aria-label={t("wiki_ui.inspector_label")}
     >
-      {props.selectedSlug ? (
-        <PageContext
-          slug={props.selectedSlug}
-          itemsBySlug={props.itemsBySlug}
-          onSelect={props.onSelect}
-        />
-      ) : (
-        <Overview {...props} />
-      )}
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4 text-sm font-medium text-foreground">
+        <HeadIcon className="h-4 w-4 text-muted-foreground" aria-hidden />
+        {t(onPage ? "wiki_ui.inspector_page" : "wiki_ui.inspector_overview")}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {props.selectedSlug ? (
+          <PageContext
+            slug={props.selectedSlug}
+            itemsBySlug={props.itemsBySlug}
+            onSelect={props.onSelect}
+          />
+        ) : (
+          <Overview {...props} />
+        )}
+      </div>
     </aside>
   );
 }

@@ -4213,7 +4213,11 @@
     "subtitle_curated": "整理于 {0}",
     "stage_label": "记忆地图与页面",
     "tab_map": "记忆地图",
-    "close_page": "关闭页面"
+    "close_page": "关闭页面",
+    "inspector_collapse": "隐藏侧边栏",
+    "inspector_expand": "显示侧边栏",
+    "inspector_overview": "概览",
+    "inspector_page": "此页面"
   },
   "skill_create_dialog": {
     "title": "创建技能",
