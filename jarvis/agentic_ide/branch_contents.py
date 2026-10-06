@@ -33,6 +33,9 @@ class BranchCommit:
     subject: str
     author: str
     committed_at: int
+    #: Reachable from an ``origin/*`` ref this clone knows, so GitHub can show it.
+    #: False for commits only on this computer: a GitHub link would be a 404.
+    on_github: bool = False
 
 
 @dataclass(slots=True)
@@ -91,7 +94,16 @@ def _short(ref: str) -> str:
     return ref.removeprefix("refs/heads/").removeprefix("refs/remotes/")
 
 
-def _commits(root: Path, spec: str) -> tuple[list[BranchCommit], bool]:
+def _local_only(root: Path, ref: str) -> set[str]:
+    """Commits of ``ref`` that no ``origin/*`` ref contains (full SHAs)."""
+    result = _git(["rev-list", "--max-count=5000", ref, "--not", "--remotes=origin"], root)
+    if result is None or result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _commits(root: Path, spec: str, ref: str) -> tuple[list[BranchCommit], bool]:
+    local_only = _local_only(root, ref)
     result = _git(
         [
             "log",
@@ -114,6 +126,7 @@ def _commits(root: Path, spec: str) -> tuple[list[BranchCommit], bool]:
                 subject=subject,
                 author=author,
                 committed_at=int(stamp) if stamp.isdigit() else 0,
+                on_github=sha not in local_only,
             )
         )
     return commits[:MAX_COMMITS], len(commits) > MAX_COMMITS
@@ -169,10 +182,10 @@ def branch_contents(
     base = _base_ref(root, default_branch)
     if base is None or _short(base) in {branch, f"origin/{branch}"}:
         # The default branch itself (or no base at all): its latest commits.
-        out.commits, out.commits_truncated = _commits(root, ref)
+        out.commits, out.commits_truncated = _commits(root, ref, ref)
         return out
     out.base = _short(base)
-    out.commits, out.commits_truncated = _commits(root, f"{base}..{ref}")
+    out.commits, out.commits_truncated = _commits(root, f"{base}..{ref}", ref)
     out.files, out.files_truncated = _files(root, f"{base}...{ref}")
     return out
 

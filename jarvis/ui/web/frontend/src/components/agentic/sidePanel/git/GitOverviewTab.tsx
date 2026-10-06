@@ -593,17 +593,24 @@ function BranchDetails({
             ) : (
               <ol className="space-y-0.5">
                 {contents.commits.map((commit) => (
-                  <li key={commit.sha} className="flex min-w-0 items-baseline gap-2">
-                    {url ? (
+                  <li key={commit.sha} data-testid="git-branch-commit" data-sha={commit.sha} className="flex min-w-0 items-baseline gap-2">
+                    {/* Only a commit GitHub has gets a link; one still only here would open a 404. */}
+                    {repoUrl && commit.on_github ? (
                       <button
                         type="button"
+                        data-testid="git-commit-link"
                         onClick={() => void openExternalUrl(`${repoUrl}/commit/${encodeURIComponent(commit.sha)}`)}
                         className="shrink-0 font-mono text-[10.5px] text-info hover:underline"
                       >
                         {commit.sha.slice(0, 7)}
                       </button>
                     ) : (
-                      <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{commit.sha.slice(0, 7)}</span>
+                      <QuickTooltip content={t("ide_side_panel.git.local_only_tip")} side="bottom" className="inline-flex shrink-0">
+                        <span data-testid="git-commit-local" className="inline-flex items-center gap-1 font-mono text-[10.5px] text-warning">
+                          <Laptop className="h-3 w-3" aria-hidden />
+                          {commit.sha.slice(0, 7)}
+                        </span>
+                      </QuickTooltip>
                     )}
                     <QuickTooltip content={`${commit.subject}\n${commit.author} · ${dateOf(commit.committed_at)}`} side="bottom" className="flex min-w-0 flex-1">
                       <span className="truncate text-foreground">{commit.subject}</span>

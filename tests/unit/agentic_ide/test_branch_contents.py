@@ -76,6 +76,17 @@ def test_the_default_branch_shows_its_latest_commits(repo: Path) -> None:
 
 
 @needs_git
+def test_only_commits_github_has_are_marked_linkable(repo: Path) -> None:
+    # origin knows main up to "start"; "main work" exists only on this computer.
+    _git(repo, "update-ref", "refs/remotes/origin/main", "main~1")
+    contents = branch_contents(repo, "main", "main")
+    assert [(c.subject, c.on_github) for c in contents.commits] == [
+        ("main work", False),
+        ("start", True),
+    ]
+
+
+@needs_git
 def test_a_file_diff_shows_the_branch_change(repo: Path) -> None:
     diff = branch_file_diff(repo, "feature/x", "main", "a.txt")
     assert (diff.status, diff.added, diff.removed) == ("modified", 1, 1)

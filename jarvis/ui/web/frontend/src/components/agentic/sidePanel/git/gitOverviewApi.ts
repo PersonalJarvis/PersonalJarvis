@@ -187,6 +187,8 @@ export interface BranchCommit {
   subject: string;
   author: string;
   committed_at: number;
+  /** GitHub has this commit; false while it exists only on this computer. */
+  on_github: boolean;
 }
 
 export interface BranchFile {

@@ -99,8 +99,8 @@ const CONTENTS = {
   branch: "feature/wip",
   base: "origin/main",
   commits: [
-    { sha: "aaaaaaaaaaaa", subject: "Add the widget", author: "Ada", committed_at: 1_790_000_000 },
-    { sha: "bbbbbbbbbbbb", subject: "Start the widget", author: "Ada", committed_at: 1_789_000_000 },
+    { sha: "aaaaaaaaaaaa", subject: "Add the widget", author: "Ada", committed_at: 1_790_000_000, on_github: false },
+    { sha: "bbbbbbbbbbbb", subject: "Start the widget", author: "Ada", committed_at: 1_789_000_000, on_github: true },
   ],
   commits_truncated: false,
   files: [
@@ -373,6 +373,12 @@ describe("GitOverviewTab", () => {
     expect(within(local).queryByTestId("git-open-github")).toBeNull();
 
     // The branch is readable in place: its commits and files, each file's diff one click away.
+    // A commit only on this computer gets no GitHub link (that page would be a 404).
+    const commit = (sha: string) => within(details).getAllByTestId("git-branch-commit").find((el) => el.dataset.sha === sha)!;
+    expect(within(commit("aaaaaaaaaaaa")).queryByTestId("git-commit-link")).toBeNull();
+    expect(within(commit("aaaaaaaaaaaa")).getByTestId("git-commit-local")).toBeTruthy();
+    fireEvent.click(within(commit("bbbbbbbbbbbb")).getByTestId("git-commit-link"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/commit/bbbbbbbbbbbb");
     expect(within(details).getByTestId("git-branch-commits").textContent).toContain("Add the widget");
     expect(within(details).getByTestId("git-branch-commits").textContent).toContain("2 commits not in origin/main");
     const file = within(details).getAllByTestId("git-branch-file").find((el) => el.dataset.path === "src/widget.ts")!;
