@@ -5783,7 +5783,7 @@
       "setting_up": "Configurando…",
       "runs_on": "Funciona con {0}",
       "title": "Motor",
-      "jarvis": "Jarvis",
+      "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
       "jarvis_hint": "El bucle de agente propio de Jarvis, con el modelo que elijas en su chat.",

@@ -5781,7 +5781,7 @@
       "setting_up": "正在安装…",
       "runs_on": "运行于 {0}",
       "title": "运行时",
-      "jarvis": "Jarvis",
+      "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
       "jarvis_hint": "Jarvis 自己的智能体循环，使用你在聊天中选择的模型。",

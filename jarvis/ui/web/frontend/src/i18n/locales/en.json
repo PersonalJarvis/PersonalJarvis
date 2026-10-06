@@ -5783,7 +5783,7 @@
       "setting_up": "Setting up…",
       "runs_on": "Runs on {0}",
       "title": "Runtime",
-      "jarvis": "Jarvis",
+      "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
       "jarvis_hint": "Jarvis' own agent loop, on the model you pick in its chat.",

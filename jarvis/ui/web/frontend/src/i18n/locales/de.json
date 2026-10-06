@@ -5783,7 +5783,7 @@
       "setting_up": "Wird eingerichtet …",
       "runs_on": "Läuft auf {0}",
       "title": "Laufzeit",
-      "jarvis": "Jarvis",
+      "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
       "jarvis_hint": "Jarvis' eigene Agenten-Schleife, auf dem Modell, das du im Chat wählst.",
