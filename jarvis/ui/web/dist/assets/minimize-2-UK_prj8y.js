@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/minimize-2-UK_prj8y.js
 import{h as e}from"./index-yOUS8faq.js";/**
+========
+import{s as e}from"./index-CcTTmuHu.js";/**
+>>>>>>>> 78966760a (chore(ui): rebuild the bundle on current main):jarvis/ui/web/dist/assets/minimize-2-CBxW1Jgm.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

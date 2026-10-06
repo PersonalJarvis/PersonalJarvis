@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/ProviderLogo-C7hbCABW.js
 import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as S,v as H,w as O}from"./xai-ELXAGfWY.js";import{h as $,j as i,c as n}from"./index-yOUS8faq.js";import{S as E}from"./server-BVnkW3RH.js";/**
+========
+import{_ as u,a as m,b as f,c as p,d as b,e as h,f as y,g as x,h as w,i as k,j,k as z,l as N,m as L,n as q,o as M,p as W,q as C,r as D,s as P,t as R,u as S,v as H,w as O}from"./xai-DAbc1WdT.js";import{s as $,j as i,c as n}from"./index-CcTTmuHu.js";import{S as E}from"./server-D0VLuZA3.js";/**
+>>>>>>>> 78966760a (chore(ui): rebuild the bundle on current main):jarvis/ui/web/dist/assets/ProviderLogo-d6GLjUMB.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

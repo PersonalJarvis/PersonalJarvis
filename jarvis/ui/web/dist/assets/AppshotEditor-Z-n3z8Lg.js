@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/AppshotEditor-Z-n3z8Lg.js
 import{h as Ze,u as xn,i as mn,k as pn,m as tr,r as x,n as Z,s as gn,o as yn,j as o,L as re,c as $,p as rr,X as kr,q as bn,B as xt,G as nr,t as wn,v as kn,w as vn,F as Mn,x as jn}from"./index-yOUS8faq.js";import{S as sr}from"./switch-B7Ya7b_I.js";import{Q as D}from"./tooltip-CRDusmuS.js";import{l as Cn,a as vr,f as Nn}from"./appshotApi-qN-Xcugy.js";import{I as Sn}from"./image-plus-B9RUxc1a.js";import{C as _n}from"./check-B3olb2Yh.js";import{C as Tn}from"./columns-2-Dy0pz2Yz.js";/**
+========
+import{s as Ze,u as xn,t as mn,v as pn,i as tr,r as x,w as Z,x as gn,y as yn,j as o,L as re,c as $,z as rr,X as kr,A as bn,B as xt,G as nr,E as wn,F as kn,H as vn,I as Mn,J as jn}from"./index-CcTTmuHu.js";import{S as sr}from"./switch-BiHSSngv.js";import{Q as D}from"./tooltip-Dc2M7r4g.js";import{l as Cn,a as vr,f as Nn}from"./appshotApi-qN-Xcugy.js";import{I as Sn}from"./image-plus-B9m-ioJm.js";import{C as _n}from"./check-BdN-Ebud.js";import{C as Tn}from"./columns-2-DMzssZAA.js";/**
+>>>>>>>> 78966760a (chore(ui): rebuild the bundle on current main):jarvis/ui/web/dist/assets/AppshotEditor-BnuMabKN.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.

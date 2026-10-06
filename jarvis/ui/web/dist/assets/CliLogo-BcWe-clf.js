@@ -1,4 +1,8 @@
+<<<<<<<< HEAD:jarvis/ui/web/dist/assets/CliLogo-BcWe-clf.js
 import{c as v,C as m,_ as b,a as k,b as p,d as h,e as u,f,g as y,h as x,i as w,j,k as M,l as C,m as L,n as G,o as R,p as B,q as V,r as z,s as D,t as N,u as O,D as E}from"./cliVendors-7CbzRhxx.js";import{h as n,j as a,c as o}from"./index-yOUS8faq.js";import{T as c}from"./terminal-CFn3UqUT.js";import{C as I}from"./credit-card-Cwkq0dHs.js";import{G as S}from"./git-branch-Bw3-yWgb.js";import{R as W}from"./rocket-x3Bjjpc2.js";import{C as $}from"./cloud-DPVXWSqd.js";/**
+========
+import{c as v,C as m,_ as b,a as k,b as p,d as h,e as u,f,g as y,h as x,i as w,j,k as M,l as C,m as L,n as G,o as R,p as B,q as V,r as z,s as D,t as N,u as O,D as E}from"./cliVendors-BE-FGLYF.js";import{s as n,j as a,c as o}from"./index-CcTTmuHu.js";import{T as c}from"./terminal-v45Y6FDb.js";import{C as I}from"./credit-card-BGpzdmd8.js";import{G as S}from"./git-branch-Bgk6q-2A.js";import{R as W}from"./rocket-DZXEZO33.js";import{C as $}from"./cloud-DHyJ496n.js";/**
+>>>>>>>> 78966760a (chore(ui): rebuild the bundle on current main):jarvis/ui/web/dist/assets/CliLogo-Cs2Q4SE_.js
  * @license lucide-react v0.445.0 - ISC
  *
  * This source code is licensed under the ISC license.
