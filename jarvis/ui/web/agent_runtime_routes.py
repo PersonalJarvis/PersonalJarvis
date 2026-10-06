@@ -8,19 +8,33 @@ own official tools and only when the person presses the button.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.agent_runtimes import RUNTIME_NAMES, manager
+from jarvis.agent_runtimes.model_map import supported_providers, usable_providers
 
 router = APIRouter(prefix="/api/agent-runtimes", tags=["agent-runtimes"])
 
 
 @router.get("")
-async def list_agent_runtimes(refresh: bool = False) -> dict[str, Any]:
-    """Every external runtime: installed, version, ready, problem, setup job."""
-    return {"runtimes": await manager.statuses(refresh=refresh)}
+async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[str, Any]:
+    """Every external runtime: installed, version, ready, problem, setup job,
+    plus the Jarvis providers an agent on such a runtime can use right now
+    (``supported_providers``: saved key or local server; ``all_providers``:
+    every provider the runtimes can drive once connected)."""
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        from jarvis.core.config import load_config
+
+        config = await asyncio.to_thread(load_config)
+    return {
+        "runtimes": await manager.statuses(refresh=refresh),
+        "supported_providers": await asyncio.to_thread(usable_providers, config),
+        "all_providers": sorted(supported_providers()),
+    }
 
 
 @router.post("/{runtime}/{action}")

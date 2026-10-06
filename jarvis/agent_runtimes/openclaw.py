@@ -201,15 +201,19 @@ class OpenClawRuntime:
                     installed=False,
                     minimum_version=minimum,
                     problem="OpenClaw is not installed.",
+                    problem_kind="not_installed",
                     install_hint=_install_hint(),
                 )
             )
         version = parse_version(run_version([*launcher, "--version"]))
         problem = ""
+        kind = ""
         if version is None:
             problem = "OpenClaw is installed but did not report its version."
+            kind = "no_version"
         elif version < MINIMUM_VERSION:
             problem = f"OpenClaw {minimum} or newer is needed. Update it."
+            kind = "outdated"
         else:
             node = which("node", "node.exe")
             node_version = parse_version(run_version([node, "--version"])) if node else None
@@ -218,6 +222,7 @@ class OpenClawRuntime:
                     "OpenClaw needs Node.js 24.16+ or 26.1+. Run the OpenClaw "
                     "installer once; it adds a suitable Node.js for OpenClaw only."
                 )
+                kind = "node"
         return self._detect.put(
             RuntimeStatus(
                 NAME,
@@ -227,6 +232,7 @@ class OpenClawRuntime:
                 minimum_version=minimum,
                 ready=not problem,
                 problem=problem,
+                problem_kind=kind,
                 install_hint=_install_hint(),
             )
         )

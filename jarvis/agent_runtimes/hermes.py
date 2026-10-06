@@ -98,6 +98,7 @@ class HermesRuntime:
                     installed=False,
                     minimum_version=minimum,
                     problem="Hermes is not installed.",
+                    problem_kind="not_installed",
                     install_hint=_install_hint(),
                 )
             )
@@ -110,6 +111,7 @@ class HermesRuntime:
                     installed=True,
                     minimum_version=minimum,
                     problem="Hermes is installed but did not report its version.",
+                    problem_kind="no_version",
                     install_hint=_install_hint(),
                 )
             )
@@ -123,6 +125,7 @@ class HermesRuntime:
                 minimum_version=minimum,
                 ready=ready,
                 problem="" if ready else f"Hermes {minimum} or newer is needed. Update it.",
+                problem_kind="" if ready else "outdated",
                 install_hint=_install_hint(),
             )
         )

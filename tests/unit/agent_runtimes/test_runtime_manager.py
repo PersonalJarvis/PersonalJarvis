@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -13,6 +14,7 @@ from fastapi.testclient import TestClient
 import jarvis.agent_runtimes as runtimes
 from jarvis.agent_runtimes import base, manager
 from jarvis.agent_runtimes.base import RuntimeStatus
+from jarvis.core.config import override_provider_secrets
 from jarvis.ui.web.agent_runtime_routes import router
 
 
@@ -86,8 +88,19 @@ async def test_unknown_runtimes_are_refused(fakes):
 def test_routes_list_status_and_start_jobs(fakes):
     app = FastAPI()
     app.include_router(router)
+    app.state.config = SimpleNamespace(brain=SimpleNamespace(providers={}))
     client = TestClient(app)
-    rows = client.get("/api/agent-runtimes").json()["runtimes"]
+    with override_provider_secrets(
+        {"openai": "sk-" + "x", "claude-api": None, "openrouter": None, "grok": None,
+         "nvidia": None, "gemini": None}
+    ):
+        body = client.get("/api/agent-runtimes").json()
+    # Usable now: a saved key or a local server; every supported one otherwise.
+    assert "openai" in body["supported_providers"]
+    assert "claude-api" not in body["supported_providers"]
+    assert "claude-api" in body["all_providers"]
+    assert "openai-codex" not in body["all_providers"]
+    rows = body["runtimes"]
     assert [row["runtime"] for row in rows] == ["hermes", "openclaw"]
     assert rows[0]["ready"] is True and rows[0]["job"] is None
     assert client.post("/api/agent-runtimes/skynet/install").status_code == 404

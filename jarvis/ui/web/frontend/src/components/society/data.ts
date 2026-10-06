@@ -16,7 +16,7 @@ import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { MentionPlugin } from "./chat/mentionItems";
 
-import type { AgentApprovalMode, Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import type { AgentApprovalMode, AgentRuntime, Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
 import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
 import { useEventStore } from "@/store/events";
 
@@ -105,6 +105,8 @@ export interface SocietyAgent {
   accountId?: string;
   /** Where the agent runs: null/absent = this computer, else a connected computer id. */
   computerId?: string | null;
+  /** The agent loop that runs its turns (docs/agent-runtimes.md); absent = Jarvis. */
+  runtime?: AgentRuntime;
   /** The character: archetype, base, parts, palette. null = the palette tile. */
   figure: FigureRecipe | null;
   palette: AgentPalette;
@@ -203,6 +205,7 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     model: row.model,
     accountId: row.account_id,
     computerId: row.computer_id ?? null,
+    runtime: row.runtime ?? "jarvis",
     effort: row.effort,
     figure,
     palette: paletteFor(figure),
@@ -472,13 +475,19 @@ export function useUpdateAgentModel() {
   const client = useQueryClient();
   return useCallback(async (agentId: string, choice: {
     provider: string; model: string; effort: string; account_id: string;
+    /** Switch the agent loop with the model; omitted keeps the current one. */
+    runtime?: AgentRuntime;
   }) => {
     const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}/model`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(choice),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // A 422 explains itself ("Hermes and OpenClaw run on an API key…").
+      const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+      throw new Error(typeof body?.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    }
     const body = await res.json() as { agent: SocietyAgentRow };
     const updated = rowToAgent(body.agent);
     client.setQueryData<RosterData>(ROSTER_QUERY_KEY, (previous) => previous ? {

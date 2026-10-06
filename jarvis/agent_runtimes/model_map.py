@@ -17,8 +17,11 @@ extra usage. Vertex needs service-account auth neither runtime receives here.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Final, Literal
+
+log = logging.getLogger(__name__)
 
 Transport = Literal["chat_completions", "anthropic_messages"]
 
@@ -81,6 +84,26 @@ def supported_providers() -> frozenset[str]:
 
 def supports(provider: str) -> bool:
     return provider in _ENDPOINTS
+
+
+def usable_providers(config: Any) -> list[str]:
+    """Supported providers that can run right now: a saved key, or a keyless
+    local server with an address. Blocking (keyring): call it in a thread.
+
+    The model picker offers only these on Hermes / OpenClaw, so a Claude
+    subscription without an Anthropic API key never looks like a choice.
+    """
+    usable: list[str] = []
+    for provider in sorted(_ENDPOINTS):
+        try:
+            route_for(config, provider, "probe")
+        except RouteUnavailable:
+            continue
+        except Exception:  # noqa: BLE001 — one unreadable provider must not empty the list
+            log.warning("agent runtimes: provider %s could not be checked", provider, exc_info=True)
+            continue
+        usable.append(provider)
+    return usable
 
 
 def _default_model(config: Any, provider: str) -> str:

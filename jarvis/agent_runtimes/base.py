@@ -106,6 +106,9 @@ class RuntimeStatus:
     ready: bool = False
     #: Why it is not ready, in plain words ("" when ready).
     problem: str = ""
+    #: The same, as a key the UI translates: ``not_installed`` / ``outdated``
+    #: / ``node`` (OpenClaw needs a newer Node.js) / ``no_version``.
+    problem_kind: str = ""
     #: The official install/update command, for display.
     install_hint: str = ""
 
@@ -118,6 +121,7 @@ class RuntimeStatus:
             "minimum_version": self.minimum_version,
             "ready": self.ready,
             "problem": self.problem,
+            "problem_kind": self.problem_kind,
             "install_hint": self.install_hint,
         }
 
