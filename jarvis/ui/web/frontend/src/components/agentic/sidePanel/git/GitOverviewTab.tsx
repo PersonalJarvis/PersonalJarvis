@@ -604,13 +604,16 @@ function BranchDetails({
                       >
                         {commit.sha.slice(0, 7)}
                       </button>
-                    ) : (
+                    ) : commit.on_github === false ? (
                       <QuickTooltip content={t("ide_side_panel.git.local_only_tip")} side="bottom" className="inline-flex shrink-0">
                         <span data-testid="git-commit-local" className="inline-flex items-center gap-1 font-mono text-[10.5px] text-warning">
                           <Laptop className="h-3 w-3" aria-hidden />
                           {commit.sha.slice(0, 7)}
                         </span>
                       </QuickTooltip>
+                    ) : (
+                      // An older backend does not say where the commit is: no link, no claim.
+                      <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{commit.sha.slice(0, 7)}</span>
                     )}
                     <QuickTooltip content={`${commit.subject}\n${commit.author} · ${dateOf(commit.committed_at)}`} side="bottom" className="flex min-w-0 flex-1">
                       <span className="truncate text-foreground">{commit.subject}</span>
