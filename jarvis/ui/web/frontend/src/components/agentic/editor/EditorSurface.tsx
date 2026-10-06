@@ -180,6 +180,10 @@ export default function EditorSurface({
         diff = monaco.editor.createDiffEditor(diffHost.current, {
           ...EDITOR_OPTIONS,
           minimap: { enabled: false },
+          // Each half would pin its own, different scope lines over the top
+          // rows, so the two sides stop lining up and a fast scroll leaves a
+          // stale header lying on the text.
+          stickyScroll: { enabled: false },
           originalEditable: false,
           renderSideBySide: true,
           useInlineViewWhenSpaceIsLimited: true,
