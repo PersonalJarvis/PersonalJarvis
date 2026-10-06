@@ -77,6 +77,7 @@ export function ComposerBrainPicker({
   title,
   className,
   chevron = true,
+  testId = "composer-model",
 }: {
   value: string;
   /** One group per provider, its id equal to that provider's section id. */
@@ -93,6 +94,8 @@ export function ComposerBrainPicker({
   title?: string;
   className?: string;
   chevron?: boolean;
+  /** Lands on the trigger; the panel gets `${testId}-panel`. */
+  testId?: string;
 }) {
   const t = useT();
   const [favorites, toggleFavorite] = useFavoriteModels();
@@ -204,7 +207,7 @@ export function ComposerBrainPicker({
             : t("agent_chat.no_models")
         }
         disabled={disabled}
-        testId="composer-model"
+        testId={testId}
         triggerHint={false}
         triggerIcon={false}
         triggerPrefix={triggerPrefix}
@@ -216,7 +219,7 @@ export function ComposerBrainPicker({
   );
 }
 
-function RailButton({
+export function RailButton({
   active,
   label,
   muted = false,

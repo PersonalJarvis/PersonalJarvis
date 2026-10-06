@@ -1,4 +1,6 @@
 import { useMemo } from "react";
+import { brainValue, splitBrainValue } from "@/components/agentchat/AgentComposer";
+import { ComposerBrainPicker, type BrainSection } from "@/components/agentchat/ComposerBrainPicker";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
@@ -33,8 +35,6 @@ export function agentName(provider: Pick<ProviderOption, "agent" | "label">): st
   }
 }
 
-const SEP = "\u0000";
-
 const EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 
 /** An effort level in the chat's own words ("" is the agent's default). */
@@ -63,22 +63,29 @@ export function AgentModelPicker({
   lockedProvider: string | null;
   onPick: (provider: string, model: string) => void;
 }) {
-  const olderLabel = useT()("agent_chat.older_models");
+  const t = useT();
+  const olderLabel = t("agent_chat.older_models");
+  const defaultLabel = t("agent_chat.model_default");
   const saved = useSavedHiddenModels((state) => state.hidden);
   const groups = useMemo<ComboboxGroup[]>(() => providers.map((provider) => {
     const locked = lockedProvider !== null && provider.id !== lockedProvider;
     const disabled = !provider.connected || locked;
     const hint = locked ? "new thread" : !provider.connected ? (provider.cli_installed === false ? "not installed" : "connect first") : undefined;
     const icon = <AgentMark agent={provider.agent ?? ""} label={provider.label} logoUrl={provider.logoUrl} variant="plain" size="sm" />;
+    // Whose model a row is, on a quiet second line under its name.
+    const owner = (note?: string) => <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span className="inline-flex shrink-0 scale-[0.86]">{icon}</span>
+      <span className="truncate">{note ? `${agentName(provider)} · ${note}` : agentName(provider)}</span>
+    </span>;
     // Models switched off on the API Keys page stay out; the current pick stays.
     const current = provider.id === draft.provider ? draft.model : "";
     const models = offeredModels(provider, modelsOf(provider, liveModels), current, saved).filter((model) => model.id);
     const toOption = (model: CuratedModel): ComboboxOption => ({
-      value: `${provider.id}${SEP}${model.id}`,
+      value: brainValue(provider.id, model.id),
       label: model.label || model.id,
-      hint: hint ?? model.note,
+      description: owner(model.note),
+      hint,
       searchText: `${model.id} ${agentName(provider)}`,
-      icon,
       disabled,
     });
     // Newest of each model line first; earlier versions fold away.
@@ -87,17 +94,25 @@ export function AgentModelPicker({
       id: provider.id,
       label: agentName(provider),
       options: [
-        { value: `${provider.id}${SEP}`, label: agentName(provider), hint: hint ?? "default model", icon, disabled },
+        { value: brainValue(provider.id, ""), label: defaultLabel, triggerLabel: agentName(provider), description: owner(), hint, disabled, searchText: agentName(provider) },
         ...ranked.current.map(toOption),
       ],
       more: ranked.older.length ? { label: olderLabel, options: ranked.older.map(toOption) } : undefined,
     };
-  }), [providers, liveModels, lockedProvider, draft.provider, draft.model, saved, olderLabel]);
-  return <Combobox ariaLabel="Coding agent and model" testId="thread-model-picker"
-    value={`${draft.provider}${SEP}${draft.model}`} groups={groups}
-    onChange={(value) => { const [provider, model = ""] = value.split(SEP); onPick(provider, model); }}
+  }), [providers, liveModels, lockedProvider, draft.provider, draft.model, saved, olderLabel, defaultLabel]);
+  // The rail on the panel's left: one mark per coding agent, plus favourites.
+  const sections = useMemo<BrainSection[]>(() => providers.map((provider) => ({
+    id: provider.id,
+    label: agentName(provider),
+    icon: <AgentMark agent={provider.agent ?? ""} label={provider.label} logoUrl={provider.logoUrl} variant="plain" size="sm" />,
+    muted: !provider.connected || (lockedProvider !== null && provider.id !== lockedProvider),
+  })), [providers, lockedProvider]);
+  const pickedIcon = providers.find((provider) => provider.id === draft.provider);
+  return <ComposerBrainPicker testId="thread-model-picker" ariaLabel="Coding agent and model"
+    value={brainValue(draft.provider, draft.model)} groups={groups} sections={sections} currentSection={draft.provider}
+    onChange={(value) => { const [provider, model] = splitBrainValue(value); onPick(provider, model); }}
     fallbackLabel={draft.model || (providers.length ? "Choose an agent" : "Loading agents…")} searchPlaceholder="Search agents and models"
-    triggerHint={false} className={TRIGGER} />;
+    triggerPrefix={pickedIcon ? <AgentMark agent={pickedIcon.agent ?? ""} label={pickedIcon.label} logoUrl={pickedIcon.logoUrl} variant="plain" size="sm" /> : undefined} />;
 }
 
 export function EffortPicker({ provider, draft, liveModels, onPick, separated = false }: {
