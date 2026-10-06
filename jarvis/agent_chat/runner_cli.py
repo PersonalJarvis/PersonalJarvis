@@ -2959,7 +2959,11 @@ async def run_cli_turn(
 
 def _agy_effective_effort(model: str, effort: str) -> str:
     """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
-    args = agy_model_args(model, effort, _agy_catalog_cached())
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        rows = None
+    args = agy_model_args(model, effort, rows)
     return args[args.index("--effort") + 1] if "--effort" in args else ""
 
 
