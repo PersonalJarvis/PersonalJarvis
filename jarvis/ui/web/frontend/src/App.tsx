@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
-import { isSectionId, useEventStore } from "@/store/events";
+import { isSectionId, useEventStore, type SectionId } from "@/store/events";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -64,6 +64,9 @@ import { cn } from "@/lib/utils";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
+
+/** Sections that fill the whole window instead of sitting beside the nav. */
+const FULLSCREEN_SECTIONS: readonly SectionId[] = ["agents", "docs", "memory"];
 
 /**
  * The surface the active section is drawn on.
@@ -278,9 +281,10 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
-  // Agents fills the window. The caption's back button leaves it, so the
-  // sidebar toggle that used to reveal this column is not needed.
-  const agentsFullscreen = activeSection === "agents";
+  // Agents, Docs and the Wiki fill the window: each brings its own navigation column,
+  // and the caption's home/back buttons leave it, so the app sidebar and the
+  // toggle that used to reveal it are not needed there.
+  const sectionFullscreen = FULLSCREEN_SECTIONS.includes(activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
 
@@ -348,7 +352,7 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <BrowserRealtimeControl controlOnly />
 
-      {!agentsFullscreen && (
+      {!sectionFullscreen && (
         <>
           <Sidebar
             width={sidebar.size}
@@ -386,7 +390,7 @@ export default function App() {
         {/* Gray, like the sidebar. The content panel below rounds its
             top-left corner so this gray shows in the curve. */}
         <div className="h-8 shrink-0" data-testid="caption-rule" />
-        <div className={activeSection === "agents" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
+        <div className={sectionFullscreen ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
         {/* Outside input software (dictation, text expanders, auto-type) cannot
             reach an elevated window: an OS-level gate the user must be told
             about, since nothing else reports it. */}

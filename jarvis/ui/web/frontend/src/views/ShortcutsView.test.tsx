@@ -53,9 +53,9 @@ describe("ShortcutsView", () => {
     render(<ShortcutsView />);
     const list = screen.getByTestId("shortcuts-list");
     const rows = list.querySelectorAll("li");
-    // 15 registry entries + the three appshot keys.
-    expect(rows.length).toBe(18);
-    expect(screen.getByTestId("shortcuts-count").textContent).toContain("18");
+    // 14 registry entries + the three appshot keys.
+    expect(rows.length).toBe(17);
+    expect(screen.getByTestId("shortcuts-count").textContent).toContain("17");
     expect(rows[0].textContent).toContain("Anywhere on this computer");
     expect(rows[rows.length - 1].textContent).toContain("In an agent terminal");
     for (const id of ["call", "hangup", "dictate", "quick_switch", "appshot-hotkey"]) {

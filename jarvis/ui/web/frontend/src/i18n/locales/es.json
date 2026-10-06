@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "Restablecer el zoom de la aplicación al 100 %",
       "open_overlay": "Abrir esta lista",
       "quick_switch": "Saltar rápido a cualquier sección",
-      "ide_menu": "Menú de teclas del IDE agéntico (pulsa dos veces para enviarlo al panel)",
-      "ide_commands": "Paleta de comandos del IDE agéntico (busca cualquier comando del IDE)"
+      "ide_menu": "Menú de teclas del IDE agéntico (pulsa dos veces para enviarlo al panel)"
     }
   },
   "quick_switch": {
@@ -5617,6 +5616,9 @@
       "identity_undone": "De nuevo {0}",
       "assignment_from": "Encargo de {0}",
       "message_waiting": "Espera a que termine la tarea actual",
+      "coding_thread_started": "Hilo de {0} iniciado",
+      "coding_thread_open": "Abrir hilo",
+      "coding_thread_author": "Escrito por {0}",
       "message_not_sent": "No enviado: {0}",
       "context_rollover": "Contexto de trabajo nuevo: se conservan la memoria y los mensajes recientes",
       "allow_always": "Permitir siempre",

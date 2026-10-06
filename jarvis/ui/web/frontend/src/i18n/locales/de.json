@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "App-Zoom auf 100 % zurücksetzen",
       "open_overlay": "Diese Liste öffnen",
       "quick_switch": "Schnell zu jedem Bereich springen",
-      "ide_menu": "Tastenmenü der Agentic IDE (zweimal drücken: an das Fenster senden)",
-      "ide_commands": "Befehlspalette der Agentic IDE (alle IDE-Befehle durchsuchen)"
+      "ide_menu": "Tastenmenü der Agentic IDE (zweimal drücken: an das Fenster senden)"
     }
   },
   "quick_switch": {
@@ -5617,6 +5616,9 @@
       "identity_undone": "Wieder {0}",
       "assignment_from": "Auftrag von {0}",
       "message_waiting": "Wartet, bis die aktuelle Aufgabe fertig ist",
+      "coding_thread_started": "{0}-Thread gestartet",
+      "coding_thread_open": "Thread öffnen",
+      "coding_thread_author": "Geschrieben von {0}",
       "message_not_sent": "Nicht gesendet: {0}",
       "context_rollover": "Frischer Arbeitskontext – Gedächtnis und letzte Nachrichten übernommen",
       "allow_always": "Immer erlauben",

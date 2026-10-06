@@ -1,5 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { ArrowDownLeft, ArrowUpRight, ChevronRight, Clock3, Inbox } from "lucide-react";
+import { CodingThreadActivity } from "@/components/agentic/threads/CodingThreadLink";
+import { codingThreadOf } from "@/components/agentic/threads/openCodingThread";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useOpenPairConversation } from "@/components/agentchat/PairConversation";
 import type { InternalMessageItem } from "@/components/agentchat/reduce";
@@ -10,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 export { routineTask } from "./routineExecution";
+export { CodingThreadActivity };
 
 /** A quiet event in the conversation; details remain keyboard accessible. */
 export function ChatActivity({ label, icon, children, failed = false }: {
@@ -78,6 +81,7 @@ export function RoutineActivity({ task, original, onOpen }: { task: string; orig
 
 export function AgentMessageActivity({ item, roster }: { item: InternalMessageItem; roster: SocietyAgent[] }) {
   const t = useT();
+  const codingThread = codingThreadOf(item.message.sender_id);
   const openPair = useOpenPairConversation();
   const assistantName = useEventStore((s) => s.assistantName);
   const outgoing = Boolean(item.outgoing);
@@ -88,6 +92,7 @@ export function AgentMessageActivity({ item, roster }: { item: InternalMessageIt
   const failed = status === "failed";
   const canOpenPair = Boolean(openPair && id && id !== "user" && item.message.sender_kind !== "user");
   const label = t(failed ? "society.chat.message_failed" : outgoing ? "society.chat.message_to" : "society.chat.message_from");
+  if (codingThread) return <CodingThreadActivity label={item.message.text} threadId={codingThread} failed={failed} />;
   return <ChatActivity failed={failed} icon={outgoing ? <ArrowUpRight aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <ArrowDownLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />}
     label={<span className="inline-flex max-w-full items-center gap-2"><span>{label}</span>{participant ? <AgentSwatch agent={participant} size={18} /> : null}<span className="truncate">{name}</span>{status === "queued" ? <span>· {t("agent_chat.delivery_queued")}</span> : null}</span>}>
     <ChatMarkdown text={item.message.text} />

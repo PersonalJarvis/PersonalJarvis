@@ -2,6 +2,7 @@ import { PairConversationBoundary } from "@/components/agentchat/PairConversatio
 import {
   AgentMessageActivity,
   ChatActivity,
+  CodingThreadActivity,
   DelegationActivity,
   RoutineActivity,
   assignmentOf,
@@ -792,6 +793,10 @@ function NoticeLine({ item }: { item: NoticeItem }) {
       onOpen={sessionId && agentId ? () => useRoutineNavigation.getState().open({
         agentId, sessionId, title: item.text, timestamp: item.tsMs,
       }) : undefined} />;
+  }
+  if (item.kind === "coding_thread") {
+    const label = t("society.chat.coding_thread_started").replace("{0}", String(item.data.agent ?? ""));
+    return <CodingThreadActivity label={`${label} · ${String(item.data.title ?? "")}`} threadId={String(item.data.thread_id ?? "")} />;
   }
   if (item.kind === "native_goal_verdict") return <p className="py-1 text-xs text-muted-foreground">{t("slash.verifying")}</p>;
   const headline =

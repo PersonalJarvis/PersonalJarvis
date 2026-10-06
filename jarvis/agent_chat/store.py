@@ -17,6 +17,11 @@ asyncio loop; the lock keeps a future worker-thread caller safe). Three tables:
 ``agent_chat_permission_overrides``
     A user's explicit Society chat stance, kept apart from the roster ceiling.
 
+``agent_chat_thread_owners``
+    Which chat started a coding thread on another chat's behalf (a Jarvis
+    agent handing work to a coding CLI, ``jarvis/society/coding_threads.py``),
+    plus that coordinator's own bookkeeping as one JSON object.
+
 Ordering by ``seq`` (our own counter), not by wall clock: Windows ``time()``
 resolution can tie two fast appends.
 """
@@ -62,6 +67,14 @@ CREATE TABLE IF NOT EXISTS agent_chat_events (
 CREATE TABLE IF NOT EXISTS agent_chat_permission_overrides (
     session_id TEXT PRIMARY KEY,
     mode TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_chat_thread_owners (
+    session_id     TEXT PRIMARY KEY,
+    owner_session  TEXT NOT NULL,
+    owner_agent    TEXT NOT NULL DEFAULT '',
+    owner_name     TEXT NOT NULL DEFAULT '',
+    created_ms     INTEGER NOT NULL,
+    state          TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_agent_chat_sessions_updated
     ON agent_chat_sessions(updated_ms DESC);
@@ -437,8 +450,84 @@ class AgentChatStore:
             self._conn.execute(
                 "DELETE FROM agent_chat_permission_overrides WHERE session_id = ?", (session_id,)
             )
+            self._conn.execute(
+                "DELETE FROM agent_chat_thread_owners WHERE session_id = ?", (session_id,)
+            )
             self._conn.commit()
         return cur.rowcount > 0
+
+    # -------------------------------------------------------- thread owners
+
+    def set_thread_owner(
+        self,
+        session_id: str,
+        *,
+        owner_session: str,
+        owner_agent: str = "",
+        owner_name: str = "",
+        state: dict[str, Any] | None = None,
+    ) -> None:
+        """Record that ``owner_session`` started (and steers) ``session_id``."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO agent_chat_thread_owners (session_id, owner_session, "
+                "owner_agent, owner_name, created_ms, state) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    session_id,
+                    owner_session,
+                    owner_agent,
+                    owner_name,
+                    now_ms(),
+                    json.dumps(state or {}),
+                ),
+            )
+            self._conn.commit()
+
+    def thread_owner(self, session_id: str) -> dict[str, Any] | None:
+        """The owner row of a thread a chat started, or None for an ordinary one."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM agent_chat_thread_owners WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        return self._owner_row(row) if row else None
+
+    def thread_owners(self, owner_session: str | None = None) -> list[dict[str, Any]]:
+        """Every owned thread (newest first), or only those of ``owner_session``."""
+        with self._lock:
+            if owner_session is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM agent_chat_thread_owners ORDER BY created_ms DESC"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM agent_chat_thread_owners WHERE owner_session = ? "
+                    "ORDER BY created_ms DESC",
+                    (owner_session,),
+                ).fetchall()
+        return [self._owner_row(r) for r in rows]
+
+    def update_thread_owner_state(self, session_id: str, state: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE agent_chat_thread_owners SET state = ? WHERE session_id = ?",
+                (json.dumps(state), session_id),
+            )
+            self._conn.commit()
+
+    @staticmethod
+    def _owner_row(row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            state = json.loads(row["state"] or "{}")
+        except ValueError:  # a damaged state restarts the bookkeeping, never the link
+            state = {}
+        return {
+            "session_id": row["session_id"],
+            "owner_session": row["owner_session"],
+            "owner_agent": row["owner_agent"],
+            "owner_name": row["owner_name"],
+            "created_ms": int(row["created_ms"]),
+            "state": state if isinstance(state, dict) else {},
+        }
 
     # -------------------------------------------------------------- events
 

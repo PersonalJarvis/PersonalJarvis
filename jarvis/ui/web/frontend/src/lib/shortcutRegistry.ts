@@ -140,13 +140,6 @@ export const SHORTCUTS: readonly Shortcut[] = [
     setting: "ide_menu",
     labelKey: "shortcut_overlay.workspace.ide_menu",
   },
-  {
-    kind: "app",
-    area: "workspace",
-    scope: "window",
-    setting: "ide_commands",
-    labelKey: "shortcut_overlay.workspace.ide_commands",
-  },
 ] as const;
 
 /** Areas in the order the overlay renders them. */

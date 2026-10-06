@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import type { IdeProject } from "@/lib/agenticIdeApi";
-import type { IdeHotkeyAction } from "@/components/agentic/ideHotkeys";
 
 type IdeAction =
   | { kind: "connect-project"; nonce: number }
@@ -9,10 +8,7 @@ type IdeAction =
   | { kind: "activate-workspace"; workspaceId: string; nonce: number }
   | { kind: "workspace-options"; workspaceId: string; nonce: number }
   | { kind: "git-panel"; workspaceId: string; nonce: number }
-  | { kind: "toggle-voice"; nonce: number }
-  // Any key-menu command, asked for from outside the view (the window caption).
-  | { kind: "command"; command: IdeHotkeyAction; nonce: number }
-  | { kind: "command-palette"; nonce: number };
+  | { kind: "toggle-voice"; nonce: number };
 
 interface IdeProjectsStore {
   projects: IdeProject[];
@@ -29,8 +25,6 @@ interface IdeProjectsStore {
   openWorkspaceOptions: (workspaceId: string) => void;
   openGitPanel: (workspaceId: string) => void;
   toggleVoice: () => void;
-  runCommand: (command: IdeHotkeyAction) => void;
-  openCommandPalette: () => void;
 }
 
 export const useIdeProjectsStore = create<IdeProjectsStore>((set) => ({
@@ -48,6 +42,4 @@ export const useIdeProjectsStore = create<IdeProjectsStore>((set) => ({
   openWorkspaceOptions: (workspaceId) => set((state) => ({ action: { kind: "workspace-options", workspaceId, nonce: (state.action?.nonce ?? 0) + 1 } })),
   openGitPanel: (workspaceId) => set((state) => ({ action: { kind: "git-panel", workspaceId, nonce: (state.action?.nonce ?? 0) + 1 } })),
   toggleVoice: () => set((state) => ({ action: { kind: "toggle-voice", nonce: (state.action?.nonce ?? 0) + 1 } })),
-  runCommand: (command) => set((state) => ({ action: { kind: "command", command, nonce: (state.action?.nonce ?? 0) + 1 } })),
-  openCommandPalette: () => set((state) => ({ action: { kind: "command-palette", nonce: (state.action?.nonce ?? 0) + 1 } })),
 }));

@@ -26,6 +26,21 @@ describe("renderSearchSnippet", () => {
     expect(container.textContent).toContain("<script>");
   });
 
+  it("shows snippets as prose, without Markdown syntax", () => {
+    const { container } = render(
+      <div>
+        {renderSearchSnippet(
+          "Open **Settings > <mark>Wake</mark> Word** | read [Audio and <mark>Wake</mark>](audio-and-<mark>wake</mark>-word).",
+        )}
+      </div>,
+    );
+
+    expect(container.textContent).toBe(
+      "Open Settings > Wake Word · read Audio and Wake.",
+    );
+    expect(container.querySelectorAll("mark")).toHaveLength(2);
+  });
+
   it("distinguishes a failed search from an empty result", async () => {
     vi.stubGlobal(
       "ResizeObserver",

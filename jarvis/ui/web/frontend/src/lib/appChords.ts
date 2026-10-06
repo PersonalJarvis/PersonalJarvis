@@ -1,7 +1,6 @@
 /**
  * The in-app chords that used to be compiled in: the terminal text size steps,
- * the `?` shortcut overview, the Agentic IDE key menu and its command
- * palette. Each one now has a
+ * the `?` shortcut overview and the Agentic IDE key menu. Each one now has a
  * default and can be recorded anew under Settings → Keyboard shortcuts.
  *
  * They are matched and recorded by CHARACTER exactly like the whole-app zoom
@@ -20,8 +19,7 @@ export type AppChordId =
   | "terminal_zoom_out"
   | "terminal_zoom_reset"
   | "shortcut_overlay"
-  | "ide_menu"
-  | "ide_commands";
+  | "ide_menu";
 
 export const APP_CHORD_IDS: readonly AppChordId[] = [
   "terminal_zoom_in",
@@ -29,7 +27,6 @@ export const APP_CHORD_IDS: readonly AppChordId[] = [
   "terminal_zoom_reset",
   "shortcut_overlay",
   "ide_menu",
-  "ide_commands",
 ];
 
 export type AppChordBindings = Record<AppChordId, string>;
@@ -37,8 +34,7 @@ export type AppChordBindings = Record<AppChordId, string>;
 /**
  * The shipped chords. The terminal steps use the platform modifier (⌘ on a
  * Mac, Ctrl elsewhere); the IDE key menu is Ctrl+B on every OS, the terminal
- * key tmux users already have in their hands. The IDE command palette is
- * Ctrl+Shift+P (⌘⇧P on a Mac), the chord editors already use for theirs.
+ * key tmux users already have in their hands.
  */
 export function defaultAppChords(platform: ChordPlatform = hostChordPlatform()): AppChordBindings {
   const mod = platform === "mac" ? "cmd" : "ctrl";
@@ -48,7 +44,6 @@ export function defaultAppChords(platform: ChordPlatform = hostChordPlatform()):
     terminal_zoom_reset: `${mod}+0`,
     shortcut_overlay: "question",
     ide_menu: "ctrl+b",
-    ide_commands: `${mod}+shift+p`,
   };
 }
 

@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "Reset the app zoom to 100 %",
       "open_overlay": "Open this list",
       "quick_switch": "Quick switch to any section",
-      "ide_menu": "Agentic IDE key menu (press twice to send it to the pane)",
-      "ide_commands": "Agentic IDE command palette (search every IDE command)"
+      "ide_menu": "Agentic IDE key menu (press twice to send it to the pane)"
     }
   },
   "quick_switch": {
@@ -5617,6 +5616,9 @@
       "identity_undone": "Back to {0}",
       "assignment_from": "Task from {0}",
       "message_waiting": "Waits until the current task is done",
+      "coding_thread_started": "Started a {0} thread",
+      "coding_thread_open": "Open thread",
+      "coding_thread_author": "Written by {0}",
       "message_not_sent": "Not sent: {0}",
       "context_rollover": "Fresh working context — memory and recent messages carried over",
       "allow_always": "Always allow",

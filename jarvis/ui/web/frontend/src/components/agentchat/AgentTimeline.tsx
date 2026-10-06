@@ -2,6 +2,8 @@ import { Fragment, memo, useMemo } from "react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
+import { CodingThreadActivity } from "@/components/agentic/threads/CodingThreadLink";
+import { codingThreadOf } from "@/components/agentic/threads/openCodingThread";
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { effortLabel } from "./AgentComposer";
@@ -71,6 +73,10 @@ export function AgentTimeline({
   );
 
   function renderItem(item: TimelineItem) {
+    if (item.type === "internal" && codingThreadOf(item.message.sender_id)) {
+      return <CodingThreadActivity key={item.id} label={item.message.text}
+        threadId={codingThreadOf(item.message.sender_id)} failed={item.message.status === "failed"} />;
+    }
     if (item.type === "internal") {
       return (
         <InternalMessageBubble
@@ -177,6 +183,11 @@ export function AgentTimeline({
     }
     if (item.type === "notice") {
       if (item.kind === "native_goal_verdict") return <p key={item.id} className="text-xs text-muted-foreground">{t("slash.verifying")}</p>;
+      if (item.kind === "coding_thread") {
+        const started = t("society.chat.coding_thread_started").replace("{0}", String(item.data.agent ?? ""));
+        return <CodingThreadActivity key={item.id} label={`${started} · ${String(item.data.title ?? "")}`}
+          threadId={String(item.data.thread_id ?? "")} />;
+      }
       // The society reporting back on a task Jarvis handed out: the
       // agent's name as the headline, its summary underneath. Muted and
       // centred like a stamp — it is not Jarvis speaking.

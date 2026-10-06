@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "将应用缩放重置为 100 %",
       "open_overlay": "打开此列表",
       "quick_switch": "快速切换到任意板块",
-      "ide_menu": "Agentic IDE 按键菜单（按两次会把按键发送给窗格）",
-      "ide_commands": "Agentic IDE 命令面板（搜索所有 IDE 命令）"
+      "ide_menu": "Agentic IDE 按键菜单（按两次会把按键发送给窗格）"
     }
   },
   "quick_switch": {
@@ -5615,6 +5614,9 @@
       "identity_undone": "已恢复为 {0}",
       "assignment_from": "来自 {0} 的任务",
       "message_waiting": "等当前任务完成后发送",
+      "coding_thread_started": "已启动 {0} 线程",
+      "coding_thread_open": "打开线程",
+      "coding_thread_author": "由 {0} 撰写",
       "message_not_sent": "未发送：{0}",
       "context_rollover": "已换用新的工作上下文——记忆和最近的消息已带过来",
       "allow_always": "始终允许",
