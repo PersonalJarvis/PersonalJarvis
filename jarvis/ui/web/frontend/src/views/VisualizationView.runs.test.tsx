@@ -591,3 +591,90 @@ describe("the retired outputs section id", () => {
     expect(initialSectionFromSearch("?view=outputs")).toBe("visualization");
   });
 });
+
+describe("VisualizationView — a run waiting for capacity", () => {
+  const OFFER = {
+    provider: "claude-api",
+    model: "claude-sonnet-4-6",
+    estimated_cost_usd: 1.65,
+    cost_cap_usd: 2,
+    reason: "provider_quota",
+    open_steps: 1,
+  };
+
+  /** Outputs as usual, plus the paid-offer and decision endpoints. */
+  function installCapacityServer(runs: OutputSummary[]) {
+    const base = installFetchMock(runs);
+    const decisions: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/paid-offer")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ mission_id: "mission-1", state: "WAITING_CAPACITY", offer: OFFER }),
+          };
+        }
+        if (url.includes("/capacity-decision")) {
+          const body = JSON.parse(String(init?.body));
+          decisions.push({ url, body });
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, mission_id: "mission-1", decision: body.decision, state: "RUNNING" }),
+          };
+        }
+        return base(input);
+      }),
+    );
+    return decisions;
+  }
+
+  it("asks in the run's stage and approves only after an explicit confirmation", async () => {
+    const decisions = installCapacityServer([
+      run({ slug: "parked-run", status: "running", waiting_capacity: true }),
+    ]);
+    await renderStaged();
+
+    expect(await screen.findByText("claude-api")).toBeTruthy();
+    expect(screen.getByText("claude-sonnet-4-6")).toBeTruthy();
+    expect(screen.getByText("about $1.65 for 1 open steps")).toBeTruthy();
+    expect(screen.getByText("Subscription capacity used up")).toBeTruthy();
+    // The badge says what the run waits for instead of pretending to work.
+    expect(screen.getAllByTestId("run-status-badge")[0].textContent).toBe("waiting for capacity");
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve paid API for this mission" }));
+    expect(decisions).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(decisions).toHaveLength(1));
+    expect(decisions[0].url).toBe("/api/missions/mission-1/capacity-decision");
+    expect(decisions[0].body).toEqual({
+      decision: "approve_paid",
+      provider: "claude-api",
+      model: "claude-sonnet-4-6",
+    });
+  });
+
+  it("waits with one click and bills nothing", async () => {
+    const decisions = installCapacityServer([
+      run({ slug: "parked-run", status: "running", waiting_capacity: true }),
+    ]);
+    await renderStaged();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Wait" }));
+    await waitFor(() =>
+      expect(decisions.map((d) => d.body)).toEqual([{ decision: "wait", provider: null, model: null }]),
+    );
+  });
+
+  it("asks nothing for a run that is simply running", async () => {
+    installCapacityServer([run({ slug: "busy-run", status: "running" })]);
+    await renderStaged();
+
+    expect(screen.queryByRole("button", { name: "Approve paid API for this mission" })).toBeNull();
+    expect(screen.getAllByTestId("run-status-badge")[0].textContent).toBe("running");
+  });
+});

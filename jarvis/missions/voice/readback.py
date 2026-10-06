@@ -332,7 +332,7 @@ CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
         "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",  # i18n-allow
         "paid": (
             "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen "  # i18n-allow
-            "Freigabe in der Missionsansicht."  # i18n-allow
+            "Freigabe unter Artefakte."  # i18n-allow
         ),
     },
     "en": {
@@ -347,7 +347,7 @@ CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
         "files": "{files} files saved.",
         "wait": "The mission is waiting until capacity is available again.",
         "wait_auth": "The mission is waiting until you sign in again.",
-        "paid": "Paid API use only with your explicit approval in the Missions view.",
+        "paid": "Paid API use only with your explicit approval in Artifacts.",
     },
 }
 

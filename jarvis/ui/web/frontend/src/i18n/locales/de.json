@@ -4194,7 +4194,7 @@
       "files": "Gespeicherte Dateien: {files}.",
       "wait": "Die Mission wartet, bis wieder Kapazität verfügbar ist.",
       "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",
-      "paid": "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen Freigabe im Tab „Freigaben“.",
+      "paid": "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen Freigabe unter „Artefakte“.",
       "paid_cap_reached": "Die freigegebene Kostengrenze für {provider} ist erreicht."
     }
   },

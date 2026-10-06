@@ -4194,7 +4194,7 @@
       "files": "Archivos guardados: {files}.",
       "wait": "La misión espera hasta que vuelva a haber capacidad.",
       "wait_auth": "La misión espera hasta que vuelvas a iniciar sesión.",
-      "paid": "Uso de API de pago solo con tu aprobación explícita en la pestaña de aprobaciones.",
+      "paid": "Uso de API de pago solo con tu aprobación explícita en Artefactos.",
       "paid_cap_reached": "Se alcanzó el límite de coste aprobado para {provider}."
     }
   },

@@ -55,6 +55,7 @@ export function CapacityDecisionPanel({
     onSuccess: () => setConfirming(null),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["missions"] });
+      void queryClient.invalidateQueries({ queryKey: ["outputs"] });
     },
   });
 
