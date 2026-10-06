@@ -23,6 +23,10 @@ export interface BrowserViewState {
   pointer?: BrowserPointerState;
   approval?: { id: string; action: string };
   dialog?: { type: string; message: string };
+  /** Another agent holds this shared browser profile; the view retries until it is free. */
+  busy?: { holderId: string; holderName: string; running: boolean };
+  /** The shared profile was opened for another agent; this view stops reconnecting. */
+  movedTo?: string;
 }
 const empty: BrowserViewState = {
   connected: false, ready: false, fullWindow: false, extendedInput: false, previewPaused: false, loginAvailable: false, loginMode: false, loginReady: false, manual: false, running: false, controlPending: false,
@@ -68,6 +72,7 @@ export function useBrowserView(agentId: string, enabled = true) {
     let decodeBusy = false;
     let lastLiveEvent = Date.now();
     let renderedFrames = 0;
+    let moved = false;
     let latestFrame: { data: string; sequence: number; timestamp: number; generation: string; geometry_id?: string; extended_input?: boolean } | null = null;
     manual.current = false;
     previewPaused.current = false;
@@ -141,6 +146,7 @@ export function useBrowserView(agentId: string, enabled = true) {
           try {
             const event = JSON.parse(message.data);
             if (event.kind === "frame") {
+              setState((s) => s.busy ? { ...s, busy: undefined } : s);
               if (previewPaused.current || (loginMode.current && !loginReady.current)) return;
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
               if (!Number.isFinite(event.timestamp)) return;
@@ -172,10 +178,20 @@ export function useBrowserView(agentId: string, enabled = true) {
                 && event.width > 0 && event.height > 0) {
                 setState((s) => ({ ...s, pointer: event }));
               }
+            } else if (event.kind === "error" && event.code === "profile_busy") {
+              lastLiveEvent = Date.now();
+              setState((s) => ({ ...s, ready: false, error: "", busy: {
+                holderId: String(event.holder_id ?? ""), holderName: String(event.holder_name ?? ""),
+                running: event.running === true } }));
+            } else if (event.kind === "disconnected" && event.reason === "moved") {
+              // Reconnecting would take the profile straight back from the other agent.
+              moved = true;
+              setState((s) => ({ ...s, movedTo: String(event.agent_name || event.agent_id || "") }));
             } else if (event.kind === "error") {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
+              setState((s) => s.busy ? { ...s, busy: undefined } : s);
               loginCapability.current = event.login_available === true;
               loginMode.current = event.login_mode === true;
               loginReady.current = event.login_ready === true;
@@ -267,6 +283,7 @@ export function useBrowserView(agentId: string, enabled = true) {
           loginReady.current = false;
           inputs.current = [];
           setState((s) => ({ ...s, connected: false, ready: false, manual: false, extendedInput: false, loginAvailable: false, loginReady: false, controlPending: false, pointer: undefined }));
+          if (moved) return;
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();

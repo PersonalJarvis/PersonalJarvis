@@ -675,6 +675,12 @@
       "repair": "Browser reparieren",
       "off": "Browser aus",
       "off_hint": "Der Browser startet erst, wenn {0} ihn braucht.",
+      "moved": "Der gemeinsame Browser ist jetzt für {0} geöffnet. Er kann immer nur für einen Agent offen sein.",
+      "moved_status": "Für {0} geöffnet",
+      "open_here": "Hier öffnen",
+      "waiting_for": "Wartet auf {0}",
+      "busy_task": "{0} nutzt den gemeinsamen Browser gerade für eine Aufgabe. Er öffnet sich hier, sobald {0} fertig ist.",
+      "stop_holder": "Aufgabe von {0} stoppen",
       "open": "Browser öffnen"
     },
     "mars": {

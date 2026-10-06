@@ -652,6 +652,45 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     assert released.is_set()
 
 
+async def test_busy_shared_profile_names_its_holder_to_the_viewer(monkeypatch):
+    from jarvis.society.browser.live import BrowserProfileBusy
+    from jarvis.ui.web import society_browser_routes as routes
+
+    sent: list[dict] = []
+
+    class Live:
+        async def subscribe(self, agent):
+            raise BrowserProfileBusy("juno", "Juno", running=True)
+
+    class Socket:
+        scope = {}
+
+        async def accept(self):
+            pass  # Test socket has no transport to accept.
+
+        async def close(self, **kwargs):
+            pass  # Test socket has no transport to close.
+
+        async def send_json(self, value):
+            sent.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="wren")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live())
+        )
+
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
+    await routes.agent_browser_live(Socket(), "wren")
+    error = next(m for m in sent if m["kind"] == "error")
+    assert error["code"] == "profile_busy"
+    assert (error["holder_id"], error["holder_name"], error["running"]) == ("juno", "Juno", True)
+    assert "Juno is running a task" in error["error"]
+
+
 async def test_hover_motion_coalesces_and_never_delays_or_drops_clicks(monkeypatch):
     import asyncio
 

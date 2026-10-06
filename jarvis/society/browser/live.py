@@ -37,6 +37,15 @@ _PAUSED = (
 )
 
 
+class BrowserProfileBusy(RuntimeError):
+    """Another agent holds the same browser profile; names it for the viewer."""
+
+    def __init__(self, holder_id: str, holder_name: str, *, running: bool) -> None:
+        self.holder_id, self.holder_name, self.running = holder_id, holder_name, running
+        doing = "running a task" if running else "under manual control"
+        super().__init__(f"This browser profile is in use: {holder_name} is {doing}.")
+
+
 class LiveUpdates:
     """Latest pixels plus coalesced control events; a frame cannot drop approval."""
 
@@ -426,18 +435,31 @@ class LiveSessions:
                 )
                 changed = other_id == agent.agent_id and previous.access_key != binding.access_key
                 if changed or (same_profile and other_id != agent.agent_id):
-                    if (
-                        other.run_lock.locked()
-                        or other.control_owner
-                        or other.subscribers
+                    holder = getattr(getattr(other, "profile_agent", None), "name", "") or other_id
+                    if other.run_lock.locked():
+                        raise BrowserProfileBusy(other_id, holder, running=True)
+                    # One Chrome profile opens in one browser at a time. A person
+                    # opening it for another agent moves it there, even from a
+                    # sign-in they left open; an agent task never takes it from
+                    # someone's hands, but merely watching never blocks a task.
+                    if not window_view and (
+                        other.control_owner
                         or other.state.get("manual", False)
+                        or other.state.get("login_mode", False)
                     ):
-                        raise RuntimeError(
-                            "This profile is in use. Stop its task or return manual control first."
-                        )
+                        raise BrowserProfileBusy(other_id, holder, running=False)
                     # The active panel follows the newly assigned owner. It must
                     # never keep accepting input into the old account.
-                    other.publish({"kind": "disconnected"})
+                    other.publish(
+                        {"kind": "disconnected"}
+                        if changed
+                        else {
+                            "kind": "disconnected",
+                            "reason": "moved",
+                            "agent_id": agent.agent_id,
+                            "agent_name": getattr(agent, "name", "") or agent.agent_id,
+                        }
+                    )
                     await other.close()
                     self.sessions.pop(other_id, None)
             old = self.sessions.get(agent.agent_id)

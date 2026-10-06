@@ -184,6 +184,10 @@ export default function EditorSurface({
           // rows, so the two sides stop lining up and a fast scroll leaves a
           // stale header lying on the text.
           stickyScroll: { enabled: false },
+          // Both halves scroll together, so the diff overview on the far
+          // right is the one scrollbar (drag and wheel go to the modified
+          // side). Each half's own bar would draw a second and third copy.
+          scrollbar: { ...EDITOR_OPTIONS.scrollbar, vertical: "hidden", verticalScrollbarSize: 0 },
           originalEditable: false,
           renderSideBySide: true,
           useInlineViewWhenSpaceIsLimited: true,

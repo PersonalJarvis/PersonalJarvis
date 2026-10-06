@@ -149,6 +149,51 @@ async def test_another_agent_cannot_reclaim_manual_profile_after_viewer_loss(tmp
     await live.close()
 
 
+async def test_opening_another_agent_moves_a_left_open_sign_in_there(tmp_path, monkeypatch):
+    live = manager(tmp_path, monkeypatch)
+    pid = live.profiles.create("Shared", "managed", [])["id"]
+    live.profiles.share(pid, "all", [], {"lead", "scout"})
+    lead = await live.ensure(SimpleNamespace(**vars(agent("lead")), name="Juno"))
+    lead.state.update(manual=True, login_mode=True)
+    lead.control_owner = "person"
+    lead.subscribers.add(LiveUpdates())
+    wren = SimpleNamespace(**vars(agent("scout")), name="Wren")
+    scout = await live.ensure(wren, window_view=True)
+    assert lead.closed and not scout.closed and "lead" not in live.sessions
+    assert ("event", {"kind": "disconnected", "reason": "moved", "agent_id": "scout",
+                      "agent_name": "Wren"}) in lead.commands
+    await live.close()
+
+
+async def test_watching_one_agent_never_blocks_another_agents_task(tmp_path, monkeypatch):
+    live = manager(tmp_path, monkeypatch)
+    pid = live.profiles.create("Shared", "managed", [])["id"]
+    live.profiles.share(pid, "all", [], {"lead", "scout"})
+    lead = await live.ensure(agent("lead"))
+    lead.subscribers.add(LiveUpdates())
+    scout = await live.ensure(agent("scout"))
+    assert lead.closed and not scout.closed
+    await live.close()
+
+
+async def test_a_running_task_keeps_the_profile_and_names_its_agent(tmp_path, monkeypatch):
+    from jarvis.society.browser.live import BrowserProfileBusy
+
+    live = manager(tmp_path, monkeypatch)
+    pid = live.profiles.create("Shared", "managed", [])["id"]
+    live.profiles.share(pid, "all", [], {"lead", "scout"})
+    lead = await live.ensure(SimpleNamespace(**vars(agent("lead")), name="Juno"))
+    await lead.run_lock.acquire()
+    try:
+        with pytest.raises(BrowserProfileBusy, match="Juno is running a task") as busy:
+            await live.ensure(agent("scout"), window_view=True)
+        assert (busy.value.holder_id, busy.value.running) == ("lead", True)
+        assert not lead.closed
+    finally:
+        lead.run_lock.release()
+    await live.close()
+
+
 async def test_lost_viewer_keeps_chrome_login_paused_until_explicit_reclaim(tmp_path):
     live = LiveSessions(tmp_path)
     session = ProfileSession("lead")
