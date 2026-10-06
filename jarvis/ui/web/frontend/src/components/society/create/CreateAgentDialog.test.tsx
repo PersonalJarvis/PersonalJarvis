@@ -41,7 +41,12 @@ function mount() {
 }
 
 beforeEach(() => { runtimes.value = READY; });
-afterEach(() => { cleanup(); vi.clearAllMocks(); act(() => useCreateAgentDialog.setState({ open: false })); });
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  // Settle anything a test left open, so the next test's request starts clean.
+  act(() => useCreateAgentDialog.getState().cancel());
+});
 
 describe("CreateAgentDialog", () => {
   test("creates a named Hermes agent with a provider and a companion", async () => {
@@ -64,7 +69,7 @@ describe("CreateAgentDialog", () => {
   test("a Jarvis agent needs nothing but the button", async () => {
     createAgent.mockResolvedValue({ agentId: "agent-2" });
     mount();
-    act(() => { void useCreateAgentDialog.getState().request(); });
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
     fireEvent.click(await screen.findByTestId("create-agent-submit"));
     await waitFor(() => expect(createAgent).toHaveBeenCalled());
     expect(createAgent.mock.calls[0][0]).toMatchObject({ runtime: "jarvis", provider: undefined });
@@ -73,7 +78,7 @@ describe("CreateAgentDialog", () => {
 
   test("a runtime that is not installed cannot be created yet", async () => {
     mount();
-    act(() => { void useCreateAgentDialog.getState().request(); });
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
     fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.openclaw" }));
     const submit = screen.getByTestId("create-agent-submit") as HTMLButtonElement;
     await waitFor(() => expect(submit.disabled).toBe(true));
@@ -83,9 +88,10 @@ describe("CreateAgentDialog", () => {
   test("closing the dialog cancels the request quietly", async () => {
     mount();
     let pending!: Promise<unknown>;
-    act(() => { pending = useCreateAgentDialog.getState().request(); });
+    // Catch at once: the rejection must never be unhandled, even for a tick.
+    act(() => { pending = useCreateAgentDialog.getState().request().catch((exc: unknown) => exc); });
     fireEvent.click(await screen.findByRole("button", { name: "society.create_agent.cancel" }));
-    const error = await pending.catch((exc: unknown) => exc);
+    const error = await pending;
     expect(isCreateCancelled(error)).toBe(true);
     expect(createAgent).not.toHaveBeenCalled();
   });

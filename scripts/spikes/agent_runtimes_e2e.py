@@ -151,14 +151,14 @@ async def main(name: str) -> int:
         home = tmp / "agent_runtimes" / name / agent_id
         written = sorted(p.name for p in home.iterdir())
         print("  runtime home:", written)
-        secret_leak = [
-            str(p.relative_to(home))
-            for p in home.rglob("*")
-            if p.is_file()
+        secret_leak = any(
+            p.is_file()
             and p.stat().st_size < 5_000_000
             and key in p.read_text(encoding="utf-8", errors="replace")
-        ]
-        print("  key written to disk:", secret_leak)
+            for p in home.rglob("*")
+        )
+        # Only a fixed word is printed: never anything derived from the key.
+        print("  key written to disk:", "YES" if secret_leak else "no")
     await driver(name).stop()
     ok = first.status == "done" and second.status == "done" and history > 2 and not secret_leak
     print("RESULT:", "PASS" if ok else "FAIL")
