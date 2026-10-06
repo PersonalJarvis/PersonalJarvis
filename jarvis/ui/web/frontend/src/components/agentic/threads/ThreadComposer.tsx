@@ -4,7 +4,7 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { DictationButton } from "@/components/agentchat/DictationButton";
-import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem } from "@/components/agentchat/reduce";
+import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
 import { releaseHeldFiles, useChatAttachments, type HeldFiles } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
@@ -14,6 +14,7 @@ import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/
 import { cn } from "@/lib/utils";
 import { effortLadder, snapEffort } from "@/lib/effortLadder";
 import { AccessPicker, AgentModelPicker, EffortPicker, modelsOf } from "./ThreadPickers";
+import { useRecalledMessages } from "./recalledMessages";
 import { rememberSeat, rememberedSeat, threadAgents, useThreadChatStore } from "./threadModel";
 
 /** A message typed while the agent was still working, sent when it is free. */
@@ -29,31 +30,47 @@ const drafts = new Map<string, string>();
 const queues = new Map<string, QueuedMessage[]>();
 
 /**
- * The message sent last, with its files, so Escape can take it back while the
- * agent has not started on it. Module-level: a thread's first message swaps
- * the empty-thread composer for the timeline one.
+ * The message sent last, with its files and when it went, so Escape can take
+ * it back. Module-level: a thread's first message swaps the empty-thread
+ * composer for the timeline one.
  */
-let lastSent: { text: string; files: HeldFiles } | null = null;
+interface SentMessage { text: string; files: HeldFiles; sentMs: number }
+let lastSent: SentMessage | null = null;
 
-function keepSent(next: { text: string; files: HeldFiles } | null): void {
+/** How long after sending Escape still takes a message back once the agent started thinking. */
+export const RECALL_WINDOW_MS = 15_000;
+
+function keepSent(next: SentMessage | null): void {
   if (lastSent && lastSent.files !== next?.files) releaseHeldFiles(lastSent.files);
   lastSent = next;
 }
 
 /**
- * True while the running turn answers `sent` and shows no work yet: no
- * reasoning, no tool call, no words. The message right before the turn must be
- * the one sent, so a queued follow-up or another thread's turn never hands back
- * the wrong text.
+ * The user item `sent` became, when Escape may still take it back: it is the
+ * newest message, and nothing after it is more than the reply still running.
+ * While that reply shows no work the message comes back however long the
+ * agent takes to connect; once it reasons or writes, only inside
+ * RECALL_WINDOW_MS; once it ran a tool, never — that work may have touched
+ * files. Matching the text keeps a queued follow-up or another thread from
+ * handing back the wrong message.
  */
-function untouchedReply(timeline: Timeline, sent: { text: string; files: HeldFiles }): boolean {
+function recallableItem(timeline: Timeline, sent: SentMessage, now: number): UserItem | null {
+  let index = timeline.items.length - 1;
+  while (index >= 0 && timeline.items[index].type !== "user") index -= 1;
+  const asked = timeline.items[index];
+  if (!asked || asked.type !== "user") return null;
+  if (sent.text ? asked.text.trim() !== sent.text : !sameFiles(asked, sent.files)) return null;
+  const after = timeline.items.slice(index + 1);
   const turn = runningTurn(timeline);
-  if (!turn || !turn.blocks.every((block) => block.kind === "text" && !block.text.trim())) return false;
-  const index = timeline.items.indexOf(turn);
-  const asked = timeline.items.slice(0, index).reverse().find((item) => item.type === "user");
-  if (!asked || asked.type !== "user") return false;
-  if (sent.text) return asked.text.trim() === sent.text;
-  const names = sent.files.attachments.map((item) => item.name).sort().join("|");
+  if (after.some((item) => item !== turn)) return null;
+  if (!turn) return asked;
+  if (turn.blocks.some((block) => block.kind === "tool")) return null;
+  const working = turn.blocks.some((block) => block.kind !== "text" || block.text.trim());
+  return !working || now - sent.sentMs <= RECALL_WINDOW_MS ? asked : null;
+}
+
+function sameFiles(asked: UserItem, files: HeldFiles): boolean {
+  const names = files.attachments.map((item) => item.name).sort().join("|");
   return names !== "" && asked.attachments.map((item) => item.name).sort().join("|") === names;
 }
 
@@ -406,7 +423,7 @@ export function ThreadComposer({
       setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
       return;
     }
-    keepSent({ text, files: held });
+    keepSent({ text, files: held, sentMs: Date.now() });
     const sent = await dispatch(text, attachments);
     if (!sent && !useThreadChatStore.getState().activeSessionId) {
       // Nothing was created: give the words back instead of losing them.
@@ -414,14 +431,16 @@ export function ThreadComposer({
     }
   };
 
-  // Escape before the agent started on the message stops the turn and puts the
-  // message, files included, back into the box to edit and send again.
+  // Escape soon after sending stops the turn, takes the message out of the
+  // thread and puts it, files included, back into the box to edit and send again.
   const recall = useRef<() => boolean>(() => false);
   recall.current = () => {
-    if (!lastSent || !untouchedReply(timeline, lastSent)) return false;
+    const asked = lastSent && recallableItem(timeline, lastSent, Date.now());
+    if (!lastSent || !asked) return false;
     const { text, files: held } = lastSent;
     lastSent = null;
     setPaused(true);
+    if (activeSessionId) useRecalledMessages.getState().hide(activeSessionId, asked.id);
     void useThreadChatStore.getState().cancel();
     const current = drafts.get(threadKey) ?? "";
     setValue(current.trim() ? `${text}\n${current}` : text);

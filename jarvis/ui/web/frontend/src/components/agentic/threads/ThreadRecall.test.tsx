@@ -148,9 +148,65 @@ describe("Escape takes back a message the agent has not started on", () => {
     expect(screen.getByTestId("chat-attachment-shot.png")).toBeTruthy();
   });
 
-  it("leaves the message alone once the agent started thinking", async () => {
+  it("takes the message out of the thread, and it stays out once the stopped turn closes", async () => {
+    await sendWithShot("fix the login");
+    expect(screen.getAllByTestId("thread-user-message")).toHaveLength(2);
+
+    await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
+    feed([["turn_finished", { turn_id: "t1", status: "cancelled", duration_ms: 10 }]]);
+
+    expect(screen.getAllByTestId("thread-user-message")).toHaveLength(1);
+    expect(screen.getAllByTestId("thread-turn")).toHaveLength(1);
+  });
+
+  it("still takes it back while the agent thinks inside the first seconds", async () => {
+    const box = await sendWithShot("fix the login");
+    feed([["reasoning_started", { turn_id: "t1" }], ["text_delta", { turn_id: "t1", text: "Looking" }]]);
+
+    await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
+
+    expect(api.cancelAgentChatTurn).toHaveBeenCalledWith("s1");
+    expect(box.value).toBe("fix the login");
+    expect(screen.getByTestId("chat-attachment-shot.png")).toBeTruthy();
+  });
+
+  it("takes it back before the agent's turn even started", async () => {
+    useIdeThreadsStore.setState({ selection: { projectId: "p1", sessionId: "s1" } });
+    api.fetchAgentChatSessions.mockResolvedValue([sessionRow()]);
+    render(<ThreadView onScreen />);
+    await waitFor(() => expect(useThreadChatStore.getState().activeSessionId).toBe("s1"));
+    feed([["user_message", { text: "earlier" }], ["turn_started", { turn_id: "t0", provider: "claude-api", model: "", effort: "high", runner: "claude-cli" }],
+      ["turn_finished", { turn_id: "t0", status: "done", duration_ms: 10 }]]);
+    const box = screen.getByTestId("thread-composer-input") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "rename it" } });
+    await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
+    await waitFor(() => expect(api.sendAgentChatMessage).toHaveBeenCalled());
+    feed([["user_message", { text: "rename it" }]]);
+
+    await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
+
+    expect(box.value).toBe("rename it");
+    expect(screen.getAllByTestId("thread-user-message")).toHaveLength(1);
+  });
+
+  it("leaves the message alone once the agent thought past the window", async () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     const box = await sendWithShot("fix the login");
     feed([["reasoning_started", { turn_id: "t1" }]]);
+    clock.mockReturnValue(now + 16_000);
+
+    await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
+    clock.mockRestore();
+
+    expect(api.cancelAgentChatTurn).not.toHaveBeenCalled();
+    expect(box.value).toBe("");
+    expect(screen.getAllByTestId("thread-user-message")).toHaveLength(2);
+  });
+
+  it("leaves the message alone once the agent ran a tool", async () => {
+    const box = await sendWithShot("fix the login");
+    feed([["tool_call", { turn_id: "t1", call_id: "c1", name: "Bash", input: { command: "ls" } }]]);
 
     await act(async () => { fireEvent.keyDown(window, { key: "Escape" }); });
 
