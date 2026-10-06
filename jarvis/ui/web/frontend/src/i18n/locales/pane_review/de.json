@@ -1,6 +1,6 @@
 {
   "pane_review": {
-    "title": "Änderungen prüfen: {name}",
+    "title": "Änderungen prüfen: {pane}",
     "description_pane": "Jede Datei, die dieser Agent geändert hat, committet oder nicht, verglichen mit dem Code vor seiner ersten Änderung.",
     "description_since": "Jede Datei, die dieser Agent geändert hat, committet oder nicht, verglichen mit dem Code vor seiner ersten Änderung ({time}).",
     "description_uncommitted": "Jede Datei, die dieser Agent geändert und noch nicht committet hat.",
@@ -40,6 +40,7 @@
     },
     "committed": "Committet",
     "pending": "Nicht committet",
-    "generated_hidden": "+ {count} generierte Dateien (Build-Ausgabe), nicht aufgelistet"
+    "generated_hidden": "+ {count} generierte Dateien (Build-Ausgabe), nicht aufgelistet",
+    "editor_badge": "Änderungen von {pane}"
   }
 }

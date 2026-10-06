@@ -167,6 +167,17 @@ export function PaneChangesDialog({
   // A worktree's files are relative to that worktree, not to the workspace the
   // editor opens files in, so only the shared folder offers "Open in editor".
   const canOpen = !folder;
+  const openable = (file: ReviewFile) => canOpen && !file.is_directory && file.status !== "deleted";
+  // The editor's diff compares against the same base as this review, so work
+  // the agent already committed is still marked there.
+  const openInEditor = (file: ReviewFile) => {
+    onOpenChange(false);
+    openFile(workspaceId, file.path, {
+      mode: "diff",
+      preview: false,
+      base: changes?.base ? { ref: changes.base, label: fill(t("pane_review.editor_badge"), { pane: title }) } : undefined,
+    });
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -196,7 +207,7 @@ export function PaneChangesDialog({
               <div className="mb-1 flex items-center gap-2">
                 <FileDiff className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
                 <Dialog.Title className="truncate font-display text-base font-semibold tracking-tight text-foreground">
-                  {fill(t("pane_review.title"), { name: title })}
+                  {fill(t("pane_review.title"), { pane: title })}
                 </Dialog.Title>
               </div>
               <Dialog.Description className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted-foreground">
@@ -309,8 +320,9 @@ export function PaneChangesDialog({
                     <li key={file.path}>
                       <button
                         type="button"
-                        onClick={() => jumpTo(file.path)}
-                        title={file.path}
+                        onClick={() => (openable(file) ? openInEditor(file) : jumpTo(file.path))}
+                        title={openable(file) ? `${file.path} — ${t("pane_review.open_editor")}` : file.path}
+                        data-testid="pane-changes-list-item"
                         className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
                       >
                         <FileTypeIcon path={file.path} />
@@ -344,12 +356,7 @@ export function PaneChangesDialog({
                     diff={diffs[file.path]}
                     collapsed={collapsed.has(file.path)}
                     onToggle={() => toggle(file.path)}
-                    onOpen={canOpen && !file.is_directory && file.status !== "deleted"
-                      ? () => {
-                        onOpenChange(false);
-                        openFile(workspaceId, file.path, { mode: "diff", preview: false });
-                      }
-                      : undefined}
+                    onOpen={openable(file) ? () => openInEditor(file) : undefined}
                     cardRef={(node) => {
                       if (node) cards.current.set(file.path, node);
                       else cards.current.delete(file.path);
@@ -401,16 +408,26 @@ function FileCard({
           <ChevronDown className={cn("h-4 w-4 transition-transform", collapsed && "-rotate-90")} aria-hidden="true" />
         </button>
         <FileTypeIcon path={file.path} />
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 font-mono text-xs" title={file.path}>
+        <button
+          type="button"
+          disabled={!onOpen}
+          onClick={onOpen}
+          data-testid="pane-changes-file-name"
+          title={onOpen ? `${file.path} — ${t("pane_review.open_editor")}` : file.path}
+          className="group/name flex min-w-0 flex-1 items-baseline gap-1.5 rounded text-left font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-default"
+        >
           {parentPath(file.path) && (
             <span dir="rtl" className="min-w-0 shrink-[999] truncate text-left text-muted-foreground">
               <bdi dir="ltr">{parentPath(file.path)}/</bdi>
             </span>
           )}
-          <span className={cn("min-w-0 shrink-0 truncate text-foreground", file.status === "deleted" && "line-through decoration-destructive/60")}>
+          <span className={cn(
+            "min-w-0 shrink-0 truncate text-foreground group-enabled/name:group-hover/name:underline",
+            file.status === "deleted" && "line-through decoration-destructive/60",
+          )}>
             {baseName(file.path)}
           </span>
-        </span>
+        </button>
         <span className={cn("shrink-0 text-[11px] font-medium", STATUS_TONE[file.status])}>
           {t(`pane_review.status.${file.status}`)}
         </span>

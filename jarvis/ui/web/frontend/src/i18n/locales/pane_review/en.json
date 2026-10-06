@@ -1,6 +1,6 @@
 {
   "pane_review": {
-    "title": "Review changes: {name}",
+    "title": "Review changes: {pane}",
     "description_pane": "Every file this agent changed, committed or not, compared with the code before its first edit.",
     "description_since": "Every file this agent changed, committed or not, compared with the code before its first edit ({time}).",
     "description_uncommitted": "Every file this agent changed that is not committed yet.",
@@ -40,6 +40,7 @@
     },
     "committed": "Committed",
     "pending": "Not committed",
-    "generated_hidden": "+ {count} generated files (build output), not listed"
+    "generated_hidden": "+ {count} generated files (build output), not listed",
+    "editor_badge": "Changes by {pane}"
   }
 }

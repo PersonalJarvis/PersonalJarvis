@@ -73,6 +73,19 @@ def test_only_narrows_to_named_files_before_the_cap(
     assert git_changes.workspace_changes(repo, only=set()).files == []
 
 
+def test_head_text_reads_a_named_commit_and_refuses_anything_else(repo: Path) -> None:
+    first = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (repo / "top.txt").write_text("later" + chr(10), encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "later")
+
+    assert git_changes.head_text(repo, "top.txt") == "later" + chr(10)
+    assert git_changes.head_text(repo, "top.txt", first) == "root" + chr(10)
+    with pytest.raises(ValueError):
+        git_changes.head_text(repo, "top.txt", "HEAD~1")
+
+
 def test_a_sub_folder_workspace_sees_only_its_own_changes_relative_to_itself(repo: Path) -> None:
     (repo / "app" / "main.py").write_text("changed\n", encoding="utf-8")
     (repo / "top.txt").write_text("changed\n", encoding="utf-8")

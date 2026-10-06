@@ -167,6 +167,7 @@ export default function EditorSurface({
   }, [tab.key, tab.fileKey, tab.mode, ready]);
 
   // Diff tabs: the committed text on the left, the live (editable) buffer on the right.
+  const diffBaseRef = useCodeEditorStore((state) => state.diffBases[tab.fileKey]?.ref ?? "");
   useEffect(() => {
     if (tab.mode !== "diff" || !ready) return;
     let alive = true;
@@ -197,7 +198,7 @@ export default function EditorSurface({
       alive = false;
       for (const watcher of watchers) watcher.dispose();
     };
-  }, [tab.key, tab.fileKey, tab.mode, ready]);
+  }, [tab.key, tab.fileKey, tab.mode, ready, diffBaseRef]);
 
   // "Open at line": a Ctrl+click on `file.py:42` in a terminal, or Quick Open's `name:42`.
   useEffect(() => {

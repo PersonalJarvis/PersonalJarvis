@@ -76,6 +76,7 @@ export function CodeEditorStage({
   const visible = useCodeEditorStore((state) => state.visible);
   const quickOpen = useCodeEditorStore((state) => state.quickOpen);
   const files = useCodeEditorStore((state) => state.files);
+  const diffBases = useCodeEditorStore((state) => state.diffBases);
   const [pending, setPending] = useState<PendingClose | null>(null);
   const [menu, setMenu] = useState<EditorTab | null>(null);
   // Tabs whose Markdown, HTML or SVG is shown rendered (Ctrl+Shift+V).
@@ -325,7 +326,7 @@ export function CodeEditorStage({
                 <span className={cn("truncate", index === segments.length - 1 && "text-foreground")}>{segment}</span>
               </span>
             ))}
-            {activeTab.mode === "diff" && <span className="ml-1.5 shrink-0 rounded bg-secondary px-1.5 py-px text-[11px]">{t("code_editor.diff_badge")}</span>}
+            {activeTab.mode === "diff" && <span className="ml-1.5 shrink-0 rounded bg-secondary px-1.5 py-px text-[11px]">{diffBases[activeTab.fileKey]?.label ?? t("code_editor.diff_badge")}</span>}
           </nav>
           {activeTab.mode === "edit" && activeFile?.status === "ready" && renderKindOf(activeTab.path) && (
             <ActionButton

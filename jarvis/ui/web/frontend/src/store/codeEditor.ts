@@ -75,8 +75,18 @@ interface ClosedTab {
   mode: EditorMode;
 }
 
+/** What a diff tab compares against instead of the last commit. */
+export interface DiffBase {
+  /** A commit id. */
+  ref: string;
+  /** Shown in the diff badge in place of "Changes since the last commit". */
+  label: string;
+}
+
 export interface OpenOptions {
   mode?: EditorMode;
+  /** Diff only: compare against this commit (a pane review's base); omitted = the last commit. */
+  base?: DiffBase;
   /** Single-click opens replace each other; false keeps the tab. */
   preview?: boolean;
   line?: number;
@@ -95,6 +105,8 @@ interface CodeEditorState {
   cursor: CursorInfo | null;
   reveal: RevealRequest | null;
   closed: ClosedTab[];
+  /** Per file: the commit its diff tab compares against, when it is not the last commit. */
+  diffBases: Record<string, DiffBase>;
   openFile: (workspaceId: string, path: string, options?: OpenOptions) => void;
   closeTab: (key: string) => void;
   closeTabs: (keys: string[]) => void;
@@ -170,6 +182,7 @@ export const useCodeEditorStore = create<CodeEditorState>((set, get) => ({
   cursor: null,
   reveal: null,
   closed: [],
+  diffBases: {},
 
   openFile: (workspaceId, path, options = {}) => {
     const mode = options.mode ?? "edit";
@@ -199,12 +212,21 @@ export const useCodeEditorStore = create<CodeEditorState>((set, get) => ({
         options.line != null
           ? { fileKey, line: options.line, column: options.column ?? 1, length: options.length ?? 0, nonce: ++revealNonce }
           : state.reveal;
+      // A diff opened from a pane review compares against that review's base;
+      // one opened anywhere else goes back to the last commit.
+      let diffBases = state.diffBases;
+      if (mode === "diff" && diffBases[fileKey]?.ref !== options.base?.ref) {
+        diffBases = { ...diffBases };
+        if (options.base) diffBases[fileKey] = options.base;
+        else delete diffBases[fileKey];
+      }
       return {
         tabs,
         files: prune(files, tabs),
         active: { ...state.active, [workspaceId]: key },
         visible: true,
         reveal,
+        diffBases,
       };
     });
   },

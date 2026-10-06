@@ -1,6 +1,6 @@
 {
   "pane_review": {
-    "title": "Revisar cambios: {name}",
+    "title": "Revisar cambios: {pane}",
     "description_pane": "Cada archivo que este agente cambió, con commit o sin él, comparado con el código antes de su primer cambio.",
     "description_since": "Cada archivo que este agente cambió, con commit o sin él, comparado con el código antes de su primer cambio ({time}).",
     "description_uncommitted": "Cada archivo que este agente cambió y que aún no tiene commit.",
@@ -40,6 +40,7 @@
     },
     "committed": "Con commit",
     "pending": "Sin commit",
-    "generated_hidden": "+ {count} archivos generados (salida de compilación), no listados"
+    "generated_hidden": "+ {count} archivos generados (salida de compilación), no listados",
+    "editor_badge": "Cambios de {pane}"
   }
 }

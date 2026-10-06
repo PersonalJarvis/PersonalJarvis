@@ -18,6 +18,7 @@ that has git at all, and every call is bounded:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -319,15 +320,25 @@ def _parse_unified(text: str) -> tuple[list[DiffHunk], int, int, bool, bool]:
     return hunks, added, removed, False, truncated
 
 
-def head_text(folder: str | Path, path: str) -> str | None:
-    """One file's text as of the last commit; None when git has no copy of it."""
+#: A commit id a caller may name instead of HEAD.
+_COMMIT_ID = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def head_text(folder: str | Path, path: str, ref: str = "") -> str | None:
+    """One file's text as of the last commit, or of commit ``ref``; None when git has no copy.
+
+    ``ref`` is a commit id (a pane review compares against the code before an
+    agent's first change); anything else is refused.
+    """
     rel = normalize_workspace_path(folder, path)
     root = Path(folder).expanduser()
+    if ref and not _COMMIT_ID.match(ref):
+        raise ValueError("That is not a commit id.")
     if not _has_head(root):
         return None
     # "./" makes git read the path relative to the workspace folder, which may
     # sit below the repository root.
-    result = _git(["show", f"HEAD:./{rel}"], root)
+    result = _git(["show", f"{ref or 'HEAD'}:./{rel}"], root)
     if result is None or result.returncode != 0:
         return None
     # The editor shows a BOM file's text without its BOM; so must the diff.

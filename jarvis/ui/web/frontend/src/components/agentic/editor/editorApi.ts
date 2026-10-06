@@ -112,9 +112,10 @@ export async function saveTextFile(workspaceId: string, request: SaveRequest): P
   return (await res.json()) as TextFile;
 }
 
-/** The file's text at the last commit; null for a file git does not know. */
-export async function fetchHeadText(workspaceId: string, path: string): Promise<string | null> {
-  const answer = await send<{ text: string | null }>(`${base(workspaceId)}/head-text?${query(path)}`);
+/** The file's text at the last commit, or at commit `ref`; null for a file git does not know. */
+export async function fetchHeadText(workspaceId: string, path: string, ref = ""): Promise<string | null> {
+  const params = new URLSearchParams(ref ? { path, ref } : { path }).toString();
+  const answer = await send<{ text: string | null }>(`${base(workspaceId)}/head-text?${params}`);
   return answer.text;
 }
 

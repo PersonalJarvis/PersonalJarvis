@@ -2265,14 +2265,17 @@ async def save_workspace_text_file(
     "/workspaces/{workspace_id}/head-text",
     summary="A workspace file's text at the last commit",
 )
-async def get_workspace_head_text(workspace_id: str, path: str) -> dict[str, object]:
+async def get_workspace_head_text(
+    workspace_id: str, path: str, ref: str = ""
+) -> dict[str, object]:
     """The committed text the editor's diff view compares against.
 
+    ``ref`` names another commit than HEAD — the base of a pane's review.
     ``text`` is null for a file git does not know (new, or not a repository).
     """
     folder = _workspace_folder(workspace_id)
     try:
-        text = await asyncio.to_thread(git_changes.head_text, folder, path)
+        text = await asyncio.to_thread(git_changes.head_text, folder, path, ref)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "text": text}

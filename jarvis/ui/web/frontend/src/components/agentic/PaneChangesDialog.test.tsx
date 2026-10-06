@@ -72,7 +72,7 @@ beforeEach(() => {
         : url.includes("/changes") ? CHANGES : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }));
-  useCodeEditorStore.setState({ tabs: [], active: {}, files: {}, visible: false, reveal: null, closed: [] });
+  useCodeEditorStore.setState({ tabs: [], active: {}, files: {}, visible: false, reveal: null, closed: [], diffBases: {} });
 });
 
 afterEach(() => {
@@ -169,6 +169,19 @@ describe("PaneChangesDialog", () => {
     fireEvent.click(await within(card).findByLabelText("Open in the editor"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(useCodeEditorStore.getState().tabs.map((tab) => tab.path)).toEqual(["src/app.ts"]);
+  });
+
+  it("opens a file in the editor when its name or its row in the list is clicked, diffed against the review base", async () => {
+    const onOpenChange = vi.fn();
+    render(<PaneChangesDialog open onOpenChange={onOpenChange} workspaceId="w1" pane="T1" />);
+    fireEvent.click(await screen.findByTestId("pane-changes-file-name"));
+    const state = useCodeEditorStore.getState();
+    expect(state.tabs.map((tab) => [tab.path, tab.mode])).toEqual([["src/app.ts", "diff"]]);
+    expect(Object.values(state.diffBases)).toEqual([{ ref: "abc1234", label: "Changes by T1" }]);
+    useCodeEditorStore.setState({ tabs: [], active: {}, files: {}, diffBases: {} });
+    fireEvent.click(screen.getByTestId("pane-changes-list-item"));
+    expect(useCodeEditorStore.getState().tabs.map((tab) => tab.path)).toEqual(["src/app.ts"]);
+    expect(onOpenChange).toHaveBeenCalledTimes(2);
   });
 
   it("folds a file's diff away", async () => {
