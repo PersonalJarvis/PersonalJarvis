@@ -70,6 +70,31 @@ what to change. A card nobody answered closes when the person sends another
 message instead. Cards are rebuilt from the session's event log, so they
 survive reopening the thread and restarting the app.
 
+## Restarts do not stop a thread
+
+A thread's coding CLI does not run as a child of the app. It runs in the
+turn host (`jarvis/agent_chat/turn_host.py`), a small background process
+that the app starts on first use and talks to over a loopback socket. The
+terminal grid keeps its agents in the PTY host the same way. The host keeps
+every line the CLI prints and streams them to the app.
+
+- **Restart, update, crash:** the CLI keeps working. The next app start
+  attaches again. It feeds the lines the old app already handled back into
+  the translator without showing them twice, then carries the turn on live:
+  new output, approval cards, the real ending.
+- **Quit:** the turn stays open while the CLI works. A turn that ends while
+  no app is attached is written to a spool folder, and the next start shows
+  its answer.
+- **Stop** ends the CLI as before.
+- **Another app process takes over** (a second start of the same instance):
+  the old process hands its turns over without ending them.
+
+Only thread turns run there. A turn running as Jarvis, a goal turn and a
+helper turn without tools need state inside the app and stay its children.
+A frozen build cannot start the host and keeps the old behaviour. So does
+any process that is not the desktop app or the web launcher, such as tests
+and scripts. Logs: `logs/turn_host.log` in the Jarvis data folder.
+
 ## Platforms
 
 Nothing in the thread layout is OS-specific: paths are compared

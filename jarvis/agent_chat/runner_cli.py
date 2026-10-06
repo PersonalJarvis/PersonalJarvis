@@ -2957,6 +2957,67 @@ async def run_cli_turn(
     return outcome.vendor_session
 
 
+async def resume_hosted_cli_turn(handle: TurnHandle, proc: Any) -> str | None:
+    """Carry on a thread turn whose CLI kept running in the turn host.
+
+    The app restarted while the turn ran; the CLI did not. ``proc`` is the
+    reattached :class:`~jarvis.agent_chat.turn_host_client.HostedCli` (or a
+    spooled one that ended meanwhile). Its ``meta`` holds what the plan said
+    at spawn; the lines the old app already handled rebuild the translator,
+    every later one is emitted, and the turn ends with its real outcome.
+    Returns the vendor session id to persist, like :func:`run_cli_turn`.
+    """
+    meta = dict(getattr(proc, "meta", {}) or {})
+    runner = str(meta.get("runner") or "")
+    shape = str(meta.get("shape") or "text")
+    started_at = float(meta.get("started_at") or time.time())
+    codex_home = str(meta.get("codex_home") or "")
+    plan = CliPlan(
+        argv=[],
+        env={"CODEX_HOME": codex_home} if codex_home else {},
+        stdin_text=None,
+        shape=shape if shape in _SHAPES else "text",
+        vendor_session=str(meta.get("vendor_session") or "") or None,
+        keep_stdin=bool(meta.get("keep_stdin")),
+        # Only its presence matters from here on: control requests are answered.
+        control_init="" if meta.get("control") else None,
+        discover=_kimi_session_after if meta.get("discover") else None,
+    )
+    elapsed = max(0.0, time.time() - started_at)
+    log.info(
+        "agent chat %s: carrying on a %s turn the turn host kept running (%.0f s old)",
+        handle.turn_id,
+        runner,
+        elapsed,
+    )
+    outcome = await _drive_cli(
+        handle,
+        proc,
+        plan,
+        runner,
+        cwd=Path(str(meta.get("cwd") or handle.session.cwd or Path.home())),
+        started_at=started_at,
+        placement=None,
+        tree=None,
+        bridge=None,
+        timeout_s=max(60.0, _TURN_TIMEOUT_S - elapsed),
+    )
+    await handle.emit(
+        make_event(
+            "turn_finished",
+            {
+                "turn_id": handle.turn_id,
+                "status": outcome.status,
+                "duration_ms": int((time.time() - started_at) * 1000),
+                "usage": outcome.usage,
+                "error": outcome.error,
+                "cost_usd": outcome.cost_usd,
+            },
+        )
+    )
+    return outcome.vendor_session
+
+
 def _agy_effective_effort(model: str, effort: str) -> str:
     """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
     try:
@@ -2977,14 +3038,9 @@ async def _run_cli_once(
     bridge: Any | None = None,
 ) -> _Outcome:
     session = handle.session
-    chat_ref = approval_ref(session.session_id)
     cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
     planner = _PLANNERS[runner]
-    status = "done"
-    error_text: str | None = None
-    usage: dict[str, int] = {}
-    cost_usd: float | None = None
     vendor_session: str | None = None
     from jarvis.society.remote import placement_for_session
 
@@ -3122,27 +3178,135 @@ async def _run_cli_once(
         except RemoteCliUnavailable as exc:
             return _Outcome("error", str(exc), {}, None, None)
     else:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *plan.argv,
+        hosted = None
+        if tree is None and _survives_restart(handle, identity):
+            from jarvis.agent_chat import turn_host_client
+
+            hosted = await turn_host_client.spawn(
+                plan.argv,
                 cwd=str(cwd),
                 env=plan.env,
-                stdin=asyncio.subprocess.PIPE
-                if plan.stdin_text is not None
-                else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-                start_new_session=tree is not None and os.name != "nt",
-                limit=_READLINE_LIMIT,
+                # The host writes the handshake and the prompt itself, so a
+                # restart between spawn and feed cannot leave the CLI waiting.
+                stdin=(
+                    (plan.control_init or "") + plan.stdin_text
+                    if plan.stdin_text is not None
+                    else None
+                ),
+                keep_stdin=plan.keep_stdin,
+                meta=_hosted_meta(handle, runner, plan, cwd, started_at),
             )
-            if tree is not None:
-                tree.assign(proc.pid)
-        except (OSError, ValueError) as exc:
-            if tree is not None:
-                tree.close()
-            return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
+        if hosted is not None:
+            proc = hosted
+        else:
+            proc = await _spawn_child(plan, cwd, tree, runner)
+            if isinstance(proc, _Outcome):
+                return proc
+    return await _drive_cli(
+        handle,
+        proc,
+        plan,
+        runner,
+        cwd=cwd,
+        started_at=started_at,
+        placement=placement,
+        tree=tree,
+        bridge=bridge,
+    )
 
+
+def _survives_restart(handle: TurnHandle, identity: Any) -> bool:
+    """Whether this turn's CLI runs in the turn host and outlives an app restart.
+
+    Threads in the Agentic IDE (surface ``agent``) only: their CLI is a plain
+    coding agent whose whole turn is its own process. A turn running AS
+    Jarvis (``identity``), a goal or a tool-less helper turn depends on state
+    that lives in this process (MCP tool context, approval bridge, goal
+    control) and would lose it across a restart, so it stays a child here.
+    """
+    session = handle.session
+    return (
+        getattr(session, "surface", "") == "agent"
+        and identity is None
+        and not getattr(handle, "goal_turn", False)
+        and not getattr(handle, "tools_disabled", False)
+        and not getattr(handle, "gateway_only", False)
+    )
+
+
+def _hosted_meta(
+    handle: TurnHandle, runner: str, plan: CliPlan, cwd: Path, started_at: float
+) -> dict[str, Any]:
+    """What a hosted turn needs to be carried on after an app restart."""
+    return {
+        "session_id": handle.session.session_id,
+        "turn_id": handle.turn_id,
+        "runner": runner,
+        "shape": plan.shape,
+        "keep_stdin": plan.keep_stdin,
+        "control": plan.control_init is not None,
+        "vendor_session": plan.vendor_session,
+        "discover": plan.discover is not None,
+        "codex_home": plan.env.get("CODEX_HOME", ""),
+        "cwd": str(cwd),
+        "started_at": started_at,
+    }
+
+
+async def _spawn_child(
+    plan: CliPlan, cwd: Path, tree: Any, runner: str
+) -> asyncio.subprocess.Process | _Outcome:
+    """Start the CLI as this process's own child (no turn host)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *plan.argv,
+            cwd=str(cwd),
+            env=plan.env,
+            stdin=asyncio.subprocess.PIPE
+            if plan.stdin_text is not None
+            else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            start_new_session=tree is not None and os.name != "nt",
+            limit=_READLINE_LIMIT,
+        )
+        if tree is not None:
+            tree.assign(proc.pid)
+    except (OSError, ValueError) as exc:
+        if tree is not None:
+            tree.close()
+        return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
+    return proc
+
+
+async def _drive_cli(
+    handle: TurnHandle,
+    proc: Any,
+    plan: CliPlan,
+    runner: str,
+    *,
+    cwd: Path,
+    started_at: float,
+    placement: Any,
+    tree: Any,
+    bridge: Any | None,
+    timeout_s: float = _TURN_TIMEOUT_S,
+) -> _Outcome:
+    """Read a started CLI to its end: translate, answer, and judge the outcome.
+
+    ``proc`` is a child process, a remote one, or a CLI in the turn host
+    (``turn_host_client.HostedCli``). A hosted CLI reattached after an app
+    restart replays the lines this turn already handled first
+    (``stdout.replaying``): they rebuild the translator's state and emit
+    nothing, so the timeline carries on from the first line it has not seen.
+    """
+    session = handle.session
+    chat_ref = approval_ref(session.session_id)
+    status = "done"
+    error_text: str | None = None
+    vendor_session = plan.vendor_session
+    hosted = bool(getattr(proc, "hosted", False))
     make_state, translate = _SHAPES[plan.shape]
     state: Any = make_state(handle.turn_id, vendor_session)
     # Lines that are not the CLI's JSON — a banner, a warning, the whole
@@ -3163,8 +3327,10 @@ async def _run_cli_once(
                 stderr_tail.append(text)
                 del stderr_tail[:-40]
 
-    async def _say_plain(line: str) -> None:
+    async def _say_plain(line: str, *, replay: bool = False) -> None:
         plain.append(line + "\n")
+        if replay:
+            return
         await handle.emit(
             make_event(
                 "text_delta",
@@ -3178,18 +3344,24 @@ async def _run_cli_once(
             raw = await proc.stdout.readline()
             if not raw:
                 return
+            # A line this turn handled before an app restart: rebuild state only.
+            replay = hosted and bool(getattr(proc.stdout, "replaying", False))
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
             if plan.shape == "text":
-                await _say_plain(line)
+                await _say_plain(line, replay=replay)
                 continue
             try:
                 obj = json.loads(line)
             except ValueError:
-                await _say_plain(line)
+                await _say_plain(line, replay=replay)
                 continue
             if not isinstance(obj, dict):
+                continue
+            if replay:
+                if obj.get("type") not in ("control_request", "control_response"):
+                    translate(obj, state)
                 continue
             if plan.control_init is not None:
                 if obj.get("type") == "control_request":
@@ -3343,7 +3515,8 @@ async def _run_cli_once(
         return build
 
     async def _feed_stdin() -> None:
-        if proc.stdin is None:
+        if proc.stdin is None or hosted:
+            # The turn host wrote the handshake and the prompt at spawn.
             return
         try:
             # The control-protocol handshake goes FIRST, on the same stdin, so
@@ -3376,14 +3549,19 @@ async def _run_cli_once(
         if getattr(handle, "goal_turn", False):
             await asyncio.gather(pump, drain, feeder)
         else:
-            await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=_TURN_TIMEOUT_S)
+            await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=timeout_s)
         await proc.wait()
     except TimeoutError:
         _kill(proc)
         status = "error"
         error_text = f"{runner} did not finish within {int(_TURN_TIMEOUT_S)} s."
     except asyncio.CancelledError:
-        _kill(proc)
+        if hosted and not handle.cancel.is_set():
+            # The app is going away, nobody pressed Stop: the CLI keeps working
+            # in the turn host and the next app start carries the turn on.
+            proc.detach()
+        else:
+            _kill(proc)
         raise
     finally:
         watcher.cancel()
@@ -3393,13 +3571,23 @@ async def _run_cli_once(
         await asyncio.gather(watcher, pump, drain, feeder, return_exceptions=True)
         if tree is not None:
             tree.close()
-        if proc.returncode is None:
+        if proc.returncode is None and not getattr(proc, "detached", False):
             _kill(proc)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
                 log.warning("Agent CLI did not reap after cancellation")
 
+    if hosted and getattr(proc, "handed_over", False):
+        from jarvis.agent_chat.turn_host_client import TurnHandedOver
+
+        raise TurnHandedOver(handle.turn_id)
+    if hosted:
+        # Handled to the end: the host (or its spool file) may drop the lines.
+        proc.release()
+        if getattr(proc, "host_lost", False) and not handle.cancel.is_set():
+            status = "error"
+            error_text = "The process that ran this agent stopped unexpectedly."
     if handle.cancel.is_set():
         status = "cancelled"
     elif status == "done":
