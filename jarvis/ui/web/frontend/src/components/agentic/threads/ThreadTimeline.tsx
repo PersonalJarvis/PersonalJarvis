@@ -8,7 +8,7 @@ import { readableOutput, traceDuration, type Call } from "@/components/agentchat
 import { useT } from "@/i18n";
 import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
-import { buildThreadRows, isFailed, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
+import { buildThreadRows, isFailed, thoughtGist, type ThreadRow, type WorkGroup, type WorkItem } from "./threadWork";
 
 /**
  * A thread's conversation: the person's messages on the right, the agent's
@@ -226,9 +226,25 @@ function CallRow({ call, stamp, grouped = false, onOpenChange }: { call: Call; s
 
 const THOUGHT_PROSE = cn(PROSE, "text-foreground-secondary dark:text-foreground-secondary prose-p:text-foreground-secondary prose-li:text-foreground-secondary");
 
-/** A thought in the agent's own words: a paragraph between its work, a step quieter than the answer. */
+/**
+ * A thought between the agent's work, read at a glance: one short line — its
+ * heading or first sentence — a step quieter than the answer. A click opens
+ * the whole text below; nothing long ever stands in the thread unasked.
+ */
 function ThoughtView({ text }: { text: string }) {
-  return <div className={THOUGHT_PROSE} data-testid="thread-thought"><ChatMarkdown text={text} /></div>;
+  const [open, setOpen] = useState(false);
+  const gist = useMemo(() => thoughtGist(text), [text]);
+  const more = gist !== text.trim();
+  return <div className="min-w-0" data-testid="thread-thought">
+    {more
+      ? <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}
+        className="group/thought block w-full rounded-md py-1 text-left text-base leading-6 text-foreground-secondary transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        {gist}
+        <ChevronRight aria-hidden className={cn("ml-1 inline h-3.5 w-3.5 align-[-2px] text-muted-foreground opacity-0 transition duration-200 group-hover/thought:opacity-70 group-focus-visible/thought:opacity-70", open && "rotate-90 opacity-70")} />
+      </button>
+      : <p className="m-0 py-1 text-base leading-6 text-foreground-secondary">{gist}</p>}
+    {open && <div className={cn(THOUGHT_PROSE, "border-l border-border pl-3 text-sm")}><ChatMarkdown text={text} /></div>}
+  </div>;
 }
 
 /** The wordless thought the running turn is having: one live "Thinking" step. */

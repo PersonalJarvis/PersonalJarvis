@@ -44,9 +44,11 @@ describe("thread work log", () => {
     expect(screen.getByTestId("thread-working").textContent).toMatch(/^Working for /);
   });
 
-  it("writes a live thought out as it comes in", () => {
-    show(turn([thought("r1", "Reading the config.\n\nNow the router.", true)], "running"));
-    expect(screen.getByText("Reading the config.")).toBeTruthy();
+  it("shows a thought as one short line that opens to its full text", () => {
+    show(turn([thought("r1", "Reading the config. It has three sections.\n\nNow the router.", true)], "running"));
+    const line = screen.getByRole("button", { name: "Reading the config." });
+    expect(screen.queryByText("Now the router.")).toBeNull();
+    fireEvent.click(line);
     expect(screen.getByText("Now the router.")).toBeTruthy();
   });
 

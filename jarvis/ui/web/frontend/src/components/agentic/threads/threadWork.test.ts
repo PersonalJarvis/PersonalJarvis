@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/en.json";
 import type { ToolBlock, TurnBlock, TurnStatus } from "@/components/agentchat/reduce";
-import { buildThreadRows, type ThreadRow, type WorkGroup } from "./threadWork";
+import { buildThreadRows, GIST_MAX, thoughtGist, type ThreadRow, type WorkGroup } from "./threadWork";
 
 type Dict = Record<string, unknown>;
 const t = (key: string): string => {
@@ -83,5 +83,22 @@ describe("thread work groups", () => {
       tool("c2"),
     ]);
     expect(list.map((row) => row.kind)).toEqual(["work", "pending", "work"]);
+  });
+});
+
+describe("thought gist", () => {
+  it("reads a thought's heading as its gist", () => {
+    expect(thoughtGist("**Checking the build**\n\nI will run the tests first and then look at the logs.")).toBe("Checking the build");
+    expect(thoughtGist("## Planning the fix\nMore text.")).toBe("Planning the fix");
+  });
+
+  it("falls back to the first sentence without Markdown marks", () => {
+    expect(thoughtGist("I need to read `src/app.ts` first. Then the router.")).toBe("I need to read src/app.ts first.");
+  });
+
+  it("cuts a long sentence at a word", () => {
+    const gist = thoughtGist(`${"word ".repeat(60)}end.`);
+    expect(gist.length).toBeLessThanOrEqual(GIST_MAX + 1);
+    expect(gist.endsWith("word…")).toBe(true);
   });
 });
