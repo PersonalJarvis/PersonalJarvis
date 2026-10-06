@@ -70,6 +70,24 @@ what to change. A card nobody answered closes when the person sends another
 message instead. Cards are rebuilt from the session's event log, so they
 survive reopening the thread and restarting the app.
 
+## Threads a Jarvis agent starts
+
+A Jarvis agent can start a thread too ("let Opus 5.5 build this in the
+website project"). It picks the coding agent, model and folder the person
+named — looking into the folder first when it needs context — and writes the
+brief itself. The thread then appears under its project like any other; the
+agent's messages carry its name above the bubble, so the person sees exactly
+what it asked and what came back, and can step in at any time.
+
+The agent's own chat shows a line that opens the thread. When a turn the
+agent started finishes, asks a question, presents a plan or waits for an
+approval, the agent is woken with the result: it checks the work, answers the
+question or plan card, sends a follow-up, and tells the person the outcome.
+Approvals of the coding agent's own commands stay with the person. A turn the
+person types into the thread is theirs and wakes no agent. After 25 automatic
+updates for one thread the agent stops following it until the person writes
+in the agent's chat again.
+
 ## Restarts do not stop a thread
 
 A thread's coding CLI does not run as a child of the app. It runs in the
