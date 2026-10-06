@@ -273,8 +273,9 @@ def app_host_mode() -> Any:
     host_mode.reset()
 
 
+@pytest.mark.parametrize("built_in", ["event-loop", "route-worker-thread"])
 async def test_a_restarted_app_carries_on_the_thread_turn_the_host_kept(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_host_mode: Any
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, app_host_mode: Any, built_in: str
 ) -> None:
     monkeypatch.setattr(turn_host_client, "spool_dir", lambda: tmp_path / "spool")
     monkeypatch.setattr(turn_host_client, "_host_alive", lambda state: False)
@@ -297,10 +298,17 @@ async def test_a_restarted_app_carries_on_the_thread_turn_the_host_kept(
         )
     _spool_record(tmp_path, session_id=kept.session_id, turn_id=f"t-{kept.session_id}", acked=0)
 
-    svc = AgentChatService(AgentChatStore(db))
+    if built_in == "event-loop":
+        svc = AgentChatService(AgentChatStore(db))
+    else:
+        # The thread list is a plain ``def`` route: the framework builds the
+        # service in a worker thread, where no event loop is running.
+        import anyio.to_thread
+
+        svc = await anyio.to_thread.run_sync(lambda: AgentChatService(AgentChatStore(db)))
     # Held as running until the host was asked: no second CLI on the conversation.
     assert svc.is_running(kept.session_id) and svc.is_running(lost.session_id)
-    await svc._reattach_task
+    await svc.wait_reattached()
     run = svc._running.get(kept.session_id)
     if run is not None and run.task is not None:
         await asyncio.wait_for(run.task, timeout=10)

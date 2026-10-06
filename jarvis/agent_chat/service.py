@@ -76,6 +76,28 @@ _ORPHANED_TURN_ERROR: Final = (
 Subscriber = asyncio.Queue[dict[str, Any]]
 
 
+def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
+    """The app's event loop, and whether this code runs on it.
+
+    The service is built on first use, and the first use is often a plain
+    ``def`` route that the web framework runs in a worker thread, where no
+    loop is running. Finding no loop there sealed every thread turn the turn
+    host still held as "Jarvis restarted" (2026-10-06): the worker thread asks
+    the loop it was dispatched from instead.
+    """
+    try:
+        return asyncio.get_running_loop(), True
+    except RuntimeError:
+        pass
+    try:
+        from anyio.from_thread import run_sync
+
+        return run_sync(asyncio.get_running_loop), False
+    except Exception:  # noqa: BLE001 - not a framework worker: no loop to reach
+        log.debug("agent chat: built outside any event loop")
+        return None, False
+
+
 def _orphan_event(turn_id: str, started_ms: int, last_ms: int) -> dict[str, Any]:
     """The ``turn_finished`` that closes a turn a restart cut off."""
     return {
@@ -341,10 +363,7 @@ class AgentChatService:
         except sqlite3.Error:
             log.warning("agent chat: could not look for turns a restart left open", exc_info=True)
             return
-        try:
-            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        loop, on_loop = _app_loop()
         hosted_possible: bool | None = None
         deferred: list[tuple[str, str, int, int]] = []
         sealed = 0
@@ -370,9 +389,26 @@ class AgentChatService:
                 held = _Running(turn_id, asyncio.Event())
                 held.setup_task = None
                 self._running[session_id] = held
-            self._reattach_task: asyncio.Task[None] | None = loop.create_task(
-                self._reattach_hosted(deferred), name="agent-chat-reattach"
-            )
+            if on_loop:
+                self._reattach_task = loop.create_task(
+                    self._reattach_hosted(deferred), name="agent-chat-reattach"
+                )
+            else:
+                # Built in a worker thread (a sync route): hand the work to the
+                # app's loop, where every turn task of this service runs.
+                self._reattach_task = asyncio.run_coroutine_threadsafe(
+                    self._reattach_hosted(deferred), loop
+                )
+
+    async def wait_reattached(self) -> None:
+        """Until the restart's thread turns are reattached or sealed (tests, tools)."""
+        task = getattr(self, "_reattach_task", None)
+        if task is None:
+            return
+        if isinstance(task, asyncio.Future):
+            await task
+        else:
+            await asyncio.wrap_future(task)
 
     def _may_be_hosted(self, session_id: str) -> bool:
         session = self.store.get_session(session_id)
@@ -401,7 +437,9 @@ class AgentChatService:
             if delay:
                 await asyncio.sleep(delay)
             client = await turn_host_client.get_client(start=False)
-            if client is not None or not turn_host_client.may_hold_turns():
+            # Patience only for a host that is alive but busy; a spool alone
+            # is read at once.
+            if client is not None or not await asyncio.to_thread(turn_host_client.host_running):
                 break
         by_turn: dict[str, Any] = {}
         if client is not None:

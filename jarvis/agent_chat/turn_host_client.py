@@ -112,6 +112,11 @@ def _host_alive(state: dict[str, Any] | None) -> bool:
     return host_is_alive(state, module=MODULE)
 
 
+def host_running() -> bool:
+    """Is a turn host process alive for this user and boot (it may be busy)?"""
+    return host_available() and _host_alive(_read_state(_state_path()))
+
+
 def may_hold_turns() -> bool:
     """Is there anything to collect: a live host, or a turn it spooled to disk?
 
@@ -706,6 +711,7 @@ __all__ = [
     "detach_all",
     "get_client",
     "host_available",
+    "host_running",
     "live_turn_ids",
     "may_hold_turns",
     "read_spool",
