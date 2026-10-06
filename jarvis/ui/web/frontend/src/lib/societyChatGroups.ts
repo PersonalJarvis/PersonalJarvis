@@ -44,3 +44,29 @@ export async function updateSocietyChatGroup(groupId: string, name: string, memb
 export async function deleteSocietyChatGroup(groupId: string) {
   await json(`/api/society/chat-groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
 }
+
+/** A group's shared meeting: its transcript, and whether a round is answering. */
+export interface SocietyMeeting {
+  messages: { id: string; speaker: string; text: string }[];
+  running: boolean;
+  room: { state: string; settle_reason: string; next_speaker: string | null } | null;
+}
+
+const meetingUrl = (groupId: string) => `/api/society/chat-groups/${encodeURIComponent(groupId)}/meeting`;
+
+export function useSocietyMeeting(groupId: string) {
+  return useQuery({
+    queryKey: ["society", "meeting", groupId],
+    queryFn: () => json<SocietyMeeting>(meetingUrl(groupId)),
+    // Poll only while a round runs; an idle transcript changes only when someone sends.
+    refetchInterval: (query) => (query.state.data?.running ? 2_000 : false),
+  });
+}
+
+export async function sendSocietyMeeting(groupId: string, text: string) {
+  return json<SocietyMeeting>(meetingUrl(groupId), body({ text }));
+}
+
+export async function stopSocietyMeeting(groupId: string) {
+  return json<SocietyMeeting>(`${meetingUrl(groupId)}/stop`, { method: "POST" });
+}

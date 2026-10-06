@@ -1,95 +1,173 @@
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLayoutEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Send, Square } from "lucide-react";
+import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import { DictationButton } from "@/components/agentchat/DictationButton";
+import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
+import { ScrollToEndButton } from "@/components/ui/scroll-to-end-button";
+import { useStickToBottom } from "@/hooks/useStickToBottom";
 import { useT } from "@/i18n";
 import { societyDisplayName } from "@/lib/societyDisplayName";
+import {
+  sendSocietyMeeting,
+  stopSocietyMeeting,
+  useSocietyMeeting,
+  type SocietyChatGroup,
+  type SocietyMeeting,
+} from "@/lib/societyChatGroups";
+import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import type { SocietyAgent } from "../data";
-import type { SocietyChatGroup } from "@/lib/societyChatGroups";
-
-interface MeetingSnapshot {
-  messages: { id: string; speaker: string; text: string }[];
-  running: boolean;
-  room: { state: string; settle_reason: string; next_speaker: string | null } | null;
-}
+import { AgentSwatch } from "../AgentSwatch";
+import { CHAT_MEASURE, Prose, UserBubble } from "./AgentChatPanel";
 
 /** The server's room cap (jarvis/society/rooms.py MAX_MEMBERS), pinned by a parity test. */
 export const MEETING_MAX_MEMBERS = 6;
 
-async function request(url: string, text?: string, stop = false): Promise<MeetingSnapshot> {
-  const response = await fetch(url, text === undefined && !stop ? undefined : {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: stop ? undefined : JSON.stringify({ text }),
-  });
-  const result = await response.json();
-  if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : `HTTP ${response.status}`);
-  return result;
-}
-
+/**
+ * The group's shared meeting, drawn with the same pieces as an agent's own
+ * chat: the person's bubble, each member's reply as prose under its face, and
+ * the one composer. A message gives every member one turn, in order; reading
+ * the transcript never starts one.
+ */
 export function MeetingChat({ group, roster }: { group: SocietyChatGroup; roster: SocietyAgent[] }) {
   const t = useT();
   const client = useQueryClient();
-  const key = ["society", "meeting", group.group_id];
-  const url = `/api/society/chat-groups/${encodeURIComponent(group.group_id)}/meeting`;
-  // Poll only while a round runs; an idle transcript changes only when someone sends.
-  const query = useQuery({
-    queryKey: key, queryFn: () => request(url),
-    refetchInterval: (current) => current.state.data?.running ? 2000 : false,
-  });
-  const [text, setText] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
-  const end = useRef<HTMLDivElement>(null);
   const assistantName = useEventStore((s) => s.assistantName);
-  const name = (id: string) => {
-    if (id === "user") return t("society.meeting.you");
-    const agent = roster.find((a) => a.agentId === id);
+  const query = useSocietyMeeting(group.group_id);
+  const meeting = query.data;
+  const [value, setValue] = useState("");
+  const [pending, setPending] = useState(false);
+  const [problem, setProblem] = useState("");
+  const fieldRef = useRef<ComposerChipFieldHandle>(null);
+  const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  useLayoutEffect(follow, [follow, meeting?.messages.length, meeting?.running]);
+
+  const agentOf = (id: string) => roster.find((agent) => agent.agentId === id);
+  const nameOf = (id: string) => {
+    const agent = agentOf(id);
     return agent ? societyDisplayName(agent, assistantName) : id;
   };
-  useEffect(() => { end.current?.scrollIntoView?.({ block: "nearest" }); }, [query.data?.messages.length]);
-  const send = async (stop = false) => {
-    if (pending || (!stop && !text.trim())) return;
-    setPending(true); setError("");
-    try {
-      const result = await request(stop ? `${url}/stop` : url, stop ? undefined : text.trim(), stop);
-      client.setQueryData(key, result);
-      if (!stop) setText("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally { setPending(false); }
-  };
+  const members = group.members.map(agentOf).filter((agent): agent is SocietyAgent => Boolean(agent));
   const tooMany = group.members.length > MEETING_MAX_MEMBERS;
+  const running = Boolean(meeting?.running);
+  const canSend = !pending && !running && !tooMany && !query.isLoading && !query.isError;
+
+  const settle = (next: SocietyMeeting) => client.setQueryData(["society", "meeting", group.group_id], next);
+  const submit = async () => {
+    const draft = fieldRef.current?.getDraft().text ?? value;
+    const text = draft.trim();
+    if (!text || !canSend) return;
+    setPending(true);
+    setProblem("");
+    try {
+      settle(await sendSocietyMeeting(group.group_id, text));
+      // Only clear what was sent; words typed meanwhile stay.
+      if ((fieldRef.current?.getDraft().text ?? value) === draft) {
+        setValue("");
+        fieldRef.current?.clear();
+      }
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  };
+  const stop = async () => {
+    setPending(true);
+    setProblem("");
+    try {
+      settle(await stopSocietyMeeting(group.group_id));
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPending(false);
+    }
+  };
+  const dictation = useComposerDictation((next) => {
+    const text = typeof next === "function" ? next(value) : next;
+    setValue(text);
+    fieldRef.current?.setText(text);
+  }, () => void submit());
+
+  const messages = meeting?.messages ?? [];
+  const failed = meeting?.room?.state === "failed";
+  const alert = problem || (query.error ? String(query.error) : "")
+    || (tooMany ? t("society.meeting.limit") : "") || (failed ? t("society.meeting.failed") : "");
+
   return <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-testid="society-meeting">
-    <header className="border-b border-border px-4 py-3">
-      <h2 className="font-semibold text-foreground">{group.name}</h2>
-      <p className="text-xs text-muted-foreground">{group.members.map(name).join(" · ")}</p>
-      <p className="mt-2 text-xs text-muted-foreground">{t("society.meeting.description")}</p>
-    </header>
-    <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4" role="log" aria-label={t("society.meeting.title")}>
-      {!query.data?.messages.length && <p className="text-sm text-muted-foreground">{t("society.meeting.empty")}</p>}
-      {query.data?.messages.map((message) => <article key={message.id}
-        className={`max-w-[90%] rounded-xl border border-border p-3 ${message.speaker === "user" ? "ml-auto bg-secondary" : "bg-card"}`}>
-        <p className="mb-1 text-xs font-semibold text-foreground">{name(message.speaker)}</p>
-        <p className="whitespace-pre-wrap break-words text-sm text-foreground">{message.text}</p>
-      </article>)}
-      <div ref={end} />
-    </div>
-    <form className="space-y-2 border-t border-border p-3" onSubmit={(event) => { event.preventDefault(); void send(); }}>
-      {query.data?.running && <p role="status" className="text-xs text-muted-foreground">
-        {t("society.meeting.answering").replace("{0}", name(query.data.room?.next_speaker ?? ""))}
-      </p>}
-      {query.data?.room?.state === "failed" && <p role="alert" className="text-sm text-destructive">{t("society.meeting.failed")}</p>}
-      {tooMany && <p role="alert" className="text-sm text-destructive">{t("society.meeting.limit")}</p>}
-      {(error || query.error) && <p role="alert" className="text-sm text-destructive">{error || String(query.error)}</p>}
-      <label className="sr-only" htmlFor={`meeting-${group.group_id}`}>{t("society.meeting.message")}</label>
-      <textarea id={`meeting-${group.group_id}`} value={text} maxLength={8000} rows={3}
-        onChange={(event) => setText(event.target.value)} placeholder={t("society.meeting.message")}
-        className="w-full resize-none rounded-lg border border-border bg-card p-3 text-sm text-foreground" />
-      <div className="flex justify-end gap-2">
-        {query.data?.running && <button type="button" disabled={pending} onClick={() => void send(true)}
-          className="rounded-md border border-border px-3 py-2 text-sm text-foreground">{t("society.meeting.stop")}</button>}
-        <button type="submit" disabled={pending || query.isLoading || query.isError || query.data?.running || tooMany || !text.trim()}
-          className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">{t("society.meeting.send")}</button>
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={rootRef} className="chat-scroller min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+        role="log" aria-label={t("society.meeting.title")}>
+        <div ref={contentRef} className={cn(CHAT_MEASURE, "flex flex-col gap-3")}>
+          {messages.length === 0 && !query.isLoading ? (
+            <div className="flex flex-col items-center gap-3 py-12 text-center">
+              <div className="flex -space-x-2">
+                {members.map((agent) => <AgentSwatch key={agent.agentId} agent={agent} size={40}
+                  className="rounded-full ring-2 ring-background" />)}
+              </div>
+              <p className="text-sm font-medium text-foreground">{group.name}</p>
+              <p className="max-w-[44ch] text-xs text-muted-foreground">{t("society.meeting.description")}</p>
+              <p className="max-w-[44ch] text-xs text-muted-foreground">{t("society.meeting.empty")}</p>
+            </div>
+          ) : null}
+          {messages.map((message) => message.speaker === "user" ? (
+            <UserBubble key={message.id}
+              item={{ type: "user", id: message.id, text: message.text, attachments: [], tsMs: 0 }} />
+          ) : (
+            <article key={message.id} className="flex min-w-0 flex-col gap-1.5 self-start">
+              <header className="flex items-center gap-2">
+                {agentOf(message.speaker) ? <AgentSwatch agent={agentOf(message.speaker)!} size={22} /> : null}
+                <span className="text-xs font-medium text-foreground">{nameOf(message.speaker)}</span>
+              </header>
+              <Prose text={message.text} />
+            </article>
+          ))}
+          {running ? (
+            <p role="status" className="self-start py-1 text-xs text-muted-foreground">
+              {t("society.meeting.answering").replace("{0}", nameOf(meeting?.room?.next_speaker ?? ""))}
+            </p>
+          ) : null}
+        </div>
       </div>
-    </form>
+      {!atEnd && <ScrollToEndButton onClick={jumpToEnd} testId="meeting-scroll-end" className="top-auto bottom-3" />}
+    </div>
+    <div className="shrink-0 px-4 pb-4 pt-2 sm:px-6">
+      {alert ? <p role="alert" className={cn(CHAT_MEASURE, "mb-1 px-1 text-xs text-destructive")}>{alert}</p> : null}
+      <div className={cn(
+        CHAT_MEASURE,
+        "relative flex items-end gap-1 rounded-[24px] border border-border bg-secondary px-2 py-1.5 focus-within:border-border-strong",
+        dictation.dictating && "border-success/35 focus-within:border-success/50",
+      )}>
+        <ComposerChipField
+          ref={fieldRef}
+          placeholder={dictation.dictating ? t("chats_view.dictation_listening") : t("society.meeting.message")}
+          onSubmit={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
+          onDraftChange={(draft) => setValue(draft.text)}
+          className="max-h-[180px] pl-2"
+        />
+        <DictationButton
+          dictating={dictation.dictating}
+          onToggle={dictation.toggle}
+          startLabel={t("society.chat.record")}
+          stopLabel={t("society.chat.stop_recording")}
+          shape="round"
+        />
+        {running ? (
+          <button type="button" onClick={() => void stop()} disabled={pending}
+            aria-label={t("society.meeting.stop")} title={t("society.meeting.stop")}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-foreground text-background transition-colors hover:bg-foreground/90 disabled:opacity-40">
+            <Square className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        ) : (
+          <button type="button" onClick={() => (dictation.dictating ? dictation.stopAndSend() : void submit())}
+            disabled={!canSend || (!value.trim() && !dictation.dictating)}
+            aria-label={t("society.meeting.send")} title={t("society.meeting.send")}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground disabled:opacity-40">
+            <Send className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        )}
+      </div>
+    </div>
   </section>;
 }

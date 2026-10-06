@@ -15,13 +15,19 @@ function mount(members = group.members) {
   render(<QueryClientProvider client={client}><MeetingChat group={{ ...group, members }} roster={roster} /></QueryClientProvider>);
   return client;
 }
+function type(text: string) {
+  const field = screen.getByRole("textbox");
+  field.textContent = text;
+  fireEvent.input(field);
+}
+const sendButton = () => screen.getByRole("button", { name: "society.meeting.send" }) as HTMLButtonElement;
 
 it("reads without starting turns, then sends exactly one explicit request and stops the round", async () => {
   let data: any = empty;
-  const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+  const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
-      data = _url.endsWith("/stop") ? { ...data, running: false } : {
-        messages: [{ id: "1", speaker: "user", text: "Compare ideas" }, { id: "2", speaker: "scout", text: "My idea" }],
+      data = url.endsWith("/stop") ? { ...data, running: false } : {
+        messages: [{ id: "1", speaker: "user", text: "Compare ideas" }, { id: "2", speaker: "scout", text: "My **idea**" }],
         running: true, room: { state: "running", next_speaker: "jarvis", settle_reason: "" },
       };
     }
@@ -31,32 +37,38 @@ it("reads without starting turns, then sends exactly one explicit request and st
   mount();
   await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
   expect(fetcher.mock.calls[0][1]).toBeUndefined();
-  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Compare ideas" } });
-  fireEvent.click(screen.getByRole("button", { name: "society.meeting.send" }));
-  await screen.findByText("My idea");
+  type("Compare ideas");
+  await waitFor(() => expect(sendButton().disabled).toBe(false));
+  fireEvent.click(sendButton());
+  // The contribution renders as Markdown under the member's name.
+  expect((await screen.findByText("idea")).tagName).toBe("STRONG");
   expect(screen.getByText("Scout")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain("society.meeting.answering");
   expect(JSON.parse(fetcher.mock.calls[1][1]?.body as string)).toEqual({ text: "Compare ideas" });
-  expect((screen.getByRole("button", { name: "society.meeting.send" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByRole("button", { name: "society.meeting.send" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "society.meeting.stop" }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  expect(fetcher.mock.calls[2][0]).toMatch(/\/meeting\/stop$/);
   await waitFor(() => expect(screen.queryByRole("button", { name: "society.meeting.stop" })).toBeNull());
 });
 
 it("keeps an unsent message when the request fails and blocks oversized meetings", async () => {
   const fetcher = vi.fn(async (_url: string, init?: RequestInit) => ({
-    ok: !init, json: async () => init ? { detail: "Agent is busy" } : empty,
+    ok: !init, status: init ? 409 : 200, json: async () => init ? { detail: "Agent is busy" } : empty,
   }));
   vi.stubGlobal("fetch", fetcher);
   mount();
   await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep this" } });
-  fireEvent.click(screen.getByRole("button", { name: "society.meeting.send" }));
-  await screen.findByRole("alert");
-  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Keep this");
+  type("Keep this");
+  await waitFor(() => expect(sendButton().disabled).toBe(false));
+  fireEvent.click(sendButton());
+  expect((await screen.findByRole("alert")).textContent).toBe("Agent is busy");
+  expect(screen.getByRole("textbox").textContent).toBe("Keep this");
   cleanup();
   mount(["a", "b", "c", "d", "e", "f", "g"]);
   expect(screen.getByText("society.meeting.limit")).toBeTruthy();
-  expect((screen.getByRole("button", { name: "society.meeting.send" }) as HTMLButtonElement).disabled).toBe(true);
+  type("Too many");
+  expect(sendButton().disabled).toBe(true);
 });
 
 it("does not poll an idle meeting", async () => {
