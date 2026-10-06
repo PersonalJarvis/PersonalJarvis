@@ -5,6 +5,8 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { deleteSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { createAgentChatStore } from "@/store/agentChat";
 import type { SocietyAgent } from "../data";
 import { AgentSwatch } from "../AgentSwatch";
@@ -40,6 +42,7 @@ export function ChatGroupPanel({
   onGroupAgents, onAddAgentToGroup,
 }: Props) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
   const client = useQueryClient();
   const [leftId, setLeftId] = useState(group.members[0] ?? "");
   const [rightId, setRightId] = useState(group.members[1] ?? "");
@@ -95,13 +98,13 @@ export function ChatGroupPanel({
               onValueChange={(value) => side === "left" ? setLeftId(value) : setRightId(value)}
               className="mt-1 w-full"
               options={members.filter((member) => member.agentId !== (side === "left" ? right?.agentId : left?.agentId))
-                .map((member) => ({ value: member.agentId, label: member.name }))}
-            /> : <h2 className="truncate text-base font-semibold text-foreground">{agent.name}</h2>}
+                .map((member) => ({ value: member.agentId, label: societyDisplayName(member, assistantName) }))}
+            /> : <h2 className="truncate text-base font-semibold text-foreground">{societyDisplayName(agent, assistantName)}</h2>}
             <p className="truncate text-xs text-muted-foreground">{agent.title}</p>
           </div>
           <button type="button" onClick={() => onOpenAgent(agent.agentId)}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-            aria-label={t("society.groups.open_individual").replace("{0}", agent.name)}>
+            aria-label={t("society.groups.open_individual").replace("{0}", societyDisplayName(agent, assistantName))}>
             {t("society.groups.open")}
           </button>
         </header>
