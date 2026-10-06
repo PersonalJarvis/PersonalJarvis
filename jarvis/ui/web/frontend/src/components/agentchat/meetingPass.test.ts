@@ -12,6 +12,9 @@ describe("meeting silence marker", () => {
   it("hides the marker alone, finished or still streaming, and nothing else", () => {
     expect(hideMeetingPass(`  ${MEETING_PASS}\n`)).toBe("");
     expect(hideMeetingPass("[[MEETING_")).toBe("");
+    expect(hideMeetingPass("[")).toBe("");
+    expect(hideMeetingPass(`${MEETING_PASS}.`)).toBe("");
+    expect(hideMeetingPass("[1] A cited answer")).toBe("[1] A cited answer");
     expect(hideMeetingPass("A real answer")).toBe("A real answer");
     expect(hideMeetingPass(`${MEETING_PASS} but more`)).toBe(`${MEETING_PASS} but more`);
     expect(hideMeetingPass("[[Wiki link]]")).toBe("[[Wiki link]]");

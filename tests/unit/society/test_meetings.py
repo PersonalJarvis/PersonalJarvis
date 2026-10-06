@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.society.meetings import MEETING_PASS, Meetings
+from jarvis.society.meetings import MEETING_PASS, Meetings, is_pass
 from jarvis.society.rooms import MAX_MEMBERS
 from jarvis.society.runtime import SocietyRuntime
 from tests.fakes.meeting_chat import MeetingChatFake
@@ -226,3 +226,65 @@ async def test_the_lead_takes_part_under_the_wake_word_name(tmp_path):
     finally:
         await rt.close()
         svc.store.close()
+
+
+def test_the_pass_marker_tolerates_stray_punctuation_only():
+    assert is_pass("  [[MEETING_PASS]].\n")
+    assert not is_pass("[[MEETING_PASS]] but I disagree")
+    assert not is_pass("")
+
+
+async def test_meeting_turns_queue_no_review(meeting):
+    import json
+
+    from jarvis.core.protocols import ChatCompletion, ChatTurn
+
+    rt, svc = meeting
+    reviewed = []
+    rt.conversations.queue_review = lambda *args, **kwargs: reviewed.append(args) or True
+    original_send = svc.send
+
+    async def send(session_id, text, **kwargs):
+        turn_id = await original_send(session_id, text, **kwargs)
+        # The service runs the society completion hook before the turn ends.
+        events = svc.store.list_events(session_id, tail=10)
+        turn = ChatTurn(session_id, turn_id, text, kwargs["direct_user"], turn_id)
+        await rt.turn_completed(
+            SimpleNamespace(session_id=session_id), ChatCompletion(turn, json.dumps(events))
+        )
+        return turn_id
+
+    svc.send = send
+    await rt.meetings.start("team", "Plan")
+    await asyncio.gather(*rt.meetings._tasks.values())
+    assert len(svc.sent) == 2
+    assert reviewed == []
+    assert not rt.meetings.is_contributing("society:scout")
+    # The same completion outside a meeting is still reviewed.
+    events = svc.store.list_events("society:scout", tail=10)
+    turn = ChatTurn("society:scout", "turn-0", "Plan", False, "turn-0")
+    await rt.turn_completed(
+        SimpleNamespace(session_id="society:scout"), ChatCompletion(turn, json.dumps(events))
+    )
+    assert len(reviewed) == 1
+
+
+async def test_a_turn_without_reply_text_fails_the_round(meeting):
+    rt, svc = meeting
+
+    async def send(session_id, text, **kwargs):
+        svc.sent.append((session_id, text, kwargs, "turn-x"))
+        from jarvis.agent_chat.events import make_event
+
+        svc.store.append_event(
+            session_id, make_event("turn_finished", {"turn_id": "turn-x", "status": "done"})
+        )
+        return "turn-x"
+
+    svc.send = send
+    await rt.meetings.start("team", "Question")
+    await asyncio.gather(*rt.meetings._tasks.values())
+    snapshot = await rt.meetings.snapshot("team")
+    assert snapshot["room"]["state"] == "failed"
+    assert [m["speaker"] for m in snapshot["messages"]] == ["user"]
+    assert len(svc.sent) == 1

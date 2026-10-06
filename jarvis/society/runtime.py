@@ -520,6 +520,11 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
+        if self.meetings.is_contributing(session.session_id):
+            # A meeting contribution is a read-only reply in a shared round,
+            # often a silent pass; reviewing each one would add a model call
+            # per member to every message the person sends.
+            return
         window_key = ""
         if completion.turn.direct_user:
             # The person's turns are reviewed per window, not per answer.
