@@ -223,7 +223,7 @@
         #jarvis-boot-splash .name { margin-top: 16px; }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-C2SrjIah.js"></script>
+    <script type="module" crossorigin src="/assets/index-BkMv51gB.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-DRKsJWNL.css">
   </head>
   <body>
@@ -496,6 +496,15 @@
               button: "Neu laden", // i18n-allow
             };
           }
+          if (lang === "zh") {
+            return {
+              title: "界面没有加载出来。", // i18n-allow
+              why: "原因：", // i18n-allow
+              unknown: "没有报告原因。", // i18n-allow
+              hint: "当某个区域打开时崩溃，或在窗口打开期间界面被重新构建时，就会出现这种情况。", // i18n-allow
+              button: "重新加载", // i18n-allow
+            };
+          }
           if (lang === "es") {
             return {
               title: "La interfaz no se cargó.", // i18n-allow
@@ -621,6 +630,6 @@
           report();
         }, POLL_MS);
       })();
-    </script>
+    </script>
   </body>
 </html>
