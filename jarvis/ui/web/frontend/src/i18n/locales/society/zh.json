@@ -219,6 +219,7 @@
       "model_group_chatgpt": "ChatGPT / Codex 订阅",
       "model_group_grok": "Grok 订阅",
       "model_group_google": "Google / Gemini 订阅",
+      "model_extra_usage": "按额外用量计费",
       "model_scope": "适用于此智能体之后的消息和例程运行。对话历史会保留。",
       "model_busy": "请等当前回复完成后再更换模型。",
       "model_save_failed": "无法保存模型",

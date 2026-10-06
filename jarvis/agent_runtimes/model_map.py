@@ -10,8 +10,9 @@ Completions; the ChatGPT subscription (``openai-codex``) speaks Responses.
 
 This module decides which providers an agent can use right now (a saved key,
 a local server with an address, a signed-in subscription) and builds the
-route. A Claude subscription is not offered: its login works only inside
-Claude Code, and Hermes would bill it as paid extra usage.
+route. Claude runs on an Anthropic API key or, when none is saved, on the
+person's Claude Code login: Anthropic bills a subscription used outside
+Claude Code as extra usage (pay as you go), so the picker says so.
 """
 
 from __future__ import annotations
@@ -43,11 +44,14 @@ class _Endpoint:
     local_server: bool = False
     #: Served by Jarvis' own model gateway on the person's subscription.
     subscription: bool = False
+    #: Without an API key, the person's Claude Code login answers instead
+    #: (billed by Anthropic as extra usage, not from the plan's limits).
+    claude_login: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
 _ENDPOINTS: Final[dict[str, _Endpoint]] = {
-    "claude-api": _Endpoint("https://api.anthropic.com"),
+    "claude-api": _Endpoint("https://api.anthropic.com", claude_login=True),
     "openai": _Endpoint("https://api.openai.com/v1"),
     "grok": _Endpoint("https://api.x.ai/v1"),
     "openrouter": _Endpoint("https://openrouter.ai/api/v1"),
@@ -87,6 +91,50 @@ def supported_providers() -> frozenset[str]:
 def subscription_providers() -> frozenset[str]:
     """Providers served by Jarvis' model gateway on the person's subscription."""
     return frozenset(name for name, endpoint in _ENDPOINTS.items() if endpoint.subscription)
+
+
+def claude_login_token() -> str | None:
+    """The live Claude Code login's bearer, or ``None``. Read-only: only the
+    Claude CLI redeems the refresh token, so an expired login stays unused
+    until Claude Code runs again (a second refresher would break its login)."""
+    from jarvis.claude_credentials import freshest_claude_oauth
+
+    snapshot = freshest_claude_oauth()
+    return snapshot.access_token if snapshot.status == "valid" else None
+
+
+def _api_key(provider: str, credential: str | None) -> str | None:
+    """The provider's real API key (the Agents-tier key wins), never a login."""
+    from jarvis.core.config import get_jarvis_agent_secret
+
+    key = (get_jarvis_agent_secret(provider) or credential or "").strip() or None
+    if key is not None and provider == "claude-api" and key.startswith(_CLAUDE_LOGIN_PREFIX):
+        # A Claude subscription login saved in the API-key slot is not an API
+        # key: Anthropic's API refuses it as one ("OAuth access token is invalid").
+        return None
+    return key
+
+
+def login_token_for(provider: str) -> str | None:
+    """The Claude login ``provider`` answers on, or ``None`` when it has an
+    API key (or cannot use a login at all). Blocking (keyring)."""
+    endpoint = _ENDPOINTS.get(provider)
+    if endpoint is None or not endpoint.claude_login:
+        return None
+    from jarvis.core.config import resolve_provider_endpoint
+
+    resolved = resolve_provider_endpoint(
+        provider, vendor_default_base_url=endpoint.default_base_url
+    )
+    if _api_key(provider, resolved.credential) is not None:
+        return None
+    return claude_login_token()
+
+
+def login_providers() -> list[str]:
+    """Usable providers that answer on a Claude login, not an API key: the
+    picker labels them as billed extra usage. Blocking (keyring)."""
+    return [name for name in _ENDPOINTS if login_token_for(name)]
 
 
 def supports(provider: str) -> bool:
@@ -160,7 +208,7 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
         if not chosen:
             raise RouteUnavailable("Choose a ChatGPT model for this agent first.")
         return chosen
-    from jarvis.core.config import get_jarvis_agent_secret, resolve_provider_endpoint
+    from jarvis.core.config import resolve_provider_endpoint
 
     resolved = resolve_provider_endpoint(
         provider, vendor_default_base_url=endpoint.default_base_url
@@ -173,17 +221,13 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
             f"{provider} has no server address yet. Add it on the provider's card first."
         )
     # The Agents-tier key wins over the shared one, exactly as the gateway uses it.
-    key = (get_jarvis_agent_secret(provider) or resolved.credential or "").strip() or None
-    if key is not None and provider == "claude-api" and key.startswith(_CLAUDE_LOGIN_PREFIX):
-        # A Claude subscription login saved in the API-key slot. Jarvis' own
-        # Claude Code seats can use it; Anthropic's API refuses it ("OAuth
-        # access token is invalid"), so it is not an API key here.
+    key = _api_key(provider, resolved.credential)
+    if key is None and endpoint.claude_login and not claude_login_token():
         raise RouteUnavailable(
-            "The saved Anthropic credential is a Claude subscription login, not an "
-            "API key. Hermes and OpenClaw need an Anthropic API key, or pick another "
-            "provider."
+            "Claude needs an Anthropic API key or a live Claude Code login. Connect "
+            "one in Settings → API keys, or open Claude Code once to renew its login."
         )
-    if key is None and not endpoint.keyless:
+    if key is None and not endpoint.keyless and not endpoint.claude_login:
         raise RouteUnavailable(
             f"No API key is saved for {provider}. Connect it in Settings → API keys."
         )

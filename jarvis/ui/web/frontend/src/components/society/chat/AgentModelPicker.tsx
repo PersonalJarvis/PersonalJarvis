@@ -63,6 +63,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const external = Boolean(agent.runtime && agent.runtime !== "jarvis");
   const supportedKey = (Array.isArray(runtimes.data?.supported_providers) ? runtimes.data.supported_providers : []).join(",");
   const gatewayKey = (Array.isArray(runtimes.data?.subscription_providers) ? runtimes.data.subscription_providers : []).join(",");
+  const loginKey = (Array.isArray(runtimes.data?.login_providers) ? runtimes.data.login_providers : []).join(",");
   const seats = useMemo(() => {
     const all = modelSeats(options, providers ?? [], live, defaultModelLabel);
     // Hermes / OpenClaw run on an API key, a local model or a subscription
@@ -70,17 +71,20 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     if (!external || !supportedKey) return all;
     const supported = new Set(supportedKey.split(","));
     const gateway = new Set(gatewayKey.split(",").filter(Boolean));
+    const login = new Set(loginKey.split(",").filter(Boolean));
     // A dual row (Claude: subscription CLI or API key) runs on its API key here,
     // so the CLI's own aliases ("opusplan", "default") are not models to offer.
     // A gateway subscription keeps its accounts: the login decides who pays.
+    // Without a key, Claude runs on the Claude Code login, billed as extra usage.
     return all.filter((seat) => supported.has(seat.provider.id))
       .map((seat) => seat.kind === "subscription" && !gateway.has(seat.provider.id) ? {
         ...seat,
-        kind: "api" as const,
+        kind: login.has(seat.provider.id) ? "subscription" as const : "api" as const,
         accounts: [],
+        extraUsage: login.has(seat.provider.id),
         provider: { ...seat.provider, curated_models: seat.provider.curated_models.filter((model) => /\d/.test(model.id)) },
       } : seat);
-  }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey]);
+  }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.

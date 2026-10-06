@@ -15,6 +15,10 @@ from ._anthropic_base import stream_complete
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
+#: Required for a Claude login bearer; without it the API treats the bearer as
+#: an API key and refuses it.
+_OAUTH_BETA = "oauth-2025-04-20"
+
 
 class ClaudeAPIBrain:
     """Anthropic messages API via API-Key (classical developer path)."""
@@ -24,11 +28,23 @@ class ClaudeAPIBrain:
     supports_tools: bool = True
     supports_vision: bool = True
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, *, auth_token: str | None = None) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        #: A Claude login bearer instead of an API key (Hermes / OpenClaw
+        #: agents without a key; Anthropic bills it as extra usage).
+        self._auth_token = auth_token
 
     def _ensure_client(self) -> Any:
+        if self._client is None and self._auth_token:
+            from anthropic import AsyncAnthropic
+
+            self._client = AsyncAnthropic(
+                auth_token=self._auth_token,
+                default_headers={"anthropic-beta": _OAUTH_BETA},
+                max_retries=0,
+                timeout=15.0,
+            )
         if self._client is None:
             ep = cfg.resolve_provider_endpoint("claude-api")
             if not ep.credential:

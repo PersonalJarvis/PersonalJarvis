@@ -435,6 +435,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     it — a context variable set there could not be reset (``ValueError``).
     """
     from jarvis.agent_chat.runner_api import build_brain
+    from jarvis.agent_runtimes.model_map import login_token_for
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
 
@@ -445,7 +446,15 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context("agent-runtime"):
-                brain = build_brain(grant.provider, model)
+                login = await asyncio.to_thread(login_token_for, grant.provider)
+                if login:
+                    # No API key: the person's Claude Code login answers,
+                    # which Anthropic bills as extra usage.
+                    from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
+
+                    brain = ClaudeAPIBrain(model=model or None, auth_token=login)
+                else:
+                    brain = build_brain(grant.provider, model)
                 async for delta in brain.complete(request):
                     await queue.put(delta)
             await queue.put(_DONE)

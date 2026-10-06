@@ -44,6 +44,9 @@ export interface AgentRuntimesResponse {
   /** Providers that run through Jarvis' model gateway on a subscription
    *  (the account still matters there). */
   subscription_providers?: string[];
+  /** Usable providers that answer on a Claude login instead of an API key;
+   *  Anthropic bills that as extra usage. */
+  login_providers?: string[];
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {

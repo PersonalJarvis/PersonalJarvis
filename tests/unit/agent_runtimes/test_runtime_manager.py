@@ -139,10 +139,12 @@ async def test_unknown_runtimes_are_refused(fakes):
         await manager.start("skynet", "install")
 
 
-def test_routes_list_status_and_start_jobs(fakes):
+def test_routes_list_status_and_start_jobs(fakes, monkeypatch):
+    import jarvis.agent_runtimes.model_map as model_map
     import jarvis.ui.web.agent_runtime_routes as routes
 
-    routes._USABLE_CACHE[:] = [float("-inf"), []]
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    routes._USABLE_CACHE[:] = [float("-inf"), [], []]
     app = FastAPI()
     app.include_router(router)
     app.state.config = SimpleNamespace(brain=SimpleNamespace(providers={}))
@@ -158,6 +160,7 @@ def test_routes_list_status_and_start_jobs(fakes):
     assert "claude-api" in body["all_providers"]
     assert "openai-codex" in body["all_providers"]
     assert body["subscription_providers"] == ["openai-codex"]
+    assert body["login_providers"] == []
     rows = body["runtimes"]
     assert [row["runtime"] for row in rows] == ["hermes", "openclaw"]
     assert rows[0]["ready"] is True and rows[0]["job"] is None
@@ -233,21 +236,31 @@ def test_the_ensure_route_starts_what_is_needed(unset):
     assert body["job"]["kind"] == "install"
 
 
-def test_a_claude_login_in_the_api_key_slot_is_not_offered(fakes):
+def test_a_claude_login_in_the_api_key_slot_is_not_an_api_key(fakes, monkeypatch):
+    import jarvis.agent_runtimes.model_map as model_map
     import jarvis.ui.web.agent_runtime_routes as routes
     from jarvis.agent_runtimes.model_map import RouteUnavailable, route_for
 
     config = SimpleNamespace(brain=SimpleNamespace(providers={}))
-    routes._USABLE_CACHE[:] = [float("-inf"), []]
     app = FastAPI()
     app.include_router(router)
     app.state.config = config
     login = "sk-ant-" + "oat01-" + "x" * 20
-    with override_provider_secrets(
-        {"openai": None, "claude-api": login, "openrouter": None, "grok": None,
-         "nvidia": None, "gemini": None}
-    ):
+    secrets = {"openai": None, "claude-api": login, "openrouter": None, "grok": None,
+               "nvidia": None, "gemini": None}
+    # No live Claude Code login: Claude is not offered.
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    routes._USABLE_CACHE[:] = [float("-inf"), [], []]
+    with override_provider_secrets(secrets):
         body = TestClient(app).get("/api/agent-runtimes").json()
-        with pytest.raises(RouteUnavailable, match="subscription login"):
+        with pytest.raises(RouteUnavailable, match="Claude Code login"):
             route_for(config, "claude-api", "claude-sonnet-5-5")
     assert "claude-api" not in body["supported_providers"]
+    assert body["login_providers"] == []
+    # A live login: Claude is offered, marked as running on the login.
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: login)
+    routes._USABLE_CACHE[:] = [float("-inf"), [], []]
+    with override_provider_secrets(secrets):
+        body = TestClient(app).get("/api/agent-runtimes").json()
+    assert "claude-api" in body["supported_providers"]
+    assert body["login_providers"] == ["claude-api"]

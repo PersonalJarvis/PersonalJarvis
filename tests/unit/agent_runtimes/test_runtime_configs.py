@@ -274,12 +274,42 @@ def test_a_missing_key_is_reported_in_plain_words(gateway_up):
     assert "API key" in str(err.value)
 
 
-def test_a_claude_login_is_not_an_api_key(gateway_up):
+def test_a_claude_login_is_not_an_api_key(gateway_up, monkeypatch):
+    import jarvis.agent_runtimes.model_map as model_map
+
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
     login = "sk-ant-" + "oat01-" + "x" * 20
     with override_provider_secrets({"claude-api": login}), pytest.raises(RouteUnavailable):
         route_for(_cfg(), "claude-api", "claude-sonnet-5")
     with override_provider_secrets({"claude-api": _SECRET}):
         assert route_for(_cfg(), "claude-api", "claude-sonnet-5").transport == "chat_completions"
+        assert model_map.login_token_for("claude-api") is None
+
+
+def test_claude_without_a_key_runs_on_the_claude_code_login(gateway_up, monkeypatch):
+    import jarvis.agent_runtimes.model_map as model_map
+
+    live = "sk-ant-" + "oat01-" + "y" * 20
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: live)
+    with override_provider_secrets({"claude-api": None}):
+        route = route_for(_cfg(), "claude-api", "claude-sonnet-5", agent_id="agent-1")
+        assert model_map.login_token_for("claude-api") == live
+        assert model_map.login_providers() == ["claude-api"]
+    # The runtime only ever holds Jarvis' gateway token, never the login.
+    assert route.transport == "chat_completions" and route.base_url == _GATEWAY
+    assert route.api_key != live
+    assert gateway_up.verify(route.api_key or "") == gateway_up.Grant("agent-1", "claude-api", "")
+    # Every other provider keeps needing its own key.
+    assert model_map.login_token_for("openai") is None
+
+
+def test_the_claude_login_brain_sends_a_bearer_not_an_api_key():
+    from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
+
+    bearer = "sk-ant-" + "oat01-" + "z" * 20
+    client = ClaudeAPIBrain(model="claude-sonnet-5", auth_token=bearer)._ensure_client()
+    assert client.auth_token == bearer and client.api_key is None
+    assert client._custom_headers["anthropic-beta"] == "oauth-2025-04-20"
 
 
 def test_no_route_before_the_gateway_is_up(gateway_up, monkeypatch):

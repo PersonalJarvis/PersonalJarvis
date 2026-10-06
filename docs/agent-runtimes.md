@@ -80,10 +80,14 @@ call with its own provider plugins (`gateway.py`,
   own Codex login. The gateway answers with Jarvis' subscription client on the
   agent's Codex account, whose refresh is coordinated in one place
   (`live/subscription_auth.py`); a failure mid-stream is `response.failed`.
-- **Claude subscription: not offered.** Its login works only inside Claude
-  Code, and Hermes would bill it as paid extra usage. A Claude login
-  (`sk-ant-oat…`) saved in the Anthropic API-key slot is not an API key, so
-  that slot counts as empty.
+- **Claude subscription: billed as extra usage.** Claude runs on an
+  Anthropic API key when one is saved. Without one, the gateway answers on
+  the person's live Claude Code login (read-only: only the Claude CLI renews
+  it, so an expired login waits until Claude Code runs again). Anthropic bills
+  a subscription used outside Claude Code as extra usage, not from the plan's
+  limits, so the model picker labels that seat "billed as extra usage"
+  (`login_providers` on `/api/agent-runtimes`). A Claude login (`sk-ant-oat…`)
+  saved in the Anthropic API-key slot is never sent as an API key.
 
 `scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
 runs two real turns through the gateway (route built by `route_for`, the real

@@ -219,6 +219,7 @@
       "model_group_chatgpt": "Suscripción de ChatGPT / Codex",
       "model_group_grok": "Suscripción de Grok",
       "model_group_google": "Suscripción de Google / Gemini",
+      "model_extra_usage": "se cobra como uso adicional",
       "model_scope": "Se aplica a los próximos mensajes y rutinas de este agente. Se conserva el historial.",
       "model_busy": "Espera a que termine la respuesta antes de cambiar el modelo.",
       "model_save_failed": "No se pudo guardar el modelo",

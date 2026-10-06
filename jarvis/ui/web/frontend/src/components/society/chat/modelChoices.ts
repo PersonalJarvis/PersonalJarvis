@@ -58,7 +58,8 @@ export function providerTitle(seat: BrainSeat, t: (key: string) => string): stri
   };
   if (seat.kind === "subscription") {
     const key = names[seat.provider.runner];
-    return key ? t(`society.chat.${key}`) : seat.provider.label;
+    const title = key ? t(`society.chat.${key}`) : seat.provider.label;
+    return seat.extraUsage ? `${title} · ${t("society.chat.model_extra_usage")}` : title;
   }
   return `${seat.provider.label} · ${t(`society.create.kind_${seat.kind}`)}`;
 }
