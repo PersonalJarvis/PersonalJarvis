@@ -21,6 +21,19 @@ describe("compact workspace terminal header", () => {
     expect(fork).toHaveBeenCalledTimes(2);
   });
 
+  it("offers the change review as a button and a menu entry, only when the pane can review", () => {
+    const review = vi.fn();
+    const { unmount } = render(<WorkspaceTerminalHeader {...BASE} onReviewChanges={review} />);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes by Dana" }));
+    expect(review).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Review changes" }));
+    expect(review).toHaveBeenCalledTimes(2);
+    unmount();
+    render(<WorkspaceTerminalHeader {...BASE} />);
+    expect(screen.queryByRole("button", { name: "Review changes by Dana" })).toBeNull();
+  });
+
   it("uses the name and accurate status without a verbose toolbar", () => {
     render(<WorkspaceTerminalHeader {...BASE} onOpenConversation={() => {}} />);
     const header = screen.getByTestId("workspace-terminal-header-Dana");

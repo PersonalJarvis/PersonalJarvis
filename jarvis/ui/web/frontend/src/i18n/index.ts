@@ -105,7 +105,8 @@ export type LocaleChunk =
   | "computers"
   | "onboarding"
   | "appshot_editor"
-  | "providers";
+  | "providers"
+  | "pane_review";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
   marketplace: {
@@ -145,6 +146,12 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     en: () => import("./locales/providers/en.json"),
     de: () => import("./locales/providers/de.json"),
     es: () => import("./locales/providers/es.json"),
+  },
+  // A pane's "Review changes" dialog: opened from its title bar, never on start.
+  pane_review: {
+    en: () => import("./locales/pane_review/en.json"),
+    de: () => import("./locales/pane_review/de.json"),
+    es: () => import("./locales/pane_review/es.json"),
   },
 };
 

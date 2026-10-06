@@ -58,6 +58,7 @@ import "@xterm/xterm/css/xterm.css";
 import {
   BookOpenText,
   Check,
+  FileDiff,
   GripVertical,
   Loader2,
   Maximize2,
@@ -157,6 +158,7 @@ import {
 import { PromptReceipt } from "./PromptReceipt";
 import { PromptHistoryButton } from "./PromptHistoryButton";
 import { PaneConversationDialog } from "./PaneConversationDialog";
+import { PaneChangesDialog } from "./PaneChangesDialog";
 import { WorkspaceTerminalHeader } from "./WorkspaceTerminalHeader";
 import { usePaneContextMenu } from "./usePaneContextMenu";
 import { SessionGitHubBadge } from "./SessionGitHubBadge";
@@ -545,6 +547,8 @@ interface AgenticTerminalProps {
   onFork?: () => void;
   /** Compact header only: the worktree branch this pane runs on, if any. */
   branch?: string;
+  /** The pane's own git worktree folder, set only for a worktree fork. */
+  folder?: string;
   /** Compact header only: the connected computer this pane runs on, if any. */
   computerName?: string;
   /** Compact header only: "Run on …" / "Bring back" menu entries. */
@@ -690,6 +694,7 @@ export function AgenticTerminal({
   markFocus = true,
   onFork,
   branch,
+  folder,
   computerName,
   placementItems,
   workspaceItems,
@@ -876,6 +881,7 @@ export function AgenticTerminal({
   const [justDelivered, setJustDelivered] = useState(false);
   /** The pane's recorded conversation, opened from the header book button. */
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const onAttachErrorRef = useRef(onAttachError);
@@ -2801,6 +2807,9 @@ export function AgenticTerminal({
   const chrome = PANE_CHROME[appearance];
   const minimal = headerMode === "minimal";
   const tile = PANE_TILE[appearance];
+  // A pane whose agent runs on another computer changes files THERE, which
+  // this machine's git cannot read — so only a local pane offers the review.
+  const reviewChanges = workspaceId && !computerName ? () => setChangesOpen(true) : undefined;
   const headerProps = {
     githubStatusEnabled: active,
     contextMenuRequest: paneMenu.request,
@@ -2826,6 +2835,7 @@ export function AgenticTerminal({
     onRename,
     onOpenConversation: () => setHistoryOpen(true),
     onOpenChat,
+    onReviewChanges: reviewChanges,
     onRestart,
     onFork,
     branch,
@@ -2941,6 +2951,7 @@ export function AgenticTerminal({
         splitDisabled={splitDisabled}
         onOpenConversation={() => setHistoryOpen(true)}
         onOpenChat={onOpenChat}
+        onReviewChanges={reviewChanges}
       />}
       {/*
         What went wrong, kept on screen for as long as it is true — and the one
@@ -2955,6 +2966,19 @@ export function AgenticTerminal({
         light={appearance === "light"}
         onRestart={onRestart}
       />
+      {/* Outside the terminal region on purpose: that region claims every
+          press in its capture phase to select the pane, and a click inside
+          the review must stay a click inside the review. */}
+      {workspaceId && (
+        <PaneChangesDialog
+          open={changesOpen}
+          onOpenChange={setChangesOpen}
+          workspaceId={workspaceId}
+          pane={name}
+          folder={folder}
+          branch={branch}
+        />
+      )}
       {/*
         Keep the visual inset OUTSIDE xterm's measured host. FitAddon reads the
         host's border-box but does not subtract padding on that host, so putting
@@ -3121,6 +3145,7 @@ function PaneHeader({
   arranging = false,
   onOpenConversation,
   onOpenChat,
+  onReviewChanges,
 }: {
   workspaceId?: string;
   githubStatusEnabled: boolean;
@@ -3154,6 +3179,8 @@ function PaneHeader({
   onOpenConversation?: () => void;
   /** Puts this pane on the chat stage, read with the agent chat's timeline. */
   onOpenChat?: () => void;
+  /** Opens the review of every uncommitted change this pane's agent made. */
+  onReviewChanges?: () => void;
 }) {
   const t = useT();
   const light = appearance === "light";
@@ -3677,6 +3704,15 @@ function PaneHeader({
         >
           <BookOpenText className="h-3.5 w-3.5" aria-hidden="true" />
         </PaneAction>
+        {onReviewChanges && (
+          <PaneAction
+            label={`Review changes by ${name}`}
+            testId={`pane-review-changes-${name}`}
+            onClick={onReviewChanges}
+          >
+            <FileDiff className="h-3.5 w-3.5" aria-hidden="true" />
+          </PaneAction>
+        )}
         <PaneAction
           label={maximized ? `Restore ${name}` : `Maximize ${name}`}
           testId={`pane-maximize-${name}`}
