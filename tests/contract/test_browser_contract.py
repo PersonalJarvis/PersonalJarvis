@@ -660,6 +660,9 @@ async def test_hover_motion_coalesces_and_never_delays_or_drops_clicks(monkeypat
     from jarvis.ui.web import society_browser_routes as routes
 
     clicked = asyncio.Event()
+    # Every message is read before the first motion's round trip ends, so the
+    # result does not depend on how fast the runner reads 401 messages.
+    all_read = asyncio.Event()
     seen: list[tuple[str, int | None]] = []
     sent: list[dict] = []
 
@@ -669,6 +672,7 @@ async def test_hover_motion_coalesces_and_never_delays_or_drops_clicks(monkeypat
 
         async def control(self, _session, _owner, op, args):
             seen.append(("hover" if args.get("move_only") else op, args.get("x")))
+            await all_read.wait()
             await asyncio.sleep(0.02)  # A slow worker round trip.
             if op == "click" and not args.get("move_only"):
                 clicked.set()
@@ -693,6 +697,7 @@ async def test_hover_motion_coalesces_and_never_delays_or_drops_clicks(monkeypat
             if self.reads <= 400:
                 return {"op": "click", "args": {"x": self.reads, "y": 1, "move_only": True}}
             if self.reads == 401:
+                all_read.set()
                 return {"op": "click", "args": {"x": 9999, "y": 1}}
             await clicked.wait()
             raise WebSocketDisconnect()
