@@ -84,6 +84,7 @@ from jarvis.agentic_ide import (
     change_authors,
     drop_analysis,
     drops,
+    file_editing,
     git_changes,
     layout_tree,
     native_picker,
@@ -952,6 +953,57 @@ class WorkspaceFilePreviewResponse(BaseModel):
     text: str | None = None
     truncated: bool = False
     hex_preview: str | None = None
+
+
+class WorkspaceTextFileResponse(BaseModel):
+    """One workspace file loaded byte-exact for the code editor."""
+
+    workspace_id: str
+    path: str
+    text: str | None = Field(
+        default=None, description="Exact file text; null when binary or too large."
+    )
+    version: str = Field(description="Content hash; send it back on save to detect conflicts.")
+    size: int
+    encoding: Literal["utf-8", "utf-8-sig"]
+    eol: Literal["\n", "\r\n"]
+    binary: bool = False
+    too_large: bool = False
+
+
+class SaveWorkspaceFileRequest(BaseModel):
+    """Editor text to write over one workspace file."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str
+    expected_version: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Version the editor loaded; null only when creating a new file.",
+    )
+    encoding: Literal["utf-8", "utf-8-sig"] = "utf-8"
+    create: bool = False
+
+
+class WorkspaceEntryRequest(BaseModel):
+    """Create one file or folder inside a workspace."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    kind: Literal["file", "directory"] = "file"
+
+
+class MoveWorkspaceEntryRequest(BaseModel):
+    """Rename or move one file or folder inside a workspace."""
+
+    source: str = Field(min_length=1, max_length=4096)
+    destination: str = Field(min_length=1, max_length=4096)
+
+
+class DeleteWorkspaceEntryRequest(BaseModel):
+    """Delete one file or folder; it goes to the system trash unless permanent."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    permanent: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -1908,6 +1960,171 @@ async def get_workspace_file_preview(workspace_id: str, path: str) -> WorkspaceF
         path=path.replace("\\", "/"),
         **preview,
     )
+
+
+def _workspace_folder(workspace_id: str) -> str:
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    return str(session.folder)
+
+
+def _text_file_response(workspace_id: str, loaded: file_editing.TextFile) -> dict[str, object]:
+    return {"workspace_id": workspace_id, **asdict(loaded)}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/text-file",
+    response_model=WorkspaceTextFileResponse,
+    summary="Load one workspace file for the code editor",
+)
+async def get_workspace_text_file(workspace_id: str, path: str) -> dict[str, object]:
+    """The file's exact text plus the version a later save must name.
+
+    Unlike ``/file-preview`` nothing is normalised: indentation, line endings
+    and a byte-order mark come back as they are on disk.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        loaded = await asyncio.to_thread(file_editing.read_text_file, folder, path)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="That workspace file is unavailable.") from exc
+    return _text_file_response(workspace_id, loaded)
+
+
+@router.put(
+    "/workspaces/{workspace_id}/text-file",
+    response_model=WorkspaceTextFileResponse,
+    summary="Save editor text over one workspace file",
+)
+async def save_workspace_text_file(
+    workspace_id: str, req: SaveWorkspaceFileRequest
+) -> dict[str, object]:
+    """Write the editor's text atomically.
+
+    Answers 409 with ``current_version`` when the file changed on disk since
+    the editor loaded it, so an agent's edit is never silently overwritten.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        saved = await asyncio.to_thread(
+            file_editing.write_text_file,
+            folder,
+            req.path,
+            req.text,
+            expected_version=req.expected_version,
+            encoding=req.encoding,
+            create=req.create,
+        )
+    except file_editing.EditConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "current_version": exc.current_version},
+        ) from exc
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: save failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="The file could not be saved.") from exc
+    return _text_file_response(workspace_id, saved)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/head-text",
+    summary="A workspace file's text at the last commit",
+)
+async def get_workspace_head_text(workspace_id: str, path: str) -> dict[str, object]:
+    """The committed text the editor's diff view compares against.
+
+    ``text`` is null for a file git does not know (new, or not a repository).
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        text = await asyncio.to_thread(git_changes.head_text, folder, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "text": text}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/file-list",
+    summary="Every file path in a workspace, for Quick Open",
+)
+async def get_workspace_file_list(workspace_id: str) -> dict[str, object]:
+    """Tracked and untracked (not ignored) files; a bounded walk outside git."""
+    folder = _workspace_folder(workspace_id)
+    try:
+        paths, truncated = await asyncio.to_thread(file_editing.list_files, folder)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Workspace folder not found.") from exc
+    return {"workspace_id": workspace_id, "paths": paths, "truncated": truncated}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries",
+    summary="Create a file or folder in a workspace",
+)
+async def create_workspace_entry(
+    workspace_id: str, req: WorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        created = await asyncio.to_thread(
+            file_editing.create_entry, folder, req.path, directory=req.kind == "directory"
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: create failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="It could not be created.") from exc
+    return {"workspace_id": workspace_id, "path": created, "kind": req.kind}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/move",
+    summary="Rename or move a file or folder in a workspace",
+)
+async def move_workspace_entry(
+    workspace_id: str, req: MoveWorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        moved = await asyncio.to_thread(
+            file_editing.rename_entry, folder, req.source, req.destination
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: rename failed for %s: %s", req.source, exc)
+        raise HTTPException(status_code=500, detail="It could not be renamed.") from exc
+    return {"workspace_id": workspace_id, "path": moved}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/delete",
+    summary="Delete a file or folder in a workspace",
+)
+async def delete_workspace_entry(
+    workspace_id: str, req: DeleteWorkspaceEntryRequest
+) -> dict[str, object]:
+    """Move to the system trash; 409 ``trash_unavailable`` asks for a permanent delete."""
+    folder = _workspace_folder(workspace_id)
+    try:
+        trashed = await asyncio.to_thread(
+            file_editing.delete_entry, folder, req.path, permanent=req.permanent
+        )
+    except file_editing.TrashUnavailable as exc:
+        raise HTTPException(
+            status_code=409, detail={"message": str(exc), "trash_unavailable": True}
+        ) from exc
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: delete failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="It could not be deleted.") from exc
+    return {"workspace_id": workspace_id, "path": req.path, "trashed": trashed}
 
 
 @router.post(

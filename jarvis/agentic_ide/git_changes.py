@@ -297,6 +297,20 @@ def _parse_unified(text: str) -> tuple[list[DiffHunk], int, int, bool, bool]:
     return hunks, added, removed, False, truncated
 
 
+def head_text(folder: str | Path, path: str) -> str | None:
+    """One file's text as of the last commit; None when git has no copy of it."""
+    rel = normalize_workspace_path(folder, path)
+    root = Path(folder).expanduser()
+    if not _has_head(root):
+        return None
+    # "./" makes git read the path relative to the workspace folder, which may
+    # sit below the repository root.
+    result = _git(["show", f"HEAD:./{rel}"], root)
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout
+
+
 def file_diff(folder: str | Path, path: str) -> FileDiff:
     """How one file differs from the last commit; an untracked file is all new."""
     rel = normalize_workspace_path(folder, path)
