@@ -99,6 +99,7 @@ from jarvis.agentic_ide import (
     screen_feed,
     workspace_catalog,
 )
+from jarvis.agentic_ide import python_intel as python_intel_module
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
@@ -1045,6 +1046,15 @@ class CopyWorkspaceEntryRequest(BaseModel):
     unique: bool = Field(
         default=False, description="Pick a free 'copy' name when the destination is taken."
     )
+
+
+class PythonIntelRequest(BaseModel):
+    """The editor's buffer and cursor, for Python completions and lookups."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str = Field(max_length=5 * 1024 * 1024)
+    line: int = Field(ge=1, description="1-based line of the cursor.")
+    column: int = Field(ge=1, description="1-based column of the cursor.")
 
 
 class DeleteWorkspaceEntryRequest(BaseModel):
@@ -2233,6 +2243,29 @@ async def replace_in_workspace_files(
     except file_editing.EditError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"workspace_id": workspace_id, **answer}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/python/{action}",
+    summary="Python completions, hover text or definitions for the code editor",
+)
+async def python_intel(
+    workspace_id: str,
+    action: Literal["complete", "hover", "definition"],
+    req: PythonIntelRequest,
+) -> dict[str, object]:
+    """Static analysis of the live buffer with the workspace as import root."""
+    folder = _workspace_folder(workspace_id)
+    handler = {
+        "complete": python_intel_module.complete,
+        "hover": python_intel_module.hover,
+        "definition": python_intel_module.definitions,
+    }[action]
+    try:
+        result = await asyncio.to_thread(handler, folder, req.path, req.text, req.line, req.column)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, "result": result}
 
 
 @router.get(

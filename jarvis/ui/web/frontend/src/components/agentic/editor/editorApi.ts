@@ -262,3 +262,35 @@ export function replaceInFiles(
     }),
   );
 }
+
+export interface PythonPosition {
+  path: string;
+  text: string;
+  /** 1-based, as Monaco counts. */
+  line: number;
+  column: number;
+}
+
+export interface PythonCompletion {
+  name: string;
+  /** Jedi's kind: module, class, function, instance, param, keyword, property, statement, path. */
+  type: string;
+  detail: string;
+}
+
+export interface PythonLocation {
+  path: string;
+  line: number;
+  column: number;
+}
+
+/** Python completions, hover text or definitions for the live buffer. */
+export async function pythonIntel<T>(
+  workspaceId: string,
+  action: "complete" | "hover" | "definition",
+  position: PythonPosition,
+  signal?: AbortSignal,
+): Promise<T> {
+  const answer = await send<{ result: T }>(`${base(workspaceId)}/python/${action}`, { ...json("POST", position), signal });
+  return answer.result;
+}

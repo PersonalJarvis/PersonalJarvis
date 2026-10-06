@@ -138,6 +138,11 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || !eventMatchesChord(event, switcherCombo)) return;
       if (document.querySelector('[data-keybind-recording="true"]')) return;
+      // Inside the code editor Ctrl+Space asks for suggestions, as in every
+      // code editor; any other switcher chord still works there.
+      const inEditor = event.target instanceof Element && event.target.closest(".monaco-editor");
+      const ctrlSpace = event.code === "Space" && event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
+      if (inEditor && ctrlSpace) return;
       event.preventDefault();
       event.stopPropagation();
       useQuickSwitcher.getState().toggle();

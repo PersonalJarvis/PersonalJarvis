@@ -119,6 +119,18 @@ function createEntry(
   return entry;
 }
 
+/** The workspace file behind an editor model or URI, for language features. */
+export function fileOfUri(uri: Monaco.Uri): { workspaceId: string; path: string } | null {
+  if (uri.scheme !== "file") return null;
+  const match = /^\/([^/]+)\/(.+)$/.exec(uri.path);
+  if (!match) return null;
+  return { workspaceId: decodeURIComponent(match[1]), path: match[2] };
+}
+
+export function fileUri(workspaceId: string, path: string): Monaco.Uri {
+  return uriFor(workspaceId, path);
+}
+
 export function modelOf(fileKey: string): Monaco.editor.ITextModel | null {
   return entries.get(fileKey)?.model ?? null;
 }

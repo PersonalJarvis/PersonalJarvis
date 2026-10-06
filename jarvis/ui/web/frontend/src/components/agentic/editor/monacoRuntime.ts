@@ -26,6 +26,7 @@ import HtmlWorker from "monaco-editor/languages/features/html/html.worker?worker
 import TsWorker from "monaco-editor/languages/features/typescript/ts.worker?worker";
 
 import { setMonaco } from "./editorModels";
+import { registerPythonLanguage } from "./pythonLanguage";
 import "./editorGutter.css";
 
 declare global {
@@ -62,6 +63,7 @@ for (const defaults of [typescriptDefaults, javascriptDefaults]) {
 }
 
 setMonaco(monaco);
+registerPythonLanguage(monaco);
 
 let probe: CanvasRenderingContext2D | null | undefined;
 

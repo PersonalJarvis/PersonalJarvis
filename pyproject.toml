@@ -69,6 +69,9 @@ dependencies = [
     # (lazy import); already installed through requests, declared because
     # Jarvis imports it directly.
     "charset-normalizer>=3.4",
+    # The code editor's Python completions, hovers and go-to-definition
+    # (static analysis, lazy import; pure Python).
+    "jedi>=0.19",
     # The code editor's delete moves files to the system trash (Recycle Bin,
     # macOS Trash, freedesktop trash) instead of erasing them; pure Python.
     "Send2Trash>=1.8.3",

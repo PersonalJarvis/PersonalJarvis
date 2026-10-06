@@ -25,7 +25,9 @@ Every file type opens:
 
 - Text and code open in the editor (Monaco, bundled locally and loaded only
   when the first file opens), with completions, hovers and syntax errors for
-  JSON, CSS/SCSS/Less, HTML and TypeScript/JavaScript.
+  JSON, CSS/SCSS/Less, HTML and TypeScript/JavaScript, and completions,
+  hovers and go-to-definition for Python (the workspace is the import root,
+  so its own packages resolve). **Ctrl+Space** asks for suggestions.
 - Text in other encodings opens too: UTF-16 with a byte-order mark, and
   legacy code pages (Windows-1252, Cyrillic, Greek, …) detected and saved
   back in the same encoding.
@@ -83,16 +85,18 @@ own app.
       check on a real Mac) — Linux needs no routing
 - [x] TypeScript/CSS/HTML language services and git change markers in the
       gutter
-- [ ] Python language server (needs a bundled server such as Pyright; not
-      started)
+- [x] Python completions, hovers and go-to-definition (F12 / Ctrl+click,
+      also into other workspace files), from jedi's static analysis
 
 ## Where it lives
 
 - Backend: `jarvis/agentic_ide/file_editing.py` (read, save, create, copy,
   move, delete, encodings), `file_search.py` (search and replace),
-  `editor_backups.py` (open tabs and unsaved text), and the
+  `editor_backups.py` (open tabs and unsaved text), `python_intel.py`
+  (Python completions, hovers, definitions), and the
   `/workspaces/{id}/` routes `text-file`, `text-file/version`, `head-text`,
-  `file-list`, `search`, `search/replace`, `editor-state`, `entries`,
+  `file-list`, `search`, `search/replace`, `python/{action}`,
+  `editor-state`, `entries`,
   `entries/copy`, `entries/move` and `entries/delete` in
   `jarvis/ui/web/agentic_ide_routes.py`.
 - Frontend: `components/agentic/editor/`, `store/codeEditor.ts`, the Folder
