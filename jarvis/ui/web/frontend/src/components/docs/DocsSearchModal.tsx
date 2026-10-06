@@ -267,8 +267,24 @@ function SuggestionItem({
   );
 }
 
+/**
+ * The index stores raw Markdown, so a snippet arrives with ``**``, link
+ * targets and table pipes in it. Strip that syntax (keeping the ``<mark>``
+ * highlights) so a result reads as prose.
+ */
+export function cleanSnippetMarkdown(value: string): string {
+  return value
+    .replace(/\]\([^)]*\)/g, "]")
+    .replace(/[[\]]/g, "")
+    .replace(/(\*\*|__|`)/g, "")
+    .replace(/(^|\s)#{1,6}\s/g, "$1")
+    .replace(/\s*\|\s*/g, " · ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export function renderSearchSnippet(value: string): React.ReactNode {
-  const parts = value.split(/(<mark>|<\/mark>)/gi);
+  const parts = cleanSnippetMarkdown(value).split(/(<mark>|<\/mark>)/gi);
   let marked = false;
   return parts.map((part, index) => {
     if (part.toLowerCase() === "<mark>") {
