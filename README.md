@@ -161,6 +161,7 @@ The installer checks for Python 3.11 or newer and Git, offers to install
 whatever is missing, adds the desktop launcher and opens the app. If you run it
 again, it updates your existing installation. You choose your language, wake
 phrase and models inside the app.
+Later, open it from the desktop launcher, or type `jarvis` in a terminal.
 
 If you prefer a regular desktop installer, download one here:
 
