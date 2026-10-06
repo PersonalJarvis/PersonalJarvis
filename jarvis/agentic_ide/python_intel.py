@@ -2,9 +2,16 @@
 
 Jedi reads the editor's live buffer together with the workspace on disk, so a
 completion after ``from jarvis.core import `` lists that package's names and a
-definition can lead into another workspace file. It analyses statically —
-nothing in the workspace is imported or run — and its helper process for
-compiled modules starts without a console window on Windows.
+definition can lead into another workspace file. Workspace source is only
+parsed, never imported or run; compiled extensions found in the workspace are
+not loaded either (``load_unsafe_extensions=False``), so a cloned repository
+cannot run native code through a completion. Jedi's helper process for the
+interpreter's own compiled modules starts without a console window on Windows.
+
+Every request runs on one dedicated worker thread: jedi's caches are not
+thread-safe, and a burst of hovers must not occupy the shared thread pool that
+saves and searches use. When requests pile up, the newest ones get an empty
+answer at once instead of queueing behind stale ones.
 
 Jedi is imported lazily: nothing here touches the boot path (AP-26), and a
 machine without it answers with empty results instead of an error.
@@ -13,7 +20,10 @@ machine without it answers with empty results instead of an error.
 from __future__ import annotations
 
 import os
+import re
 import threading
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -21,14 +31,41 @@ from loguru import logger
 
 from .file_editing import EditError, _resolve
 
-__all__ = ["complete", "definitions", "hover"]
+__all__ = ["complete", "definitions", "hover", "submit"]
 
 #: Completions returned for one request; Monaco filters further as you type.
 MAX_COMPLETIONS = 300
 _HOVER_DOC_CHARS = 4000
 
+#: Requests waiting or running before new ones are answered empty.
+MAX_PENDING = 3
+_LINE_BREAK = re.compile(r"\r\n|\r|\n")
+
 _projects: dict[str, Any] = {}
 _lock = threading.Lock()
+_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="python-intel")
+_pending = 0
+
+
+def submit(fn: Callable[..., Any], *args: Any, empty: Any) -> Future[Any]:
+    """Run one lookup on the worker thread, or answer ``empty`` when it is busy."""
+    global _pending
+    with _lock:
+        if _pending >= MAX_PENDING:
+            done: Future[Any] = Future()
+            done.set_result(empty)
+            return done
+        _pending += 1
+
+    def run() -> Any:
+        global _pending
+        try:
+            return fn(*args)
+        finally:
+            with _lock:
+                _pending -= 1
+
+    return _executor.submit(run)
 
 
 def _jedi() -> Any | None:
@@ -50,15 +87,18 @@ def _script(root: str | os.PathLike[str], path: str, text: str) -> tuple[Any, Pa
     with _lock:
         project = _projects.get(key)
         if project is None:
-            # The workspace is the import root, so its own packages resolve.
-            project = jedi.Project(path=str(base), added_sys_path=[str(base)])
+            # The workspace is the import root (smart_sys_path), so its own
+            # packages resolve; its compiled extensions are never loaded.
+            project = jedi.Project(path=str(base), load_unsafe_extensions=False)
             _projects[key] = project
     return jedi.Script(code=text, path=str(target), project=project), base
 
 
 def _position(text: str, line: int, column: int) -> tuple[int, int]:
     """Monaco's 1-based line/column as jedi's 1-based line, 0-based column, clamped."""
-    lines = text.splitlines() or [""]
+    # Only CRLF, CR and LF end a line, as in the editor (splitlines() would
+    # also split on form feeds and drop a trailing empty line).
+    lines = _LINE_BREAK.split(text)
     line = max(1, min(line, len(lines)))
     current = lines[line - 1] if line - 1 < len(lines) else ""
     return line, max(0, min(column - 1, len(current)))

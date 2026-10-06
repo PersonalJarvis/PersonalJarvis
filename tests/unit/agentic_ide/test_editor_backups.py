@@ -68,8 +68,19 @@ def test_a_damaged_backup_is_skipped_not_fatal(tmp_path: Path, store: Path) -> N
 def test_paths_are_validated(tmp_path: Path) -> None:
     with pytest.raises(EditError):
         editor_backups.save_backup(tmp_path, "../x", "t", base_version=None, encoding="utf-8")
-    with pytest.raises(EditError):
-        editor_backups.save_tabs(tmp_path, [{"path": ".git/config"}], None)
+    # One unusable tab is dropped; the others are still remembered.
+    editor_backups.save_tabs(tmp_path, [{"path": ".git/config"}, {"path": "ok.py"}], ".git/x")
+    state = editor_backups.load_state(tmp_path)
+    assert [tab["path"] for tab in state["tabs"]] == ["ok.py"]
+    assert state["active"] is None
+
+
+def test_old_backups_are_pruned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    editor_backups.save_backup(tmp_path, "old.py", "x", base_version=None, encoding="utf-8")
+    monkeypatch.setattr(editor_backups, "MAX_BACKUP_AGE_S", -1)
+    assert editor_backups.load_state(tmp_path)["backups"] == []
+    monkeypatch.setattr(editor_backups, "MAX_BACKUP_AGE_S", 3600)
+    assert editor_backups.load_state(tmp_path)["backups"] == []  # deleted, not just hidden
 
 
 async def test_routes_store_and_return_state(

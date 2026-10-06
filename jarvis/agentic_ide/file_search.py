@@ -43,6 +43,12 @@ MAX_MATCHES = 2000
 MAX_SEARCH_BYTES = 1024 * 1024
 #: Wall-clock budget for one search.
 SEARCH_BUDGET_S = 8.0
+#: Lines longer than this are skipped by a regular-expression search: a
+#: backtracking pattern on a minified megabyte line could hold the server.
+MAX_REGEX_LINE = 4000
+#: One line, a line ending included (only CRLF, CR and LF end a line, as in
+#: the editor, so line numbers agree with what it shows).
+_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$")
 _PREVIEW_CHARS = 240
 
 
@@ -62,9 +68,50 @@ class _FileHits:
     matches: list[dict[str, object]] = field(default_factory=list)
 
 
+def _repeats(tree: object, inside_repeat: bool = False) -> bool:
+    r"""True when a variably repeated group contains an unbounded repeat.
+
+    ``(a+)+``, ``(\w*)*`` and ``(a|b+)*`` backtrack exponentially in Python's
+    ``re``, which has no timeout and holds the interpreter lock while it runs.
+    ``(\d{2})+`` or ``(?:x+)?`` are fine and pass.
+    """
+    from re import _constants as constants  # noqa: PLC0415 — stdlib internals, parse only
+
+    for op, value in tree:  # type: ignore[attr-defined]
+        if op in (constants.MAX_REPEAT, constants.MIN_REPEAT):
+            low, high, body = value
+            unbounded = high is constants.MAXREPEAT
+            variable = unbounded or (high > 1 and low != high)
+            if unbounded and inside_repeat:
+                return True
+            if _repeats(body, inside_repeat or variable):
+                return True
+        elif op is constants.SUBPATTERN:
+            if _repeats(value[-1], inside_repeat):
+                return True
+        elif op is constants.BRANCH:
+            if any(_repeats(branch, inside_repeat) for branch in value[1]):
+                return True
+    return False
+
+
+def _risky(pattern: str) -> bool:
+    try:
+        from re import _parser as parser  # noqa: PLC0415 — stdlib internals, parse only
+
+        return _repeats(parser.parse(pattern))
+    except Exception:  # noqa: BLE001 — an unparseable pattern fails in re.compile instead
+        return False
+
+
 def _compile(options: SearchOptions) -> re.Pattern[str]:
     if not options.query:
         raise EditError("Type something to search for.")
+    if options.regex and _risky(options.query):
+        raise EditError(
+            "That expression repeats a repeated group, e.g. (a+)+; it could take minutes. "
+            "Simplify it, for example (a+) or a+."
+        )
     pattern = options.query if options.regex else re.escape(options.query)
     if options.whole_word:
         pattern = rf"\b(?:{pattern})\b"
@@ -100,6 +147,9 @@ def _read_searchable(base: Path, path: str) -> str | None:
     # must not become a way to read files the editor itself refuses to open.
     real = os.path.realpath(target)
     if not real.startswith(f"{base}{os.sep}"):
+        return None
+    # Nor a link into git's own database, which the editor refuses as well.
+    if any(part.lower() == ".git" for part in Path(real[len(str(base)) + 1 :]).parts):
         return None
     try:
         if target.stat().st_size > MAX_SEARCH_BYTES:
@@ -145,8 +195,14 @@ def search_workspace(root: str | os.PathLike[str], options: SearchOptions) -> di
             continue
         searched += 1
         hits: _FileHits | None = None
-        for number, line in enumerate(text.splitlines(keepends=True), start=1):
-            for match in pattern.finditer(line):
+        for number, found in enumerate(_LINE.finditer(text), start=1):
+            line = found.group(0)
+            if options.regex and len(line) > MAX_REGEX_LINE:
+                continue
+            if time.monotonic() > deadline:
+                truncated = True
+                break
+            for match in pattern.finditer(line.rstrip("\r\n")):
                 if match.end() == match.start():
                     continue  # an empty match marks nothing
                 if hits is None:
@@ -197,6 +253,35 @@ def _template(replacement: str, *, regex: bool) -> str:
     return re.sub(r"\$(\$|&|\d+)", group, replacement)
 
 
+def _replace_lines(
+    pattern: re.Pattern[str], template: str, text: str, *, regex: bool
+) -> tuple[str, int]:
+    """Replace line by line, exactly the matches the search listed.
+
+    A pattern then never spans a line break, ``^``/``$`` mean a line's start
+    and end, empty matches are left alone, and a line the search skipped for
+    its length is skipped here too.
+    """
+    count = 0
+
+    def one(match: re.Match[str]) -> str:
+        nonlocal count
+        if match.end() == match.start():
+            return match.group(0)
+        count += 1
+        return match.expand(template)
+
+    out: list[str] = []
+    for found in _LINE.finditer(text):
+        line = found.group(0)
+        body = line.rstrip("\r\n")
+        if regex and len(line) > MAX_REGEX_LINE:
+            out.append(line)
+            continue
+        out.append(pattern.sub(one, body) + line[len(body) :])
+    return "".join(out), count
+
+
 def replace_in_files(
     root: str | os.PathLike[str],
     options: SearchOptions,
@@ -209,16 +294,26 @@ def replace_in_files(
     writing, is reported back instead of being written.
     """
     pattern = _compile(options)
+    template = _template(replacement, regex=options.regex)
     replaced_files: list[str] = []
     skipped: list[dict[str, str]] = []
     total = 0
+    deadline = time.monotonic() + SEARCH_BUDGET_S * 2
+    seen: set[str] = set()
     for path in paths:
+        key = os.path.normcase(path.replace("\\", "/"))
+        if key in seen:
+            continue  # the same file twice would be replaced twice
+        seen.add(key)
+        if time.monotonic() > deadline:
+            skipped.append({"path": path, "reason": "out of time"})
+            continue
         try:
             loaded = read_text_file(root, path)
             if loaded.text is None:
                 skipped.append({"path": path, "reason": "not a text file"})
                 continue
-            new_text, count = pattern.subn(_template(replacement, regex=options.regex), loaded.text)
+            new_text, count = _replace_lines(pattern, template, loaded.text, regex=options.regex)
             if count == 0:
                 continue
             write_text_file(

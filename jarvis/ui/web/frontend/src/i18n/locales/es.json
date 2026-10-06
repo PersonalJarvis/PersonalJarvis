@@ -6295,6 +6295,7 @@
       "toggle_replace": "Mostrar u ocultar reemplazar",
       "replace_all": "Reemplazar todo",
       "replace_confirm": "¿Reemplazar {count} en {files} archivos?",
+      "replace_truncated": "Solo se muestra parte de los resultados; acota la búsqueda hasta ver todos para reemplazarlos.",
       "filters": "Archivos a incluir o excluir",
       "include": "Incluir, p. ej. *.py, src",
       "exclude": "Excluir, p. ej. tests, *.min.js",

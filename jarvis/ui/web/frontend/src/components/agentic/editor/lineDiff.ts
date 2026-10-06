@@ -18,7 +18,9 @@ export interface GutterChange {
 }
 
 /** More differences than this and no markers are drawn. */
-export const MAX_EDIT_DISTANCE = 4000;
+export const MAX_EDIT_DISTANCE = 1000;
+/** Files longer than this (both sides together) get no markers. */
+export const MAX_DIFF_LINES = 20_000;
 
 const splitLines = (text: string) => text.split(/\r\n|\r|\n/);
 
@@ -85,6 +87,7 @@ export function gutterChanges(base: string, current: string): GutterChange[] | n
   if (base === current) return [];
   const a = splitLines(base);
   const b = splitLines(current);
+  if (a.length + b.length > MAX_DIFF_LINES) return null;
   const steps = editScript(a, b);
   if (!steps) return null;
   const changes: GutterChange[] = [];

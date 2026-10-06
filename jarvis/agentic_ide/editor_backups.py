@@ -45,6 +45,10 @@ __all__ = [
 
 #: More open tabs than this are not worth restoring; the oldest are dropped.
 MAX_TABS = 60
+#: A backup nobody restored for this long belongs to a file long gone.
+MAX_BACKUP_AGE_S = 30 * 24 * 3600
+#: Backups restored per workspace at most; the newest win.
+MAX_BACKUPS = 100
 _MODES = ("edit", "diff")
 
 
@@ -95,10 +99,16 @@ def save_tabs(
     """Remember the open tabs of one workspace, in order."""
     clean: list[dict[str, Any]] = []
     for tab in tabs[-MAX_TABS:]:
-        path = _normalise_relative(str(tab.get("path", "")))
+        try:
+            path = _normalise_relative(str(tab.get("path", "")))
+        except EditError:
+            continue  # one unusable tab must not cost the others their place
         mode = tab.get("mode") if tab.get("mode") in _MODES else "edit"
         clean.append({"path": path, "mode": mode, "preview": bool(tab.get("preview"))})
-    active_path = _normalise_relative(active) if active else None
+    try:
+        active_path = _normalise_relative(active) if active else None
+    except EditError:
+        active_path = None
     _write_json(_folder_dir(folder) / "tabs.json", {"tabs": clean, "active": active_path})
 
 
@@ -143,8 +153,17 @@ def load_state(folder: str | os.PathLike[str]) -> dict[str, Any]:
     backups: list[dict[str, Any]] = []
     backup_dir = root / "backups"
     if backup_dir.is_dir():
+        cutoff = time.time() - MAX_BACKUP_AGE_S
         for entry in sorted(backup_dir.glob("*.json")):
             doc = _read_json(entry)
-            if doc and isinstance(doc.get("path"), str) and isinstance(doc.get("text"), str):
-                backups.append(doc)
-    return {"tabs": tabs, "active": tabs_doc.get("active"), "backups": backups}
+            if not (doc and isinstance(doc.get("path"), str) and isinstance(doc.get("text"), str)):
+                continue
+            if float(doc.get("saved_at") or 0) < cutoff:
+                try:
+                    entry.unlink()
+                except OSError as exc:
+                    logger.warning("Editor backup: could not prune {}: {}", entry.name, exc)
+                continue
+            backups.append(doc)
+    backups.sort(key=lambda doc: float(doc.get("saved_at") or 0), reverse=True)
+    return {"tabs": tabs, "active": tabs_doc.get("active"), "backups": backups[:MAX_BACKUPS]}

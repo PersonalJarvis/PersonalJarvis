@@ -2261,8 +2261,13 @@ async def python_intel(
         "hover": python_intel_module.hover,
         "definition": python_intel_module.definitions,
     }[action]
+    empty: object = None if action == "hover" else []
     try:
-        result = await asyncio.to_thread(handler, folder, req.path, req.text, req.line, req.column)
+        result = await asyncio.wrap_future(
+            python_intel_module.submit(
+                handler, folder, req.path, req.text, req.line, req.column, empty=empty
+            )
+        )
     except file_editing.EditError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"workspace_id": workspace_id, "result": result}

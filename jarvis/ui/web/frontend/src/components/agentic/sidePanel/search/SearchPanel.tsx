@@ -54,7 +54,10 @@ export function SearchPanel() {
   const [regex, setRegex] = useState(false);
   const [include, setInclude] = useState("");
   const [exclude, setExclude] = useState("");
+  // The answer and the search it answers: Replace all only acts on the
+  // result of exactly the search on screen.
   const [result, setResult] = useState<SearchResult | null>(null);
+  const [resultKey, setResultKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -78,10 +81,12 @@ export function SearchPanel() {
     return () => window.removeEventListener(SEARCH_FOCUS_EVENT, focus);
   }, []);
 
+  const searchKey = JSON.stringify(search);
   useEffect(() => {
     setConfirming(false);
     if (!workspaceId || !search.query) {
       setResult(null);
+      setResultKey("");
       setError("");
       return;
     }
@@ -91,6 +96,7 @@ export function SearchPanel() {
       searchWorkspace(workspaceId, search, controller.signal)
         .then((answer) => {
           setResult(answer);
+          setResultKey(JSON.stringify(search));
           setError("");
         })
         .catch((err: unknown) => {
@@ -111,8 +117,9 @@ export function SearchPanel() {
   const open = (path: string, line: number, column: number, length: number) =>
     useCodeEditorStore.getState().openFile(workspaceId, path, { line, column, length });
 
+  const replaceReady = !!result && resultKey === searchKey && !result.truncated && result.match_count > 0;
   const runReplace = async () => {
-    if (!result) return;
+    if (!result || !replaceReady) return;
     setConfirming(false);
     // A file with unsaved edits in the editor is left alone: replacing on
     // disk under it would only turn into a conflict.
@@ -206,9 +213,9 @@ export function SearchPanel() {
                 <button
                   type="button"
                   data-testid="ide-search-replace-all"
-                  disabled={!result?.match_count || busy}
+                  disabled={!replaceReady || busy}
+                  title={result?.truncated ? t("ide_side_panel.search.replace_truncated") : t("ide_side_panel.search.replace_all")}
                   onClick={() => (confirming ? void runReplace() : setConfirming(true))}
-                  title={t("ide_side_panel.search.replace_all")}
                   className={cn(
                     "inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs disabled:opacity-40",
                     confirming ? "border-destructive/60 bg-destructive/10 text-destructive" : "border-border/60 text-foreground hover:bg-secondary",

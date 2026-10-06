@@ -58,3 +58,9 @@ async def test_route_answers_each_action(project: Path, monkeypatch: pytest.Monk
     answer = await routes.python_intel("w1", "definition", request)
 
     assert answer["result"] == [{"path": "pkg/util.py", "line": 1, "column": 5}]
+
+
+def test_a_busy_worker_answers_new_requests_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(python_intel, "MAX_PENDING", 0)
+    future = python_intel.submit(lambda: ["never"], empty=[])
+    assert future.result(timeout=1) == []

@@ -180,8 +180,30 @@ function toast(message: string): void {
 // ---- Hot exit: unsaved text survives closing the app ----------------------
 
 /** How long typing has to pause before the unsaved text is backed up. */
-const BACKUP_DELAY_MS = 600;
+const BACKUP_DELAY_MS = 400;
+/**
+ * Browsers cap a keepalive request body (about 64 KB). A larger buffer is
+ * still sent while the window closes, without keepalive: best effort.
+ */
+const KEEPALIVE_MAX_CHARS = 60_000;
 const backupTimers = new Map<string, number>();
+/**
+ * Backup writes and deletes of one file run strictly one after another. Sent
+ * independently, a PUT issued just before a save could land after the save's
+ * DELETE and bring a stale backup back after the next restart.
+ */
+const backupChains = new Map<string, Promise<void>>();
+
+function inOrder(fileKey: string, task: () => Promise<void>): void {
+  const previous = backupChains.get(fileKey) ?? Promise.resolve();
+  const next = previous.then(task, task).catch((error: unknown) => {
+    console.warn("Editor backup request failed:", (error as Error).message);
+  });
+  backupChains.set(fileKey, next);
+  void next.finally(() => {
+    if (backupChains.get(fileKey) === next) backupChains.delete(fileKey);
+  });
+}
 /** Files that have a backup on the server, so a clean buffer knows to drop it. */
 const backedUp = new Set<string>();
 /** Backups from last run, laid over their file when it loads. */
@@ -199,11 +221,11 @@ function sendBackup(fileKey: string, keepalive = false): void {
   if (!file || !entry) return;
   if (file.dirty) {
     backedUp.add(fileKey);
-    void putEditorBackup(
-      file.workspaceId,
-      { path: file.path, text: entry.model.getValue(), base_version: file.version, encoding: file.encoding },
-      keepalive,
-    ).catch((error: unknown) => console.warn("Editor backup failed:", (error as Error).message));
+    const backup = { path: file.path, text: entry.model.getValue(), base_version: file.version, encoding: file.encoding };
+    const send = () => putEditorBackup(file.workspaceId, backup, keepalive && backup.text.length <= KEEPALIVE_MAX_CHARS);
+    // While the window closes there is no later turn to wait for: send now.
+    if (keepalive) void send().catch((error: unknown) => console.warn("Editor backup failed:", (error as Error).message));
+    else inOrder(fileKey, send);
   } else {
     forgetBackup(fileKey);
   }
@@ -219,9 +241,8 @@ function forgetBackup(fileKey: string, file = store().files[fileKey]): void {
   window.clearTimeout(backupTimers.get(fileKey));
   backupTimers.delete(fileKey);
   if (!backedUp.delete(fileKey) || !file) return;
-  void deleteEditorBackup(file.workspaceId, file.path).catch((error: unknown) =>
-    console.warn("Editor backup cleanup failed:", (error as Error).message),
-  );
+  const { workspaceId, path } = file;
+  inOrder(fileKey, () => deleteEditorBackup(workspaceId, path));
 }
 
 /** Send every backup still waiting for its typing pause, now (the window is closing). */

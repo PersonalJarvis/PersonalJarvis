@@ -25,6 +25,7 @@ import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
 import { AppshotEditorHost } from "@/components/appshot/AppshotEditorHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
+import { useMacWindowCloseFallback } from "@/lib/macWindowClose";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
   layout table and the keybind hook — none of which anything needs before
@@ -151,6 +152,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [switcherEnabled, switcherCombo]);
 
+  useMacWindowCloseFallback();
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();

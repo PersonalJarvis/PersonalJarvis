@@ -120,3 +120,37 @@ def test_search_reads_legacy_encodings_like_the_editor(project: Path) -> None:
         ("legacy.txt", 2),
         ("legacy.txt", 3),
     ]
+
+
+def test_catastrophic_regex_is_refused_but_ordinary_repeats_pass(project: Path) -> None:
+    with pytest.raises(EditError, match="repeats a repeated group"):
+        search_workspace(project, SearchOptions("(a+)+$", regex=True))
+    assert (
+        search_workspace(project, SearchOptions(r"(\d{2})+|hel+o", regex=True))["match_count"] >= 1
+    )
+
+
+def test_replace_changes_exactly_what_search_listed(project: Path) -> None:
+    (project / "lines.txt").write_text("foo one\nfoo two\nbar\n", encoding="utf-8")
+
+    listed = search_workspace(project, SearchOptions("^foo", regex=True, include="lines.txt"))
+    answer = replace_in_files(
+        project, SearchOptions("^foo", regex=True), "baz", ["lines.txt", "lines.txt"]
+    )
+
+    assert listed["match_count"] == answer["replacements"] == 2
+    assert (project / "lines.txt").read_text("utf-8") == "baz one\nbaz two\nbar\n"
+    # An empty match marks nothing, so it replaces nothing either.
+    assert (
+        replace_in_files(project, SearchOptions("x*", regex=True), "!", ["lines.txt"])[
+            "replacements"
+        ]
+        == 0
+    )
+    assert (project / "lines.txt").read_text("utf-8") == "baz one\nbaz two\nbar\n"
+
+
+def test_line_numbers_count_only_real_line_breaks(project: Path) -> None:
+    (project / "ff.txt").write_text("a\x0cb\nneedle\n", encoding="utf-8")
+    hits = _hits(search_workspace(project, SearchOptions("needle")))
+    assert ("ff.txt", 2, 1) in hits
