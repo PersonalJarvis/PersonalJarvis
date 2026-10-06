@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Plus, SquareTerminal, X } from "lucide-react";
+import { Check, Maximize2, Minimize2, MoveHorizontal, Plus, SquareTerminal, X } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
@@ -215,7 +215,10 @@ function IdeSidePanelRail() {
   );
 }
 
-/** The panel itself: tab header ("+" and collapse) over the active tab's content. */
+/**
+ * The panel itself: tab header ("+" and maximize) over the active tab's content.
+ * It opens and closes from the window caption (`IdeSidePanelToggle`).
+ */
 export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: TerminalAppearance; onScreen?: boolean }) {
   const t = useT();
   const allTabs = useIdeSidePanelStore((state) => state.tabs);
@@ -230,7 +233,6 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
   const select = useIdeSidePanelStore((state) => state.select);
   const openTab = useIdeSidePanelStore((state) => state.openTab);
   const closeTab = useIdeSidePanelStore((state) => state.closeTab);
-  const setOpen = useIdeSidePanelStore((state) => state.setOpen);
   const maximized = useIdeSidePanelStore((state) => state.maximized);
   const setMaximized = useIdeSidePanelStore((state) => state.setMaximized);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -357,18 +359,6 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
           className={HEADER_BTN}
         >
           {maximized ? <Minimize2 className="h-4 w-4" aria-hidden /> : <Maximize2 className="h-4 w-4" aria-hidden />}
-        </button>
-        <button
-          type="button"
-          data-testid="ide-side-panel-collapse"
-          aria-label={t("ide_side_panel.collapse")}
-          title={t("ide_side_panel.collapse")}
-          aria-controls={SIDE_PANEL_ID}
-          aria-expanded
-          onClick={() => setOpen(false)}
-          className={HEADER_BTN}
-        >
-          <PanelRightClose className="h-4 w-4" aria-hidden />
         </button>
       </div>
       {/* Keyed by tab: Changes and Folder share one component and must not share its state. */}
