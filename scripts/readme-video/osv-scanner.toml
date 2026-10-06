@@ -1,0 +1,19 @@
+# osv-scanner exceptions for package-lock.json in this folder.
+#
+# This is a local video-rendering project: it ships nothing to users and runs
+# only on the maintainer's machine over our own sources. `ignoreUntil` forces
+# a fresh review.
+
+# braces: stack exhaustion on deeply nested brace patterns. 3.0.3 is the
+# last release and the advisory lists no fix; only our own globs reach it.
+[[IgnoredVulns]]
+id = "CVE-2026-93687"
+ignoreUntil = 2027-01-06
+reason = "GHSA-vfj7-8cjw-p6xm: dev-only build dependency, no fixed release; only our own globs reach it."
+
+# postcss-selector-parser: fixed in 7.1.6, but Tailwind CSS 3 needs the 6.x
+# line; it parses only the selectors in our own stylesheets.
+[[IgnoredVulns]]
+id = "CVE-2026-104844"
+ignoreUntil = 2027-01-06
+reason = "GHSA-rj75-hqrm-r3gf: fix is 7.x, which Tailwind CSS 3 cannot use; parses only our own CSS."
