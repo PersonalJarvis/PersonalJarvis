@@ -333,10 +333,16 @@ class PlainChrome:
                 raise RuntimeError("The login browser is already open; close it before reopening")
             _validate_executable(self.profile, Path(self.executable))
             # Keep spawn and ownership assignment atomic against cancellation.
+            # Chrome Sync installs the person's extensions into this profile;
+            # an AI browser extension would let outside tools drive the shared
+            # logged-in browser, so the sign-in window runs extension-free like
+            # the agent browser. The browser worker ends Chrome without a clean
+            # exit, which must not greet each sign-in with a restore prompt.
             self.process = subprocess.Popen(  # noqa: ASYNC220
                 [self.executable, f"--user-data-dir={self.profile.resolve()}", "--new-window",
                  "--no-first-run", "--disable-background-mode",
-                 "--disable-backgrounding-occluded-windows", "chrome://newtab/"],
+                 "--disable-backgrounding-occluded-windows", "--disable-extensions",
+                 "--hide-crash-restore-bubble", "chrome://newtab/"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=self.creationflags,
             )
