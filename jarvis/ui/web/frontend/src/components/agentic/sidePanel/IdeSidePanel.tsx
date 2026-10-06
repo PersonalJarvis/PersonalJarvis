@@ -19,11 +19,17 @@ import { SIDE_PANEL_ID } from "./sidePanelIds";
 const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
 const MIN_PX = 260;
-const MAX_PX = 720;
+/**
+ * Ceiling before the frame has been measured. The real limit is the frame
+ * minus `GRID_RESERVED_PX`: a fixed cap here stopped the drag halfway across a
+ * wide window, and it must stay high so the first, unmeasured render does not
+ * clip a wider stored width.
+ */
+const UNMEASURED_MAX_PX = 4096;
 /** The office map needs room to walk around in: its tab opens the panel at least this wide. */
 const OFFICE_MIN_PX = 520;
-/** Terminal canvas kept visible while the panel is open. */
-const GRID_RESERVED_PX = 320;
+/** Strip of terminal grid kept beside the panel, so its grip always stays reachable. */
+const GRID_RESERVED_PX = 120;
 
 // Preserve the existing public export without coupling caption chrome to the panel.
 export { SIDE_PANEL_ID } from "./sidePanelIds";
@@ -70,7 +76,7 @@ export function IdeSidePanelFrame({ children, markInUse = false, appearance, onS
     return () => observer.disconnect();
   }, []);
 
-  const max = Math.max(MIN_PX, Math.min(MAX_PX, frameWidth ? frameWidth - GRID_RESERVED_PX : MAX_PX));
+  const max = Math.max(MIN_PX, frameWidth ? frameWidth - GRID_RESERVED_PX : UNMEASURED_MAX_PX);
   const pane = useResizablePane({
     storageKey: WIDTH_KEY,
     defaultSize: DEFAULT_PX,

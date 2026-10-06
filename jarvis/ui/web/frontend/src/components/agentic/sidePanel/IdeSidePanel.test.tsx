@@ -203,6 +203,13 @@ describe("IdeSidePanel", () => {
     expect(useIdeSidePanelStore.getState()).toMatchObject({ active: "agents", tabs: ["office", "agents"] });
   });
 
+  it("keeps a stored width wider than the old 720px cap", () => {
+    localStorage.setItem("jarvis.agenticIde.sidePanelWidth.v1", "1100");
+    act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
+    render(<Harness />);
+    expect(screen.getByTestId("ide-side-panel-host").style.width).toBe("1100px");
+  });
+
   it("maximizes the office over the whole view without remounting it or resizing the grid", async () => {
     localStorage.setItem("jarvis.agenticIde.sidePanelWidth.v1", "600");
     act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["office"], active: "office" }));
