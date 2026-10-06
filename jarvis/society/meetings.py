@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 # The reply an agent gives when it stays silent. Never published: the meeting
 # drops it, and the personal chat hides it (frontend agentchat/meetingPass.ts,
 # pinned by a parity test).
-MEETING_PASS = "[[MEETING_PASS]]"
+MEETING_PASS = "[[MEETING_PASS]]"  # noqa: S105 — a silence marker, not a credential
 
 
 def _speaker_name(agent: Any, cfg: Any) -> str:
@@ -207,7 +207,9 @@ class Meetings:
                 await self.runtime.rooms.say(room.room_id, agent.agent_id, reply)
                 if reply:
                     context.append({"speaker": names[agent.agent_id], "text": reply})
-            if (await self.runtime.rooms.get(room.room_id)).state == RoomState.RUNNING:
+            # A round where nobody spoke has already settled itself as silence.
+            current = await self.runtime.rooms.get(room.room_id)
+            if current is not None and current.state == RoomState.RUNNING:
                 await self.runtime.rooms.settle(room.room_id, reason="user_round_complete")
         except asyncio.CancelledError:
             await self.runtime.rooms.settle(room.room_id, reason="user_stopped")

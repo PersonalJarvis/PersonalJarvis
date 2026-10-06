@@ -9,6 +9,7 @@ import pytest
 
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.society.meetings import MEETING_PASS, Meetings
+from jarvis.society.rooms import MAX_MEMBERS
 from jarvis.society.runtime import SocietyRuntime
 from tests.fakes.meeting_chat import MeetingChatFake
 
@@ -194,6 +195,15 @@ def test_the_personal_chat_hides_the_same_silence_marker():
     ).read_text(encoding="utf-8")
     match = re.search(r'export const MEETING_PASS = "([^"]+)"', source)
     assert match is not None and match.group(1) == MEETING_PASS
+
+
+def test_the_meeting_view_uses_the_same_member_cap():
+    root = Path(__file__).resolve().parents[3]
+    source = (
+        root / "jarvis/ui/web/frontend/src/components/society/chat/MeetingChat.tsx"
+    ).read_text(encoding="utf-8")
+    match = re.search(r"export const MEETING_MAX_MEMBERS = (\d+);", source)
+    assert match is not None and int(match.group(1)) == MAX_MEMBERS
 
 
 async def test_the_lead_takes_part_under_the_wake_word_name(tmp_path):

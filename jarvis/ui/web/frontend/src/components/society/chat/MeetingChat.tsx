@@ -12,6 +12,9 @@ interface MeetingSnapshot {
   room: { state: string; settle_reason: string; next_speaker: string | null } | null;
 }
 
+/** The server's room cap (jarvis/society/rooms.py MAX_MEMBERS), pinned by a parity test. */
+export const MEETING_MAX_MEMBERS = 6;
+
 async function request(url: string, text?: string, stop = false): Promise<MeetingSnapshot> {
   const response = await fetch(url, text === undefined && !stop ? undefined : {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -54,7 +57,7 @@ export function MeetingChat({ group, roster }: { group: SocietyChatGroup; roster
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally { setPending(false); }
   };
-  const tooMany = group.members.length > 6;
+  const tooMany = group.members.length > MEETING_MAX_MEMBERS;
   return <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-testid="society-meeting">
     <header className="border-b border-border px-4 py-3">
       <h2 className="font-semibold text-foreground">{group.name}</h2>
