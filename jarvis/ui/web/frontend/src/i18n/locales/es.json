@@ -3246,7 +3246,9 @@
     "no_results": "Sin resultados para \"{0}\"",
     "for_fulltext": "para la búsqueda completa.",
     "could_not_load": "No se pudo cargar el documento.",
-    "recent": "Recientes"
+    "recent": "Recientes",
+    "search_button": "Buscar en la documentación",
+    "search_hero": "Buscar en la documentación"
   },
   "sessions": {
     "select_one": "Selecciona una sesión a la izquierda.",
@@ -3671,7 +3673,9 @@
     "indexing": "Creando el índice local…",
     "retry": "Intentar de nuevo",
     "documents": "documentos",
-    "no_results": "No hay documentos coincidentes"
+    "no_results": "No hay documentos coincidentes",
+    "overview": "Resumen",
+    "github": "Documentación en GitHub"
   },
   "docs_content": {
     "prev": "Anterior",
@@ -3683,27 +3687,46 @@
     "on_this_page": "En esta página",
     "copy_code": "Copiar código",
     "code_copied": "Código copiado",
-    "skip_to_content": "Saltar al contenido de la documentación"
+    "skip_to_content": "Saltar al contenido de la documentación",
+    "reading_time": "{0} min de lectura",
+    "reviewed": "Revisado el {0}",
+    "copy_page": "Copiar página",
+    "page_copied": "Copiado",
+    "view_source": "Ver fuente",
+    "copy": "Copiar",
+    "pagination": "Guía anterior y siguiente",
+    "callout_note": "Nota",
+    "callout_info": "Información",
+    "callout_tip": "Consejo",
+    "callout_warning": "Advertencia"
   },
   "docs_overview": {
     "eyebrow": "Documentación",
     "title": "Documentación de Personal Jarvis",
-    "description": "Todo, desde la configuración inicial hasta la arquitectura de la voz. Explora la biblioteca local completa o abre la documentación pública rediseñada.",
-    "online_docs": "Abrir la documentación web rediseñada",
+    "description": "Guías, conceptos y referencias para configurar, usar y ampliar tu asistente.",
+    "online_docs": "Ver en GitHub",
     "load_failed_title": "No se pudo cargar la documentación",
     "load_failed_description": "El índice local no estuvo listo a tiempo. Inténtalo de nuevo sin reiniciar la aplicación.",
     "retry": "Intentar de nuevo",
     "empty_title": "No se encontraron documentos locales",
-    "empty_description": "La documentación web sigue disponible mediante el botón de arriba.",
+    "empty_description": "La documentación también está disponible en GitHub.",
     "local_library": "Empieza en la biblioteca local",
     "local_library_description": "Acceso rápido y sin conexión a la documentación incluida en esta instalación.",
     "indexing_title": "Preparando tu documentación",
     "indexing_description": "Se está leyendo la biblioteca Markdown local y creando la búsqueda de texto completo. Normalmente solo tarda un momento.",
     "loading_page": "Cargando documento…",
     "browse_by_topic": "Explorar por tema",
-    "browse_description": "Sigue una ruta de aprendizaje o ve directamente a la función que necesitas.",
+    "browse_description": "Todas las guías incluidas en esta instalación, agrupadas según lo que quieras hacer.",
     "guide": "guía",
-    "guides": "guías"
+    "guides": "guías",
+    "start_title": "Primeros pasos",
+    "start_description": "¿Eres nuevo? Lee estas guías en orden, desde la instalación hasta tu primera conversación por voz.",
+    "start_reading": "Empezar a leer",
+    "recent_title": "Continúa donde lo dejaste",
+    "show_all": "Mostrar las {0}",
+    "show_less": "Mostrar menos",
+    "help_title": "¿No encuentras lo que buscas?",
+    "help_description": "Busca en todas las guías por palabra clave o consulta las fuentes en GitHub."
   },
   "docs_search_modal": {
     "navigate": "navegar",

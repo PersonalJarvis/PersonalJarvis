@@ -1,23 +1,12 @@
-import { useMemo, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  Clock,
-  FileText,
-  Loader2,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ExternalLink, RefreshCw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import {
-  buildDocSections,
-  useDocsGrouped,
-  type DocNavSummary,
-} from "@/hooks/useDocs";
-import { useRecentDocs } from "@/hooks/useRecentDocs";
+import { buildDocSections, useDocsGrouped } from "@/hooks/useDocs";
 import { useT } from "@/i18n";
+import { openExternalUrl } from "@/lib/openExternal";
+import { ONLINE_DOCS_URL, SearchTrigger } from "./docsShared";
 
 interface Props {
   selectedSlug: string | null;
@@ -26,6 +15,11 @@ interface Props {
   onOpenSearch: () => void;
 }
 
+/**
+ * The docs navigation: one search field, an Overview entry, then every topic
+ * as a collapsible group of plain text links. No per-row icons or counts —
+ * the titles carry the navigation, the active row carries the accent.
+ */
 export function DocsSidebar({
   selectedSlug,
   onSelect,
@@ -34,244 +28,174 @@ export function DocsSidebar({
 }: Props) {
   const t = useT();
   const { data, isLoading, isFetching, error, refetch } = useDocsGrouped();
-  const { recent } = useRecentDocs();
-  const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const sections = useMemo(() => buildDocSections(data), [data]);
 
-  const filteredSections = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return sections;
-    return sections
-      .map((section) => ({
-        ...section,
-        docs: section.docs.filter(
-          (d) =>
-          d.title.toLowerCase().includes(q) ||
-          d.summary.toLowerCase().includes(q) ||
-          d.slug.toLowerCase().includes(q) ||
-          d.tags.some((t) => t.toLowerCase().includes(q)),
-        ),
-      }))
-      .filter((section) => section.docs.length > 0);
-  }, [query, sections]);
+  // Opening a guide from search or a cross-link re-opens its group, so the
+  // active row is never hidden inside a collapsed topic.
+  useEffect(() => {
+    if (!selectedSlug) return;
+    const owner = sections.find((section) =>
+      section.docs.some((doc) => doc.slug === selectedSlug),
+    );
+    if (!owner) return;
+    setCollapsed((prev) => {
+      if (!prev.has(owner.name)) return prev;
+      const next = new Set(prev);
+      next.delete(owner.name);
+      return next;
+    });
+  }, [selectedSlug, sections]);
 
-  const totalCount = useMemo(() => {
-    return filteredSections.reduce((acc, section) => acc + section.docs.length, 0);
-  }, [filteredSections]);
+  const toggle = (name: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
-  // A standing rail, not a card: it runs the full height of the section, so it
-  // takes the rail ground and separates from the page by fill alone — a
-  // content-sized surface is what earns --card, and this is not one.
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-border bg-sidebar">
-      {/* Header */}
-      <div className="border-b border-border px-3 py-3">
-        <div className="mb-2 flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onShowOverview}
-            className="rounded-sm text-base font-semibold text-foreground-strong transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {t("docs_sidebar.title")}
-          </button>
-          <button
-            type="button"
-            onClick={onOpenSearch}
-            title={t("docs.fulltext_search")}
-            aria-label={t("docs.fulltext_search")}
-            className="rounded-md p-1.5 text-muted-foreground transition hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Search className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-        <label htmlFor="docs-sidebar-filter" className="sr-only">
-          {t("docs.search_placeholder")}
-        </label>
-        <input
-          id="docs-sidebar-filter"
-          name="docs-filter"
-          type="text"
-          placeholder={t("docs.search_placeholder")}
-          autoComplete="off"
-          value={query}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setQuery(e.target.value)
-          }
-          className="flex h-9 w-full rounded-md border border-border-strong bg-input px-3 text-base ring-offset-sidebar placeholder:text-foreground-faint transition-colors focus-visible:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        />
-        {isLoading ? (
-          <div
-            className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
-            role="status"
-          >
-            <Loader2 className="h-3 w-3 animate-spin text-primary motion-reduce:animate-none" aria-hidden="true" />
-            <span>{t("docs_sidebar.indexing")}</span>
-          </div>
-        ) : error ? (
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="mt-2 inline-flex items-center gap-1.5 text-xs text-destructive transition hover:text-destructive/80"
-          >
-            <RefreshCw
-              className={cn(
-                "h-3 w-3",
-                isFetching && "animate-spin motion-reduce:animate-none",
-              )}
-              aria-hidden="true"
-            />
-            {t("docs_sidebar.retry")}
-          </button>
-        ) : (
-          <p className="mt-2 text-sm text-foreground-faint">
-            {totalCount} {t("docs_sidebar.documents")}
-          </p>
-        )}
+    <aside
+      aria-label={t("docs_sidebar.title")}
+      className="flex h-full w-64 shrink-0 flex-col border-r border-border bg-background"
+    >
+      <div className="px-4 pb-3 pt-5">
+        <SearchTrigger onClick={onOpenSearch} />
       </div>
 
-      {/* Tree */}
       <ScrollArea className="flex-1">
-        <div className="px-2 py-2">
+        <nav className="px-3 pb-6">
+          <NavRow
+            label={t("docs_sidebar.overview")}
+            active={selectedSlug === null}
+            onClick={onShowOverview}
+          />
+
           {isLoading && <SidebarSkeleton />}
 
-          {/* Recent docs — only when not filtered + at least 1 entry */}
-          {!isLoading && !query && recent.length > 0 && (
-            <div className="mb-2">
-              <div className="mb-1 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide text-foreground-faint">
-                <Clock className="h-3 w-3" aria-hidden="true" />
-                <span>{t("docs.recent")}</span>
-                <span className="ml-auto text-xs font-normal normal-case tracking-normal">
-                  {recent.length}
-                </span>
-              </div>
-              {recent.map((doc) => (
+          {error && !isLoading && (
+            <button
+              type="button"
+              onClick={() => void refetch()}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-sm px-3 text-sm text-destructive transition-colors hover:text-destructive/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RefreshCw
+                className={cn(
+                  "h-3 w-3",
+                  isFetching && "animate-spin motion-reduce:animate-none",
+                )}
+                aria-hidden="true"
+              />
+              {t("docs_sidebar.retry")}
+            </button>
+          )}
+
+          {sections.map((section) => {
+            const isCollapsed = collapsed.has(section.name);
+            const groupId = `docs-nav-${section.order}-${section.docs[0]?.slug ?? "group"}`;
+            return (
+              <div key={section.name} className="mt-5">
                 <button
-                  key={doc.slug}
                   type="button"
-                  onClick={() => onSelect(doc.slug)}
-                  data-active={doc.slug === selectedSlug || undefined}
-                  className={cn(
-                    "flex min-h-8 w-full items-start gap-2 rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
-                    "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    doc.slug === selectedSlug && "jarvis-nav-active bg-secondary font-medium text-foreground",
-                  )}
-                  title={doc.title}
+                  onClick={() => toggle(section.name)}
+                  aria-expanded={!isCollapsed}
+                  aria-controls={groupId}
+                  className="group flex w-full items-center justify-between gap-2 rounded-sm px-3 py-1 text-left text-sm font-semibold text-foreground-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <FileText className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="flex-1 break-words line-clamp-2">
-                    {doc.title}
-                  </span>
-                </button>
-              ))}
-              <div className="my-2 border-b border-border/40" />
-            </div>
-          )}
-
-          {filteredSections.map((section) => {
-              const isCollapsed = collapsed.has(section.name);
-              return (
-                <div key={section.name} className="mb-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = new Set(collapsed);
-                      if (isCollapsed) next.delete(section.name);
-                      else next.add(section.name);
-                      setCollapsed(next);
-                    }}
-                    aria-expanded={!isCollapsed}
-                    className="group mb-1 mt-4 flex h-6 w-full items-center gap-1 rounded-sm px-3 text-xs font-medium uppercase tracking-wide text-foreground-faint transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    {isCollapsed ? (
-                      <ChevronRight className="h-3 w-3" aria-hidden="true" />
-                    ) : (
-                      <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                  <span>{section.name}</span>
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 shrink-0 text-foreground-faint opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100",
+                      isCollapsed && "-rotate-90 opacity-100",
                     )}
-                    <span>{section.name}</span>
-                    <span className="ml-auto text-xs font-normal normal-case tracking-normal">
-                      {section.docs.length}
-                    </span>
-                  </button>
-                  {!isCollapsed &&
-                    section.docs.map((doc) => (
-                      <SidebarItem
-                        key={doc.slug}
-                        doc={doc}
-                        active={doc.slug === selectedSlug}
-                        onClick={() => onSelect(doc.slug)}
-                      />
+                    aria-hidden="true"
+                  />
+                </button>
+                {!isCollapsed && (
+                  <ul id={groupId} className="mt-1 space-y-px">
+                    {section.docs.map((doc) => (
+                      <li key={doc.slug}>
+                        <NavRow
+                          label={doc.title}
+                          active={doc.slug === selectedSlug}
+                          onClick={() => onSelect(doc.slug)}
+                        />
+                      </li>
                     ))}
-                </div>
-              );
-            })}
-
-          {!isLoading && !error && totalCount === 0 && (
-            <div className="px-3 py-8 text-center text-base text-muted-foreground">
-              {t("docs_sidebar.no_results")}
-            </div>
-          )}
-        </div>
+                  </ul>
+                )}
+              </div>
+            );
+          })}
+        </nav>
       </ScrollArea>
+
+      <div className="border-t border-border px-4 py-3">
+        <a
+          href={ONLINE_DOCS_URL}
+          onClick={(event) => {
+            event.preventDefault();
+            void openExternalUrl(ONLINE_DOCS_URL);
+          }}
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 rounded-sm text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {t("docs_sidebar.github")}
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      </div>
     </aside>
   );
 }
 
-interface ItemProps {
-  doc: DocNavSummary;
+function NavRow({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
   active: boolean;
   onClick: () => void;
-}
-
-function SidebarSkeleton() {
-  return (
-    <div
-      className="animate-pulse space-y-5 px-2 py-2 motion-reduce:animate-none"
-      aria-hidden="true"
-    >
-      {[4, 3, 5].map((rows, group) => (
-        <div key={group} className="space-y-2">
-          <div className="h-2 w-24 rounded-full bg-muted" />
-          {Array.from({ length: rows }, (_, row) => (
-            <div key={row} className="flex items-center gap-2 py-1">
-              <div className="h-3 w-3 rounded-sm bg-muted/80" />
-              <div
-                className="h-2.5 rounded-full bg-muted/80"
-                style={{ width: `${58 + ((row + group) % 3) * 12}%` }}
-              />
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SidebarItem({ doc, active, onClick }: ItemProps) {
-  // Doc titles should be fully readable (user mandate 2026-04-29) —
-  // ``break-words`` allows wrapping inside German compound words,
-  // ``line-clamp-2`` caps it at 2 lines max so the list doesn't sprawl, and
-  // the ``title`` attribute stays as a hover tooltip for the full title.
-  // NO Diataxis pill — the section header above already carries that info
-  // (user mandate: no duplicate information, no truncated ``LEGAC...`` pill).
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       data-active={active || undefined}
       aria-current={active ? "page" : undefined}
+      title={label}
       className={cn(
-        "flex min-h-8 w-full items-start gap-2 rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
+        "block w-full rounded-md px-3 py-1.5 text-left text-base text-muted-foreground transition-colors",
         "hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "jarvis-nav-active bg-secondary font-medium text-foreground",
+        active && "jarvis-nav-active font-medium",
       )}
-      title={doc.title}
     >
-      <FileText className="mt-1 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      <span className="flex-1 break-words line-clamp-2">
-        {doc.title}
-      </span>
+      <span className="line-clamp-2 break-words">{label}</span>
     </button>
+  );
+}
+
+function SidebarSkeleton() {
+  return (
+    <div
+      className="mt-5 animate-pulse space-y-6 px-3 motion-reduce:animate-none"
+      aria-hidden="true"
+    >
+      {[5, 4, 6].map((rows, group) => (
+        <div key={group} className="space-y-3">
+          <div className="h-2.5 w-24 rounded-full bg-muted" />
+          {Array.from({ length: rows }, (_, row) => (
+            <div
+              key={row}
+              className="h-2.5 rounded-full bg-muted/70"
+              style={{ width: `${55 + ((row + group) % 3) * 14}%` }}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }

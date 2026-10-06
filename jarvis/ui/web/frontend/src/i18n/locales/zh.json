@@ -3248,7 +3248,9 @@
     "no_results": "没有找到“{0}”的结果",
     "for_fulltext": "进行全文搜索。",
     "could_not_load": "无法加载文档。",
-    "recent": "最近"
+    "recent": "最近",
+    "search_button": "搜索文档",
+    "search_hero": "搜索文档"
   },
   "sessions": {
     "select_one": "请在左侧选择一个会话。",
@@ -3673,7 +3675,9 @@
     "indexing": "正在建立本地索引…",
     "retry": "重试",
     "documents": "篇文档",
-    "no_results": "没有匹配的文档"
+    "no_results": "没有匹配的文档",
+    "overview": "概览",
+    "github": "GitHub 上的文档"
   },
   "docs_content": {
     "prev": "上一篇",
@@ -3685,27 +3689,46 @@
     "on_this_page": "本页内容",
     "copy_code": "复制代码",
     "code_copied": "代码已复制",
-    "skip_to_content": "跳到文档内容"
+    "skip_to_content": "跳到文档内容",
+    "reading_time": "阅读约 {0} 分钟",
+    "reviewed": "审阅于 {0}",
+    "copy_page": "复制页面",
+    "page_copied": "已复制",
+    "view_source": "查看源文件",
+    "copy": "复制",
+    "pagination": "上一篇和下一篇指南",
+    "callout_note": "注意",
+    "callout_info": "信息",
+    "callout_tip": "提示",
+    "callout_warning": "警告"
   },
   "docs_overview": {
     "eyebrow": "文档",
     "title": "Personal Jarvis 文档",
-    "description": "从首次设置到语音背后的架构，一应俱全。浏览完整的本地文档库，或打开全新设计的在线文档。",
-    "online_docs": "打开全新的在线文档",
+    "description": "设置、使用和扩展你的助手所需的指南、概念与参考资料。",
+    "online_docs": "在 GitHub 上查看",
     "load_failed_title": "无法加载文档",
     "load_failed_description": "本地索引未能及时就绪。无需重启应用，直接重试即可。",
     "retry": "重试",
     "empty_title": "未找到本地文档",
-    "empty_description": "你仍然可以通过上方按钮访问在线文档。",
+    "empty_description": "文档也可以在 GitHub 上查看。",
     "local_library": "从本地文档库开始",
     "local_library_description": "快速、离线地访问此安装附带的文档。",
     "indexing_title": "正在准备你的文档",
     "indexing_description": "正在扫描本地 Markdown 文档库并建立全文搜索。通常只需片刻。",
     "loading_page": "正在加载文档…",
     "browse_by_topic": "按主题浏览",
-    "browse_description": "沿着学习路径前进，或直接跳到你需要的功能。",
+    "browse_description": "本次安装附带的所有指南，按你想完成的事情分组。",
     "guide": "篇指南",
-    "guides": "篇指南"
+    "guides": "篇指南",
+    "start_title": "快速开始",
+    "start_description": "刚开始使用？按顺序阅读这些指南，从安装应用到第一次语音对话。",
+    "start_reading": "开始阅读",
+    "recent_title": "从上次离开的地方继续",
+    "show_all": "显示全部 {0} 篇",
+    "show_less": "收起",
+    "help_title": "没有找到需要的内容？",
+    "help_description": "按关键词搜索所有指南，或在 GitHub 上浏览源文件。"
   },
   "docs_search_modal": {
     "navigate": "导航",

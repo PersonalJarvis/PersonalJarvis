@@ -3246,7 +3246,9 @@
     "no_results": "No results for \"{0}\"",
     "for_fulltext": "for full-text search.",
     "could_not_load": "Could not load doc.",
-    "recent": "Recent"
+    "recent": "Recent",
+    "search_button": "Search docs",
+    "search_hero": "Search the documentation"
   },
   "sessions": {
     "select_one": "Select a session on the left.",
@@ -3671,7 +3673,9 @@
     "indexing": "Building local index…",
     "retry": "Try again",
     "documents": "documents",
-    "no_results": "No matching documents"
+    "no_results": "No matching documents",
+    "overview": "Overview",
+    "github": "Docs on GitHub"
   },
   "docs_content": {
     "prev": "Previous",
@@ -3683,27 +3687,46 @@
     "on_this_page": "On this page",
     "copy_code": "Copy code",
     "code_copied": "Code copied",
-    "skip_to_content": "Skip to documentation content"
+    "skip_to_content": "Skip to documentation content",
+    "reading_time": "{0} min read",
+    "reviewed": "Reviewed {0}",
+    "copy_page": "Copy page",
+    "page_copied": "Copied",
+    "view_source": "View source",
+    "copy": "Copy",
+    "pagination": "Previous and next guide",
+    "callout_note": "Note",
+    "callout_info": "Info",
+    "callout_tip": "Tip",
+    "callout_warning": "Warning"
   },
   "docs_overview": {
     "eyebrow": "Documentation",
-    "title": "Personal Jarvis docs",
-    "description": "Everything from first setup to the architecture behind the voice. Browse the complete local library or open the redesigned public documentation.",
-    "online_docs": "Open redesigned online docs",
+    "title": "Personal Jarvis documentation",
+    "description": "Guides, concepts, and reference for setting up, using, and extending your assistant.",
+    "online_docs": "View on GitHub",
     "load_failed_title": "Documentation could not be loaded",
     "load_failed_description": "The local index did not become ready in time. Try again without restarting the app.",
     "retry": "Try again",
     "empty_title": "No local documents found",
-    "empty_description": "The online documentation is still available from the button above.",
+    "empty_description": "The documentation is also available on GitHub.",
     "local_library": "Start in the local library",
     "local_library_description": "Fast, offline access to the documentation shipped with this installation.",
     "indexing_title": "Preparing your documentation",
     "indexing_description": "Scanning the local Markdown library and building full-text search. This usually takes only a moment.",
     "loading_page": "Loading document…",
-    "browse_by_topic": "Browse by Topic",
-    "browse_description": "Follow a learning path or jump to the feature you need.",
+    "browse_by_topic": "Browse by topic",
+    "browse_description": "Every guide that ships with this installation, grouped by what you want to do.",
     "guide": "guide",
-    "guides": "guides"
+    "guides": "guides",
+    "start_title": "Get started",
+    "start_description": "New here? Read these guides in order, from installing the app to your first voice conversation.",
+    "start_reading": "Start reading",
+    "recent_title": "Pick up where you left off",
+    "show_all": "Show all {0}",
+    "show_less": "Show less",
+    "help_title": "Can't find what you need?",
+    "help_description": "Search every guide by keyword, or browse the sources on GitHub."
   },
   "docs_search_modal": {
     "navigate": "navigate",

@@ -9,9 +9,9 @@ import { useRecentDocs } from "@/hooks/useRecentDocs";
 import { useT } from "@/i18n";
 
 /**
- * Top-level view for the docs section. 3-column layout (Anthropic/Mintlify style):
- * left sidebar = Diataxis tree, middle = Markdown body, right = TOC with
- * active-heading spy.
+ * Top-level view for the docs section. The navigation rail stays put on the
+ * left; the article and its "On this page" list share one centred scroller,
+ * so the table of contents travels beside the text at every window width.
  *
  * ``selectedSlug`` is view-local — not a state-store entry, because the doc
  * only matters within this view. When switching sections we deliberately
@@ -106,15 +106,22 @@ export function DocsView() {
         id="docs-content"
         ref={contentRef as React.RefObject<HTMLElement>}
         tabIndex={-1}
-        className="min-w-0 flex-1 overflow-y-auto"
+        className="min-w-0 flex-1 overflow-y-auto focus-visible:outline-none"
       >
-        <DocsContent
-          slug={selectedSlug}
-          onSelect={selectDoc}
-          onShowOverview={showOverview}
-        />
+        <div className="mx-auto flex w-full max-w-6xl gap-12 px-10">
+          <div className="min-w-0 flex-1">
+            <DocsContent
+              slug={selectedSlug}
+              onSelect={selectDoc}
+              onShowOverview={showOverview}
+              onOpenSearch={() => setSearchOpen(true)}
+            />
+          </div>
+          {selectedSlug && (
+            <DocsToc headings={headings} contentRef={contentRef} />
+          )}
+        </div>
       </main>
-      <DocsToc headings={headings} contentRef={contentRef} />
 
       <DocsSearchModal
         open={searchOpen}

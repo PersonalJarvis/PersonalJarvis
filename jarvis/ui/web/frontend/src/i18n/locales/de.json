@@ -3246,7 +3246,9 @@
     "no_results": "Keine Treffer für \"{0}\"",
     "for_fulltext": "für die Volltextsuche.",
     "could_not_load": "Konnte Doc nicht laden.",
-    "recent": "Zuletzt"
+    "recent": "Zuletzt",
+    "search_button": "Doku durchsuchen",
+    "search_hero": "Dokumentation durchsuchen"
   },
   "sessions": {
     "select_one": "Wähle links eine Session aus.",
@@ -3671,7 +3673,9 @@
     "indexing": "Lokaler Index wird erstellt…",
     "retry": "Erneut versuchen",
     "documents": "Dokumente",
-    "no_results": "Keine passenden Dokumente"
+    "no_results": "Keine passenden Dokumente",
+    "overview": "Übersicht",
+    "github": "Doku auf GitHub"
   },
   "docs_content": {
     "prev": "Vorher",
@@ -3683,27 +3687,46 @@
     "on_this_page": "Auf dieser Seite",
     "copy_code": "Code kopieren",
     "code_copied": "Code kopiert",
-    "skip_to_content": "Zum Dokumentationsinhalt springen"
+    "skip_to_content": "Zum Dokumentationsinhalt springen",
+    "reading_time": "{0} Min. Lesezeit",
+    "reviewed": "Geprüft am {0}",
+    "copy_page": "Seite kopieren",
+    "page_copied": "Kopiert",
+    "view_source": "Quelle ansehen",
+    "copy": "Kopieren",
+    "pagination": "Vorherige und nächste Anleitung",
+    "callout_note": "Hinweis",
+    "callout_info": "Info",
+    "callout_tip": "Tipp",
+    "callout_warning": "Warnung"
   },
   "docs_overview": {
     "eyebrow": "Dokumentation",
-    "title": "Personal Jarvis Docs",
-    "description": "Alles von der ersten Einrichtung bis zur Architektur hinter der Sprachsteuerung. Durchsuche die vollständige lokale Bibliothek oder öffne die neu gestaltete öffentliche Dokumentation.",
-    "online_docs": "Neu gestaltete Online-Docs öffnen",
+    "title": "Personal Jarvis Dokumentation",
+    "description": "Anleitungen, Konzepte und Referenzen zum Einrichten, Nutzen und Erweitern deines Assistenten.",
+    "online_docs": "Auf GitHub ansehen",
     "load_failed_title": "Die Dokumentation konnte nicht geladen werden",
     "load_failed_description": "Der lokale Index wurde nicht rechtzeitig bereit. Versuch es erneut, ohne die App neu zu starten.",
     "retry": "Erneut versuchen",
     "empty_title": "Keine lokalen Dokumente gefunden",
-    "empty_description": "Die Online-Dokumentation ist weiterhin über die Schaltfläche oben erreichbar.",
+    "empty_description": "Die Dokumentation ist auch auf GitHub verfügbar.",
     "local_library": "In der lokalen Bibliothek starten",
     "local_library_description": "Schneller Offline-Zugriff auf die Dokumentation dieser Installation.",
     "indexing_title": "Deine Dokumentation wird vorbereitet",
     "indexing_description": "Die lokale Markdown-Bibliothek wird gelesen und die Volltextsuche aufgebaut. Das dauert normalerweise nur einen Moment.",
     "loading_page": "Dokument wird geladen…",
-    "browse_by_topic": "Nach Thema durchsuchen",
-    "browse_description": "Folge einem Lernpfad oder springe direkt zum benötigten Feature.",
+    "browse_by_topic": "Nach Thema stöbern",
+    "browse_description": "Alle Anleitungen dieser Installation, sortiert nach dem, was du vorhast.",
     "guide": "Anleitung",
-    "guides": "Anleitungen"
+    "guides": "Anleitungen",
+    "start_title": "Erste Schritte",
+    "start_description": "Neu hier? Lies diese Anleitungen der Reihe nach – von der Installation bis zu deinem ersten Sprachgespräch.",
+    "start_reading": "Jetzt lesen",
+    "recent_title": "Weiterlesen, wo du aufgehört hast",
+    "show_all": "Alle {0} anzeigen",
+    "show_less": "Weniger anzeigen",
+    "help_title": "Nicht gefunden, was du suchst?",
+    "help_description": "Durchsuche alle Anleitungen nach Stichworten oder sieh dir die Quellen auf GitHub an."
   },
   "docs_search_modal": {
     "navigate": "navigieren",
