@@ -880,6 +880,14 @@ export function AgenticTerminal({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
   /** Briefly true right after a delivery — draws the eye to the right pane. */
   const [justDelivered, setJustDelivered] = useState(false);
+  const deliveredTimer = useRef<number | undefined>(undefined);
+  // One flash at a time, and none left running once the pane is gone.
+  const flashDelivered = useCallback((ms: number) => {
+    setJustDelivered(true);
+    window.clearTimeout(deliveredTimer.current);
+    deliveredTimer.current = window.setTimeout(() => setJustDelivered(false), ms);
+  }, []);
+  useEffect(() => () => window.clearTimeout(deliveredTimer.current), []);
   /** The pane's recorded conversation, opened from the header book button. */
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changesOpen, setChangesOpen] = useState(false);
@@ -2146,8 +2154,7 @@ export function AgenticTerminal({
           if (disposed) return;
           if (activeRef.current) showPane();
           setReceipt(delivery);
-          setJustDelivered(true);
-          window.setTimeout(() => setJustDelivered(false), 2_000);
+          flashDelivered(2_000);
         },
         onReady: ({ resumed, reattached, lastPrompt }) => {
           troubleShown = null;
@@ -2732,8 +2739,7 @@ export function AgenticTerminal({
         announceSkillRefused(name);
         return;
       }
-      setJustDelivered(true);
-      window.setTimeout(() => setJustDelivered(false), 1_200);
+      flashDelivered(1_200);
       useIdeSkillsStore.getState().recordUse(skill.id, name);
     },
     [name, onFocus],
