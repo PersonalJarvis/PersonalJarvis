@@ -1,52 +1,53 @@
 /**
- * Desktop view of the on-disk Obsidian vault.
+ * The Wiki section: the assistant's long-term memory, as the Obsidian vault
+ * on disk holds it.
  *
- * Read-only — writes happen via the WikiCurator (B1) or the user editing
- * Markdown files in Obsidian. This component is a pure projection of
- * `wiki/obsidian-vault/` exposed through Agent A's `/api/wiki/*` endpoints.
+ * Read-only — writes happen via the wiki curator or the user editing Markdown
+ * files in Obsidian. This view is a projection of the vault exposed through
+ * the `/api/wiki/*` endpoints.
  *
- * Layout (matches docs/plans/b3/00-OVERVIEW.md §4.1):
- *   ┌──────────┬──────────────────┬────────────┐
- *   │   tree   │  graph | page    │ backlinks  │
- *   │ (260 px) │  (centre tabs)   │  (380 px)  │
- *   └──────────┴──────────────────┴────────────┘
+ * One viewport, three regions, nothing below the fold:
  *
- * Replaces the legacy `MemoryView` (`data/core_memory.json` flat memory).
+ *   ┌───────────┬──────────────────────────────┬────────────┐
+ *   │  library  │  stage: memory map | page    │ inspector  │
+ *   │  272 px   │  (fills the rest)            │  320 px    │
+ *   └───────────┴──────────────────────────────┴────────────┘
+ *
+ * The library finds a page, the stage shows it (or the whole vault as a
+ * map), and the inspector tells you how it connects — or, with nothing open,
+ * whether the memory is healthy and what it took in today.
  */
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  FileText,
-  Maximize2,
-  Minimize2,
-  Network,
-  Notebook,
-  RefreshCw,
-} from "lucide-react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BookOpen, Maximize2, Minimize2, Network, Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { cn } from "@/lib/utils";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import {
   fetchWikiHealth,
   fetchWikiTree,
   rebuildWikiIndex,
-  type WikiCaptureFunnel,
-  type WikiHealthSnapshot,
 } from "@/lib/wikiApi";
+import { cleanTitle, libraryItems, relativeAge, type LibraryItem } from "@/lib/wikiModel";
 import { useWikiLive } from "@/hooks/useWikiLive";
 
-import { TreeSidebar } from "@/components/wiki/TreeSidebar";
+import { EmptyState } from "@/components/ui/empty-state";
+import { WikiLibrary } from "@/components/wiki/WikiLibrary";
 import { PageRenderer } from "@/components/wiki/PageRenderer";
-import { BacklinksPanel } from "@/components/wiki/BacklinksPanel";
+import {
+  HEALTH_DOT_STYLE,
+  HEALTH_LABEL_KEY,
+  WikiInspector,
+  classifyWikiHealth,
+} from "@/components/wiki/WikiInspector";
+import { WikiSearch, type WikiSearchHandle } from "@/components/wiki/WikiSearch";
 import { ObsidianStatus } from "@/components/wiki/ObsidianStatus";
 import { ObsidianSetupDialog } from "@/components/wiki/ObsidianSetupDialog";
 import type { ObsidianStatus as ObsidianStatusType } from "@/types/setup";
 
-// Agent C owns WikiGraph. Lazy import so the graph bundle (~120 KB minified)
-// only loads when the Wiki tab is mounted. A placeholder file ships in this
-// branch — Agent C's real implementation will replace it during Wave 2.
+// The graph bundle (~120 KB minified) only loads when the Wiki section mounts.
 const WikiGraph = lazy(() =>
   import("@/components/wiki/WikiGraph").then((mod) => ({
     default: mod.WikiGraph,
@@ -60,8 +61,12 @@ interface WikiToast {
   id: number;
 }
 
+const IS_MAC =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent);
+
 export function WikiView(): JSX.Element {
   const t = useT();
+  const language = useUiLanguage();
   useWikiLive();
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [centreTab, setCentreTab] = useState<CentreTab>("graph");
@@ -74,17 +79,16 @@ export function WikiView(): JSX.Element {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
   const [reindexError, setReindexError] = useState<string | null>(null);
+  const searchRef = useRef<WikiSearchHandle>(null);
 
   // A staged "open this page" request from another section (e.g. the Contacts
-  // detail's wiki link). Same consumption idiom as the Visualization stage:
-  // `seq` bumps on every request, so re-opening the same slug still fires.
+  // detail's wiki link). `seq` bumps on every request, so re-opening the same
+  // slug still fires.
   const wikiPageRequest = useEventStore((s) => s.wikiPageRequest);
   useEffect(() => {
     if (wikiPageRequest) setSelectedSlug(wikiPageRequest.slug);
   }, [wikiPageRequest]);
 
-  // Tree query lives both here (for header stats + empty-state detection)
-  // and inside TreeSidebar (for the list). React Query dedupes them.
   const treeQuery = useQuery({
     queryKey: ["wiki", "tree"],
     queryFn: fetchWikiTree,
@@ -94,9 +98,16 @@ export function WikiView(): JSX.Element {
   const stats = treeQuery.data?.stats;
   const totalPages = stats?.total_pages ?? 0;
   const totalLinks = stats?.total_links ?? 0;
+  const folders = useMemo(() => treeQuery.data?.folders ?? [], [treeQuery.data?.folders]);
+  const items = useMemo(() => libraryItems(folders), [folders]);
+  const itemsBySlug = useMemo(() => {
+    const map = new Map<string, LibraryItem>();
+    for (const item of items) if (!map.has(item.slug)) map.set(item.slug, item);
+    return map;
+  }, [items]);
 
-  // Wiki subsystem health (spec A5): polled on mount + every 30 s so the
-  // "honest, not silent" status strip stays live without a manual refresh.
+  // Wiki subsystem health: polled on mount + every 30 s so the "honest, not
+  // silent" status stays live without a manual refresh.
   const healthQuery = useQuery({
     queryKey: ["wiki", "health"],
     queryFn: fetchWikiHealth,
@@ -104,8 +115,7 @@ export function WikiView(): JSX.Element {
     staleTime: 5_000,
   });
 
-  // When a slug is selected (via tree click, graph click, or wikilink),
-  // automatically swap to the page tab.
+  // Selecting a page (tree, graph, wikilink, search) swaps to the page tab.
   useEffect(() => {
     if (selectedSlug) {
       setCentreTab("page");
@@ -114,8 +124,7 @@ export function WikiView(): JSX.Element {
   }, [selectedSlug]);
 
   // Escape leaves the full-window map. With the nav rail covered it is the
-  // reflex people reach for first, and the Restore button in the tab bar is
-  // the only other way out.
+  // reflex people reach for first.
   useEffect(() => {
     if (!isGraphExpanded) return;
     const onKey = (event: KeyboardEvent) => {
@@ -125,11 +134,9 @@ export function WikiView(): JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [isGraphExpanded]);
 
-  // On the first visit to the Wiki tab, auto-open the Obsidian setup
-  // walkthrough — but only if the user has never marked it as completed
-  // AND the current status says action is required.
-  // Both requests run in parallel; AbortController cancels them if the
-  // component unmounts before the network round trip finishes.
+  // On the first visit, auto-open the Obsidian setup walkthrough — but only
+  // if the user never marked it completed AND the status says action is
+  // required. AbortController cancels both requests on unmount.
   useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
@@ -146,16 +153,13 @@ export function WikiView(): JSX.Element {
         const state = (await stateResp.json()) as { obsidian_setup_seen: boolean };
 
         if (cancelled) return;
-        if (
-          state.obsidian_setup_seen === false &&
-          status.recommended_action !== "ok"
-        ) {
+        if (state.obsidian_setup_seen === false && status.recommended_action !== "ok") {
           setSetupHint(status);
           setDialogOpen(true);
         }
       } catch (err) {
-        // AbortError is expected on unmount; everything else we silently
-        // swallow — the status pill still gives the user a manual entry.
+        // AbortError is expected on unmount; anything else is only logged —
+        // the Obsidian pill in the header still gives the user a manual entry.
         if ((err as { name?: string })?.name !== "AbortError") {
           console.debug("[WikiView] first-run setup probe failed:", err);
         }
@@ -186,25 +190,16 @@ export function WikiView(): JSX.Element {
       }
       await Promise.all([healthQuery.refetch(), treeQuery.refetch()]);
     } catch (error) {
-      setReindexError(
-        error instanceof Error ? error.message : t("wiki_health.reindex_failed"),
-      );
+      setReindexError(error instanceof Error ? error.message : t("wiki_health.reindex_failed"));
       showToast(t("wiki_health.reindex_failed"));
     } finally {
       setIsReindexing(false);
     }
   }, [healthQuery, showToast, t, treeQuery]);
 
-  // Build the known-slug set lazily here too, so we can validate a wikilink
-  // click before changing the URL. Single source of truth: the tree response.
-  const knownSlugs = useMemo(
-    () => collectSlugs(treeQuery.data?.folders ?? []),
-    [treeQuery.data?.folders],
-  );
-
   const handleSelect = useCallback(
     (slug: string) => {
-      if (knownSlugs.size > 0 && !knownSlugs.has(slug)) {
+      if (itemsBySlug.size > 0 && !itemsBySlug.has(slug)) {
         showToast(t("wiki_view.page_not_found"));
         return;
       }
@@ -214,45 +209,81 @@ export function WikiView(): JSX.Element {
       setCentreTab("page");
       setSelectedSlug(slug);
     },
-    [knownSlugs, showToast, t],
+    [itemsBySlug, showToast, t],
   );
+
+  const closePage = useCallback(() => {
+    setSelectedSlug(null);
+    setCentreTab("graph");
+  }, []);
+
+  const health = healthQuery.data;
+  const healthVisual = health ? classifyWikiHealth(health) : "unknown";
+  const curated = stats?.last_curator_run
+    ? relativeAge(Date.parse(stats.last_curator_run) / 1000, language)
+    : "";
 
   const subtitle = treeQuery.isLoading
     ? t("wiki_view.loading_vault")
     : totalPages === 0
       ? t("wiki_view.vault_empty")
-      : `${totalPages} ${t("wiki_view.pages")} · ${totalLinks} ${t("wiki_view.wikilinks")}`;
+      : [
+          t("wiki_ui.subtitle_pages").replace("{0}", formatCount(totalPages, language)),
+          t("wiki_ui.subtitle_links").replace("{0}", formatCount(totalLinks, language)),
+          curated ? t("wiki_ui.subtitle_curated").replace("{0}", curated) : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+
+  const selectedTitle = selectedSlug
+    ? itemsBySlug.get(selectedSlug)?.title ?? cleanTitle(selectedSlug)
+    : "";
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="wiki-view">
-      <div className="flex items-start justify-between gap-3 pr-6">
-        <div className="min-w-0 flex-1">
-          <ViewHeader
-            icon={<Notebook className="h-4 w-4" />}
-            title="Wiki · Memory Map"
-            subtitle={subtitle}
-          />
-        </div>
-        <div className="flex shrink-0 items-center gap-3 pt-4">
-          <ObsidianStatus
-            onOpenSetup={(s) => {
-              setSetupHint(s);
-              setDialogOpen(true);
-            }}
-          />
-        </div>
-      </div>
-
-      <WikiHealthStrip
-        health={healthQuery.data}
-        isLoading={healthQuery.isLoading}
-        isReindexing={isReindexing}
-        reindexError={reindexError}
-        onReindex={handleReindex}
-      />
-      <WikiCaptureFunnelStrip
-        error={healthQuery.data?.capture_error}
-        funnel={healthQuery.data?.capture_funnel}
+      <ViewHeader
+        icon={<BookOpen className="h-4 w-4" />}
+        title={t("wiki_ui.title")}
+        subtitle={subtitle}
+        right={
+          <>
+            <button
+              type="button"
+              onClick={() => searchRef.current?.open()}
+              data-testid="wiki-search-trigger"
+              className="flex h-8 w-60 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-sm text-foreground-faint transition-colors hover:border-border-strong hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="flex-1 truncate text-left">{t("wiki_ui.search_placeholder")}</span>
+              <kbd className="rounded-sm border border-border px-1.5 font-mono text-xs leading-5">
+                {IS_MAC ? "⌘K" : "Ctrl K"}
+              </kbd>
+            </button>
+            <button
+              type="button"
+              onClick={closePage}
+              data-testid="wiki-health-chip"
+              data-visual={healthQuery.isLoading ? "loading" : healthVisual}
+              title={t("wiki_ui.health_chip_title")}
+              className="inline-flex h-8 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            >
+              <span
+                className={cn(
+                  "h-2 w-2 rounded-full",
+                  healthQuery.isLoading ? "animate-pulse bg-faint-foreground" : HEALTH_DOT_STYLE[healthVisual],
+                )}
+                aria-hidden
+              />
+              {healthQuery.isLoading ? t("wiki_health.checking") : t(HEALTH_LABEL_KEY[healthVisual])}
+            </button>
+            <ObsidianStatus
+              onOpenSetup={(s) => {
+                setSetupHint(s);
+                setDialogOpen(true);
+              }}
+            />
+          </>
+        }
       />
 
       {dialogOpen && setupHint && (
@@ -262,13 +293,10 @@ export function WikiView(): JSX.Element {
           initialStatus={setupHint}
           onComplete={async () => {
             // Only when the user explicitly confirms that setup worked;
-            // never on Escape or an outside click. Fire-and-forget — the
-            // route never returns a 5xx, and a failed mark only means the
-            // wizard reopens on the next visit.
+            // never on Escape or an outside click. A failed mark only means
+            // the wizard reopens on the next visit, so it is logged, not shown.
             try {
-              await fetch("/api/setup/state/obsidian-seen", {
-                method: "POST",
-              });
+              await fetch("/api/setup/state/obsidian-seen", { method: "POST" });
             } catch (err) {
               console.debug("[WikiView] mark-obsidian-seen failed:", err);
             }
@@ -276,78 +304,88 @@ export function WikiView(): JSX.Element {
         />
       )}
 
+      <WikiSearch ref={searchRef} onResultClick={handleSelect} />
+
       {treeQuery.isError ? (
-        <div className="flex flex-1 items-center justify-center p-6">
-          <div
-            role="alert"
-            className="max-w-reading text-body text-destructive"
-            data-testid="wiki-tree-error"
-          >
+        <div className="flex flex-1 items-center justify-center border-t border-border p-6">
+          <p role="alert" className="max-w-reading text-base text-destructive" data-testid="wiki-tree-error">
             {t("wiki_view.load_error")}
-          </div>
+          </p>
         </div>
       ) : !treeQuery.isLoading && totalPages === 0 ? (
-        <EmptyState />
+        // An empty vault can itself be a symptom (a failed bootstrap writes
+        // nothing), so the health rail stays beside the empty state.
+        <div className="flex min-h-0 flex-1 overflow-hidden border-t border-border">
+          <div className="flex min-w-0 flex-1 items-center justify-center p-6">
+            <WikiEmptyState />
+          </div>
+          <WikiInspector
+            selectedSlug={null}
+            itemsBySlug={itemsBySlug}
+            health={health}
+            healthLoading={healthQuery.isLoading}
+            isReindexing={isReindexing}
+            reindexError={reindexError}
+            onReindex={handleReindex}
+            onSelect={handleSelect}
+          />
+        </div>
       ) : (
         <div
           id="wiki-workspace"
           className={cn(
-            "flex flex-1 min-h-0 overflow-hidden",
-            // Expanded means the whole window, not "the middle column, but
-            // wider". The map is the one thing in this app that gets better
-            // the more room it has, and leaving the nav rail, the header and
-            // two status strips around it was most of why it never looked
-            // like anything. Fixed to the viewport, above everything.
-            isGraphExpanded && "fixed inset-0 z-[100]",
+            "flex min-h-0 flex-1 overflow-hidden border-t border-border",
+            // Expanded means the whole window: the map is the one thing in
+            // this app that gets better the more room it has.
+            isGraphExpanded && "fixed inset-0 z-[100] border-t-0 bg-background",
           )}
           data-testid="wiki-workspace"
           data-graph-expanded={isGraphExpanded ? "true" : "false"}
         >
           {!isGraphExpanded && (
-            <TreeSidebar
+            <WikiLibrary
+              folders={folders}
+              isLoading={treeQuery.isLoading}
+              isError={treeQuery.isError}
               selectedSlug={selectedSlug}
               onSelect={handleSelect}
             />
           )}
 
-          <section className="flex flex-1 min-w-0 flex-col">
-            <div className="flex items-stretch border-b border-border">
-              <TabButton
+          <section className="flex min-w-0 flex-1 flex-col" aria-label={t("wiki_ui.stage_label")}>
+            <div className="flex h-11 shrink-0 items-stretch gap-1 border-b border-border px-3">
+              <StageTab
                 active={centreTab === "graph"}
                 onClick={() => setCentreTab("graph")}
-                icon={<Network className="h-3.5 w-3.5" />}
-                label="Memory Map"
+                icon={<Network className="h-3.5 w-3.5" aria-hidden />}
+                label={t("wiki_ui.tab_map")}
+                testId="wiki-tab-graph"
               />
-              <TabButton
-                active={centreTab === "page"}
-                onClick={() => {
-                  setCentreTab("page");
-                  setIsGraphExpanded(false);
-                }}
-                icon={<FileText className="h-3.5 w-3.5" />}
-                label={
-                  selectedSlug
-                    ? `Page · ${selectedSlug}.md`
-                    : "Page"
-                }
-                disabled={!selectedSlug}
-              />
+              {selectedSlug && (
+                <StageTab
+                  active={centreTab === "page"}
+                  onClick={() => {
+                    setCentreTab("page");
+                    setIsGraphExpanded(false);
+                  }}
+                  label={selectedTitle}
+                  testId="wiki-tab-page"
+                  onClose={closePage}
+                  closeLabel={t("wiki_ui.close_page")}
+                />
+              )}
               {centreTab === "graph" && (
                 <button
                   type="button"
-                  className="ml-auto mr-2 my-1.5 inline-flex items-center gap-1.5 self-center rounded-md px-2.5 py-1.5 text-body text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
+                  className="ml-auto inline-flex h-8 items-center gap-1.5 self-center rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setIsGraphExpanded((expanded) => !expanded)}
                   aria-controls="wiki-workspace"
                   aria-expanded={isGraphExpanded}
                   aria-label={t(
-                    isGraphExpanded
-                      ? "wiki_graph.restore_view_title"
-                      : "wiki_graph.expand_view_title",
+                    isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
                   )}
                   title={t(
-                    isGraphExpanded
-                      ? "wiki_graph.restore_view_title"
-                      : "wiki_graph.expand_view_title",
+                    isGraphExpanded ? "wiki_graph.restore_view_title" : "wiki_graph.expand_view_title",
                   )}
                   data-testid="wiki-graph-expand-toggle"
                 >
@@ -356,64 +394,46 @@ export function WikiView(): JSX.Element {
                   ) : (
                     <Maximize2 className="h-3.5 w-3.5" aria-hidden />
                   )}
-                  <span>
-                    {t(
-                      isGraphExpanded
-                        ? "wiki_graph.restore"
-                        : "wiki_graph.expand",
-                    )}
-                  </span>
+                  <span>{t(isGraphExpanded ? "wiki_graph.restore" : "wiki_graph.expand")}</span>
                 </button>
               )}
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div
+              className={cn(
+                "relative min-h-0 flex-1",
+                centreTab === "page" ? "overflow-y-auto" : "overflow-hidden",
+              )}
+            >
               {centreTab === "graph" && (
                 <Suspense fallback={<GraphSkeleton />}>
-                  <WikiGraph
-                    onNodeClick={handleSelect}
-                    highlightSlug={selectedSlug ?? undefined}
-                  />
+                  <WikiGraph onNodeClick={handleSelect} highlightSlug={selectedSlug ?? undefined} />
                 </Suspense>
               )}
-
-              {centreTab === "page" && (
-                <>
-                  {selectedSlug ? (
-                    <PageRenderer
-                      slug={selectedSlug}
-                      onWikilinkClick={handleSelect}
-                    />
-                  ) : (
-                    <div
-                      className="px-7 py-10 text-center text-body text-muted-foreground"
-                      data-testid="wiki-page-no-selection"
-                    >
-                      {t("wiki_view.no_selection_hint")}
-                    </div>
-                  )}
-                </>
+              {centreTab === "page" && selectedSlug && (
+                <PageRenderer key={selectedSlug} slug={selectedSlug} onWikilinkClick={handleSelect} />
               )}
             </div>
           </section>
 
-          {!isGraphExpanded &&
-            (selectedSlug ? (
-              <BacklinksPanel slug={selectedSlug} onSelect={handleSelect} />
-            ) : (
-              <aside
-                className="flex h-full w-[380px] shrink-0 flex-col bg-sidebar p-4"
-                data-testid="wiki-backlinks-placeholder"
-              >
-                <p className="text-body text-muted-foreground">{t("wiki_view.backlinks_hint")}</p>
-              </aside>
-            ))}
+          {!isGraphExpanded && (
+            <WikiInspector
+              selectedSlug={selectedSlug}
+              itemsBySlug={itemsBySlug}
+              health={health}
+              healthLoading={healthQuery.isLoading}
+              isReindexing={isReindexing}
+              reindexError={reindexError}
+              onReindex={handleReindex}
+              onSelect={handleSelect}
+            />
+          )}
         </div>
       )}
 
       {toast && (
         <div
-          className="pointer-events-none fixed bottom-12 right-6 z-50 max-w-sm rounded-lg bg-popover px-4 py-3 text-body text-foreground shadow-float"
+          className="pointer-events-none fixed bottom-12 right-6 z-[110] max-w-sm rounded-lg bg-popover px-4 py-3 text-base text-foreground shadow-float"
           data-testid="wiki-toast"
           role="status"
         >
@@ -424,389 +444,95 @@ export function WikiView(): JSX.Element {
   );
 }
 
-type WikiHealthVisual = "green" | "amber" | "red" | "unknown";
-
-// The three status hues and nothing else. "unknown" is the ONLY state allowed
-// to be neutral — an "ok" that renders dimmer than an "unknown" inverts the ramp.
-const HEALTH_DOT_STYLE: Record<WikiHealthVisual, string> = {
-  green: "bg-success",
-  amber: "bg-warning",
-  red: "bg-destructive",
-  unknown: "bg-faint-foreground",
-};
-
-function classifyWikiHealth(health: WikiHealthSnapshot): WikiHealthVisual {
-  if (
-    health.bootstrap_ok === false ||
-    health.last_write?.ok === false ||
-    health.last_chain_failure
-  ) {
-    return "red";
+function formatCount(value: number, language: string): string {
+  try {
+    return new Intl.NumberFormat(language).format(value);
+  } catch {
+    return String(value);
   }
-  if (
-    health.journal_backlog > 0 ||
-    health.vault_legacy_conflict ||
-    health.index_state === "stale"
-  ) {
-    return "amber";
-  }
-  // At this point `last_write?.ok === false` and `last_chain_failure` are
-  // both already ruled out by the guard above, so the remaining green
-  // condition collapses to `bootstrap_ok` alone.
-  if (health.bootstrap_ok) {
-    return "green";
-  }
-  // bootstrap_ok is null (never run yet) and nothing else flagged a problem —
-  // neither a clean pass nor a known failure, so stay neutral rather than
-  // claim "green" for a state we haven't actually verified.
-  return "unknown";
 }
 
-function describeWikiWriteStatus(
-  health: WikiHealthSnapshot,
-  t: (key: string) => string,
-): string {
-  if (health.bootstrap_ok === false) {
-    return health.bootstrap_error
-      ? t("wiki_health.bootstrap_failed").replace("{0}", health.bootstrap_error)
-      : t("wiki_health.bootstrap_failed_unknown");
-  }
-  if (health.last_chain_failure) {
-    return t("wiki_health.chain_failure").replace(
-      "{0}",
-      health.last_chain_failure.detail,
-    );
-  }
-  if (health.last_write?.ok === false) {
-    return health.last_write.error
-      ? t("wiki_health.last_write_failed").replace("{0}", health.last_write.error)
-      : t("wiki_health.last_write_failed_unknown");
-  }
-  if (health.last_write?.ok) {
-    const page = health.last_write.pages.join(", ") || health.last_write.source;
-    return t("wiki_health.last_write_ok").replace("{0}", page);
-  }
-  if (health.journal_backlog > 0) {
-    return t("wiki_health.pending_writes").replace(
-      "{0}",
-      String(health.journal_backlog),
-    );
-  }
-  return t("wiki_health.no_writes_yet");
-}
-
-/**
- * Compact status strip at the top of the Wiki tab (spec A5). Polled by the
- * caller on a timer; this component only renders whatever snapshot it was
- * given. "Honest, not silent": a failed bootstrap, a failed write, or a
- * growing journal backlog shows up here instead of failing quietly.
- */
-function WikiHealthStrip({
-  health,
-  isLoading,
-  isReindexing,
-  reindexError,
-  onReindex,
+function StageTab({
+  active,
+  onClick,
+  icon,
+  label,
+  testId,
+  onClose,
+  closeLabel,
 }: {
-  health: WikiHealthSnapshot | null | undefined;
-  isLoading: boolean;
-  isReindexing: boolean;
-  reindexError: string | null;
-  onReindex: () => void;
-}): JSX.Element {
-  const t = useT();
-
-  if (isLoading) {
-    return (
-      <div
-        className="flex items-center gap-2 border-b border-border px-4 py-2 text-meta text-muted-foreground"
-        data-testid="wiki-health-strip"
-      >
-        <span
-          className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-faint-foreground"
-          data-testid="wiki-health-dot"
-          data-visual="loading"
-          aria-hidden
-        />
-        <span data-testid="wiki-health-checking">{t("wiki_health.checking")}</span>
-      </div>
-    );
-  }
-
-  if (!health) {
-    return (
-      <div
-        className="flex items-center gap-2 border-b border-border px-4 py-2 text-meta text-muted-foreground"
-        data-testid="wiki-health-strip"
-      >
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-faint-foreground"
-          data-testid="wiki-health-dot"
-          data-visual="unknown"
-          aria-hidden
-        />
-        <span data-testid="wiki-health-unavailable">{t("wiki_health.unavailable")}</span>
-      </div>
-    );
-  }
-
-  const visual = classifyWikiHealth(health);
-  const vaultText = health.vault_root
-    ? t("wiki_health.vault_prefix").replace("{0}", health.vault_root)
-    : t("wiki_health.vault_unknown");
-  const writeText = describeWikiWriteStatus(health, t);
-
+  active: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  label: string;
+  testId: string;
+  onClose?: () => void;
+  closeLabel?: string;
+}) {
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-2 text-meta text-muted-foreground"
-      data-testid="wiki-health-strip"
+      className={cn(
+        "relative -mb-px flex min-w-0 items-center border-b-2 transition-colors",
+        active ? "border-accent" : "border-transparent",
+      )}
     >
-      <span
-        className={cn("h-2 w-2 shrink-0 rounded-full", HEALTH_DOT_STYLE[visual])}
-        data-testid="wiki-health-dot"
-        data-visual={visual}
-        aria-hidden
-      />
-      <span data-testid="wiki-health-vault" className="truncate">
-        {vaultText}
-      </span>
-      <span aria-hidden>·</span>
-      <span
-        data-testid="wiki-health-write"
-        className={visual === "red" ? "text-destructive" : undefined}
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={active ? "page" : undefined}
+        data-active={active ? "true" : "false"}
+        data-testid={testId}
+        className={cn(
+          "flex h-full min-w-0 max-w-[280px] items-center gap-2 px-2 text-base font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          active ? "text-foreground-strong" : "text-muted-foreground hover:text-foreground",
+        )}
       >
-        {writeText}
-      </span>
-      {health.journal_backlog > 0 && (
-        <span
-          data-testid="wiki-health-backlog"
-          className="rounded-full bg-secondary px-2 py-0.5 text-warning"
+        {icon}
+        <span className="truncate">{label}</span>
+      </button>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={closeLabel}
+          title={closeLabel}
+          data-testid={`${testId}-close`}
+          className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-foreground-faint transition-colors hover:bg-secondary hover:text-foreground"
         >
-          {t("wiki_health.backlog_count").replace(
-            "{0}",
-            String(health.journal_backlog),
-          )}
-        </span>
-      )}
-      {health.index_state === "stale" && (
-        <>
-          <span
-            data-testid="wiki-health-index-stale"
-            className="rounded-full bg-secondary px-2 py-0.5 text-warning"
-          >
-            {t("wiki_health.index_stale")
-              .replace("{0}", String(health.indexed_pages))
-              .replace("{1}", String(health.vault_pages))}
-          </span>
-          <button
-            type="button"
-            onClick={onReindex}
-            disabled={isReindexing}
-            data-testid="wiki-health-reindex"
-            className="inline-flex items-center gap-1 rounded-md bg-secondary px-2 py-0.5 text-foreground transition-colors hover:bg-popover disabled:opacity-50"
-          >
-            <RefreshCw className={cn("h-3 w-3", isReindexing && "animate-spin")} />
-            {t(isReindexing ? "wiki_health.reindexing" : "wiki_health.reindex")}
-          </button>
-          {reindexError && (
-            <span
-              role="alert"
-              data-testid="wiki-health-reindex-error"
-              className="text-destructive"
-            >
-              {t("wiki_health.reindex_failed_detail").replace("{0}", reindexError)}
-            </span>
-          )}
-        </>
-      )}
-      {health.vault_legacy_conflict && (
-        <span
-          data-testid="wiki-health-legacy-conflict"
-          className="rounded-full bg-secondary px-2 py-0.5 text-warning"
-        >
-          {t("wiki_health.legacy_conflict")}
-        </span>
+          <X className="h-3 w-3" aria-hidden />
+        </button>
       )}
     </div>
   );
 }
 
-function WikiCaptureFunnelStrip({
-  error,
-  funnel,
-}: {
-  error: string | null | undefined;
-  funnel: WikiCaptureFunnel | undefined;
-}): JSX.Element | null {
-  const t = useT();
-  if (!funnel) return null;
-
-  const windowHours = Math.max(1, Math.round(funnel.window_hours));
-  const metrics = [
-    ["reviewed", t("wiki_health.capture_reviewed"), funnel.total],
-    ["candidate-reviews", t("wiki_health.capture_candidate_reviews"), funnel.candidates],
-    ["candidate-facts", t("wiki_health.capture_candidate_facts"), funnel.facts],
-    ["writes", t("wiki_health.capture_writes"), funnel.writes],
-    ["noop", t("wiki_health.capture_noop"), funnel.stage2_noop],
-    ["rejected", t("wiki_health.capture_rejected"), funnel.stage2_rejected],
-    ["skipped", t("wiki_health.capture_skipped"), funnel.stage2_skipped],
-    ["pending", t("wiki_health.capture_pending"), funnel.stage2_pending],
-    ["filtered", t("wiki_health.capture_filtered"), funnel.filtered],
-    ["empty", t("wiki_health.capture_empty"), funnel.empty],
-    ["failed", t("wiki_health.capture_failed"), funnel.failed],
-    ["in-progress", t("wiki_health.capture_in_progress"), funnel.started],
-    ["session-sweeps", t("wiki_health.capture_session_sweeps"), funnel.sessions_swept],
-  ] as const;
-  const windowLabel = t("wiki_health.capture_window").replace(
-    "{0}",
-    String(windowHours),
-  );
-  const errorText =
-    error === "capture_store_unavailable"
-      ? t("wiki_health.capture_store_unavailable")
-      : error
-        ? t("wiki_health.capture_store_error").replace("{0}", error)
-        : null;
-
-  return (
-    <section
-      aria-label={t("wiki_health.capture_aria").replace("{0}", String(windowHours))}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-4 py-1.5 text-meta"
-      data-testid="wiki-capture-funnel"
-    >
-      <span className="text-foreground">{windowLabel}</span>
-      {errorText && (
-        <span
-          className="text-destructive"
-          data-testid="wiki-capture-error"
-          role="alert"
-        >
-          {errorText}
-        </span>
-      )}
-      {!error && funnel.failed > 0 && (
-        <span
-          className="text-destructive"
-          data-testid="wiki-capture-failed-detail"
-          role="status"
-        >
-          {t("wiki_health.capture_failed_detail").replace(
-            "{0}",
-            String(funnel.failed),
-          )}
-        </span>
-      )}
-      <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-        {metrics.map(([key, label, value]) => (
-          <div
-            className={cn(
-              "flex items-baseline gap-1",
-              key === "failed" && value > 0 && "text-destructive",
-            )}
-            data-testid={`wiki-capture-${key}`}
-            key={key}
-          >
-            <dt>{label}</dt>
-            <dd
-              className={cn(
-                "tabular-nums",
-                key === "failed" && value > 0 ? "text-destructive" : "text-foreground",
-              )}
-            >
-              {value}
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  icon,
-  label,
-  disabled,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "flex items-center gap-1.5 border-b-2 px-4 py-2.5 text-body transition-colors",
-        active
-          ? "border-primary text-foreground-strong"
-          : "border-transparent text-muted-foreground hover:text-foreground",
-        disabled && "cursor-not-allowed opacity-50 hover:text-muted-foreground",
-      )}
-      data-active={active ? "true" : "false"}
-      data-testid={`wiki-tab-${label.toLowerCase().replace(/\s+/g, "-")}`}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function EmptyState() {
+function WikiEmptyState() {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
   return (
-    <div className="flex flex-1 items-center justify-center p-6">
-      <div
-        className="max-w-form rounded-lg bg-card px-8 py-10 text-center shadow-rim"
-        data-testid="wiki-empty-state"
-      >
-        <Notebook className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-        <h3 className="mb-2 text-page font-semibold text-foreground-strong">
-          {t("wiki_view.empty_title")}
-        </h3>
-        <p className="mb-2 text-reading text-foreground">
-          {t("wiki_view.empty_body_a")} {assistantName} {t("wiki_view.empty_body_b")}
-        </p>
-        <p className="text-reading text-muted-foreground">
-          {t("wiki_view.manual_a")}{" "}
-          <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-meta text-foreground">
-            .md
-          </code>
-          {t("wiki_view.manual_b")}{" "}
-          <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-meta text-foreground">
-            wiki/obsidian-vault/entities/
-          </code>{" "}
-          {t("wiki_view.manual_c")}
-        </p>
-      </div>
+    <div data-testid="wiki-empty-state">
+      <EmptyState
+        icon={<BookOpen />}
+        title={t("wiki_view.empty_title")}
+        description={`${t("wiki_view.empty_body_a")} ${assistantName} ${t("wiki_view.empty_body_b")}`}
+      />
+      <p className="mx-auto -mt-6 max-w-[420px] text-center text-sm text-foreground-faint">
+        {t("wiki_view.manual_a")}{" "}
+        <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-xs text-foreground">.md</code>
+        {t("wiki_view.manual_b")}{" "}
+        <code className="rounded-sm bg-secondary px-1 py-0.5 font-mono text-xs text-foreground">
+          wiki/obsidian-vault/entities/
+        </code>{" "}
+        {t("wiki_view.manual_c")}
+      </p>
     </div>
   );
 }
 
 function GraphSkeleton() {
   return (
-    <div
-      className="flex h-full min-h-[400px] items-center justify-center p-6"
-      data-testid="wiki-graph-skeleton"
-    >
-      <div className="h-full w-full max-w-page animate-pulse rounded-lg bg-sheen/[0.06]" />
+    <div className="flex h-full items-center justify-center p-6" data-testid="wiki-graph-skeleton">
+      <div className="h-24 w-24 animate-pulse rounded-full bg-foreground/10" />
     </div>
   );
-}
-
-function collectSlugs(
-  folders: Array<{ files: Array<{ slug: string }> }>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const folder of folders) {
-    for (const file of folder.files) {
-      out.add(file.slug);
-    }
-  }
-  return out;
 }
