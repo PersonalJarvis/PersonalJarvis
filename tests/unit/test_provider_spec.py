@@ -6,6 +6,8 @@ POST /api/secrets/{key} falls into the whitelist hole.
 """
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from jarvis.setup.wizard import SECRETS
 from jarvis.ui.web.provider_spec import (
     PROVIDERS,
@@ -212,14 +214,15 @@ def test_gemini_offers_both_aistudio_and_vertex() -> None:
         assert spec is not None, pid
         # Primary path is the AI-Studio API key.
         assert spec.auth_mode == "api_key"
-        assert spec.dashboard_url and "aistudio.google.com" in spec.dashboard_url
+        assert urlsplit(spec.dashboard_url).hostname == "aistudio.google.com"
         # The Vertex path is offered as an explicit alternative.
         assert spec.alt_credential is not None, f"{pid}: missing Vertex alt path"
         alt = spec.alt_credential
         assert "vertex" in alt.label.lower()
         assert alt.billing == "api"
         assert alt.credential_help
-        assert alt.dashboard_url and "cloud.google.com" in alt.dashboard_url
+        host = urlsplit(alt.dashboard_url).hostname or ""
+        assert host == "cloud.google.com" or host.endswith(".cloud.google.com")
 
 
 def test_other_families_have_no_google_project_credential_path() -> None:

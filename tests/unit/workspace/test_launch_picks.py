@@ -18,6 +18,17 @@ from jarvis.workspace.agents import coding_agent_names, get_agent
 DECLARING = [name for name in coding_agent_names() if launch_picks.picks_for(name) is not None]
 
 
+@pytest.fixture(autouse=True)
+def _no_in_flight_model_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test starts with no CLI model-list read in flight.
+
+    A slow read one test leaves running can outlive that test's event loop
+    on a slow runner. Its task then never completes and stays registered, so
+    the next test would join it instead of starting its own read.
+    """
+    monkeypatch.setattr(launch_picks, "_IN_FLIGHT", {})
+
+
 def test_some_entries_declare_picks() -> None:
     """A guard on the guard: an empty table would make every test below pass."""
     assert "claude" in DECLARING

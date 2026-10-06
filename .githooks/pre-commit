@@ -71,17 +71,21 @@ fi
 # GIT: a commit that rewrites dist/index.html to freshly-hashed chunks while
 # the chunks themselves stay untracked works on the builder's machine (files
 # are on disk) but boots every clone to a blank spinner (cloud review
-# 2026-07-18, AP-23). Checks the STAGED index, only when the commit touches
-# dist/. rc 1 = confirmed missing chunk; any other rc fails OPEN.
+# 2026-07-18, AP-23). It also refuses newly added ORPHAN chunks: earlier
+# builds' files the build keeps on disk for open windows, which a blanket
+# `git add` of dist/ would otherwise ship forever. Checks the STAGED index,
+# only when the commit touches dist/. rc 1 = confirmed; any other rc fails OPEN.
 dist_gate="scripts/ci/check_dist_consistency.py"
 if [ -f "$dist_gate" ]; then
     "$PY" "$dist_gate" --staged </dev/null
     if [ "$?" -eq 1 ]; then
         echo ""
-        echo "pre-commit BLOCKED: DIST CONSISTENCY gate — half-shipped frontend bundle."
-        echo "  The staged dist/index.html (or a chunk it loads) references files that"
-        echo "  are NOT staged/tracked. Stage the ENTIRE rebuilt bundle as one set:"
+        echo "pre-commit BLOCKED: DIST CONSISTENCY gate — inconsistent frontend bundle."
+        echo "  Either the staged dist/index.html (or a chunk it loads) references files"
+        echo "  that are NOT staged — stage the ENTIRE rebuilt bundle as one set:"
         echo "    git add jarvis/ui/web/dist/index.html jarvis/ui/web/dist/assets/"
+        echo "  — or orphaned chunks of earlier builds are staged — untrack them with:"
+        echo "    python $dist_gate --staged --prune"
         echo "  Bypass once with:  git commit --no-verify"
         exit 1
     fi

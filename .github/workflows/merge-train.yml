@@ -53,16 +53,19 @@ concurrency:
   group: merge-train
   cancel-in-progress: false
 
+# Read-only by default; the one job below asks for what it writes.
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  checks: read
+  contents: read
 
 jobs:
   train:
     name: merge train
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
