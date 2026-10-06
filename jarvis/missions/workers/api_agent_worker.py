@@ -140,6 +140,23 @@ _DEFAULT_MODEL: dict[str, str] = {
 _DEFAULT_MODEL["vertex"] = _DEFAULT_MODEL["gemini"]
 
 
+class _CostCapReached(RuntimeError):
+    """An approved paid run spent its ceiling; the loop stops right here."""
+
+
+def _usage_cost_usd(model: str, usage: dict[str, int]) -> float:
+    """USD for one call's usage block (canonical keys: uncached input,
+    output, cache hits)."""
+    from jarvis.brain.cost import calculate_cost_usd
+
+    return calculate_cost_usd(
+        model,
+        int(usage.get("input_tokens") or 0),
+        int(usage.get("output_tokens") or 0),
+        int(usage.get("cache_hit_tokens") or 0),
+    )
+
+
 def _resolve_worker_model(provider: str, explicit: str) -> str:
     """Model for the in-process API worker, honoring the user's PICK.
 
@@ -243,8 +260,16 @@ class ApiAgentWorker:
         provider: str,
         *,
         capability_inventory: WorkerCapabilityInventory | None = None,
+        pinned_model: str = "",
+        cost_cap_usd: float | None = None,
     ) -> None:
         self.provider = (provider or "").strip().lower()
+        # The exact model a user approved for paid use on this mission
+        # (jarvis/missions/capacity.py). Wins over every other model source.
+        self.pinned_model = (pinned_model or "").strip()
+        # Hard spend ceiling of an approved paid run: the loop stops after the
+        # call that reaches it. None = no ceiling (the user's own key choice).
+        self.cost_cap_usd = cost_cap_usd
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
@@ -317,7 +342,7 @@ class ApiAgentWorker:
         session_id = str(uuid.uuid4())
         self.last_pid = None
         self.last_session_id = session_id
-        resolved_model = _resolve_worker_model(self.provider, model)
+        resolved_model = _resolve_worker_model(self.provider, self.pinned_model or model)
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
         stream_path = log_dir / "stream.jsonl"
         # The orchestrator reuses one log directory across critic iterations.
@@ -326,6 +351,9 @@ class ApiAgentWorker:
         with suppress(OSError):
             stream_path.write_text("", encoding="utf-8")
         written: list[str] = []
+        # What this spawn cost, from the usage each call reports — carried on
+        # the terminal result so a paid mission can log its real spend.
+        spent_usd = 0.0
         broker_specs = broker_binding.tool_specs if broker_binding is not None else ()
         local_names = {str(spec["name"]) for spec in WORKER_TOOL_SPECS}
         all_tool_specs = WORKER_TOOL_SPECS + tuple(
@@ -441,6 +469,8 @@ class ApiAgentWorker:
                         with usage_context("mission-worker"):
                             _stream = brain.complete(req)
                         async for delta in _stream:
+                            if delta.usage:
+                                spent_usd += _usage_cost_usd(resolved_model, delta.usage)
                             if delta.content:
                                 text_parts.append(delta.content)
                             if delta.tool_call:
@@ -467,6 +497,7 @@ class ApiAgentWorker:
                         res = ClaudeResult(
                             subtype="error_during_execution",
                             is_error=True,
+                            cost_usd=round(spent_usd, 6),
                             session_id=session_id,
                             duration_ms=int((time.perf_counter() - t0) * 1000),
                             result=_tool_incapable_message(
@@ -477,6 +508,12 @@ class ApiAgentWorker:
                         yield res
                         return
                     raise
+
+                if self.cost_cap_usd is not None and spent_usd >= self.cost_cap_usd:
+                    raise _CostCapReached(
+                        f"approved cost cap of ${self.cost_cap_usd:.2f} reached "
+                        f"(${spent_usd:.2f} spent)"
+                    )
 
                 assistant_text = "".join(text_parts).strip()
                 if assistant_text:
@@ -571,6 +608,7 @@ class ApiAgentWorker:
             res = ClaudeResult(
                 subtype="success",
                 is_error=False,
+                cost_usd=round(spent_usd, 6),
                 session_id=session_id,
                 num_turns=turns,
                 duration_ms=wall_ms,
@@ -587,7 +625,8 @@ class ApiAgentWorker:
         except Exception as exc:  # noqa: BLE001
             wall_ms = int((time.perf_counter() - t0) * 1000)
             logger.warning("ApiAgentWorker[%s] failed: %s", worker_id, exc, exc_info=True)
-            if _error_means_family_unusable(str(exc)):
+            # The cost cap is the approval's limit, not a broken key.
+            if not isinstance(exc, _CostCapReached) and _error_means_family_unusable(str(exc)):
                 # Remember that THIS key cannot run right now, fingerprinted so
                 # a freshly saved key lifts the block instantly. The factory's
                 # family walk skips the family on the retry and crosses to the
@@ -615,6 +654,7 @@ class ApiAgentWorker:
             res = ClaudeResult(
                 subtype="error_during_execution",
                 is_error=True,
+                cost_usd=round(spent_usd, 6),
                 session_id=session_id,
                 num_turns=turns,
                 duration_ms=wall_ms,

@@ -45,7 +45,9 @@ export type EventType =
   | "MissionStateChanged"
   | "BusStats"
   | "MissionBudgetWarning"
-  | "MissionWaitingCapacity";
+  | "MissionWaitingCapacity"
+  | "MissionCapacityDecision"
+  | "MissionPaidUsage";
 
 export interface BasePayload {
   event_type: EventType;
@@ -197,7 +199,56 @@ export interface BusStats extends BasePayload {
 }
 
 /** Mirror of CAPACITY_WAIT_REASONS in jarvis/missions/events.py. */
-export type CapacityWaitReason = "provider_quota" | "provider_auth" | "provider_unavailable";
+export type CapacityWaitReason =
+  | "provider_quota"
+  | "provider_auth"
+  | "provider_unavailable"
+  | "paid_cap_reached";
+
+/** Mirror of jarvis.missions.capacity.CapacityDecision. */
+export type CapacityDecision = "wait" | "approve_paid" | "cancel";
+
+export interface MissionCapacityDecision extends BasePayload {
+  event_type: "MissionCapacityDecision";
+  decision: CapacityDecision;
+  provider: string | null;
+  model: string | null;
+  estimated_cost_usd: number | null;
+  cost_cap_usd: number | null;
+  reason: string;
+}
+
+export interface MissionPaidUsage extends BasePayload {
+  event_type: "MissionPaidUsage";
+  provider: string;
+  model: string;
+  cost_usd: number;
+  cost_cap_usd: number;
+  estimated_cost_usd: number;
+}
+
+/** GET /api/missions/{id}/paid-offer — what an approval would cover. */
+export interface PaidOffer {
+  provider: string;
+  model: string;
+  estimated_cost_usd: number;
+  cost_cap_usd: number;
+  reason: string;
+  open_steps: number;
+}
+
+export interface PaidOfferResponse {
+  mission_id: string;
+  state: MissionState;
+  offer: PaidOffer | null;
+}
+
+export interface CapacityDecisionResponse {
+  ok: boolean;
+  mission_id: string;
+  decision: CapacityDecision;
+  state: MissionState;
+}
 
 export interface MissionWaitingCapacity extends BasePayload {
   event_type: "MissionWaitingCapacity";
@@ -234,6 +285,8 @@ export type AnyPayload =
   | MissionTimedOut
   | MissionStateChanged
   | MissionWaitingCapacity
+  | MissionCapacityDecision
+  | MissionPaidUsage
   | BusStats
   | MissionBudgetWarning;
 

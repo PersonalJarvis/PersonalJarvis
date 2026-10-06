@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.missions.budget import BudgetTracker
+from jarvis.missions.capacity import PaidOffer
 from jarvis.missions.critic.verdict import REQUIRED_AXES, CriticAxis, CriticVerdict
 from jarvis.missions.kontrollierer.decomposer import MissionPlan, Step
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
@@ -57,8 +58,10 @@ class FakeMissionWorker:
         quota: bool = False,
         writes: dict[str, str] | None = None,
         on_spawn: Callable[[str, Path], None] | None = None,
+        cost_usd: float = 0.0,
     ) -> None:
         self.family = family
+        self.cost_usd = cost_usd
         self.quota = quota
         self.writes = dict(writes or {})
         self.on_spawn = on_spawn
@@ -78,10 +81,13 @@ class FakeMissionWorker:
         _write_log(log_dir)
         if self.quota:
             yield ResultEvent(
-                is_error=True, subtype="error_during_execution", result=SESSION_LIMIT_ERROR
+                is_error=True,
+                subtype="error_during_execution",
+                result=SESSION_LIMIT_ERROR,
+                cost_usd=self.cost_usd,
             )
         else:
-            yield ResultEvent()
+            yield ResultEvent(cost_usd=self.cost_usd)
 
 
 class ApprovingCritic:
@@ -141,12 +147,34 @@ class DirWorktrees:
         shutil.rmtree(path, ignore_errors=True)
 
 
+class FakePaidOption:
+    """A fixed paid offer; its workers report ``cost_per_spawn`` USD each."""
+
+    def __init__(self, offer: PaidOffer | None, *, cost_per_spawn: float = 0.25) -> None:
+        self._offer = offer
+        self.cost_per_spawn = cost_per_spawn
+        self.offer_calls: list[dict[str, Any]] = []
+        self.workers: list[FakeMissionWorker] = []
+        self.remaining: list[float] = []
+
+    def offer(self, **kwargs: Any) -> PaidOffer | None:
+        self.offer_calls.append(kwargs)
+        return self._offer
+
+    def worker(self, offer: PaidOffer, *, remaining_usd: float, task_text: str) -> Any:
+        self.remaining.append(remaining_usd)
+        worker = FakeMissionWorker(family=offer.provider, cost_usd=self.cost_per_spawn)
+        self.workers.append(worker)
+        return worker
+
+
 def make_kontrollierer(
     manager: MissionManager,
     tmp_path: Path,
     plan: MissionPlan,
     factory: Callable[[Step], Any],
     critic: Any | None = None,
+    paid_option: Any | None = None,
 ) -> Kontrollierer:
     return Kontrollierer(
         manager=manager,
@@ -158,4 +186,5 @@ def make_kontrollierer(
         worker_factory=factory,
         job_factory=NoopJob,
         isolation_root=tmp_path / "missions",
+        paid_option=paid_option,
     )

@@ -4,6 +4,8 @@
  * WS hooks so React Query can cache the list/detail queries.
  */
 import type {
+  CapacityDecision,
+  CapacityDecisionResponse,
   CriticVerdictReady,
   EventEnvelope,
   MissionChanges,
@@ -13,6 +15,7 @@ import type {
   MissionToolApprovalDecision,
   MissionToolApprovalsResponse,
   JarvisAgentWorkerSnapshot,
+  PaidOfferResponse,
 } from "@/types/missions";
 
 export interface MissionsListResponse {
@@ -91,6 +94,39 @@ export async function denyMissionToolCall(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason }),
+    },
+  );
+}
+
+export function paidOfferQueryKey(missionId: string | null) {
+  return ["missions", "paid-offer", missionId] as const;
+}
+
+/** The paid-API alternative for a mission waiting for capacity (read-only). */
+export async function fetchPaidOffer(missionId: string): Promise<PaidOfferResponse> {
+  return requestJson(`${API_BASE}/${encodeURIComponent(missionId)}/paid-offer`);
+}
+
+/**
+ * Wait, approve paid API use for this one mission, or cancel. An approval
+ * echoes the provider and model of the offer the user saw; the server
+ * rejects it (409) if the offer changed in between.
+ */
+export async function decideCapacity(
+  missionId: string,
+  decision: CapacityDecision,
+  offer?: { provider: string; model: string },
+): Promise<CapacityDecisionResponse> {
+  return requestJson(
+    `${API_BASE}/${encodeURIComponent(missionId)}/capacity-decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decision,
+        provider: offer?.provider ?? null,
+        model: offer?.model ?? null,
+      }),
     },
   );
 }

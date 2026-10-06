@@ -28,12 +28,16 @@ import os
 import random
 import tempfile
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 log = logging.getLogger(__name__)
 
-CapacityWaitReason = Literal["provider_quota", "provider_auth", "provider_unavailable"]
+CapacityWaitReason = Literal[
+    "provider_quota", "provider_auth", "provider_unavailable", "paid_cap_reached"
+]
+CapacityDecision = Literal["wait", "approve_paid", "cancel"]
 
 #: Written into ``<mission_dir>/`` when a mission is parked. Its presence also
 #: keeps the mission directory out of the age-based cleanup sweep.
@@ -51,6 +55,62 @@ RESUME_INTERVAL_S = 300.0
 #: (AP-33).
 RESUME_JITTER_S = 60.0
 
+#: Hard spend ceiling of ONE approved paid run (user decision 2026-10-04: $2
+#: per mission on an approved API key). Reaching it parks the mission again.
+PAID_MISSION_CAP_USD = 2.0
+
+#: Token volume assumed per open step for the up-front estimate. Deliberately
+#: generous: a worker re-reads its workspace every turn, and one trivial
+#: mission once used 1.3M input tokens exploring a repository.
+ESTIMATE_INPUT_TOKENS_PER_STEP = 400_000
+ESTIMATE_OUTPUT_TOKENS_PER_STEP = 30_000
+
+
+@dataclass(frozen=True)
+class PaidOffer:
+    """What the user is asked to approve before any paid API use: which
+    provider and model, what it will roughly cost, the hard cap, and why."""
+
+    provider: str
+    model: str
+    estimated_cost_usd: float
+    cost_cap_usd: float
+    reason: str
+    open_steps: int
+
+
+class PaidOption(Protocol):
+    """Builds the paid alternative for a parked mission (wired in
+    ``jarvis.missions.init``). ``offer`` never calls a provider."""
+
+    def offer(self, *, pinned_family: str | None, open_steps: int, reason: str) -> PaidOffer | None:
+        ...
+
+    def worker(self, offer: PaidOffer, *, remaining_usd: float, task_text: str) -> Any:
+        ...
+
+
+def estimate_paid_cost_usd(model: str, open_steps: int) -> float | None:
+    """Rough USD for ``open_steps`` steps on ``model``, or None when the model
+    has no known price — an unpriced model is never offered for paid use,
+    because neither the estimate nor the cap could be trusted."""
+    from jarvis.brain.cost import resolve_rates
+
+    rates = resolve_rates(model)
+    if rates is None or rates == (0.0, 0.0):
+        return None
+    rate_in, rate_out = rates
+    steps = max(open_steps, 1)
+    return round(
+        steps
+        * (
+            ESTIMATE_INPUT_TOKENS_PER_STEP * rate_in
+            + ESTIMATE_OUTPUT_TOKENS_PER_STEP * rate_out
+        )
+        / 1_000_000,
+        4,
+    )
+
 
 class WorkerCapacityUnavailable(RuntimeError):
     """Raised by the worker factory instead of picking a worker that would bill
@@ -66,6 +126,12 @@ class WorkerCapacityUnavailable(RuntimeError):
         self.reason: CapacityWaitReason = reason
         self.provider = provider
         self.detail = detail
+
+
+class CapacityDecisionRejected(RuntimeError):
+    """A capacity decision that cannot apply: the mission is no longer
+    parked, there is no paid option, or the option changed since it was
+    shown. Nothing was decided or billed."""
 
 
 def pinned_to_subscription(*, configured_is_subscription: bool) -> bool:
@@ -159,11 +225,19 @@ async def capacity_resume_loop(
 __all__ = [
     "CHECKPOINT_NAME",
     "CHECKPOINT_VERSION",
+    "ESTIMATE_INPUT_TOKENS_PER_STEP",
+    "ESTIMATE_OUTPUT_TOKENS_PER_STEP",
+    "PAID_MISSION_CAP_USD",
     "RESUME_INTERVAL_S",
     "RESUME_JITTER_S",
+    "CapacityDecision",
+    "CapacityDecisionRejected",
     "CapacityWaitReason",
+    "PaidOffer",
+    "PaidOption",
     "WorkerCapacityUnavailable",
     "capacity_resume_loop",
+    "estimate_paid_cost_usd",
     "pinned_to_subscription",
     "read_checkpoint",
     "worker_family",

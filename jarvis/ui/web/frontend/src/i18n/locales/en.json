@@ -4194,7 +4194,8 @@
       "files": "Files saved: {files}.",
       "wait": "The mission is waiting until capacity is available again.",
       "wait_auth": "The mission is waiting until you sign in again.",
-      "paid": "Paid API use only with your explicit approval."
+      "paid": "Paid API use only with your explicit approval in the Approvals tab.",
+      "paid_cap_reached": "The approved cost limit for {provider} is reached."
     }
   },
   "mission_tool_approvals": {
@@ -7036,5 +7037,40 @@
       "create": "Create pet",
       "creating": "Creating…"
     }
+  },
+  "capacity_decision": {
+    "title": "Mission waiting for capacity – your decision",
+    "loading": "Checking for a paid alternative …",
+    "provider": "Provider",
+    "model": "Model",
+    "estimate": "Estimated cost",
+    "estimate_value": "about {cost} for {steps} open steps",
+    "cap": "Hard cost cap",
+    "reason": "Reason",
+    "reasons": {
+      "provider_quota": "Subscription capacity used up",
+      "provider_auth": "Subscription sign-in expired",
+      "provider_unavailable": "Subscription cannot be used right now",
+      "paid_cap_reached": "Approved cost cap reached"
+    },
+    "no_offer": "No paid API access with a known price is available. The mission waits for its subscription.",
+    "over_cap": "The estimate is above the cost cap. The mission pauses once the cap is reached; its progress stays saved.",
+    "scope": "An approval covers only this mission and this one run – no permanent or global approval. Nothing is billed without it.",
+    "wait": "Wait",
+    "approve": "Approve paid API for this mission",
+    "cancel": "Cancel mission",
+    "confirm_approve": "Use {provider} / {model} for this mission, at most {cap}?",
+    "confirm_cancel": "Cancel the mission? The saved progress is kept.",
+    "confirm": "Confirm",
+    "back": "Back",
+    "error": "Decision not applied: {detail}",
+    "waiting_ack": "The mission keeps waiting for its subscription.",
+    "logged": {
+      "wait": "Decision: wait.",
+      "approve_paid": "Decision: paid API approved.",
+      "cancel": "Decision: cancelled."
+    },
+    "logged_offer": "{provider} / {model}, estimated {cost}, cap {cap}.",
+    "paid_usage": "Paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap})."
   }
 }

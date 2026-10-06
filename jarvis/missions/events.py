@@ -163,6 +163,7 @@ CAPACITY_WAIT_REASONS: Final[frozenset[str]] = frozenset({
     "provider_quota",        # usage/session window or credit spent
     "provider_auth",         # subscription login expired
     "provider_unavailable",  # the worker cannot run without a paid fallback
+    "paid_cap_reached",      # an approved paid run hit its spend ceiling
 })
 
 
@@ -174,7 +175,9 @@ class MissionWaitingCapacity(_PayloadBase):
     """
 
     event_type: Literal["MissionWaitingCapacity"] = "MissionWaitingCapacity"
-    reason: Literal["provider_quota", "provider_auth", "provider_unavailable"]
+    reason: Literal[
+        "provider_quota", "provider_auth", "provider_unavailable", "paid_cap_reached"
+    ]
     provider: str | None = None
     steps_done: int = 0
     steps_total: int = 0
@@ -186,6 +189,31 @@ class MissionWaitingCapacity(_PayloadBase):
     # True when a resume attempt parked again without finishing another step:
     # nothing new to tell, so the voice layer stays silent.
     repeat: bool = False
+
+
+class MissionCapacityDecision(_PayloadBase):
+    """The user's answer to a parked mission's paid-API offer — the audit
+    record of exactly what was shown and decided. An approval covers this one
+    mission and this one run, never anything else."""
+
+    event_type: Literal["MissionCapacityDecision"] = "MissionCapacityDecision"
+    decision: Literal["wait", "approve_paid", "cancel"]
+    provider: str | None = None
+    model: str | None = None
+    estimated_cost_usd: float | None = None
+    cost_cap_usd: float | None = None
+    reason: str = ""
+
+
+class MissionPaidUsage(_PayloadBase):
+    """What an approved paid run actually cost, logged when the run ends."""
+
+    event_type: Literal["MissionPaidUsage"] = "MissionPaidUsage"
+    provider: str
+    model: str
+    cost_usd: float
+    cost_cap_usd: float
+    estimated_cost_usd: float
 
 
 class MissionCancelled(_PayloadBase):
@@ -242,7 +270,9 @@ Payload = Annotated[
     | MissionStateChanged
     | BusStats
     | MissionBudgetWarning
-    | MissionWaitingCapacity,
+    | MissionWaitingCapacity
+    | MissionCapacityDecision
+    | MissionPaidUsage,
     Field(discriminator="event_type"),
 ]
 

@@ -32,12 +32,17 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
 from ..capacity import (
+    CapacityDecision,
+    CapacityDecisionRejected,
+    PaidOffer,
+    PaidOption,
     WorkerCapacityUnavailable,
     read_checkpoint,
     worker_family,
@@ -58,7 +63,9 @@ from ..events import (
     EventEnvelope,
     MissionApproved,
     MissionCancelled,
+    MissionCapacityDecision,
     MissionFailed,
+    MissionPaidUsage,
     MissionPlanReady,
     MissionWaitingCapacity,
     WorkerCorrectionRequired,
@@ -406,6 +413,17 @@ def _real_diff_is_empty(diff_text: str) -> bool:
 # Cap on the content embedded for a verified external file. Large enough for a
 # typical document deliverable, small enough not to blow the Critic's prompt.
 _EXTERNAL_VERIFY_MAX_CHARS: Final[int] = 8000
+
+
+@dataclass(frozen=True)
+class _ResumeClaim:
+    """A parked mission this caller moved to RUNNING, ready to continue."""
+
+    prompt: str
+    plan: MissionPlan
+    done: frozenset[str]
+    restore_dirs: dict[str, Path]
+    checkpoint: dict[str, Any]
 
 
 def _plan_from_checkpoint(checkpoint: dict[str, Any] | None) -> MissionPlan | None:
@@ -840,8 +858,13 @@ class Kontrollierer:
         # Phase-5 safety hooks (all optional — None = no-op):
         safety_enabled: bool = True,
         extra_blocked_globs: tuple[str, ...] = (),
+        # The paid-API alternative offered for a parked mission (None = no
+        # offer is ever made). Used only after the user approves it for one
+        # mission — see `decide_capacity`.
+        paid_option: PaidOption | None = None,
     ) -> None:
         self._manager = manager
+        self._paid_option = paid_option
         self._decomposer = decomposer
         self._runner = critic_runner
         self._worktrees = worktree_mgr
@@ -890,6 +913,14 @@ class Kontrollierer:
         self._resume_family: dict[str, str] = {}
         self._resume_attempt: dict[str, int] = {}
         self._resume_done_before: dict[str, int] = {}
+        # Approved paid runs: the exact offer the user accepted, and what the
+        # run has spent so far. In memory on purpose — an approval covers one
+        # run of one mission and dies with it (or with the process).
+        self._paid_approval: dict[str, PaidOffer] = {}
+        self._paid_spent: dict[str, float] = {}
+        # Paid runs started by an approval; referenced so they are not
+        # garbage-collected mid-flight.
+        self._background_runs: set[asyncio.Task[Any]] = set()
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -1498,8 +1529,7 @@ class Kontrollierer:
             # Worker spawn (real or fake depending on the factory). A factory
             # that refuses to switch to a billing fallback parks the task.
             try:
-                worker = self._worker_factory(step)
-                self._check_resume_family(mission_id, worker)
+                worker = self._make_worker(mission_id, step)
             except WorkerCapacityUnavailable as exc:
                 logger.warning(
                     "Task %s iter %d: no worker capacity (%s) — parking the "
@@ -1542,6 +1572,29 @@ class Kontrollierer:
                 if iteration == MAX_CRITIC_LOOPS - 1:
                     return TaskOutcome.ERROR
                 continue
+
+            approval = self._paid_approval.get(mission_id)
+            if approval is not None:
+                spent = self._paid_spent.get(mission_id, 0.0) + float(
+                    spawn_result.cost_usd or 0.0
+                )
+                self._paid_spent[mission_id] = spent
+                if spent >= approval.cost_cap_usd:
+                    # The approved ceiling is hard: stop before the critic and
+                    # park; the work so far is archived with the checkpoint.
+                    logger.warning(
+                        "Task %s iter %d: approved paid run reached its cap "
+                        "($%.4f of $%.2f) — parking the mission",
+                        step.task_id, iteration, spent, approval.cost_cap_usd,
+                    )
+                    self._capacity_wait[mission_id] = {
+                        "reason": "paid_cap_reached",
+                        "provider": approval.provider,
+                        "error_detail": None,
+                    }
+                    # No iteration diff recorded: the task's final archive
+                    # falls back to a fresh diff of the worktree.
+                    return TaskOutcome.WAITING_CAPACITY
 
             # git add/diff/ls-files over the whole worktree: off the loop.
             diff_text = await asyncio.to_thread(self._capture_diff, worktree)
@@ -3072,24 +3125,23 @@ class Kontrollierer:
         in ``_running_missions`` like ``run_mission`` so cancel and shutdown
         reach it.
         """
+        claim = await self._claim_resume(mission_id)
+        if isinstance(claim, MissionState):
+            return claim
+        return await self._run_claimed_resume(mission_id, claim, paid=None)
+
+    async def _claim_resume(self, mission_id: str) -> _ResumeClaim | MissionState:
+        """Take a parked mission out of WAITING_CAPACITY for exactly one run.
+
+        Returns the claim, or the mission's current state when it is not
+        resumable by this caller (not parked, already running here, or its
+        checkpoint is unusable — then it is failed honestly).
+        """
         if mission_id in self._running_missions:
-            # Already running here (a resume or a run) — that caller owns the
-            # mission and its tracking; a second resume must not touch either.
+            # Already running here — that caller owns the mission and its
+            # tracking; a second resume must not touch either.
             view = await self._manager.mission(mission_id)
             return view.state if view is not None else MissionState.FAILED
-        task = asyncio.current_task()
-        if task is not None:
-            self._running_missions[mission_id] = task
-        try:
-            return await self._resume_mission_inner(mission_id)
-        finally:
-            if self._running_missions.get(mission_id) is task:
-                self._running_missions.pop(mission_id, None)
-            self._resume_family.pop(mission_id, None)
-            self._resume_attempt.pop(mission_id, None)
-            self._resume_done_before.pop(mission_id, None)
-
-    async def _resume_mission_inner(self, mission_id: str) -> MissionState:
         view = await self._manager.mission(mission_id)
         if view is None:
             raise KeyError(f"Mission not found: {mission_id}")
@@ -3131,30 +3183,232 @@ class Kontrollierer:
             await self._manager.store.touch_heartbeat(mission_id, now_ms())
         except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory
             logger.debug("Resume heartbeat failed (non-fatal): %s", hb_exc)
-
-        pinned = checkpoint.get("provider")
-        if isinstance(pinned, str) and pinned:
-            self._resume_family[mission_id] = pinned
-        attempts = checkpoint.get("resume_attempts")
-        self._resume_attempt[mission_id] = (attempts if isinstance(attempts, int) else 0) + 1
-        self._resume_done_before[mission_id] = len(done)
-        answers = checkpoint.get("task_answers")
-        if isinstance(answers, list) and answers:
-            self._task_answers[mission_id] = [str(a) for a in answers]
-
-        logger.info(
-            "resume_mission: %s resumes on %s — %d/%d step(s) already done, "
-            "%d with partial work to restore (attempt %d)",
-            mission_id, pinned or "<unknown>", len(done), len(plan.steps),
-            len(restore_dirs), self._resume_attempt[mission_id],
-        )
-        return await self._execute_plan(
-            mission_id,
-            view.prompt,
-            plan,
-            done_task_ids=frozenset(done),
+        return _ResumeClaim(
+            prompt=view.prompt,
+            plan=plan,
+            done=frozenset(done),
             restore_dirs=restore_dirs,
+            checkpoint=checkpoint,
         )
+
+    async def _run_claimed_resume(
+        self, mission_id: str, claim: _ResumeClaim, *, paid: PaidOffer | None
+    ) -> MissionState:
+        """Run a claimed mission's open steps. ``paid`` is the offer the user
+        approved for this one run; it exists only inside this call."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._running_missions[mission_id] = task
+        try:
+            checkpoint = claim.checkpoint
+            pinned = checkpoint.get("provider")
+            if isinstance(pinned, str) and pinned:
+                self._resume_family[mission_id] = pinned
+            attempts = checkpoint.get("resume_attempts")
+            self._resume_attempt[mission_id] = (
+                attempts if isinstance(attempts, int) else 0
+            ) + 1
+            self._resume_done_before[mission_id] = len(claim.done)
+            answers = checkpoint.get("task_answers")
+            if isinstance(answers, list) and answers:
+                self._task_answers[mission_id] = [str(a) for a in answers]
+            if paid is not None:
+                self._paid_approval[mission_id] = paid
+                self._paid_spent[mission_id] = 0.0
+
+            logger.info(
+                "resume_mission: %s resumes on %s — %d/%d step(s) already done, "
+                "%d with partial work to restore (attempt %d)",
+                mission_id,
+                f"{paid.provider}/{paid.model} (approved paid run)" if paid else pinned,
+                len(claim.done), len(claim.plan.steps), len(claim.restore_dirs),
+                self._resume_attempt[mission_id],
+            )
+            try:
+                return await self._execute_plan(
+                    mission_id,
+                    claim.prompt,
+                    claim.plan,
+                    done_task_ids=claim.done,
+                    restore_dirs=claim.restore_dirs,
+                )
+            finally:
+                await self._record_paid_usage(mission_id)
+        finally:
+            if self._running_missions.get(mission_id) is task:
+                self._running_missions.pop(mission_id, None)
+            self._resume_family.pop(mission_id, None)
+            self._resume_attempt.pop(mission_id, None)
+            self._resume_done_before.pop(mission_id, None)
+            self._paid_approval.pop(mission_id, None)
+            self._paid_spent.pop(mission_id, None)
+
+    # --- Paid-API approval ---------------------------------------------------
+
+    async def paid_offer(self, mission_id: str) -> PaidOffer | None:
+        """The paid alternative for a parked mission, or None.
+
+        Computed fresh on every call and never stored: an offer is only what
+        the user is looking at right now. No provider is called.
+        """
+        if self._paid_option is None:
+            return None
+        view = await self._manager.mission(mission_id)
+        if view is None or view.state != MissionState.WAITING_CAPACITY:
+            return None
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            return None
+        open_steps = len(plan.steps) - len(_done_task_ids(checkpoint))
+        pinned = checkpoint.get("provider")
+        reason = checkpoint.get("reason")
+        return await asyncio.to_thread(
+            self._paid_option.offer,
+            pinned_family=pinned if isinstance(pinned, str) else None,
+            open_steps=max(open_steps, 1),
+            reason=reason if isinstance(reason, str) else "provider_quota",
+        )
+
+    async def decide_capacity(
+        self,
+        mission_id: str,
+        decision: CapacityDecision,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> MissionState:
+        """Apply the user's answer to a parked mission's paid-API offer.
+
+        - ``wait``: logged; the mission stays parked and keeps waiting for its
+          own subscription.
+        - ``cancel``: logged; the mission is cancelled, its work stays saved.
+        - ``approve_paid``: only for the offer the user saw — ``provider`` and
+          ``model`` must match the current offer, or nothing happens. The
+          approval covers this one run of this one mission; it is never
+          stored, and reaching the cost cap parks the mission again.
+
+        Raises :class:`CapacityDecisionRejected` when the decision cannot apply.
+        """
+        view = await self._manager.mission(mission_id)
+        if view is None:
+            raise KeyError(f"Mission not found: {mission_id}")
+        if view.state != MissionState.WAITING_CAPACITY:
+            raise CapacityDecisionRejected(
+                f"mission is {view.state.value}, not waiting for capacity"
+            )
+        offer = await self.paid_offer(mission_id)
+        if decision == "approve_paid":
+            if offer is None:
+                raise CapacityDecisionRejected("no paid option is available for this mission")
+            if (provider, model) != (offer.provider, offer.model):
+                raise CapacityDecisionRejected(
+                    "the paid option changed since it was shown; review it again"
+                )
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir) or {}
+        reason = checkpoint.get("reason")
+        await self._manager.store.append_and_publish(
+            EventEnvelope(
+                mission_id=mission_id,
+                source_actor="ui",
+                ts_ms=now_ms(),
+                payload=MissionCapacityDecision(
+                    decision=decision,
+                    provider=offer.provider if offer else None,
+                    model=offer.model if offer else None,
+                    estimated_cost_usd=offer.estimated_cost_usd if offer else None,
+                    cost_cap_usd=offer.cost_cap_usd if offer else None,
+                    reason=reason if isinstance(reason, str) else "",
+                ),
+            )
+        )
+        logger.info(
+            "Mission %s capacity decision: %s (offer=%s)", mission_id, decision,
+            f"{offer.provider}/{offer.model} est=${offer.estimated_cost_usd:.2f} "
+            f"cap=${offer.cost_cap_usd:.2f}" if offer else "none",
+        )
+        if decision == "wait":
+            return MissionState.WAITING_CAPACITY
+        if decision == "cancel":
+            if not await self._safe_transition(
+                mission_id, MissionState.CANCELLED, "ui_cancel"
+            ):
+                current = await self._manager.mission(mission_id)
+                return current.state if current is not None else MissionState.FAILED
+            await self._manager.store.append_and_publish(
+                EventEnvelope(
+                    mission_id=mission_id,
+                    source_actor="ui",
+                    ts_ms=now_ms(),
+                    payload=MissionCancelled(cascade=False, reason="ui_cancel"),
+                )
+            )
+            return MissionState.CANCELLED
+
+        assert offer is not None  # approve_paid was validated above
+        claim = await self._claim_resume(mission_id)
+        if isinstance(claim, MissionState):
+            return claim
+        run = asyncio.create_task(
+            self._run_claimed_resume(mission_id, claim, paid=offer),
+            name=f"mission-paid-resume-{mission_id[:13]}",
+        )
+        self._background_runs.add(run)
+        run.add_done_callback(self._background_runs.discard)
+        return MissionState.RUNNING
+
+    def _make_worker(self, mission_id: str, step: Step) -> Any:
+        """The worker for one iteration. An approved paid run uses exactly the
+        approved provider and model, within what is left of its cost cap;
+        anything else goes through the factory and its capacity rules."""
+        approval = self._paid_approval.get(mission_id)
+        if approval is None:
+            worker = self._worker_factory(step)
+            self._check_resume_family(mission_id, worker)
+            return worker
+        spent = self._paid_spent.get(mission_id, 0.0)
+        if spent >= approval.cost_cap_usd:
+            raise WorkerCapacityUnavailable(
+                "paid_cap_reached",
+                approval.provider,
+                f"spent ${spent:.2f} of the approved ${approval.cost_cap_usd:.2f}",
+            )
+        if self._paid_option is None:
+            raise WorkerCapacityUnavailable("provider_unavailable", approval.provider)
+        return self._paid_option.worker(
+            approval, remaining_usd=approval.cost_cap_usd - spent, task_text=step.prompt
+        )
+
+    async def _record_paid_usage(self, mission_id: str) -> None:
+        """Log what an approved paid run actually cost (event + log line)."""
+        approval = self._paid_approval.get(mission_id)
+        if approval is None:
+            return
+        spent = round(self._paid_spent.get(mission_id, 0.0), 6)
+        logger.info(
+            "Mission %s paid run on %s/%s cost $%.4f (estimate $%.2f, cap $%.2f)",
+            mission_id, approval.provider, approval.model, spent,
+            approval.estimated_cost_usd, approval.cost_cap_usd,
+        )
+        try:
+            await self._manager.store.append_and_publish(
+                EventEnvelope(
+                    mission_id=mission_id,
+                    source_actor="kontrollierer",
+                    ts_ms=now_ms(),
+                    payload=MissionPaidUsage(
+                        provider=approval.provider,
+                        model=approval.model,
+                        cost_usd=spent,
+                        cost_cap_usd=approval.cost_cap_usd,
+                        estimated_cost_usd=approval.estimated_cost_usd,
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 - the log line above still records it
+            logger.exception("Mission %s: paid-usage event could not be stored", mission_id)
 
     def _check_resume_family(self, mission_id: str, worker: Any) -> None:
         """A resumed mission runs only on the provider family it was parked
@@ -3280,7 +3534,10 @@ class Kontrollierer:
                     "mission_id": mission_id,
                     "prompt": prompt,
                     "reason": reason,
-                    "provider": provider,
+                    # The family the mission waits for. A paid run that parks
+                    # again keeps waiting for its original subscription — never
+                    # for the paid key, which needs a fresh approval.
+                    "provider": self._resume_family.get(mission_id) or provider,
                     "error_detail": error_detail,
                     "created_ms": now_ms(),
                     "resume_attempts": attempt,

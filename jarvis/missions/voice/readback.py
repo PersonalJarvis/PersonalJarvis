@@ -320,6 +320,9 @@ CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
         "provider_quota": "{provider}-Kapazität momentan ausgeschöpft.",  # i18n-allow
         "provider_auth": "Die {provider}-Anmeldung ist abgelaufen.",  # i18n-allow
         "provider_unavailable": "{provider} ist momentan nicht nutzbar.",  # i18n-allow
+        "paid_cap_reached": (
+            "Die freigegebene Kostengrenze für {provider} ist erreicht."  # i18n-allow
+        ),
         "saved": "Der bisherige Stand wurde gesichert.",  # i18n-allow
         "progress": "{done} von {total} Teilschritten erledigt, {open} offen.",  # i18n-allow
         "progress_single": "Die Aufgabe selbst ist noch offen.",  # i18n-allow
@@ -328,13 +331,15 @@ CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
         "wait": "Die Mission wartet, bis wieder Kapazität verfügbar ist.",  # i18n-allow
         "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",  # i18n-allow
         "paid": (
-            "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen Freigabe."  # i18n-allow
+            "Kostenpflichtige API-Nutzung nur mit deiner ausdrücklichen "  # i18n-allow
+            "Freigabe in der Missionsansicht."  # i18n-allow
         ),
     },
     "en": {
         "provider_quota": "{provider} capacity is used up for now.",
         "provider_auth": "The {provider} sign-in has expired.",
         "provider_unavailable": "{provider} cannot be used right now.",
+        "paid_cap_reached": "The approved cost limit for {provider} is reached.",
         "saved": "The progress so far has been saved.",
         "progress": "{done} of {total} steps done, {open} open.",
         "progress_single": "The task itself is still open.",
@@ -342,7 +347,7 @@ CAPACITY_WAIT_PHRASES: Final[dict[str, dict[str, str]]] = {
         "files": "{files} files saved.",
         "wait": "The mission is waiting until capacity is available again.",
         "wait_auth": "The mission is waiting until you sign in again.",
-        "paid": "Paid API use only with your explicit approval.",
+        "paid": "Paid API use only with your explicit approval in the Missions view.",
     },
 }
 

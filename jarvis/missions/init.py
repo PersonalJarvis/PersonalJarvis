@@ -34,7 +34,13 @@ from typing import Any
 from jarvis.core.bus import EventBus as _SpeechEventBus
 
 from .budget import BudgetTracker
-from .capacity import WorkerCapacityUnavailable, pinned_to_subscription
+from .capacity import (
+    PAID_MISSION_CAP_USD,
+    PaidOffer,
+    WorkerCapacityUnavailable,
+    estimate_paid_cost_usd,
+    pinned_to_subscription,
+)
 from .cleanup import daily_cleanup_task, startup_sweep
 from .critic.runner import CriticRunner
 from .event_bus import MissionBus
@@ -789,6 +795,71 @@ def _pinned_codex_worker(capability_inventory: WorkerCapabilityInventory | None)
     return CodexDirectWorker(capability_inventory=capability_inventory, backend_fallback=False)
 
 
+# The API-key family of the same vendor as a subscription worker: the paid
+# alternative offered first for a mission parked on that subscription.
+_PAID_FAMILY_FOR_SUBSCRIPTION: dict[str, str] = {
+    "claude": "claude-api",
+    "codex": "openai",
+    "antigravity": "gemini",
+    "gemini": "gemini",
+    "grok-build": "grok",
+}
+_PAID_FAMILY_ORDER: tuple[str, ...] = (
+    "claude-api", "gemini", "openrouter", "openai", "grok", "nvidia",
+)
+
+
+class ApiKeyPaidOption:
+    """The paid alternative for a parked mission: the in-process API worker
+    on one of the user's own keys. Offered, never used, until the user
+    approves it for one mission (jarvis/missions/capacity.py).
+
+    The same vendor's key comes first; a model without a known price is never
+    offered, since neither its estimate nor the cost cap could be trusted.
+    Reads keys and config only — never calls a provider.
+    """
+
+    def offer(
+        self, *, pinned_family: str | None, open_steps: int, reason: str
+    ) -> PaidOffer | None:
+        from jarvis.missions.workers.api_agent_worker import (
+            _resolve_worker_model,
+            supports_api_agent_worker,
+        )
+
+        preferred = _PAID_FAMILY_FOR_SUBSCRIPTION.get(pinned_family or "")
+        order = dict.fromkeys(p for p in (preferred, *_PAID_FAMILY_ORDER) if p)
+        # A mission parked on an API key gets a DIFFERENT key, not the one
+        # that just ran out.
+        order.pop(pinned_family or "", None)
+        for provider in order:
+            if not supports_api_agent_worker(provider):
+                continue
+            if not _api_key_family_viable(provider):
+                continue
+            model = _resolve_worker_model(provider, "")
+            estimate = estimate_paid_cost_usd(model, open_steps)
+            if estimate is None:
+                continue
+            return PaidOffer(
+                provider=provider,
+                model=model,
+                estimated_cost_usd=estimate,
+                cost_cap_usd=PAID_MISSION_CAP_USD,
+                reason=reason,
+                open_steps=open_steps,
+            )
+        return None
+
+    def worker(self, offer: PaidOffer, *, remaining_usd: float, task_text: str) -> Any:
+        return ApiAgentWorker(
+            offer.provider,
+            capability_inventory=_assemble_worker_capability_inventory(task_text),
+            pinned_model=offer.model,
+            cost_cap_usd=max(remaining_usd, 0.0),
+        )
+
+
 def _resolve_api_agent_worker(
     provider: str,
     task_text: str,
@@ -1412,6 +1483,7 @@ async def bootstrap_missions(
         max_workers=max_workers,
         safety_enabled=safety_enabled,
         extra_blocked_globs=extra_blocked_globs,
+        paid_option=ApiKeyPaidOption(),
     )
 
     # 8. VoiceListener / Announcer — mutually exclusive (2026-05-27 finding

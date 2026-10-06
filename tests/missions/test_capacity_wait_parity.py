@@ -97,3 +97,40 @@ def test_repeated_pause_is_not_announced_again() -> None:
 
     assert listener._render(env(first), "de")
     assert listener._render(env(again), "de") == ""
+
+
+@pytest.mark.parametrize("name", ["MissionCapacityDecision", "MissionPaidUsage"])
+def test_decision_events_python_ts_parity(name: str) -> None:
+    from jarvis.missions import events
+
+    m = re.search(rf"export interface {name} extends BasePayload \{{([^}}]+)\}}", _MISSIONS_TS)
+    assert m, f"{name} interface not found in missions.ts"
+    ts_fields = set(re.findall(r"^\s*(\w+):", m.group(1), re.MULTILINE))
+    assert ts_fields == set(getattr(events, name).model_fields)
+    assert name in _ts_union("EventType")
+
+
+def test_decision_vocabulary_python_ts_parity() -> None:
+    from jarvis.missions.capacity import CapacityDecision
+    from jarvis.missions.events import MissionCapacityDecision
+
+    py = set(get_args(CapacityDecision))
+    assert py == set(get_args(MissionCapacityDecision.model_fields["decision"].annotation))
+    assert _ts_union("CapacityDecision") == py
+
+
+def test_decision_dialog_locales_match() -> None:
+    def flat(node: dict, prefix: str = "") -> set[str]:
+        out: set[str] = set()
+        for key, value in node.items():
+            path = f"{prefix}.{key}" if prefix else key
+            out |= flat(value, path) if isinstance(value, dict) else {path}
+        return out
+
+    keys = [flat(_locale(lang)["capacity_decision"]) for lang in _LOCALES]
+    assert all(k == keys[0] for k in keys)
+    reasons = set(_locale("en")["capacity_decision"]["reasons"])
+    assert reasons == set(CAPACITY_WAIT_REASONS)
+    from jarvis.missions.capacity import CapacityDecision
+
+    assert set(_locale("en")["capacity_decision"]["logged"]) == set(get_args(CapacityDecision))
