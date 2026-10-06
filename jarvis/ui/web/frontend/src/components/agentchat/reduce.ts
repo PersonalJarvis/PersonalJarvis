@@ -129,6 +129,41 @@ export interface ToolBlock {
   question?: QuestionState;
   /** When the call was made; a result without its own duration is timed from here. */
   startedMs: number;
+  /** The sub-agent this call spawned, when the runner reported one (`subagent_*` events). */
+  subagent?: SubagentState;
+}
+
+/** How a sub-agent stands: still working, or how it ended. */
+export type SubagentStatus = "running" | "done" | "failed" | "stopped";
+
+/**
+ * A sub-agent a coding agent spawned, filed on the call that spawned it. Its
+ * own conversation — text, thoughts, calls, its own sub-agents — folds into
+ * `blocks` from the events that name it (`agent_id`), never into the turn.
+ */
+export interface SubagentState {
+  /** The short task title ("Explore the auth code"). */
+  description: string;
+  /** The vendor's agent kind ("general-purpose", "Explore"); "" when it names none. */
+  agentType: string;
+  /** The whole task the main agent gave it. */
+  prompt: string;
+  /** It runs beside the main agent; the spawn call's own result is only a receipt. */
+  background: boolean;
+  /** The vendor's thread id for the agent, when it has one (Codex). */
+  threadId: string;
+  status: SubagentStatus;
+  /** Its answer, as the vendor reported it at the end. */
+  summary: string;
+  /** What it is doing now ("Running the tests"). */
+  activity: string;
+  lastTool: string;
+  tokens: number | null;
+  toolUses: number | null;
+  durationMs: number | null;
+  startedMs: number;
+  finishedMs: number | null;
+  blocks: TurnBlock[];
 }
 
 export type TurnBlock = TextBlock | ReasoningBlock | ToolBlock;
@@ -450,6 +485,130 @@ function upsertBlock<B extends TurnBlock>(
   return { ...turn, blocks: replaceAt(turn.blocks, i, next) };
 }
 
+function emptySubagent(startedMs: number): SubagentState {
+  return {
+    description: "",
+    agentType: "",
+    prompt: "",
+    background: false,
+    threadId: "",
+    status: "running",
+    summary: "",
+    activity: "",
+    lastTool: "",
+    tokens: null,
+    toolUses: null,
+    durationMs: null,
+    startedMs,
+    finishedMs: null,
+    blocks: [],
+  };
+}
+
+/**
+ * `blocks` with the first tool block `match` picks — at the top or inside
+ * any sub-agent's conversation — replaced by `fn(block)`. Null when none matches.
+ */
+function mapToolDeep(
+  blocks: TurnBlock[],
+  match: (b: ToolBlock) => boolean,
+  fn: (b: ToolBlock) => ToolBlock,
+): TurnBlock[] | null {
+  for (let i = 0; i < blocks.length; i += 1) {
+    const b = blocks[i];
+    if (b.kind !== "tool") continue;
+    if (match(b)) {
+      const next = fn(b);
+      return next === b ? blocks : replaceAt(blocks, i, next);
+    }
+    if (b.subagent) {
+      const inner = mapToolDeep(b.subagent.blocks, match, fn);
+      if (inner) {
+        return inner === b.subagent.blocks ? blocks : replaceAt(blocks, i, { ...b, subagent: { ...b.subagent, blocks: inner } });
+      }
+    }
+  }
+  return null;
+}
+
+/** Update the sub-agent `agentId` spawned; a spawn call the stream never announced gets a row of its own. */
+function updateSubagent(
+  turn: TurnItem,
+  agentId: string,
+  tsMs: number,
+  fn: (sub: SubagentState) => SubagentState,
+): TurnItem {
+  const apply = (b: ToolBlock): ToolBlock => {
+    const sub = b.subagent ?? emptySubagent(b.startedMs);
+    const next = fn(sub);
+    return next === sub && b.subagent ? b : { ...b, subagent: next };
+  };
+  const blocks = mapToolDeep(turn.blocks, (b) => b.callId === agentId, apply);
+  if (blocks) return blocks === turn.blocks ? turn : { ...turn, blocks };
+  const spawn: ToolBlock = {
+    kind: "tool", callId: agentId, name: "Agent", input: null, output: null,
+    isError: false, durationMs: null, approval: null, startedMs: tsMs,
+  };
+  return { ...turn, blocks: [...turn.blocks, apply(spawn)] };
+}
+
+/**
+ * Fold a block-level step into a sub-agent's own conversation: the same step
+ * the turn would take, taken on the sub-agent's blocks.
+ */
+function updateHost(tl: Timeline, turnId: string, agentId: string, tsMs: number, fn: (turn: TurnItem) => TurnItem): Timeline {
+  if (!agentId) return updateTurn(tl, turnId, fn);
+  return updateTurn(tl, turnId, (turn) =>
+    updateSubagent(turn, agentId, tsMs, (sub) => {
+      const host: TurnItem = { ...turn, blocks: sub.blocks };
+      const next = fn(host);
+      return next === host || next.blocks === sub.blocks ? sub : { ...sub, blocks: next.blocks };
+    }),
+  );
+}
+
+function closeLiveBlocks(blocks: TurnBlock[], nowMs: number): TurnBlock[] {
+  return blocks.some((b) => b.kind === "reasoning" && b.live)
+    ? blocks.map((b) => b.kind === "reasoning" && b.live ? { ...b, live: false, durationMs: b.durationMs ?? Math.max(0, nowMs - b.startedMs) } : b)
+    : blocks;
+}
+
+function finishSubagent(sub: SubagentState, status: SubagentStatus, nowMs: number, summary = ""): SubagentState {
+  return {
+    ...sub,
+    status,
+    summary: summary || sub.summary,
+    activity: "",
+    finishedMs: sub.finishedMs ?? nowMs,
+    durationMs: sub.durationMs ?? Math.max(0, nowMs - sub.startedMs),
+    blocks: closeLiveBlocks(sub.blocks, nowMs),
+  };
+}
+
+/**
+ * A turn's end settles every sub-agent still marked working, however deep: a
+ * foreground one by its call's result, a background one that never reported
+ * its end as stopped — its process is gone.
+ */
+function settleSubagents(blocks: TurnBlock[], nowMs: number): TurnBlock[] {
+  let changed = false;
+  const next = blocks.map((b) => {
+    if (b.kind !== "tool" || !b.subagent) return b;
+    const inner = settleSubagents(b.subagent.blocks, nowMs);
+    let sub = inner === b.subagent.blocks ? b.subagent : { ...b.subagent, blocks: inner };
+    if (sub.status === "running") {
+      const answered = !sub.background && b.output !== null;
+      sub = finishSubagent(sub, answered ? (b.isError ? "failed" : "done") : "stopped", nowMs, answered ? b.output ?? "" : "");
+    }
+    if (sub === b.subagent) return b;
+    changed = true;
+    return { ...b, subagent: sub };
+  });
+  return changed ? next : blocks;
+}
+
+const SUBAGENT_STATUSES: readonly SubagentStatus[] = ["running", "done", "failed", "stopped"];
+
 /** Fold one event. Pure; returns `tl` itself when nothing changed. */
 export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
   const p = ev.payload ?? {};
@@ -457,6 +616,8 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
   const base: Timeline =
     seq > tl.lastSeq ? { ...tl, lastSeq: seq, sessionPatch: null } : tl.sessionPatch ? { ...tl, sessionPatch: null } : tl;
   const turnId = str(p.turn_id);
+  // A sub-agent's own step names the agent; it folds into that agent's conversation.
+  const agentId = str(p.agent_id);
 
   switch (ev.kind) {
     case "agent_message": {
@@ -530,7 +691,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const id = str(p.message_id, "live");
       const delta = str(p.text);
       if (!delta) return base;
-      return updateTurn(base, turnId, (turn) =>
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) =>
         upsertBlock<TextBlock>(
           closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
@@ -542,7 +703,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     case "assistant_text": {
       const id = str(p.message_id, "live");
       const text = str(p.text);
-      return updateTurn(base, turnId, (turn) =>
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) =>
         upsertBlock<TextBlock>(
           closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
@@ -555,7 +716,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       // The model began to think. Its thinking may never stream (Claude Code
       // redacts it), so this is what the person sees meanwhile: one live
       // row, "Thinking…", counting the seconds until the finished block.
-      return updateTurn(base, turnId, (turn) => {
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) => {
         const last = turn.blocks[turn.blocks.length - 1];
         if (last && last.kind === "reasoning" && last.live) return turn;
         return {
@@ -577,7 +738,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     case "reasoning_delta": {
       const delta = str(p.text);
       if (!delta) return base;
-      return updateTurn(base, turnId, (turn) => {
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) => {
         // Deltas grow the newest live reasoning block; a finished one starts a new block.
         const last = turn.blocks[turn.blocks.length - 1];
         if (last && last.kind === "reasoning" && last.live) {
@@ -610,7 +771,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const text = str(p.text);
       const durationMs = num(p.duration_ms);
       const messageId = str(p.message_id) || undefined;
-      return updateTurn(base, turnId, (turn) => {
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) => {
         const last = turn.blocks[turn.blocks.length - 1];
         if (last && last.kind === "reasoning" && last.live) {
           return {
@@ -660,7 +821,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
 
     case "tool_call": {
       const callId = str(p.call_id);
-      return updateTurn(base, turnId, (turn) =>
+      return updateHost(base, turnId, agentId, ev.ts_ms, (turn) =>
         upsertBlock<ToolBlock>(
           closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "tool" && b.callId === callId,
@@ -682,12 +843,13 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
 
     case "tool_result": {
       const callId = str(p.call_id);
-      return updateTurn(base, turnId, (turn) =>
+      const answered = updateHost(base, turnId, agentId, ev.ts_ms, (turn) =>
         upsertBlock<ToolBlock>(
           turn,
           (b) => b.kind === "tool" && b.callId === callId,
           (ex) => ({
             ...(ex?.question ? { question: ex.question } : {}),
+            ...(ex?.subagent ? { subagent: ex.subagent } : {}),
             kind: "tool",
             callId,
             name: ex?.name ?? str(p.name),
@@ -702,6 +864,61 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             startedMs: ex?.startedMs ?? ev.ts_ms,
           }),
         ),
+      );
+      // A foreground sub-agent's answer IS its spawn call's result.
+      return updateTurn(answered, turnId, (turn) => {
+        const blocks = mapToolDeep(
+          turn.blocks,
+          (b) => b.callId === callId && b.subagent?.status === "running" && !b.subagent.background,
+          (b) => ({ ...b, subagent: finishSubagent(b.subagent!, b.isError ? "failed" : "done", ev.ts_ms, b.output ?? "") }),
+        );
+        return blocks && blocks !== turn.blocks ? { ...turn, blocks } : turn;
+      });
+    }
+
+    case "subagent_started": {
+      if (!agentId) return base;
+      return updateTurn(base, turnId, (turn) =>
+        updateSubagent(turn, agentId, ev.ts_ms, (sub) => ({
+          ...sub,
+          description: str(p.description) || sub.description,
+          agentType: str(p.agent_type) || sub.agentType,
+          prompt: str(p.prompt) || sub.prompt,
+          background: Boolean(p.background),
+          threadId: str(p.thread_id) || sub.threadId,
+        })),
+      );
+    }
+
+    case "subagent_progress": {
+      if (!agentId) return base;
+      return updateTurn(base, turnId, (turn) =>
+        updateSubagent(turn, agentId, ev.ts_ms, (sub) => sub.status !== "running" ? sub : {
+          ...sub,
+          activity: str(p.activity) || sub.activity,
+          lastTool: str(p.last_tool) || sub.lastTool,
+          tokens: num(p.tokens) ?? sub.tokens,
+          toolUses: num(p.tool_uses) ?? sub.toolUses,
+          durationMs: num(p.duration_ms) ?? sub.durationMs,
+        }),
+      );
+    }
+
+    case "subagent_finished": {
+      if (!agentId) return base;
+      const raw = str(p.status, "done") as SubagentStatus;
+      const status = SUBAGENT_STATUSES.includes(raw) && raw !== "running" ? raw : "done";
+      return updateTurn(base, turnId, (turn) =>
+        updateSubagent(turn, agentId, ev.ts_ms, (sub) => {
+          const ended = finishSubagent({ ...sub, durationMs: num(p.duration_ms) ?? sub.durationMs }, status, ev.ts_ms, str(p.summary));
+          return {
+            ...ended,
+            // A later report (the notification after a status patch) may only add to the first.
+            status: sub.status === "running" ? status : sub.status,
+            tokens: num(p.tokens) ?? sub.tokens,
+            toolUses: num(p.tool_uses) ?? sub.toolUses,
+          };
+        }),
       );
     }
 
@@ -731,8 +948,11 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         input: p.input,
         summary: str(p.summary),
       };
-      const withTurn = updateTurn(base, turnId, (turn) =>
-        upsertBlock<ToolBlock>(
+      const withTurn = updateTurn(base, turnId, (turn) => {
+        const approval = { approvalId, summary: pending.summary, decision: null };
+        const nested = mapToolDeep(turn.blocks, (b) => b.callId === callId, (b) => ({ ...b, approval }));
+        if (nested) return nested === turn.blocks ? turn : { ...turn, blocks: nested };
+        return upsertBlock<ToolBlock>(
           turn,
           (b) => b.kind === "tool" && b.callId === callId,
           (ex) => ({
@@ -743,11 +963,11 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
             output: ex?.output ?? null,
             isError: ex?.isError ?? false,
             durationMs: ex?.durationMs ?? null,
-            approval: { approvalId, summary: pending.summary, decision: null },
+            approval,
             startedMs: ex?.startedMs ?? ev.ts_ms,
           }),
-        ),
-      );
+        );
+      });
       return {
         ...withTurn,
         pendingApprovals: [
@@ -761,18 +981,12 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       const approvalId = str(p.approval_id);
       const decision = str(p.decision);
       const withTurn = updateTurn(base, turnId, (turn) => {
-        const i = turn.blocks.findIndex(
-          (b) => b.kind === "tool" && b.approval?.approvalId === approvalId,
+        const blocks = mapToolDeep(
+          turn.blocks,
+          (b) => b.approval?.approvalId === approvalId,
+          (b) => ({ ...b, approval: b.approval ? { ...b.approval, decision } : null }),
         );
-        if (i < 0) return turn;
-        const block = turn.blocks[i] as ToolBlock;
-        return {
-          ...turn,
-          blocks: replaceAt(turn.blocks, i, {
-            ...block,
-            approval: block.approval ? { ...block.approval, decision } : null,
-          }),
-        };
+        return blocks && blocks !== turn.blocks ? { ...turn, blocks } : turn;
       });
       return {
         ...withTurn,
@@ -828,7 +1042,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         status: status === "running" ? "done" : status,
         // A turn that ended mid-stream closes its live reasoning block, and
         // a question nobody can answer any more stops asking.
-        blocks: turn.blocks.map((b) =>
+        blocks: settleSubagents(turn.blocks, ev.ts_ms).map((b) =>
           b.kind === "reasoning" && b.live
             ? {
                 ...b,
