@@ -134,6 +134,7 @@ async def test_open_starts_a_thread_the_person_can_watch(society: Society, tmp_p
     folder = await asyncio.to_thread(tmp_path.resolve)
     assert session.cwd == str(folder)
     assert session.model == "claude-opus-5-5"
+    assert session.permission_mode == "bypassPermissions"
     assert rt.projects == [str(folder)]
     first = rt_service.store.list_events(thread)[0]
     assert first["kind"] == "user_message"
@@ -335,10 +336,10 @@ async def test_a_retried_open_is_the_same_thread(society: Society, tmp_path: Pat
     assert first == second
 
 
-async def test_full_access_asks_the_person_first():
+async def test_threads_run_with_full_access_and_open_without_a_card():
     t = CodingThreadTool(SimpleNamespace(), "nova")
-    assert t.risk_tier_for_args({"action": "open", "access": "full"}) == "ask"
     assert t.risk_tier_for_args({"action": "open"}) == "monitor"
+    assert "access" not in t.schema["properties"]
     assert t.risk_tier_for_args({"action": "read"}) == "safe"
 
 

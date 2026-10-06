@@ -96,7 +96,8 @@ The agent's own chat shows a line that opens the thread. When a turn the
 agent started finishes, asks a question, presents a plan or waits for an
 approval, the agent is woken with the result: it checks the work, answers the
 question or plan card, sends a follow-up, and tells the person the outcome.
-Approvals of the coding agent's own commands stay with the person. A turn the
+A thread an agent opens runs with full access (bypass permissions), so it does
+not stop for approvals; the person can lower that in the composer. A turn the
 person types into the thread is theirs and wakes no agent. After 25 automatic
 updates for one thread the agent stops following it until the person writes
 in the agent's chat again.

@@ -65,7 +65,6 @@ DUPLICATE_OPEN_S: Final[float] = 120.0
 _READ_ACTIONS: Final[frozenset[str]] = frozenset(
     {"agents", "projects", "threads", "read", "files"}
 )
-_ACCESS: Final[tuple[str, ...]] = ("plan", "build", "full")
 _FILE_OPS: Final[dict[str, str]] = {"ls": "Ls", "read": "Read", "glob": "Glob", "grep": "Grep"}
 _TEXT_LIMIT: Final[int] = 4000
 _WRITING_TOOLS: Final[frozenset[str]] = frozenset(
@@ -280,7 +279,8 @@ class CodingThreadTool:
         "agents (the coding agents on this computer, their models), projects (known project "
         "folders), open (start a thread: agent, folder = absolute project path or project "
         "name, prompt = a complete, self-contained brief you write, optional model, effort, "
-        "access plan|build|full, title), send (a follow-up into your thread), read (the "
+        "title; the thread runs with full access), send (a follow-up into your thread), "
+        "read (the "
         "thread's transcript; pass after=<cursor> for news only), answer (the thread's open "
         "question card: answers = one string per question, an option label or your own "
         "text; or its plan card: decision build|keep), stop (end the running turn), threads "
@@ -311,7 +311,6 @@ class CodingThreadTool:
             "agent": {"type": "string", "description": "Coding agent id or name (open)."},
             "model": {"type": "string"},
             "effort": {"type": "string"},
-            "access": {"type": "string", "enum": list(_ACCESS)},
             "folder": {"type": "string", "description": "Project folder or project name."},
             "title": {"type": "string"},
             "prompt": {"type": "string"},
@@ -339,8 +338,6 @@ class CodingThreadTool:
         action = str(args.get("action") or "")
         if action in _READ_ACTIONS:
             return "safe"
-        if action == "open" and str(args.get("access") or "build") == "full":
-            return "ask"  # no sandbox, no approvals: the person decides
         return "monitor"
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
@@ -410,11 +407,7 @@ class CodingThreadTool:
             )
         return {
             "coding_agents": rows,
-            "access": {
-                "plan": "reads and plans only",
-                "build": "edits in the folder; risky commands ask the person (default)",
-                "full": "no sandbox, no approvals — only when the person asked for it",
-            },
+            "access": "Threads you open run with full access: no approval prompts.",
         }
 
     async def _do_projects(self, service: Any, agent: Any, args: dict[str, Any]) -> dict[str, Any]:
@@ -446,9 +439,6 @@ class CodingThreadTool:
         if not (await _installed_clis()).get(row.agent, True):
             raise ValueError(f"{row.label} is not installed on this computer.")
         folder = await asyncio.to_thread(resolve_folder, str(args.get("folder") or ""))
-        access = str(args.get("access") or "build")
-        if access not in _ACCESS:
-            raise ValueError("access must be plan, build or full.")
         fingerprint = hashlib.sha256(
             f"{row.id}\n{folder}\n{prompt}".encode()
         ).hexdigest()[:24]
@@ -468,7 +458,9 @@ class CodingThreadTool:
             model=match_model(row, str(args.get("model") or "")),
             effort=(str(args["effort"]).strip() or None) if args.get("effort") else None,
             cwd=folder,
-            permission_mode=access_mode(runner, access),
+            # The maintainer's choice: an agent's coding threads never stop for
+            # approvals, so they always run in the runner's bypass mode.
+            permission_mode=access_mode(runner, "full"),
             title=_clip(str(args.get("title") or ""), 80),
             surface=THREAD_SURFACE,
         )

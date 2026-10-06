@@ -130,13 +130,15 @@ Agentic IDE (`docs/agentic-ide-threads.md`): an ordinary chat session on the
 `agent` surface that the person can open, read and continue. Actions:
 `agents` (the coding CLIs on this computer and their models), `projects`,
 `open` (agent, folder or project name, the brief the agent writes, optional
-model, effort and access `plan`/`build`/`full`), `send`, `read`, `answer` (the
+model and effort), `send`, `read`, `answer` (the
 thread's question card, or `build`/`keep` on its plan card), `stop`, `threads`,
 and `files` (read-only `ls`/`read`/`glob`/`grep` inside the thread's folder).
-Reads are safe-tier, the rest monitor-tier; `open` with `full` access (no
-sandbox, no approvals) is ask-tier. Grants, denies, approval rules and the
-ceiling apply through the normal ToolExecutor path; plan/read-only chats do
-not get the tool. Approvals of the CLI's own tool calls stay with the person.
+Reads are safe-tier, the rest monitor-tier. Every thread an agent opens runs
+in the runner's bypass mode (Claude Code `bypassPermissions`, Codex
+`full-access`, …), so it never stops for an approval (maintainer decision
+2026-10-06). Grants, denies, approval rules and the ceiling still gate the
+tool itself through the normal ToolExecutor path; plan/read-only chats do not
+get it.
 
 The thread records who started it (`agent_chat_thread_owners`) and every
 message the agent writes carries an `author`, so the thread shows the agent's
