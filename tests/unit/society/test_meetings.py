@@ -194,3 +194,25 @@ def test_the_personal_chat_hides_the_same_silence_marker():
     ).read_text(encoding="utf-8")
     match = re.search(r'export const MEETING_PASS = "([^"]+)"', source)
     assert match is not None and match.group(1) == MEETING_PASS
+
+
+async def test_the_lead_takes_part_under_the_wake_word_name(tmp_path):
+    svc = MeetingChatFake(AgentChatStore(tmp_path / "chat.db"))
+    cfg = SimpleNamespace(
+        memory=SimpleNamespace(data_dir=str(tmp_path)),
+        trigger=SimpleNamespace(wake_word=SimpleNamespace(phrase="Hey Athena")),
+    )
+    rt = SocietyRuntime(tmp_path, chat_service=lambda: svc, cfg=lambda: cfg)
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="ollama", model="fake")
+        await rt.roster.update("jarvis", {"provider": "ollama", "model": "fake"})
+        await rt.store.create_chat_group("team", "Team", ["jarvis", "scout"])
+        await rt.meetings.start("team", "Plan the week")
+        await asyncio.gather(*rt.meetings._tasks.values())
+        assert len(svc.sent) == 2
+        assert "these agents: Athena, Scout" in svc.sent[0][1]
+        assert "Athena: Contribution from society:jarvis" in svc.sent[1][1]
+    finally:
+        await rt.close()
+        svc.store.close()

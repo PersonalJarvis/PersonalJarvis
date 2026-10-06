@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from uuid import uuid4
 
+from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 from jarvis.core.turn_language import resolve_output_language
 
 from .chat_binding import agent_busy, ensure_session
@@ -20,6 +21,15 @@ log = logging.getLogger(__name__)
 # drops it, and the personal chat hides it (frontend agentchat/meetingPass.ts,
 # pinned by a parity test).
 MEETING_PASS = "[[MEETING_PASS]]"
+
+
+def _speaker_name(agent: Any, cfg: Any) -> str:
+    """The name members see; the lead wears the wake-word name, as on every surface."""
+    if str(getattr(agent, "tier", "")) == "lead":
+        name = resolve_assistant_name(cfg)
+        if name and name != DEFAULT_ASSISTANT_NAME:
+            return name
+    return agent.name
 
 
 class Meetings:
@@ -110,8 +120,13 @@ class Meetings:
         active: tuple[str, str] | None = None
         sending: asyncio.Task[str] | None = None
         try:
-            context = [*context, {"speaker": "user", "text": room.topic}]
             cfg = self.runtime.config()
+            names = {agent.agent_id: _speaker_name(agent, cfg) for agent in agents}
+            # Earlier rounds are stored by agent id; every member reads names.
+            context = [
+                *({**m, "speaker": names.get(m["speaker"], m["speaker"])} for m in context),
+                {"speaker": "user", "text": room.topic},
+            ]
             language = resolve_output_language(
                 getattr(getattr(cfg, "brain", None), "reply_language", "auto"),
                 "",
@@ -129,7 +144,7 @@ class Meetings:
                 transcript = "\n".join(f"{m['speaker']}: {m['text'][:8000]}" for m in context)
                 prompt = (
                     "You are participating in a shared meeting with the user and these agents: "
-                    + ", ".join(a.name for a in agents)
+                    + ", ".join(names[a.agent_id] for a in agents)
                     + ". Decide whether speaking would help, using your own expertise, the user's "
                     "latest message, and earlier contributions. Speak when directly addressed, "
                     "when you have a relevant answer, a useful new perspective, a necessary "
@@ -191,7 +206,7 @@ class Meetings:
                     reply = ""
                 await self.runtime.rooms.say(room.room_id, agent.agent_id, reply)
                 if reply:
-                    context.append({"speaker": agent.name, "text": reply})
+                    context.append({"speaker": names[agent.agent_id], "text": reply})
             if (await self.runtime.rooms.get(room.room_id)).state == RoomState.RUNNING:
                 await self.runtime.rooms.settle(room.room_id, reason="user_round_complete")
         except asyncio.CancelledError:

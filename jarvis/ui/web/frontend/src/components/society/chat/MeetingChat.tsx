@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import type { SocietyAgent } from "../data";
 import type { SocietyChatGroup } from "@/lib/societyChatGroups";
 
@@ -30,7 +32,12 @@ export function MeetingChat({ group, roster }: { group: SocietyChatGroup; roster
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const end = useRef<HTMLDivElement>(null);
-  const name = (id: string) => id === "user" ? t("society.meeting.you") : roster.find((a) => a.agentId === id)?.name ?? id;
+  const assistantName = useEventStore((s) => s.assistantName);
+  const name = (id: string) => {
+    if (id === "user") return t("society.meeting.you");
+    const agent = roster.find((a) => a.agentId === id);
+    return agent ? societyDisplayName(agent, assistantName) : id;
+  };
   useEffect(() => { end.current?.scrollIntoView?.({ block: "nearest" }); }, [query.data?.messages.length]);
   const send = async (stop = false) => {
     if (pending || (!stop && !text.trim())) return;
