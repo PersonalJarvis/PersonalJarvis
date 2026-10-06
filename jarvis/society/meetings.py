@@ -16,6 +16,11 @@ from .rooms import MAX_MEMBERS, Room
 
 log = logging.getLogger(__name__)
 
+# The reply an agent gives when it stays silent. Never published: the meeting
+# drops it, and the personal chat hides it (frontend agentchat/meetingPass.ts,
+# pinned by a parity test).
+MEETING_PASS = "[[MEETING_PASS]]"
+
 
 class Meetings:
     def __init__(self, runtime: Any) -> None:
@@ -129,7 +134,7 @@ class Meetings:
                     "latest message, and earlier contributions. Speak when directly addressed, "
                     "when you have a relevant answer, a useful new perspective, a necessary "
                     "correction, or a clarifying question. Otherwise stay silent: output exactly "
-                    "[[MEETING_PASS]] and nothing else. Silence is a valid choice, including "
+                    f"{MEETING_PASS} and nothing else. Silence is a valid choice, including "
                     "when another agent has already answered adequately. Do not add agreement, "
                     "repeat an answer, or invent a contribution just to take your turn. "
                     "If you speak, give one concise contribution under your own identity. "
@@ -146,6 +151,9 @@ class Meetings:
                         prompt,
                         read_only=True,
                         tool_choices=[],
+                        # Not a message typed into this chat: no steering,
+                        # delegation wait or end-of-turn question card.
+                        direct_user=False,
                         display_text=room.topic,
                         output_language=language,
                     )
@@ -179,7 +187,7 @@ class Meetings:
                     "",
                 )
                 active = None
-                if reply.strip() == "[[MEETING_PASS]]":
+                if reply.strip() == MEETING_PASS:
                     reply = ""
                 await self.runtime.rooms.say(room.room_id, agent.agent_id, reply)
                 if reply:

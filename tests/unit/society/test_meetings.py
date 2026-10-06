@@ -1,12 +1,14 @@
 """Shared context, explicit spend bounds, persistence and stop ownership."""
 
 import asyncio
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from jarvis.agent_chat.store import AgentChatStore
-from jarvis.society.meetings import Meetings
+from jarvis.society.meetings import MEETING_PASS, Meetings
 from jarvis.society.runtime import SocietyRuntime
 from tests.fakes.meeting_chat import MeetingChatFake
 
@@ -34,6 +36,8 @@ async def test_one_user_message_runs_one_serial_round_with_shared_context(meetin
     assert len(svc.sent) == 2
     assert "Contribution from society:scout" in svc.sent[1][1]
     assert all(call[2]["read_only"] and call[2]["tool_choices"] == [] for call in svc.sent)
+    # A meeting turn is not a message typed into the agent's own chat.
+    assert all(call[2]["direct_user"] is False for call in svc.sent)
     snapshot = await rt.meetings.snapshot("team")
     assert [m["speaker"] for m in snapshot["messages"]] == ["user", "scout", "writer"]
     assert snapshot["room"]["settle_reason"] == "user_round_complete"
@@ -181,3 +185,12 @@ async def test_agents_can_pass_without_publishing_or_polluting_context(meeting, 
     assert snapshot["room"]["settle_reason"] == (
         "silence" if silent == "both" else "user_round_complete"
     )
+
+
+def test_the_personal_chat_hides_the_same_silence_marker():
+    root = Path(__file__).resolve().parents[3]
+    source = (
+        root / "jarvis/ui/web/frontend/src/components/agentchat/meetingPass.ts"
+    ).read_text(encoding="utf-8")
+    match = re.search(r'export const MEETING_PASS = "([^"]+)"', source)
+    assert match is not None and match.group(1) == MEETING_PASS
