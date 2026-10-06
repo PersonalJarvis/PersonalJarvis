@@ -93,6 +93,27 @@ def default_effort(provider: str) -> str:
     return _LADDERS.get((provider or "").strip().lower(), _FALLBACK_LADDER)[1]
 
 
+def effort_note(provider: str, effort: str) -> str:
+    """Tell the model the reasoning effort its turn really runs on.
+
+    A model does not see the level's name — only how long it may think — so
+    asked "which effort are you on?" it guesses, and a guess like "low" on a
+    seat the person set to medium reads as a broken picker. ``effort`` is the
+    level the runner actually passes on; the CLI runners put this block in
+    front of the message, the API runner in the system prompt. ``""`` when
+    the provider has no effort knob at all.
+    """
+    if not any(effort_levels(provider)):
+        return ""
+    level = effort or "the provider's own default"
+    return (
+        "<jarvis_turn_settings>\n"
+        f"Reasoning effort for this turn: {level} (as selected in the Jarvis composer). "
+        "If asked about your effort level, report exactly this.\n"
+        "</jarvis_turn_settings>\n\n"
+    )
+
+
 def snap_to_ladder(level: str | None, ladder: tuple[str, ...] | list[str]) -> str:
     """Fold ``level`` onto ``ladder`` (a model's own levels), lower neighbour first.
 

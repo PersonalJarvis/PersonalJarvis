@@ -229,6 +229,23 @@ def dot_eye(prefix, side, pivot_at, parent, radii, iris, pupil=None, glint="#f7f
     return eye
 
 
+def floppy_ear(name, sign, length, width, thickness, splay, curl, mat, parent):
+    """A soft ear flap hanging from its pivot, widest near the top, its tip curling out."""
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=18, ring_count=12, location=(0, 0, 0))
+    obj = bpy.context.object
+    for vertex in obj.data.vertices:
+        x, y, z = vertex.co
+        down = (1 - z) / 2  # 0 at the root .. 1 at the tip
+        taper = 1 - 0.45 * down**1.5
+        vertex.co = (
+            sign * (thickness * (x * sign + 0.6) * taper + splay * down + curl * down**2.4),
+            y * width * taper - 0.25 * width * down**2,
+            -length * down,
+        )
+    obj.data.update()
+    return finish(obj, name, mat, parent)
+
+
 def smile(name, centre, width, depth, mat, parent, lift=0.0):
     cx, cy, cz = centre
     points = [
@@ -631,6 +648,165 @@ def build_bolt(root):
     smile("bolt_Mouth", (0, -0.078, 0.214), 0.018, 0.009, ink, body)
 
 
+def build_cocoa(root):
+    """A chocolate Labrador puppy: chunky body, big head, floppy ears, oversized paws."""
+    fur = material("cocoa.Fur", "#6e3b22")
+    light = material("cocoa.FurLight", "#9c5a36")
+    dark = material("cocoa.FurDark", "#4a2414")
+    nose = material("cocoa.Nose", "#2a1610", 0.22)
+    tongue = material("cocoa.Tongue", "#ff7a8a", 0.4)
+    ink = material("cocoa.Ink", "#2a1610", 0.5)
+
+    body = empty("cocoa_Body", (0, 0, 0.195), root)
+    ellipsoid("cocoa_Torso", (0, 0, 0), (0.13, 0.13, 0.118), fur, body)
+    ellipsoid("cocoa_Belly", (0, -0.01, -0.048), (0.095, 0.1, 0.07), light, body, 18, 9)
+    ellipsoid("cocoa_Chest", (0, -0.1, 0.035), (0.1, 0.08, 0.1), fur, body, 18, 9)
+    ellipsoid("cocoa_Bib", (0, -0.145, 0.02), (0.062, 0.04, 0.072), light, body, 16, 8)
+
+    head = empty("cocoa_Head", (0, -0.15, 0.355), root)
+    ellipsoid("cocoa_Skull", (0, 0, 0), (0.145, 0.13, 0.128), fur, head, 26, 13)
+    for side, sign in (("L", -1), ("R", 1)):
+        ellipsoid(
+            f"cocoa_Jowl_{side}",
+            (sign * 0.068, -0.075, -0.05),
+            (0.062, 0.06, 0.056),
+            fur,
+            head,
+            18,
+            9,
+        )
+    ellipsoid("cocoa_Muzzle", (0, -0.122, -0.045), (0.072, 0.062, 0.05), light, head)
+    for side, sign in (("L", -1), ("R", 1)):
+        ellipsoid(
+            f"cocoa_Lip_{side}",
+            (sign * 0.028, -0.16, -0.064),
+            (0.034, 0.026, 0.026),
+            light,
+            head,
+            16,
+            8,
+        )
+        smile(
+            f"cocoa_Mouth_{side}",
+            (sign * 0.015, -0.183, -0.064),
+            0.016,
+            0.009,
+            ink,
+            head,
+        )
+    ellipsoid("cocoa_Nose", (0, -0.178, -0.018), (0.031, 0.019, 0.022), nose, head, 18, 9)
+    ellipsoid(
+        "cocoa_NoseShine",
+        (-0.009, -0.195, -0.008),
+        (0.009, 0.004, 0.006),
+        material("Pet.Glint", "#f7f7fb", 0.2, 0.4),
+        head,
+        10,
+        5,
+    )
+    tube("cocoa_Philtrum", [(0, -0.186, -0.036), (0, -0.185, -0.062)], 0.003, ink, head)
+
+    # The lower jaw and tongue hinge so the puppy can pant; the mouth shows when it opens.
+    ellipsoid(
+        "cocoa_MouthInside",
+        (0, -0.135, -0.08),
+        (0.036, 0.034, 0.016),
+        material("cocoa.Mouth", "#5a1f24", 0.6),
+        head,
+        14,
+        7,
+    )
+    jaw = empty("cocoa_Jaw", (0, -0.1, -0.082), head)
+    ellipsoid("cocoa_Chin", (0, -0.04, -0.012), (0.046, 0.042, 0.022), light, jaw, 16, 8)
+    lick = empty("cocoa_Tongue", (0, -0.06, -0.01), jaw)
+    ellipsoid("cocoa_TongueTip", (0, -0.012, -0.02), (0.022, 0.011, 0.028), tongue, lick, 16, 8)
+
+    for side, sign in (("L", -1), ("R", 1)):
+        eye = dot_eye(
+            "cocoa",
+            side,
+            (sign * 0.062, -0.104, 0.03),
+            head,
+            (0.032, 0.014, 0.036),
+            "#7a8a9a",
+            "#1a1210",
+        )
+        ellipsoid(
+            f"cocoa_Socket_{side}",
+            (sign * 0.062, -0.097, 0.03),
+            (0.036, 0.013, 0.04),
+            dark,
+            head,
+            18,
+            9,
+        )
+        ellipsoid(
+            f"cocoa_Brow_{side}",
+            (sign * 0.064, -0.096, 0.078),
+            (0.036, 0.016, 0.011),
+            fur,
+            head,
+            16,
+            8,
+        )
+        ellipsoid(
+            f"cocoa_Glint2_{side}",
+            (-0.01, -0.0135, -0.013),
+            (0.007, 0.004, 0.007),
+            material("Pet.Glint", "#f7f7fb", 0.2, 0.4),
+            eye,
+            10,
+            5,
+        )
+        ellipsoid(
+            f"cocoa_Cheek_{side}",
+            (sign * 0.1, -0.1, -0.03),
+            (0.022, 0.01, 0.013),
+            material("Pet.Blush", BLUSH, 0.7),
+            head,
+            12,
+            6,
+        )
+        # Floppy ears hang beside the head, their tips curling out.
+        ear = empty(f"cocoa_Ear_{side}", (sign * 0.142, -0.01, 0.05), head)
+        floppy_ear(f"cocoa_EarFlap_{side}", sign, 0.19, 0.07, 0.02, 0.03, 0.04, dark, ear)
+
+    for name, x, y, back in (
+        ("FL", -0.072, -0.08, False),
+        ("FR", 0.072, -0.08, False),
+        ("BL", -0.078, 0.085, True),
+        ("BR", 0.078, 0.085, True),
+    ):
+        leg = empty(f"cocoa_Leg_{name}", (x, y, 0.155), root)
+        if back:
+            ellipsoid(
+                f"cocoa_Haunch_{name}", (0, 0.008, -0.022), (0.052, 0.062, 0.062), fur, leg, 16, 8
+            )
+        ellipsoid(f"cocoa_LegFur_{name}", (0, 0, -0.06), (0.042, 0.044, 0.074), fur, leg, 16, 8)
+        ellipsoid(f"cocoa_Paw_{name}", (0, -0.018, -0.124), (0.05, 0.06, 0.031), light, leg, 18, 9)
+        for i, dx in enumerate((-0.022, 0.0, 0.022)):
+            ellipsoid(
+                f"cocoa_Toe_{name}_{i}",
+                (dx, -0.068, -0.124),
+                (0.015, 0.014, 0.017),
+                light,
+                leg,
+                8,
+                4,
+            )
+
+    # A thick otter tail, carried high and happy.
+    tail = empty("cocoa_Tail", (0, 0.12, 0.235), root)
+    tube(
+        "cocoa_TailFur",
+        smooth_points([(0, 0, 0), (0, 0.055, 0.022), (0, 0.1, 0.06), (0, 0.128, 0.11)]),
+        0.032,
+        fur,
+        tail,
+        taper=0.35,
+    )
+
+
 PETS = {
     "miso": build_miso,
     "ember": build_ember,
@@ -638,6 +814,7 @@ PETS = {
     "mochi": build_mochi,
     "brew": build_brew,
     "bolt": build_bolt,
+    "cocoa": build_cocoa,
 }
 
 

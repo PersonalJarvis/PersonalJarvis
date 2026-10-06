@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "attio",
+  "version": "1.0.0",
+  "description": "CRM records, lists and notes",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Attio",
+      "category": "Knowledge & Reading",
+      "logo_slug": "attio",
+      "logo_color": "1F1F1F",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.attio.com/mcp",
+        "discovery_url": "https://mcp.attio.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.attio.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_attio_access_token}"
+      },
+      "post_install_hint_md": "Sign in with your Attio workspace. Records follow your workspace permissions."
+    }
+  }
+}

@@ -51,7 +51,6 @@ import { DictationButton } from "@/components/agentchat/DictationButton";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
-import { startNewVoiceRun } from "@/lib/chatsApi";
 import {
   runningTurn,
   type NoticeItem,
@@ -369,19 +368,6 @@ function JarvisChat({ agent, roster }: AgentChatPanelProps) {
 
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
-  const voiceState = useEventStore((s) => s.voiceState);
-  const freshVoicePending = useHomeStore((s) => s.freshVoicePending);
-
-  useEffect(() => {
-    if (!freshVoicePending || voiceState !== "idle" || !useHomeStore.getState().freshVoicePending) return;
-    useHomeStore.setState({ freshVoicePending: false });
-    // Use the existing reset contract once after hangup, including re-entry
-    // after the card was closed. Never interrupt a call started elsewhere.
-    void startNewVoiceRun().catch(() => {
-      useEventStore.getState().pushToast("error", `${t("sidebar.new_voice_chat")}: ${t("voice_state.error")}`);
-    });
-  }, [freshVoicePending, voiceState, t]);
-
   // A null session is an intentional fresh chat. Only an explicit history
   // selection may open an older session; polling must not undo New chat.
 

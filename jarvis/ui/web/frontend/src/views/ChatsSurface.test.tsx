@@ -4,6 +4,7 @@ import { ChatsSurface } from "@/views/ChatsSurface";
 import { useHomeStore } from "@/store/home";
 import { readHomeSurface } from "@/lib/homeSurface";
 import { useEventStore } from "@/store/events";
+import { useAgentChatStore } from "@/store/agentChat";
 
 /**
  * The front page is ONE chat with a voice mode inside it (2026-10-01). What
@@ -32,8 +33,8 @@ const STORAGE_KEY = "jarvis.home.surface.v2";
 describe("ChatsSurface (the front page)", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    useHomeStore.setState({ surface: readHomeSurface(), agentChatId: null });
-    useEventStore.setState({ activeSection: "chats", voiceState: "idle" });
+    useHomeStore.setState({ surface: readHomeSurface(), agentChatId: null, freshVoicePending: false, continuedVoiceId: null, voiceSwitchStopping: false });
+    useEventStore.setState({ activeSection: "chats", voiceState: "idle", activeKind: "voice", activeThreadId: null });
   });
 
   afterEach(cleanup);
@@ -83,6 +84,36 @@ describe("ChatsSurface (the front page)", () => {
     act(() => useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "call" }, 1));
     expect(screen.getByTestId("agent-chat").textContent).toBe("agent-7");
     expect(useHomeStore.getState().surface).toBe("chat");
+  });
+
+  it("stays blank after hangup, late timeline updates, and switching back to typing", async () => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify({ providers: [], sessions: [], session_id: "old-chat" })));
+    vi.stubGlobal("fetch", fetcher);
+    try {
+      useHomeStore.setState({ surface: "voice", continuedVoiceId: "archive" });
+      useEventStore.setState({ activeKind: "voice", activeThreadId: "archive" });
+      useHomeStore.getState().seedTranscript([{ id: "old", who: "user", text: "Old call", ts: 1 }]);
+      render(<ChatsSurface />);
+      await act(async () => {
+        useHomeStore.getState().ingest("VoiceSessionStarted", { session_id: "call" }, 1);
+        useHomeStore.getState().ingest("VoiceSessionEnded", { session_id: "call", hangup_reason: "hotkey" }, 2);
+      });
+      act(() => useAgentChatStore.setState({ timeline: {
+        ...useAgentChatStore.getState().timeline,
+        items: [{ type: "user", id: "late", text: "Late stored turn", tsMs: 3, attachments: [] }],
+      } }));
+      expect(useHomeStore.getState().transcript).toEqual([]);
+      expect(useHomeStore.getState().freshVoicePending).toBe(true);
+      expect(useEventStore.getState().activeThreadId).toBeNull();
+      expect(screen.getByTestId("voice")).toBeTruthy();
+      fireEvent.click(screen.getByTestId("voice-mode-exit"));
+      expect(await screen.findByTestId("chat")).toBeTruthy();
+      expect(useAgentChatStore.getState().activeSessionId).toBeNull();
+      expect(fetcher.mock.calls.some(([url, init]) => String(url) === "/api/agent-chat/voice-chat" && !init?.method)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("ignores the retired Voice | Chat switch's stored choice", async () => {

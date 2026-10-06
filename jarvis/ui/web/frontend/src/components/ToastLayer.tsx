@@ -45,8 +45,9 @@ export function ToastLayer() {
     // z-[115]: above the first-run setup spotlight (z-110), whose scrim takes
     // every click outside its hole: a toast with a button ("Open System
     // Settings" after the wake-word switch asked for the microphone) must stay
-    // clickable there. Below the caption bar (z-120), which is every window's
-    // title bar. A portal to <body> because the spotlight is one too: inside the
+    // clickable there. Also above the full-window appshot editor (z-95), whose
+    // Save toast carries the "Show in folder" action. Below the caption bar
+    // (z-120), which is every window's title bar. A portal to <body> because the spotlight is one too: inside the
     // shell root (an isolated stacking context) no z-index could outrank it.
     // top-12: below the caption strip — at the top edge a toast covered the
     // restart and window buttons whose outcome it reports.

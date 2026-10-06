@@ -158,7 +158,7 @@ def test_real_catalog_client_keeps_source_catalog(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["publisher", "own", "missing"])
+@pytest.mark.parametrize("source", ["publisher", "own", "shipped", "missing"])
 async def test_device_connect_uses_resolved_client(monkeypatch, source):
     import asyncio
 
@@ -174,7 +174,7 @@ async def test_device_connect_uses_resolved_client(monkeypatch, source):
     def fake_get(key, env_fallback=None):
         if source == "own" and key == "github_oauth_client_id":
             return "expert-client"
-        if source != "missing" and key == "publisher_github_oauth_client_id":
+        if source in ("publisher", "own") and key == "publisher_github_oauth_client_id":
             return "publisher-client"
         return None
 
@@ -193,6 +193,10 @@ async def test_device_connect_uses_resolved_client(monkeypatch, source):
     monkeypatch.setattr(routes, "DeviceFlowHandler", DeviceHandler)
     monkeypatch.setattr(routes, "get_registry", lambda: registry)
     if source == "missing":
+        monkeypatch.setattr(
+            "jarvis.marketplace.publisher_clients.SHIPPED_PUBLIC_CLIENT_IDS", {}
+        )
+    if source == "missing":
         with pytest.raises(HTTPException) as exc:
             await routes.connect_start("github", BackgroundTasks())
         assert exc.value.status_code == 409
@@ -201,7 +205,14 @@ async def test_device_connect_uses_resolved_client(monkeypatch, source):
         response = await routes.connect_start("github", BackgroundTasks())
         await asyncio.wait_for(completed.wait(), timeout=1)
         assert response["kind"] == "device_flow"
-        assert captured == ["expert-client" if source == "own" else "publisher-client"]
+        from jarvis.marketplace.publisher_clients import SHIPPED_PUBLIC_CLIENT_IDS
+
+        expected = {
+            "own": "expert-client",
+            "publisher": "publisher-client",
+            "shipped": SHIPPED_PUBLIC_CLIENT_IDS["github"],
+        }[source]
+        assert captured == [expected]
 
 
 # ----------------------------------------------------------------------
@@ -676,15 +687,19 @@ async def test_list_plugins_exposes_fallback_and_device_standard(monkeypatch):
     payload = await mr.list_plugins(Response())
     by_id = {p["id"]: p for p in payload["plugins"]}
 
+    # GitHub ships its public device-flow client: the browser login is ready
+    # with zero setup, and the token path stays only as the expert fallback.
     github = by_id["github"]
     assert github["fallback_auth"]["mode"] == "pat_paste"
     assert github["auth_standard"]["fallback"] is True
-    assert github["auth_standard"]["ready"] is False
-    assert github["oauth_client_configured"] is False
+    assert github["auth_standard"]["ready"] is True
+    assert github["auth_standard"]["source"] == "publisher"
 
     gitlab = by_id["gitlab"]
     assert gitlab["fallback_auth"]["mode"] == "pat_paste"
     assert gitlab["auth_standard"]["fallback"] is True
+    assert gitlab["auth_standard"]["ready"] is False
+    assert gitlab["oauth_client_configured"] is False
 
     outlook = by_id["outlook"]
     assert outlook["fallback_auth"] is None

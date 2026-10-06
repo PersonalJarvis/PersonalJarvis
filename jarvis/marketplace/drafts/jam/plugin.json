@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jam",
+  "version": "1.0.0",
+  "description": "Bug reports with console logs, network requests and replays",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Jam",
+      "category": "Developer",
+      "logo_slug": "jam",
+      "logo_color": "6A4DFF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.jam.dev/mcp",
+        "discovery_url": "https://mcp.jam.dev/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.jam.dev/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_jam_access_token}"
+      },
+      "post_install_hint_md": "Sign in with your Jam account. Available reports follow your team permissions."
+    }
+  }
+}

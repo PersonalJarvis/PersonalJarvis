@@ -104,7 +104,8 @@ export type LocaleChunk =
   | "society"
   | "computers"
   | "onboarding"
-  | "appshot_editor";
+  | "appshot_editor"
+  | "providers";
 
 const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknown>>> = {
   marketplace: {
@@ -138,6 +139,12 @@ const CHUNK_LOADERS: Record<LocaleChunk, Record<UiLanguage, () => Promise<unknow
     en: () => import("./locales/appshot_editor/en.json"),
     de: () => import("./locales/appshot_editor/de.json"),
     es: () => import("./locales/appshot_editor/es.json"),
+  },
+  // The provider page (Settings → API Keys).
+  providers: {
+    en: () => import("./locales/providers/en.json"),
+    de: () => import("./locales/providers/de.json"),
+    es: () => import("./locales/providers/es.json"),
   },
 };
 

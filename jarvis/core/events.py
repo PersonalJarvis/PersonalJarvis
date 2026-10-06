@@ -2517,6 +2517,50 @@ class SocietyMessageSent(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class SocietyResultPosted(Event):
+    """An agent finished (or gave up on) a piece of work: a RESULT on the board.
+
+    Published by :class:`jarvis.society.world_feed.WorldFeed` after the
+    envelope is stored. Carries no text — the result itself stays behind
+    ``GET /api/society/events``. The level system pays the agent for it
+    (``jarvis/progression``); the Verse may celebrate it.
+    """
+
+    #: The board envelope's uuid7, stable for dedupe.
+    event_id: str = ""
+    agent_id: str = ""
+    #: ``done`` or ``blocked`` (the RESULT payload's own status).
+    status: str = ""
+    society_trace: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressionAwarded(Event):
+    """A subject of the Jarvis Verse level system earned XP.
+
+    Published by :class:`jarvis.progression.service.ProgressionService`
+    after the award is stored. ``level > previous_level`` is a level-up;
+    ``unlocked`` names the cosmetics that level-up opened
+    (``jarvis/progression/rules.py`` REWARDS). The Verse animates it.
+    """
+
+    seq: int = 0
+    #: ``person``, ``agent:<agent_id>`` or ``pet:<pet_id>``.
+    subject_id: str = ""
+    subject_kind: str = ""
+    #: The rule that paid (``RULES`` source id).
+    xp_source: str = ""
+    xp: int = 0
+    total_xp: int = 0
+    level: int = 1
+    previous_level: int = 1
+    title: str = ""
+    unlocked: tuple[str, ...] = ()
+    #: Agent looks (``LOOK_UNLOCKS``) this level-up opened; agents only.
+    unlocked_looks: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SocietyRoomChanged(Event):
     """A bounded group discussion opened or settled (``jarvis/society/rooms.py``).
 

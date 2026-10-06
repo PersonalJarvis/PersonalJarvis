@@ -32,3 +32,59 @@
     opacity: 1;
   }
 }
+
+/* Accessory motion: cheap compositor-only transforms on a few small shapes. */
+.society-agent-symbol .agent-acc-smoke circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  opacity: 0;
+  animation: agent-acc-smoke 3.2s ease-out infinite;
+}
+.society-agent-symbol .agent-acc-smoke circle:nth-child(even) { animation-name: agent-acc-smoke-left; }
+
+@keyframes agent-acc-smoke {
+  0% { transform: translate(0, 0) scale(0.35); opacity: 0; }
+  14% { opacity: 0.7; }
+  55% { transform: translate(1.6px, -6px) scale(1.15); opacity: 0.42; }
+  100% { transform: translate(3.4px, -11px) scale(1.8); opacity: 0; }
+}
+@keyframes agent-acc-smoke-left {
+  0% { transform: translate(0, 0) scale(0.3); opacity: 0; }
+  14% { opacity: 0.6; }
+  55% { transform: translate(-0.8px, -6.5px) scale(1.1); opacity: 0.38; }
+  100% { transform: translate(1.2px, -12px) scale(1.7); opacity: 0; }
+}
+
+.society-agent-symbol .agent-acc-twinkle,
+.society-agent-symbol .agent-acc-twinkle-late {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-acc-twinkle 3.6s ease-in-out infinite;
+}
+.society-agent-symbol .agent-acc-twinkle-late { animation-delay: 1.8s; }
+
+@keyframes agent-acc-twinkle {
+  0%, 68%, 100% { transform: scale(0) rotate(0deg); opacity: 0; }
+  78% { transform: scale(1) rotate(45deg); opacity: 1; }
+  88% { transform: scale(0.55) rotate(70deg); opacity: 0.6; }
+}
+
+.society-agent-symbol .agent-acc-ember {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: agent-acc-ember 1.7s ease-in-out infinite;
+}
+
+@keyframes agent-acc-ember {
+  0%, 100% { transform: scale(0.9); opacity: 0.7; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .society-agent-symbol .agent-acc-smoke circle { animation: none; opacity: 0; }
+  .society-agent-symbol .agent-acc-twinkle,
+  .society-agent-symbol .agent-acc-twinkle-late,
+  .society-agent-symbol .agent-acc-ember { animation: none; }
+  .society-agent-symbol .agent-acc-twinkle,
+  .society-agent-symbol .agent-acc-twinkle-late { opacity: 0; }
+}

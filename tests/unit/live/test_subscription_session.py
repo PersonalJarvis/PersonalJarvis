@@ -11,6 +11,7 @@ from jarvis.live.config import LiveConfig
 from jarvis.live.state import LiveLedger
 from jarvis.live.tools import LiveTools
 from tests.fakes.fake_subscription_session import (
+    AppshotSubscriptionGateway,
     ScriptedSubscriptionReasoning,
     SubscriptionConnection,
     SubscriptionEvents,
@@ -27,7 +28,7 @@ def make_session(monkeypatch, tmp_path):
 
     sessions = []
 
-    def make(rounds):
+    def make(rounds, gateway=None):
         reasoning = ScriptedSubscriptionReasoning(rounds)
         monkeypatch.setattr(module, "SubscriptionReasoning", lambda **kwargs: reasoning)
         config = SimpleNamespace(
@@ -56,7 +57,7 @@ def make_session(monkeypatch, tmp_path):
             bus=bus,
         )
         ledger = LiveLedger(tmp_path / f"{session.session_id}.sqlite3")
-        gateway = SubscriptionGateway()
+        gateway = gateway or SubscriptionGateway()
         session._ledger = ledger
         session._connection = SubscriptionConnection()
         session._tools = LiveTools(
@@ -327,6 +328,61 @@ async def test_screenshot_tool_result_becomes_a_supported_image_input(make_sessi
         {"type": "input_image", "image_url": "data:image/png;base64,AAAA"} in item["content"]
         for item in image_messages
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refused", [False, True])
+async def test_new_appshot_request_keeps_old_image_as_context_and_uses_new_tool_result(
+    make_session, refused,
+):
+    gateway = AppshotSubscriptionGateway(refused=refused)
+    capture = {
+        "id": "fresh-shot", "type": "function_call", "call_id": "capture-1",
+        "name": "take_appshot", "arguments": '{"scope":"window"}',
+    }
+    session, reasoning, _, _, _, _ = make_session([
+        completed_response("r1", [capture]),
+        completed_response("r2", [spoken_result("Capture refused." if refused else "Captured.")]),
+    ], gateway=gateway)
+    await session.attach_appshot(b"OLD", "image/png", "An earlier skill editor screenshot")
+    request = "Take a new appshot and look at my current screen."
+    await session._delegate("fresh-request", request)
+
+    first = reasoning.requests[0]
+    assert "take_appshot" in {tool["name"] for tool in first["tools"]}
+    assert first["input"][-1]["content"][0]["text"] == request
+    previous = first["input"][-2]["content"]
+    assert "Earlier screen snapshot" in previous[0]["text"]
+    assert previous[-1]["image_url"] == "data:image/png;base64,T0xE"
+    assert [(name, args) for name, args, _ in gateway.calls] == [
+        ("take_appshot", {"scope": "window"}),
+    ]
+    followup = reasoning.requests[1]["input"]
+    result = next(item for item in followup if item.get("type") == "function_call_output")
+    assert json.loads(result["output"])["success"] is not refused
+    assert ("data:image/png;base64,TkVX" in json.dumps(followup)) is not refused
+    if refused:
+        assert "Blocked by the privacy filter" in result["output"]
+    else:
+        assert session._image_context == [
+            {"type": "input_image", "image_url": "data:image/png;base64,TkVX"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_existing_appshot_stays_available_for_a_followup_without_recapture(make_session):
+    session, reasoning, gateway, _, _, _ = make_session([
+        completed_response("r1", [spoken_result("This image shows a skill editor.")]),
+        completed_response("r2", [spoken_result("The button in that image says Save.")]),
+    ])
+    await session.attach_appshot(b"OLD", "image/png", "A supplied screenshot")
+    for index, request in enumerate(("Describe this image.", "What does its button say?")):
+        await session._delegate(f"image-{index}", request)
+        items = reasoning.requests[index]["input"]
+        assert items[-1]["content"][0]["text"] == request
+        assert "data:image/png;base64,T0xE" in json.dumps(items)
+        assert "Earlier screen snapshot" in json.dumps(items)
+    assert gateway.calls == []
 
 
 @pytest.mark.asyncio

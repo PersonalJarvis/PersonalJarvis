@@ -3,7 +3,13 @@
 Endpoints (all under ``/api/agentic-ide/git``)::
 
     GET  /inspect             Branch, changes, ahead/behind, branches, worktrees
+    GET  /changes             Changed files under a folder, with line counts
+    GET  /diff                One file's change against the last commit
     GET  /overview            A workspace's branches with merged-into, PR and CI state
+    GET  /branch/contents     A branch's own commits and changed files
+    GET  /branch/diff         How a branch changed one file
+    GET  /branch/editors      Where a branch's checkout can be opened on this computer
+    POST /branch/open         Open a branch's checkout in the file manager or an editor
     GET  /github/repos        The person's GitHub repositories, for the one-time pick
     PUT  /github/binding      Remember which GitHub repository a workspace folder is
     POST /prepare             Git half of opening a workspace or an agent
@@ -25,13 +31,25 @@ UI can offer the follow-up it has for that code (``dirty`` → "remove anyway?")
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from dataclasses import asdict
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from jarvis.agentic_ide import git_ops, git_overview, github_link, github_status
+from jarvis.agentic_ide import (
+    branch_contents,
+    git_changes,
+    git_ops,
+    git_overview,
+    github_link,
+    github_status,
+)
 from jarvis.agentic_ide.git_ops import GitError, PrepareMode
 from jarvis.agentic_ide.session import account_home, get_registry
 from jarvis.agentic_ide.session_branches import PaneBranchRecord
+from jarvis.agentic_ide.thread_folders import allowed_thread_folder
+from jarvis.ui.web.surface_security import is_loopback_request
 
 router = APIRouter(prefix="/api/agentic-ide/git", tags=["agentic-ide-git"])
 
@@ -77,6 +95,35 @@ def inspect_folder(folder: str = Query(..., min_length=1)) -> dict:
         raise _fail(exc) from exc
 
 
+@router.get("/changes", summary="Changed files under a folder, with line counts")
+def folder_changes(folder: str = Query(..., min_length=1)) -> dict:
+    """What a thread's diff panel lists — the same reading as a workspace's
+    Changes tab, for a folder no workspace has open (a thread's worktree).
+
+    Only a folder inside a connected project or an open workspace is read.
+    """
+    return asdict(git_changes.workspace_changes(_thread_folder(folder)))
+
+
+def _thread_folder(folder: str) -> Path:
+    path = allowed_thread_folder(folder)
+    if path is None:
+        raise HTTPException(
+            status_code=403, detail="This folder is not part of a connected project."
+        )
+    return path
+
+
+@router.get("/diff", summary="How one file under a folder differs from the last commit")
+def folder_file_diff(
+    folder: str = Query(..., min_length=1), path: str = Query(..., min_length=1)
+) -> dict:
+    try:
+        return asdict(git_changes.file_diff(_thread_folder(folder), path))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
 @router.get("/overview", summary="Branches of a workspace's repository with PR and CI state")
 def workspace_overview(
     workspace_id: str = Query(..., min_length=1),
@@ -92,7 +139,8 @@ def workspace_overview(
     session = get_registry().get(workspace_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    return git_overview.overview(session.folder, refresh=refresh).to_dict()
+    # The tab polls again soon while GitHub's first read is still loading.
+    return git_overview.overview(session.folder, refresh=refresh, wait_for_github=False).to_dict()
 
 
 @router.get("/session-status", summary="Current GitHub branch, pull request and CI status per pane")
@@ -116,6 +164,106 @@ def session_github_status(workspace_id: str = Query(..., min_length=1)) -> dict:
         if not pane.computer_id
     ]
     return {"panes": github_status.statuses(records)}
+
+
+# The editors a branch's checkout is offered in, when installed.
+_BRANCH_EDITORS = ("code", "cursor")
+
+
+def _native_actions(request: Request) -> bool:
+    """Opening a folder acts on the screen of the computer running Jarvis."""
+    return is_loopback_request(request.scope) and bool(
+        getattr(request.app.state, "native_file_actions", False)
+    )
+
+
+def _workspace_folder(workspace_id: str) -> Path:
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    return Path(session.folder)
+
+
+@router.get("/branch/contents", summary="A branch's own commits and changed files")
+def branch_contents_route(
+    workspace_id: str = Query(..., min_length=1),
+    branch: str = Query(..., min_length=1, max_length=300),
+    base: str = Query("", max_length=300, description="The default branch to compare with"),
+    remote: bool = Query(False, description="Read origin/<branch> (a GitHub-only branch)"),
+) -> dict:
+    """What the Git tab shows when a branch row is folded open."""
+    folder = _workspace_folder(workspace_id)
+    return branch_contents.branch_contents(folder, branch, base, remote=remote).to_dict()
+
+
+@router.get("/branch/diff", summary="How a branch changed one file")
+def branch_diff_route(
+    workspace_id: str = Query(..., min_length=1),
+    branch: str = Query(..., min_length=1, max_length=300),
+    path: str = Query(..., min_length=1, max_length=1000),
+    base: str = Query("", max_length=300),
+    remote: bool = Query(False),
+) -> dict:
+    folder = _workspace_folder(workspace_id)
+    try:
+        diff = branch_contents.branch_file_diff(folder, branch, base, path, remote=remote)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return asdict(diff)
+
+
+@router.get("/branch/editors", summary="Where a branch's checkout can be opened")
+def branch_editors(request: Request) -> dict:
+    """The file manager and the installed editors; empty on a headless host."""
+    if not _native_actions(request):
+        return {"file_manager": False, "editors": []}
+    from jarvis.ui.web import outputs_routes
+
+    labels = dict(outputs_routes._OPENER_EDITORS)
+    installed = {entry["id"] for entry in outputs_routes._available_openers()}
+    editors = [{"id": oid, "label": labels[oid]} for oid in _BRANCH_EDITORS if oid in installed]
+    return {"file_manager": True, "editors": editors}
+
+
+class OpenBranchRequest(BaseModel):
+    workspace_id: str = Field(..., min_length=1)
+    branch: str = Field(..., min_length=1, max_length=300)
+    target: str = Field(
+        "folder", min_length=1, max_length=40, description='"folder" or an editor id'
+    )
+
+
+@router.post("/branch/open", summary="Open a branch's checkout in the file manager or an editor")
+def open_branch(request: Request, req: OpenBranchRequest) -> dict:
+    """Open the folder a branch is checked out in.
+
+    The folder comes from git's own worktree list for the open workspace, never
+    from the client, and ``target`` is a closed id — this cannot open an
+    arbitrary path or launch an arbitrary program.
+    """
+    if not _native_actions(request):
+        raise HTTPException(status_code=404, detail="Folders can only be opened on this computer.")
+    session = get_registry().get(req.workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    folder = git_overview.branch_checkout(session.folder, req.branch)
+    if folder is None:
+        raise HTTPException(
+            status_code=404, detail="This branch is not checked out on this computer."
+        )
+    from jarvis.platform import open_path
+
+    if req.target == "folder":
+        return {"opened": bool(open_path.open_file(folder)), "path": str(folder)}
+    if req.target not in _BRANCH_EDITORS:
+        raise HTTPException(status_code=400, detail="Unknown editor.")
+    from jarvis.ui.web import outputs_routes
+
+    resolved = outputs_routes._resolve_opener(req.target)
+    if resolved is None:
+        raise HTTPException(status_code=409, detail="That editor is not installed.")
+    kind, value = resolved
+    return {"opened": bool(open_path.open_file_with(folder, kind, value)), "path": str(folder)}
 
 
 class BindingRequest(BaseModel):

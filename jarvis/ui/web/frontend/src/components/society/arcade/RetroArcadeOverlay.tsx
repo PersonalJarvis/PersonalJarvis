@@ -12,6 +12,7 @@
  * Phase changes are React state (rare); the loop itself runs on refs and
  * never sets state per frame. The HUD polls the game ten times a second.
  */
+import { reportWorldAction } from "../progression/progressionApi";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { useReducedMotion } from "framer-motion";
 import { useT } from "@/i18n";
@@ -147,6 +148,8 @@ export function RetroArcadeOverlay({ gameId, onClose, loadGame = loadRetroGame }
       const previous = readBest(gameId);
       const newBest = saveBest(gameId, score);
       const kept = Math.max(previous, score);
+      // A scored round pays the person a little XP; a new record a little more (metered on the server).
+      if (score > 0) void reportWorldAction(newBest ? "arcade_record" : "arcade_round");
       setBest(kept);
       setResult({ score, best: kept, newBest, won });
       overAt = now;

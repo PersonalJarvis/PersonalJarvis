@@ -27,6 +27,13 @@ Kinds (``payload`` keys in brackets):
 ``tool_result``        [turn_id, call_id, output, is_error, duration_ms]
 ``approval_required``  [turn_id, approval_id, call_id, name, input, summary]
 ``approval_resolved``  [turn_id, approval_id, decision]   decision: allow | deny
+``question_required``  [turn_id, question_id, asker, questions, deferred?] — a question
+                        card; ``deferred`` = an end-of-turn card (turn_prompts)
+                        whose answers go to the agent as the next message
+``question_progress``  [turn_id, question_id, answers]
+``question_resolved``  [turn_id, question_id, answers]
+``plan_ready``         [turn_id, build_mode]           — a coding agent's plan card
+``plan_resolved``      [turn_id, decision]             decision: build | keep
 ``turn_finished``      [turn_id, status, duration_ms, usage, error, cost_usd]
                         status: done | cancelled | error
 ``session_updated``    [title?, provider?, model?, effort?, cwd?, permission_mode?]

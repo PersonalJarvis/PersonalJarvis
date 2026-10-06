@@ -32,6 +32,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
+from jarvis.core.path_safety import contained_path
 from jarvis.sessions.formatter import format_session_markdown, format_session_plain
 from jarvis.sessions.models import (
     SessionDetail,
@@ -213,7 +214,9 @@ async def save_session_to_downloads(
     # Target path: %USERPROFILE%\Downloads\.
     downloads = Path.home() / "Downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    target = _avoid_collision(downloads / filename)
+    # contained_path refuses a name that would leave Downloads (defence in depth:
+    # the name is already built from a slug or the session id).
+    target = _avoid_collision(contained_path(downloads, filename))
 
     # Write — UTF-8 with a BOM only for plain text so Notepad detects it
     # correctly; Markdown + JSON stay pure UTF-8.

@@ -313,7 +313,7 @@ class FakeCaptureService:
         self.consumed: list[str] = []
         self.verdicts: list[IntentVerdict] = []
 
-    async def capture(self, *, verdict=None, trace_id=None):
+    async def capture(self, *, verdict=None, trace_id=None, master=False):
         self.verdicts.append(verdict)
         return CaptureOutcome(
             status="captured", verdict=verdict, context=make_context(), handle_id="h1"

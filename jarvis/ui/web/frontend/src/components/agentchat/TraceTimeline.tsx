@@ -79,7 +79,7 @@ function brandRow(call: Call): ToolChoice | null {
   return null;
 }
 
-function CallMark({ call }: { call: Call }) {
+export function CallMark({ call }: { call: Call }) {
   const row = brandRow(call);
   if (row) return <BrandMark row={row} />;
   if (call.kind in GLYPHS) {
@@ -96,7 +96,7 @@ function CallMark({ call }: { call: Call }) {
 }
 
 /** A stretch's mark: up to three brand logos it touched, else its first call's glyph. */
-function StretchMark({ calls }: { calls: Call[] }) {
+export function StretchMark({ calls }: { calls: Call[] }) {
   const rows: ToolChoice[] = [];
   const seen = new Set<string>();
   for (const call of calls) {

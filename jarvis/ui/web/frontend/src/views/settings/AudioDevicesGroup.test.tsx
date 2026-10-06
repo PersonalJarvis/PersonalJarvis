@@ -42,7 +42,9 @@ describe("AudioDevicesGroup", () => {
     );
     render(<AudioDevicesGroup />);
 
-    expect(screen.getByText("Audio devices")).toBeTruthy();
+    // One row per device kind, named for what it picks.
+    expect(screen.getByText("Voice output")).toBeTruthy();
+    expect(screen.getByText("Microphone")).toBeTruthy();
 
     await waitFor(() => {
       const output = screen.getByTestId("audio-output-select");

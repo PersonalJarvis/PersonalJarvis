@@ -345,16 +345,12 @@ export const ComputersIcon = defineIcon(
   </>,
 );
 
-/** Two sliders: everything that can be tuned. */
+/** A gear: the general settings. */
 export const SettingsIcon = defineIcon(
   "SettingsIcon",
   <>
-    <path d="M4 7.5h8.5" />
-    <path d="M17.5 7.5H20" />
-    <circle cx="15" cy="7.5" r="2.5" />
-    <path d="M4 16.5h2.5" />
-    <path d="M11.5 16.5H20" />
-    <circle cx="9" cy="16.5" r="2.5" />
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+    <circle cx="12" cy="12" r="3" />
   </>,
 );
 

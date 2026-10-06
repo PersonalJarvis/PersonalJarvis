@@ -30,3 +30,13 @@ measured evidence rather than asserting performance from file size.
 This is one matching companion family. It does not approve redesigns of the
 map, characters, buildings or vehicles. Further unrelated art-family rollout
 retains the project's reference-review gate.
+
+## Accessories (2026-10)
+
+Wearables extend the same family without changing a body: one item per slot
+(head, face, mouth, neck, outfit, back, held). `scripts/art/companion_accessories.py`
+authors every item as small primitives around a per-shape slot anchor and
+writes the shared catalog; `scripts/art/build_companion_accessories.py` builds
+`source/accessories.blend` and `exports/accessories.glb` from it. Clothing is a
+patch of the body outline, clipped per silhouette. The GLB loads only when a
+companion wears something.

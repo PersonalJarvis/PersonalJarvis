@@ -57,6 +57,9 @@ class SettingsPatch(BaseModel):
     effect: bool | None = None
     card_seconds: int | None = Field(default=None, ge=0, le=600)
     library: bool | None = None
+    #: Keep only the newest N screenshots and N recordings; ``0`` keeps all.
+    keep_newest: int | None = Field(default=None, ge=0, le=500)
+    copy_to_clipboard: bool | None = None
 
 
 class TakeRequest(BaseModel):
@@ -76,30 +79,42 @@ def _bus(request: Request) -> Any | None:
     return getattr(request.app.state, "bus", None)
 
 
-def _capability() -> dict[str, Any]:
+def _capture_capability() -> tuple[bool, str]:
+    """Whether this desktop can capture at all, and the reason when not.
+
+    Asks what the capture backend itself needs: a display, the capture
+    package and an X11 (not Wayland) session. A page that said "ready" and
+    then refused on Try it was the old behaviour. This is backend support,
+    not a permission preflight: a Mac without a grant must retain its capture
+    button so first use can ask the OS.
+    """
     import importlib.util  # noqa: PLC0415
+
+    from jarvis.platform.probes import display_present, is_wayland  # noqa: PLC0415
+
+    if not display_present():
+        return False, "There is no screen on this computer."
+    if importlib.util.find_spec("mss") is None:
+        return False, "The screen-capture package is not installed."
+    if is_wayland():
+        return False, "Appshot capture is not supported on Wayland yet. Use an X11 session."
+    return True, ""
+
+
+def _capability() -> dict[str, Any]:
 
     from jarvis.appshot.region import picker_capability  # noqa: PLC0415
     from jarvis.cu.indicator.controller import screen_indicator_capability  # noqa: PLC0415
-    from jarvis.platform.probes import display_present, is_wayland
 
-    capture_ok = importlib.util.find_spec("mss") is not None
-    capture_detail = "" if capture_ok else "The screen-capture package is not installed."
-    if not display_present():
-        capture_ok = False
-        capture_detail = "Screen capture needs an interactive desktop session."
-    elif is_wayland():
-        capture_ok = False
-        capture_detail = "Appshot capture is not supported on Wayland yet. Use an X11 session."
-    # This is backend support, not a permission preflight. A Mac without a
-    # grant must retain its capture button so first use can ask the OS.
+    capture_ok, capture_reason = _capture_capability()
     effect_ok, effect_reason = screen_indicator_capability()
     region_ok, region_reason = picker_capability()
     if not capture_ok:
-        region_ok, region_reason = False, capture_detail
+        # The picker would freeze the screens for a capture that is refused.
+        region_ok, region_reason = False, capture_reason
     return {
         "capture": capture_ok,
-        "capture_detail": capture_detail,
+        "capture_detail": capture_reason,
         "effect": effect_ok,
         "effect_detail": effect_reason,
         "region": region_ok,
@@ -131,6 +146,8 @@ def _settings_payload() -> dict[str, Any]:
         "effect": bool(block.effect),
         "card_seconds": int(getattr(block, "card_seconds", 6)),
         "library": bool(getattr(block, "library", True)),
+        "keep_newest": int(getattr(block, "keep_newest", 0) or 0),
+        "copy_to_clipboard": bool(getattr(block, "copy_to_clipboard", True)),
         "sound_effects_master": bool(getattr(config.ui, "sound_effects", True)),
         "shortcut": _status("window"),
         "region_shortcut": _status("region"),
@@ -153,6 +170,7 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         is_gesture,
         normalize_hotkey,
         request_saved_shortcut_access,
+        shortcuts_conflict,
     )
     from jarvis.core.config import load_config  # noqa: PLC0415
     from jarvis.core.config_writer import (  # noqa: PLC0415
@@ -183,8 +201,13 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
         window = changes.get("hotkey", current["window"])
         region = changes.get("region_hotkey", current["region"])
         recording = changes.get("recording_hotkey", current["recording"])
-        assigned = [key for key in (window, region, recording) if key]
-        if len(assigned) != len(set(assigned)):
+        chosen = [key for key in (window, region, recording) if key]
+        overlaps = any(
+            shortcuts_conflict(key, earlier)
+            for index, key in enumerate(chosen)
+            for earlier in chosen[:index]
+        )
+        if overlaps:
             raise HTTPException(
                 status_code=400,
                 detail="Each AppShot action needs a different shortcut.",
@@ -219,6 +242,10 @@ async def put_settings(request: Request, patch: SettingsPatch) -> dict[str, Any]
     shortcut = get_shortcut()
     if shortcut is not None and listener_change:
         await shortcut.reload()
+    if changes.get("keep_newest"):
+        from jarvis.appshot import retention  # noqa: PLC0415
+
+        await asyncio.to_thread(retention.apply, int(changes["keep_newest"]))
     return await asyncio.to_thread(_settings_payload)
 
 

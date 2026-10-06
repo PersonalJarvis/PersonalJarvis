@@ -24,6 +24,7 @@ import { PetModel, VoxelPet, type PetDrive } from "../companion/PetModel";
 import type { PetMood } from "../companion/petRig";
 import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
 import { cameraView } from "./officeStore";
+import { petBody } from "./walkerRegistry";
 
 /** Gigi's on-screen height in the office. */
 export const GIGI_OFFICE_SIZE_M = 0.5;
@@ -105,7 +106,8 @@ function bodyOffset(pet: CompanionPet, ground: boolean): number {
   return pet.kind === "gigi" ? MODEL_CENTRE_OFFSET : -pet.heightM / 2;
 }
 
-function CompanionBody({ pet, drive, reduced, paused, gigi }: {
+/** The pet's own body: its authored model, its voxel figure, or Gigi (passed in, so each host sizes it). */
+export function CompanionBody({ pet, drive, reduced, paused, gigi }: {
   pet: CompanionPet; drive: { current: PetDrive }; reduced: boolean; paused: boolean; gigi: ReactNode;
 }) {
   if (pet.kind === "model") return <PetModel pet={pet} drive={drive} reduced={reduced} paused={paused} />;
@@ -114,7 +116,7 @@ function CompanionBody({ pet, drive, reduced, paused, gigi }: {
 }
 
 /** A missing or broken GLB hides the companion's body; the glow still marks the lead. */
-class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+export class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   componentDidCatch(error: Error) { console.warn("Companion model unavailable", error.name); }
@@ -179,6 +181,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
     return { geometry, shadowGeometry, positions, colours, age: new Float32Array(TRAIL_SIZE).fill(TRAIL_LIFE_S), rise: new Float32Array(TRAIL_SIZE), next: 0 };
   }, []);
   useEffect(() => () => { particles.geometry.dispose(); particles.shadowGeometry.dispose(); }, [particles]);
+  // The level system's cosmetics follow the pet; nobody draws them once it is gone.
+  useEffect(() => () => { petBody.active = false; }, []);
 
   useFrame((_, rawDt) => {
     if (paused) return;
@@ -209,6 +213,10 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, child
     // One horizontal transform for the model, shadow and floor annotations.
     // The navigation target can lead this spring-smoothed position by a metre.
     if (groundRoot.current) groundRoot.current.position.set(pose.x, 0, pose.z);
+    petBody.x = pose.x; petBody.z = pose.z; petBody.y = onFloor ? pet.heightM / 2 : pose.y;
+    petBody.top = onFloor ? pet.heightM : pose.y + GIGI_OFFICE_SIZE_M * 0.55;
+    petBody.sizeM = onFloor ? pet.heightM : GIGI_OFFICE_SIZE_M;
+    petBody.active = !hidden;
     if (root.current) root.current.position.y = pose.y;
     if (body.current) {
       body.current.rotation.set(pose.pitch, pose.yaw, pose.roll, "YXZ");

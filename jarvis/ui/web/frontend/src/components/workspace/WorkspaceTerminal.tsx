@@ -7,13 +7,19 @@
  * Conventions copied from PtyTerminal: xterm instance in a ref (never state, or
  * it rerenders per chunk), dispose() on unmount (WebGL context cap).
  */
-import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { Terminal as TerminalIcon, AlertCircle } from "lucide-react";
 import { installNewlineBridge } from "../agentic/terminalNewline";
+import { usePaneFileDrag } from "../agentic/paneFileDrag";
+import { announceSkillRefused, pasteSkillText, type SkillDragPayload } from "../agentic/skillDrag";
+import { SkillDropCard } from "../agentic/sidePanel/skills/SkillDropCard";
+import { useIdeSkillsStore } from "@/store/ideSkills";
+import { requestConnect } from "@/lib/connectBudget";
 import { FONT_DEFAULT } from "../agentic/paneFont";
 import {
   MINIMUM_CONTRAST_RATIO,
@@ -23,7 +29,6 @@ import {
 } from "../agentic/terminalThemes";
 import { useThemeValue } from "@/hooks/useTheme";
 import { TERMINAL_FONT_STACK, syncTerminalFont } from "@/lib/terminalFont";
-import { requestConnect } from "@/lib/connectBudget";
 import {
   activateTerminalLink,
   TERMINAL_OSC_LINK_HANDLER,
@@ -40,6 +45,18 @@ interface WorkspaceTerminalProps {
   installName?: string;
   /** Plain terminals are pinned to the workspace chosen when the tab opens. */
   workspaceId?: string;
+  /**
+   * Or to a folder of their own — a thread's terminal drawer, whose folder may
+   * be a worktree no workspace has open. Ignored when `workspaceId` is set.
+   */
+  folder?: string;
+  /**
+   * Typed into the shell once, the first time it is ready — a project action
+   * ("npm run dev") opened in a fresh terminal. End it with "\r" to run it.
+   */
+  initialInput?: string;
+  /** No header or frame: the host draws its own tabs around the terminal. */
+  bare?: boolean;
   active?: boolean;
   appearance?: TerminalAppearance;
   /**
@@ -71,6 +88,9 @@ export function WorkspaceTerminal({
   title,
   banner,
   workspaceId,
+  folder,
+  initialInput,
+  bare = false,
   active = true,
   appearance: requestedAppearance,
 }: WorkspaceTerminalProps) {
@@ -93,6 +113,9 @@ export function WorkspaceTerminal({
   // PTY down and restart the installer whenever the string changed identity.
   const bannerRef = useRef(banner);
   bannerRef.current = banner;
+  // Same reason: the input is sent once at `ready`, never a reason to respawn.
+  const initialInputRef = useRef(initialInput);
+  initialInputRef.current = initialInput;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -136,7 +159,6 @@ export function WorkspaceTerminal({
     }
 
     let ws: WebSocket | null = null;
-    let cancelConnect: () => void = () => {};
     let disposed = false;
     let everLive = false;
 
@@ -163,7 +185,10 @@ export function WorkspaceTerminal({
       sendResize();
     });
 
-    {
+    // Workspace panes share the same connection budget as the app and IDE
+    // sockets. A grid mounting at once must not bypass the wake-storm cap.
+    const cancelConnect = requestConnect(() => {
+      if (disposed) return;
       const params: Record<string, string> = {
         cols: String(term.cols || 80),
         rows: String(term.rows || 24),
@@ -171,76 +196,77 @@ export function WorkspaceTerminal({
       if (agentName) params.agent = agentName;
       else if (installName) params.install = installName;
       if (workspaceId) params.workspace_id = workspaceId;
+      else if (folder) params.folder = folder;
 
-      // Workspace panes share the same connection budget as the app and IDE
-      // sockets. A grid mounting at once must not bypass the wake-storm cap.
-      cancelConnect = requestConnect(() => {
-        if (disposed) return;
+      try {
+        ws = new WebSocket(buildUrl(paneKey, params));
+      } catch {
+        setStatus("error");
+        setError("Connection to the terminal failed.");
+        return;
+      }
+      ws.onopen = () => {
+        setStatus("connecting");
+        // Push the ACTUAL pane size to the PTY now that we can send. The spawn
+        // used a best-effort size (the mount-time fit often runs before the
+        // grid cell is measured), and resizes fired while the socket was still
+        // connecting were dropped — so without this the agent's full-screen TUI
+        // keeps drawing at the wrong dimensions (cramped / clipped on the
+        // right). A second deferred fit catches any late grid layout.
+        sendResize();
+        requestAnimationFrame(sendResize);
+      };
+      ws.onmessage = (ev) => {
+        let msg: { t?: string; d?: string; code?: number; message?: string };
         try {
-          ws = new WebSocket(buildUrl(paneKey, params));
+          msg = JSON.parse(ev.data as string);
         } catch {
-          setStatus("error");
-          setError("Connection to the terminal failed.");
           return;
         }
-        ws.onopen = () => {
-          setStatus("connecting");
-          // Push the ACTUAL pane size to the PTY now that we can send. The spawn
-          // used a best-effort size (the mount-time fit often runs before the
-          // grid cell is measured), and resizes fired while the socket was still
-          // connecting were dropped — so without this the agent's full-screen TUI
-          // keeps drawing at the wrong dimensions (cramped / clipped on the
-          // right). A second deferred fit catches any late grid layout.
-          sendResize();
-          requestAnimationFrame(sendResize);
-        };
-        ws.onmessage = (ev) => {
-          let msg: { t?: string; d?: string; code?: number; message?: string };
-          try {
-            msg = JSON.parse(ev.data as string);
-          } catch {
-            return;
+        if (msg.t === "o") term.write(msg.d ?? "");
+        else if (msg.t === "ready") {
+          const firstReady = !everLive;
+          everLive = true;
+          setStatus("live");
+          if (activeRef.current) term.focus();
+          const input = initialInputRef.current;
+          if (firstReady && input && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: "i", d: input }));
           }
-          if (msg.t === "o") term.write(msg.d ?? "");
-          else if (msg.t === "ready") {
-            everLive = true;
-            setStatus("live");
-            if (activeRef.current) term.focus();
-          } else if (msg.t === "exit") {
-            setStatus("exited");
-            term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
-          } else if (msg.t === "error") {
-            setStatus("error");
-            setError(msg.message ?? "terminal error");
-          }
-        };
-        ws.onerror = () => {
+        } else if (msg.t === "exit") {
+          setStatus("exited");
+          term.write(`\r\n\x1b[33m[process exited: ${msg.code ?? "?"}]\x1b[0m\r\n`);
+        } else if (msg.t === "error") {
           setStatus("error");
-          setError("Connection to the terminal failed.");
-        };
-        ws.onclose = (ev) => {
-          if (everLive) {
-            setStatus("exited");
-          } else if (!disposed) {
-            // Closed during the handshake (e.g. 4401 auth) — surface it honestly
-            // instead of hanging on "connecting" forever (mirrors PtyTerminal).
-            setStatus("error");
-            setError((e) =>
-              e ??
-              (ev.code === 4401
-                ? "Terminal authorization failed — reopen to retry."
-                : `Terminal connection closed (code ${ev.code || "?"}).`),
-            );
-          }
-        };
+          setError(msg.message ?? "terminal error");
+        }
+      };
+      ws.onerror = () => {
+        setStatus("error");
+        setError("Connection to the terminal failed.");
+      };
+      ws.onclose = (ev) => {
+        if (everLive) {
+          setStatus("exited");
+        } else if (!disposed) {
+          // Closed during the handshake (e.g. 4401 auth) — surface it honestly
+          // instead of hanging on "connecting" forever (mirrors PtyTerminal).
+          setStatus("error");
+          setError((e) =>
+            e ??
+            (ev.code === 4401
+              ? "Terminal authorization failed — reopen to retry."
+              : `Terminal connection closed (code ${ev.code || "?"}).`),
+          );
+        }
+      };
 
-        term.onData((data) => {
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ t: "i", d: data }));
-          }
-        });
-      }, 0);
-    }
+      term.onData((data) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ t: "i", d: data }));
+        }
+      });
+    });
 
     window.addEventListener("resize", sendResize);
     const ro = new ResizeObserver(() => sendResize());
@@ -262,7 +288,7 @@ export function WorkspaceTerminal({
       term.dispose();
       termRef.current = null;
     };
-  }, [paneKey, agentName, installName, workspaceId]);
+  }, [paneKey, agentName, installName, workspaceId, folder]);
 
   useEffect(() => {
     if (!active) return;
@@ -280,12 +306,30 @@ export function WorkspaceTerminal({
     if (term) term.options.theme = themeFor(appearance);
   }, [appearance]);
 
+  // A skill from the Skills tab, dropped here: one bracketed paste, not sent
+  // (a plain shell without bracketed paste refuses a multi-line one).
+  // Files have no route into a plain shell; the drop is only claimed so it
+  // cannot navigate the IDE away.
+  const pasteSkill = useCallback((skill: SkillDragPayload) => {
+    const term = termRef.current;
+    if (!term || !skill.content) return;
+    if (!pasteSkillText(term, skill.content)) {
+      announceSkillRefused(title);
+      return;
+    }
+    useIdeSkillsStore.getState().recordUse(skill.id, title);
+  }, [title]);
+  const ignoreFiles = useCallback(() => {}, []);
+  const { dragging, carrying, handlers: dragHandlers } = usePaneFileDrag(ignoreFiles, pasteSkill);
+  const skillInFlight = useIdeSkillsStore((state) => (carrying === "skill" ? state.dragging : null));
+
   return (
     <div
-      className="relative flex h-full w-full flex-col overflow-hidden rounded-lg border border-border"
+      {...dragHandlers}
+      className={cn("relative flex h-full w-full flex-col overflow-hidden", !bare && "rounded-lg border border-border")}
       style={{ background: PANE_CHROME[appearance].shell }}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-1.5">
+      {!bare && <header className="flex items-center justify-between gap-2 border-b border-border bg-card/40 px-3 py-1.5">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <TerminalIcon className="h-3.5 w-3.5 text-primary" />
           <span className="font-mono">{title}</span>
@@ -304,8 +348,10 @@ export function WorkspaceTerminal({
             <span className="text-muted-foreground">connecting…</span>
           )}
         </span>
-      </header>
+      </header>}
       <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
+      {dragging && carrying === "skill" && <SkillDropCard skill={skillInFlight} target={title}
+        blocked={Boolean(skillInFlight?.multiline) && !termRef.current?.modes.bracketedPasteMode} />}
       {error && (
         <div className="border-t border-border bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
           {error}

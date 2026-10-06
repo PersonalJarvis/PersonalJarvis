@@ -105,7 +105,7 @@ changing settings also clears captures made under old rules.
 | Windows desktop | Supported without a separate screen-recording grant | Supported through Windows UI Automation |
 | macOS desktop | Requires **Screen Recording** permission | Requires **Accessibility** permission; the image can still work without it |
 | Linux with X11 | Supported when the desktop capture dependency is available | Uses an active AT-SPI session |
-| Linux with Wayland | Unavailable until a supported desktop-portal capture backend is installed | Does not make global capture available |
+| Linux with Wayland | Unavailable; sign in with an X11 session (for example GNOME on Xorg) | Does not make global capture available |
 | Headless server | Unavailable because there is no addressable display | Not applicable |
 
 Missing support produces a refusal, not a blank screenshot. On macOS, the

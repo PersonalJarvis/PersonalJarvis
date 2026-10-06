@@ -37,8 +37,30 @@ import { useEventStore } from "@/store/events";
 
 type Filter = "all" | "edited";
 
-/** Tiles rendered before "Show more"; the grid stays light with 500 kept. */
+/** Rows shown while the gallery is folded; "Show more" opens the rest. */
+const ROWS = 2;
+/** Tiles each further "Show more" adds; the grid stays light with 500 kept. */
 const PAGE = 48;
+/** Columns assumed until the grid has been measured (and where it cannot be). */
+const FALLBACK_COLUMNS = 6;
+
+/** How many tiles fit in one row of the auto-filled grid right now. */
+function useGridColumns(grid: HTMLUListElement | null): number {
+  const [columns, setColumns] = useState(FALLBACK_COLUMNS);
+  useEffect(() => {
+    if (!grid) return;
+    const measure = () => {
+      const tracks = getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length;
+      if (tracks > 0) setColumns(tracks);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, [grid]);
+  return columns;
+}
 
 const tileKey = (item: AppshotLibraryItem) => `${item.id}:${item.variant}`;
 
@@ -207,7 +229,11 @@ export function AppshotLibrary({
   const [items, setItems] = useState<AppshotLibraryItem[] | null>(null);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  // Folded: exactly ROWS full rows. Unfolded: `limit` tiles, PAGE more per click.
+  const [expanded, setExpanded] = useState(false);
   const [limit, setLimit] = useState(PAGE);
+  const [grid, setGrid] = useState<HTMLUListElement | null>(null);
+  const columns = useGridColumns(grid);
   const [busyKey, setBusyKey] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -325,6 +351,8 @@ export function AppshotLibrary({
 
   const total = items?.length ?? 0;
   const empty = items !== null && shown.length === 0;
+  const folded = columns * ROWS;
+  const visible = expanded ? Math.max(limit, folded) : folded;
 
   return (
     <section
@@ -361,6 +389,7 @@ export function AppshotLibrary({
                   data-testid={`appshot-library-filter-${value}`}
                   onClick={() => {
                     setFilter(value);
+                    setExpanded(false);
                     setLimit(PAGE);
                   }}
                   className={cn(
@@ -413,8 +442,8 @@ export function AppshotLibrary({
         )
       ) : (
         <>
-          <ul className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3">
-            {shown.slice(0, limit).map((item) => (
+          <ul ref={setGrid} className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(min(100%,12rem),1fr))] gap-3">
+            {shown.slice(0, visible).map((item) => (
               <Tile
                 key={tileKey(item)}
                 item={item}
@@ -426,17 +455,40 @@ export function AppshotLibrary({
           </ul>
           <div className="mt-3 flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">{t("appshot_editor.library_drag_hint")}</p>
-            {shown.length > limit && (
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => setLimit((value) => value + PAGE)}
-                data-testid="appshot-library-more"
-              >
-                {t("appshot_editor.library_show_more")}
-              </Button>
-            )}
+            <div className="flex shrink-0 items-center gap-2">
+              {expanded && shown.length > folded && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setExpanded(false);
+                    setLimit(PAGE);
+                    grid?.scrollIntoView?.({ block: "nearest" });
+                  }}
+                  data-testid="appshot-library-less"
+                >
+                  {t("appshot_editor.library_show_less")}
+                </Button>
+              )}
+              {shown.length > visible && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    if (expanded) setLimit((value) => value + PAGE);
+                    else {
+                      setExpanded(true);
+                      setLimit(Math.max(PAGE, folded));
+                    }
+                  }}
+                  data-testid="appshot-library-more"
+                >
+                  {t("appshot_editor.library_show_more")}
+                </Button>
+              )}
+            </div>
           </div>
         </>
       )}

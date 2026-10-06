@@ -77,6 +77,59 @@ describe("AppshotsView", () => {
     expect(Object.keys(JSON.parse(String(put[1].body)))).toEqual(["sound"]);
   });
 
+  it("saves the clipboard switch on its own", async () => {
+    const withClipboard = { ...SETTINGS, copy_to_clipboard: true };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/appshot/settings" && init?.method === "PUT") {
+        return json({ ...withClipboard, ...JSON.parse(String(init.body)) });
+      }
+      if (url === "/api/appshot/settings") return json(withClipboard);
+      if (url === "/api/appshot/latest") return json({ appshot: null });
+      return json({}, 404);
+    });
+    render(<AppshotsView />);
+    const toggle = await screen.findByTestId("appshots-clipboard");
+    expect(toggle.getAttribute("data-state")).toBe("checked");
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            url === "/api/appshot/settings" &&
+            init?.method === "PUT" &&
+            JSON.parse(String(init.body)).copy_to_clipboard === false,
+        ),
+      ).toBe(true),
+    );
+    const put = fetchMock.mock.calls.find(([, init]) => init?.method === "PUT")!;
+    expect(Object.keys(JSON.parse(String(put[1].body)))).toEqual(["copy_to_clipboard"]);
+  });
+
+  it("hides the clipboard switch while an older backend is still running", async () => {
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-sound");
+    expect(screen.queryByTestId("appshots-clipboard")).toBeNull();
+  });
+
+  it("says on the Try row why a capture cannot run here", async () => {
+    const blocked = {
+      ...SETTINGS,
+      readiness: {
+        ...SETTINGS.readiness,
+        capture: false,
+        capture_detail: "Grant Screen Recording.",
+      },
+    };
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/appshot/settings") return json(blocked);
+      if (url === "/api/appshot/latest") return json({ appshot: null });
+      return json({}, 404);
+    });
+    render(<AppshotsView />);
+    await screen.findByTestId("appshots-try");
+    expect(screen.getByText(/Grant Screen Recording\./)).toBeDefined();
+  });
+
   it("disables every other control while appshots are switched off", async () => {
     fetchMock.mockImplementation(async (url: string) =>
       url === "/api/appshot/settings"
@@ -101,7 +154,7 @@ describe("AppshotsView", () => {
     const button = await screen.findByTestId("appshots-try");
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByTestId("appshots-try-region") as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("Wayland capture is unavailable.")).toBeDefined();
+    expect(screen.getByText(/Wayland capture is unavailable\./)).toBeDefined();
     expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/permissions"))).toBe(false);
   });
 
@@ -251,6 +304,86 @@ describe("AppshotsView shortcut recorder", () => {
     render(<AppshotsView />);
     fireEvent.click(await screen.findByTestId("appshots-region-hotkey-clear"));
     await waitFor(() => expect(puts()).toEqual([{ region_hotkey: "" }]));
+  });
+
+  it("keeps a modifier that was released before the letter", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "ControlLeft", key: "Control", ctrlKey: false });
+    expect(puts()).toEqual([]);
+    fireEvent.keyDown(window, { code: "KeyS", key: "s", ctrlKey: false });
+    fireEvent.keyUp(window, { code: "KeyS", key: "s", ctrlKey: false });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+s" }]));
+  });
+
+  it("saves when a modifier key-up never arrives", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyDown(window, { code: "KeyJ", key: "j", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "KeyJ", key: "j", ctrlKey: false });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+j" }]));
+  });
+
+  it("saves a function key whose key-up never arrives", async () => {
+    render(<AppshotsView />);
+    const change = await screen.findByTestId("appshots-hotkey-change");
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(change);
+      fireEvent.keyDown(window, { code: "F9", key: "F9" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "f9" }]));
+  });
+
+  it("saves the chord when the window loses focus", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyDown(window, { code: "KeyS", key: "s", ctrlKey: true });
+    fireEvent.blur(window);
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+s" }]));
+  });
+
+  it("saves keys that were already down when the page renders again", async () => {
+    const view = render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    view.rerender(<AppshotsView />);
+    fireEvent.keyDown(window, { code: "KeyS", key: "s", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "KeyS", key: "s", ctrlKey: false });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "ctrl+s" }]));
+  });
+
+  it("saves the typed character for a key outside A to Z", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    fireEvent.keyDown(window, { code: "BracketLeft", key: "\u00fc" });
+    fireEvent.keyUp(window, { code: "BracketLeft", key: "\u00fc" });
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "\u00fc" }]));
+  });
+
+  it("tells the rest of the app that a shortcut is being recorded", async () => {
+    render(<AppshotsView />);
+    fireEvent.click(await screen.findByTestId("appshots-hotkey-change"));
+    expect(screen.getByTestId("appshots-hotkey").getAttribute("data-keybind-recording")).toBe(
+      "true",
+    );
+  });
+
+  it("a second click saves the keys already held", async () => {
+    render(<AppshotsView />);
+    const change = await screen.findByTestId("appshots-hotkey-change");
+    fireEvent.click(change);
+    fireEvent.keyDown(window, { code: "KeyK", key: "k" });
+    fireEvent.click(change);
+    await waitFor(() => expect(puts()).toEqual([{ hotkey: "k" }]));
   });
 });
 

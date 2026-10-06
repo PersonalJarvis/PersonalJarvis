@@ -2,7 +2,6 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { useIdeChatStore } from "@/store/ideChat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdeSidePanelFrame } from "./IdeSidePanel";
-import { IdeSidePanelToggle } from "./IdeSidePanelToggle";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
@@ -26,7 +25,6 @@ vi.mock("@/components/society/office/OfficeStage", () => ({
 function Harness() {
   return (
     <>
-      <IdeSidePanelToggle />
       <IdeSidePanelFrame>
         <div data-testid="grid">grid</div>
       </IdeSidePanelFrame>
@@ -68,7 +66,7 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
     expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
     expect(firstNode.dataset.active).toBe("false");
-    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
     fireEvent.click(screen.getByTestId(`ide-side-panel-tab-${first.id}`));
     expect(firstNode.dataset.active).toBe("true");
     fireEvent.click(screen.getByTestId(`ide-side-panel-close-${second.id}`));
@@ -103,12 +101,12 @@ describe("IdeSidePanel", () => {
     expect((screen.getByTestId("ide-side-panel-add-terminal") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("opens from the caption toggle and closes from its own header", () => {
+  it("opens from its rail and closes from its own header", () => {
     render(<Harness />);
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
     expect(screen.getByTestId("ide-side-panel-host").style.width).toBe("0px");
 
-    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
     expect(screen.getByTestId("ide-side-panel")).toBeTruthy();
     expect(screen.getByTestId("ide-side-panel-tab-agents").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("ide-workspace-agents")).toBeTruthy();
@@ -123,7 +121,7 @@ describe("IdeSidePanel", () => {
   it("keeps the grid mounted while the panel opens and closes", () => {
     render(<Harness />);
     const grid = screen.getByTestId("grid");
-    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
     fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
     expect(screen.getByTestId("grid")).toBe(grid);
   });
@@ -133,7 +131,7 @@ describe("IdeSidePanel", () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-close-agents"));
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
-    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
     expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
   });
 
@@ -167,12 +165,6 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-add-agents"));
     expect(useIdeSidePanelStore.getState().tabs).toEqual(["agents"]);
     expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
-  });
-
-  it("shows the toggle only in the Agentic IDE", () => {
-    act(() => useEventStore.setState({ activeSection: "chats" }));
-    render(<IdeSidePanelToggle />);
-    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
   });
 
   it("leaves a labelled rail on the right edge while closed, and opens at the tab picked there", () => {

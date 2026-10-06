@@ -123,6 +123,14 @@ def apply_client_auth(
     return None
 
 
+def _is_auth_server_metadata(meta: object) -> bool:
+    """True for an RFC 8414 document, as opposed to an RFC 9728 one."""
+    return isinstance(meta, dict) and all(
+        isinstance(meta.get(key), str) and meta[key]
+        for key in ("authorization_endpoint", "token_endpoint")
+    )
+
+
 def _well_known_candidates(issuer: str) -> list[str]:
     """Auth-server metadata URLs for an issuer, most-correct first.
 
@@ -203,6 +211,11 @@ class HostedMcpDcrHandler:
             }
 
         auth_servers = pr_meta.get("authorization_servers") or []
+        if not auth_servers and _is_auth_server_metadata(pr_meta):
+            # Servers on the 2025-03-26 MCP auth spec (Atlassian) publish no
+            # protected-resource document; their catalog entry points the
+            # discovery URL straight at the RFC 8414 auth-server metadata.
+            return pr_meta
         if not auth_servers:
             raise RuntimeError(
                 "protected-resource has no authorization_servers "

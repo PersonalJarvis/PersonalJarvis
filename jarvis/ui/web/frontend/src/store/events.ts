@@ -70,9 +70,6 @@ export type SectionId =
   | "profile"
   | "memory"
   | "apikeys"
-  // Local models: the Ollama server, its installed models and the catalogue,
-  // in one section instead of a card body inside API Keys.
-  | "local-models"
   // Computers: the user's own servers and local VMs, reached over SSH.
   | "computers"
   | "settings"
@@ -80,7 +77,6 @@ export type SectionId =
   | "telephony-setup"
   | "socials"
   | "taskbar"
-  | "contacts"
   | "feedback"
   | "agent-instructions"
   // Appshots: the shortcut, destination, sound and flash for showing the
@@ -137,14 +133,12 @@ export const SECTION_IDS = [
   "profile",
   "memory",
   "apikeys",
-  "local-models",
   "computers",
   "settings",
   "telephony",
   "telephony-setup",
   "socials",
   "taskbar",
-  "contacts",
   "feedback",
   "agent-instructions",
   "appshots",
@@ -236,14 +230,12 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   profile: "Profile",
   memory: "Notes",
   apikeys: "API Keys",
-  "local-models": "Local models",
   computers: "Computers",
   settings: "Settings",
   telephony: "Telephony",
   "telephony-setup": "Telephony setup",
   socials: "Socials",
   taskbar: "Taskbar",
-  contacts: "Contacts",
   feedback: "Feedback",
   "agent-instructions": "Assistant",
   appshots: "Appshots",

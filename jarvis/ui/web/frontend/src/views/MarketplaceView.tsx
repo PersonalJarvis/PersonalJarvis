@@ -1149,9 +1149,17 @@ function PublishInvite({
 }) {
   const fileInput = useRef<HTMLInputElement | null>(null);
   return (
-    <div className="mt-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-3 backdrop-blur-sm">
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground">{t("marketplace.publish_hint")}</p>
+    <div className="mt-10 flex flex-wrap items-center gap-4 rounded-lg border border-dashed border-border-strong px-5 py-4">
+      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-muted-foreground">
+        <UploadCloud className="h-4 w-4" />
+      </div>
+      <div className="min-w-0 flex-1 basis-[280px]">
+        <p className="text-base font-semibold text-foreground-strong">
+          {t("marketplace.publish_card_title")}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          {enabled ? t("marketplace.publish_card_body") : t("marketplace.publish_hint")}
+        </p>
         {importError && (
           <p role="alert" className="mt-1 flex items-start gap-1.5 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -1159,7 +1167,7 @@ function PublishInvite({
           </p>
         )}
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <input
           ref={fileInput}
           type="file"
@@ -1186,15 +1194,17 @@ function PublishInvite({
           )}
           {t("marketplace.import_agent")}
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
-          title={t("marketplace.publish_on_web")}
-        >
-          {t("marketplace.publish_on_web")}
-          <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-        </Button>
+        {!enabled && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => openExternalUrl(MARKETPLACE_SUBMIT_URL)}
+            title={t("marketplace.publish_on_web")}
+          >
+            {t("marketplace.publish_on_web")}
+            <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
+          </Button>
+        )}
         {enabled && (
           <Button size="sm" onClick={onPublish}>
             <UploadCloud className="mr-1.5 h-3.5 w-3.5" />

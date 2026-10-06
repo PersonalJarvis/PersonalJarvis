@@ -19,6 +19,28 @@ overlays (the mascot, the bar) take the focus when you click them, so the
 capture looks past them to the app window underneath (BUG-228); with no app
 window there, it takes the whole screen instead.
 
+## Paste it anywhere
+
+Every appshot taken with a shortcut or a **Try it** button also goes on the
+system clipboard, so Ctrl+V (Cmd+V on a Mac) pastes it straight into a chat,
+a mail, a document or an image editor. It is the finished picture, markings
+included, at full resolution (the lossless copy, not the smaller picture the
+assistant gets). Looks the assistant takes on its own, or a spoken "what do
+you see?", never replace what is on the clipboard. **Copy to clipboard** on
+the Appshots page (`[appshot].copy_to_clipboard`) turns it off.
+
+The clipboard holds the same picture in several formats at once, because
+every app asks for a different one (`jarvis/platform/clipboard_image.py`):
+
+| OS | Formats | Who reads what |
+|---|---|---|
+| Windows | `PNG` (registered format, offered first) + `CF_DIB`; Windows adds `CF_BITMAP` and `CF_DIBV5` itself | Browsers, Electron chat apps and Office take the lossless PNG with its transparency; classic Win32 apps (Paint and older tools) take the bitmap, where transparent parts are laid on white instead of turning black |
+| macOS | `public.png` + `public.tiff` on the general pasteboard, set through the built-in JavaScript for Automation bridge (`osascript -l JavaScript`); AppleScript sets the PNG alone if that bridge fails | Modern apps read PNG; TIFF is the pasteboard's native image type that older Cocoa apps read |
+| Linux | `image/png` through `wl-copy` (Wayland) or `xclip` (X11) | Every X11 and Wayland toolkit reads `image/png`. Without either tool nothing is copied and the log names the package to install |
+| Headless | — | No clipboard; nothing is attempted |
+
+Jarvis X screenshots (`[jarvisx].copy_to_clipboard`) use the same code.
+
 ## Selecting an area
 
 The area picker is a short-lived PySide6 process (`python -m
@@ -28,6 +50,10 @@ selection, so nothing stays resident. The picker provides:
 - every screen is frozen under a light dim the moment the picker opens, so
   nothing moves under the selection (where a frozen frame cannot be grabbed,
   a dim layer over the live desktop is used instead);
+- the appshot is that same instant: every screen is grabbed at the shortcut
+  press, before the picker opens, and the finished area is cut out of that
+  frame (at full depth on an HDR monitor), so a video that plays on while
+  the area is selected does not change the picture;
 - the pointer is a thin crosshair with a small ring, and two small numbers
   beside it show the position — while dragging, the width and height in real
   pixels. No lens, no boxed labels, no banner;
@@ -173,7 +199,8 @@ app. Nothing navigates away.
   menu (presets + any colour) and the size slider, then **Save** and
   **Done**.
 - **Options capsule:** under the top bar, only for tools that have options
-  (text style, pixelate or blur, crop ratio, background) or a hint.
+  (text style, pixelate or blur, crop ratio with size, Reset and Crop,
+  background) or a hint. **Add picture** opens a side panel instead.
 - **Bottom bar:** zoom (Fit, 50 %, 100 %, 200 %), undo and redo; a **Drag me**
   handle in the middle; delete (with a selection), save and copy on the right.
 
@@ -188,8 +215,17 @@ app. Nothing navigates away.
 | C | Counter | Numbered badges; each click adds the next number. |
 | H | Spotlight | Dims everything outside the dragged areas. |
 | P | Pixelate or blur | Hides a region; the options bar switches between pixelate and blur. |
-| K | Crop | Free, 1:1, 4:3 or 16:9; undo brings the rest back. |
+| K | Crop | A frame over the whole document with corner grips (and edge grips for a free crop), a thirds grid and its size in pixels. Drag a grip or the frame itself, or drag outside it for a new one; Free, 1:1, 4:3 or 16:9 (a ratio reshapes the frame at once). Enter or **Crop** finishes, **Reset** shows everything again, undo brings the rest back. |
 | B | Background | Frames the picture on a backdrop (eight presets, padding, corner radius, shadow); applied on copy, save and use. |
+| I | Add picture | Puts another picture into the document: an earlier appshot from the gallery, a file, a pasted picture (Ctrl+V) or one dropped onto the editor. It goes **beside** (same height), **below** (same width) or **on top** (small, in the middle) of what is visible; the choice is remembered. |
+
+**Several pictures in one.** An added picture is a layer of the document,
+painted under every annotation, so an arrow or a highlight can run from one
+picture into the next. The select tool (V) moves it and its corner grips
+resize it without distorting it; Delete removes it. The document grows with
+its pictures, a crop that is in place grows to take a new picture in, and
+Copy, Save, Drag me and Done hand on the combined picture. Pixelate and blur
+hide whatever picture lies under them.
 
 Taking hold of annotations: the **select tool** picks up any annotation —
 the pointer turns into a move cursor over it, a drag moves it, a click
@@ -235,7 +271,8 @@ it outside the editor; **not done** = not built, with the reason.
 | Text styles (7) | Partly: 3 styles |
 | Move/select annotations | Done |
 | Rotate, flip, resize image | Not done |
-| Combine images, editable project file | Not done |
+| Combine images | Done: add pictures beside, below or on top (gallery, file, paste, drop) |
+| Editable project file | Not done |
 | Capture area / window / fullscreen, freeze, crosshair with coordinates | Elsewhere: the area picker and the window shortcut ([Selecting an area](#selecting-an-area)); no fullscreen mode |
 | Corner card (copy / save / annotate / drag after capture) | Elsewhere: the corner card (click = editor, drag = file) |
 | Editor window: drag handle, zoom, Save / Done | Done: "Drag me" (Windows, macOS), zoom Fit/50/100/200 %, Save to Downloads, Done = use in the next message |
@@ -355,12 +392,13 @@ original any-order behaviour.
 | `effect` | `true` | Flash and corner thumbnail |
 | `card_seconds` | `6` | How long the corner card rests, 0–600 seconds; `0` = until closed |
 | `library` | `true` | Keep every appshot and saved edit in the gallery (`<data dir>/appshots/`, newest 500) |
+| `copy_to_clipboard` | `true` | Put shortcut and button appshots on the clipboard (see [Paste it anywhere](#paste-it-anywhere)) |
 
 ## Operating systems
 
 | | Windows | macOS | Linux/X11 | Wayland / headless |
 |---|---|---|---|---|
-| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`; whether this read needs the Input Monitoring grant is **unverified** (not measured on a Mac), so the page shows no Input Monitoring row for it | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
+| Both-Alt shortcut | `GetAsyncKeyState` (AltGr counts as right Alt) | `CGEventSourceKeyState`, needs the Input Monitoring grant; a silent check (never a prompt) reports the shortcut unavailable and names the grant when it is missing | `XQueryKeymap` via python-xlib | Unavailable, reason shown on the page; voice and the button still work where capture works |
 | Other shortcuts (incl. the area shortcut) | Shared hotkey backends (`jarvis/trigger/backends`) | same | same | same as above |
 | Area picker and its marking toolbar | PySide6 overlay; a global Esc also cancels until an area is chosen, because Windows may not hand it keyboard focus until the first click | PySide6 overlay | PySide6 overlay | Unavailable, reason shown on the page; the window appshot still works |
 | Burning the markings into the appshot | Pillow, in the main process (`jarvis/appshot/markup.py`) | same | same | same (no display needed) |

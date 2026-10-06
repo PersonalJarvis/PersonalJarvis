@@ -1008,7 +1008,9 @@ def test_unfiltered_session_list_hides_society_sessions(tmp_path: Path):
     )
     app = FastAPI()
     app.include_router(router)
-    app.state.agent_chat = SimpleNamespace(store=store, is_running=lambda sid: False)
+    app.state.agent_chat = SimpleNamespace(
+        store=store, is_running=lambda sid: False, pending_approvals=lambda sid: []
+    )
     with TestClient(app) as c:
         everything = c.get("/api/agent-chat/sessions").json()["sessions"]
         assert [s["surface"] for s in everything] == ["agent"]

@@ -1285,6 +1285,31 @@ body {
     color: transparent;
     animation: thinking-shimmer 2.4s linear infinite;
   }
+  /* A live work-log line: a narrow band of full-contrast text slides across
+     the muted label in steps. Portions adapted from pingdotgg/t3code
+     @ e22c880 (apps/web/src/index.css), MIT License, Copyright (c) 2026
+     T3 Tools Inc. — third_party/t3code/LICENSE. */
+  @keyframes live-tool-shine {
+    from {
+      background-position: -4.5rem 0, 0 0;
+    }
+    to {
+      background-position: calc(100% + 4.5rem) 0, 0 0;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    .live-tool-shine {
+      color: transparent;
+      background-image:
+        linear-gradient(to right, transparent, hsl(var(--foreground)), transparent),
+        linear-gradient(hsl(var(--muted-foreground)), hsl(var(--muted-foreground)));
+      background-size: 4.5rem 100%, 100% 100%;
+      background-repeat: no-repeat;
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: live-tool-shine 2.2s steps(30) infinite;
+    }
+  }
   @keyframes thinking-ring {
     0% {
       transform: scale(0.6);

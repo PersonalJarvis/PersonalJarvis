@@ -4,12 +4,14 @@
 // to it (isolatedModules requires every file to be a module or a script; as a
 // script these ambient declarations would otherwise leak into the rest of the
 // app's type-check).
-import { JitterBufferedPcm16Queue, Pcm16Packetizer } from "./pcmWorkletBuffer";
+import { Pcm16Packetizer } from "./pcmWorkletBuffer";
+import { TimedPcmQueue, type RenderedAudioInterval } from "./playbackTimeline";
 import { StartupAudioQueue } from "./startupAudio";
 
 export {};
 
 declare const sampleRate: number;
+declare const currentTime: number;
 declare function registerProcessor(name: string, ctor: unknown): void;
 declare class AudioWorkletProcessor {
   readonly port: MessagePort;
@@ -84,7 +86,9 @@ class StartupCapture extends AudioWorkletProcessor {
 registerProcessor("pcm-startup", StartupCapture);
 
 class PcmPlayback extends AudioWorkletProcessor {
-  private readonly queue = new JitterBufferedPcm16Queue(sampleRate);
+  private readonly queue = new TimedPcmQueue(sampleRate);
+  private spans: RenderedAudioInterval[] = [];
+  private generation = 0;
   private levelSum = 0;
   private levelCount = 0;
   private muted = true;
@@ -93,18 +97,27 @@ class PcmPlayback extends AudioWorkletProcessor {
   constructor() {
     super();
     this.port.onmessage = (e: MessageEvent) => {
-      const msg = e.data as { type: string; data?: ArrayBuffer; muted?: boolean; volume?: number };
+      const msg = e.data as {
+        type: string; data?: ArrayBuffer; muted?: boolean; volume?: number;
+        generation?: number; startMs?: number; endMs?: number;
+      };
       if (msg.type === "output_state") {
         const muted = msg.muted === true;
-        if (muted !== this.muted) this.queue.clear();
+        if (muted !== this.muted) { this.queue.clear(); this.spans = []; }
+        if (msg.generation !== undefined) this.generation = msg.generation;
         this.muted = muted;
         this.volume = msg.volume ?? 1;
-      } else if (msg.type === "flush") this.queue.clear();
+      } else if (msg.type === "flush") {
+        this.queue.clear();
+        this.spans = [];
+        this.generation = msg.generation ?? this.generation + 1;
+      }
       else if (msg.type === "pcm" && msg.data && !this.muted) {
         // The bounded ring keeps the newest audio if a provider outruns
         // playback for more than ten seconds. enqueue() drops the oldest
         // samples on overrun, preventing stale latency and unbounded memory.
-        this.queue.enqueue(new Int16Array(msg.data));
+        this.queue.enqueue(new Int16Array(msg.data), msg.startMs !== undefined && msg.endMs !== undefined
+          ? { startMs: msg.startMs, endMs: msg.endMs } : undefined);
       }
     };
   }
@@ -115,7 +128,8 @@ class PcmPlayback extends AudioWorkletProcessor {
     // Banks a jitter reserve at a burst start and after an underrun, then
     // streams at wall clock. Zero-filling a starved quantum instead is what
     // chopped the voice on this surface.
-    this.queue.render(out);
+    const rendered = this.queue.render(out, currentTime);
+    if (!this.muted && this.volume > 0) this.spans.push(...rendered);
     for (let i = 0; i < out.length; i++) out[i] *= this.muted ? 0 : this.volume;
     // Throttled (~30 Hz) OUTPUT-level messages, the mirror of PcmCapture's.
     // Measured on the samples this processor just wrote, so the number is the
@@ -130,6 +144,8 @@ class PcmPlayback extends AudioWorkletProcessor {
     if (this.levelCount >= sampleRate / 30) {
       const rms = Math.sqrt(this.levelSum / this.levelCount);
       this.port.postMessage({ type: "level", rms });
+      this.port.postMessage({ type: "playback", generation: this.generation, spans: this.spans });
+      this.spans = [];
       this.levelSum = 0;
       this.levelCount = 0;
     }

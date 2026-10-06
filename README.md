@@ -150,7 +150,11 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 The installer checks Python 3.11+ and Git, offers to install anything missing,
 registers the desktop launcher and opens the app. Running it again updates an
 existing installation. Language, wake phrase and models are set up inside the
-app.
+app. Later, open it from the desktop launcher or from a terminal:
+
+```bash
+jarvis          # full desktop
+```
 
 **Desktop downloads:** [Windows](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Setup-x64.exe) ·
 [macOS (Apple Silicon)](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-arm64.dmg) ·

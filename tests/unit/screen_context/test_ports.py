@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from types import SimpleNamespace
 
 import pytest
 
@@ -36,13 +35,20 @@ def test_wayland_permission_probe_is_actionable(
 
     assert issue is not None
     assert issue.code == "wayland_portal"
-    assert "portal" in issue.message.lower()
+    # The engine has no portal capture path: the honest remedy is an X11 login.
+    assert "X11" in issue.message and "portal" not in issue.message.lower()
 
 
-def test_windows_window_capture_never_falls_back_to_desktop_rect(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_window_capture_never_falls_back_to_desktop_rect(
+    monkeypatch: pytest.MonkeyPatch, platform: str
 ) -> None:
-    monkeypatch.setattr(ports, "os", SimpleNamespace(name="nt"))
+    """The window-alone path guards a denylisted overlap: a rect grab would show it.
+
+    Linux has no window-only capture, so before this it photographed the
+    denylisted window through the desktop-rectangle fallback.
+    """
+    monkeypatch.setattr("jarvis.platform.window_capture.detect_platform", lambda: platform)
     monkeypatch.setattr(ports, "_input_space", nullcontext)
     monkeypatch.setattr(
         "jarvis.cu.indicator.capture_guard.indicator_suppressed",

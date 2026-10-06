@@ -9,7 +9,7 @@ import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useWorkspacePanes } from "@/store/workspacePanes";
 import { usePaneReviewsStore } from "@/store/paneReviews";
 import { AgentMark } from "@/components/agentic/AgentMark";
-import { paneTitleFrom, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
+import { paneTitleFrom, recapsFor, usePaneRecapPoll, usePaneRecapsStore } from "@/store/paneRecaps";
 import { CheckCheck, Eye, Loader2, Search, X, type LucideIcon } from "lucide-react";
 import { agentSearchDocument } from "./agentSearch";
 import { useAgentSearch } from "./useAgentSearch";
@@ -126,7 +126,7 @@ export function AgentsOverview() {
   const searching = query.trim().length > 0;
   const search = useAgentSearch(query, mine.map((pane) => agentSearchDocument(
     pane,
-    paneTitleFrom(recaps.workspaceId === pane.workspace_id ? recaps.byName[pane.name] : undefined, pane),
+    paneTitleFrom(recapsFor(recaps, pane.workspace_id)?.[pane.name], pane),
   )));
   const byId = new Map(mine.map((pane) => [pane.history_id, pane]));
   const matches = search.matches.flatMap(({ id }) => {
@@ -158,7 +158,7 @@ export function AgentsOverview() {
       spotlight !== null && spotlight.workspaceId === pane.workspace_id && spotlight.pane === pane.name;
     const stateSince = compactSince(pane.activity_since, now);
     const lastOutput = compactSince(pane.last_output_at, now);
-    const recap = recaps.workspaceId === pane.workspace_id ? recaps.byName[pane.name] : undefined;
+    const recap = recapsFor(recaps, pane.workspace_id)?.[pane.name];
     const title = paneTitleFrom(recap, pane);
     const elsewhere = pane.workspace_id !== activeWorkspaceId ? pane.workspace_name : "";
     return (

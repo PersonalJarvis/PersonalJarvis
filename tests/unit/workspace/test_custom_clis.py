@@ -415,6 +415,24 @@ def test_a_real_name_is_addressable_by_voice() -> None:
     assert registry.spoken_aliases().get("fixturecli") == "fixturecli"
 
 
+def test_a_cli_added_while_running_is_spawnable_by_name() -> None:
+    """"Open five Warpdrive terminals" must work without restarting the app.
+
+    The spawn parser compiles every spoken name into its patterns; an entry
+    added after it was imported used to be invisible to voice until a restart.
+    """
+    from jarvis.agentic_ide import intent
+
+    before = intent.detect_spawn("open five warpdrive terminals")
+    assert before is None or all(group.agent != "warpdrive" for group in before.groups)
+    entry = custom_clis.create_custom_cli("Warpdrive", "warpdrive --tui")
+    registry.refresh_custom_agents()
+
+    request = intent.detect_spawn("open five warpdrive terminals")
+    assert request is not None
+    assert [(group.count, group.agent) for group in request.groups] == [(5, entry.id)]
+
+
 def test_a_custom_name_is_reserved_against_pane_call_signs() -> None:
     """Saying "FixtureCLI" must not be a coin flip between a pane and a CLI."""
     custom_clis.create_custom_cli("FixtureCLI", "fixture-cli")

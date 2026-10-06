@@ -11,6 +11,13 @@ import { useEventStore, type SectionId } from "@/store/events";
  */
 const MAX_HISTORY = 50;
 
+/**
+ * The front page. Back always reaches it: every other section can be left
+ * even with no earlier visit (a fresh launch into the IDE, a restored
+ * section), so nobody is ever stranded without a way home.
+ */
+const HOME: SectionId = "chats";
+
 interface SectionNavHistoryState {
   /** The section the stacks were last reconciled with. Null until observed. */
   current: SectionId | null;
@@ -63,7 +70,21 @@ export const useSectionNavHistory = create<SectionNavHistoryState>((set, get) =>
 
   goBack: () => {
     const { current, past, future } = get();
-    if (current === null || past.length === 0) return null;
+    const section = current ?? useEventStore.getState().activeSection;
+    // With no earlier visit, back still leaves any section for the front
+    // page — only the front page itself has nowhere further to go.
+    if (past.length === 0) {
+      if (section === HOME) return null;
+      set({
+        current: HOME,
+        past: [],
+        future: [section, ...future].slice(0, MAX_HISTORY),
+        navigating: true,
+      });
+      useEventStore.getState().setActiveSection(HOME);
+      return HOME;
+    }
+    if (current === null) return null;
     const target = past[past.length - 1];
     if (target === current) {
       set({ past: past.slice(0, -1) });
@@ -121,7 +142,8 @@ export interface SectionHistory {
  * path would cover one. "Back" returns to the previously visited section and
  * "forward" only re-applies an undone step: it stays disabled until a step was
  * undone, and any new visit clears the redo stack, because a section never
- * visited cannot be gone to.
+ * visited cannot be gone to. With no earlier visit, back still leads from any
+ * section to the front page, so there is always a way home.
  */
 export function useSectionHistory(): SectionHistory {
   const activeSection = useEventStore((s) => s.activeSection);
@@ -136,7 +158,7 @@ export function useSectionHistory(): SectionHistory {
   }, [activeSection, record]);
 
   return {
-    canGoBack: past.length > 0,
+    canGoBack: past.length > 0 || activeSection !== HOME,
     canGoForward: future.length > 0,
     goBack,
     goForward,

@@ -188,24 +188,41 @@ def save(shot: Appshot) -> bool:
     """Write a freshly taken appshot. Never raises; False when nothing was kept."""
     try:
         folder = _folder(shot.id)
-        ext = _EXTENSIONS.get(shot.mime, "jpg")
+        # The lossless copy when there is one: full resolution, PNG, the
+        # monitor's colour profile. The model's JPEG is the fallback.
+        lossless = bool(shot.original_png)
+        image = shot.original_png if lossless else shot.image
+        mime = "image/png" if lossless else shot.mime
+        ext = _EXTENSIONS.get(mime, "jpg")
+        width, height = _png_size(image) if lossless else (shot.width, shot.height)
         with _lock:
             folder.mkdir(parents=True, exist_ok=True)
             name = f"{_stem(shot.taken_at)}.{ext}"
-            (folder / name).write_bytes(shot.image)
+            (folder / name).write_bytes(image)
             meta = {
                 **_base_meta(shot),
                 "file": name,
-                "mime": shot.mime,
-                "width": shot.width,
-                "height": shot.height,
+                "mime": mime,
+                "width": width,
+                "height": height,
             }
+            if shot.hdr_png:
+                hdr_name = f"{_stem(shot.taken_at)}-hdr.png"
+                (folder / hdr_name).write_bytes(shot.hdr_png)
+                meta["hdr_file"] = hdr_name
             _write_meta(folder, meta)
             _prune()
         return True
     except (OSError, ValueError) as exc:
         log.warning("appshot library: could not keep the appshot (%s)", exc)
         return False
+
+
+def _png_size(png: bytes) -> tuple[int, int]:
+    """Width and height from a PNG's IHDR, without decoding it."""
+    import struct  # noqa: PLC0415
+
+    return struct.unpack(">II", png[16:24])
 
 
 def save_edit(shot: Appshot) -> bool:
@@ -410,9 +427,22 @@ def clear() -> int:
     return removed
 
 
-def _prune() -> None:
-    """Keep at most :data:`MAX_ENTRIES` appshots. Caller holds the lock."""
+def prune(keep: int) -> int:
+    """Keep only the newest ``keep`` appshots (``[appshot].keep_newest``).
+
+    ``0`` or anything above :data:`MAX_ENTRIES` keeps the usual cap. Returns
+    how many appshots were deleted.
+    """
+    with _lock:
+        return _prune(keep)
+
+
+def _prune(keep: int = 0) -> int:
+    """Keep at most ``keep`` (else :data:`MAX_ENTRIES`) appshots. Caller holds the lock."""
+    limit = keep if 0 < keep < MAX_ENTRIES else MAX_ENTRIES
     root = library_root()
+    if not root.is_dir():
+        return 0
     dated: list[tuple[float, Path]] = []
     for folder in root.iterdir():
         if not folder.is_dir() or not valid_id(folder.name):
@@ -420,11 +450,12 @@ def _prune() -> None:
         meta = _read_meta(folder) or {}
         taken = meta.get("taken_at", 0.0)
         dated.append((float(taken) if isinstance(taken, (int, float)) else 0.0, folder))
-    if len(dated) <= MAX_ENTRIES:
-        return
+    if len(dated) <= limit:
+        return 0
     dated.sort(key=lambda entry: entry[0])
-    for _taken, folder in dated[: len(dated) - MAX_ENTRIES]:
+    for _taken, folder in dated[: len(dated) - limit]:
         shutil.rmtree(folder, ignore_errors=True)
+    return len(dated) - limit
 
 
 __all__ = [
@@ -438,6 +469,7 @@ __all__ = [
     "library_root",
     "list_items",
     "load_shot",
+    "prune",
     "save",
     "save_edit",
     "set_root",

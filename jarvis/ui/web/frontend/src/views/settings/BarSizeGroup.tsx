@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Maximize2 } from "lucide-react";
 import { useBarSize } from "@/hooks/useBarSize";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
+import {
+  SettingsLinkButton,
+  SettingsRow,
+  SettingsValue,
+  settingsRangeCls,
+} from "@/views/settings/SettingsLayout";
 
 /**
  * "Bar size" slider inside the Settings view. Tunes how big the on-screen bar
@@ -119,46 +124,32 @@ export function BarSizeGroup() {
   const showReset = pct !== def;
 
   return (
-    <div className="mt-2 rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Maximize2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-4">
-            <h4 className="font-display text-sm font-semibold">
-              {t("settings_view.bar_size.title")}
-            </h4>
-            <span className="font-mono text-sm text-foreground-strong">{`${pct}%`}</span>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.bar_size.description")}
-          </p>
-
-          <input
-            type="range"
-            min={min}
-            max={max}
-            step={5}
-            value={pct}
-            disabled={loading}
-            onChange={(e) => onDrag(Number(e.target.value))}
-            onMouseUp={() => void commit(pct)}
-            onKeyUp={() => void commit(pct)}
-            onTouchEnd={() => void commit(pct)}
-            className="mt-4 w-full accent-primary disabled:opacity-50"
-          />
-
-          {showReset && (
-            <button
-              type="button"
-              onClick={onReset}
-              disabled={saving}
-              className="mt-3 text-micro text-muted-foreground underline hover:text-foreground disabled:opacity-50"
-            >
-              {t("settings_view.bar_size.reset")}
-            </button>
-          )}
+    <SettingsRow
+      title={t("settings_view.bar_size.title")}
+      description={t("settings_view.bar_size.description")}
+      control={<SettingsValue>{`${pct}%`}</SettingsValue>}
+    >
+      <input
+        type="range"
+        aria-label={t("settings_view.bar_size.title")}
+        min={min}
+        max={max}
+        step={5}
+        value={pct}
+        disabled={loading}
+        onChange={(e) => onDrag(Number(e.target.value))}
+        onMouseUp={() => void commit(pct)}
+        onKeyUp={() => void commit(pct)}
+        onTouchEnd={() => void commit(pct)}
+        className={settingsRangeCls}
+      />
+      {showReset && (
+        <div className="flex justify-end">
+          <SettingsLinkButton onClick={onReset} disabled={saving}>
+            {t("settings_view.bar_size.reset")}
+          </SettingsLinkButton>
         </div>
-      </div>
-    </div>
+      )}
+    </SettingsRow>
   );
 }

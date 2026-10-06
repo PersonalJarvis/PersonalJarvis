@@ -315,6 +315,9 @@ def reveal_project(request: Request, project_id: str) -> RevealedOut:
 class LauncherOut(BaseModel):
     id: str
     label: str
+    # False for a featured editor that is not on this computer: the menu still
+    # lists it, greyed out, so the user can see where the folder could open.
+    installed: bool = True
 
 
 class LaunchersOut(BaseModel):
@@ -332,6 +335,10 @@ class OpenInIn(BaseModel):
         max_length=40,
         description='An editor id from ``/launchers`` or ``"remote"``.',
     )
+
+
+# The editors the project menu always offers, in this order.
+_FEATURED_EDITORS = ("code", "cursor")
 
 
 def _require_folder(request: Request, project_id: str) -> str:
@@ -367,12 +374,22 @@ def project_launchers(request: Request, project_id: str) -> LaunchersOut:
     from jarvis.agentic_ide import project_links
     from jarvis.ui.web import outputs_routes
 
-    editor_ids = {oid for oid, _ in outputs_routes._OPENER_EDITORS}
-    editors = [
-        LauncherOut(id=entry["id"], label=entry["label"])
-        for entry in outputs_routes._available_openers()
-        if entry["id"] in editor_ids
+    labels = dict(outputs_routes._OPENER_EDITORS)
+    installed = [
+        entry["id"] for entry in outputs_routes._available_openers() if entry["id"] in labels
     ]
+    # VS Code and Cursor are always listed, installed or not. Another editor
+    # only stands in when neither of them is on this computer.
+    editors = [
+        LauncherOut(id=oid, label=labels[oid], installed=oid in installed)
+        for oid in _FEATURED_EDITORS
+    ]
+    if not any(editor.installed for editor in editors):
+        editors += [
+            LauncherOut(id=oid, label=labels[oid])
+            for oid in installed
+            if oid not in _FEATURED_EDITORS
+        ][:2]
     remote = project_links.remote_web_url(folder)
     return LaunchersOut(
         file_manager=True,

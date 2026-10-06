@@ -1,12 +1,12 @@
 import {
   Eye,
-  FilePen,
+  FilePenLine,
+  Hand,
   NotebookPen,
-  ShieldCheck,
-  ShieldOff,
-  ShieldQuestion,
-  ShieldX,
-  Sparkles,
+  Shield,
+  ShieldAlert,
+  ShieldBan,
+  WandSparkles,
   type LucideIcon,
 } from "lucide-react";
 
@@ -20,30 +20,38 @@ import {
  * `read-only`, `full-access`, …). Several of those mean the same thing, so
  * they wear the same glyph — a person who learned "the pen means edits go
  * through" recognises it on every provider. Anything unknown falls back to
- * the column's shield so a new ladder entry is never blank.
+ * a plain shield so a new ladder entry is never blank.
  */
 const GLYPHS: Record<string, LucideIcon> = {
-  // Ask before acting.
-  ask: ShieldQuestion,
-  default: ShieldQuestion,
-  "approve-for-me": ShieldQuestion,
+  // Stops and asks before acting.
+  ask: Hand,
+  default: Hand,
+  "approve-for-me": Hand,
   // Edits go through, everything else asks.
-  "accept-edits": FilePen,
-  acceptEdits: FilePen,
-  // Nothing asks.
-  bypass: ShieldOff,
-  bypassPermissions: ShieldOff,
-  "full-access": ShieldOff,
-  "skip-permissions": ShieldOff,
+  "accept-edits": FilePenLine,
+  acceptEdits: FilePenLine,
+  // Nothing asks — the one stance that deserves a warning sign.
+  bypass: ShieldAlert,
+  bypassPermissions: ShieldAlert,
+  "full-access": ShieldAlert,
+  "skip-permissions": ShieldAlert,
   // Reads and plans, changes nothing.
   plan: NotebookPen,
   "read-only": Eye,
   // The runner decides on its own.
-  auto: Sparkles,
+  auto: WandSparkles,
   // Never asks — and refuses what it would have asked about.
-  dontAsk: ShieldX,
+  dontAsk: ShieldBan,
 };
 
+/** Stances in which nothing stops to ask: the agent may change anything. */
+const UNGUARDED = new Set(["bypass", "bypassPermissions", "full-access", "skip-permissions"]);
+
 export function permissionModeIcon(id: string): LucideIcon {
-  return GLYPHS[id] ?? ShieldCheck;
+  return GLYPHS[id] ?? Shield;
+}
+
+/** True for a mode that lets the agent act with no approval at all. */
+export function isUnguardedPermissionMode(id: string): boolean {
+  return UNGUARDED.has(id);
 }

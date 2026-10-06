@@ -13,3 +13,16 @@ docs/licensing.md and the license files shipped beside them, for example
 jarvis/assets/vad/LICENSE for the Silero VAD model, and
 third_party/hermes-agent/LICENSE for portions adapted from
 NousResearch/hermes-agent (MIT, Copyright (c) 2025 Nous Research).
+
+The Agentic IDE thread work log (jarvis/ui/web/frontend/src/components/agentic/threads/
+threadWork.ts, ThreadTimeline.tsx and the live-tool-shine rule in src/index.css)
+contains portions adapted from T3 Code (https://github.com/pingdotgg/t3code),
+Copyright (c) 2026 T3 Tools Inc., used under the MIT License - see
+third_party/t3code/LICENSE.
+
+The Agentic IDE explorer's file-type icons (jarvis/ui/web/frontend/src/components/
+agentic/sidePanel/explorer/fileIconSprite.ts and fileIcon.ts) contain SVG symbols
+and file-name rules from @pierre/trees (https://www.npmjs.com/package/@pierre/trees),
+Copyright 2025 Pierre Computer Company, used under the Apache License, Version 2.0 -
+see third_party/pierre-trees/LICENSE - and a colour table adapted from T3 Code under
+the MIT License.

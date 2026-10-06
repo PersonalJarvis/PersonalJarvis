@@ -38,6 +38,8 @@ export interface JarvisXSettings {
   copy_to_clipboard: boolean;
   sound: boolean;
   effect: boolean;
+  /** Keep only the newest N screenshots and N recordings; 0 = keep all. Absent on an older backend. */
+  keep_newest?: number;
   recording_available: boolean;
   recording_detail: string;
   shortcuts: Partial<Record<string, JarvisXShortcutStatus>>;
@@ -53,6 +55,7 @@ export type JarvisXSettingsPatch = Partial<
     | "copy_to_clipboard"
     | "sound"
     | "effect"
+    | "keep_newest"
   >
 > & { hotkeys?: Partial<Record<JarvisXHotkeyAction, string>> };
 

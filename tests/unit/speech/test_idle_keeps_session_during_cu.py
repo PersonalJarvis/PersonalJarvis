@@ -26,6 +26,7 @@ from jarvis.harness.computer_use_context import (
     register_active_cu_token,
 )
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -85,7 +86,9 @@ def test_cu_mission_active_false_for_cancelled_token() -> None:
 
 
 def _pipeline(bus: EventBus) -> SpeechPipeline:
-    return SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    return open_classic_voice_session(
+        SpeechPipeline(tts=FakeTTS(), bus=bus, enable_whisper_wake=False)
+    )
 
 
 @pytest.mark.asyncio

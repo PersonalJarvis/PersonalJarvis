@@ -179,6 +179,8 @@ export const ROOM_FLOOR_COLOURS = {
   foyer: { base: "#24202e", accents: ["#2c2838", "#1d1a26"] },
   prizes: { base: "#3a1838", accents: ["#431c41", "#33152f"] },
   snack: { base: "#5a1e22", accents: ["#e9e2d6", "#4c191c"] },
+  // Level Hall: deep midnight-blue polished stone with gold veins.
+  levels: { base: "#e7e0d0", accents: ["#e7e0d0", "#2b2d33", "#bdb3a0", "#b8964f"] },
 } as const;
 
 /** Checkpoint gold: floor ring, hexagon token and the label badge. */

@@ -12,25 +12,29 @@
  * these through `useKeybinds()`, which reads the live configuration, so what
  * the overlay shows is by construction what the backend has registered.
  *
- * A **fixed** entry carries its chord, because the chord is compiled into the
- * frontend and cannot be rebound. Those chords ARE duplicated from the modules
- * that implement them — there is no way to run a matcher backwards to recover
- * the keys it accepts. `shortcutRegistry.test.ts` closes that gap instead: it
- * feeds every chord declared here to the real matcher and asserts the real
- * matcher agrees. Change the implementation without changing this file and the
- * test fails, which is the drift protection the copy would otherwise lack.
+ * An **app** entry is an in-window chord stored per device (the quick
+ * switcher, the zoom steps, the overview, the IDE key menu). It carries no keys
+ * either: the renderer reads the live setting, including whether it is off.
  *
  * Entries are grouped by area so the overlay can render sections without a
  * second ordering table.
  */
 import type { KeybindAction } from "@/hooks/useHotkey";
+import type { AppChordId } from "@/lib/appChords";
 
 export type ShortcutArea = "voice" | "workspace";
+
+/**
+ * Where a shortcut fires: anywhere on the computer (a global OS hotkey), only
+ * while the Jarvis window is in front, or only inside an agent terminal.
+ */
+export type ShortcutScope = "global" | "window" | "terminal";
 
 interface ShortcutBase {
   /** i18n key for the one-line description. */
   labelKey: string;
   area: ShortcutArea;
+  scope: ShortcutScope;
 }
 
 export interface RebindableShortcut extends ShortcutBase {
@@ -39,115 +43,101 @@ export interface RebindableShortcut extends ShortcutBase {
   action: KeybindAction;
 }
 
-export interface FixedShortcut extends ShortcutBase {
-  kind: "fixed";
-  /**
-   * Key tokens, in press order, as the overlay should draw them. `Mod` renders
-   * as ⌘ on Apple keyboards and Ctrl everywhere else — the platform split the
-   * implementing modules already make.
-   */
-  keys: string[];
-  /**
-   * Alternative spellings of the same chord on other layouts, drawn as a
-   * secondary line. `+` is its own key on a German board but Shift+`=` on a US
-   * one, and an overlay that names only one of them is wrong for half its
-   * readers.
-   */
-  alternateKeys?: string[][];
-}
-
 /**
- * An in-app shortcut whose chord is a per-device preference (the quick
- * switcher, the whole-app zoom). Like a rebindable entry it carries no keys —
- * the overlay reads the live setting, including whether the shortcut is
- * switched off.
+ * An in-app shortcut whose chord is a per-device preference: the quick
+ * switcher, the whole-app zoom, and the chords of ./appChords. Like a
+ * rebindable entry it carries no keys — the overlay reads the live setting,
+ * including whether the shortcut is switched off.
  */
 export interface AppSettingShortcut extends ShortcutBase {
   kind: "app";
-  setting: "quick_switch" | "app_zoom_in" | "app_zoom_out" | "app_zoom_reset";
+  setting: "quick_switch" | "app_zoom_in" | "app_zoom_out" | "app_zoom_reset" | AppChordId;
 }
 
-export type Shortcut = RebindableShortcut | FixedShortcut | AppSettingShortcut;
+export type Shortcut = RebindableShortcut | AppSettingShortcut;
 
 export const SHORTCUTS: readonly Shortcut[] = [
   // ── Voice — every one of these is rebindable in Settings ───────────────
-  { kind: "rebindable", area: "voice", action: "dictate", labelKey: "shortcut_overlay.voice.dictate" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "dictate", labelKey: "shortcut_overlay.voice.dictate" },
   {
     kind: "rebindable",
     area: "voice",
+    scope: "global",
     action: "dictate_toggle",
     labelKey: "shortcut_overlay.voice.dictate_toggle",
   },
-  { kind: "rebindable", area: "voice", action: "call", labelKey: "shortcut_overlay.voice.call" },
-  { kind: "rebindable", area: "voice", action: "hangup", labelKey: "shortcut_overlay.voice.hangup" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "call", labelKey: "shortcut_overlay.voice.call" },
+  { kind: "rebindable", area: "voice", scope: "global", action: "hangup", labelKey: "shortcut_overlay.voice.hangup" },
   {
     kind: "rebindable",
     area: "voice",
+    scope: "global",
     action: "paste_last",
     labelKey: "shortcut_overlay.voice.paste_last",
   },
 
-  // ── Workspace — fixed chords, verified against their matcher by the test ──
-  {
-    kind: "fixed",
-    area: "workspace",
-    keys: ["Mod", "+"],
-    alternateKeys: [["Mod", "="]],
-    labelKey: "shortcut_overlay.workspace.zoom_in",
-  },
-  {
-    kind: "fixed",
-    area: "workspace",
-    keys: ["Mod", "-"],
-    alternateKeys: [["Mod", "_"]],
-    labelKey: "shortcut_overlay.workspace.zoom_out",
-  },
-  {
-    kind: "fixed",
-    area: "workspace",
-    keys: ["Mod", "0"],
-    labelKey: "shortcut_overlay.workspace.zoom_reset",
-  },
-  {
-    kind: "fixed",
-    area: "workspace",
-    keys: ["?"],
-    labelKey: "shortcut_overlay.workspace.open_overlay",
-  },
-  {
-    kind: "fixed",
-    area: "workspace",
-    keys: ["Ctrl", "B"],
-    labelKey: "shortcut_overlay.workspace.ide_menu",
-  },
+  // ── Workspace — per-device chords, changed under Settings ───────────────
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "quick_switch",
     labelKey: "shortcut_overlay.workspace.quick_switch",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_in",
     labelKey: "shortcut_overlay.workspace.app_zoom_in",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_out",
     labelKey: "shortcut_overlay.workspace.app_zoom_out",
   },
   {
     kind: "app",
     area: "workspace",
+    scope: "window",
     setting: "app_zoom_reset",
     labelKey: "shortcut_overlay.workspace.app_zoom_reset",
   },
   {
-    kind: "fixed",
+    kind: "app",
     area: "workspace",
-    keys: ["Ctrl", "B"],
+    scope: "window",
+    setting: "shortcut_overlay",
+    labelKey: "shortcut_overlay.workspace.open_overlay",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    scope: "terminal",
+    setting: "terminal_zoom_in",
+    labelKey: "shortcut_overlay.workspace.zoom_in",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    scope: "terminal",
+    setting: "terminal_zoom_out",
+    labelKey: "shortcut_overlay.workspace.zoom_out",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    scope: "terminal",
+    setting: "terminal_zoom_reset",
+    labelKey: "shortcut_overlay.workspace.zoom_reset",
+  },
+  {
+    kind: "app",
+    area: "workspace",
+    scope: "terminal",
+    setting: "ide_menu",
     labelKey: "shortcut_overlay.workspace.ide_menu",
   },
 ] as const;

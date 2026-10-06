@@ -31,7 +31,7 @@ export function JarvisHistoryRail() {
   const sessions = useAgentChatStore((s) => s.sessions);
   const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
   const loadSessions = useAgentChatStore((s) => s.loadSessions);
-  const { conversations, openConversation, refresh } = useConversations({ poll: true });
+  const { conversations, openConversation, reopenLiveConversation, refresh } = useConversations({ poll: true });
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
@@ -49,10 +49,15 @@ export function JarvisHistoryRail() {
   };
 
   const openVoice = async (voiceId: string) => {
+    if (reopenLiveConversation(voiceId)) {
+      setJarvisCardMode("voice");
+      return;
+    }
     useAgentChatStore.getState().newChat();
     useHomeStore.getState().seedTranscript([]);
     setJarvisCardMode("voice");
     const messages = await openConversation("voice", voiceId);
+    if (messages === null) return;
     const active = useEventStore.getState();
     if (active.activeKind !== "voice" || active.activeThreadId !== voiceId) return;
     useHomeStore.getState().seedTranscript(transcriptFromMessages(messages));

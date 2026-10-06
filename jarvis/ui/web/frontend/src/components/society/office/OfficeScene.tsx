@@ -31,6 +31,7 @@ import { TeamBoardFace } from "./TeamBoardFace";
 import { TeamRoomFittings } from "./TeamRoomDecor";
 import { BreakLoungeFittings } from "./BreakLounge";
 import { WardrobeFittings } from "./WardrobeRoom";
+import { LevelHallFittings } from "./LevelHall";
 import { LobbyFittings } from "./LobbyDecor";
 import { SpawnFittings } from "./SpawnPoint";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
@@ -47,6 +48,7 @@ import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { CODING_SCENE, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
+import { ProgressionLayer } from "../progression/ProgressionLayer";
 
 /** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
 const PLAYER_OWNER = { current: playerBody };
@@ -157,6 +159,8 @@ export function OfficeScene(props: OfficeSceneProps) {
       )}
       {/* Upstairs the person's pet comes along: to the coding floor and to play in the arcade. */}
       {floor !== "agents" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
+      {/* Levels: what everyone wears, level-up bursts and "+XP"; after the walkers, so it reads this frame's positions. */}
+      <ProgressionLayer awake={awake} reduced={reduced} />
       <OfficeCameraRig layout={layout} overview={overview} />
     </>
   );
@@ -186,6 +190,8 @@ function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awak
   const wardrobeRug = layout.furniture.find((f) => f.kind === "roundRug" && f.room === "wardrobe");
   const lobbyLamp = layout.furniture.find((f) => f.kind === "lobbyLamp");
   const spawnTerminal = layout.furniture.find((f) => f.kind === "spawnTerminal");
+  const levelStage = layout.furniture.find((f) => f.kind === "studioStage");
+  const levelGuide = layout.furniture.find((f) => f.kind === "levelGuide") ?? null;
   return (
     <>
       <primitive attach="background" object={background} />
@@ -223,6 +229,7 @@ function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awak
       {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
       {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}
+      {levelStage && <LevelHallFittings stage={levelStage} guide={levelGuide} />}
       {lobbyLamp && <LobbyFittings lamp={lobbyLamp} />}
       {spawnTerminal && <SpawnFittings terminal={spawnTerminal} arrival={layout.arrival} floor={floor} newcomers={newcomers} animate={awake && !reduced} />}
     </>

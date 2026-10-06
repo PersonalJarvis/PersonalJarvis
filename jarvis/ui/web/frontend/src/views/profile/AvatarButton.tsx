@@ -24,11 +24,14 @@ export function AvatarButton({
   name,
   hasAvatar,
   size = "md",
+  shape = "circle",
 }: {
   name: string | null;
   hasAvatar: boolean;
   /** `xl` is the profile header; `md` keeps the old 56 px for anywhere else. */
   size?: "md" | "lg" | "xl";
+  /** The profile header draws the photo as a rounded square. */
+  shape?: "circle" | "rounded";
 }) {
   const t = useT();
   const queryClient = useQueryClient();
@@ -79,6 +82,7 @@ export function AvatarButton({
   const busy = upload.isPending || remove.isPending;
   const box = size === "xl" ? "h-20 w-20" : size === "lg" ? "h-16 w-16" : "h-14 w-14";
   const title = hasAvatar ? t("profile_view.avatar_change") : t("profile_view.avatar_upload");
+  const round = shape === "rounded" ? "rounded-3xl" : "rounded-full";
 
   return (
     <div className="group/avatar relative shrink-0">
@@ -98,7 +102,8 @@ export function AvatarButton({
         title={title}
         aria-label={title}
         className={cn(
-          "relative flex items-center justify-center overflow-hidden rounded-full bg-secondary transition-colors",
+          "relative flex items-center justify-center overflow-hidden bg-secondary transition-colors",
+          round,
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50",
           box,
         )}
@@ -111,7 +116,7 @@ export function AvatarButton({
             size="lg"
             src={hasAvatar ? `/api/profile/avatar?t=${bust}` : null}
             alt={t("profile_view.avatar_alt")}
-            className={size === "xl" ? "h-full w-full text-2xl" : undefined}
+            className={cn(size === "xl" && "h-full w-full text-2xl", round)}
           />
         ) : hasAvatar ? (
           <img
@@ -124,12 +129,12 @@ export function AvatarButton({
           <UserCircle2 aria-hidden className={cn("text-muted-foreground", size === "xl" ? "h-9 w-9" : "h-6 w-6")} />
         )}
 
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-scrim/70 opacity-0 transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100">
+        <span className={cn("pointer-events-none absolute inset-0 flex items-center justify-center bg-scrim/70", round, "opacity-0 transition-opacity duration-200 group-hover/avatar:opacity-100 group-focus-visible/avatar:opacity-100")}>
           <Camera aria-hidden className="h-4 w-4 text-foreground-strong" />
         </span>
 
         {busy && (
-          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-scrim/70">
+          <span className={cn("absolute inset-0 flex items-center justify-center bg-scrim/70", round)}>
             <Loader2 aria-hidden className="h-4 w-4 animate-spin text-foreground-strong" />
           </span>
         )}

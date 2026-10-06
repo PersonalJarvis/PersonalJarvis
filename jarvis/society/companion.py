@@ -1,9 +1,14 @@
 """Validated visual companion settings inside the existing avatar JSON envelope."""
 
 import secrets
-from typing import Any, Final, Literal
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+# Mirrors ACCESSORY_SLOTS in the frontend catalog (parity test pins it). Item ids
+# stay open-ended so a look saved by a newer build survives an older one.
+AccessorySlot = Literal["back", "outfit", "neck", "mouth", "face", "head", "held"]
+AccessoryId = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,40}$")]
 
 #: Mirrors ``COMPANION_SHAPES`` / ``COMPANION_COLORS`` in the frontend's
 #: ``components/society/companion/appearance.ts`` (parity test pins both).
@@ -24,6 +29,7 @@ class CompanionAppearance(BaseModel):
     color: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     eyes: Literal["dots", "lines"] = "dots"
     enabled: bool = True
+    accessories: dict[AccessorySlot, AccessoryId] = Field(default_factory=dict)
     sizeM: float = Field(default=0.5, ge=0.25, le=0.8)
     followDistanceM: float = Field(default=1.0, ge=0.5, le=2.0)
 
@@ -31,16 +37,23 @@ class CompanionAppearance(BaseModel):
 def random_companion() -> dict[str, Any]:
     """A random, valid companion look for a newly created agent."""
     rng = secrets.SystemRandom()
-    return CompanionAppearance(
+    look = CompanionAppearance(
         shape=rng.choice(COMPANION_SHAPES),  # type: ignore[arg-type]
         color=rng.choice(COMPANION_COLORS),
         eyes=rng.choice(("dots", "lines")),  # type: ignore[arg-type]
     ).model_dump()
+    # A new agent wears nothing yet; store it the way a bare look is stored.
+    if not look.get("accessories"):
+        look.pop("accessories", None)
+    return look
 
 
 def validate_avatar_companion(avatar: dict[str, Any]) -> dict[str, Any]:
     """Preserve character/import fields verbatim; validate only our namespace."""
     if "companion" not in avatar:
         return avatar
-    companion = CompanionAppearance.model_validate(avatar["companion"])
-    return {**avatar, "companion": companion.model_dump()}
+    companion = CompanionAppearance.model_validate(avatar["companion"]).model_dump()
+    # A bare look stays byte-identical to what builds without accessories stored.
+    if not companion["accessories"]:
+        del companion["accessories"]
+    return {**avatar, "companion": companion}

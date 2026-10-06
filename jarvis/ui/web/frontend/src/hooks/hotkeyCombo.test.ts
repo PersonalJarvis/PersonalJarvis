@@ -92,6 +92,7 @@ describe("codeToModifierToken", () => {
     expect(codeToModifierToken("ShiftRight")).toBe("shift");
     expect(codeToModifierToken("AltLeft")).toBe("alt");
     expect(codeToModifierToken("AltRight")).toBe("right_alt");
+    expect(codeToModifierToken("AltGraph")).toBe("right_alt");
     expect(codeToModifierToken("MetaLeft", "pc")).toBe("win");
   });
 
