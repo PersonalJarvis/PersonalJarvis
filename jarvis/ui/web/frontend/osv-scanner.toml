@@ -1,0 +1,33 @@
+# osv-scanner exceptions for package-lock.json in this folder.
+#
+# Every entry is a build-time-only (devDependencies) package with no fixed
+# release reachable from our toolchain. None of them ships in the prebuilt
+# bundle or runs inside the app: they parse our own CSS and source globs
+# while `npm run build` runs, so the attacker-controlled input each advisory
+# needs never reaches them. `ignoreUntil` forces a fresh review.
+
+# braces: stack exhaustion on deeply nested brace patterns. 3.0.3 is the
+# last release and the advisory lists no fix. Pulled by chokidar/micromatch
+# (Tailwind's file watcher) with globs from tailwind.config.
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2027-01-06
+reason = "Dev-only build dependency, no fixed release; only our own config globs reach it."
+
+[[IgnoredVulns]]
+id = "CVE-2026-93687"
+ignoreUntil = 2027-01-06
+reason = "Alias of GHSA-vfj7-8cjw-p6xm."
+
+# postcss-selector-parser: quadratic parsing of flat selectors, fixed in
+# 7.1.6. Tailwind CSS 3 (^6.1.2) and @tailwindcss/typography (pins 6.0.10)
+# require the 6.x line; it only parses the selectors in our own stylesheets.
+[[IgnoredVulns]]
+id = "GHSA-rj75-hqrm-r3gf"
+ignoreUntil = 2027-01-06
+reason = "Dev-only build dependency; the fix is 7.x, which Tailwind CSS 3 cannot use; parses only our own CSS."
+
+[[IgnoredVulns]]
+id = "CVE-2026-104844"
+ignoreUntil = 2027-01-06
+reason = "Alias of GHSA-rj75-hqrm-r3gf."
