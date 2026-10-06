@@ -16,6 +16,7 @@ from jarvis.agentic_ide.file_editing import (
     EditConflict,
     EditError,
     TrashUnavailable,
+    copy_entry,
     create_entry,
     delete_entry,
     list_files,
@@ -230,6 +231,23 @@ def test_create_rename_and_permanent_delete(tmp_path: Path) -> None:
 
     assert delete_entry(tmp_path, "src", permanent=True) is False
     assert not (tmp_path / "src").exists()
+
+
+def test_copy_files_and_folders_with_free_names(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "lib").mkdir()
+
+    assert copy_entry(tmp_path, "src/a.py", "lib/a.py") == "lib/a.py"
+    with pytest.raises(EditError):
+        copy_entry(tmp_path, "src/a.py", "lib/a.py")
+    assert copy_entry(tmp_path, "src/a.py", "src/a.py", unique=True) == "src/a copy.py"
+    assert copy_entry(tmp_path, "src/a.py", "src/a.py", unique=True) == "src/a copy 2.py"
+
+    assert copy_entry(tmp_path, "src", "lib/src") == "lib/src"
+    assert (tmp_path / "lib" / "src" / "a copy.py").read_text(encoding="utf-8") == "x"
+    with pytest.raises(EditError):
+        copy_entry(tmp_path, "src", "src/inner")
 
 
 def test_delete_without_trash_asks_for_a_permanent_delete(

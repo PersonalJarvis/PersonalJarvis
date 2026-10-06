@@ -47,6 +47,7 @@ __all__ = [
     "EditError",
     "TextFile",
     "TrashUnavailable",
+    "copy_entry",
     "create_entry",
     "delete_entry",
     "file_version",
@@ -447,6 +448,52 @@ def rename_entry(root: str | os.PathLike[str], source: str, destination: str) ->
         raise EditError("The destination folder does not exist.")
     os.replace(source_path, target)
     return relative
+
+
+def _free_name(target: Path) -> Path:
+    """``name copy.ext``, ``name copy 2.ext``, … — the first that is free."""
+    if not (target.exists() or target.is_symlink()):
+        return target
+    stem, suffix = target.stem, target.suffix
+    if target.is_dir():
+        stem, suffix = target.name, ""
+    for number in range(1, 1000):
+        label = " copy" if number == 1 else f" copy {number}"
+        candidate = target.with_name(f"{stem}{label}{suffix}")
+        if not (candidate.exists() or candidate.is_symlink()):
+            return candidate
+    raise EditError("There are too many copies with that name already.")
+
+
+def copy_entry(
+    root: str | os.PathLike[str], source: str, destination: str, *, unique: bool = False
+) -> str:
+    """Copy a file or folder inside the workspace; returns the new path.
+
+    With ``unique`` an existing destination gets a free "copy" name instead of
+    refusing, the way pasting into the same folder works in a file manager.
+    Symlinks are copied as links, never followed out of the workspace.
+    """
+    _, source_path = _resolve_entry(root, source)
+    _, target = _resolve_entry(root, destination)
+    if not (source_path.is_symlink() or source_path.exists()):
+        raise EditError("That file or folder no longer exists.")
+    if not target.parent.is_dir():
+        raise EditError("The destination folder does not exist.")
+    if target.exists() or target.is_symlink():
+        if not unique:
+            raise EditError("Something with that name already exists.")
+        target = _free_name(target)
+    is_folder = source_path.is_dir() and not source_path.is_symlink()
+    if is_folder:
+        source_key = os.path.normcase(str(source_path))
+        if os.path.normcase(os.path.realpath(target)).startswith(source_key + os.sep):
+            raise EditError("A folder cannot be copied into itself.")
+        shutil.copytree(source_path, target, symlinks=True)
+    else:
+        shutil.copy2(source_path, target, follow_symlinks=False)
+    real_root = Path(os.path.realpath(os.fspath(root)))
+    return target.relative_to(real_root).as_posix()
 
 
 #: Quick Open lists at most this many paths; a home directory opened as a

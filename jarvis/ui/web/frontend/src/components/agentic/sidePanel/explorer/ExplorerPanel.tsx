@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type
 import {
   ChevronRight,
   ChevronsDownUp,
+  ClipboardPaste,
   Copy,
+  CopyPlus,
   ExternalLink,
   FilePlus,
   Folder,
@@ -12,6 +14,7 @@ import {
   Loader2,
   Pencil,
   RefreshCw,
+  Scissors,
   Search,
   SquareArrowOutUpRight,
   SquarePen,
@@ -28,7 +31,7 @@ import {
 } from "@/lib/agenticIdeApi";
 import { setWorkspaceDragPaths } from "@/components/agentic/paneDrop";
 import { AgentMark } from "@/components/agentic/AgentMark";
-import { createEntry, deleteEntry, moveEntry, TrashUnavailableError } from "@/components/agentic/editor/editorApi";
+import { copyEntry, createEntry, deleteEntry, moveEntry, TrashUnavailableError } from "@/components/agentic/editor/editorApi";
 import { moveModels } from "@/components/agentic/editor/editorModels";
 import { forgetFileList } from "@/components/agentic/editor/QuickOpen";
 import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
@@ -72,14 +75,27 @@ const baseName = (path: string) => path.split("/").filter(Boolean).pop() ?? path
 const parentPath = (path: string) => path.split("/").slice(0, -1).join("/");
 const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}` : name);
 
-/** Start a drag that a terminal pane turns into a file reference. */
-function startFileDrag(event: DragEvent, absolute: string): void {
-  if (!setWorkspaceDragPaths(event.dataTransfer, [absolute])) {
+/** The tree's own drag payload: the workspace paths being moved. */
+const EXPLORER_DRAG_TYPE = "application/x-jarvis-explorer-paths";
+
+/**
+ * Start a drag that a terminal pane turns into file references, and that a
+ * folder in the tree turns into a move (`moving` lists the workspace paths).
+ */
+function startFileDrag(event: DragEvent, absolute: string | string[], moving?: string[]): void {
+  const paths = Array.isArray(absolute) ? absolute : [absolute];
+  if (!setWorkspaceDragPaths(event.dataTransfer, paths)) {
     event.preventDefault();
     return;
   }
-  event.dataTransfer.setData("text/plain", absolute);
-  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("text/plain", paths.join("\n"));
+  if (moving) event.dataTransfer.setData(EXPLORER_DRAG_TYPE, JSON.stringify(moving));
+  event.dataTransfer.effectAllowed = moving ? "copyMove" : "copy";
+}
+
+/** Drop the paths that lie inside another listed path: moving the folder moves them. */
+function topLevel(paths: string[]): string[] {
+  return paths.filter((path) => !paths.some((other) => other !== path && isUnder(path, other)));
 }
 
 function useWorkspaceChanges(workspaceId: string | null) {
@@ -530,7 +546,13 @@ function FileTree({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [focused, setFocused] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ path: string; isDirectory: boolean } | null>(null);
-  const [confirm, setConfirm] = useState<{ path: string; isDirectory: boolean; permanent: boolean } | null>(null);
+  const [confirm, setConfirm] = useState<{ paths: string[]; isDirectory: boolean; permanent: boolean } | null>(null);
+  // Several rows can be selected (Ctrl/Cmd+click, Shift+click) for delete,
+  // cut/copy/paste and drag; a plain click selects one row again.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const anchorRef = useRef<string | null>(null);
+  const [clip, setClip] = useState<{ paths: string[]; cut: boolean } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const menuAnchor = useRef<HTMLElement | null>(null);
   const list = useRef<HTMLUListElement>(null);
   const loaded = useRef<Set<string>>(new Set());
@@ -669,17 +691,16 @@ function FileTree({
     }
   };
 
-  const rename = async (path: string, name: string) => {
-    setRenaming(null);
+  /** Rename or move one entry; open buffers, tabs and open folders follow it. */
+  const moveTo = async (path: string, destination: string): Promise<string | null> => {
     const saving = Object.values(useCodeEditorStore.getState().files).some(
       (file) => file.workspaceId === workspaceId && file.saving && isUnder(file.path, path),
     );
     // A save in flight would land under the old name; wait for it.
     if (saving) {
       pushToast("error", t("ide_side_panel.explorer.busy_saving"));
-      return;
+      return null;
     }
-    const destination = joinPath(parentPath(path), name);
     try {
       const moved = await moveEntry(workspaceId, path, destination);
       forgetFileList(workspaceId);
@@ -692,25 +713,79 @@ function FileTree({
       });
       loaded.current = new Set([...loaded.current].filter((entry) => !isUnder(entry, path)));
       await load(parentPath(path));
-      setFocused(moved.path);
+      if (parentPath(moved.path) !== parentPath(path)) await load(parentPath(moved.path));
+      return moved.path;
     } catch (err) {
       fail(err);
+      return null;
     }
   };
 
-  const remove = async (path: string, permanent: boolean) => {
-    setConfirm(null);
-    try {
-      await deleteEntry(workspaceId, path, permanent);
-      forgetFileList(workspaceId);
-      editor.markDeleted(workspaceId, path);
-      await load(parentPath(path));
-    } catch (err) {
-      if (err instanceof TrashUnavailableError) {
-        const isDirectory = (children[parentPath(path)] ?? []).find((entry) => entry.path === path)?.is_directory ?? false;
-        setConfirm({ path, isDirectory, permanent: true });
-      } else fail(err);
+  const rename = async (path: string, name: string) => {
+    setRenaming(null);
+    const moved = await moveTo(path, joinPath(parentPath(path), name));
+    if (moved) setFocused(moved);
+  };
+
+  const isDirectory = (path: string) =>
+    (children[parentPath(path)] ?? []).find((entry) => entry.path === path)?.is_directory ?? false;
+  /** The folder a paste or a drop lands in: the folder itself, or a file's folder. */
+  const folderFor = (path: string | null) => (!path ? "" : isDirectory(path) ? path : parentPath(path));
+  /** What an action on `path` covers: the whole selection when the row is part of it. */
+  const selectionFor = (path: string) => (selected.has(path) && selected.size > 1 ? topLevel([...selected]) : [path]);
+
+  const moveInto = async (paths: string[], folder: string) => {
+    let last: string | null = null;
+    for (const path of topLevel(paths)) {
+      if (parentPath(path) === folder || isUnder(folder, path)) continue;
+      last = (await moveTo(path, joinPath(folder, baseName(path)))) ?? last;
     }
+    if (folder) expand(folder);
+    if (last) {
+      setFocused(last);
+      setSelected(new Set([last]));
+    }
+  };
+
+  const paste = async (folder: string) => {
+    if (!clip) return;
+    if (clip.cut) {
+      await moveInto(clip.paths, folder);
+      setClip(null);
+      return;
+    }
+    let last: string | null = null;
+    for (const path of topLevel(clip.paths)) {
+      try {
+        last = (await copyEntry(workspaceId, path, joinPath(folder, baseName(path)), true)).path;
+      } catch (err) {
+        fail(err);
+      }
+    }
+    forgetFileList(workspaceId);
+    await load(folder);
+    if (folder) expand(folder);
+    if (last) setFocused(last);
+  };
+
+  const remove = async (paths: string[], permanent: boolean) => {
+    setConfirm(null);
+    for (const [index, path] of paths.entries()) {
+      try {
+        await deleteEntry(workspaceId, path, permanent);
+        editor.markDeleted(workspaceId, path);
+      } catch (err) {
+        if (err instanceof TrashUnavailableError) {
+          // No trash on this computer: ask once for the rest, permanently.
+          setConfirm({ paths: paths.slice(index), isDirectory: isDirectory(path), permanent: true });
+          break;
+        }
+        fail(err);
+      }
+    }
+    forgetFileList(workspaceId);
+    setSelected(new Set());
+    for (const folder of new Set(paths.map(parentPath))) await load(folder);
   };
 
   const copy = (text: string) => void navigator.clipboard?.writeText(text).catch(fail);
@@ -736,7 +811,17 @@ function FileTree({
       setRenaming(item.path);
     } else if (event.key === "Delete") {
       event.preventDefault();
-      setConfirm({ path: item.path, isDirectory: item.is_directory, permanent: false });
+      setConfirm({ paths: selectionFor(item.path), isDirectory: item.is_directory, permanent: false });
+    } else if ((event.ctrlKey || event.metaKey) && ["c", "x"].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      setClip({ paths: selectionFor(item.path), cut: event.key.toLowerCase() === "x" });
+    } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v") {
+      event.preventDefault();
+      void paste(folderFor(item.path));
+    } else if (event.key === "Escape" && (selected.size > 1 || clip)) {
+      event.preventDefault();
+      setSelected(new Set([item.path]));
+      setClip(null);
     } else if (event.key === "ArrowRight" && item.is_directory && !expanded.has(item.path)) {
       event.preventDefault();
       expand(item.path);
@@ -784,9 +869,27 @@ function FileTree({
         // A click on the empty space below the rows clears the selection, so
         // New File / New Folder go to the workspace root again.
         onClick={(event) => {
-          if (event.target === event.currentTarget) setFocused(null);
+          if (event.target === event.currentTarget) {
+            setFocused(null);
+            setSelected(new Set());
+          }
         }}
         onContextMenu={(event) => openMenu(event, "", true)}
+        // Dropped on the empty space below the rows: into the workspace root.
+        onDragOver={(event) => {
+          if (event.target !== event.currentTarget || !event.dataTransfer.types.includes(EXPLORER_DRAG_TYPE)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setDropTarget("");
+        }}
+        onDragLeave={() => setDropTarget(null)}
+        onDrop={(event) => {
+          setDropTarget(null);
+          const raw = event.dataTransfer.getData(EXPLORER_DRAG_TYPE);
+          if (!raw) return;
+          event.preventDefault();
+          void moveInto(JSON.parse(raw) as string[], "");
+        }}
       >
         {error && <li className="px-3 py-2 text-[11px] text-destructive">{error}</li>}
         {rows.map((row) => {
@@ -827,9 +930,46 @@ function FileTree({
               <button
                 type="button"
                 draggable
-                onDragStart={(event) => startFileDrag(event, absolute(item.path))}
-                onClick={() => {
+                onDragStart={(event) => startFileDrag(event, selectionFor(item.path).map(absolute), selectionFor(item.path))}
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes(EXPLORER_DRAG_TYPE)) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = "move";
+                  setDropTarget(folderFor(item.path));
+                }}
+                onDragLeave={() => setDropTarget(null)}
+                onDrop={(event) => {
+                  setDropTarget(null);
+                  const raw = event.dataTransfer.getData(EXPLORER_DRAG_TYPE);
+                  if (!raw) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void moveInto(JSON.parse(raw) as string[], folderFor(item.path));
+                }}
+                onClick={(event) => {
                   setFocused(item.path);
+                  if (event.ctrlKey || event.metaKey) {
+                    setSelected((current) => {
+                      const next = new Set(current);
+                      if (next.has(item.path)) next.delete(item.path);
+                      else next.add(item.path);
+                      return next;
+                    });
+                    anchorRef.current = item.path;
+                    return;
+                  }
+                  if (event.shiftKey && anchorRef.current) {
+                    const order = rows.flatMap((entry) => (entry.kind === "item" ? [entry.item.path] : []));
+                    const from = order.indexOf(anchorRef.current);
+                    const to = order.indexOf(item.path);
+                    if (from >= 0 && to >= 0) {
+                      setSelected(new Set(order.slice(Math.min(from, to), Math.max(from, to) + 1)));
+                      return;
+                    }
+                  }
+                  setSelected(new Set([item.path]));
+                  anchorRef.current = item.path;
                   if (item.is_directory) toggle(item.path);
                   else editor.openFile(workspaceId, item.path);
                 }}
@@ -839,12 +979,16 @@ function FileTree({
                 data-testid="explorer-tree-row"
                 data-path={item.path}
                 data-active={current || undefined}
+                data-selected={selected.has(item.path) || undefined}
                 title={item.path}
                 style={{ paddingLeft: 10 + depth * 14 }}
                 className={cn(
                   "flex h-7 w-full items-center gap-1.5 pr-3 text-left text-[13px] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none",
                   current && "bg-secondary",
+                  selected.has(item.path) && selected.size > 1 && "bg-primary/10",
                   focused === item.path && "ring-1 ring-inset ring-ring/50",
+                  item.is_directory && dropTarget === item.path && "bg-primary/15 ring-1 ring-inset ring-primary/50",
+                  clip?.cut && clip.paths.includes(item.path) && "opacity-50",
                 )}
               >
                 <ChevronRight
@@ -871,6 +1015,14 @@ function FileTree({
           <div role="menu" data-testid="explorer-menu">
             <ThreadMenuItem icon={<FilePlus className="h-4 w-4" />} label={t("ide_side_panel.explorer.new_file")} onSelect={pick(() => onCreate(menuFolder, "file"))} />
             <ThreadMenuItem icon={<FolderPlus className="h-4 w-4" />} label={t("ide_side_panel.explorer.new_folder")} onSelect={pick(() => onCreate(menuFolder, "directory"))} />
+            {clip && (
+              <ThreadMenuItem
+                icon={<ClipboardPaste className="h-4 w-4" />}
+                label={t("ide_side_panel.explorer.paste")}
+                hint="Ctrl+V"
+                onSelect={pick(() => void paste(menuFolder))}
+              />
+            )}
             {menu.path && (
               <>
                 <ThreadMenuSeparator />
@@ -886,6 +1038,19 @@ function FileTree({
                 )}
                 <ThreadMenuItem icon={<ExternalLink className="h-4 w-4" />} label={t("ide_side_panel.explorer.open_externally")} onSelect={pick(() => void openTerminalTarget(workspaceId, menu.path).catch(fail))} />
                 <ThreadMenuSeparator />
+                <ThreadMenuItem
+                  icon={<Scissors className="h-4 w-4" />}
+                  label={t("ide_side_panel.explorer.cut")}
+                  hint="Ctrl+X"
+                  onSelect={pick(() => setClip({ paths: selectionFor(menu.path), cut: true }))}
+                />
+                <ThreadMenuItem
+                  icon={<CopyPlus className="h-4 w-4" />}
+                  label={t("ide_side_panel.explorer.copy")}
+                  hint="Ctrl+C"
+                  onSelect={pick(() => setClip({ paths: selectionFor(menu.path), cut: false }))}
+                />
+                <ThreadMenuSeparator />
                 <ThreadMenuItem icon={<Copy className="h-4 w-4" />} label={t("ide_side_panel.explorer.copy_path")} onSelect={pick(() => copy(absolute(menu.path)))} />
                 <ThreadMenuItem icon={<span aria-hidden />} label={t("ide_side_panel.explorer.copy_relative_path")} onSelect={pick(() => copy(menu.path))} />
                 <ThreadMenuSeparator />
@@ -895,7 +1060,7 @@ function FileTree({
                   label={t("ide_side_panel.explorer.delete")}
                   hint="Del"
                   danger
-                  onSelect={pick(() => setConfirm({ path: menu.path, isDirectory: menu.isDirectory, permanent: false }))}
+                  onSelect={pick(() => setConfirm({ paths: selectionFor(menu.path), isDirectory: menu.isDirectory, permanent: false }))}
                 />
               </>
             )}
@@ -905,11 +1070,12 @@ function FileTree({
 
       {confirm && (
         <DeleteDialog
-          name={baseName(confirm.path)}
+          name={baseName(confirm.paths[0])}
+          count={confirm.paths.length}
           isDirectory={confirm.isDirectory}
           permanent={confirm.permanent}
           onCancel={() => setConfirm(null)}
-          onConfirm={() => void remove(confirm.path, confirm.permanent)}
+          onConfirm={() => void remove(confirm.paths, confirm.permanent)}
         />
       )}
     </>
@@ -918,12 +1084,14 @@ function FileTree({
 
 function DeleteDialog({
   name,
+  count,
   isDirectory,
   permanent,
   onConfirm,
   onCancel,
 }: {
   name: string;
+  count: number;
   isDirectory: boolean;
   permanent: boolean;
   onConfirm: () => void;
@@ -932,7 +1100,14 @@ function DeleteDialog({
   const t = useT();
   const confirmButton = useRef<HTMLButtonElement>(null);
   useEffect(() => confirmButton.current?.focus(), []);
-  const title = permanent ? "ide_side_panel.explorer.delete_permanent_title" : isDirectory ? "ide_side_panel.explorer.delete_folder_title" : "ide_side_panel.explorer.delete_file_title";
+  const title =
+    count > 1
+      ? "ide_side_panel.explorer.delete_many_title"
+      : permanent
+        ? "ide_side_panel.explorer.delete_permanent_title"
+        : isDirectory
+          ? "ide_side_panel.explorer.delete_folder_title"
+          : "ide_side_panel.explorer.delete_file_title";
   return (
     <div
       role="presentation"
@@ -952,7 +1127,7 @@ function DeleteDialog({
         className="w-full max-w-sm rounded-xl border border-border bg-popover p-4 text-popover-foreground shadow-float"
       >
         <h2 id="explorer-delete-title" className="text-sm font-semibold text-foreground-strong">
-          {fill(t(title), { file: name })}
+          {fill(t(title), { file: name, count })}
         </h2>
         <p className="mt-1.5 text-xs text-muted-foreground">
           {t(permanent ? "ide_side_panel.explorer.delete_permanent_body" : "ide_side_panel.explorer.delete_body")}

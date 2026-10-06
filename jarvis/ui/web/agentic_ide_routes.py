@@ -1037,6 +1037,16 @@ class ReplaceInFilesRequest(BaseModel):
     paths: list[str] = Field(min_length=1, max_length=5000)
 
 
+class CopyWorkspaceEntryRequest(BaseModel):
+    """Copy one file or folder inside a workspace."""
+
+    source: str = Field(min_length=1, max_length=4096)
+    destination: str = Field(min_length=1, max_length=4096)
+    unique: bool = Field(
+        default=False, description="Pick a free 'copy' name when the destination is taken."
+    )
+
+
 class DeleteWorkspaceEntryRequest(BaseModel):
     """Delete one file or folder; it goes to the system trash unless permanent."""
 
@@ -2285,6 +2295,26 @@ async def delete_editor_backup(workspace_id: str, path: str) -> dict[str, object
     except file_editing.EditError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/copy",
+    summary="Copy a file or folder in a workspace",
+)
+async def copy_workspace_entry(
+    workspace_id: str, req: CopyWorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        copied = await asyncio.to_thread(
+            file_editing.copy_entry, folder, req.source, req.destination, unique=req.unique
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: copy failed for %s: %s", req.source, exc)
+        raise HTTPException(status_code=500, detail="It could not be copied.") from exc
+    return {"workspace_id": workspace_id, "path": copied}
 
 
 @router.post(

@@ -6279,6 +6279,10 @@
       "delete_body": "Es landet im Papierkorb und lässt sich von dort wiederherstellen.",
       "delete_permanent_body": "Dieser Computer hat keinen Papierkorb. Endgültiges Löschen lässt sich nicht rückgängig machen.",
       "delete_permanent": "Endgültig löschen",
+      "cut": "Ausschneiden",
+      "copy": "Kopieren",
+      "paste": "Einfügen",
+      "delete_many_title": "{count} Einträge löschen?",
       "busy_saving": "Eine Datei darin wird noch gespeichert. Versuche es gleich noch einmal.",
       "cancel": "Abbrechen"
     },

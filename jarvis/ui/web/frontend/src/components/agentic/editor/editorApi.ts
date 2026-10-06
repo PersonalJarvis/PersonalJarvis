@@ -131,6 +131,11 @@ export function createEntry(workspaceId: string, path: string, kind: "file" | "d
   return send(`${base(workspaceId)}/entries`, json("POST", { path, kind }));
 }
 
+/** Copy a file or folder; `unique` picks a free "copy" name when the destination is taken. */
+export function copyEntry(workspaceId: string, source: string, destination: string, unique = false): Promise<{ path: string }> {
+  return send(`${base(workspaceId)}/entries/copy`, json("POST", { source, destination, unique }));
+}
+
 export function moveEntry(workspaceId: string, source: string, destination: string): Promise<{ path: string }> {
   return send(`${base(workspaceId)}/entries/move`, json("POST", { source, destination }));
 }

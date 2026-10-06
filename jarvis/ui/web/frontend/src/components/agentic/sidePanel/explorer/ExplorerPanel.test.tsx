@@ -167,6 +167,60 @@ describe("ExplorerPanel", () => {
     await waitFor(() => expect(sent()).toEqual(["src/new.ts", "src/lib", "top.ts"]));
   });
 
+  it("selects several rows with Ctrl+click and deletes them together", async () => {
+    render(<ExplorerPanel view="files" />);
+    await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
+    const [src, readme] = screen.getAllByTestId("explorer-tree-row");
+    fireEvent.click(readme);
+    fireEvent.click(src, { ctrlKey: true });
+    expect(screen.getAllByTestId("explorer-tree-row").filter((row) => row.dataset.selected)).toHaveLength(2);
+
+    fireEvent.keyDown(readme, { key: "Delete" });
+    expect(screen.getByTestId("explorer-delete-dialog").textContent).toContain("2");
+    fireEvent.click(screen.getByTestId("explorer-delete-confirm"));
+    await waitFor(() => expect(calls.filter((call) => call.url.includes("/entries/delete"))).toHaveLength(2));
+    const sent = calls.filter((call) => call.url.includes("/entries/delete")).map((call) => JSON.parse(call.body).path);
+    expect(sent.sort()).toEqual(["README.md", "src"]);
+  });
+
+  it("copies with Ctrl+C and pastes into the selected folder with a free name", async () => {
+    render(<ExplorerPanel view="files" />);
+    await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
+    const [src, readme] = screen.getAllByTestId("explorer-tree-row");
+    fireEvent.click(readme);
+    fireEvent.keyDown(readme, { key: "c", ctrlKey: true });
+    fireEvent.keyDown(src, { key: "v", ctrlKey: true });
+
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("/entries/copy"))).toBe(true));
+    const sent = JSON.parse(calls.find((call) => call.url.endsWith("/entries/copy"))!.body);
+    expect(sent).toEqual({ source: "README.md", destination: "src/README.md", unique: true });
+  });
+
+  it("moves a dragged row into the folder it is dropped on", async () => {
+    render(<ExplorerPanel view="files" />);
+    await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
+    const [src, readme] = screen.getAllByTestId("explorer-tree-row");
+    const data: Record<string, string> = {};
+    const dataTransfer = {
+      setData: (type: string, value: string) => {
+        data[type] = value;
+      },
+      getData: (type: string) => data[type] ?? "",
+      get types() {
+        return Object.keys(data);
+      },
+      effectAllowed: "",
+      dropEffect: "",
+    };
+    fireEvent.dragStart(readme, { dataTransfer });
+    fireEvent.dragOver(src, { dataTransfer });
+    fireEvent.drop(src, { dataTransfer });
+
+    await waitFor(() => expect(calls.some((call) => call.url.endsWith("/entries/move"))).toBe(true));
+    const sent = JSON.parse(calls.find((call) => call.url.endsWith("/entries/move"))!.body);
+    expect(sent).toEqual({ source: "README.md", destination: "src/README.md" });
+  });
+
   it("asks before deleting and sends the file to the trash", async () => {
     render(<ExplorerPanel view="files" />);
     await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
