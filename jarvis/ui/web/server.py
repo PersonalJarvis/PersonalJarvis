@@ -469,12 +469,12 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agent_runtime_routes import router as agent_runtime_router
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .app_actions_routes import router as app_actions_router
         from .appshot_routes import router as appshot_router
-        from .jarvisx_routes import router as jarvisx_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -506,6 +506,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .jarvisx_routes import router as jarvisx_router
         from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
@@ -752,6 +753,7 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        app.include_router(agent_runtime_router)
         from .mars_routes import router as mars_router
 
         app.include_router(mars_router)
