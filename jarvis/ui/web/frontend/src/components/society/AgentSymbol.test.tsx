@@ -29,3 +29,18 @@ describe("symbol gaze and thinking", () => {
     expect(container.querySelector(".agent-symbol-orbit, .agent-symbol-thoughts")).toBeNull();
   });
 });
+
+describe("symbol volume shading", () => {
+  it.each(COMPANION_SHAPES)("lights %s inside its own silhouette", shape => {
+    const { container } = render(<AgentSymbol shape={shape} color="#8b5cf6" size={48} />);
+    const shading = container.querySelector("[data-agent-shading]")!;
+    const masked = shading.querySelector("g[mask]")!;
+    const id = masked.getAttribute("mask")!.match(/url\(#(.+)\)/)![1]!;
+    const mask = container.querySelector(`mask[id="${id}"]`)!;
+    // A mask nested inside the element it masks would leave the light unclipped.
+    expect(masked.contains(mask)).toBe(false);
+    expect(mask.querySelector("path, circle")).not.toBeNull();
+    expect(masked.querySelector("ellipse")).not.toBeNull();
+  });
+});
+

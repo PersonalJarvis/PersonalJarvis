@@ -59,6 +59,73 @@ function SymbolBody({ shape, color, grow = 0 }: { shape: SymbolShape; color: str
   }
 }
 
+type Facet = [points: string, tone: "light" | "dark", opacity: number];
+interface ShadingRecipe {
+  /** Key light from the upper left: bright centre, darker toward the far edges. */
+  light: [cx: number, cy: number, r: number, strength: number];
+  /** A soft specular spot: cx, cy, rx, ry, rotation. */
+  gloss: [number, number, number, number, number];
+  /** Flat faces of the solid, brighter toward the light. */
+  facets?: Facet[];
+}
+
+/**
+ * The volume of each 3D companion body, drawn as light on the flat symbol:
+ * the sphere and the puffs read round, the pyramid shows its lit left face,
+ * the crystal its cut facets. Overlays are white or black over the body
+ * colour, so every identity colour and both app themes keep their hue.
+ */
+const SHADING: Record<SymbolShape, ShadingRecipe> = {
+  circle: { light: [14, 12.5, 25, 1], gloss: [13.4, 11.2, 4.4, 2.6, -38] },
+  squircle: { light: [13.5, 12, 27, 0.9], gloss: [12.6, 9.6, 5.2, 2.1, -16] },
+  pill: { light: [15, 12, 25, 0.9], gloss: [15.5, 12.6, 8.2, 1.9, -4] },
+  drop: { light: [14.5, 22, 22, 1], gloss: [12.9, 24.2, 2.1, 4.6, 24] },
+  cloud: { light: [15, 12, 27, 0.9], gloss: [15.6, 9.8, 4.2, 2.1, -18] },
+  triangle: {
+    light: [15, 17, 24, 0.75], gloss: [13.2, 19, 1.4, 4.6, 30],
+    facets: [["20,5.5 8,38 -4,38 -4,0 20,0", "light", 0.2]],
+  },
+  hexagon: {
+    light: [15, 13, 26, 0.65], gloss: [11.6, 9.4, 3.2, 1.1, -30],
+    facets: [
+      ["20,3.5 11.5,11.75 0,11.75 0,0 20,0", "light", 0.3],
+      ["20,3.5 11.5,11.75 28.5,11.75", "light", 0.2],
+      ["20,3.5 28.5,11.75 40,11.75 40,0 20,0", "light", 0.08],
+      ["11.5,11.75 0,11.75 0,28.25 11.5,28.25", "light", 0.1],
+      ["28.5,11.75 40,11.75 40,28.25 28.5,28.25", "dark", 0.14],
+      ["11.5,28.25 0,28.25 0,40 20,40 20,36.5", "dark", 0.06],
+      ["11.5,28.25 28.5,28.25 20,36.5", "dark", 0.13],
+      ["28.5,28.25 40,28.25 40,40 20,40 20,36.5", "dark", 0.24],
+    ],
+  },
+};
+
+/** Light, facets and gloss, masked to the body silhouette. */
+function SymbolShading({ shape, uid }: { shape: SymbolShape; uid: string }) {
+  const { light: [cx, cy, r, strength], gloss: [gx, gy, grx, gry, turn], facets = [] } = SHADING[shape];
+  // The mask lives beside the shaded group: a mask inside the element it masks never applies.
+  return <g data-agent-shading pointerEvents="none">
+    <defs>
+      <mask id={`${uid}-shape`} maskUnits="userSpaceOnUse" x={-20} y={-20} width={80} height={84}><SymbolBody shape={shape} color="#ffffff" /></mask>
+      <radialGradient id={`${uid}-light`} gradientUnits="userSpaceOnUse" cx={cx} cy={cy} r={r}>
+        <stop offset="0" stopColor="#ffffff" stopOpacity={0.3 * strength} />
+        <stop offset="0.4" stopColor="#ffffff" stopOpacity={0} />
+        <stop offset="0.64" stopColor="#000000" stopOpacity={0} />
+        <stop offset="1" stopColor="#000000" stopOpacity={0.3 * strength} />
+      </radialGradient>
+      <radialGradient id={`${uid}-gloss`}>
+        <stop offset="0" stopColor="#ffffff" stopOpacity={0.72} />
+        <stop offset="1" stopColor="#ffffff" stopOpacity={0} />
+      </radialGradient>
+    </defs>
+    <g mask={`url(#${uid}-shape)`}>
+      {facets.map(([points, tone, opacity]) => <polygon key={points} points={points} fill={tone === "light" ? "#ffffff" : "#000000"} opacity={opacity} />)}
+      <rect x={-4} y={-4} width={48} height={52} fill={`url(#${uid}-light)`} />
+      <ellipse cx={gx} cy={gy} rx={grx} ry={gry} transform={`rotate(${turn} ${gx} ${gy})`} fill={`url(#${uid}-gloss)`} />
+    </g>
+  </g>;
+}
+
 /** A monochrome thinking interlude, using the agent's own identity colour. */
 export function SymbolThinkingDots({ color }: { color: string }) {
   return <g className="agent-symbol-thoughts" fill={color}>
@@ -171,6 +238,7 @@ export function AgentSymbol({ shape, color, size, eyes = "lines", thinking = fal
           <mask id={maskId} maskUnits="userSpaceOnUse" x={-20} y={-20} width={80} height={84}><SymbolBody shape={shape} color="#ffffff" /></mask>
           <g mask={`url(#${maskId})`}>{draw(worn, true)}</g>
         </>}
+        <SymbolShading shape={shape} uid={`${maskId}-light`} />
         {draw(worn.filter(item => item.slot === "outfit" || item.slot === "neck"))}
         <g className="agent-symbol-gaze">
           <g data-agent-eyes fill={ink.eye} transform={faceTransform}>
