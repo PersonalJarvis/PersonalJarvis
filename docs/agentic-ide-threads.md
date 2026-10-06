@@ -49,8 +49,21 @@ for an approval and a blue dot for news since it was last opened.
 - **Under the composer:** a strip that says where the agent works — the
   current checkout or a fresh git worktree for a new thread — and on which
   branch (the base of the worktree, or the branch to switch the checkout to).
-- Changes, files, git and terminals live in the IDE's side panel, as in the
-  grid layout.
+- **Caption buttons:** at the right end of the window caption, beside the
+  window buttons. In threads there are two: the terminal drawer, then the side
+  panel. The grid has only the side panel button, since its panes are
+  terminals already. A shut side panel leaves no rail on the window edge. Its
+  button gets an amber dot while an agent of the active workspace waits for
+  the person.
+- **Terminal drawer:** plain shells under the conversation, in the open
+  thread's folder, one tab each. The first press starts the folder's first
+  shell, the next one hides the drawer without ending anything, and the top
+  edge drags to resize. Threads that share a folder share its shells, and they
+  keep running while the person moves between threads or back to the grid.
+  Closing a tab ends that shell, and the drawer goes down with the folder's
+  last one.
+- Changes, files, git and more terminals live in the IDE's side panel, as in
+  the grid layout.
 
 ## Questions, approvals and plans
 
@@ -120,6 +133,8 @@ attach to the host. Logs: `logs/turn_host.log` in the Jarvis data folder.
 ## Platforms
 
 Nothing in the thread layout is OS-specific: paths are compared
-case-insensitively only for Windows drive paths and the git calls run the same
-`git` everywhere. The layout choice and the last agent pick are kept in the
-browser's storage and fall back to defaults when storage is blocked.
+case-insensitively only for Windows drive paths, the terminal drawer opens the
+platform's default shell, and the git calls run the same `git` everywhere. The
+layout choice, the last agent pick and the drawer's height are kept in the
+browser's storage and fall back to defaults when storage is blocked. Drawer
+shells are never kept: a reload does not restart them.

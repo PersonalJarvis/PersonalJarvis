@@ -4,6 +4,7 @@ import { prepareGit } from "@/lib/gitApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeThreadsStore } from "@/store/ideThreads";
+import { useThreadTerminalsStore } from "@/store/threadTerminals";
 import { ThreadBranchBar, type ThreadCheckout } from "./ThreadBranchBar";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadMenuItem, ThreadPopover } from "./ThreadPopover";
@@ -59,6 +60,9 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     ?? fallbackProject;
   const folder = session?.cwd || project?.path || "";
   const isDraft = selection.sessionId === null;
+
+  // The terminal drawer and its caption toggle open shells in this folder.
+  useEffect(() => { useThreadTerminalsStore.getState().setFolder(folder); }, [folder]);
 
   // Keep the store on what the sidebar picked. A draft's first message
   // creates its session: that is this project's thread now — unless the

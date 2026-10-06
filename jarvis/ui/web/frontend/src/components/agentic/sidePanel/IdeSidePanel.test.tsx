@@ -7,6 +7,7 @@ import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
+import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
 
 vi.mock("@/components/workspace/WorkspaceTerminal", () => ({
   WorkspaceTerminal: ({ paneKey, workspaceId, active }: { paneKey: string; workspaceId: string; active: boolean }) => (
@@ -68,7 +69,7 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
     expect(firstNode.dataset.active).toBe("false");
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     fireEvent.click(screen.getByTestId(`ide-side-panel-tab-${first.id}`));
     expect(firstNode.dataset.active).toBe("true");
     fireEvent.click(screen.getByTestId(`ide-side-panel-close-${second.id}`));
@@ -103,12 +104,13 @@ describe("IdeSidePanel", () => {
     expect((screen.getByTestId("ide-side-panel-add-terminal") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("opens from its rail and closes from its own header", () => {
+  it("opens and closes from the caption toggle alone", () => {
     render(<Harness />);
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
     expect(screen.getByTestId("ide-side-panel-host").style.width).toBe("0px");
 
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(screen.getByTestId("ide-side-panel-toggle").getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByTestId("ide-side-panel")).toBeTruthy();
     expect(screen.getByTestId("ide-side-panel-tab-agents").getAttribute("aria-selected")).toBe("true");
     expect(screen.getByTestId("ide-workspace-agents")).toBeTruthy();
@@ -123,7 +125,7 @@ describe("IdeSidePanel", () => {
   it("keeps the grid mounted while the panel opens and closes", () => {
     render(<Harness />);
     const grid = screen.getByTestId("grid");
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.getByTestId("grid")).toBe(grid);
   });
@@ -133,7 +135,7 @@ describe("IdeSidePanel", () => {
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-close-agents"));
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
   });
 
@@ -169,15 +171,33 @@ describe("IdeSidePanel", () => {
     expect(screen.getByTestId("ide-side-panel-tab-agents")).toBeTruthy();
   });
 
-  it("leaves a labelled rail on the right edge while closed, and opens at the tab picked there", () => {
+  it("leaves nothing on the right edge while closed and reopens at the tab in front", () => {
+    useIdeSidePanelStore.setState({ tabs: ["agents", "files"], active: "files" });
     render(<Harness />);
-    const rail = screen.getByTestId("ide-side-panel-rail");
-    expect(rail.textContent).toContain("Agents");
-    expect(rail.textContent).toContain("Changes");
-    expect(rail.textContent).toContain("Folder");
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-files"));
-    expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "files" });
     expect(screen.queryByTestId("ide-side-panel-rail")).toBeNull();
+    expect(screen.queryByRole("navigation")).toBeNull();
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "files" });
+  });
+
+  it("puts a dot on the shut panel's toggle while an agent of the workspace waits", () => {
+    const row = (name: string, workspaceId: string, activity: WorkspacePaneRow["activity"]) => ({
+      workspace_id: workspaceId, workspace_name: workspaceId, folder: "/code/app", workspace_active: workspaceId === "w1",
+      key: name, history_id: `${name}@${workspaceId}`, name, agent: "claude", display_name: "Claude Code",
+      accepts_prompts: true, status: "live", exit_code: null, activity, activity_since: 0, worked: true,
+      started_at: 1, last_output_at: 2, last_prompt: "", last_prompt_at: null, recap: "", has_resume: false,
+      readable: true, account: null, account_label: null, archived: false,
+    }) as WorkspacePaneRow;
+    useIdeProjectsStore.setState({ activeWorkspaceId: "w1" });
+    useWorkspacePanesStore.setState({ panes: [row("T1", "w1", "working"), row("T1", "w2", "asking")] });
+    render(<Harness />);
+    expect(screen.queryByTestId("ide-side-panel-waiting")).toBeNull();
+    act(() => useWorkspacePanesStore.setState({ panes: [row("T1", "w1", "asking"), row("T2", "w1", "asking")] }));
+    expect(screen.getByTestId("ide-side-panel-waiting")).toBeTruthy();
+    expect(screen.getByTestId("ide-side-panel-toggle").getAttribute("aria-label")).toBe("Open side panel (2 waiting for you)");
+    // The open panel lists the agents itself.
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(screen.queryByTestId("ide-side-panel-waiting")).toBeNull();
   });
 
   it("adds the Jarvis Verse tab from + and shows the coding floor in a compact stage", async () => {
@@ -241,12 +261,6 @@ describe("IdeSidePanel", () => {
     fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
     fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(useIdeSidePanelStore.getState().maximized).toBe(false);
-  });
-
-  it("lists Office on the closed panel's rail", () => {
-    render(<Harness />);
-    fireEvent.click(screen.getByTestId("ide-side-panel-rail-office"));
-    expect(useIdeSidePanelStore.getState()).toMatchObject({ open: true, active: "office" });
   });
 
   it("frames the panel in blue while the reader works in it", () => {

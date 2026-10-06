@@ -4,6 +4,9 @@ import { TopBar } from "./TopBar";
 import { useEventStore } from "@/store/events";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { useThreadTerminalsStore } from "@/store/threadTerminals";
+import { useWorkspacePanesStore } from "@/store/workspacePanes";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -20,6 +23,8 @@ beforeEach(() => {
     solo: false,
     detachedViews: [],
   });
+  // The shut side panel's toggle counts waiting agents; no poll leaves the test.
+  useWorkspacePanesStore.setState({ panes: [], load: async () => {} });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -48,6 +53,41 @@ describe("TopBar side panel toggle", () => {
   it("stays out of every other section", () => {
     render(<TopBar />);
     expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+  });
+});
+
+describe("TopBar terminal drawer toggle", () => {
+  beforeEach(() => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeSidePanelStore.setState({ open: false, maximized: false });
+    useThreadTerminalsStore.setState({ folder: "/code/app", open: false, shells: [], active: {} });
+  });
+  afterEach(() => useIdeThreadsStore.setState({ layout: "grid" }));
+
+  it("sits before the side panel toggle in the thread layout and starts a shell", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    render(<TopBar />);
+    const terminal = screen.getByTestId("thread-terminal-toggle");
+    const panel = screen.getByTestId("ide-side-panel-toggle");
+    expect(terminal.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(terminal);
+    expect(useThreadTerminalsStore.getState()).toMatchObject({ open: true });
+    expect(useThreadTerminalsStore.getState().shells).toHaveLength(1);
+  });
+
+  it("is not offered in the terminal grid", () => {
+    useIdeThreadsStore.setState({ layout: "grid" });
+    render(<TopBar />);
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+    expect(screen.getByTestId("ide-side-panel-toggle")).toBeTruthy();
+  });
+
+  it("steps aside while a maximized side panel covers the thread", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    useIdeSidePanelStore.setState({ open: true, maximized: true });
+    render(<TopBar />);
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
   });
 });
 

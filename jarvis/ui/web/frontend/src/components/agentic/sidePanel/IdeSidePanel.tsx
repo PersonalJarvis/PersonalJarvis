@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, Maximize2, Minimize2, MoveHorizontal, Plus, SquareTerminal, X } from "lucide-react";
-import { fill, useT } from "@/i18n";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
@@ -10,9 +10,6 @@ import { WorkspaceTerminal } from "@/components/workspace/WorkspaceTerminal";
 import type { TerminalAppearance } from "../terminalThemes";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
 import { usePaneReviewTracking } from "@/store/paneReviews";
-import { useIdeProjectsStore } from "@/store/ideProjects";
-import { useWorkspacePanes } from "@/store/workspacePanes";
-import { dotKindFor, workspaceAgents } from "./agentStatus";
 import { SIDE_PANEL_TABS, sidePanelTab } from "./sidePanelTabs";
 import { SIDE_PANEL_ID } from "./sidePanelIds";
 
@@ -161,63 +158,14 @@ export function IdeSidePanelFrame({ children, markInUse = false, appearance, onS
           </>
         )}
       </div>
-      {!open && <IdeSidePanelRail />}
     </div>
   );
 }
 
 /**
- * The closed panel's edge: one labelled button per tab, always in view.
- *
- * The caption toggle alone was easy to miss (maintainer, 2026-09-28), so a
- * closed panel leaves this narrow rail on the right edge — the way an editor's
- * activity bar does — and an agent waiting for the user shows up here as a
- * count even while the panel is shut.
- */
-function IdeSidePanelRail() {
-  const t = useT();
-  const openTab = useIdeSidePanelStore((state) => state.openTab);
-  const activeWorkspaceId = useIdeProjectsStore((state) => state.activeWorkspaceId);
-  const panes = useWorkspacePanes();
-  const waiting = workspaceAgents(panes, activeWorkspaceId).filter((pane) => dotKindFor(pane) === "waiting").length;
-  return (
-    <nav
-      data-testid="ide-side-panel-rail"
-      aria-label={t("ide_side_panel.rail_aria")}
-      className="flex h-full w-12 shrink-0 flex-col items-center gap-1.5 border-l border-border/60 bg-card/40 py-2"
-    >
-      {SIDE_PANEL_TABS.map((tab) => {
-        const label = t(tab.labelKey);
-        const badge = tab.id === "agents" && waiting > 0 ? waiting : 0;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            data-testid={`ide-side-panel-rail-${tab.id}`}
-            onClick={() => openTab(tab.id)}
-            title={label}
-            aria-label={badge ? `${label} (${fill(t("ide_side_panel.rail_waiting"), { n: badge })})` : label}
-            aria-controls={SIDE_PANEL_ID}
-            aria-expanded={false}
-            className="relative flex w-10 flex-col items-center gap-0.5 rounded-lg py-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <tab.icon className="h-[18px] w-[18px]" aria-hidden />
-            <span className="max-w-full truncate text-[9.5px] font-medium leading-none">{label}</span>
-            {badge > 0 && (
-              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold tabular-nums text-background">
-                {badge}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-/**
  * The panel itself: tab header ("+" and maximize) over the active tab's content.
- * It opens and closes from the window caption (`IdeSidePanelToggle`).
+ * It opens and closes from the window caption (`IdeSidePanelToggle`) only;
+ * a shut panel leaves no rail behind, so the grid or thread gets the full width.
  */
 export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: TerminalAppearance; onScreen?: boolean }) {
   const t = useT();

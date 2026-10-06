@@ -15,6 +15,9 @@ import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
 import { IDE_SECTIONS } from "@/lib/ideSections";
 import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
+import { ThreadTerminalToggle } from "@/components/agentic/threads/ThreadTerminalToggle";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
 import { WikiInspectorToggle } from "@/components/wiki/WikiInspectorToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 
@@ -25,7 +28,8 @@ import { useDesktopChrome, WindowControls } from "@/components/layout/WindowCont
  * empty middle to drag the window, and minimize, maximize and close at the
  * right. Theme, restart and the sidebar toggles are not caption buttons; the
  * theme lives in Settings. On the Agentic IDE the caption also carries the
- * side panel toggle, beside the window buttons.
+ * panel toggles beside the window buttons: the thread layout's terminal
+ * drawer, then the side panel.
  *
  * The update button below (rendered in the sidebar) restarts through
  * ``/api/settings/restart-app``, which spawns a detached relauncher (see
@@ -130,10 +134,22 @@ function WikiCaptionPanelToggle() {
   return onWiki ? <WikiInspectorToggle /> : null;
 }
 
-/** The IDE side panel's open / close button, only on the IDE. */
+/**
+ * The IDE's panel toggles, only on the IDE: the terminal drawer in the thread
+ * layout (the grid is all terminals already, and a maximized side panel covers
+ * the thread), then the side panel in every layout.
+ */
 function IdeCaptionPanelToggle() {
   const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
-  return onIde ? <IdeSidePanelToggle /> : null;
+  const threads = useIdeThreadsStore((s) => s.layout === "threads");
+  const panelCovers = useIdeSidePanelStore((s) => s.open && s.maximized);
+  if (!onIde) return null;
+  return (
+    <div className="flex items-center gap-0.5">
+      {threads && !panelCovers && <ThreadTerminalToggle />}
+      <IdeSidePanelToggle />
+    </div>
+  );
 }
 
 // The restart can fail transiently right after an apply (the backend is busy,
