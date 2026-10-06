@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import plistlib
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
 import jarvis.setup.macos_dock as dock
 
-_BUNDLE = Path("/Applications/Personal Jarvis.app")
+# A macOS path on every host: on Windows a drive-less Path is not absolute and
+# cannot become a file URI, while the code only names and formats the bundle.
+_BUNDLE = PurePosixPath("/Applications/Personal Jarvis.app")
 
 
 def _tile(url: str, bundle_id: str | None) -> dict:
