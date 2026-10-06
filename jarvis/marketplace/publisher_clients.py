@@ -137,7 +137,13 @@ def is_standard_ready(
     catalog_client_secret: str | None = None,
 ) -> bool:
     """True when the standard browser flow can start with no user BYO setup."""
-    _, _, source = resolve_publisher_client(plugin_id, catalog_client_id, catalog_client_secret)
+    _, secret, source = resolve_publisher_client(
+        plugin_id, catalog_client_id, catalog_client_secret
+    )
+    # Figma requires HTTP Basic client authentication even with PKCE. A public
+    # client ID alone cannot complete its token exchange or refresh flow.
+    if plugin_id == "figma" and not secret:
+        return False
     return source in ("publisher", "catalog", "own")
 
 

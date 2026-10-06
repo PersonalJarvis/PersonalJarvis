@@ -823,6 +823,120 @@ def test_new_pkce_plugins_use_staggered_ports():
     assert len(set(ports.values())) == len(ports), f"ports collide: {ports}"
 
 
+def test_figma_requires_confidential_client_and_uses_official_token_endpoint(monkeypatch):
+    from jarvis.marketplace.publisher_clients import is_standard_ready
+    from jarvis.ui.web.marketplace_routes import _auth_standard_payload
+
+    spec = load_catalog().by_id("figma")
+    assert spec is not None
+    assert spec.auth.token_url == "https://api.figma.com/v1/oauth/token"  # noqa: S105 - endpoint
+    assert spec.auth.client_auth_method == "client_secret_basic"
+
+    def public_id_only(key, env_fallback=None):
+        if key == "publisher_figma_oauth_client_id":
+            return "configured-client"
+        return None
+
+    monkeypatch.setattr("jarvis.core.config.get_secret", public_id_only)
+    assert not is_standard_ready("figma", spec.auth.client_id)
+    assert _auth_standard_payload(spec)["ready"] is False
+
+    def confidential_client(key, env_fallback=None):
+        if key == "publisher_figma_oauth_client_secret":
+            return "configured-secret"
+        return public_id_only(key, env_fallback)
+
+    monkeypatch.setattr("jarvis.core.config.get_secret", confidential_client)
+    assert is_standard_ready("figma", spec.auth.client_id)
+    assert _auth_standard_payload(spec)["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_figma_connect_rejects_client_id_without_secret(monkeypatch):
+    from fastapi import BackgroundTasks, HTTPException
+
+    from jarvis.ui.web.marketplace_routes import connect_start
+
+    def public_id_only(key, env_fallback=None):
+        if key == "publisher_figma_oauth_client_id":
+            return "configured-client"
+        return None
+
+    monkeypatch.setattr("jarvis.core.config.get_secret", public_id_only)
+    with pytest.raises(HTTPException) as exc:
+        await connect_start("figma", BackgroundTasks())
+    assert exc.value.status_code == 409
+    assert "confidential OAuth client" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_figma_token_exchange_and_refresh_use_basic_auth(monkeypatch):
+    import base64
+    from types import SimpleNamespace
+
+    import httpx
+
+    from jarvis.marketplace.auth.oauth_pkce_loopback import (
+        PkceLoopbackConfig,
+        PkceLoopbackHandler,
+    )
+
+    spec = load_catalog().by_id("figma")
+    assert spec is not None
+    requests = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, *, data, headers):
+            requests.append((url, data, headers))
+            payload = (
+                {"access_token": "initial", "refresh_token": "renewal", "expires_in": 3600}
+                if len(requests) == 1
+                else {"access_token": "refreshed", "expires_in": 3600}
+            )
+            return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr("jarvis.marketplace.auth.oauth_pkce_loopback.httpx.AsyncClient", Client)
+    handler = PkceLoopbackHandler(
+        PkceLoopbackConfig(
+            plugin_id="figma",
+            authorization_url=spec.auth.authorization_url,
+            token_url=spec.auth.token_url,
+            client_id="configured-client",
+            client_secret="configured-secret",  # noqa: S106 - test fixture
+            callback_port=spec.auth.callback_port,
+            scopes=list(spec.auth.scopes),
+            client_auth_method=spec.auth.client_auth_method,
+        )
+    )
+    pending = SimpleNamespace(
+        config=handler._config,
+        code_verifier="verifier",
+        redirect_uri="https://example.test/oauth/callback",
+    )
+    initial = await handler._exchange(pending, code="authorization-code")
+    refreshed = await handler.refresh(initial)
+    assert refreshed.access == "refreshed"
+    assert refreshed.refresh == "renewal"
+    assert [request[0] for request in requests] == [spec.auth.token_url] * 2
+    assert requests[0][1]["grant_type"] == "authorization_code"
+    assert requests[0][1]["code_verifier"] == "verifier"
+    assert requests[1][1]["grant_type"] == "refresh_token"
+    for _, body, headers in requests:
+        assert "client_secret" not in body
+        assert base64.b64decode(headers["Authorization"].removeprefix("Basic ")) == (
+            b"configured-client:configured-secret"
+        )
+
+
 def test_github_mirror_matches_seed():
     import json
     from pathlib import Path

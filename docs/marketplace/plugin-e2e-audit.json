@@ -2181,7 +2181,7 @@
     {
       "plugin_id": "figma",
       "result": "BLOCKED",
-      "config_fingerprint": "b644ba3d27855621fda403804c65157d0a46496e5eaa232d8f241ad6110a96cb",
+      "config_fingerprint": "47be03960e50a34f9d0f1d86c2a79324ba1aab14e07bae0df38def9a298180be",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
@@ -2221,9 +2221,9 @@
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "reason": "The public Figma app approval and a publisher-hosted confidential OAuth exchange/refresh service are unverified. The client secret cannot ship with desktop installs.",
         "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "next_action": "Configure and approve a public Figma app, deploy a confidential OAuth service with its redirect URL, then repeat the full clean browser journey.",
         "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
       }
     },
