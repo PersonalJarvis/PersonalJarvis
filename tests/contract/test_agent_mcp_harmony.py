@@ -202,6 +202,17 @@ WITHHELD: Final[dict[str, str]] = {
     "DELETE /api/society/chat-groups/{group_id}": (
         "ungrouping the owner's chats is app-only UI state"
     ),
+    "GET /api/society/chat-groups/{group_id}/meeting": (
+        "a group meeting's transcript belongs to the owner's group chat in the "
+        "app; a remote client reads each agent's own chat"
+    ),
+    "POST /api/society/chat-groups/{group_id}/meeting": (
+        "a meeting round bills a turn on every member's seat and starts only "
+        "from the owner's explicit message in the app"
+    ),
+    "POST /api/society/chat-groups/{group_id}/meeting/stop": (
+        "stops the owner's meeting round, which only the app can start"
+    ),
 }
 
 

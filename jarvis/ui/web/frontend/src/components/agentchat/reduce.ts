@@ -1,6 +1,7 @@
 import type { AgentChatEvent, InternalMessage } from "@/lib/agentChatApi";
 import type { ChatControlState } from "@/lib/chatControlApi";
 import { hideAskBlocks } from "./askFence";
+import { hideMeetingPass } from "./meetingPass";
 import { readToolChoices, type ToolChoice } from "./toolChoices";
 
 /**
@@ -362,7 +363,7 @@ function updateQuestion(
 /** Attach a question to its tool row: the open ask call, else a row of its own. */
 /** A text block whose question block, if any, is hidden behind its card. */
 function textBlock(id: string, raw: string): TextBlock {
-  const text = hideAskBlocks(raw);
+  const text = hideMeetingPass(hideAskBlocks(raw));
   return text === raw ? { kind: "text", id, text } : { kind: "text", id, text, raw };
 }
 
