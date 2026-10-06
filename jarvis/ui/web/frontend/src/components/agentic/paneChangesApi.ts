@@ -46,8 +46,10 @@ export interface PaneChanges {
   truncated: boolean;
   /** The commit the pane's files are compared with; empty for an uncommitted-only reading. */
   base: string;
-  /** When the agent first wrote a file (epoch ms); 0 when unknown. */
+  /** When the agent first changed a file (epoch ms); 0 when unknown. */
   sinceMs: number;
+  /** Generated files (build output) the agent changed, counted rather than listed. */
+  generated: number;
 }
 
 /** Where a pane's work lives: its own worktree folder, else the workspace's shared one. */
@@ -90,6 +92,7 @@ interface ChangesBody {
   reason: string;
   base?: string;
   since_ms?: number;
+  generated?: number;
 }
 
 /** The files whose agent records name `pane` as a writer. Directories are kept only when named too. */
@@ -120,6 +123,7 @@ function reading(body: ChangesBody, extra: Pick<PaneChanges, "folderTotal" | "ow
     truncated: body.truncated,
     base: body.base ?? "",
     sinceMs: body.since_ms ?? 0,
+    generated: body.generated ?? 0,
     ...extra,
   };
 }

@@ -83,12 +83,19 @@ class FileDiff:
     truncated: bool = False
 
 
-def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str] | None:
-    """Run git; None when git is missing or does not answer in time."""
+def _git(
+    args: list[str], cwd: Path, stdin: str | None = None
+) -> subprocess.CompletedProcess[str] | None:
+    """Run git; None when git is missing or does not answer in time.
+
+    ``stdin`` is fed to git when given; otherwise git reads nothing, so a
+    command that would wait for input can never hang the caller.
+    """
     try:
         return subprocess.run(
             ["git", "-c", "core.quotePath=false", *args],
             cwd=str(cwd),
+            input=stdin if stdin is not None else "",
             capture_output=True,
             text=True,
             encoding="utf-8",

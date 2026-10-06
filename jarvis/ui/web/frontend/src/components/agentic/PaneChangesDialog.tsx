@@ -222,6 +222,11 @@ export function PaneChangesDialog({
                     <Counts added={totals.added} removed={totals.removed} />
                   </span>
                 )}
+                {changes && changes.generated > 0 && (
+                  <span data-testid="pane-changes-generated">
+                    {fill(t("pane_review.generated_hidden"), { count: changes.generated })}
+                  </span>
+                )}
               </Dialog.Description>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">

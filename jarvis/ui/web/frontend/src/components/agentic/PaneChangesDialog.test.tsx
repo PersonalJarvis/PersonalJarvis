@@ -62,6 +62,7 @@ beforeEach(() => {
         ? {
           ...CHANGES,
           base: "abc1234",
+          generated: 412,
           since_ms: 1_700_000_000_000,
           // The pane route answers committed work too, and marks it.
           files: CHANGES.files
@@ -138,6 +139,7 @@ describe("PaneChangesDialog", () => {
     await screen.findByText("new src/app.ts");
     expect(urls.some((url) => url.includes("/terminals/T1/diff?path=src%2Fapp.ts&base=abc1234"))).toBe(true);
     expect(screen.getByText(/compared with the code before its first edit/)).toBeTruthy();
+    expect(screen.getByTestId("pane-changes-generated").textContent).toBe("+ 412 generated files (build output), not listed");
   });
 
   it("asks the pane route for a worktree pane too", async () => {

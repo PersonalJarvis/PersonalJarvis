@@ -8,6 +8,13 @@ write: the last commit on the checkout's first-parent line made before that
 moment (:func:`session_base`), diffed against the file on disk now. That
 covers work the agent committed, work still uncommitted, and new files.
 
+Which files are the agent's (:func:`pane_work`): the ones its editing tools
+named, plus every file in the commits its own shell commands made — found by
+the ids those commands printed and the subjects they passed. That second half
+is what catches a file the agent changed with a script. Files
+``.gitattributes`` marks ``linguist-generated`` (a built bundle) are counted,
+not listed, so they cannot bury the agent's real changes.
+
 Another agent's commits to the same files after that moment show up in the
 diff too — git cannot split one file's history by author once it is merged
 into one line. The file list itself stays this agent's own.
@@ -19,9 +26,14 @@ the repository root works the same.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from . import change_authors
 from .git_changes import (
     MAX_CHANGED_FILES,
     ChangedFile,
@@ -33,7 +45,6 @@ from .git_changes import (
     _repo_prefix,
     file_diff,
     normalize_workspace_path,
-    workspace_changes,
 )
 
 #: Paths handed to one git call; keeps the command line far below Windows' limit.
@@ -132,8 +143,25 @@ def pane_changes(
             truncated = True
             break
         files.append(ChangedFile(path=path, status=word, added=added, removed=removed))
-    pending = {item.path for item in workspace_changes(root, only=set(wanted)).files}
-    return files, pending, truncated
+    return files, _pending(root, [item.path for item in files]), truncated
+
+
+def _pending(root: Path, paths: list[str]) -> set[str]:
+    """Which of ``paths`` git still reports as changed or untracked in the working tree."""
+    pending: set[str] = set()
+    _is_repo, prefix, _reason = _repo_prefix(root)
+    for chunk in _chunks(paths):
+        status = _git(
+            ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]
+            + ["--", *chunk],
+            root,
+        )
+        if status is None or status.returncode != 0:
+            continue
+        for record in status.stdout.split("\0"):
+            if len(record) >= 4 and record[3:].startswith(prefix):
+                pending.add(record[3 + len(prefix) :])
+    return pending
 
 
 def pane_file_diff(folder: str | Path, path: str, base: str) -> FileDiff:
@@ -169,4 +197,207 @@ def pane_file_diff(folder: str | Path, path: str, base: str) -> FileDiff:
     )
 
 
-__all__ = ["BASE_PATTERN", "pane_changes", "pane_file_diff", "session_base"]
+#: A tool that runs a shell command: Bash, PowerShell, Codex's shell, exec tools.
+_SHELL_TOOL = re.compile(r"bash|shell|powershell|pwsh|exec|command|terminal", re.IGNORECASE)
+#: git commit's summary line: ``[main 4f7ae66] subject`` or ``[main (root-commit) 4f7ae66]``.
+_COMMIT_SUMMARY = re.compile(r"^\[[^\]\n]*?\b([0-9a-f]{7,40})\]", re.MULTILINE)
+#: A full commit id printed by a script around ``git commit-tree`` and the like.
+_FULL_ID = re.compile(r"\b[0-9a-f]{40}\b")
+#: ``-m "…"`` / ``-am '…'`` / ``--message=…`` in a commit command.
+_MESSAGE_FLAG = re.compile(
+    r"""(?:\s-[A-Za-z]*m|--message)(?:\s+|=)(?:"((?:[^"\\]|\\.)*)"|'([^']*)')""", re.DOTALL
+)
+#: A here-document body, as agents write multi-line commit messages.
+_HEREDOC = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n(.*?)\n\s*\1\b", re.DOTALL)
+#: Most commit ids checked per record; one git call each.
+_MAX_COMMIT_IDS = 200
+
+
+@dataclass(frozen=True, slots=True)
+class CommitRefs:
+    """What an agent's own shell commands say about the commits they made."""
+
+    ids: frozenset[str]
+    subjects: frozenset[str]
+
+
+@dataclass(slots=True)
+class PaneWork:
+    """The files one agent changed: ``{path: last change ms}``, and when it started."""
+
+    files: dict[str, int] = field(default_factory=dict)
+    #: The earliest change (edit or commit), 0 when unknown.
+    since_ms: int = 0
+
+
+def _command_text(args: Any) -> str:
+    if isinstance(args, str):
+        return args
+    if isinstance(args, dict):
+        for key in ("command", "cmd", "script", "commands"):
+            value = args.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                return " ".join(str(part) for part in value)
+    return ""
+
+
+def _subject(message: str) -> str:
+    """A commit message's first line, from a here-document when it is written as one."""
+    heredoc = _HEREDOC.search(message)
+    if heredoc:
+        message = heredoc.group(2)
+    return next((line.strip() for line in message.splitlines() if line.strip()), "")
+
+
+def agent_commit_refs(events: Iterable[dict[str, Any]]) -> CommitRefs:
+    """The commits an agent's shell commands made, by id (from the output) and subject.
+
+    Only commands that mention ``commit`` count, so an id printed by ``git log``
+    in some unrelated command never makes another person's commit look like
+    this agent's.
+    """
+    commands: set[str] = set()
+    ids: set[str] = set()
+    subjects: set[str] = set()
+    for event in events:
+        payload = event.get("payload") or {}
+        call_id = str(payload.get("call_id"))
+        if event.get("kind") == "tool_call":
+            if not _SHELL_TOOL.search(str(payload.get("name") or "")):
+                continue
+            text = _command_text(payload.get("input"))
+            if "commit" not in text:
+                continue
+            commands.add(call_id)
+            for match in _MESSAGE_FLAG.finditer(text):
+                if match.group(1) is not None:
+                    message = re.sub(r"\\(.)", r"\1", match.group(1))
+                else:
+                    message = match.group(2)
+                if subject := _subject(message):
+                    subjects.add(subject)
+            # `git commit -F - <<'EOF'`: the message is the here-document itself.
+            for heredoc in _HEREDOC.finditer(text):
+                opener = text[: heredoc.start()].rsplit("\n", 1)[-1]
+                if "commit" in opener and (subject := _subject(heredoc.group(2))):
+                    subjects.add(subject)
+        elif event.get("kind") == "tool_result" and call_id in commands:
+            output = payload.get("output")
+            text = output if isinstance(output, str) else json.dumps(output)
+            ids.update(_COMMIT_SUMMARY.findall(text))
+            ids.update(_FULL_ID.findall(text))
+    return CommitRefs(frozenset(ids), frozenset(subjects))
+
+
+def resolve_commits(folder: str | Path, refs: CommitRefs, since_ms: int) -> dict[str, int]:
+    """``{commit id: commit time ms}`` for the refs that are real commits of this session.
+
+    A commit older than the record (less a minute of clock slack) is not this
+    session's, whatever printed its id.
+    """
+    root = Path(folder).expanduser()
+    floor = max(0, since_ms // 1000 - 60) if since_ms > 0 else 0
+    found: dict[str, int] = {}
+    for ref in sorted(refs.ids)[:_MAX_COMMIT_IDS]:
+        result = _git(["log", "-1", "--format=%H%x1f%ct", f"{ref}^{{commit}}", "--"], root)
+        if result is None or result.returncode != 0:
+            continue
+        sha, _sep, seconds = result.stdout.strip().partition("\x1f")
+        if sha and seconds.isdigit() and int(seconds) >= floor:
+            found[sha] = int(seconds) * 1000
+    if refs.subjects:
+        window = [f"--since=@{floor}"] if floor else ["-n", "2000"]
+        result = _git(["log", "--branches", *window, "--format=%H%x1f%ct%x1f%s"], root)
+        for line in (result.stdout.splitlines() if result and result.returncode == 0 else []):
+            sha, _a, rest = line.partition("\x1f")
+            seconds, _b, subject = rest.partition("\x1f")
+            if subject.strip() in refs.subjects and seconds.isdigit():
+                found[sha] = int(seconds) * 1000
+    return found
+
+
+def commit_files(folder: str | Path, commits: dict[str, int]) -> dict[str, int]:
+    """``{workspace-relative path: newest commit time ms}`` across ``commits``."""
+    root = Path(folder).expanduser()
+    files: dict[str, int] = {}
+    shas = sorted(commits)
+    for start in range(0, len(shas), 50):
+        chunk = shas[start : start + 50]
+        result = _git(
+            ["show", "--no-renames", "--name-only", "--relative", "--format=%x1e%H", *chunk, "--"],
+            root,
+        )
+        if result is None or result.returncode != 0:
+            continue
+        for block in result.stdout.split("\x1e"):
+            lines = [line for line in block.splitlines() if line.strip()]
+            if not lines or lines[0] not in commits:
+                continue
+            when = commits[lines[0]]
+            for path in lines[1:]:
+                files[path] = max(files.get(path, 0), when)
+    return files
+
+
+def generated_paths(folder: str | Path, paths: set[str]) -> set[str]:
+    """The paths ``.gitattributes`` marks ``linguist-generated`` (build output, bundles)."""
+    root = Path(folder).expanduser()
+    found: set[str] = set()
+    if not paths:
+        return found
+    result = _git(
+        ["check-attr", "--stdin", "-z", "linguist-generated"], root, stdin="\0".join(sorted(paths))
+    )
+    if result is None or result.returncode != 0:
+        return found
+    parts = result.stdout.split("\0")
+    for path, _attr, value in zip(parts[0::3], parts[1::3], parts[2::3], strict=False):
+        if value in ("set", "true"):
+            found.add(path)
+    return found
+
+
+def pane_work(
+    folder: str | Path, events: list[dict[str, Any]], record_folder: str | Path | None = None
+) -> PaneWork:
+    """Every file one agent changed: through its editing tools, and in the commits it made.
+
+    The commits catch what an editing tool never names — a file a script or
+    a shell command changed, once the agent committed it.
+    """
+    root = Path(folder).expanduser().resolve(strict=False)
+    base = Path(record_folder or root).expanduser()
+    work = PaneWork()
+    starts: list[int] = []
+    for raw, (first, last) in change_authors.write_spans(events).items():
+        relative = change_authors.relative_path(raw, base, root)
+        if relative is None:
+            continue
+        work.files[relative] = max(work.files.get(relative, 0), last)
+        if first:
+            starts.append(first)
+    session_start = min((int(e.get("ts_ms") or 0) for e in events if e.get("ts_ms")), default=0)
+    commits = resolve_commits(root, agent_commit_refs(events), session_start)
+    for path, when in commit_files(root, commits).items():
+        work.files[path] = max(work.files.get(path, 0), when)
+    # A commit carries whole seconds: one second earlier is safely before it.
+    starts.extend(when - 1000 for when in commits.values())
+    work.since_ms = min(starts, default=0)
+    return work
+
+
+__all__ = [
+    "BASE_PATTERN",
+    "CommitRefs",
+    "PaneWork",
+    "agent_commit_refs",
+    "commit_files",
+    "generated_paths",
+    "pane_changes",
+    "pane_file_diff",
+    "pane_work",
+    "resolve_commits",
+    "session_base",
+]

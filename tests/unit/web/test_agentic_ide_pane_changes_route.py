@@ -34,6 +34,13 @@ def _git(cwd: Path, *args: str, at: int | None = None) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, env=env)
 
 
+def _head(cwd: Path) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
+    )
+    return result.stdout.strip()
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     _git(tmp_path, "init", "-q")
@@ -79,7 +86,19 @@ def workspace(repo: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(agent_transcript, "can_read", lambda agent: True)
     monkeypatch.setattr(agent_transcript, "read_events", lambda agent, sid, home=None: records[sid])
     monkeypatch.setattr(change_authors, "_cache", {})
+    session.records = records
     return session
+
+
+def _shell(call_id: str, command: str, output: str) -> list[dict]:
+    return [
+        {
+            "kind": "tool_call",
+            "ts_ms": FIRST_WRITE_MS + 1000,
+            "payload": {"call_id": call_id, "name": "Bash", "input": {"command": command}},
+        },
+        {"kind": "tool_result", "payload": {"call_id": call_id, "output": output}},
+    ]
 
 
 async def test_work_the_agent_already_committed_is_listed(
@@ -124,6 +143,57 @@ async def test_a_file_back_to_its_old_text_is_not_listed(
 
     assert answer.available
     assert answer.files == []
+
+
+async def test_a_file_a_script_changed_shows_once_the_agent_committed_it(
+    repo: Path, workspace: SimpleNamespace
+) -> None:
+    # The agent rewrote theirs.py with a script — no editing tool names it —
+    # then committed. Its commit command's own output names the commit.
+    (repo / "theirs.py").write_text("scripted\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "chore: rewrite by script", at=NOW - 20)
+    workspace.records["s1"] += _shell(
+        "c9", 'git commit -am "chore: rewrite by script"', "[main 1234567] chore: rewrite by script"
+    )
+
+    answer = await routes.get_pane_changes("w1", "T1")
+
+    assert [(f.path, f.committed) for f in answer.files] == [("theirs.py", True)]
+
+
+async def test_a_commit_id_printed_by_an_unrelated_command_is_not_the_agents(
+    repo: Path, workspace: SimpleNamespace
+) -> None:
+    (repo / "theirs.py").write_text("someone else\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-am", "other agent", at=NOW - 20)
+    other = _head(repo)
+    workspace.records["s1"] += _shell("c9", "git log -1 --format=%H", other)
+
+    answer = await routes.get_pane_changes("w1", "T1")
+
+    assert answer.files == []
+
+
+async def test_generated_files_are_counted_not_listed(
+    repo: Path, workspace: SimpleNamespace
+) -> None:
+    (repo / ".gitattributes").write_text("dist/** linguist-generated\n", encoding="utf-8")
+    _git(repo, "add", ".gitattributes")
+    _git(repo, "commit", "-q", "-m", "attributes", at=NOW - 90)
+    (repo / "dist").mkdir()
+    for index in range(3):
+        (repo / "dist" / f"chunk{index}.js").write_text("x\n", encoding="utf-8")
+    (repo / "mine.py").write_text("two\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "build and fix", at=NOW - 20)
+    workspace.records["s1"] += _shell(
+        "c9", "git add -A && git commit -q -m 'build and fix'", ""
+    )
+
+    answer = await routes.get_pane_changes("w1", "T1")
+
+    assert [f.path for f in answer.files] == ["mine.py"]
+    assert answer.generated == 3
 
 
 async def test_a_diff_refuses_a_base_that_is_not_a_commit_id(workspace: SimpleNamespace) -> None:

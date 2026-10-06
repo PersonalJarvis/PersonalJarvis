@@ -19,7 +19,7 @@
     "diff_failed": "Dieser Unterschied konnte nicht gelesen werden: {error}",
     "unavailable": "Änderungen können hier nicht angezeigt werden: {reason}",
     "empty_pane": "Dieser Agent hat noch keine Dateien geändert.",
-    "empty_pane_hint": "Es zählen nur Dateien, die er selbst bearbeitet hat. Eine Datei, die ein Shell-Befehl geändert hat, steht unter „Ganzer Ordner“, solange sie nicht committet ist.",
+    "empty_pane_hint": "Dateien, die er per Skript oder Shell-Befehl geändert hat, zählen, sobald er sie committet; bis dahin stehen sie unter „Ganzer Ordner“.",
     "empty_folder": "In diesem Ordner ist nichts unkommittet.",
     "empty_hint": "Was schon committet ist, steht im Git-Tab.",
     "file_list": "Geänderte Dateien",
@@ -39,6 +39,7 @@
       "conflicted": "Konflikt"
     },
     "committed": "Committet",
-    "pending": "Nicht committet"
+    "pending": "Nicht committet",
+    "generated_hidden": "+ {count} generierte Dateien (Build-Ausgabe), nicht aufgelistet"
   }
 }

@@ -161,6 +161,9 @@ def _relative(raw: str, base: Path, root: Path) -> str | None:
     return None if text in ("", ".") else text
 
 
+#: Public name for callers that resolve a record's paths themselves.
+relative_path = _relative
+
 Reader = Callable[[PaneRecord], list[dict[str, Any]] | None]
 
 
@@ -224,25 +227,6 @@ def change_authors(
     for authors in by_path.values():
         authors.sort(key=lambda author: author.last_edit_ms, reverse=True)
     return by_path
-
-
-def first_write_ms(
-    workspace_folder: str | Path,
-    record: PaneRecord,
-    *,
-    reader: Reader = _read_events,
-    now: float | None = None,
-) -> int:
-    """When ``record``'s agent first wrote a file inside the workspace; 0 if never or unknown."""
-    root = Path(workspace_folder).expanduser().resolve(strict=False)
-    base = Path(record.folder or root).expanduser()
-    moment = time.monotonic() if now is None else now
-    firsts = [
-        first
-        for raw, (first, _last) in _pane_spans(record, reader, moment).items()
-        if first and _relative(raw, base, root) is not None
-    ]
-    return min(firsts, default=0)
 
 
 def authors_for(

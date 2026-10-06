@@ -19,7 +19,7 @@
     "diff_failed": "No se pudo leer esta diferencia: {error}",
     "unavailable": "Los cambios no se pueden mostrar aquí: {reason}",
     "empty_pane": "Este agente aún no ha cambiado ningún archivo.",
-    "empty_pane_hint": "Solo cuentan los archivos que editó él mismo. Un archivo cambiado por un comando de shell aparece en «Carpeta entera» mientras no tenga commit.",
+    "empty_pane_hint": "Los archivos que cambió con un script o un comando de shell cuentan en cuanto hace commit; hasta entonces aparecen en «Carpeta entera».",
     "empty_folder": "No hay nada sin commit en esta carpeta.",
     "empty_hint": "Lo que ya tiene commit está en la pestaña Git.",
     "file_list": "Archivos cambiados",
@@ -39,6 +39,7 @@
       "conflicted": "Conflicto"
     },
     "committed": "Con commit",
-    "pending": "Sin commit"
+    "pending": "Sin commit",
+    "generated_hidden": "+ {count} archivos generados (salida de compilación), no listados"
   }
 }

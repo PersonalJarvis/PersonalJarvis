@@ -939,7 +939,10 @@ class PaneChangesResponse(BaseModel):
     truncated: bool = False
     reason: str = ""
     base: str = Field(default="", description="The commit the files are compared with.")
-    since_ms: int = Field(default=0, description="The agent's first write; 0 when unknown.")
+    since_ms: int = Field(default=0, description="The agent's first change; 0 when unknown.")
+    generated: int = Field(
+        default=0, description="Generated files (build output) the agent changed, not listed."
+    )
 
 
 class DiffLineItem(BaseModel):
@@ -1797,12 +1800,23 @@ def _pane_of(workspace_id: str, name: str) -> tuple[Any, Any]:
 
 def _read_pane_changes(
     folder: str, record: change_authors.PaneRecord | None
-) -> tuple[dict[str, list[change_authors.ChangeAuthor]], int, str | None, Any]:
-    authors = change_authors.change_authors(folder, [record] if record else [])
-    since = change_authors.first_write_ms(folder, record) if record else 0
-    base = pane_changes.session_base(folder, since) if authors else None
-    listed = pane_changes.pane_changes(folder, set(authors), base) if base else ([], set(), False)
-    return authors, since, base, listed
+) -> tuple[pane_changes.PaneWork, str | None, int, Any]:
+    """(the agent's work, the base it is compared with, generated files left out, listing)."""
+    events: list[dict[str, Any]] = []
+    if record is not None:
+        try:
+            events = (
+                agent_transcript.read_events(record.agent, record.session_id, home=record.home)
+                or []
+            )
+        except Exception as exc:  # a record the CLI rewrote mid-read: an empty review this time
+            log.info("Pane changes: %s record unreadable: %s", record.pane, exc)
+    work = pane_changes.pane_work(folder, events, record.folder if record else None)
+    generated = pane_changes.generated_paths(folder, set(work.files))
+    wanted = set(work.files) - generated
+    base = pane_changes.session_base(folder, work.since_ms) if wanted else None
+    listed = pane_changes.pane_changes(folder, wanted, base) if base else ([], set(), False)
+    return work, base, len(generated), listed
 
 
 @router.get(
@@ -1826,8 +1840,9 @@ async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
         return PaneChangesResponse(
             workspace_id=workspace_id, available=False, reason=changes.reason
         )
-    authors, since, base, (files, pending, truncated) = await asyncio.to_thread(
-        _read_pane_changes, folder, _pane_record(session, term)
+    record = _pane_record(session, term)
+    work, base, generated, (files, pending, truncated) = await asyncio.to_thread(
+        _read_pane_changes, folder, record
     )
     return PaneChangesResponse(
         workspace_id=workspace_id,
@@ -1836,14 +1851,23 @@ async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
         files=[
             PaneChangedFileItem(
                 **asdict(item),
-                authors=[ChangeAuthorItem(**asdict(a)) for a in authors.get(item.path, [])],
+                authors=[
+                    ChangeAuthorItem(
+                        pane=term.name,
+                        history_id=term.history_id,
+                        agent=term.agent,
+                        display_name=term.display_name,
+                        last_edit_ms=work.files.get(item.path, 0),
+                    )
+                ],
                 committed=item.path not in pending,
             )
             for item in files
         ],
         truncated=truncated,
         base=base or "",
-        since_ms=since,
+        since_ms=work.since_ms,
+        generated=generated,
     )
 
 
