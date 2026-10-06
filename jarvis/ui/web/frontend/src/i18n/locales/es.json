@@ -5922,6 +5922,19 @@
       "submit": "Crear agente",
       "name_required": "Primero dale un nombre al agente.",
       "error": "No se pudo crear el agente."
+    },
+    "meeting": {
+      "title": "Reunión compartida",
+      "individual": "Chats individuales",
+      "you": "Tú",
+      "description": "Cada mensaje da un turno a cada miembro, por orden. Pueden reaccionar a las respuestas anteriores o guardar silencio. La ronda termina automáticamente.",
+      "empty": "Envía un tema para empezar. Puedes añadir a {name} desde Editar grupo.",
+      "answering": "{0} está respondiendo…",
+      "failed": "La ronda no pudo terminar. Abre el chat individual del agente para más detalles. Las contribuciones anteriores se guardan.",
+      "limit": "Las reuniones admiten de dos a seis agentes. Edita el grupo para reducir sus miembros.",
+      "message": "Tu mensaje al grupo",
+      "stop": "Detener ronda",
+      "send": "Preguntar al grupo"
     }
   },
   "chat_tools": {

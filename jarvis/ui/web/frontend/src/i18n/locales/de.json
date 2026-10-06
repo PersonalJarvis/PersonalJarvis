@@ -5922,6 +5922,19 @@
       "submit": "Agent erstellen",
       "name_required": "Gib dem Agenten zuerst einen Namen.",
       "error": "Der Agent konnte nicht erstellt werden."
+    },
+    "meeting": {
+      "title": "Gemeinsame Besprechung",
+      "individual": "Einzelchats",
+      "you": "Du",
+      "description": "Jede Nachricht gibt jedem Mitglied der Reihe nach einen Zug. Sie können auf frühere Antworten reagieren oder schweigen. Danach endet die Runde automatisch.",
+      "empty": "Sende ein Thema, um die Diskussion zu starten. Über Gruppe bearbeiten kannst du {name} hinzufügen.",
+      "answering": "{0} antwortet…",
+      "failed": "Die Runde konnte nicht beendet werden. Details findest du im Einzelchat des Agenten. Frühere Beiträge bleiben gespeichert.",
+      "limit": "Besprechungen unterstützen zwei bis sechs Agenten. Verkleinere die Gruppe über Bearbeiten.",
+      "message": "Deine Nachricht an die Gruppe",
+      "stop": "Runde stoppen",
+      "send": "Gruppe fragen"
     }
   },
   "chat_tools": {

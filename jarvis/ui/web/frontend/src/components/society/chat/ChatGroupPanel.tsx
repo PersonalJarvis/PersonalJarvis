@@ -2,14 +2,28 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { deleteSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import { createAgentChatStore } from "@/store/agentChat";
 import type { SocietyAgent } from "../data";
 import { AgentSwatch } from "../AgentSwatch";
 import { RosterRail } from "../roster/RosterRail";
 import { AgentChatPanel } from "./AgentChatPanel";
 import { ChatGroupDialog } from "./ChatGroupDialog";
+import { MeetingChat } from "./MeetingChat";
+
+/** The active view reads as selected; both states keep the same box size. */
+function viewToggle(active: boolean): string {
+  return cn(
+    "rounded-md border px-3 py-2 text-sm transition-colors",
+    active
+      ? "border-border-strong bg-secondary text-foreground"
+      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+  );
+}
 
 interface Props {
   group: SocietyChatGroup;
@@ -28,10 +42,12 @@ export function ChatGroupPanel({
   onGroupAgents, onAddAgentToGroup,
 }: Props) {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
   const client = useQueryClient();
   const [leftId, setLeftId] = useState(group.members[0] ?? "");
   const [rightId, setRightId] = useState(group.members[1] ?? "");
   const [editing, setEditing] = useState(false);
+  const [shared, setShared] = useState(true);
   const [confirmUngroup, setConfirmUngroup] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [error, setError] = useState("");
@@ -82,13 +98,13 @@ export function ChatGroupPanel({
               onValueChange={(value) => side === "left" ? setLeftId(value) : setRightId(value)}
               className="mt-1 w-full"
               options={members.filter((member) => member.agentId !== (side === "left" ? right?.agentId : left?.agentId))
-                .map((member) => ({ value: member.agentId, label: member.name }))}
-            /> : <h2 className="truncate text-base font-semibold text-foreground">{agent.name}</h2>}
+                .map((member) => ({ value: member.agentId, label: societyDisplayName(member, assistantName) }))}
+            /> : <h2 className="truncate text-base font-semibold text-foreground">{societyDisplayName(agent, assistantName)}</h2>}
             <p className="truncate text-xs text-muted-foreground">{agent.title}</p>
           </div>
           <button type="button" onClick={() => onOpenAgent(agent.agentId)}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
-            aria-label={t("society.groups.open_individual").replace("{0}", agent.name)}>
+            aria-label={t("society.groups.open_individual").replace("{0}", societyDisplayName(agent, assistantName))}>
             {t("society.groups.open")}
           </button>
         </header>
@@ -134,10 +150,18 @@ export function ChatGroupPanel({
       onGroupAgents={onGroupAgents} onAddAgentToGroup={onAddAgentToGroup}
       loading={false} sample={false} side="left" className="w-full border-0 jarvis-nav-surface"
       footer={teamFooter} />
-    <div className="grid min-h-0 min-w-0 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden border-l border-border bg-background"
+    <div className="flex min-h-0 min-w-0 flex-col border-l border-border">
+      <div className="flex shrink-0 gap-2 border-b border-border p-2">
+        <button type="button" aria-pressed={shared} onClick={() => setShared(true)}
+          className={viewToggle(shared)}>{t("society.meeting.title")}</button>
+        <button type="button" aria-pressed={!shared} onClick={() => setShared(false)}
+          className={viewToggle(!shared)}>{t("society.meeting.individual")}</button>
+      </div>
+      {shared ? <MeetingChat key={group.group_id} group={group} roster={roster} /> : <div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden bg-background"
       data-testid="society-group-split">
       {pane("left", left)}
       {pane("right", right)}
+    </div>}
     </div>
     {editing && <ChatGroupDialog group={group} agents={roster} onClose={() => setEditing(false)} onSaved={onOpenGroup} />}
   </div>;
