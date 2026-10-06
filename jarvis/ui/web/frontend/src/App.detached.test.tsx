@@ -99,7 +99,7 @@ describe("App shell around detached coding views", () => {
     expect(document.documentElement.classList.contains("jarvis-wallpaper")).toBe(false);
   });
 
-  it.each(["agents", "docs"] as const)("gives the %s section the whole window", (section) => {
+  it.each(["agents", "docs", "memory"] as const)("gives the %s section the whole window", (section) => {
     useEventStore.setState({ activeSection: section });
 
     render(<App />);

@@ -66,7 +66,7 @@ import { cn } from "@/lib/utils";
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
 
 /** Sections that fill the whole window instead of sitting beside the nav. */
-const FULLSCREEN_SECTIONS: readonly SectionId[] = ["agents", "docs"];
+const FULLSCREEN_SECTIONS: readonly SectionId[] = ["agents", "docs", "memory"];
 
 /**
  * The surface the active section is drawn on.
@@ -281,7 +281,7 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
-  // Agents and Docs fill the window: each brings its own navigation column,
+  // Agents, Docs and the Wiki fill the window: each brings its own navigation column,
   // and the caption's home/back buttons leave it, so the app sidebar and the
   // toggle that used to reveal it are not needed there.
   const sectionFullscreen = FULLSCREEN_SECTIONS.includes(activeSection);
