@@ -517,6 +517,20 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
+def _anthropic_key_for_cli_env(key: str | None, *, cli_present: bool) -> str | None:
+    """The Anthropic credential a mission's ``claude`` CLI may see, or None.
+
+    With the CLI installed, missions are pinned to its subscription login
+    (jarvis/missions/capacity.py), so only that login's OAuth bearer may
+    reach the process — worker and critic alike. A classic per-token key in
+    ``ANTHROPIC_API_KEY`` would make the CLI bill it silently; paid use runs
+    only in an approved run, in-process, never through this environment.
+    """
+    if key and cli_present and not key.startswith("sk-ant-oat"):
+        return None
+    return key
+
+
 def _claude_subscription_login_state() -> bool | None:
     """The ``claude`` CLI's SUBSCRIPTION login: usable (True), proven dead this
     session (False), or absent (None).
@@ -1242,6 +1256,15 @@ async def bootstrap_missions(
             # viability gate) or fails with the honest "Not logged in".
             anthropic_key = None
 
+        if live_provider in {"claude", "claude-api"}:
+            from jarvis.missions.workers.claude_direct_worker import (
+                _resolve_claude_binary,
+            )
+
+            anthropic_key = _anthropic_key_for_cli_env(
+                anthropic_key, cli_present=_resolve_claude_binary() is not None
+            )
+
         return build_worker_env(
             run_dir=mission_dir,
             anthropic_api_key=anthropic_key,
@@ -1317,11 +1340,13 @@ async def bootstrap_missions(
             # install the mission stays on Claude's subscription login — a spent
             # window or a dead login parks it in WAITING_CAPACITY instead of
             # moving it to codex, another family, or the Anthropic API key.
+            # Pinned whenever the CLI exists — NOT only when the login probe
+            # answers: a logged-out or unreadable subscription login (probe ->
+            # None) must park the mission too, never reopen the legacy chain
+            # that runs the CLI on a stored per-token Anthropic key.
             binary_present = _resolve_claude_binary() is not None
             login = _claude_subscription_login_state() if binary_present else None
-            if pinned_to_subscription(
-                configured_is_subscription=binary_present and login is not None
-            ):
+            if pinned_to_subscription(configured_is_subscription=binary_present):
                 return _pinned_claude_worker(
                     capability_inventory, binary_present=binary_present, login=login
                 )
