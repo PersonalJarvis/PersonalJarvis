@@ -6182,6 +6182,12 @@
     "conflict_load_disk": "Seine Version laden",
     "conflict_keep_mine": "Meine behalten",
     "deleted": "Diese Datei wurde auf der Festplatte gelöscht. Speichern legt sie neu an.",
+    "preview": "Vorschau",
+    "show_source": "Quelltext zeigen",
+    "media_failed": "Diese Datei lässt sich hier nicht anzeigen.",
+    "document_note": "Aus diesem Dokument gelesener Text. Zum Bearbeiten auf diesem Computer öffnen.",
+    "truncated": "Nur der Anfang der Datei wird gezeigt.",
+    "empty": "Diese Datei hat keinen lesbaren Inhalt.",
     "tab_menu": "Tab-Aktionen",
     "menu": {
       "close": "Schließen",

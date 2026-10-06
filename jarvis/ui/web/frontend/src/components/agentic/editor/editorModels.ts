@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor/editor/editor.api";
 
 import { useEventStore } from "@/store/events";
 import { useCodeEditorStore, type EditorFile } from "@/store/codeEditor";
+import { viewKindOf } from "./fileKinds";
 import {
   SaveConflictError,
   fetchFileVersion,
@@ -55,9 +56,6 @@ export function monacoApi(): MonacoApi | null {
 
 const store = () => useCodeEditorStore.getState();
 
-const IMAGE_FILE = /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif)$/i;
-
-export const isImagePath = (path: string) => IMAGE_FILE.test(path);
 
 /** The engine's language id for a file name, `plaintext` when nothing claims it. */
 export function languageFor(path: string): string {
@@ -165,8 +163,9 @@ function toast(message: string): void {
 export async function loadFile(fileKey: string): Promise<void> {
   const file = store().files[fileKey];
   if (!file || !api) return;
-  if (isImagePath(file.path)) {
-    store().patchFile(fileKey, { status: "image" });
+  const kind = viewKindOf(file.path);
+  if (kind) {
+    store().patchFile(fileKey, { status: kind });
     return;
   }
   try {

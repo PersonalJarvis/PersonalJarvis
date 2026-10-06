@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { setReloadHold } from "@/lib/reloadHold";
 import type { LineEnding, TextEncoding } from "@/components/agentic/editor/editorApi";
+import type { ViewKind } from "@/components/agentic/editor/fileKinds";
 
 /**
  * The Agentic IDE's code editor: which files are open as tabs, and what is
@@ -28,7 +29,8 @@ export interface EditorTab {
   preview: boolean;
 }
 
-export type FileStatus = "loading" | "ready" | "binary" | "too_large" | "image" | "error";
+/** `ready` = editable text; a ViewKind = shown with a viewer; the rest are read-only notices. */
+export type FileStatus = "loading" | "ready" | "binary" | "too_large" | "error" | ViewKind;
 
 export interface EditorFile {
   workspaceId: string;

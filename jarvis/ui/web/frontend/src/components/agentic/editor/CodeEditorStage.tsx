@@ -3,7 +3,9 @@ import { useShallow } from "zustand/react/shallow";
 import {
   AlertTriangle,
   ChevronRight,
+  Code2,
   Copy,
+  Eye,
   ExternalLink,
   FileDiff,
   FileText,
@@ -25,6 +27,7 @@ import { absoluteWorkspacePath } from "@/components/agentic/sidePanel/explorer/e
 import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
 import { checkDisk, discardFile, languageName, revertFile, saveAll, saveFile } from "./editorModels";
 import { QuickOpen } from "./QuickOpen";
+import { renderKindOf } from "./fileKinds";
 
 const EditorSurface = lazy(() => import("./EditorSurface"));
 
@@ -71,6 +74,17 @@ export function CodeEditorStage({
   const files = useCodeEditorStore((state) => state.files);
   const [pending, setPending] = useState<PendingClose | null>(null);
   const [menu, setMenu] = useState<EditorTab | null>(null);
+  // Tabs whose Markdown, HTML or SVG is shown rendered (Ctrl+Shift+V).
+  const [rendered, setRendered] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRendered = (key: string) =>
+    setRendered((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const toggleRenderedRef = useRef(toggleRendered);
+  toggleRenderedRef.current = toggleRendered;
   const menuAnchor = useRef<HTMLElement | null>(null);
   const pushToast = useEventStore((state) => state.pushToast);
 
@@ -144,6 +158,9 @@ export function CodeEditorStage({
       } else if (key === "t" && event.shiftKey) {
         handled();
         state.reopenClosed(workspaceId);
+      } else if (key === "v" && event.shiftKey && current.mode === "edit" && renderKindOf(current.path)) {
+        handled();
+        toggleRenderedRef.current(current.key);
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -293,11 +310,23 @@ export function CodeEditorStage({
             ))}
             {activeTab.mode === "diff" && <span className="ml-1.5 shrink-0 rounded bg-secondary px-1.5 py-px text-[11px]">{t("code_editor.diff_badge")}</span>}
           </nav>
-          <ActionButton
-            onClick={() => store.openFile(workspaceId, activeTab.path, { mode: activeTab.mode === "diff" ? "edit" : "diff", preview: false })}
-            icon={activeTab.mode === "diff" ? <FileText className="h-3.5 w-3.5" aria-hidden /> : <FileDiff className="h-3.5 w-3.5" aria-hidden />}
-            label={activeTab.mode === "diff" ? t("code_editor.open_file") : t("code_editor.open_changes")}
-          />
+          {activeTab.mode === "edit" && activeFile?.status === "ready" && renderKindOf(activeTab.path) && (
+            <ActionButton
+              onClick={() => toggleRendered(activeTab.key)}
+              icon={rendered.has(activeTab.key) ? <Code2 className="h-3.5 w-3.5" aria-hidden /> : <Eye className="h-3.5 w-3.5" aria-hidden />}
+              label={rendered.has(activeTab.key) ? t("code_editor.show_source") : t("code_editor.preview")}
+              hint="Ctrl+Shift+V"
+              wide
+            />
+          )}
+          {/* A text comparison only means something for a text file. */}
+          {(activeTab.mode === "diff" || activeFile?.status === "ready") && (
+            <ActionButton
+              onClick={() => store.openFile(workspaceId, activeTab.path, { mode: activeTab.mode === "diff" ? "edit" : "diff", preview: false })}
+              icon={activeTab.mode === "diff" ? <FileText className="h-3.5 w-3.5" aria-hidden /> : <FileDiff className="h-3.5 w-3.5" aria-hidden />}
+              label={activeTab.mode === "diff" ? t("code_editor.open_file") : t("code_editor.open_changes")}
+            />
+          )}
           {stagedPane && (
             <ActionButton
               onClick={() =>
@@ -336,7 +365,7 @@ export function CodeEditorStage({
               </p>
             }
           >
-            <EditorSurface tab={activeTab} onOpenExternally={openExternally} />
+            <EditorSurface tab={activeTab} rendered={rendered.has(activeTab.key)} onOpenExternally={openExternally} />
           </Suspense>
         </div>
 
@@ -380,17 +409,32 @@ export function CodeEditorStage({
   );
 }
 
-function ActionButton({ onClick, icon, label, iconOnly = false }: { onClick: () => void; icon: ReactNode; label: string; iconOnly?: boolean }) {
+function ActionButton({
+  onClick,
+  icon,
+  label,
+  hint,
+  iconOnly = false,
+  wide = false,
+}: {
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  hint?: string;
+  iconOnly?: boolean;
+  /** Keep the label visible at every window width. */
+  wide?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      title={label}
+      title={hint ? `${label} (${hint})` : label}
       aria-label={label}
       className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded px-1.5 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {icon}
-      {!iconOnly && <span className="hidden xl:inline">{label}</span>}
+      {!iconOnly && <span className={wide ? "inline" : "hidden xl:inline"}>{label}</span>}
     </button>
   );
 }

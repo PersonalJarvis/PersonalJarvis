@@ -6182,6 +6182,12 @@
     "conflict_load_disk": "Cargar su versión",
     "conflict_keep_mine": "Mantener la mía",
     "deleted": "Este archivo se eliminó del disco. Al guardar se vuelve a crear.",
+    "preview": "Vista previa",
+    "show_source": "Ver código",
+    "media_failed": "Este archivo no se puede mostrar aquí.",
+    "document_note": "Texto leído de este documento. Ábrelo en este equipo para editarlo.",
+    "truncated": "Solo se muestra el comienzo del archivo.",
+    "empty": "Este archivo no tiene contenido legible.",
     "tab_menu": "Acciones de pestaña",
     "menu": {
       "close": "Cerrar",

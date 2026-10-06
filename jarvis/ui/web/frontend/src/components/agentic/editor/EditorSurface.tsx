@@ -1,12 +1,13 @@
 import { useEffect, useRef, type MouseEvent } from "react";
-import { ExternalLink, FileWarning, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { fill, useT } from "@/i18n";
-import { workspaceFileUrl } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 import { useCodeEditorStore, type EditorTab } from "@/store/codeEditor";
 import { languageFor, loadFile, loadHead, modelOf, rememberViewState, viewStateOf } from "./editorModels";
 import { EDITOR_OPTIONS, applyTheme, monaco } from "./monacoRuntime";
+import { renderKindOf } from "./fileKinds";
+import { ExtractedPreview, MediaViewer, Notice, RenderedPreview } from "./FileViewers";
 
 type CodeEditor = monaco.editor.ICodeEditor;
 
@@ -48,9 +49,12 @@ const keepContextMenu = (event: MouseEvent) => event.stopPropagation();
  */
 export default function EditorSurface({
   tab,
+  rendered,
   onOpenExternally,
 }: {
   tab: EditorTab;
+  /** Show a Markdown, HTML or SVG file rendered instead of its source. */
+  rendered: boolean;
   onOpenExternally: (path: string) => void;
 }) {
   const t = useT();
@@ -64,6 +68,7 @@ export default function EditorSurface({
   const reveal = useCodeEditorStore((state) => state.reveal);
   const status = file?.status ?? "loading";
   const ready = status === "ready";
+  const renderKind = renderKindOf(tab.path);
 
   // Follow the app's light/dark switch. Watching the class on <html> (not a
   // prop) matters: the theme provider repaints the document in its own effect,
@@ -158,47 +163,30 @@ export default function EditorSurface({
     editor.focus();
   }, [reveal, ready, tab.fileKey, tab.mode, tab.key]);
 
-  const notice = (() => {
+  const external = () => onOpenExternally(tab.path);
+  const overlay = (() => {
     if (status === "loading") {
       return (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <p className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           {t("code_editor.loading")}
         </p>
       );
     }
-    if (status === "image") {
-      return (
-        <img
-          src={workspaceFileUrl(tab.workspaceId, tab.path)}
-          alt={tab.path.split("/").pop() ?? tab.path}
-          className="max-h-full max-w-full rounded-md border border-border/60 object-contain"
-        />
-      );
+    if (status === "ready") {
+      return rendered && renderKind && tab.mode === "edit" ? (
+        <RenderedPreview kind={renderKind} fileKey={tab.fileKey} workspaceId={tab.workspaceId} path={tab.path} />
+      ) : null;
     }
-    if (status === "ready") return null;
-    const message =
-      status === "binary"
-        ? t("code_editor.binary")
-        : status === "too_large"
-          ? t("code_editor.too_large")
-          : fill(t("code_editor.load_failed"), { error: file?.error ?? "" });
-    return (
-      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
-        <FileWarning className="h-8 w-8 text-muted-foreground/70" aria-hidden />
-        <p className="text-sm text-muted-foreground">{message}</p>
-        {status !== "error" && (
-          <button
-            type="button"
-            onClick={() => onOpenExternally(tab.path)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs text-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-            {t("code_editor.open_externally")}
-          </button>
-        )}
-      </div>
-    );
+    if (status === "image" || status === "pdf" || status === "audio" || status === "video") {
+      return <MediaViewer kind={status} workspaceId={tab.workspaceId} path={tab.path} onOpenExternally={external} />;
+    }
+    if (status === "document" || status === "binary" || status === "too_large") {
+      const note =
+        status === "document" ? t("code_editor.document_note") : status === "binary" ? t("code_editor.binary") : t("code_editor.too_large");
+      return <ExtractedPreview workspaceId={tab.workspaceId} path={tab.path} note={note} onOpenExternally={external} />;
+    }
+    return <Notice message={fill(t("code_editor.load_failed"), { error: file?.error ?? "" })} />;
   })();
 
   const showCode = ready && tab.mode === "edit";
@@ -210,7 +198,7 @@ export default function EditorSurface({
         onContextMenu={keepContextMenu}
         className={cn("absolute inset-0", tab.mode !== "diff" && "invisible", !ready && "invisible")}
       />
-      {notice && <div className="absolute inset-0 flex items-center justify-center p-6">{notice}</div>}
+      {overlay && <div className="absolute inset-0 bg-background">{overlay}</div>}
     </div>
   );
 }

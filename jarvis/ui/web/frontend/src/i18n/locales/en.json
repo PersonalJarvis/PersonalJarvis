@@ -6182,6 +6182,12 @@
     "conflict_load_disk": "Load their version",
     "conflict_keep_mine": "Keep mine",
     "deleted": "This file was deleted on disk. Saving creates it again.",
+    "preview": "Preview",
+    "show_source": "Show source",
+    "media_failed": "This file cannot be shown here.",
+    "document_note": "Text read out of this document. Open it on this computer to edit it.",
+    "truncated": "Only the beginning of the file is shown.",
+    "empty": "This file has no readable content.",
     "tab_menu": "Tab actions",
     "menu": {
       "close": "Close",
