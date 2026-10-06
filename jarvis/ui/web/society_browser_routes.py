@@ -312,14 +312,23 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
         log.debug("Browser view disconnected for %s", agent_id, exc_info=True)
         with contextlib.suppress(Exception):
             if session is None:
-                await send(
-                    {
-                        "kind": "error",
-                        "error": str(exc)[:300]
-                        if isinstance(exc, (RuntimeError, ValueError))
-                        else "Browser startup failed. Retry or repair the installation.",
-                    }
-                )
+                payload = {
+                    "kind": "error",
+                    "error": str(exc)[:300]
+                    if isinstance(exc, (RuntimeError, ValueError))
+                    else "Browser startup failed. Retry or repair the installation.",
+                }
+                from jarvis.society.browser.live import BrowserProfileBusy
+
+                if isinstance(exc, BrowserProfileBusy):
+                    # The panel names who holds the shared browser and waits.
+                    payload.update(
+                        code="profile_busy",
+                        holder_id=exc.holder_id,
+                        holder_name=exc.holder_name[:120],
+                        running=exc.running,
+                    )
+                await send(payload)
             await websocket.close(code=1011)
     finally:
         for task in (receive, pending):
