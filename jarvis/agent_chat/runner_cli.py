@@ -1431,6 +1431,12 @@ class _ClaudeState:
     #: Last tool_result that came back as an error — used when the CLI then
     #: aborts the turn instead of thinking again (Grok print-mode cancel).
     last_tool_error: str | None = None
+    #: A sub-agent's own translator state, by the call that spawned it — its
+    #: messages carry ``parent_tool_use_id`` and must never read as the main
+    #: agent's words.
+    agents: dict[str, _ClaudeState] = field(default_factory=dict)
+    #: The CLI's task id -> the spawning call, for task updates that name only the task.
+    agent_tasks: dict[str, str] = field(default_factory=dict)
 
 
 #: Streamed characters per estimated output token (English and code average).
@@ -1544,6 +1550,134 @@ def _content_text(content: Any) -> str:
     return "" if content is None else str(content)
 
 
+#: Claude Code's background-task lines; the agent ones become a sub-agent's card.
+_CLAUDE_TASK_SUBTYPES: Final = frozenset(
+    {"task_started", "task_progress", "task_updated", "task_notification"}
+)
+
+
+def subagent_status(raw: str) -> str:
+    """A vendor's word for how a sub-agent ended, as ``done`` | ``failed`` | ``stopped``."""
+    word = raw.strip().lower()
+    if word in {"completed", "complete", "done", "success", "succeeded"}:
+        return "done"
+    if word in {"failed", "error", "errored"}:
+        return "failed"
+    return "stopped"
+
+
+def _task_usage(obj: dict[str, Any]) -> dict[str, int]:
+    usage = obj.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    keys = {"total_tokens": "tokens", "tool_uses": "tool_uses", "duration_ms": "duration_ms"}
+    return {
+        ours: int(usage[theirs])
+        for theirs, ours in keys.items()
+        if isinstance(usage.get(theirs), int | float)
+    }
+
+
+def _claude_subagent_line(
+    obj: dict[str, Any], st: _ClaudeState, parent: str
+) -> list[dict[str, Any]]:
+    """A sub-agent's own message, filed under the call that spawned it.
+
+    The CLI streams a sub-agent's turns on the parent's stdout, marked only by
+    ``parent_tool_use_id``. Each sub-agent gets a translator state of its own,
+    so its text, thoughts and calls never merge into the main agent's answer,
+    and every event it yields names the agent (``agent_id``). Its partial
+    stream and token counts stay out: the finished messages carry the words,
+    and the live counter is the main agent's.
+    """
+    if str(obj.get("type") or "") not in {"assistant", "user"}:
+        return []
+    child = st.agents.get(parent)
+    if child is None:
+        child = st.agents[parent] = _ClaudeState(turn_id=st.turn_id)
+    out: list[dict[str, Any]] = []
+    for event in translate_claude_line({**obj, "parent_tool_use_id": None}, child):
+        if event["kind"] == "usage_delta":
+            continue
+        event["payload"]["agent_id"] = parent
+        out.append(event)
+    return out
+
+
+def _claude_task_events(obj: dict[str, Any], st: _ClaudeState) -> list[dict[str, Any]]:
+    """A sub-agent's life from Claude Code's task lines: started, working, finished.
+
+    Background shell commands are tasks too; only agent tasks get a card.
+    """
+    subtype = str(obj.get("subtype") or "")
+    if subtype not in _CLAUDE_TASK_SUBTYPES:
+        return []
+    task_id = str(obj.get("task_id") or "")
+    if subtype == "task_started":
+        call_id = str(obj.get("tool_use_id") or "")
+        task_type = str(obj.get("task_type") or "")
+        if not call_id or not (obj.get("subagent_type") or "agent" in task_type):
+            return []
+        if task_id:
+            st.agent_tasks[task_id] = call_id
+        return [
+            make_event(
+                "subagent_started",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": call_id,
+                    "task_id": task_id,
+                    "description": str(obj.get("description") or ""),
+                    "agent_type": str(obj.get("subagent_type") or ""),
+                    "prompt": str(obj.get("prompt") or ""),
+                    "background": bool(obj.get("is_backgrounded")),
+                },
+            )
+        ]
+    call_id = st.agent_tasks.get(task_id) or ""
+    if not call_id:
+        named = str(obj.get("tool_use_id") or "")
+        call_id = named if named in st.agents else ""
+    if not call_id:
+        return []
+    if subtype == "task_progress":
+        return [
+            make_event(
+                "subagent_progress",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": call_id,
+                    "activity": str(obj.get("description") or ""),
+                    "last_tool": str(obj.get("last_tool_name") or ""),
+                    **_task_usage(obj),
+                },
+            )
+        ]
+    if subtype == "task_updated":
+        patch = obj.get("patch") if isinstance(obj.get("patch"), dict) else {}
+        status = str(patch.get("status") or "")
+        if status in {"", "running", "pending"}:
+            return []
+        return [
+            make_event(
+                "subagent_finished",
+                {"turn_id": st.turn_id, "agent_id": call_id, "status": subagent_status(status)},
+            )
+        ]
+    return [
+        make_event(
+            "subagent_finished",
+            {
+                "turn_id": st.turn_id,
+                "agent_id": call_id,
+                "status": subagent_status(str(obj.get("status") or "completed")),
+                "summary": str(obj.get("summary") or ""),
+                **_task_usage(obj),
+            },
+        )
+    ]
+
+
 def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[str, Any]]:
     """One Claude-shaped NDJSON object -> zero or more agent-chat events."""
     out: list[dict[str, Any]] = []
@@ -1552,8 +1686,14 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
     if sid and not st.vendor_session:
         st.vendor_session = str(sid)
 
+    parent = obj.get("parent_tool_use_id")
+    if parent:
+        return _claude_subagent_line(obj, st, str(parent))
+
     if kind == "system":
-        return out  # init / hooks / status — nothing the timeline shows
+        # init / hooks / status are nothing the timeline shows; a sub-agent's
+        # life (started, working, finished) is.
+        return _claude_task_events(obj, st)
 
     if kind == "stream_event":
         ev = obj.get("event") or {}
@@ -1816,6 +1956,105 @@ class _CodexState:
     #: The last top-level ``error`` notification (retryable until turn.failed).
     last_error: str | None = None
     failed_tools: set[str] = field(default_factory=set)
+    #: A sub-agent's thread id -> the ``spawn_agent`` call that started it.
+    agents: dict[str, str] = field(default_factory=dict)
+    #: Sub-agents whose end was already told, so a later ``close_agent`` that
+    #: reports them shut down does not turn a finished agent into a stopped one.
+    agents_ended: set[str] = field(default_factory=set)
+
+
+#: Codex's word for a sub-agent that is still working.
+_CODEX_AGENT_LIVE: Final = frozenset({"pending_init", "running"})
+
+
+def _codex_collab_events(item: dict[str, Any], phase: str, st: _CodexState) -> list[dict[str, Any]]:
+    """Codex's multi-agent calls (``collab_tool_call``) as sub-agent cards.
+
+    ``spawn_agent`` becomes the card's call; the agent's thread id is
+    remembered, so every later call that reports ``agents_states`` (``wait``,
+    ``send_input``, ``close_agent``) updates that card. ``codex exec`` does not
+    stream a sub-agent's own steps — the card carries its task and its answer.
+    """
+    out: list[dict[str, Any]] = []
+    item_id = str(item.get("id") or uuid.uuid4().hex)
+    tool = str(item.get("tool") or "agent")
+    prompt = str(item.get("prompt") or "")
+    receivers = [str(t) for t in item.get("receiver_thread_ids") or [] if t]
+    states = item.get("agents_states") if isinstance(item.get("agents_states"), dict) else {}
+    if item_id not in st.items:
+        st.items[item_id] = (item_id, tool)
+        st.started_at[item_id] = time.perf_counter()
+        summary = prompt.strip().splitlines()[0][:200] if prompt.strip() else ""
+        args: dict[str, Any] = {"prompt": prompt} if prompt else {}
+        if tool != "spawn_agent" and receivers:
+            args["agents"] = receivers
+        out.append(
+            make_event(
+                "tool_call",
+                {
+                    "turn_id": st.turn_id,
+                    "call_id": item_id,
+                    "name": tool,
+                    "input": args,
+                    "summary": summary,
+                },
+            )
+        )
+    if tool == "spawn_agent":
+        for thread_id in receivers:
+            if thread_id in st.agents:
+                continue
+            st.agents[thread_id] = item_id
+            out.append(
+                make_event(
+                    "subagent_started",
+                    {
+                        "turn_id": st.turn_id,
+                        "agent_id": item_id,
+                        "thread_id": thread_id,
+                        "description": prompt.strip().splitlines()[0][:120] if prompt else "",
+                        "agent_type": "",
+                        "prompt": prompt,
+                        "background": True,
+                    },
+                )
+            )
+    for thread_id, raw in states.items():
+        agent_id = st.agents.get(str(thread_id))
+        state = raw if isinstance(raw, dict) else {}
+        status = str(state.get("status") or "")
+        if not agent_id or not status or status in _CODEX_AGENT_LIVE:
+            continue
+        if status in {"shutdown", "not_found"} and agent_id in st.agents_ended:
+            continue
+        st.agents_ended.add(agent_id)
+        out.append(
+            make_event(
+                "subagent_finished",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": agent_id,
+                    "status": subagent_status(status),
+                    "summary": str(state.get("message") or ""),
+                },
+            )
+        )
+    if phase == "completed":
+        started = st.started_at.get(item_id)
+        failed = str(item.get("status") or "") == "failed"
+        out.append(
+            make_event(
+                "tool_result",
+                {
+                    "turn_id": st.turn_id,
+                    "call_id": item_id,
+                    "output": ", ".join(receivers) if tool == "spawn_agent" else "done",
+                    "is_error": failed,
+                    "duration_ms": int((time.perf_counter() - started) * 1000) if started else None,
+                },
+            )
+        )
+    return out
 
 
 def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str, Any]]:
@@ -1898,6 +2137,8 @@ def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str,
                 )
             )
         return out
+    if itype == "collab_tool_call":
+        return _codex_collab_events(item, phase, st)
     if itype in {"command_execution", "file_change", "mcp_tool_call", "web_search"}:
         if itype == "command_execution":
             name, args = "RunCommand", {"command": str(item.get("command") or "")}

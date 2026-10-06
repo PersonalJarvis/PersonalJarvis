@@ -985,6 +985,34 @@ def get_session(
     return {"session": d, "events": svc.store.list_events(session_id, tail=tail)}
 
 
+@router.get(
+    "/sessions/{session_id}/subagents",
+    summary="The sub-agents a coding agent spawned, read from the CLI's own session files",
+    openapi_extra={"x-jarvis-readonly": True},
+)
+async def list_subagents(session_id: str, request: Request) -> dict[str, Any]:
+    """A thread's sub-agents whose steps the CLI does not stream (Codex).
+
+    Claude Code streams its sub-agents into the thread itself; Codex files each
+    one as a rollout of its own. ``agents`` is empty for every other CLI.
+    """
+    from jarvis.agent_chat.subagent_transcripts import codex_homes, codex_subagents
+
+    svc = _service(request)
+    session = svc.store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    runner = resolve_runner(session.provider, surface=session.surface, runtime=session.runtime)
+    if runner != "codex-cli" or not session.vendor_session:
+        return {"agents": []}
+    parent, since, account = session.vendor_session, session.created_ms, session.account_id
+    # Reading rollouts is file work: off the event loop.
+    agents = await asyncio.to_thread(
+        lambda: codex_subagents(parent, since_ms=since, homes=codex_homes(account or None))
+    )
+    return {"agents": [agent.to_dict() for agent in agents]}
+
+
 @router.patch("/sessions/{session_id}")
 async def patch_session(
     session_id: str, body: PatchSessionBody, request: Request
@@ -1161,6 +1189,15 @@ async def cancel_turn(session_id: str, request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="session not found")
     session = svc.store.get_session(session_id)
     cancelled = svc.is_running(session_id)
+    # Who ended a turn is otherwise invisible: name the control that asked.
+    headers = request.headers
+    log.info(
+        "agent chat %s: stop requested over HTTP (via=%s, running=%s, fetch-site=%s)",
+        session_id,
+        (headers.get("x-jarvis-stop-via") or "unnamed")[:40],
+        cancelled,
+        (headers.get("sec-fetch-site") or "none")[:20],
+    )
     if session.surface in ("jarvis", "society"):
         await svc.controls.pause(session_id, "Stopped by the user")
     else:
