@@ -87,7 +87,7 @@ def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
     """
     try:
         return asyncio.get_running_loop(), True
-    except RuntimeError:
+    except RuntimeError:  # no loop on this thread: fall through to the dispatching loop
         pass
     try:
         from anyio.from_thread import run_sync
