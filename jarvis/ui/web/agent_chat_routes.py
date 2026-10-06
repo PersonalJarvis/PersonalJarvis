@@ -449,9 +449,11 @@ def _catalog_rows(
     """The provider rows for ``surface`` with this machine's runner facts."""
     from jarvis.agent_chat import agent_provider_prefs
 
-    # The agents' own seats carry the API Keys page's on/off and hidden
-    # models; their pickers filter on them. Other surfaces keep every seat.
-    prefs = agent_provider_prefs.load() if surface == agent_provider_prefs.AGENT_SURFACE else None
+    # Every surface's rows carry the models hidden on the API Keys page, and
+    # every model picker leaves them out. The on/off switch is the agents'
+    # own: other surfaces keep every seat.
+    prefs = agent_provider_prefs.load()
+    agents = surface == agent_provider_prefs.AGENT_SURFACE
     rows: list[dict[str, Any]] = []
     for row in rows_for(surface):
         d = row.to_dict()
@@ -482,9 +484,9 @@ def _catalog_rows(
         # decided here, from the runner, so the box never offers a "/" list
         # to a seat that would read it as plain text.
         d["typeahead"] = list(typeahead.triggers_for(runner, surface))
-        if prefs is not None:
+        if agents:
             d["enabled"] = prefs.enabled(row.id)
-            d["hidden_models"] = list(prefs.hidden(row.id))
+        d["hidden_models"] = list(prefs.hidden(row.id))
         rows.append(d)
     return rows
 

@@ -25,6 +25,7 @@ import { folderLeaf } from "@/lib/folderPath";
 import { effortLadder, snapEffort } from "@/lib/effortLadder";
 import { rankModels } from "@/lib/modelRanking";
 import { isApiRunner, pickAgentChatFolder, type CuratedModel } from "@/lib/agentChatApi";
+import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -148,6 +149,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
   const connections = useAgentChat((s) => s.connections);
   const liveModels = useAgentChat((s) => s.liveModels);
+  const savedHidden = useSavedHiddenModels((s) => s.hidden);
   const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
   const timeline = useAgentChat((s) => s.timeline);
@@ -434,7 +436,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const brainGroups = useMemo<ComboboxGroup[]>(() => {
     return brainProviders.map((p) => {
       const live = liveModels[p.id];
-      const models = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      const listed = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      // Models switched off on the API Keys page stay out; the current pick stays.
+      const models = offeredModels(p, listed, p.id === draft.provider ? draft.model : "", savedHidden);
       const disabled = !p.connected;
       const hint = disabled
         ? p.cli_installed === false
@@ -475,7 +479,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
       };
     });
-  }, [brainProviders, liveModels, providerMark, t]);
+  }, [brainProviders, liveModels, providerMark, t, draft.provider, draft.model, savedHidden]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -493,7 +497,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
       searchText: m.id,
     });
-    const { current, older } = rankModels(modelList.filter((m) => m.id));
+    // Models switched off on the API Keys page stay out; the current pick stays.
+    const { current, older } = rankModels(offeredModels(provider, modelList, draft.model, savedHidden).filter((m) => m.id));
     const options: ComboboxOption[] = [
       { value: "", label: t("agent_chat.model_default"), hint: provider.label },
       ...current.map(toOption),
@@ -503,7 +508,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       options,
       more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
     }];
-  }, [provider, modelList, t]);
+  }, [provider, modelList, t, draft.model, savedHidden]);
 
   // The effort ladder is the provider's, narrowed to the chosen model's own
   // levels when the catalog knows them (agy's Pro: low/high; its Claude

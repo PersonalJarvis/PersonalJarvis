@@ -4,6 +4,7 @@ import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agen
 import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
+import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { effortLadder } from "@/lib/effortLadder";
 import { rankModels } from "@/lib/modelRanking";
 import { cn } from "@/lib/utils";
@@ -63,12 +64,15 @@ export function AgentModelPicker({
   onPick: (provider: string, model: string) => void;
 }) {
   const olderLabel = useT()("agent_chat.older_models");
+  const saved = useSavedHiddenModels((state) => state.hidden);
   const groups = useMemo<ComboboxGroup[]>(() => providers.map((provider) => {
     const locked = lockedProvider !== null && provider.id !== lockedProvider;
     const disabled = !provider.connected || locked;
     const hint = locked ? "new thread" : !provider.connected ? (provider.cli_installed === false ? "not installed" : "connect first") : undefined;
     const icon = <AgentMark agent={provider.agent ?? ""} label={provider.label} logoUrl={provider.logoUrl} variant="plain" size="sm" />;
-    const models = modelsOf(provider, liveModels).filter((model) => model.id);
+    // Models switched off on the API Keys page stay out; the current pick stays.
+    const current = provider.id === draft.provider ? draft.model : "";
+    const models = offeredModels(provider, modelsOf(provider, liveModels), current, saved).filter((model) => model.id);
     const toOption = (model: CuratedModel): ComboboxOption => ({
       value: `${provider.id}${SEP}${model.id}`,
       label: model.label || model.id,
@@ -88,7 +92,7 @@ export function AgentModelPicker({
       ],
       more: ranked.older.length ? { label: olderLabel, options: ranked.older.map(toOption) } : undefined,
     };
-  }), [providers, liveModels, lockedProvider, olderLabel]);
+  }), [providers, liveModels, lockedProvider, draft.provider, draft.model, saved, olderLabel]);
   return <Combobox ariaLabel="Coding agent and model" testId="thread-model-picker"
     value={`${draft.provider}${SEP}${draft.model}`} groups={groups}
     onChange={(value) => { const [provider, model = ""] = value.split(SEP); onPick(provider, model); }}

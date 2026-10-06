@@ -31,6 +31,7 @@ import {
   fetchAgentProviderPrefs,
   saveAgentProviderPrefs,
   toggled,
+  useSavedHiddenModels,
   type AgentProviderPrefs,
 } from "@/lib/agentProviderPrefs";
 import {
@@ -116,6 +117,7 @@ function useAgentProviders(entriesFor: (prefs: AgentProviderPrefs) => FamilyAcce
     try {
       const saved = await saveAgentProviderPrefs(patch);
       client.setQueryData(AGENT_PROVIDER_PREFS_KEY, saved);
+      useSavedHiddenModels.setState({ hidden: saved.hidden_models });
       void client.invalidateQueries({ queryKey: SOCIETY_CATALOG_KEY });
       void client.invalidateQueries({ queryKey: ["society", "providers"] });
       const next = nextDefault(entriesFor(withPatch(prefs, saved)), primary, familyId);
