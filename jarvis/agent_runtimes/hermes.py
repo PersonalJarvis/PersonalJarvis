@@ -150,6 +150,9 @@ class HermesRuntime:
         binary = _binary()
         return [binary, "update", "--yes"] if binary else None
 
+    def busy(self) -> bool:
+        return self._slots.busy()
+
     async def stop(self, agent_id: str | None = None) -> None:
         """Hermes runs one process per turn; nothing stays behind between turns."""
         return

@@ -1,9 +1,9 @@
 """``/api/agent-runtimes`` — Hermes / OpenClaw status, install and update.
 
-The society UI reads these to offer the runtime switch on an agent's Brain
-settings: installed or not, version, whether that version is new enough, and
-a running setup job with its log tail. Install and update run the runtimes'
-own official tools and only when the person presses the button.
+The create dialog reads these to show whether Hermes or OpenClaw is ready
+or being set up. Setup and updates run the runtimes' own official tools and
+start on their own (``agent_runtimes.manager``): picking a runtime sends
+``ensure``.
 """
 
 from __future__ import annotations
@@ -53,11 +53,16 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
     openapi_extra={"x-jarvis-dangerous": True},
 )
 async def run_agent_runtime_setup(
-    runtime: str, action: Literal["install", "update"]
+    runtime: str, action: Literal["install", "update", "ensure"]
 ) -> dict[str, Any]:
-    """Start the runtime's official installer or updater (person-started only)."""
+    """Start the runtime's official installer or updater. ``ensure`` starts
+    whichever one it needs (``job`` is ``null`` when it is ready already);
+    the create dialog sends it as soon as Hermes or OpenClaw is picked."""
     if runtime not in RUNTIME_NAMES:
         raise HTTPException(404, f"unknown runtime {runtime!r}")
+    if action == "ensure":
+        found = await manager.ensure(runtime)
+        return {"job": found.to_dict() if found is not None else None}
     return {"job": (await manager.start(runtime, action)).to_dict()}
 
 

@@ -5687,8 +5687,9 @@
     },
     "runtime": {
       "built_in": "Integrado",
-      "needs_setup": "Necesita una actualización",
-      "not_installed_short": "No instalado",
+      "ready": "Listo",
+      "auto_setup": "Se configura solo",
+      "setting_up": "Configurando…",
       "runs_on": "Funciona con {0}",
       "title": "Motor",
       "jarvis": "Jarvis",
@@ -5697,16 +5698,11 @@
       "jarvis_hint": "El bucle de agente propio de Jarvis, con el modelo que elijas en su chat.",
       "hermes_hint": "El agente Hermes con sus propias herramientas, más la memoria, las habilidades y las herramientas de Jarvis.",
       "openclaw_hint": "El agente OpenClaw con sus propias herramientas, más la memoria, las habilidades y las herramientas de Jarvis.",
-      "install": "Instalar",
-      "update": "Actualizar",
-      "installing": "Instalando…",
-      "updating": "Actualizando…",
-      "version": "Versión {0}",
-      "not_installed": "{0} no está instalado en este equipo.",
-      "needs_update": "Se necesita {0} {1} o posterior.",
+      "setting_up_hint": "{0} se está configurando en este equipo. Ya puedes crear el agente; responderá en cuanto termine la configuración.",
+      "auto_setup_hint": "Jarvis instala {0} por sí mismo y lo mantiene actualizado.",
       "setup_failed": "La instalación no terminó: {0}",
-      "node_hint": "OpenClaw necesita Node.js 24.16 o posterior. Su instalador añade uno solo para OpenClaw.",
-      "no_version": "{0} está instalado pero no indica su versión. Vuelve a instalarlo."
+      "setting_up_chat": "Configurando {0} en este equipo. La primera vez tarda unos minutos; tu mensaje se responde en cuanto esté listo.",
+      "retry": "Reintentar"
     },
     "approval_mode": {
       "title": "Permisos del agente",

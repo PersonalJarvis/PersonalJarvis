@@ -56,12 +56,10 @@ export function fetchAgentRuntimes(refresh = false): Promise<AgentRuntimesRespon
   return json<AgentRuntimesResponse>(`/api/agent-runtimes${refresh ? "?refresh=true" : ""}`);
 }
 
-export async function startAgentRuntimeSetup(
-  runtime: ExternalRuntime,
-  action: "install" | "update",
-): Promise<AgentRuntimeJob> {
-  const body = await json<{ job: AgentRuntimeJob }>(
-    `/api/agent-runtimes/${encodeURIComponent(runtime)}/${action}`,
+/** Install or update the runtime when it needs it (`null` when it is ready). */
+export async function ensureAgentRuntime(runtime: ExternalRuntime): Promise<AgentRuntimeJob | null> {
+  const body = await json<{ job: AgentRuntimeJob | null }>(
+    `/api/agent-runtimes/${encodeURIComponent(runtime)}/ensure`,
     { method: "POST" },
   );
   return body.job;

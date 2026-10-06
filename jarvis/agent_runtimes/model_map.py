@@ -28,6 +28,9 @@ Transport = Literal["chat_completions", "anthropic_messages"]
 #: The environment variable both runtimes read the model key from.
 KEY_ENV_VAR: Final[str] = "JARVIS_RUNTIME_API_KEY"
 
+#: A Claude subscription (OAuth) token, never an Anthropic API key.
+_CLAUDE_LOGIN_PREFIX: Final[str] = "sk-ant-oat"
+
 #: The provider name Jarvis registers inside the runtime's config.
 RUNTIME_PROVIDER_NAME: Final[str] = "jarvis"
 
@@ -150,6 +153,15 @@ def route_for(config: Any, provider: str, model: str) -> ModelRoute:
             f"{provider} has no server address yet. Add it on the provider's card first."
         )
     key = (resolved.credential or "").strip() or None
+    if key is not None and provider == "claude-api" and key.startswith(_CLAUDE_LOGIN_PREFIX):
+        # A Claude subscription login saved in the API-key slot. Jarvis' own
+        # seats can use it; Anthropic's API refuses it from Hermes / OpenClaw
+        # ("OAuth access token is invalid"), so it is not an API key here.
+        raise RouteUnavailable(
+            "The saved Anthropic credential is a Claude subscription login, not an "
+            "API key. Hermes and OpenClaw need an Anthropic API key, or pick another "
+            "provider."
+        )
     if key is None and not endpoint.keyless:
         raise RouteUnavailable(
             f"No API key is saved for {provider}. Connect it in Settings → API keys."
