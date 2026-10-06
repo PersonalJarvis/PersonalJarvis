@@ -1206,17 +1206,6 @@ body {
 }
 
 @layer utilities {
-  /* A transparent full-screen map must not reveal the app bar's labels under
-     its own toolbar. The shell controls stay hidden while the map is expanded
-     and return immediately when it restores. */
-  main:has(
-      > .jarvis-section-stage
-        #wiki-workspace[data-graph-expanded="true"]
-    )
-    > :not(.jarvis-section-stage) {
-    visibility: hidden;
-  }
-
   /* Staggered reveal on view mount — one orchestrated page-load moment.
      Pair with an inline `animationDelay` for the stagger cadence. */
   @keyframes profile-rise {

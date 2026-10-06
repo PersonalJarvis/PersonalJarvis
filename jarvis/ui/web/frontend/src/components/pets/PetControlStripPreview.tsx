@@ -11,14 +11,13 @@ import { cn } from "@/lib/utils";
 const STRIP_FILL = "#0d1117";
 const STRIP_ICON = "#e8e9ee";
 const STRIP_DIVIDER = "#181c25";
-/** The glossy talk orb: lit from the top left, deep blue at the rim. */
-const ORB_GRADIENT =
-  "radial-gradient(circle at 32% 30%, #e6f1ff 0 7%, #a9d0ff 15%, #4a7cf5 55%, #2747c8 100%)";
+/** The indicator strokes' sky blue (`PET_INDICATOR_SKY`). */
+const STRIP_INDICATOR = "#7ebaff";
 
 /**
- * A still picture of the control strip the desktop pet carries: the pen in
- * its own filled disc (new chat), then one filled pill holding the
- * microphone, the talk orb and the speaker, split by faint dividers, then the
+ * A still picture of the control strip the desktop pet and the Jarvis Bar
+ * share: the pen in its own filled disc (new chat; the pet has a bell there), then one filled pill holding the
+ * microphone, the three-stroke voice indicator and the speaker, split by faint dividers, then the
  * phone that calls Jarvis (its handset lies flat to hang up). Shown on
  * the settings page so the user knows what sits under the pet before
  * switching it on.
@@ -41,7 +40,6 @@ export function PetControlStripPreview({
   const disc = small ? "w-7" : "w-10";
   const slot = small ? "w-7" : "w-10";
   const icon = small ? "h-3.5 w-3.5" : "h-[18px] w-[18px]";
-  const orb = small ? "h-[22px] w-[22px]" : "h-8 w-8";
   const divider = small ? "h-3" : "h-5";
   return (
     <div
@@ -64,13 +62,15 @@ export function PetControlStripPreview({
         </span>
         <span className={cn("w-px", divider)} style={{ backgroundColor: STRIP_DIVIDER }} />
         <span className={cn("grid place-items-center", small ? "w-8" : "w-11")}>
-          {companion ? <span className="flex items-center gap-1" data-testid="pet-strip-indicator">
-            {[0, 1, 2].map((i) => <span key={i} className="h-2 w-1 rounded-full bg-[#7ebaff]" />)}
-          </span> : <span
-            data-testid="pet-strip-orb"
-            className={cn("rounded-full", orb)}
-            style={{ backgroundImage: ORB_GRADIENT }}
-          />}
+          <span className="flex items-center gap-1" data-testid="pet-strip-indicator">
+            {[0, 1, 2].map((i) => (
+              <span
+                key={i}
+                className={cn("rounded-full", small ? "h-2 w-1" : "h-2.5 w-1.5")}
+                style={{ backgroundColor: STRIP_INDICATOR }}
+              />
+            ))}
+          </span>
         </span>
         <span className={cn("w-px", divider)} style={{ backgroundColor: STRIP_DIVIDER }} />
         <span className={cn("grid place-items-center", slot)}>

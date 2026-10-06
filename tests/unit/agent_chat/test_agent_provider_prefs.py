@@ -1,5 +1,6 @@
 """The agents' provider choices: several seats on at once, models hidden,
-Claude set to its key — and only the agents' surface narrowed by them."""
+Claude set to its key — the on/off and the key choice narrowing the agents'
+surface only, the hidden models every model picker."""
 
 from __future__ import annotations
 
@@ -58,6 +59,42 @@ def test_claude_on_its_key_changes_the_agents_surface_only(monkeypatch: pytest.M
 
     assert service.resolve_runner("claude-api", surface="society") not in ("claude-cli", "unknown")
     assert service.resolve_runner("claude-api", surface="agent") == "claude-cli"
+
+
+def test_hidden_models_reach_every_surface_but_the_switch_only_the_agents() -> None:
+    from jarvis.ui.web.agent_chat_routes import _catalog_rows
+
+    surfaces = ("agent", "jarvis", "society")
+    before = {s: {r["id"]: r["curated_models"] for r in _catalog_rows(s, {})} for s in surfaces}
+
+    prefs_mod.save(
+        prefs_mod.parse({"disabled": ["openai"], "hidden_models": {"claude-api": ["opusplan"]}})
+    )
+
+    for surface in surfaces:
+        rows = {row["id"]: row for row in _catalog_rows(surface, {})}
+        assert rows["claude-api"]["hidden_models"] == ["opusplan"], surface
+        assert rows["openai"]["hidden_models"] == [], surface
+        # The list itself stays whole: the picker filters, and the API Keys
+        # page (which reads the same rows) still shows the switched-off model.
+        assert {k: r["curated_models"] for k, r in rows.items()} == before[surface], surface
+    agents = {row["id"]: row for row in _catalog_rows("society", {})}
+    assert agents["openai"]["enabled"] is False
+    assert all("enabled" not in row for row in _catalog_rows("agent", {}))
+
+
+def test_coding_panes_leave_hidden_models_out_but_still_launch_on_them() -> None:
+    from jarvis.workspace import launch_picks
+
+    every = [m["id"] for m in launch_picks.offered("claude")["models"]]
+    assert "opusplan" in every
+
+    prefs_mod.save(prefs_mod.parse({"hidden_models": {"claude-api": ["opusplan"]}}))
+
+    offered = [m["id"] for m in launch_picks.offered("claude")["models"]]
+    assert offered == [m for m in every if m != "opusplan"]
+    # A pane already on the model reopens on it: hiding only shortens the list.
+    assert launch_picks.normalize_model("claude", "opusplan") == "opusplan"
 
 
 def test_the_page_route_merges_and_refuses_unknown_ids() -> None:

@@ -55,10 +55,11 @@ afterEach(() => {
 });
 
 describe("OverlayTaskbarGroup", () => {
-  it("shows the authored blue-orb bar as the default preview", () => {
+  it("shows the bar with the voice indicator as the default preview", () => {
     render(<OverlayTaskbarGroup />);
     expect(screen.getByTestId("jarvis-bar-preview")).toBeDefined();
-    expect(screen.getByTestId("pet-strip-orb").style.backgroundImage).toContain("radial-gradient");
+    const bar = screen.getByTestId("jarvis-bar-preview");
+    expect(bar.querySelector('[data-testid="pet-strip-indicator"]')?.children).toHaveLength(3);
     expect(screen.getByTestId("pet-strip-call")).toBeDefined();
   });
 

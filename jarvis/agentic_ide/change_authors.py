@@ -104,6 +104,15 @@ def _patch_paths(value: Any) -> list[str]:
 
 def written_paths(events: Iterable[dict[str, Any]]) -> dict[str, int]:
     """``{path as written in the call: last write ms}`` for successful writing calls."""
+    return {path: last for path, (_first, last) in write_spans(events).items()}
+
+
+def write_spans(events: Iterable[dict[str, Any]]) -> dict[str, tuple[int, int]]:
+    """``{path as written in the call: (first, last) write ms}`` for successful writes.
+
+    The first write is what a review compares against: the code as it stood
+    before this agent touched the file. 0 means the record carried no time.
+    """
     calls: dict[str, tuple[list[str], int]] = {}
     failed: set[str] = set()
     for event in events:
@@ -128,12 +137,13 @@ def written_paths(events: Iterable[dict[str, Any]]) -> dict[str, int]:
         paths.extend(_patch_paths(args))
         if paths:
             calls[str(payload.get("call_id"))] = (paths, int(event.get("ts_ms") or 0))
-    out: dict[str, int] = {}
+    out: dict[str, tuple[int, int]] = {}
     for call_id, (paths, ts) in calls.items():
         if call_id in failed:
             continue
         for path in paths:
-            out[path] = max(out.get(path, 0), ts)
+            first, last = out.get(path, (ts, ts))
+            out[path] = (min(first, ts) if first and ts else first or ts, max(last, ts))
     return out
 
 
@@ -151,6 +161,9 @@ def _relative(raw: str, base: Path, root: Path) -> str | None:
     return None if text in ("", ".") else text
 
 
+#: Public name for callers that resolve a record's paths themselves.
+relative_path = _relative
+
 Reader = Callable[[PaneRecord], list[dict[str, Any]] | None]
 
 
@@ -158,10 +171,14 @@ def _read_events(record: PaneRecord) -> list[dict[str, Any]] | None:
     return agent_transcript.read_events(record.agent, record.session_id, home=record.home)
 
 
-_cache: dict[tuple[str, str], tuple[float, dict[str, int]]] = {}
+_cache: dict[tuple[str, str], tuple[float, dict[str, tuple[int, int]]]] = {}
 
 
 def _pane_writes(record: PaneRecord, reader: Reader, now: float) -> dict[str, int]:
+    return {path: last for path, (_first, last) in _pane_spans(record, reader, now).items()}
+
+
+def _pane_spans(record: PaneRecord, reader: Reader, now: float) -> dict[str, tuple[int, int]]:
     key = (record.history_id, record.session_id)
     cached = _cache.get(key)
     if cached is not None and now - cached[0] < CACHE_TTL_S:
@@ -171,9 +188,9 @@ def _pane_writes(record: PaneRecord, reader: Reader, now: float) -> dict[str, in
     except Exception as exc:  # a record the CLI rewrote mid-read: no names this round
         logger.info("Change authors: pane {} record unreadable: {}", record.pane, exc)
         events = []
-    writes = written_paths(events)
-    _cache[key] = (now, writes)
-    return writes
+    spans = write_spans(events)
+    _cache[key] = (now, spans)
+    return spans
 
 
 def change_authors(

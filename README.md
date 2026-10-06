@@ -1,6 +1,11 @@
 <h1 align="center">Personal Jarvis</h1>
 
 <p align="center">
+  <strong>English</strong> ·
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis/blob/main/README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <strong>The open-source AI agent super-app for your desktop.</strong><br />
   Run every coding agent side by side, talk to your computer, and keep a team of AI agents working while you are away.
 </p>

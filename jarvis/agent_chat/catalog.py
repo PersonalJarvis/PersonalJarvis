@@ -177,6 +177,19 @@ CLAUDE_CODE_MODELS: Final[tuple[CuratedModel, ...]] = (
 )
 
 
+def claude_model_efforts(model: str) -> tuple[str, ...] | None:
+    """The effort levels Claude Code's ``model`` takes; ``None`` = the full ladder.
+
+    A model newer than :data:`CLAUDE_CODE_MODELS` (the discovery feed's) or an
+    alias gets ``None``: the provider ladder applies and Claude Code folds.
+    """
+    picked = (model or "").strip()
+    for row in CLAUDE_CODE_MODELS:
+        if row.id == picked:
+            return row.efforts
+    return None
+
+
 def claude_code_models() -> tuple[CuratedModel, ...]:
     """What the Claude Code picker offers: :data:`CLAUDE_CODE_MODELS` with any
     newer Anthropic release placed first.

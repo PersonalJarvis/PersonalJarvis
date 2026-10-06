@@ -30,6 +30,8 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSkillsStore } from "@/store/ideSkills";
 import { useIdeThreadsStore } from "@/store/ideThreads";
 import { ThreadView } from "@/components/agentic/threads/ThreadView";
+import { CodeEditorStage } from "@/components/agentic/editor/CodeEditorStage";
+import { useCodeEditorStore } from "@/store/codeEditor";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
@@ -83,6 +85,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Grid of terminals, or one thread at a time (see store/ideThreads).
   const layout = useIdeThreadsStore((state) => state.layout);
   const threads = layout === "threads";
+  // The code editor lies over the grid or the thread; both stay mounted underneath.
+  const ideWorkspace = useIdeChatStore((state) => state.workspace);
+  const stagedPane = useIdeChatStore((state) => state.stagedPane);
+  const editorShown = useCodeEditorStore((state) => state.visible && state.tabs.some((tab) => tab.workspaceId === ideWorkspace?.id));
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
@@ -566,11 +572,12 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
-      {threads && <ThreadView onScreen={onScreen} />}
+      <div className="relative h-full min-h-0">
+      {threads && <ThreadView onScreen={onScreen && !editorShown} />}
       {/* The grid stays mounted behind the threads: its terminals keep running
           and come back exactly as they were when the layout switches back. */}
       <div hidden={threads} className="h-full min-h-0">
-      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads && !editorShown} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
         onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -579,6 +586,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
         <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
       </div>}
+      </div>
+      <CodeEditorStage workspaceId={ideWorkspace?.id ?? null} workspacePath={ideWorkspace?.path ?? ""} stagedPane={stagedPane} />
       </div>
       </IdeSidePanelFrame>
     </main>

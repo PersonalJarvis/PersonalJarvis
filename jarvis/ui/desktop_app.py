@@ -177,6 +177,24 @@ def _pet_toggle_hotkey(cfg: Any) -> str:
     return str(value or "").strip()
 
 
+
+def _cached_orb_window(cache: dict[str, Any]) -> Any | None:
+    """The orb window among the cached overlay surfaces, if one was built."""
+    from jarvis.ui.overlay_styles import ORB_STYLES
+
+    for key, surface in cache.items():
+        if key in ORB_STYLES and hasattr(surface, "set_style"):
+            return surface
+    return None
+
+
+def _recache_surface(cache: dict[str, Any], surface: Any, style: str) -> None:
+    """Key ``surface`` under ``style`` only — one window, one cache entry."""
+    for key in [k for k, v in cache.items() if v is surface]:
+        cache.pop(key, None)
+    cache[style] = surface
+
+
 def boot_overlay_style(configured: str | None, *, instance: Any | None = None) -> str:
     """The on-screen overlay style this process boots with.
 
@@ -3255,6 +3273,10 @@ class DesktopApp:
                     from jarvis.agentic_ide.session import schedule_boot_restore
 
                     schedule_boot_restore()
+                    # Carry on the IDE thread turns the turn host kept running.
+                    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+                    schedule_turn_reattach(server.app.state)
                 except Exception as exc:  # noqa: BLE001 — never kill the backend loop
                     from loguru import logger as _slog
 
@@ -3626,54 +3648,12 @@ class DesktopApp:
             # companion process whose MAIN thread owns the Tk mainloop
             # (jarvis.ui.jarvisbar.host), remote-driven over stdio; the init
             # line's "surface" key selects bar vs. mascot.
-            from loguru import logger
-
-            if style == "jarvis_bar":
-                try:
-                    from jarvis.ui.jarvisbar.subprocess_overlay import (
-                        SubprocessBarOverlay,
-                    )
-
-                    surface = SubprocessBarOverlay(
-                        persistent=self.cfg.ui.bar_persistent,
-                        accent=self.cfg.ui.bar_accent,
-                        startup_gated=gate_until_voice_ready,
-                        size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
-                        follow_cursor_monitor=getattr(
-                            self.cfg.ui, "bar_follow_cursor_monitor", True
-                        ),
-                    )
-                    surface.start_in_thread()
-                    logger.info(
-                        "JarvisBar hosted out-of-process on macOS (jarvis.ui.jarvisbar.host)."
-                    )
-                    return surface
-                except Exception:  # noqa: BLE001 — cosmetic; never block boot
-                    logger.opt(exception=True).warning(
-                        "macOS JarvisBar host failed to start — falling back to the no-op surface."
-                    )
-            elif style != "none":
-                try:
-                    from jarvis.ui.jarvisbar.subprocess_overlay import (
-                        SubprocessMascotOverlay,
-                    )
-
-                    surface = SubprocessMascotOverlay(
-                        mascot_path=self.cfg.ui.orb_mascot_path or None,
-                        style=style,
-                        **self._pet_surface_kwargs(),
-                    )
-                    surface.start_in_thread()
-                    logger.info(
-                        "Orb window hosted out-of-process on macOS "
-                        "(jarvis.ui.jarvisbar.host, style={}).",
-                        style,
-                    )
-                    return surface
-                except Exception:  # noqa: BLE001 — cosmetic; never block boot
-                    logger.opt(exception=True).warning(
-                        "macOS orb host failed to start — falling back to the no-op surface."
-                    )
+            if style != "none":
+                hosted = self._build_hosted_surface(
+                    style, gate_until_voice_ready=gate_until_voice_ready
+                )
+                if hosted is not None:
+                    return hosted
             from jarvis.ui.jarvisbar import NullOverlay
 
             return NullOverlay()
@@ -3704,6 +3684,54 @@ class DesktopApp:
                 **self._pet_surface_kwargs(),
             )
         surface.start_in_thread()
+        return surface
+
+    def _build_hosted_surface(self, style: str, *, gate_until_voice_ready: bool = False):
+        """Start the bar or the orb window in its own companion process.
+
+        ``jarvis.ui.jarvisbar.host`` owns the Tk (or Qt) root on its own MAIN
+        thread, so nothing in this process ever creates or destroys a root.
+        That makes it the macOS boot surface (BUG-057) and, on every OS, the
+        surface a live style switch builds: a second in-process root aborts
+        the whole app (BUG-031), while a host process can be started and
+        stopped any number of times. Returns ``None`` when the host could not
+        be started; the caller decides how to degrade.
+        """
+        from loguru import logger
+
+        from jarvis.ui.overlay_styles import BAR_STYLE, ORB_STYLES
+
+        try:
+            if style == BAR_STYLE:
+                from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+
+                surface = SubprocessBarOverlay(
+                    persistent=self.cfg.ui.bar_persistent,
+                    accent=self.cfg.ui.bar_accent,
+                    startup_gated=gate_until_voice_ready,
+                    size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
+                    follow_cursor_monitor=getattr(self.cfg.ui, "bar_follow_cursor_monitor", True),
+                )
+            elif style in ORB_STYLES:
+                from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
+
+                surface = SubprocessMascotOverlay(
+                    mascot_path=self.cfg.ui.orb_mascot_path or None,
+                    style=style,
+                    **self._pet_surface_kwargs(),
+                )
+            else:
+                return None
+            # The host imports its renderer before it reports ready; give a
+            # cold interpreter more room than the 3 s default.
+            surface.start_in_thread(timeout=10.0)
+        except Exception:  # noqa: BLE001 — cosmetic; the caller degrades
+            logger.opt(exception=True).warning("Overlay host for style={} failed to start.", style)
+            return None
+        if getattr(surface, "_proc", None) is None:
+            logger.warning("Overlay host for style={} did not start.", style)
+            return None
+        logger.info("Overlay hosted out-of-process (jarvis.ui.jarvisbar.host, style={}).", style)
         return surface
 
     def _pet_surface_kwargs(self) -> dict[str, object]:
@@ -3905,31 +3933,31 @@ class DesktopApp:
             return {"ok": True, "applied_live": False, "enabled": enabled}
 
     def swap_overlay(self, style: str) -> dict[str, object]:
-        """Apply an overlay style change at runtime *as far as is Tk-safe*.
+        """Switch the on-screen overlay style live.
 
-        Hard constraint: this NEVER creates a new ``tk.Tk()`` root at runtime.
-        Tkinter cannot create per-style Tk roots on short-lived threads and tear
-        them down: when a destroyed root's Python wrapper is later garbage-
-        collected on a different thread, Tcl aborts the WHOLE PROCESS with
-        ``Tcl_AsyncDelete: async handler deleted by the wrong thread`` (proven
-        live — ``screenshots/live_swap_three_cycles.py``, BUG-031). The "park +
-        join + rebuild" approach looked safe in a 2-root throwaway test only
-        because that test called ``os._exit()`` before GC ran. So the only live
-        transitions we allow are the ones that touch no new root:
+        Hard constraint: this NEVER creates a ``tk.Tk()`` root in THIS process
+        at runtime. Building a second in-process root and tearing one down
+        aborts the whole app with ``Tcl_AsyncDelete: async handler deleted by
+        the wrong thread`` (BUG-031). The transitions therefore are:
 
-        - ``"none"``           → hide the current surface (NullOverlay no-op).
-        - an already-built style (cached, e.g. the boot surface re-selected)
-                               → show it again (same root, never destroyed).
+        - ``"none"``              → the rootless ``NullOverlay``.
+        - one orb look to another → re-style the live orb window (same root).
+        - an already-built style  → show it again (same root, never destroyed).
+        - anything else           → start the surface in its own host process
+                                    (``_build_hosted_surface``), whose root
+                                    lives on that process's main thread.
 
-        Any transition that would need a brand-new real surface (e.g. boot was
-        the mascot and the user picks the bar for the first time) returns
-        ``applied_live=False``; the choice is persisted and the route reports
-        ``restart_required``. The frontend turns that into a one-click
-        self-restart so the user never has to close + reopen by hand. Guarded.
+        The surface being left is taken off the screen at once, so the old look
+        never lingers beside the new one (the 2026-10-06 "the pet stays next to
+        the bar" report). A hosted surface is stopped — its process ends — and
+        an in-process one is only hidden, never destroyed. ``applied_live`` is
+        False only when a host fails to start; the route then reports
+        ``restart_required`` and the frontend offers a one-click restart.
         """
         from loguru import logger
 
         from jarvis.ui.overlay_styles import (
+            HIDDEN_STYLE,
             ORB_STYLES,
             OVERLAY_STYLES,
             PERSISTENT_ORB_STYLES,
@@ -3942,23 +3970,25 @@ class DesktopApp:
         if bridge is None:
             # No live bridge (headless / overlay unavailable) — persisted only.
             return {"ok": True, "applied_live": False, "style": style}
+        # What is on screen right now. Not cfg.ui.orb_style: the settings route
+        # stores the NEW style there before it calls this method.
+        previous = str(
+            getattr(self, "_live_overlay_style", None)
+            or getattr(self.cfg.ui, "orb_style", "")
+            or ""
+        )
         try:
             cache = getattr(self, "_surfaces", None)
             if cache is None:
                 cache = self._surfaces = {}
             old = getattr(self, "_orb", None)
 
-            # Mascot <-> voice orb is a RENDERER swap inside one window, not a
-            # new surface: the orb window stays, only what it paints changes. So
-            # this transition applies live even though every other first-time
-            # transition needs a restart (a second tk.Tk() root would abort the
-            # process — BUG-031).
+            # Mascot <-> voice orb <-> pet is a RENDERER swap inside one window,
+            # not a new surface: the orb window stays, only what it paints
+            # changes.
             if style in ORB_STYLES and old is not None and hasattr(old, "set_style"):
-                previous = str(getattr(self.cfg.ui, "orb_style", "") or "")
                 old.set_style(style)
-                for key in [k for k, v in cache.items() if v is old]:
-                    cache.pop(key, None)
-                cache[style] = old
+                _recache_surface(cache, old, style)
                 # The idle regime travels with the look: the pet stays up
                 # while idle, the mascot and the voice orb pop up per session.
                 bridge._hide_on_idle = self._hide_on_idle_for(style)
@@ -3967,40 +3997,38 @@ class DesktopApp:
                     old.show(mode)
                 elif previous in PERSISTENT_ORB_STYLES and mode == "idle":
                     old.hide()
-                try:
-                    self.cfg.ui.orb_style = style  # best-effort in-memory
-                except Exception:  # noqa: BLE001
-                    logger.debug("in-memory orb_style update skipped", exc_info=True)
+                self._note_live_overlay_style(style)
                 logger.info("Orb window re-styled live to {}.", style)
                 return {"ok": True, "applied_live": True, "style": style}
 
-            if style == "none":
-                new = cache.get("none")
+            if style == HIDDEN_STYLE:
+                new = cache.get(HIDDEN_STYLE)
                 if new is None:
                     from jarvis.ui.jarvisbar import NullOverlay  # no Tk root
 
                     new = NullOverlay()
-                    cache["none"] = new
+                    cache[HIDDEN_STYLE] = new
+            elif style in ORB_STYLES and (window := _cached_orb_window(cache)) is not None:
+                # The orb window built earlier (e.g. at boot) wears any orb
+                # look, so it is reused rather than built a second time.
+                window.set_style(style)
+                _recache_surface(cache, window, style)
+                new = window
             else:
                 new = cache.get(style)
                 if new is None:
-                    # A new tk.Tk() root at runtime would cross-thread-abort the
-                    # process (Tcl_AsyncDelete, BUG-031). Persist only; the route
-                    # surfaces restart_required (frontend = one-click restart).
-                    logger.info(
-                        "Overlay style '{}' needs a restart (no live Tk root yet).",
-                        style,
-                    )
-                    return {"ok": True, "applied_live": False, "style": style}
+                    new = self._build_hosted_surface(style)
+                    if new is None:
+                        # The host would not start. Persisted only; the route
+                        # reports restart_required (one-click restart).
+                        return {"ok": True, "applied_live": False, "style": style}
+                    cache[style] = new
 
             bridge.set_surface(new)
             self._orb = new
             bridge._hide_on_idle = self._hide_on_idle_for(style)
             if old is not None and old is not new:
-                try:
-                    old.hide()
-                except Exception:  # noqa: BLE001
-                    logger.debug("old overlay hide failed", exc_info=True)
+                self._retire_overlay_surface(old, cache)
             try:
                 if (
                     style == "jarvis_bar" and self.cfg.ui.bar_persistent
@@ -4008,10 +4036,7 @@ class DesktopApp:
                     new.show("idle")
             except Exception:  # noqa: BLE001
                 logger.debug("post-swap show failed", exc_info=True)
-            try:
-                self.cfg.ui.orb_style = style  # best-effort in-memory
-            except Exception:  # noqa: BLE001
-                logger.debug("in-memory orb_style update skipped", exc_info=True)
+            self._note_live_overlay_style(style)
             logger.info("Overlay swapped live to style={}.", style)
             return {"ok": True, "applied_live": True, "style": style}
         except Exception as exc:  # noqa: BLE001
@@ -4019,6 +4044,38 @@ class DesktopApp:
                 "overlay live-swap failed (persisted; applies on restart)"
             )
             return {"ok": True, "applied_live": False, "style": style}
+
+    def _note_live_overlay_style(self, style: str) -> None:
+        """Remember which style is on screen (in memory and in the config)."""
+        self._live_overlay_style = style
+        try:
+            self.cfg.ui.orb_style = style  # best-effort in-memory
+        except Exception:  # noqa: BLE001 — a frozen model is not an error
+            from loguru import logger
+
+            logger.debug("in-memory orb_style update skipped", exc_info=True)
+
+    def _retire_overlay_surface(self, surface: Any, cache: dict[str, Any]) -> None:
+        """Take a surface that is no longer selected off the screen.
+
+        A surface in a host process is stopped and forgotten: its process ends,
+        and a later switch back simply starts a fresh one. A surface in this
+        process keeps its Tk root (destroying it aborts the app, BUG-031), so it
+        is only hidden and stays cached for reuse.
+        """
+        from loguru import logger
+
+        from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+
+        try:
+            if isinstance(surface, SubprocessBarOverlay):
+                for key in [k for k, v in cache.items() if v is surface]:
+                    cache.pop(key, None)
+                surface.stop()
+            else:
+                surface.hide()
+        except Exception:  # noqa: BLE001 — cosmetic; the new surface is already live
+            logger.debug("retiring the previous overlay failed", exc_info=True)
 
     def request_restart(self) -> bool:
         """Cleanly self-restart the app to deliver a pending overlay change.
@@ -4414,6 +4471,7 @@ class DesktopApp:
                 # Cache the boot surface so a later swap back to it reuses the
                 # same Tk root instead of building a second one.
                 self._surfaces = {orb_style: surface}
+                self._live_overlay_style = orb_style
                 logger.info(
                     "On-screen overlay active: style={} (persistent={}, accent={}).",
                     orb_style,
@@ -6212,6 +6270,15 @@ class DesktopApp:
             # editor's "Drag me" handle (jarvis/appshot/dragfile.py).
             install_native_drag(allowed_base_dirs=[downloads_dir(), drag_folder()])
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
+            pass
+
+        # macOS: Cmd+W goes to the page (closes a code-editor tab) instead of
+        # closing the window; a logged no-op everywhere else. Before start().
+        try:
+            from jarvis.ui.macos_editor_keys import install_macos_editor_keys
+
+            install_macos_editor_keys()
+        except Exception:  # noqa: BLE001, S110 - key routing is never load-bearing
             pass
 
         # webview.start blocks the main thread. func/args gets called after

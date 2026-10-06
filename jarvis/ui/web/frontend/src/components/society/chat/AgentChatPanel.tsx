@@ -66,6 +66,7 @@ import { cn } from "@/lib/utils";
 import { societyDisplayName } from "@/lib/societyDisplayName";
 import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from "@/store/agentChat";
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
+import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 
 import { AgentSwatch } from "../AgentSwatch";
 import {
@@ -504,6 +505,7 @@ function ModelPicker() {
   const providerOptions = useAgentChat((s) => s.providerOptions);
   const providerById = useAgentChat((s) => s.providerById);
   const liveModels = useAgentChat((s) => s.liveModels);
+  const savedHidden = useSavedHiddenModels((s) => s.hidden);
   const loadModels = useAgentChat((s) => s.loadModels);
   const setDraft = useAgentChat((s) => s.setDraft);
   const locks = useAgentChat((s) => s.locks);
@@ -517,12 +519,14 @@ function ModelPicker() {
   const models = useMemo(() => {
     if (!chosen) return [];
     const seen = new Set<string>();
-    return [...(liveModels[chosen.id] ?? []), ...chosen.curated_models].filter((m) => {
+    const listed = [...(liveModels[chosen.id] ?? []), ...chosen.curated_models].filter((m) => {
       if (seen.has(m.id)) return false;
       seen.add(m.id);
       return true;
     });
-  }, [chosen, liveModels]);
+    // Models switched off on the API Keys page stay out; the current pick stays.
+    return offeredModels(chosen, listed, chosen.id === draft.provider ? draft.model : "", savedHidden);
+  }, [chosen, liveModels, draft.provider, draft.model, savedHidden]);
 
   useEffect(() => {
     if (open && chosen && chosen.models_source === "live") void loadModels(chosen.id);

@@ -37,4 +37,16 @@ LABELS = {
         "recording": "Grabando",
         "saving": "Guardando grabación…",
     },
+    "zh": {
+        "title": "AppShots — 屏幕录制",  # i18n-allow: product UI
+        "select": "拖动选择录制区域 · 按 Esc 取消",  # i18n-allow: product UI
+        "full": "录制整个屏幕",  # i18n-allow: product UI
+        "portal": "请在系统共享对话框中选择一个屏幕。",  # i18n-allow: product UI
+        "preview": "在预览中拖动选择区域，或录制整个共享屏幕。",  # i18n-allow: product UI
+        "cancel": "取消",  # i18n-allow: product UI
+        "stop": "停止并保存",  # i18n-allow: product UI
+        "starting": "正在开始录制…",  # i18n-allow: product UI
+        "recording": "正在录制",  # i18n-allow: product UI
+        "saving": "正在保存录制…",  # i18n-allow: product UI
+    },
 }

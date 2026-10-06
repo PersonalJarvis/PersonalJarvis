@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ComponentType, type CSSProperties, type MouseEvent, type PointerEvent, type SVGProps } from "react";
 import { createPortal } from "react-dom";
-import { Check, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { Check, FileDiff, FolderInput, GitBranch, Maximize2, Minimize2, MoreHorizontal, Plus, Server, X } from "lucide-react";
+import { loadLocaleChunk } from "@/i18n";
 import { AgentMark } from "./AgentMark";
 import { BranchIcon } from "./branchIcon";
 import { SessionGitHubBadge } from "./SessionGitHubBadge";
@@ -37,6 +38,10 @@ interface Props {
   onRename?: (name: string) => Promise<boolean>;
   onOpenConversation?: () => void;
   onOpenChat?: () => void;
+  /** Opens the review of every uncommitted change this pane's agent made. */
+  onReviewChanges?: () => void;
+  /** Starts reading the review ahead of a click: on the button at once, on the title bar after a short dwell. */
+  onReviewChangesPrefetch?: () => void;
   onRestart?: () => void;
   /** Opens the fork dialog: a new agent continuing a copy of this pane's chat. */
   onFork?: () => void;
@@ -75,7 +80,7 @@ export function WorkspaceTerminalHeader({
   contextMenuRequest, onSwapWithFocused, sendRightClicks = false, onToggleSendRightClicks,
   name, workspaceId, promptCount = 0, agent, agentLogoUrl, displayName, status, appearance, arranging = false,
   maximized = false, addDisabled = false, onArrangeStart, onActivate, onToggleMaximize,
-  onAdd, onClose, onRename, onOpenConversation, onOpenChat, onRestart, onFork, branch,
+  onAdd, onClose, onRename, onOpenConversation, onOpenChat, onReviewChanges, onReviewChangesPrefetch, onRestart, onFork, branch,
   computerName, placementItems, workspaceItems, variant = "bar", focused = false, githubStatusEnabled = true,
 }: Props) {
   const brand = PANE_BRAND[appearance];
@@ -94,6 +99,19 @@ export function WorkspaceTerminalHeader({
   const [renameError, setRenameError] = useState("");
   const stopped = status === "exited" || status === "error";
   const menuOpen = menuPosition !== null;
+  // A pointer resting on the title bar is a pointer about to use it: the
+  // review is read ahead so it opens already painted. A pass across the bar
+  // on the way somewhere else is too short to start a read.
+  const prefetchTimer = useRef<number | null>(null);
+  const cancelPrefetch = () => {
+    if (prefetchTimer.current !== null) window.clearTimeout(prefetchTimer.current);
+    prefetchTimer.current = null;
+  };
+  useEffect(() => cancelPrefetch, []);
+  const prefetchReview = () => {
+    void loadLocaleChunk("pane_review");
+    onReviewChangesPrefetch?.();
+  };
   useEffect(() => {
     if (contextMenuRequest) setMenuPosition(contextMenuRequest);
   }, [contextMenuRequest]);
@@ -202,6 +220,7 @@ export function WorkspaceTerminalHeader({
           Icon: maximized ? Minimize2 : Maximize2, run: onToggleMaximize },
         onOpenConversation && { label: "Conversation history", run: onOpenConversation },
         onOpenChat && { label: "Open as chat", run: onOpenChat },
+        onReviewChanges && { label: "Review changes", Icon: FileDiff, run: onReviewChanges },
         stopped && onRestart && { label: "Restart agent", run: onRestart },
         ...(workspaceItems ?? []).map((item, index) => ({ ...item, Icon: FolderInput, separated: index === 0 })),
         ...(placementItems ?? []).map((item, index) => ({ ...item, Icon: Server, separated: index === 0 })),
@@ -241,6 +260,11 @@ export function WorkspaceTerminalHeader({
         : "relative flex h-9 min-h-9 shrink-0 select-none items-center gap-1 border-b pl-2.5 pr-1"}
       style={{ ...variables, borderColor: chrome.border, background: chrome.shell, touchAction: onArrangeStart ? "none" : undefined }}
       onContextMenu={openMenuAt}
+      onPointerEnter={onReviewChanges ? () => {
+        cancelPrefetch();
+        prefetchTimer.current = window.setTimeout(prefetchReview, 300);
+      } : undefined}
+      onPointerLeave={cancelPrefetch}
       onPointerDown={(event) => {
         if (event.button !== 0 || (event.target as HTMLElement).closest("[data-header-control]")) return;
         setMenuPosition(null);
@@ -274,6 +298,8 @@ export function WorkspaceTerminalHeader({
       <span id={dragHintId} className="sr-only">Drag to reorder, or focus this title and press Alt with an arrow key.</span>
       <SessionGitHubBadge workspaceId={githubStatusEnabled ? workspaceId : undefined} name={name} appearance={appearance} />
       <div data-header-control="true" className="flex shrink-0 items-center gap-0.5">
+        {onReviewChanges && <button type="button" data-testid={`pane-review-changes-${name}`} aria-label={`Review changes by ${name}`}
+          title="Review changes" onClick={onReviewChanges} onPointerEnter={() => { cancelPrefetch(); prefetchReview(); }} className={action}><FileDiff className="h-[15px] w-[15px]" /></button>}
         {moreButton}
         {maximizeButton}
         {onFork && <button type="button" data-testid={`pane-fork-${name}`} aria-label={`Fork ${name}`} title={`Fork ${name}`}

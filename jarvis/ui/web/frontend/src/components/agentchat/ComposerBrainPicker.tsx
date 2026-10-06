@@ -1,8 +1,9 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Star } from "lucide-react";
 
-import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
+import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
+import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { cn } from "@/lib/utils";
 
 /**
@@ -77,6 +78,7 @@ export function ComposerBrainPicker({
   title,
   className,
   chevron = true,
+  testId = "composer-model",
 }: {
   value: string;
   /** One group per provider, its id equal to that provider's section id. */
@@ -93,50 +95,54 @@ export function ComposerBrainPicker({
   title?: string;
   className?: string;
   chevron?: boolean;
+  /** Lands on the trigger; the panel gets `${testId}-panel`. */
+  testId?: string;
 }) {
   const t = useT();
   const [favorites, toggleFavorite] = useFavoriteModels();
   const [section, setSection] = useState(currentSection);
+  const [providerOrder, moveProvider] = useProviderOrder();
+  const ordered = useMemo(() => orderBy(sections, (s) => s.id, providerOrder), [sections, providerOrder]);
 
   // Every row carries its star; the favourites tab lists the starred rows in
   // the order they were starred.
-  const starred = useMemo<ComboboxGroup[]>(
-    () =>
-      groups.map((group) => ({
-        ...group,
-        options: group.options.map((option) => {
-          const on = favorites.includes(option.value);
-          const label = on ? t("agent_chat.favorite_remove") : t("agent_chat.favorite_add");
-          return {
-            ...option,
-            trailing: (
-              <button
-                type="button"
-                aria-label={label}
-                aria-pressed={on}
-                title={label}
-                data-testid="composer-model-star"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleFavorite(option.value);
-                }}
-                className={cn(
-                  "-my-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-sheen/[0.08]",
-                  on ? "text-warning" : "text-faint-foreground hover:text-foreground",
-                )}
-              >
-                <Star className={cn("h-3.5 w-3.5", on && "fill-current")} aria-hidden />
-              </button>
-            ),
-          };
-        }),
-      })),
-    [groups, favorites, toggleFavorite, t],
-  );
+  const starred = useMemo<ComboboxGroup[]>(() => {
+    const withStar = (option: ComboboxOption): ComboboxOption => {
+      const on = favorites.includes(option.value);
+      const label = on ? t("agent_chat.favorite_remove") : t("agent_chat.favorite_add");
+      return {
+        ...option,
+        trailing: (
+          <button
+            type="button"
+            aria-label={label}
+            aria-pressed={on}
+            title={label}
+            data-testid="composer-model-star"
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleFavorite(option.value);
+            }}
+            className={cn(
+              "-my-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-sheen/[0.08]",
+              on ? "text-warning" : "text-faint-foreground hover:text-foreground",
+            )}
+          >
+            <Star className={cn("h-3.5 w-3.5", on && "fill-current")} aria-hidden />
+          </button>
+        ),
+      };
+    };
+    return groups.map((group) => ({
+      ...group,
+      options: group.options.map(withStar),
+      more: group.more && { ...group.more, options: group.more.options.map(withStar) },
+    }));
+  }, [groups, favorites, toggleFavorite, t]);
 
   const browseGroups = useMemo<ComboboxGroup[]>(() => {
     if (section === FAVORITES) {
-      const all = starred.flatMap((group) => group.options);
+      const all = starred.flatMap((group) => [...group.options, ...(group.more?.options ?? [])]);
       const options = favorites
         .map((fav) => all.find((option) => option.value === fav))
         .filter((option): option is NonNullable<typeof option> => Boolean(option));
@@ -171,9 +177,17 @@ export function ComposerBrainPicker({
         <Star className="h-4 w-4 fill-current" aria-hidden />
       </RailButton>
       <span className="mx-1 my-0.5 border-b border-border" aria-hidden />
-      {sections.map((s) => (
+      {ordered.map((s, index) => (
         <RailButton
           key={s.id}
+          reorder={{
+            id: s.id,
+            onMove: (dragged, target) => moveProvider(ordered.map((o) => o.id), dragged, target),
+            onStep: (step) => {
+              const target = ordered[index + step];
+              if (target) moveProvider(ordered.map((o) => o.id), s.id, target.id);
+            },
+          }}
           active={section === s.id}
           label={s.label}
           muted={s.muted}
@@ -204,7 +218,7 @@ export function ComposerBrainPicker({
             : t("agent_chat.no_models")
         }
         disabled={disabled}
-        testId="composer-model"
+        testId={testId}
         triggerHint={false}
         triggerIcon={false}
         triggerPrefix={triggerPrefix}
@@ -216,12 +230,24 @@ export function ComposerBrainPicker({
   );
 }
 
-function RailButton({
+/** The drag payload a rail mark carries: the provider id it stands for. */
+const RAIL_DRAG = "application/x-jarvis-provider";
+
+export interface RailReorder {
+  id: string;
+  /** Drop `dragged` onto this mark's place. */
+  onMove: (dragged: string, target: string) => void;
+  /** Alt+Arrow: one place up (-1) or down (+1). */
+  onStep: (step: -1 | 1) => void;
+}
+
+export function RailButton({
   active,
   label,
   muted = false,
   onSelect,
   testId,
+  reorder,
   children,
 }: {
   active: boolean;
@@ -229,8 +255,11 @@ function RailButton({
   muted?: boolean;
   onSelect: () => void;
   testId: string;
+  /** Lets the mark be dragged (or Alt+Arrowed) to another place on the rail. */
+  reorder?: RailReorder;
   children: ReactNode;
 }) {
+  const [dropTarget, setDropTarget] = useState(false);
   return (
     <button
       type="button"
@@ -238,6 +267,32 @@ function RailButton({
       aria-pressed={active}
       title={label}
       data-testid={testId}
+      draggable={Boolean(reorder)}
+      onDragStart={(event) => {
+        if (!reorder) return;
+        event.dataTransfer.setData(RAIL_DRAG, reorder.id);
+        event.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(event) => {
+        if (!reorder || !event.dataTransfer.types.includes(RAIL_DRAG)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        setDropTarget(true);
+      }}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={(event) => {
+        setDropTarget(false);
+        const dragged = event.dataTransfer.getData(RAIL_DRAG);
+        if (!reorder || !dragged) return;
+        event.preventDefault();
+        reorder.onMove(dragged, reorder.id);
+      }}
+      onKeyDown={(event) => {
+        if (!reorder || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        reorder.onStep(event.key === "ArrowUp" ? -1 : 1);
+      }}
       onClick={(event) => {
         onSelect();
         // Back to the search box, so typing right after a rail click searches.
@@ -250,6 +305,7 @@ function RailButton({
         "relative flex aspect-square w-full shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sheen/[0.08] hover:text-foreground",
         active && "bg-sheen/[0.06] text-foreground",
         muted && "opacity-50",
+        dropTarget && "ring-1 ring-border-strong",
       )}
     >
       {active && (

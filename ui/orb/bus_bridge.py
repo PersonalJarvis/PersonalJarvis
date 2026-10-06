@@ -156,6 +156,7 @@ MICROPHONE_REFUSAL_TEXT: dict[str, str] = {
         "Se necesita acceso al micrófono: permítelo en el diálogo de macOS y vuelve "  # i18n-allow
         "a pulsar la tecla."  # i18n-allow
     ),
+    "zh": "需要麦克风权限：请在 macOS 对话框中允许，然后再按一次快捷键。",  # i18n-allow
 }
 
 # The microphone is DENIED (or macOS applies the switch only in Settings): there is no
@@ -174,6 +175,11 @@ MICROPHONE_DENIED_REFUSAL_TEXT: dict[str, str] = {
         "El micrófono está desactivado para Personal Jarvis: actívalo en Ajustes del "  # i18n-allow
         "Sistema > Privacidad y seguridad > Micrófono y vuelve a pulsar la tecla."  # i18n-allow
     ),
+    "zh": (  # i18n-allow
+        "Personal Jarvis 的麦克风已关闭："  # i18n-allow
+        "请在“系统设置 > 隐私与安全性 > 麦克风”中开启，"  # i18n-allow
+        "然后再按一次快捷键。"  # i18n-allow
+    ),
 }
 
 # Running outside the installed app: the confirmation lives in the web window, and
@@ -182,6 +188,7 @@ MICROPHONE_OUTSIDE_REFUSAL_TEXT: dict[str, str] = {
     "en": "Open the Personal Jarvis window to continue.",
     "de": "Öffne das Personal-Jarvis-Fenster, um fortzufahren.",  # i18n-allow
     "es": "Abre la ventana de Personal Jarvis para continuar.",  # i18n-allow
+    "zh": "打开 Personal Jarvis 窗口以继续。",  # i18n-allow
 }
 
 # A microphone-permission notice is a sentence with a place name in it: 3 s is too
@@ -337,39 +344,46 @@ PET_CARD_LABELS: dict[str, dict[str, str]] = {
         "en": "Thinking …",
         "de": "Denkt nach …",  # i18n-allow
         "es": "Pensando …",  # i18n-allow
+        "zh": "正在思考…",  # i18n-allow
     },
     "working": {
         "en": "Working",
         "de": "Arbeitet",  # i18n-allow
         "es": "Trabajando",  # i18n-allow
+        "zh": "正在处理",  # i18n-allow
     },
     "working_detail": {
         "en": "Working …",
         "de": "Arbeitet …",  # i18n-allow
         "es": "Trabajando …",  # i18n-allow
+        "zh": "正在处理…",  # i18n-allow
     },
     "step_done": {
         "en": "Step done",
         "de": "Befehl ausgeführt",  # i18n-allow
         "es": "Paso completado",  # i18n-allow
+        "zh": "步骤已完成",  # i18n-allow
     },
     "step_failed": {
         "en": "Step failed",
         "de": "Befehl fehlgeschlagen",  # i18n-allow
         "es": "Paso fallido",  # i18n-allow
+        "zh": "步骤失败",  # i18n-allow
     },
     "done": {
         "en": "Done",
         "de": "Erledigt",  # i18n-allow
         "es": "Hecho",  # i18n-allow
+        "zh": "已完成",  # i18n-allow
     },
     "failed": {
         "en": "Failed",
         "de": "Fehlgeschlagen",  # i18n-allow
         "es": "Falló",  # i18n-allow
+        "zh": "失败",  # i18n-allow
     },
 }
-PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
+PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "zh")
 
 # Minimum spacing of two card updates. A streamed reasoning summary produces a
 # few snapshots per second; repainting the card for each one is flicker.

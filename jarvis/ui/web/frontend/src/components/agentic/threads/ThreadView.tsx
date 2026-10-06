@@ -8,6 +8,7 @@ import { ThreadBranchBar, type ThreadCheckout } from "./ThreadBranchBar";
 import { ThreadComposer } from "./ThreadComposer";
 import { ThreadMenuItem, ThreadPopover } from "./ThreadPopover";
 import { ThreadTimeline } from "./ThreadTimeline";
+import { useRecalledMessages, withoutRecalled } from "./recalledMessages";
 import { projectIdFor, rememberedSeat, useThreadChatStore } from "./threadModel";
 
 /**
@@ -30,6 +31,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   const activeSessionId = useThreadChatStore((state) => state.activeSessionId);
   const activeSession = useThreadChatStore((state) => state.activeSession);
   const timeline = useThreadChatStore((state) => state.timeline);
+  const recalled = useRecalledMessages((state) => (activeSessionId ? state.bySession[activeSessionId] : undefined));
   const draft = useThreadChatStore((state) => state.draft);
   const catalog = useThreadChatStore((state) => state.catalog);
   const lastError = useThreadChatStore((state) => state.lastError);
@@ -188,7 +190,7 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
         </div>
       </div>
       : <>
-        <ThreadTimeline items={timeline.items} sessionId={selection.sessionId} bottomInset={composerHeight} folder={folder} />
+        <ThreadTimeline items={withoutRecalled(timeline.items, recalled)} sessionId={selection.sessionId} bottomInset={composerHeight} folder={folder} />
         <div ref={composerBox} className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-70% to-transparent px-5 pb-4 pt-6">
           <div className="pointer-events-auto">
             <ThreadComposer threadKey={threadKey} prepareDraft={prepareDraft} autoFocusNonce={focusNonce} strip={strip} onScreen={onScreen} />
