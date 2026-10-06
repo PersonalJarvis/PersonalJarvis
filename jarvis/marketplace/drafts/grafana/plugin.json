@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "grafana",
+  "version": "1.0.0",
+  "description": "Dashboards, queries, alerts and incidents",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Grafana Cloud",
+      "category": "Developer",
+      "logo_slug": "grafana",
+      "logo_color": "F46800",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.grafana.com/mcp",
+        "discovery_url": "https://mcp.grafana.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.grafana.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_grafana_access_token}"
+      },
+      "post_install_hint_md": "Sign in with Grafana Cloud and choose the stack. Self-hosted Grafana is not included."
+    }
+  }
+}

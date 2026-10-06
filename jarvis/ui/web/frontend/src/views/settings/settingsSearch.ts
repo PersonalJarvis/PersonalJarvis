@@ -14,7 +14,6 @@ const SEARCH_GROUPS = [
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },
-  { id: "silence-window", keys: ["silence_window"] },
   { id: "volume", keys: ["volume"] },
   { id: "audio-devices", keys: ["audio_devices"] },
   { id: "music", keys: ["music", "music_group_title"] },
@@ -25,7 +24,6 @@ const SEARCH_GROUPS = [
 const SEARCH_PAGES = [
   { id: "profile", keys: ["profile_view"] },
   { id: "agent-instructions", keys: ["assistant_view"] },
-  { id: "contacts", keys: ["contacts"] },
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
   { id: "appshots", keys: ["appshots"] },

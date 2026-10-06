@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import {
   ARROW_STYLES,
+  addImage,
+  coversAll,
+  cropHandleAt,
+  cropHandles,
+  extent,
+  fitRatio,
+  moveCrop,
+  placeImage,
+  resizeCrop,
+  withCrop,
   handleAt,
   handleCursor,
   handles,
@@ -329,5 +339,76 @@ describe("grabScope", () => {
     }
     expect(grabScope("crop")).toBe("none");
     expect(grabScope("background")).toBe("none");
+  });
+});
+
+describe("crop frame", () => {
+  const area = { x: 0, y: 0, w: 200, h: 100 };
+
+  it("offers edge grips only for a free crop", () => {
+    expect(cropHandles({ x: 10, y: 10, w: 50, h: 40 }, null)).toHaveLength(8);
+    expect(cropHandles({ x: 10, y: 10, w: 50, h: 40 }, 1).map((h) => h.id)).toEqual(["nw", "ne", "se", "sw"]);
+    expect(cropHandleAt({ x: 10, y: 10, w: 50, h: 40 }, { x: 35, y: 11 }, 4, null)).toBe("n");
+    expect(cropHandleAt({ x: 10, y: 10, w: 50, h: 40 }, { x: 35, y: 11 }, 4, 1)).toBeNull();
+  });
+
+  it("moves one edge, or a corner against the opposite one, inside the document", () => {
+    const rect = { x: 20, y: 20, w: 100, h: 50 };
+    expect(resizeCrop(rect, "e", { x: 150, y: 0 }, area, null)).toEqual({ x: 20, y: 20, w: 130, h: 50 });
+    expect(resizeCrop(rect, "n", { x: 0, y: -40 }, area, null)).toEqual({ x: 20, y: 0, w: 100, h: 70 });
+    expect(resizeCrop(rect, "se", { x: 400, y: 400 }, area, null)).toEqual({ x: 20, y: 20, w: 180, h: 80 });
+    // A fixed ratio holds even where the document stops it.
+    const square = resizeCrop(rect, "se", { x: 400, y: 400 }, area, 1);
+    expect(square.w).toBeCloseTo(80);
+    expect(square.h).toBeCloseTo(80);
+  });
+
+  it("never lets the frame turn inside out or leave the document", () => {
+    const rect = { x: 20, y: 20, w: 100, h: 50 };
+    expect(resizeCrop(rect, "w", { x: 500, y: 0 }, area, null).w).toBe(8);
+    expect(moveCrop(rect, 500, -500, area)).toEqual({ x: 100, y: 0, w: 100, h: 50 });
+  });
+
+  it("fits a ratio into the middle of what is visible", () => {
+    expect(fitRatio({ x: 0, y: 0, w: 200, h: 100 }, 1)).toEqual({ x: 50, y: 0, w: 100, h: 100 });
+  });
+
+  it("keeps a single crop, and none for the whole document", () => {
+    const once = withCrop([pen, crop], { x: 0, y: 0, w: 30, h: 30 });
+    expect(once.filter((op) => op.kind === "crop")).toHaveLength(1);
+    expect(withCrop(once, null).some((op) => op.kind === "crop")).toBe(false);
+    expect(coversAll({ x: 0, y: 0, w: 200, h: 100 }, area)).toBe(true);
+  });
+});
+
+describe("more pictures", () => {
+  it("places a picture beside at the same height, below at the same width, or over the middle", () => {
+    const view = { x: 0, y: 0, w: 400, h: 200 };
+    expect(placeImage(view, 100, 100, "beside")).toEqual({ x: 400, y: 0, w: 200, h: 200 });
+    expect(placeImage(view, 200, 100, "below")).toEqual({ x: 0, y: 200, w: 400, h: 200 });
+    const over = placeImage(view, 1000, 1000, "over");
+    expect(over.w).toBeCloseTo(90);
+    expect(over.x + over.w / 2).toBeCloseTo(200);
+  });
+
+  it("grows the document with the pictures added to it", () => {
+    const { ops, id } = addImage([], 400, 200, { src: "a.png", width: 100, height: 100 }, "beside");
+    expect(ops.find((op) => op.id === id)?.kind).toBe("image");
+    expect(extent(ops, 400, 200)).toEqual({ x: 0, y: 0, w: 600, h: 200 });
+    expect(viewport(ops, 400, 200)).toEqual({ x: 0, y: 0, w: 600, h: 200 });
+  });
+
+  it("widens a crop so an added picture is never out of sight", () => {
+    const cropped = [withId({ kind: "crop", rect: { x: 50, y: 50, w: 100, h: 50 } } as const)];
+    const { ops } = addImage(cropped, 400, 200, { src: "a.png", width: 100, height: 100 }, "beside");
+    expect(viewport(ops, 400, 200)).toEqual({ x: 50, y: 50, w: 150, h: 50 });
+  });
+
+  it("is moved only with the select tool and keeps its shape when resized", () => {
+    const picture = withId({ kind: "image", rect: { x: 0, y: 0, w: 200, h: 100 }, src: "a.png" } as const);
+    expect(hitTest([picture], { x: 50, y: 50 }, 2)?.id).toBe(picture.id);
+    expect(hitTest([picture], { x: 50, y: 50 }, 2, undefined, { areas: false })).toBeNull();
+    const grown = reshape(picture, "se", { x: 400, y: 120 });
+    expect(grown.rect).toEqual({ x: 0, y: 0, w: 400, h: 200 });
   });
 });

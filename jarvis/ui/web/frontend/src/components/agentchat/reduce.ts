@@ -1,5 +1,6 @@
 import type { AgentChatEvent, InternalMessage } from "@/lib/agentChatApi";
 import type { ChatControlState } from "@/lib/chatControlApi";
+import { hideAskBlocks } from "./askFence";
 import { readToolChoices, type ToolChoice } from "./toolChoices";
 
 /**
@@ -21,7 +22,10 @@ import { readToolChoices, type ToolChoice } from "./toolChoices";
 export interface TextBlock {
   kind: "text";
   id: string;
+  /** What the reply shows: the agent's text without an end-of-turn question block. */
   text: string;
+  /** The text as the agent wrote it, kept only when a question block was hidden from it. */
+  raw?: string;
 }
 
 export interface ReasoningBlock {
@@ -34,6 +38,8 @@ export interface ReasoningBlock {
   live: boolean;
   /** When the model began to think (drives the live elapsed counter). */
   startedMs: number;
+  /** The model message the thought belongs to, when the runner names one. */
+  messageId?: string;
 }
 
 export interface ApprovalState {
@@ -82,13 +88,31 @@ export interface QuestionState {
   expiresMs: number | null;
   /** The card no longer takes answers (resolved, or the turn ended). */
   closed: boolean;
+  /**
+   * An end-of-turn card (jarvis/agent_chat/turn_prompts.py): the agent already
+   * stopped, and the answers go to it as the next message. It stays open after
+   * its turn ended and closes when the person starts another turn instead.
+   */
+  deferred?: boolean;
 }
 
 /** The tool an agent asks its question with — bare or behind an MCP prefix. */
 export const QUESTION_TOOL = "society_ask_user";
+/** Claude Code's own question tool, answered on the same card. */
+export const CLAUDE_QUESTION_TOOL = "AskUserQuestion";
 
 export function isQuestionTool(name: string): boolean {
-  return name === QUESTION_TOOL || name.endsWith(`__${QUESTION_TOOL}`);
+  return name === QUESTION_TOOL || name.endsWith(`__${QUESTION_TOOL}`) || name === CLAUDE_QUESTION_TOOL;
+}
+
+/**
+ * A coding agent's plan card (jarvis/agent_chat/turn_prompts.py): the turn
+ * finished in plan mode. `decision` is `build`, `keep`, `superseded` (the
+ * person started another turn instead) or `null` while it waits.
+ */
+export interface PlanState {
+  buildMode: string;
+  decision: string | null;
 }
 
 export interface ToolBlock {
@@ -161,6 +185,8 @@ export interface TurnItem {
   liveUsage: Record<string, number> | null;
   costUsd: number | null;
   error: string | null;
+  /** The plan card of a turn that finished in plan mode. */
+  plan?: PlanState;
 }
 
 export interface ErrorItem {
@@ -334,6 +360,46 @@ function updateQuestion(
 }
 
 /** Attach a question to its tool row: the open ask call, else a row of its own. */
+/** A text block whose question block, if any, is hidden behind its card. */
+function textBlock(id: string, raw: string): TextBlock {
+  const text = hideAskBlocks(raw);
+  return text === raw ? { kind: "text", id, text } : { kind: "text", id, text, raw };
+}
+
+/**
+ * A new turn settles the cards the last one left waiting: an end-of-turn
+ * question nobody answered and a plan nobody approved. The person moved on —
+ * the server no longer takes answers for them either.
+ */
+function settleWaitingCards(items: TimelineItem[]): TimelineItem[] {
+  let changed = false;
+  const next = items.map((item) => {
+    if (item.type !== "turn") return item;
+    const openPlan = item.plan && item.plan.decision === null;
+    const openAsk = item.blocks.some((b) => b.kind === "tool" && b.question?.deferred && !b.question.closed);
+    if (!openPlan && !openAsk) return item;
+    changed = true;
+    return {
+      ...item,
+      ...(openPlan && item.plan ? { plan: { ...item.plan, decision: "superseded" } } : {}),
+      blocks: openAsk
+        ? item.blocks.map((b) =>
+          b.kind === "tool" && b.question?.deferred && !b.question.closed
+            ? {
+              ...b,
+              question: {
+                ...b.question,
+                closed: true,
+                answers: b.question.answers.map((a) => a ?? { text: "", optionIndex: null, source: "closed" }),
+              },
+            }
+            : b)
+        : item.blocks,
+    };
+  });
+  return changed ? next : items;
+}
+
 function withQuestion(turn: TurnItem, question: QuestionState, tsMs: number): TurnItem {
   let index = -1;
   for (let i = turn.blocks.length - 1; i >= 0; i -= 1) {
@@ -439,7 +505,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       return {
         ...base,
         items: [
-          ...base.items,
+          ...settleWaitingCards(base.items),
           {
             type: "turn",
             id: turnId,
@@ -467,7 +533,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         upsertBlock<TextBlock>(
           closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
-          (ex) => ({ kind: "text", id, text: (ex?.text ?? "") + delta }),
+          (ex) => textBlock(id, (ex?.raw ?? ex?.text ?? "") + delta),
         ),
       );
     }
@@ -479,7 +545,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         upsertBlock<TextBlock>(
           closeLiveReasoning(turn, ev.ts_ms),
           (b) => b.kind === "text" && b.id === id,
-          (ex) => (ex && ex.text === text ? ex : { kind: "text", id, text }),
+          (ex) => (ex && (ex.raw ?? ex.text) === text ? ex : textBlock(id, text)),
         ),
       );
     }
@@ -542,6 +608,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     case "reasoning": {
       const text = str(p.text);
       const durationMs = num(p.duration_ms);
+      const messageId = str(p.message_id) || undefined;
       return updateTurn(base, turnId, (turn) => {
         const last = turn.blocks[turn.blocks.length - 1];
         if (last && last.kind === "reasoning" && last.live) {
@@ -552,6 +619,20 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               text: text || last.text,
               durationMs: durationMs ?? Math.max(0, ev.ts_ms - last.startedMs),
               live: false,
+              ...(messageId ? { messageId } : {}),
+            }),
+          };
+        }
+        // The CLI sends a message's thinking blocks one by one, each event
+        // carrying everything that message thought so far. A later block of
+        // the same message replaces the finished one instead of repeating it.
+        if (messageId && last && last.kind === "reasoning" && last.messageId === messageId) {
+          return {
+            ...turn,
+            blocks: replaceAt(turn.blocks, turn.blocks.length - 1, {
+              ...last,
+              text: text || last.text,
+              durationMs: durationMs ?? last.durationMs,
             }),
           };
         }
@@ -569,6 +650,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
               durationMs,
               live: false,
               startedMs: ev.ts_ms - (durationMs ?? 0),
+              ...(messageId ? { messageId } : {}),
             },
           ],
         };
@@ -717,6 +799,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         answers: questions.map(() => null),
         expiresMs: num(p.expires_ms),
         closed: false,
+        ...(p.deferred ? { deferred: true } : {}),
       };
       return updateTurn(base, turnId, (turn) => withQuestion(turn, question, ev.ts_ms));
     }
@@ -775,6 +858,17 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
         pendingApprovals: finished.pendingApprovals.filter((a) => a.turnId !== turnId),
       };
     }
+
+    case "plan_ready":
+      return updateTurn(base, turnId, (turn) => ({
+        ...turn,
+        plan: { buildMode: str(p.build_mode), decision: null },
+      }));
+
+    case "plan_resolved":
+      return updateTurn(base, turnId, (turn) =>
+        turn.plan ? { ...turn, plan: { ...turn.plan, decision: str(p.decision) || "keep" } } : turn,
+      );
 
     case "session_updated":
       return { ...base, sessionPatch: { ...p } };

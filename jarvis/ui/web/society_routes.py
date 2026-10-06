@@ -343,6 +343,10 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         )
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    progression = getattr(request.app.state, "progression", None)
+    if created and progression is not None:
+        # Growing the team levels the person up (jarvis/progression).
+        await progression.note_agent_hired(agent.agent_id)
     return {
         "agent": agent.to_dict(),
         "created": created,
@@ -764,6 +768,40 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
 
 
 # --------------------------------------------------------------- providers
+
+
+class ProviderPrefsBody(BaseModel):
+    """The agents' provider choices from the API Keys page (any field may be left out)."""
+
+    disabled: list[str] | None = Field(default=None, max_length=256)
+    api_only: list[str] | None = Field(default=None, max_length=256)
+    hidden_models: dict[str, list[str]] | None = None
+
+
+@router.get("/provider-prefs", summary="Which providers and models the agents may run on")
+def get_provider_prefs() -> dict[str, Any]:
+    from jarvis.agent_chat import agent_provider_prefs
+
+    return agent_provider_prefs.load().to_dict()
+
+
+@router.put("/provider-prefs", summary="Turn providers and models on or off for the agents")
+def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
+    """Merge the given fields into the saved choices; ids outside the
+    agents' catalog are refused so a typo cannot hide a seat for good."""
+    from jarvis.agent_chat import agent_provider_prefs
+    from jarvis.agent_chat.catalog import offers
+
+    current = agent_provider_prefs.load().to_dict()
+    patch = body.model_dump(exclude_none=True)
+    ids = set(patch.get("disabled", [])) | set(patch.get("api_only", [])) | set(
+        patch.get("hidden_models", {})
+    )
+    unknown = sorted(i for i in ids if not offers(agent_provider_prefs.AGENT_SURFACE, i))
+    if unknown:
+        raise HTTPException(422, f"Not an agent provider: {', '.join(unknown)}")
+    saved = agent_provider_prefs.save(agent_provider_prefs.parse({**current, **patch}))
+    return saved.to_dict()
 
 
 class ModelBody(BaseModel):

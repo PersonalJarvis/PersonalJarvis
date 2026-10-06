@@ -1,43 +1,30 @@
 /**
  * The registry must not drift from the code that implements the chords.
  *
- * The fixed entries are the risky half: they spell out keys that a matcher
- * elsewhere decides on. So every fixed chord declared for the workspace area is
- * replayed here through `zoomIntentFor` — the real matcher — and must produce
- * the intent its label claims. Change the matcher without changing the registry
- * and this fails, which is the whole reason the duplication is acceptable.
+ * Every chord is now read from a live setting, so the risky half is the
+ * DEFAULTS: the shipped bindings must still mean what the matchers answer to.
+ * They are replayed here through the real matchers — the terminal zoom, the
+ * overview trigger and the IDE leader — on both platforms.
  */
 import { describe, expect, it } from "vitest";
-import { zoomIntentFor } from "@/components/agentic/terminalZoom";
-import { isLeaderChord } from "@/components/agentic/ideHotkeys";
-import {
-  SHORTCUTS,
-  SHORTCUT_AREAS,
-  keyLabel,
-  shortcutsForArea,
-  type FixedShortcut,
-} from "./shortcutRegistry";
+import { defaultTerminalZoomBindings, zoomIntentForBindings } from "@/components/agentic/terminalZoom";
+import { isLeaderChord, leaderPassthrough } from "@/components/agentic/ideHotkeys";
+import { APP_CHORD_IDS, defaultAppChords } from "./appChords";
+import { SHORTCUTS, SHORTCUT_AREAS, keyLabel, shortcutsForArea } from "./shortcutRegistry";
 import { shouldOpenShortcutOverlay } from "./shortcutOverlayTrigger";
 import { eventMatchesChord, defaultQuickSwitchCombo } from "./quickSwitchChord";
 
-/** Turn a declared chord into the event the matcher would see. */
-function eventFor(keys: string[], isMac: boolean) {
-  const mod = keys.includes("Mod");
-  const key = keys[keys.length - 1];
+/** A keydown as the matchers see it. */
+function keyEvent(key: string, code: string, mods: { ctrl?: boolean; meta?: boolean; shift?: boolean } = {}) {
   return {
     key,
-    code: "",
-    ctrlKey: mod && !isMac,
-    metaKey: mod && isMac,
+    code,
+    ctrlKey: Boolean(mods.ctrl),
+    metaKey: Boolean(mods.meta),
     altKey: false,
+    shiftKey: Boolean(mods.shift),
   };
 }
-
-const ZOOM_EXPECTATIONS: Record<string, "in" | "out" | "reset"> = {
-  "shortcut_overlay.workspace.zoom_in": "in",
-  "shortcut_overlay.workspace.zoom_out": "out",
-  "shortcut_overlay.workspace.zoom_reset": "reset",
-};
 
 describe("registry integrity", () => {
   it("declares every area it groups by, and groups nothing else", () => {
@@ -62,45 +49,51 @@ describe("registry integrity", () => {
   });
 });
 
-describe("fixed chords agree with the matcher that implements them", () => {
-  const zoomEntries = shortcutsForArea("workspace").filter(
-    (s): s is FixedShortcut =>
-      s.kind === "fixed" && s.labelKey in ZOOM_EXPECTATIONS,
-  );
-
-  it("covers all three zoom steps", () => {
-    expect(zoomEntries).toHaveLength(3);
+describe("the default chords agree with the matchers that implement them", () => {
+  it("lists every in-app chord in the registry, read from its setting", () => {
+    const settings = SHORTCUTS.filter((s) => s.kind === "app").map((s) => s.setting);
+    for (const id of APP_CHORD_IDS) expect(settings).toContain(id);
+    for (const shortcut of SHORTCUTS) expect(shortcut).not.toHaveProperty("keys");
   });
 
   for (const isMac of [true, false]) {
-    it(`resolves on ${isMac ? "macOS" : "PC"} exactly as declared`, () => {
-      for (const entry of zoomEntries) {
-        const expected = ZOOM_EXPECTATIONS[entry.labelKey];
-        expect(zoomIntentFor(eventFor(entry.keys, isMac), { isMac })).toBe(
-          expected,
-        );
-        for (const alt of entry.alternateKeys ?? []) {
-          expect(zoomIntentFor(eventFor(alt, isMac), { isMac })).toBe(expected);
-        }
-      }
+    it(`zooms the terminal text on ${isMac ? "macOS" : "PC"} with both spellings`, () => {
+      const mod = isMac ? { meta: true } : { ctrl: true };
+      const bindings = defaultTerminalZoomBindings(isMac);
+      const intent = (key: string, code: string, shift = false) =>
+        zoomIntentForBindings(keyEvent(key, code, { ...mod, shift }), { isMac, bindings });
+      expect(intent("+", "BracketRight")).toBe("in");
+      expect(intent("=", "Equal")).toBe("in");
+      expect(intent("-", "Minus")).toBe("out");
+      expect(intent("_", "Minus", true)).toBe("out");
+      expect(intent("0", "Digit0")).toBe("reset");
     });
   }
 
-  it("declares the `?` chord that actually opens the overlay", () => {
-    const entry = shortcutsForArea("workspace").find(
-      (s) => s.labelKey === "shortcut_overlay.workspace.open_overlay",
-    ) as FixedShortcut;
-    expect(entry.keys).toEqual(["?"]);
-    expect(
-      shouldOpenShortcutOverlay({
-        key: entry.keys[0],
-        ctrlKey: false,
-        metaKey: false,
-        altKey: false,
-        defaultPrevented: false,
-        target: null,
-      }),
-    ).toBe(true);
+  it("answers a recorded terminal chord and drops a removed one", () => {
+    const bindings = { in: "alt+up", out: "", reset: "ctrl+0" };
+    const altUp = { ...keyEvent("ArrowUp", "ArrowUp"), altKey: true };
+    expect(zoomIntentForBindings(altUp, { isMac: false, bindings })).toBe("in");
+    expect(zoomIntentForBindings(keyEvent("-", "Minus", { ctrl: true }), { isMac: false, bindings })).toBeNull();
+  });
+
+  it("opens the overview on a bare `?` by default, and on a recorded chord", () => {
+    const base = { ctrlKey: false, metaKey: false, altKey: false, defaultPrevented: false, target: null };
+    expect(shouldOpenShortcutOverlay({ ...base, key: "?" }, defaultAppChords().shortcut_overlay)).toBe(true);
+    const f1 = { ...base, key: "F1", code: "F1" };
+    expect(shouldOpenShortcutOverlay(f1, "f1")).toBe(true);
+    expect(shouldOpenShortcutOverlay({ ...base, key: "?" }, "f1")).toBe(false);
+    expect(shouldOpenShortcutOverlay({ ...base, key: "?" }, "")).toBe(false);
+  });
+
+  it("opens the IDE key menu on Ctrl+B by default, and passes its control code through", () => {
+    const leader = defaultAppChords().ide_menu;
+    expect(isLeaderChord(keyEvent("b", "KeyB", { ctrl: true }), leader)).toBe(true);
+    expect(leaderPassthrough(leader)).toBe("\x02");
+    expect(isLeaderChord(keyEvent("b", "KeyB", { ctrl: true }), "ctrl+g")).toBe(false);
+    expect(isLeaderChord(keyEvent("g", "KeyG", { ctrl: true }), "ctrl+g")).toBe(true);
+    expect(leaderPassthrough("ctrl+g")).toBe("\x07");
+    expect(leaderPassthrough("alt+b")).toBeNull();
   });
 });
 
@@ -118,19 +111,6 @@ describe("the quick switcher entry", () => {
     expect(eventMatchesChord({ ...base, ctrlKey: true }, defaultQuickSwitchCombo("pc"))).toBe(true);
     expect(eventMatchesChord({ ...base, altKey: true }, defaultQuickSwitchCombo("mac"))).toBe(true);
   });
-});
-
-describe("the IDE key menu chord", () => {
-  for (const isMac of [true, false]) {
-    it(`opens the menu on ${isMac ? "macOS" : "PC"} exactly as declared`, () => {
-      const entry = shortcutsForArea("workspace").find(
-        (s) => s.labelKey === "shortcut_overlay.workspace.ide_menu",
-      ) as FixedShortcut;
-      expect(entry.keys).toEqual(["Ctrl", "B"]);
-      expect(keyLabel(entry.keys[0], isMac)).toBe(isMac ? "⌃" : "Ctrl");
-      expect(isLeaderChord({ key: "b", code: "KeyB", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false })).toBe(true);
-    });
-  }
 });
 
 describe("keyLabel", () => {

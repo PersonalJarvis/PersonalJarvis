@@ -216,6 +216,12 @@ ROUTER_TOOLS = frozenset({
     # directly; otherwise a connected YouTube Music is not callable by voice.
     # risk_tier "monitor": audible and instantly undone. Never a spawn (AP-5/AP-14).
     "youtube_music",
+    # Slack Marketplace plugin (2026-10-05): native REST tool over the Slack Web
+    # API. Slack's hosted MCP server admits only Marketplace-listed or internal
+    # apps, so the plugin carries no MCP server block and must be router-visible
+    # directly. Reads are "safe"; post_message keeps "ask" (echo-confirm).
+    # Never a spawn (AP-5/AP-14).
+    "slack",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

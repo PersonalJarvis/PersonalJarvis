@@ -1225,19 +1225,80 @@ def _macos_app_present(display_name: str) -> bool:
     return False
 
 
+def _editor_install_candidates(app_id: str) -> list[Path]:
+    """The standard install locations of VS Code and Cursor on this OS.
+
+    Checked before the generic resolver so the editor's own GUI executable is
+    found even when its shell command is not on ``PATH`` (a GUI-launched
+    backend often has a short ``PATH``) and so Windows launches ``Code.exe`` /
+    ``Cursor.exe`` rather than the ``.cmd`` shim. macOS is not listed: its
+    ``.app`` bundles resolve through ``open -a``.
+    """
+    plat = detect_platform()
+    home = Path.home()
+    if plat == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        program_dirs = [
+            Path(value)
+            for value in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"))
+            if value
+        ]
+        if app_id == "code":
+            return [
+                base / "Microsoft VS Code" / "Code.exe"
+                for base in (local / "Programs", *program_dirs)
+            ]
+        if app_id == "cursor":
+            return [local / "Programs" / "cursor" / "Cursor.exe"] + [
+                base / "Cursor" / "Cursor.exe" for base in program_dirs
+            ]
+        return []
+    if plat == "linux":
+        flatpak_bins = [
+            Path("/var/lib/flatpak/exports/bin"),
+            home / ".local" / "share" / "flatpak" / "exports" / "bin",
+        ]
+        if app_id == "code":
+            return [
+                Path("/usr/bin/code"),
+                Path("/usr/share/code/code"),
+                Path("/snap/bin/code"),
+                *(base / "com.visualstudio.code" for base in flatpak_bins),
+            ]
+        if app_id == "cursor":
+            appimages = sorted((home / "Applications").glob("[Cc]ursor*.AppImage"), reverse=True)
+            return [
+                Path("/usr/bin/cursor"),
+                Path("/usr/share/cursor/cursor"),
+                Path("/opt/Cursor/cursor"),
+                Path("/opt/cursor/cursor"),
+                home / ".local" / "bin" / "cursor",
+                *appimages,
+            ]
+    return []
+
+
 def _resolve_installed(app_id: str) -> tuple[str, str] | None:
     """Resolve *app_id* to a launch ``(kind, value)`` IFF it is actually
     installed, else None. Distinguishes a real resolution (executable / a
     Start-Menu ``.lnk`` / a present macOS ``.app``) from the resolver's
     raw-name ``startfile`` fallback, which just means "not found"."""
-    from jarvis.plugins.tool.app_resolver import resolve_app_launch_target
+    from jarvis.plugins.tool.app_resolver import (
+        launch_services_can_open,
+        resolve_app_launch_target,
+    )
 
+    for candidate in _editor_install_candidates(app_id):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return ("executable", str(candidate))
     target = resolve_app_launch_target(app_id)
     if target.kind == "executable":
         return (target.kind, target.value)
     if target.kind == "startfile" and target.value.lower().endswith(".lnk"):
         return (target.kind, target.value)
-    if target.kind == "open_a" and _macos_app_present(target.value):
+    if target.kind == "open_a" and (
+        _macos_app_present(target.value) or launch_services_can_open({target.value})
+    ):
         return (target.kind, target.value)
     return None
 

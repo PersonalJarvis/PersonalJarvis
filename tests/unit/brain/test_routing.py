@@ -1927,6 +1927,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # must be router-visible directly. risk_tier "monitor". Never a
             # spawn (AP-5/AP-14).
             "youtube_music",
+            # Slack Marketplace plugin (2026-10-05): native REST tool over the
+            # Slack Web API — the hosted Slack MCP server admits only
+            # Marketplace-listed or internal apps. Reads safe, posting ask.
+            # Never a spawn (AP-5/AP-14).
+            "slack",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,

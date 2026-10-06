@@ -154,6 +154,7 @@ async def test_happy_path_announcement_handler_calls_tts_once() -> None:
         _deliver_announcement_via_realtime=_not_delivered_via_realtime,
         _live_call=lambda: None,
         _realtime_session_owns_voice=lambda: False,
+        _classic_voice_session_open=lambda: True,
         _register_assistant_speech=lambda _text: None,
         _playback_confirmed=lambda _result: True,
         # Instant acknowledgment (2026-08-17): the handler compares the source

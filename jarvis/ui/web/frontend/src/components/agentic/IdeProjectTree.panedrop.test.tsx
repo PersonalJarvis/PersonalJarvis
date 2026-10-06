@@ -13,7 +13,10 @@ import { useIdeProjectsStore } from "@/store/ideProjects";
 import type { IdeProject } from "@/lib/agenticIdeApi";
 
 vi.mock("@/lib/agenticIdeApi", () => ({ IdeApiError: class extends Error {} }));
-vi.mock("@/lib/chatLibraryApi", () => ({ ChatLibraryError: class extends Error {} }));
+vi.mock("@/lib/chatLibraryApi", () => ({
+  ChatLibraryError: class extends Error {},
+  fetchProjectLaunchers: vi.fn(async () => ({ file_manager: false, editors: [], remote_url: null, remote_label: null })),
+}));
 
 function workspace(id: string, name: string, status: "open" | "closed" = "open") {
   return { id, name, status, live_terminals: 1, terminals: 1, restorable: true };

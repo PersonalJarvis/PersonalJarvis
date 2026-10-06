@@ -303,6 +303,19 @@ def test_settings_contract_and_partial_update(client) -> None:
     assert updated["thumbnail_persist"] is True
 
 
+def test_keep_newest_trims_the_library_at_once_and_after_each_capture(client) -> None:
+    for _ in range(3):
+        assert client.post("/api/jarvisx/capture", json={"mode": "fullscreen"}).json()["ok"]
+    assert client.get("/api/jarvisx/settings").json()["keep_newest"] == 0
+
+    assert client.put("/api/jarvisx/settings", json={"keep_newest": 2}).json()["keep_newest"] == 2
+    assert len(client.get("/api/jarvisx/items").json()["items"]) == 2
+
+    assert client.post("/api/jarvisx/capture", json={"mode": "fullscreen"}).json()["ok"]
+    assert len(client.get("/api/jarvisx/items").json()["items"]) == 2
+    assert client.put("/api/jarvisx/settings", json={"keep_newest": -1}).status_code == 422
+
+
 def test_invalid_or_colliding_hotkeys_are_422(client) -> None:
     clash = client.put("/api/jarvisx/settings", json={"hotkeys": {"window": "ctrl+shift+2"}})
     assert clash.status_code == 422 and "same keys" in clash.json()["detail"]

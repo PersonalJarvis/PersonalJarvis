@@ -150,7 +150,11 @@ function renderApp(): void {
           >
             <AuthGate quiet={isEditorWindow}>
               {isEditorWindow ? (
-                <React.Suspense fallback={null}>
+                <React.Suspense
+                  fallback={
+                    <div className="fixed inset-0 bg-popover" data-testid="appshot-editor-window" />
+                  }
+                >
                   <AppshotEditorWindow />
                 </React.Suspense>
               ) : (

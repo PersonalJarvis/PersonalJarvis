@@ -138,7 +138,7 @@ it("navigates back through the window caption instead of a sections toggle", () 
   render(<SocietyView />);
   expect(screen.queryByRole("button", { name: "society.world.toggle_sections" })).toBeNull();
   expect(screen.queryByRole("button", { name: "settings_hub.back_to_app" })).toBeNull();
-  // The caption sidebar toggle (owned by TopBar) is the way back to the app.
+  // The caption back button leaves this fullscreen section. The sidebar toggle is gone.
   expect(screen.getByTestId("mode-switch")).toBeTruthy();
 });
 

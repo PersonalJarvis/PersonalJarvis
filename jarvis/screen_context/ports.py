@@ -26,7 +26,6 @@ the first capture, not at boot.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -389,9 +388,9 @@ class SurfaceCapturer(Protocol):
 def _refuse_while_confirmation_pending() -> None:
     """A native window capture timed out while macOS may be asking the user.
 
-    PENDING, never DENIED: when the live state says granted the rect-grab fallback
-    below is safe and carries on; when it does not (a request is still in flight)
-    that fallback would return the wallpaper, so say that macOS may be asking.
+    PENDING, never DENIED: when the live state says granted the caller's own
+    window-only refusal applies; when it does not (a request is still in flight)
+    the capture failed because macOS may be asking, so say that instead.
     Silent: nothing is asked here.
     """
     try:
@@ -447,24 +446,27 @@ class NativeSurfaceCapturer:
                     )
                 if native is not None:
                     return native
-            except Exception:  # noqa: BLE001 — platform policy below decides fallback
+            except Exception:  # noqa: BLE001 — the refusal below is the outcome
                 log.debug("native window capture failed", exc_info=True)
             _refuse_while_confirmation_pending()
-            if os.name == "nt":
-                raise CaptureUnavailable(
-                    "The focused Windows window could not be captured safely. "
-                    "A desktop-rectangle fallback was refused because another "
-                    "window could overlap it. Bring the window to the foreground and "
-                    "retry; some protected or GPU-rendered windows do not support "
-                    "window-only capture."
-                )
+            # A window handle means "this window ALONE" (the privacy path: a
+            # denylisted window overlaps the rectangle). A desktop-rectangle
+            # grab would photograph exactly that window, so it is refused on
+            # every OS — Linux has no window-only capture at all.
+            raise CaptureUnavailable(
+                "The window could not be captured on its own, and a "
+                "desktop-rectangle fallback was refused because another window "
+                "overlaps it. Bring the window to the foreground or move the "
+                "other window away and retry; some protected or GPU-rendered "
+                "windows do not support window-only capture."
+            )
 
         try:
             if _is_wayland():
                 raise CaptureUnavailable(
-                    "Screen capture is unavailable in this Wayland session. "
-                    "Use an X11 session or install a supported desktop-portal "
-                    "capture backend."
+                    "Screen capture does not work in a Wayland session yet. "
+                    "Sign in with an X11 session (\"GNOME on Xorg\" or "
+                    "\"Plasma (X11)\" on the login screen)."
                 )
             import mss  # type: ignore[import-not-found]  # noqa: PLC0415
         except ImportError as exc:
@@ -566,8 +568,9 @@ def capture_permission_error(*, deep: bool = True) -> CapturePermissionIssue | N
         return CapturePermissionIssue(
             code="wayland_portal",
             message=(
-                "Screen capture is not supported in this Wayland session yet: "
-                "Jarvis has no desktop-portal capture adapter. Use an X11 session."
+                "Screen capture does not work in a Wayland session yet. Sign in "
+                "with an X11 session (\"GNOME on Xorg\" or \"Plasma (X11)\" on "
+                "the login screen), then ask again."
             ),
         )
     try:

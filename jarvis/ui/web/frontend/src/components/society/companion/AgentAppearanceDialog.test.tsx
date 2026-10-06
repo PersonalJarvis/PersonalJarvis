@@ -15,18 +15,22 @@ function setup(fail = false, legacy = false) {
   const figure = legacy ? { contract: 1 as const, archetype: "biped" as const, base: "rogue", parts: {} } : original.figure!;
   const agent = { ...original, agentId: "appearance-test", figure: { ...figure, companion: { ...defaultCompanion("test"), shape: "circle" as const } } };
   const close = vi.fn();
-  const fetcher = vi.fn(async () => new Response(JSON.stringify({ agent }), { status: fail ? 500 : 200 }));
+  // The look picker reads agent levels; an unreachable level system leaves every look open.
+  const fetcher = vi.fn(async (url: RequestInfo | URL) => String(url).startsWith("/api/progression")
+    ? new Response("{}", { status: 404 })
+    : new Response(JSON.stringify({ agent }), { status: fail ? 500 : 200 }));
+  const saves = () => fetcher.mock.calls.filter(([url]) => String(url).startsWith("/api/society/agents/"));
   vi.stubGlobal("fetch", fetcher);
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><AgentAppearanceDialog agent={agent} sample={false} onClose={close} /></QueryClientProvider>);
-  return { agent, fetcher, close };
+  return { agent, fetcher, close, saves };
 }
 
 it("saves companion edits without overwriting character parts or other agent fields", async () => {
-  const { agent, fetcher } = setup();
+  const { agent, saves } = setup();
   fireEvent.click(screen.getByRole("button", { name: "society.companion.shapes.cloud" }));
   fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-  const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  await waitFor(() => expect(saves()).toHaveLength(1));
+  const [, init] = saves()[0] as unknown as [string, RequestInit];
   const body = JSON.parse(init.body as string);
   expect(Object.keys(body)).toEqual(["avatar"]);
   expect(body.avatar.companion.shape).toBe("cloud");
@@ -63,14 +67,14 @@ it("keeps shape customization without size or following-distance sliders", () =>
 });
 
 it("saves a chosen hairstyle on the recipe without dropping its colours", async () => {
-  const { agent, fetcher } = setup();
+  const { agent, saves } = setup();
   fireEvent.click(screen.getByRole("tab", { name: "society.companion.character" }));
   await screen.findByTestId("character-preview");
   fireEvent.click(screen.getByRole("button", { name: "society.office.hair_beanie" }));
   expect(screen.getByRole("button", { name: "society.office.hair_beanie" }).getAttribute("aria-pressed")).toBe("true");
   fireEvent.click(screen.getByRole("button", { name: "society.card.save" }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
-  const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+  await waitFor(() => expect(saves()).toHaveLength(1));
+  const [, init] = saves()[0] as unknown as [string, RequestInit];
   const body = JSON.parse(init.body as string);
   expect(body.avatar.hairStyle).toBe("beanie");
   expect(body.avatar.palette).toEqual(agent.figure?.palette);

@@ -39,6 +39,7 @@ class OpenAILiveProvider:
     supports_realtime = True
     continuous_conversation = True
     browser_audio = True
+    source_timed_audio = True
     requires_webrtc_offer = True
     handshake_budget_s = 60.0
     implicit_usage_fallback_allowed = False

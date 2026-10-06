@@ -523,7 +523,6 @@ export function ProviderCard({
   const [consentPending, setConsentPending] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const recordVerdict = useProviderTestStore((s) => s.record);
   // The card only escalates to red for a real "set up but failing" error — the
   // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
@@ -933,24 +932,6 @@ export function ProviderCard({
           </p>
         </div>
 
-        {/* Pull-capable servers have a section of their own; the row still
-            opens/activates the provider as before (rowGestures ignores anything
-            marked data-agent-card-control). */}
-        {descriptor.supports_model_pull && (
-          <button
-            type="button"
-            data-agent-card-control
-            data-testid={`provider-open-local-models-${descriptor.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveSection("local-models");
-            }}
-            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
-            {t("apikeys_view.local_models_open")}
-          </button>
-        )}
         {descriptor.configuration_surface !== "live" && (
         <ActiveControl
           descriptor={

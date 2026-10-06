@@ -30,6 +30,7 @@ import json
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -86,6 +87,13 @@ class _CodexIndex:
 
 
 _records: dict[tuple[str, str], _Record] = {}
+#: Chat threads keep their own cache: a long thread list must not evict the
+#: panes' entries, nor the panes the threads'.
+_thread_records: dict[tuple[str, str], _Record] = {}
+#: Thread titles are read here, never on the request that lists the threads.
+_reader = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cli-title")
+#: Bound on the thread cache — far above any real thread list.
+MAX_THREAD_ENTRIES = 4096
 _codex_indexes: dict[str, _CodexIndex] = {}
 #: Several panes' reads run on executor threads and share one index per home.
 _codex_lock = threading.Lock()
@@ -145,17 +153,56 @@ def _recorded(term: Any) -> str:
         return ""
     # Lifetime id, like the recap cache: two workspaces can each hold a "t5".
     pane = str(getattr(term, "history_id", "") or getattr(term, "key", "") or "")
-    key = (pane, session_id)
-    entry = _records.get(key)
+    return _cached_title(_records, MAX_ENTRIES, (pane, session_id), agent, session_id, _home(term))
+
+
+def session_title(agent: str, session_id: str, account_id: str = "") -> str:
+    """The title a CLI gave the conversation ``session_id``, or "" when it has none.
+
+    For a chat thread rather than a pane: the thread knows its CLI, the
+    vendor's session id and the subscription seat it runs on, but has no
+    terminal and therefore no window title. Same records; the read runs on a
+    worker thread, so a list of many threads answers from the cache at once
+    and picks a new title up on its next read.
+    """
+    try:
+        agent = (agent or "").strip().lower()
+        session_id = (session_id or "").strip()
+        if agent not in ("claude", "codex") or not session_id:
+            return ""
+        if "/" in session_id or "\\" in session_id:
+            return ""
+        home = _account_home(agent, account_id)
+        key = ("thread", session_id)
+        title = _cached_title(
+            _thread_records, MAX_THREAD_ENTRIES, key, agent, session_id, home, background=True
+        )
+        return _clip(title)
+    except Exception as exc:  # noqa: BLE001 - a title must never break a session list
+        logger.debug("Agentic IDE: CLI title of thread {} unreadable: {}", session_id, exc)
+        return ""
+
+
+def _cached_title(
+    records: dict[tuple[str, str], _Record],
+    limit: int,
+    key: tuple[str, str],
+    agent: str,
+    session_id: str,
+    home: Path | None,
+    *,
+    background: bool = False,
+) -> str:
+    """The title cached under ``key``, refreshed from the CLI's record on a slow clock."""
+    entry = records.get(key)
     if entry is None:
-        if len(_records) >= MAX_ENTRIES:
-            _records.pop(next(iter(_records)))
-        entry = _records[key] = _Record()
+        if len(records) >= limit:
+            records.pop(next(iter(records)))
+        entry = records[key] = _Record()
     now = time.monotonic()
     if entry.inflight or (entry.checked_at and now - entry.checked_at < RECHECK_S):
         return entry.title
     entry.inflight = True
-    home = _home(term)
 
     def _read() -> None:
         try:
@@ -169,6 +216,9 @@ def _recorded(term: Any) -> str:
             entry.checked_at = time.monotonic()
             entry.inflight = False
 
+    if background:
+        _reader.submit(_read)
+        return entry.title
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -268,6 +318,24 @@ def _home(term: Any) -> Path | None:
         return None
 
 
+def _account_home(agent: str, account_id: str) -> Path | None:
+    """The config dir a chat thread's CLI writes its record to.
+
+    A thread with no seat of its own runs on the platform's active account,
+    so that account's folder is where its record lands.
+    """
+    try:
+        from jarvis import agent_accounts
+
+        if agent not in agent_accounts.platforms():
+            return None
+        seat = account_id or agent_accounts.active_account(agent).id  # type: ignore[arg-type]
+        return agent_accounts.config_dir_for(agent, seat)  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001 - the default home is the honest fallback
+        logger.debug("Agentic IDE: account folder for thread on {} is unknown: {}", agent, exc)
+        return None
+
+
 def forget(key: str) -> None:
     """Drop what is remembered about one pane (its lifetime id) — it has been closed."""
     for cached in [item for item in _records if item[0] == key]:
@@ -276,6 +344,7 @@ def forget(key: str) -> None:
 
 def reset_for_tests() -> None:
     _records.clear()
+    _thread_records.clear()
     _codex_indexes.clear()
 
 
@@ -284,6 +353,7 @@ __all__ = [
     "clean_window_title",
     "forget",
     "reset_for_tests",
+    "session_title",
     "title_for",
     "window_title",
 ]

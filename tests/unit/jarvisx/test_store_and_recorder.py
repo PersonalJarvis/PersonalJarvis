@@ -181,3 +181,14 @@ def test_an_encoder_failure_ends_the_recording_with_a_reason(tmp_path) -> None:
     result = recorder.stop()
     assert "disk full" in result.error
     assert encoder.closed
+
+
+def test_prune_keeps_the_newest_of_each_kind_and_deletes_their_files(tmp_path) -> None:
+    store = ItemStore(tmp_path / "lib")
+    images = [store.add(_item(tmp_path, f"{index:032x}")) for index in range(3)]
+    videos = [store.add(_item(tmp_path, f"{index + 10:032x}", kind="video")) for index in range(2)]
+
+    assert store.prune(1) == 3
+    assert [item.id for item in store.recent()] == [videos[-1].id, images[-1].id]
+    assert not Path(images[0].path).exists(), "an old capture leaves the save folder too"
+    assert store.prune(0) == 0, "0 keeps everything"

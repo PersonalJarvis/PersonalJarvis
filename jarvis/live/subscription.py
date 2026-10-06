@@ -218,6 +218,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             )
             return
         if kind == "output_audio_buffer.cleared":
+            await self._clear_playback()
             # Match native voice: a report the user interrupted was heard.
             self._report_finished(delivered=True)
             self._notify_pause()
@@ -299,7 +300,17 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                 "end_ms": end,
             }
         )
+        if role == "assistant" and event.get("timestamp_source") == "source_audio":
+            await self._speech_timing(
+                caption, str(event.get("delta") or ""),
+                event.get("fragment_start_ms"), event.get("fragment_end_ms"),
+            )
         if event.get("is_final"):
+            if role == "assistant" and self._awaiting_output_clear:
+                # Subscription transports also signal cancellation by ending
+                # the old turn. Do not wait forever for an optional clear event.
+                self._last_output_audio_end = max(self._last_output_audio_end, end)
+                await self._clear_playback()
             self._transcript.finish(role)
             self._notify_pause()
 
@@ -420,14 +431,23 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
             if not latest:
                 return
             request_item = {"role": "user", "content": [{"type": "input_text", "text": latest}]}
-            items.append(request_item)
             history_prefix = [request_item]
             if not application_event:
                 if self._pending_images:
                     self._image_context = self._pending_images
                     self._pending_images = []
                 if self._image_context:
-                    items.append({"role": "user", "content": self._image_context})
+                    items.append({"role": "user", "content": [
+                        {
+                            "type": "input_text",
+                            "text": "[Earlier screen snapshot, not a new capture for the "
+                            "request below. A new appshot request requires take_appshot.]",
+                        },
+                        *self._image_context,
+                    ]})
+            # Put the actual request after retained image context. A previous
+            # appshot's framing must not override a request for a fresh capture.
+            items.append(request_item)
             backend = self._config.live.backend_config(
                 language=self._language,
                 tools=self._tools.declarations(defer_catalog=True),

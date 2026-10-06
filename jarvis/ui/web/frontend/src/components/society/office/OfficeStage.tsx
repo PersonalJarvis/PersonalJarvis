@@ -10,6 +10,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSyncCompanionPet } from "../companion/companionPetStore";
+import { useActivePet } from "@/hooks/usePets";
 import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
@@ -52,6 +53,12 @@ import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
 import { OfficeFrameDriver } from "./OfficeFrameDriver";
+import { useProgressionSync } from "../progression/useProgressionSync";
+import { useProgression } from "../progression/progressionStore";
+import { LevelHud, LevelToasts } from "../progression/LevelHud";
+import { LevelUpBanner } from "../progression/LevelUpBanner";
+import { LevelHallScreen } from "../progression/hall/LevelHallScreen";
+import "../progression/progression.css";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
 // Only loaded when someone plays a retro cabinet on the arcade floor.
@@ -144,6 +151,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   useRosterRefresh(awake && floor === "agents");
   // Jarvis keeps the person company as the pet chosen in My Pets.
   useSyncCompanionPet();
+  const petName = useActivePet()?.name || "Gigi";
+  // Levels: the person, their pet and every agent earn XP for real work; the Verse shows and celebrates it.
+  useProgressionSync(awake, floor);
   const [overview, setOverview] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
@@ -344,6 +354,29 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleGuide]);
 
+  // The Level Hall's two checkpoints open its screen: the stage on the studio, the guide on the overview.
+  useEffect(() => {
+    if (selection?.kind !== "checkpoint" || (selection.id !== "studio" && selection.id !== "levels")) return;
+    useProgression.getState().openPanel(selection.id === "studio" ? "studio" : "overview");
+    select(null);
+  }, [selection, select]);
+
+  // L (or the level card) opens the Level Hall screen, and closes it again.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "KeyL" || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      const levels = useProgression.getState();
+      if (ownsKeyboard(event.target) && !levels.panel) return;
+      if (useOfficeStore.getState().selection?.kind === "arcade") return;
+      event.preventDefault();
+      levels.openPanel(levels.panel ? null : "overview");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // The Level Hall screen closes with the map.
+  useEffect(() => () => useProgression.getState().openPanel(null), []);
+
   // Leaving the map forgets panels and calls; the office opens fresh next time.
   useEffect(() => () => {
     const store = useOfficeStore.getState();
@@ -375,6 +408,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const playsAsteroids = selection?.kind === "arcade" && (!playing || playing.kind === "asteroid3d");
   const titleKey = arcade ? "society.office.arcade_floor_title" : coding ? "society.office.coding_title" : "society.office.title";
   const playerName = profile.name.trim() || t("society.office.you");
+  const playerToyLook = useMemo(() => playerLook(profile), [profile]);
+  const agentNames = useMemo(() => new Map(jarvisAgents.map((a) => [a.agentId, a.name])), [jarvisAgents]);
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
   // Mission Control and the spawn point carry forms: they get the wide slot, like reception.
@@ -396,7 +431,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 onPointerMissed={() => select(null)}>
                 <OfficeFrameDriver enabled={awake && compact} />
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
-                  awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
+                  awake={awake} reduced={reduced} overview={overview} player={{ look: playerToyLook, name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}
                   elevatorCall={{ lit: picking || !!ride, picking, onPress: pressCall }} />
               </Canvas>
@@ -412,6 +447,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
             ? t("society.office.arcade_floor_subtitle").replace("{0}", String(ARCADE_GAMES.length))
             : t(coding ? "society.office.coding_subtitle" : "society.office.subtitle").replace("{0}", String(active.length))}</span>
         </div>
+        <LevelHud playerName={playerName} petName={petName} compact={compact} />
         {arcade && <p className="office-card office-note">{t("society.office.arcade_floor_hint")}</p>}
         {!arcade && <div className="office-card office-counts" role="status" aria-live="polite">
           <span data-tone="working"><i aria-hidden />{t("society.office.count_working").replace("{0}", String(counts.working))}</span>
@@ -428,6 +464,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <button type="button" className="office-button" aria-pressed={follow} onClick={() => useOfficeStore.getState().setFollow(true)}>{t("society.office.me")}</button>
         <button type="button" className="office-button" onClick={() => setOverview((v) => v + 1)}>{t("society.office.overview")}</button>
         <button type="button" className="office-button" onClick={() => select({ kind: "checkpoint", id: "wardrobe" })}>{t("society.office.cp_wardrobe")}</button>
+        <button type="button" className="office-button" aria-keyshortcuts="L" onClick={() => useProgression.getState().openPanel("overview")}>
+          {t("society.level.hud_button")}
+        </button>
         <button type="button" className="office-button" aria-pressed={receptionOpen} aria-keyshortcuts="H"
           onClick={toggleGuide}>
           {t("society.office.guide.hud_button")}
@@ -453,7 +492,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       {selection && selection.kind !== "arcade" && !(selection.kind === "agent" && selectedPane) && (
         <div className="office-panel-slot" data-wide={receptionOpen || widePanel || undefined}>
           {selection.kind === "agent" && selectedAgent && <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />}
-          {selection.kind === "checkpoint" && (
+          {/* The Level Hall's checkpoints open their own screen (the effect above), never a side panel. */}
+          {selection.kind === "checkpoint" && selection.id !== "studio" && selection.id !== "levels" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
               profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
           )}
@@ -474,6 +514,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       {!compact && showHintBar && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
+      <LevelToasts names={agentNames} agents={jarvisAgents} />
+      <LevelHallScreen agents={jarvisAgents} playerName={playerName} petName={petName} playerLook={playerToyLook} />
+      <LevelUpBanner playerName={playerName} petName={petName} />
     </section>
   );
 }

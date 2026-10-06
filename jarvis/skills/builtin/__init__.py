@@ -71,6 +71,7 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-x",
     "plugin-youtube_studio",
     "plugin-zoom",
+    "plugin-atlassian",
 )
 
 BUILTIN_SKILL_NAMES: tuple[str, ...] = (

@@ -144,9 +144,20 @@ class RegionCaptureService:
     def __init__(self) -> None:
         self.regions: list = []
         self.displays = Displays()
+        self.steps: list[str] = []
+        self.frozen = object()
+        self.frozen_used: list = []
 
-    async def capture(self, *, verdict=None, trace_id=None, region=None):
+    async def freeze_screens(self):
+        self.steps.append("freeze")
+        return self.frozen
+
+    async def capture(
+        self, *, verdict=None, trace_id=None, region=None, master=False, frozen=None
+    ):
+        self.steps.append("capture")
         self.regions.append((verdict, region))
+        self.frozen_used.append(frozen)
         context = ScreenContext(
             image=b"jpeg",
             mime="image/jpeg",
@@ -174,6 +185,7 @@ def flow(monkeypatch):
     picks: list = []
 
     async def pick_region(**_kwargs):
+        service.steps.append("pick")
         return picks.pop(0) if picks else None
 
     monkeypatch.setattr(turn, "get_service", lambda bus=None: service)
@@ -201,6 +213,24 @@ async def test_an_area_appshot_captures_exactly_the_selected_rectangle(flow) -> 
     assert verdict.intent is VisualIntent.SCREEN
     assert result.shot.label == "selected area"
     assert result.shot.delivered_to == "message"
+
+
+async def test_an_area_appshot_is_the_screen_at_the_press_not_after_selecting(flow) -> None:
+    # A video plays on while the user selects: the screens freeze BEFORE the
+    # picker opens and the area is cut from that frame.
+    service, picks = flow
+    picks.append(
+        region.Selection(
+            screen={"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0, "dpr": 1.0},
+            rect=(0.25, 0.5, 0.5, 0.25),
+        )
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+
+    assert result.ok
+    assert service.steps == ["freeze", "pick", "capture"]
+    assert service.frozen_used == [service.frozen]
 
 
 async def test_esc_on_the_picker_takes_nothing(flow) -> None:
@@ -265,7 +295,9 @@ class _Instance:
     owns_ambient_duties = True
 
 
-async def _reload_with(monkeypatch, hotkey: str, region_hotkey: str) -> AppshotShortcut:
+async def _reload_with(
+    monkeypatch, hotkey: str, region_hotkey: str, recording_hotkey: str = "",
+) -> AppshotShortcut:
     import jarvis.appshot.hotkey as hotkey_module
     import jarvis.core.config as config_module
     import jarvis.core.instance as instance_module
@@ -280,6 +312,7 @@ async def _reload_with(monkeypatch, hotkey: str, region_hotkey: str) -> AppshotS
 
     Cfg.appshot.hotkey = hotkey
     Cfg.appshot.region_hotkey = region_hotkey
+    Cfg.appshot.recording_hotkey = recording_hotkey
     monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
     monkeypatch.setattr(instance_module, "current_instance", lambda: _Instance())
     monkeypatch.setattr(probes, "has_hotkey", lambda: True)
@@ -316,6 +349,15 @@ async def test_the_same_key_for_both_arms_only_the_window(monkeypatch) -> None:
     assert not region_status.armed
     assert "another AppShot action" in region_status.detail
     assert shortcut.armed_combos == [{"window": "ctrl+alt+a"}]
+
+
+async def test_a_shorter_chord_blocks_the_later_action(monkeypatch) -> None:
+    shortcut = await _reload_with(monkeypatch, "ctrl+b", "", "ctrl+shift+b")
+
+    assert shortcut.status_for("window").armed
+    assert not shortcut.status_for("recording").armed
+    assert "another AppShot action" in shortcut.status_for("recording").detail
+    assert shortcut.armed_combos == [{"window": "ctrl+b"}]
 
 
 async def test_an_empty_area_shortcut_is_simply_off(monkeypatch) -> None:
@@ -394,6 +436,28 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
 
     assert response.status_code == 400
     assert "different shortcut" in response.json()["detail"]
+    assert writes == []
+
+
+def test_a_shortcut_inside_another_is_refused_before_writing(client, monkeypatch) -> None:
+    import jarvis.core.config as config_module
+    import jarvis.core.config_writer as writer
+
+    class Cfg:
+        class appshot:  # noqa: N801
+            hotkey = "ctrl+b"
+            region_hotkey = ""
+            recording_hotkey = ""
+
+    writes: list = []
+    monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
+    monkeypatch.setattr(writer, "set_appshot_settings", lambda values: writes.append(values))
+
+    longer = client.put("/api/appshot/settings", json={"recording_hotkey": "ctrl+shift+b"})
+    same_keys = client.put("/api/appshot/settings", json={"recording_hotkey": "ctrl+right_alt+b"})
+
+    assert longer.status_code == 400
+    assert same_keys.status_code == 400
     assert writes == []
 
 

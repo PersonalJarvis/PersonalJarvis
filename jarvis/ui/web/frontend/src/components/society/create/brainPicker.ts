@@ -61,15 +61,21 @@ export function brainSeats(
 ): BrainSeat[] {
   const byId = new Map(society.map((r) => [r.id, r]));
   return options
-    .filter((o) => o.connected)
+    .filter((o) => o.connected && o.enabled !== false)
     .filter((o) => !o.keyless || (liveModels[o.id]?.length ?? 0) > 0)
-    .map((option) => {
+    .flatMap((option) => {
       const live = liveModels[option.id];
-      const provider = live?.length ? { ...option, curated_models: live } : option;
+      const listed = live?.length ? live : option.curated_models;
+      // Models hidden on the API Keys page stay out of the agents' pickers; a
+      // provider whose every model is hidden is not offered at all.
+      const hidden = new Set(option.hidden_models ?? []);
+      const models = hidden.size ? listed.filter((m) => !hidden.has(m.id)) : listed;
+      if (listed.length > 0 && models.length === 0) return [];
+      const provider = models !== option.curated_models ? { ...option, curated_models: models } : option;
       const row = byId.get(provider.id);
       const kind = kindOf(provider, row);
       const accounts = kind === "subscription" ? (row?.accounts ?? []).filter((a) => a.connected) : [];
-      return { provider, kind, accounts };
+      return [{ provider, kind, accounts }];
     })
     .filter((s) => s.kind !== "subscription" || s.accounts.length > 0 || known.has(s.provider.id))
     .sort(

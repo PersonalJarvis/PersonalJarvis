@@ -10,7 +10,6 @@
  * a section added here would silently never appear on the deck.
  */
 import { KeyRound, type LucideIcon } from "lucide-react";
-import { OllamaIcon } from "@/components/icons/OllamaIcon";
 import {
   AgentsIcon,
   ArtifactsIcon,
@@ -19,7 +18,6 @@ import {
   ChatIcon,
   CodeIcon,
   ComputersIcon,
-  ContactsIcon,
   DocsIcon,
   ExtensionsIcon,
   FeedbackIcon,
@@ -183,7 +181,6 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: AssistantIcon,
       fallbackLabel: "Assistant",
     },
-    { id: "contacts", labelKey: "nav.contacts", icon: ContactsIcon },
     // Spend & Tokens — every token the app spent, priced per provider, model
     // and role. It reports, it does not configure.
     { id: "costs", labelKey: "nav.costs", icon: SpendIcon, fallbackLabel: "Spend" },
@@ -209,14 +206,6 @@ export const NAV_GROUPS: NavItem[][] = [
       labelKey: "nav.apikeys",
       icon: KeyRound,
       matchIds: ["apikeys", "telephony", "telephony-setup"],
-    },
-    // Local models sit directly under API Keys: the same "which brain" question,
-    // answered for the machine itself instead of a hosted account.
-    {
-      id: "local-models",
-      labelKey: "nav.local_models",
-      icon: OllamaIcon,
-      fallbackLabel: "Local models",
     },
     {
       id: "settings",
@@ -292,12 +281,10 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "languages",
   "profile",
   "agent-instructions",
-  "contacts",
   "socials",
   "apikeys",
   "telephony",
   "telephony-setup",
-  "local-models",
   "computers",
   "appshots",
   "shortcuts",

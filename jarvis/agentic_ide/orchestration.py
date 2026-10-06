@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import re
 import threading
@@ -210,6 +211,18 @@ class WorkspaceOrchestrator:
         self.registry = registry
         self.sessions = sessions
         self.ledger = ledger
+        # A source update can leave the boot-loaded ledger older than this
+        # lazily imported controller. Check the contract before allocating a
+        # pane, recording a claim, or sending anything to an agent.
+        try:
+            inspect.signature(ledger.claim).bind(
+                "", "", "", {}, 0, deduplicate_unconfirmed=True,
+            )
+            self._ledger_compatible = callable(getattr(ledger, "operation", None))
+        except (AttributeError, TypeError, ValueError):
+            # No ledger (resolve-only use) or an old one: surface a restart
+            # requirement below instead of a partial dispatch.
+            self._ledger_compatible = False
         # request_id -> (target IDs, issued at, prompt sent under it or "")
         self._issued: dict[str, tuple[dict[str, str], float, str]] = {}
         self._issued_lock = threading.Lock()
@@ -952,6 +965,14 @@ class WorkspaceOrchestrator:
                 self._issued[request_id] = (target, time.monotonic(), prompt)
 
     async def run(self, args: dict[str, Any], *, trace_id: str = "") -> dict[str, Any]:
+        if not self._ledger_compatible:
+            return {
+                "status": "restart_required", "success": False, "executed": False,
+                "reason": "Workspace control and its receipt store are from different app "
+                          "versions. Restart Personal Jarvis before retrying. This request "
+                          "created no workspace or agent and sent no prompt. Do not retry, "
+                          "reassign, or use another delivery tool before restarting.",
+            }
         action = args.get("action")
         from jarvis.core.image_references import get_store
 

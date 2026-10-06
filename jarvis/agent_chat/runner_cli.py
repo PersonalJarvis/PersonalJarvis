@@ -72,9 +72,16 @@ from typing import Any, Final
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
 from jarvis.agent_chat.cli_catalog import CatalogCache, catalog_key, discover_codex_models
-from jarvis.agent_chat.effort import ORDER, normalize_effort, snap_to_ladder
+from jarvis.agent_chat.effort import ORDER, effort_note, normalize_effort, snap_to_ladder
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import normalize_permission
+from jarvis.agent_chat.permissions import default_permission, normalize_permission
+from jarvis.agent_chat.questions import (
+    CANCELLED,
+    UNATTENDED,
+    TooManyQuestions,
+    parse_questions,
+    recommended_answer,
+)
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -162,6 +169,17 @@ def claude_argv_prefix() -> list[str]:
     return claude_cli_argv_prefix(binary)
 
 
+def warm_claude_capabilities() -> None:
+    """Run the Claude CLI's flag probes (blocking, cached) so planning only reads them."""
+    from jarvis.claude_auth import claude_cli_supports_thinking_display
+
+    try:
+        prefix = claude_argv_prefix()
+    except CliUnavailable:
+        return  # planning reports the missing CLI itself
+    claude_cli_supports_thinking_display(prefix)
+
+
 def codex_argv_prefix() -> list[str]:
     try:
         from jarvis.missions.workers.codex_direct_worker import _resolve_codex_argv_prefix
@@ -199,25 +217,64 @@ def grok_argv_prefix() -> list[str]:
     return [binary]
 
 
+def _is_batch(binary: str) -> bool:
+    return binary.lower().endswith((".cmd", ".bat"))
+
+
+def _behind_shim(binary: str, agent: str) -> list[str]:
+    """``binary``, or what its Windows ``.cmd`` shim would have launched.
+
+    These CLIs take the prompt on argv, and through an npm shim argv passes
+    ``cmd.exe``: a line break ends the command there, so a multi-line message
+    reached the agent cut after its first line. The package layout the
+    workspace registry declares (``WinShim``) launches the real program
+    instead; an install laid out differently keeps the shim, and
+    :func:`_argv_prompt` keeps the whole message on one line for it.
+    """
+    if not _is_batch(binary):
+        return [binary]
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        spec = workspace_agents.get_agent(agent)
+        direct = workspace_agents.behind_win_shim(spec, binary) if spec is not None else None
+    except Exception:  # noqa: BLE001 — the shim still runs; only line breaks are at risk
+        log.warning("agent chat: could not look behind the %s shim", agent, exc_info=True)
+        direct = None
+    return list(direct) if direct else [binary]
+
+
+def _argv_prompt(prefix: list[str], prompt: str) -> str:
+    """The prompt as one argv value that survives ``prefix``.
+
+    A batch file still in front (an unknown install layout) would drop every
+    line after the first, so the lines are joined with spaces instead: the
+    agent loses the layout, never the words.
+    """
+    if prefix and _is_batch(prefix[0]):
+        return " ".join(line.strip() for line in prompt.splitlines() if line.strip())
+    return prompt
+
+
 def opencode_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["opencode-cli"])
     if not binary:
         raise CliUnavailable("OpenCode (opencode) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "opencode")
 
 
 def kimi_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["kimi-cli"])
     if not binary:
         raise CliUnavailable("Kimi Code (kimi) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "kimi")
 
 
 def dsh_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["dsh-cli"])
     if not binary:
         raise CliUnavailable("DeepSeek Harness (dsh) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "deepseek-harness")
 
 
 def cursor_argv_prefix() -> list[str]:
@@ -445,6 +502,7 @@ def plan_claude(
         resume=resume,
         identity=identity,
         env=jarvis_harness.apply_env(_account_env("claude")),
+        thinking_summaries=True,
     )
 
 
@@ -491,10 +549,12 @@ def _plan_claude_code(
     resume: str | None,
     identity: jarvis_harness.Identity | None,
     env: dict[str, str],
+    thinking_summaries: bool = False,
 ) -> CliPlan:
     mode = normalize_permission("claude-cli", permission_mode)
+    prefix = claude_argv_prefix()
     argv = [
-        *claude_argv_prefix(),
+        *prefix,
         "--print",
         "--output-format",
         "stream-json",
@@ -514,6 +574,15 @@ def _plan_claude_code(
         argv += ["--model", model]
     if effort:
         argv += ["--effort", effort]
+    # Without this the stream carries empty thinking blocks and the chat shows
+    # no reasoning. The probe ran off the event loop before planning
+    # (``warm_claude_capabilities``); an older CLI without the flag skips it.
+    # Anthropic's endpoint only — GLM's compatible one is not asked for a
+    # thinking setting it never documented.
+    from jarvis.claude_auth import claude_cli_thinking_display_known
+
+    if thinking_summaries and claude_cli_thinking_display_known(prefix):
+        argv += ["--thinking-display", "summarized"]
     # Jarvis' own tools, and the identity that says when to use them. Both are
     # skipped when the app cannot offer them (no control key, server not bound
     # yet) — the session then behaves exactly as it did before. On the Jarvis
@@ -592,7 +661,7 @@ def plan_grok(
     else:
         sid = str(uuid.uuid4())
         argv += ["--session-id", sid]
-    argv += ["-p", prompt]
+    argv += ["-p", _argv_prompt(argv, prompt)]
     env = jarvis_harness.apply_env(_account_env("grok-build"))
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return CliPlan(argv, env, None, "claude", sid)
@@ -1100,7 +1169,7 @@ def plan_opencode(
         argv += ["--variant", effort]
     if resume:
         argv += ["--session", resume]
-    argv += ["--", prompt]
+    argv += ["--", _argv_prompt(argv, prompt)]
     env = _registry_env("opencode", _account_env("opencode"))
     return CliPlan(argv, env, None, "opencode", resume)
 
@@ -1140,16 +1209,15 @@ def plan_kimi(
     if model:
         argv += ["--model", model]
     # Print mode is autonomous by Kimi's own design (a headless run has nobody
-    # to ask); the flag only says so out loud. Plan is an instruction, not a
-    # sandbox — the ladder's sentence says as much.
-    if mode == "auto":
-        argv += ["--auto"]
+    # to ask), and Kimi Code refuses ``--auto``, ``--yolo`` and ``--plan`` next
+    # to ``--prompt`` ("Cannot combine --prompt with --auto", 0.29). Plan is
+    # therefore an instruction, not a sandbox — the ladder's sentence says so.
     if resume:
         # Long form on purpose: the two Kimi generations disagree on the short
         # flag (``agent_sessions``).
         argv += ["--session", resume]
     text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
-    argv += ["--prompt", text]
+    argv += ["--prompt", _argv_prompt(argv, text)]
     env = _registry_env("kimi", _account_env("kimi"))
     return CliPlan(
         argv, env, None, "kimi", resume, discover=None if resume else _kimi_session_after
@@ -1173,7 +1241,8 @@ def plan_dsh(
     back is text, and the chat shows it as the answer.
     """
     prompt = _with_identity(prompt, identity, None, compact=True)
-    argv = [*dsh_argv_prefix(), "--profile", "headless", prompt]
+    prefix = dsh_argv_prefix()
+    argv = [*prefix, "--profile", "headless", _argv_prompt(prefix, prompt)]
     env = _registry_env("deepseek-harness", _account_env("deepseek-harness"))
     return CliPlan(argv, env, None, "text", None)
 
@@ -1214,7 +1283,7 @@ def plan_cursor(
         argv += ["--force"]
     if resume:
         argv += ["--resume", resume]
-    argv.append(prompt)
+    argv.append(_argv_prompt(argv, prompt))
     env = _registry_env("cursor", _account_env("cursor"))
     return CliPlan(argv, env, None, "cursor", resume)
 
@@ -2793,6 +2862,17 @@ async def run_cli_turn(
                     else lambda _name, _args: False,
                 ),
             )
+    from jarvis.agent_chat.surface_kits import kit_for
+    from jarvis.agent_chat.turn_prompts import ASK_PROTOCOL
+
+    if (
+        runner not in _CLAUDE_CODE_RUNNERS
+        and kit_for(session.surface).turn_prompts
+        and not user_text.lstrip().startswith("/")
+    ):
+        # No mid-turn channel to ask on: the agent asks at the end of its turn
+        # and the chat shows the block as a question card (turn_prompts).
+        user_text = ASK_PROTOCOL + user_text
     tool_context = register_turn(session.session_id) if identity else None
     try:
         outcome = await _run_cli_once(
@@ -2877,6 +2957,16 @@ async def run_cli_turn(
     return outcome.vendor_session
 
 
+def _agy_effective_effort(model: str, effort: str) -> str:
+    """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        rows = None
+    args = agy_model_args(model, effort, rows)
+    return args[args.index("--effort") + 1] if "--effort" in args else ""
+
+
 async def _run_cli_once(
     handle: TurnHandle,
     user_text: str,
@@ -2939,6 +3029,12 @@ async def _run_cli_once(
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
+            told_effort = (
+                _agy_effective_effort(session.model, effort) if runner == "agy-cli" else effort
+            )
+            planned_prompt = effort_note(session.provider, told_effort) + planned_prompt
+            if runner == "claude-cli":
+                await asyncio.to_thread(warm_claude_capabilities)
             plan: CliPlan = planner(
                 prompt=planned_prompt,
                 cwd=cwd,
@@ -3135,10 +3231,14 @@ async def _run_cli_once(
         subtype = str(req.get("subtype") or "")
         decision = "deny"
         message = "Not supported by this chat."
+        tool_name = ""
         if subtype == "can_use_tool":
             tool_name = str(req.get("tool_name") or req.get("display_name") or "tool")
             tool_input = req.get("input") if isinstance(req.get("input"), dict) else {}
             call_id = str(req.get("tool_use_id") or uuid.uuid4().hex)
+            if tool_name == "AskUserQuestion":
+                await _respond(request_id, await _claude_question(tool_input))
+                return
             summary = str(req.get("description") or "") or _claude_request_summary(
                 tool_name, tool_input
             )
@@ -3172,13 +3272,75 @@ async def _run_cli_once(
                 # A Jarvis tool the CLI just asked about will hit the executor's
                 # own gate over MCP in a moment; the person has answered once.
                 bridge.note_cli_approval(chat_ref, tool_name)
+            if tool_name == "ExitPlanMode":
+                build = await _leave_plan_mode()
+                if build:
+                    body["updatedPermissions"] = [
+                        {"type": "setMode", "mode": build, "destination": "session"}
+                    ]
         else:
             body = {"behavior": "deny", "message": message}
+        await _respond(request_id, body)
+
+    async def _respond(request_id: str, body: dict[str, Any]) -> None:
         frame = {
             "type": "control_response",
             "response": {"subtype": "success", "request_id": request_id, "response": body},
         }
         await _write_stdin(json.dumps(frame, ensure_ascii=False) + "\n")
+
+    async def _claude_question(tool_input: dict[str, Any]) -> dict[str, Any]:
+        """Claude Code's own ``AskUserQuestion``, answered on the chat's question card.
+
+        The answers go back the way the CLI reads them: ``updatedInput`` keeps
+        the questions and adds ``answers`` keyed by each question's text.
+        """
+        raw = tool_input.get("questions")
+        rows = raw if isinstance(raw, list) else []
+        try:
+            specs = parse_questions({"questions": rows})
+        except ValueError as exc:  # the error text goes back to the model in the deny message
+            return {
+                "behavior": "deny",
+                "message": f"Invalid questions ({exc}). Ask 1-4 questions with 2-4 options each.",
+            }
+        ask = getattr(handle.control_service, "ask_questions", None)
+        if not callable(ask):
+            return {
+                "behavior": "deny",
+                "message": "Nobody can answer here. Decide yourself and state your assumptions.",
+            }
+        try:
+            answers = await ask(session.session_id, specs)
+        except (TooManyQuestions, RuntimeError) as exc:
+            # The turn already used its cards (or has none to show): the
+            # agent's own first options stand, exactly as on an unanswered card.
+            log.info("agent chat %s: question not shown (%s)", handle.turn_id, exc)
+            answers = [recommended_answer(spec, UNATTENDED) for spec in specs]
+        if any(a.source == CANCELLED for a in answers):
+            return {"behavior": "deny", "message": "The turn was stopped."}
+        picked = {
+            str(row.get("question") or ""): a.answer for row, a in zip(rows, answers, strict=True)
+        }
+        return {"behavior": "allow", "updatedInput": {**tool_input, "answers": picked}}
+
+    async def _leave_plan_mode() -> str:
+        """The build mode an approved plan continues in, or "" to leave it to the CLI.
+
+        Coding threads only (``turn_prompts``): the session leaves plan mode
+        for the runner's default, so the next message builds too and the
+        composer's access pick shows it.
+        """
+        from jarvis.agent_chat.surface_kits import kit_for
+
+        if not kit_for(session.surface).turn_prompts:
+            return ""
+        build = default_permission(runner)
+        store = getattr(handle.control_service, "store", None)
+        if store is not None and build != session.permission_mode:
+            store.update_session(session.session_id, permission_mode=build)
+            await handle.emit(make_event("session_updated", {"permission_mode": build}))
+        return build
 
     async def _feed_stdin() -> None:
         if proc.stdin is None:

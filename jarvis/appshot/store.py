@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 #: How many appshots stay at hand — as many as the corner card stack shows.
 MAX_RECENT = 5
@@ -46,6 +47,13 @@ class Appshot:
     #: Wall-clock seconds.
     taken_at: float
     delivered_to: str = ""
+    #: The user's lossless copy (:mod:`jarvis.appshot.master`): the
+    #: full-resolution 8-bit PNG, and a 16-bit HDR PNG when the monitor ran
+    #: HDR. Empty until encoded, and for pictures that had no master.
+    original_png: bytes = field(default=b"", repr=False)
+    hdr_png: bytes = field(default=b"", repr=False)
+    #: The raw master on its way to those files; dropped once they exist.
+    master: Any = field(default=None, repr=False, compare=False)
 
     def meta(self) -> dict[str, object]:
         """What the app may show about it — no pixels."""
@@ -128,12 +136,40 @@ class AppshotStore:
             if index is None:
                 return None
             shot, until = recent[index]
-            edited = replace(shot, image=image, mime=mime, width=width, height=height)
+            # The edit supersedes the lossless copies of the unedited picture.
+            edited = replace(
+                shot, image=image, mime=mime, width=width, height=height,
+                original_png=b"", hdr_png=b"",
+            )
             recent[index] = (edited, until)
             pending = self._live_pending()
             if pending is not None and pending.id == shot_id:
-                self._pending = replace(pending, image=image, mime=mime, width=width, height=height)
+                self._pending = replace(
+                    pending, image=image, mime=mime, width=width, height=height,
+                    original_png=b"", hdr_png=b"",
+                )
             return edited
+
+    def attach_originals(self, shot: Appshot) -> None:
+        """Give a held appshot its finished lossless copies, keeping place and expiry.
+
+        Only the copies move over. When the picture was edited meanwhile, the
+        copies describe the unedited picture and are dropped instead.
+        """
+
+        def merged(held: Appshot) -> Appshot:
+            if held.image != shot.image:
+                return replace(held, master=None)
+            return replace(
+                held, original_png=shot.original_png, hdr_png=shot.hdr_png, master=None
+            )
+
+        with self._lock:
+            for index, (held, until) in enumerate(self._recent):
+                if held.id == shot.id:
+                    self._recent[index] = (merged(held), until)
+            if self._pending is not None and self._pending.id == shot.id:
+                self._pending = merged(self._pending)
 
     def mark_delivered(self, shot_id: str, delivered_to: str) -> None:
         with self._lock:

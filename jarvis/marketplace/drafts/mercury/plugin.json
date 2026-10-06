@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mercury",
+  "version": "1.0.0",
+  "description": "Business bank accounts and transactions",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Mercury",
+      "category": "Knowledge & Reading",
+      "logo_slug": "mercury",
+      "logo_color": "5466F9",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.mercury.com/mcp",
+        "discovery_url": "https://mcp.mercury.com/.well-known/oauth-protected-resource",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.mercury.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_mercury_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with a Mercury business account. Transfer requests ask for approval first and still need approval inside Mercury."
+    }
+  }
+}

@@ -543,6 +543,13 @@ class CUIndicatorController:
             return False, (
                 "PySide6 not installed (install the [desktop] extra)"
             )
+        from jarvis.platform.qt_sidecar import (  # noqa: PLC0415
+            missing_system_library,
+        )
+
+        missing = missing_system_library()
+        if missing:
+            return False, missing
         return True, ""
 
     # ---------------------------------------------------------------- sidecar
@@ -553,13 +560,14 @@ class CUIndicatorController:
             from jarvis.core.process_utils import (  # noqa: PLC0415
                 NO_WINDOW_CREATIONFLAGS,
             )
+            from jarvis.platform.qt_sidecar import stderr_sink  # noqa: PLC0415
 
             self._card_open = False  # a fresh sidecar has no card yet
             self._proc = subprocess.Popen(
                 [sys.executable, "-m", "jarvis.cu.indicator"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr_sink("cu-indicator"),
                 text=True,
                 encoding="utf-8",
                 creationflags=NO_WINDOW_CREATIONFLAGS,

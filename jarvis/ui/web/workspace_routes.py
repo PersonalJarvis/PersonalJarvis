@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
@@ -173,11 +174,17 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
         from jarvis.agentic_ide.session import get_registry
 
         workspace_id = qp.get("workspace_id")
+        folder = _terminal_folder(qp.get("folder"))
         workspace = get_registry().get(workspace_id) if workspace_id else None
-        if workspace is None:
+        if workspace is not None:
+            cwd = str(workspace.folder)
+        elif folder is not None and not workspace_id:
+            # A thread's terminal drawer: pinned to the thread's own folder,
+            # which may be a worktree no workspace has open.
+            cwd = str(folder)
+        else:
             await ws.close(code=4404, reason="workspace not found")
             return
-        cwd = str(workspace.folder)
         argv = build_agent_argv(PLAIN_TERMINAL)
     elif agent:
         if agent not in known:
@@ -264,6 +271,17 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
         # about what is installed.
         if install:
             invalidate_agent_detection()
+
+
+def _terminal_folder(raw: str | None) -> Path | None:
+    """The thread folder named by ``?folder=``: an existing directory inside a
+    connected project or an open workspace, else None."""
+    text = (raw or "").strip()
+    if not text:
+        return None
+    from jarvis.agentic_ide.thread_folders import allowed_thread_folder
+
+    return allowed_thread_folder(text)
 
 
 def _safe_int(value: object, default: int) -> int:

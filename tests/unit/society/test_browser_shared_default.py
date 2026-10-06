@@ -140,6 +140,22 @@ def test_legacy_selected_configuration_without_marker_is_not_reset(tmp_path):
     assert profiles.resolve(agent("future")).profile_id is None
 
 
+def test_legacy_shared_chrome_name_is_renamed_once_without_changing_access(tmp_path):
+    profiles = BrowserProfiles(tmp_path)
+    assert profiles.ensure_shared_default(agent())
+    shared = profiles.resolve(agent())
+    with sqlite3.connect(profiles.path) as db:
+        db.execute("UPDATE profiles SET name='Shared Chrome'")
+        db.execute("DELETE FROM settings WHERE key='shared_name_v2'")
+    agents = [{"agent_id": "lead", "name": "Lead"}]
+
+    assert profiles.snapshot(agents, set())["profiles"][0]["name"] == "Shared browser"
+    assert profiles.resolve(agent()).access_key == shared.access_key
+    # A name the user picks later is never rewritten.
+    profiles.update(shared.profile_id, name="Shared Chrome", domains=None)
+    assert profiles.snapshot(agents, set())["profiles"][0]["name"] == "Shared Chrome"
+
+
 def test_queued_adoption_shares_original_storage_and_clears_all_overrides(tmp_path):
     folder = owned_folder(tmp_path, "source")
     profiles = BrowserProfiles(tmp_path)

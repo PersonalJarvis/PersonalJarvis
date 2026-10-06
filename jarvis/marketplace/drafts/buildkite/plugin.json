@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "buildkite",
+  "version": "1.0.0",
+  "description": "Pipelines, builds, jobs and logs",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Buildkite",
+      "category": "Developer",
+      "logo_slug": "buildkite",
+      "logo_color": "14CC80",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.buildkite.com/mcp",
+        "discovery_url": "https://mcp.buildkite.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.buildkite.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_buildkite_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with Buildkite and pick the organization. Starting or cancelling builds asks for approval first."
+    }
+  }
+}

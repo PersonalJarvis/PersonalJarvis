@@ -4,6 +4,23 @@ from jarvis.core.protocols import Transcript
 from jarvis.speech.pipeline import SpeechPipeline, _merge_partial_transcript
 
 
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("I said do not", "do-not delete these files.", "I said do not delete these files."),
+        ("Use alpha beta", "alpha,beta,gamma today.", "Use alpha beta gamma today."),
+        ("Use read only", "read-only mode", "Use read only mode"),
+        ("Use alpha beta", "alpha / beta: gamma today.", "Use alpha beta gamma today."),
+        ("Keep the value", "the value -5 unchanged.", "Keep the value -5 unchanged."),
+        ("Use this flag", "this flag --verbose today.", "Use this flag --verbose today."),
+    ],
+)
+def test_partial_merge_preserves_words_after_punctuated_overlap(
+    left: str, right: str, expected: str,
+) -> None:
+    assert _merge_partial_transcript(left, right) == expected
+
+
 def test_merge_partial_transcript_appends_non_overlapping_tail() -> None:
     assert (
         _merge_partial_transcript("Hallo ich bin", "bin cool")

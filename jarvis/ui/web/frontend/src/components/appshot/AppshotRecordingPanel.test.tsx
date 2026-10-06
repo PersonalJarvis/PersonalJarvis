@@ -65,6 +65,21 @@ describe("AppShot recording controls", () => {
     expect(screen.queryByRole("button", { name: "Stop and save" })).toBeNull();
   });
 
+  it("shows what to do while the recording shortcut is being captured", async () => {
+    const onShortcut = vi.fn(async () => {});
+    vi.stubGlobal("fetch", vi.fn(async () => response({ phase: "idle", id: "", message: "", capability: ready })));
+    render(<AppshotRecordingPanel settings={{ ...settings, recording_hotkey: "" }} saving={false} onShortcut={onShortcut} />);
+    fireEvent.click(await screen.findByTestId("appshots-recording-hotkey-change"));
+    expect(await screen.findByTestId("appshots-recording-hotkey-status")).toHaveProperty(
+      "textContent",
+      expect.stringMatching(/Hold the keys/),
+    );
+    fireEvent.keyDown(window, { code: "ControlLeft", key: "Control", ctrlKey: true });
+    fireEvent.keyDown(window, { code: "Digit9", key: "9", ctrlKey: true });
+    fireEvent.keyUp(window, { code: "Digit9", key: "9", ctrlKey: false });
+    await waitFor(() => expect(onShortcut).toHaveBeenCalledWith("ctrl+9"));
+  });
+
   it("keeps older recordings downloadable after reopening the page", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => response({ phase: "idle", id: "", message: "",
       capability: ready, recent: [{ id: "older", created_at: 100 }],

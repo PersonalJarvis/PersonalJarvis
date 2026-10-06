@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "wix",
+  "version": "1.0.0",
+  "description": "Your Wix sites, stores, bookings and content",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Wix",
+      "category": "Media & Creativity",
+      "logo_slug": "wix",
+      "logo_color": "0C6EFC",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.wix.com/mcp",
+        "discovery_url": "https://mcp.wix.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.wix.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_wix_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with the Wix account that owns the site. Every change to a site asks for approval first."
+    }
+  }
+}

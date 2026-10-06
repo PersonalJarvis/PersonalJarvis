@@ -1218,6 +1218,9 @@ def run(language: str = "en") -> int:
     except Exception as exc:  # noqa: BLE001 - no display / no platform plugin
         sys.stderr.write(f"appshot-picker: no usable display ({exc!r}).\n")
         return wire.EXIT_NO_GUI
+    from jarvis.platform.qt_sidecar import hide_from_dock
+
+    hide_from_dock()  # macOS: no "Python" Dock icon for the resident picker
     app.setQuitOnLastWindowClosed(False)
     picker = Picker(app, language=language)
     pump = _StdinPump()

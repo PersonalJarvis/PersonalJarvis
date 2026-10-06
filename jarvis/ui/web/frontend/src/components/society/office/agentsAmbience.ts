@@ -8,7 +8,8 @@
  * Pure and shared: the layout adds every item to its obstacles, the renderer
  * builds each piece inside the same box. Everything stands in the 1.6 m
  * window strip between the departments and the railing, so no desk, room door
- * or checkpoint loses its way in.
+ * or checkpoint loses its way in. Where the Level Hall stands beyond the east
+ * window, the east olives stay away: the hall's doors open onto those aisles.
  */
 import type { Rect } from "./officeLayout";
 
@@ -65,8 +66,11 @@ export function agentsAmbience({ departments, rooms }: AgentsAmbienceFrame): Age
     aisles.push((above + rowStarts[i]) / 2);
   }
   if (south.length > 0) aisles.push((lastZ + Math.min(...south)) / 2);
+  // A wing beyond the east window (the Level Hall) opens its doors onto the cross aisles: no olive may close them.
+  const eastWing = rooms.some((r) => r.minX >= colMaxX - 1e-6 && r.minZ < lastZ && r.maxZ > firstZ);
   aisles.forEach((z, i) => {
     for (const [side, x] of [["west", colMinX - OLIVE_OUT], ["east", colMaxX + OLIVE_OUT]] as const) {
+      if (side === "east" && eastWing) continue;
       items.push({
         id: `olive-${side}-${i}`, kind: "olive", facing: side === "west" ? "east" : "west", h: OLIVE_H,
         minX: x - OLIVE_BOX / 2, maxX: x + OLIVE_BOX / 2, minZ: z - OLIVE_BOX / 2, maxZ: z + OLIVE_BOX / 2,

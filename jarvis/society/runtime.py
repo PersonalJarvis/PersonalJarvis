@@ -913,7 +913,14 @@ class SocietyRuntime:
                             used_browser = True
                     elif kind == "error":
                         if payload.get("display_only"):
-                            log.info("society: %s turn had a display-only error", target.name)
+                            # A picture that could not be shown does not undo
+                            # the work (live 2026-10-02: a finished research
+                            # turn was reported as blocked over two missing
+                            # screenshots).
+                            log.info(
+                                "society: %s turn had a display-only error: %s",
+                                target.name, str(payload.get("message") or "")[:200],
+                            )
                             continue
                         status, error = "blocked", str(payload.get("message") or "error")
                     elif kind == "turn_finished":

@@ -32,7 +32,7 @@ from filelock import FileLock, Timeout
 
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 from jarvis.core.instance import current_instance
-from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.process_utils import drop_inherited_electron_node_mode, ensure_standard_streams
 
 if TYPE_CHECKING:
     from jarvis.ui.desktop_background import BackgroundStatus
@@ -50,6 +50,7 @@ _SPA_DOCUMENT_PROBE = "document.getElementById('root') !== null"
 # Direct ``python -m jarvis.ui.desktop_app`` entry points bypass the launcher,
 # so they need the same pythonw/PyInstaller stream repair here as well.
 ensure_standard_streams()
+drop_inherited_electron_node_mode()
 
 if sys.platform == "win32":
     try:
@@ -931,6 +932,45 @@ def _primary_screen_size(webview_module: Any) -> tuple[int, int] | None:
         return int(screen.width), int(screen.height)
     except Exception:  # noqa: BLE001 - unknown screen: the default size
         return None
+
+
+def _repaint_webview_shown_from_hidden(window: Any) -> None:
+    """Paint a WebView that was created hidden.
+
+    On Windows the editor window is created hidden so the first click is
+    instant. WebView2 builds its surface while that form is hidden, then
+    ``show()`` reveals a blank frame — the window's own background, with none
+    of the page — until the form's size actually changes. One pixel out and
+    back is enough. Other platforms paint on show, so this is a no-op there.
+    """
+    if sys.platform != "win32":
+        return
+    size = _window_size_for_repaint(window)
+    if size is None:
+        return
+    width, height = size
+    try:
+        window.resize(width, height + 1)
+        window.resize(width, height)
+    except Exception:  # noqa: BLE001 - the window is already shown; a failed nudge must not fail the open
+        from loguru import logger
+
+        logger.debug("The appshot editor window could not be nudged to paint", exc_info=True)
+
+
+def _window_size_for_repaint(window: Any) -> tuple[int, int] | None:
+    """The window's current size, or the size it was created at."""
+    for read in (
+        lambda: (int(window.width), int(window.height)),
+        lambda: (int(window.initial_width), int(window.initial_height)),
+    ):
+        try:
+            width, height = read()
+        except Exception:  # noqa: BLE001 - a cross-thread size read can fail; try the other source
+            continue
+        if width >= 2 and height >= 2:
+            return width, height
+    return None
 
 
 def _bring_window_to_front_by_title(title: str) -> bool:
@@ -5345,16 +5385,25 @@ class DesktopApp:
         return self.open_detached_window("jarvisx-editor", query=f"item={item_id}")
 
     def _show_warm_editor(self, window: Any, query: str, fallback: str) -> dict[str, Any]:
-        """Show the kept-warm appshot editor on the appshot named in ``query``."""
+        """Show the kept-warm appshot editor on the appshot (or recording) in ``query``."""
         shot_id = query.partition("appshot=")[2].split("&", 1)[0]
+        hook = "__jarvisOpenAppshot"
+        if not shot_id:
+            # The same window plays and trims screen recordings.
+            shot_id = query.partition("recording=")[2].split("&", 1)[0]
+            hook = "__jarvisOpenRecording"
         pointed = False
         if shot_id:
             try:
-                pointed = bool(
+                # Only a real boolean true means the page switched in place.
+                # Anything else (still loading, a script error object, a
+                # string) must navigate, or the window opens on the empty shell.
+                pointed = (
                     window.evaluate_js(
-                        "typeof window.__jarvisOpenAppshot === 'function'"
-                        f" && window.__jarvisOpenAppshot({json.dumps(shot_id)})"
+                        f"typeof window.{hook} === 'function'"
+                        f" && window.{hook}({json.dumps(shot_id)})"
                     )
+                    is True
                 )
             except Exception:  # noqa: BLE001 - still loading: navigate instead
                 pointed = False
@@ -5368,6 +5417,8 @@ class DesktopApp:
 
             logger.opt(exception=exc).warning("The appshot editor window could not be shown")
             return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
+        # After show: a window created hidden stays a blank frame until resized.
+        _repaint_webview_shown_from_hidden(window)
         _bring_window_to_front_by_title(self._detached_title("appshot-editor"))
         return {"ok": True, "already_open": True, "view": "appshot-editor"}
 
@@ -6153,14 +6204,13 @@ class DesktopApp:
         # lives. Windows and macOS are native; Linux is a logged no-op until its
         # GTK source lands. Never blocks the window.
         try:
-            from pathlib import Path as _Path
-
             from jarvis.appshot.dragfile import drag_folder
+            from jarvis.platform.user_dirs import downloads_dir
             from jarvis.ui.native_drag import install_native_drag
 
             # Downloads for saved files; the appshot drag folder for the
             # editor's "Drag me" handle (jarvis/appshot/dragfile.py).
-            install_native_drag(allowed_base_dirs=[_Path.home() / "Downloads", drag_folder()])
+            install_native_drag(allowed_base_dirs=[downloads_dir(), drag_folder()])
         except Exception:  # noqa: BLE001, S110 - the drag bridge is never load-bearing
             pass
 

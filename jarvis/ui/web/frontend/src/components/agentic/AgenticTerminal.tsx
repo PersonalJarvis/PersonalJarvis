@@ -98,6 +98,9 @@ import {
   type PaneDropPayload,
 } from "./paneDrop";
 import { usePaneFileDrag } from "./paneFileDrag";
+import { PANE_PASTE_EVENT, announceSkillRefused, pasteSkillText, type PanePasteDetail, type SkillDragPayload } from "./skillDrag";
+import { SkillDropCard } from "./sidePanel/skills/SkillDropCard";
+import { useIdeSkillsStore } from "@/store/ideSkills";
 import {
   AgentPickerMenu,
   offersAgentChoice,
@@ -2706,7 +2709,30 @@ export function AgenticTerminal({
     [name, onAttachError],
   );
 
-  const { dragging, handlers: dragHandlers } = usePaneFileDrag(
+  /*
+   * A skill from the side panel's Skills tab: its Markdown goes into the
+   * agent's prompt as ONE bracketed paste — the same thing Ctrl+V does — so a
+   * multi-line text never submits itself line by line. Not sent: the user
+   * still says what to do with it.
+   */
+  const pasteSkill = useCallback(
+    (skill: SkillDragPayload) => {
+      const term = termRef.current;
+      if (!term || !skill.content) return;
+      onFocus?.();
+      takeOwnershipRef.current?.();
+      if (!pasteSkillText(term, skill.content)) {
+        announceSkillRefused(name);
+        return;
+      }
+      setJustDelivered(true);
+      window.setTimeout(() => setJustDelivered(false), 1_200);
+      useIdeSkillsStore.getState().recordUse(skill.id, name);
+    },
+    [name, onFocus],
+  );
+
+  const { dragging, carrying, handlers: dragHandlers } = usePaneFileDrag(
     useCallback(
       (dt: DataTransfer) => {
         onFocus?.();
@@ -2715,7 +2741,20 @@ export function AgenticTerminal({
       },
       [attach, onFocus],
     ),
+    pasteSkill,
   );
+  const skillInFlight = useIdeSkillsStore((state) => (carrying === "skill" ? state.dragging : null));
+
+  // "Paste into …" on a skill card: the same paste, addressed by name.
+  useEffect(() => {
+    const onPaste = (event: Event) => {
+      const detail = (event as CustomEvent<PanePasteDetail>).detail;
+      if (detail?.pane !== name || (workspaceId && detail.workspaceId !== workspaceId)) return;
+      pasteSkill(detail.skill);
+    };
+    window.addEventListener(PANE_PASTE_EVENT, onPaste);
+    return () => window.removeEventListener(PANE_PASTE_EVENT, onPaste);
+  }, [name, workspaceId, pasteSkill]);
 
   // Clipboard images only — pasted TEXT belongs to xterm, which turns it into a
   // proper bracketed paste the agent's prompt box understands.
@@ -3009,7 +3048,11 @@ export function AgenticTerminal({
           </div>
         )}
       </div>
-      {(dragging || attaching) && (
+      {dragging && carrying === "skill" && !attaching && (
+        <SkillDropCard skill={skillInFlight} target={name}
+          blocked={Boolean(skillInFlight?.multiline) && !termRef.current?.modes.bracketedPasteMode} />
+      )}
+      {((dragging && carrying !== "skill") || attaching) && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background backdrop-blur-[2px]">
           {/* A real card fill separates this from the pane behind it, so it
               needs no rim of its own — and the two glyphs are decoration

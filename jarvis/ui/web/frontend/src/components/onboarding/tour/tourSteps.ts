@@ -1,57 +1,13 @@
 /**
- * The guided tour of the real app, as data.
+ * Geometry for the guide's spotlight: the dim with a hole over one real
+ * element, the ring around it, and where the speech bubble or card sits.
  *
- * Each step points at one element that carries `data-tour="<anchor>"` — a
+ * Every element the guide points at carries `data-tour="<anchor>"` — a
  * stable hook set for this purpose, never a CSS class or a test id (tests
- * rename those freely). A step may move the app before it points (`onEnter`)
- * or after the user moves on (`onExit`); the tour only ever NAVIGATES. It
- * never presses a control that could start something — the voice bar, for
- * one, opens a paid call, so the tour points at it and leaves the click to
- * the user.
+ * rename those freely).
  */
-import type { PetState } from "@/lib/petStates";
-
-/** What a step may do to the app. Every effect is plain navigation. */
-export type TourEffect = "home-voice" | "open-agents" | "back-home";
 
 export type TourPlacement = "right" | "left" | "below" | "above" | "inside";
-
-export interface TourStep {
-  /** Also the i18n key: `app_tour.steps.<id>`. */
-  id: string;
-  anchor: string;
-  placement: TourPlacement;
-  onEnter?: TourEffect;
-  onExit?: TourEffect;
-  /** Drop the step when its anchor never shows (e.g. a section this build lacks). */
-  skipIfMissing?: boolean;
-  /** How the guiding pet looks on this step. */
-  pet: PetState;
-}
-
-// The pet's "how it works" walk in setup already explained tools, agents,
-// the coding workspace and Artifacts; the tour after the restart shows the
-// everyday places around them and does not repeat it.
-export const TOUR_STEPS: readonly TourStep[] = [
-  { id: "voice", anchor: "voice-bar", placement: "below", onEnter: "home-voice", pet: "talking" },
-  { id: "new_chat", anchor: "new-chat", placement: "right", pet: "idle" },
-  {
-    id: "agents_world",
-    anchor: "agents-page",
-    placement: "inside",
-    onEnter: "open-agents",
-    onExit: "back-home",
-    skipIfMissing: true,
-    pet: "thinking",
-  },
-  { id: "voice_hub", anchor: "nav-dictation", placement: "right", onEnter: "back-home", pet: "listening" },
-  { id: "settings", anchor: "settings", placement: "right", pet: "thinking" },
-  { id: "done", anchor: "voice-bar", placement: "below", onEnter: "home-voice", pet: "success" },
-];
-
-export function nextStepIndex(index: number): number | null {
-  return index + 1 < TOUR_STEPS.length ? index + 1 : null;
-}
 
 export interface Rect {
   x: number;

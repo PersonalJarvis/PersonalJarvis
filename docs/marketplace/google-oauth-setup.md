@@ -1,23 +1,62 @@
 # OAuth app setup for the Asana, Gmail, Drive, Calendar and YouTube Music plugins
 
-> Standard notice (see `browser-auth-standard.md`): the product standard is
-> that the PROJECT provisions the shared OAuth client and the user only
-> clicks Connect. That publisher registration is still open (tracked in
-> `plugin-auth-audit.md`, family `google`/`asana`), so until it lands, the
-> expert path below is the only working route. It is documented honestly as
-> an expert option — not as the standard.
+> **Google: nothing to set up.** Since 2026-10-05 the app ships the project's
+> shared "Personal Jarvis" Google Desktop client for Gmail, Google Drive,
+> Google Calendar, YouTube Music, YouTube Studio and Google Cloud. Click
+> **Connect**, sign in at Google in the browser, done. Everything below in
+> Part A is the **expert** path for people who want their own Google client.
+> Asana (Part B) still needs its publisher registration (tracked in
+> `plugin-auth-audit.md`).
 
-These marketplace plugins use browser-login OAuth against an app **you** register
-once. This is the providers' security model — no one can do it for you, and there
-is no shared Jarvis-owned client: every user connects their *own* Google account
-through their *own* OAuth client.
+### How the shared Google client works without shipping a secret
+
+Google's token endpoint refuses a code exchange or a refresh for a Desktop
+client unless the request carries the client secret, even with PKCE
+(`invalid_request: "client_secret is missing."`). A secret inside an
+installable app is not a secret, so the app never holds it. Instead, the two
+token calls for the shared client go to the project's token broker at
+`https://token.personaljarvis.ai/oauth/google/token`. That small service adds
+the client id and secret, forwards the call to Google, and hands Google's
+answer back unchanged. It accepts only:
+
+- a code exchange with a PKCE `code_verifier` and a loopback `redirect_uri`
+  (`http://127.0.0.1:<port>/…`), and
+- a refresh.
+
+It stores nothing and logs nothing. Its source is `workers/token-broker` in
+the website repository.
+
+What goes where:
+
+| Step | Shared client | Your own client (expert) |
+|---|---|---|
+| Browser sign-in | `accounts.google.com`, loopback redirect | same |
+| Code exchange + refresh | token broker | `oauth2.googleapis.com/token` with your secret |
+| Disconnect (revocation) | `oauth2.googleapis.com/revoke` directly | same |
+
+The routing follows the grant, not today's settings: a grant made with the
+shared client keeps refreshing through the broker even if you later add your
+own client, and vice versa. It works the same for every install type
+(desktop app, `pip`, CLI) and on every OS. It needs network access to
+`token.personaljarvis.ai` at connect and refresh time.
+
+**Status:** the broker is live and was checked with made-up codes: Google
+answers `invalid_grant`, which shows the secret is attached. A full sign-in
+with a real account through the app has **not** been verified end to end yet
+(see `plugin-auth-audit.md`).
+
+### Your own Google client (expert)
+
+These plugins can also use OAuth against an app **you** register once, for
+example to own the consent screen or to lift the shared client's limits.
 
 The simplest way to hand the resulting **Client ID** to Jarvis is right in the
 app: click **Connect** on the plugin, expand **"Use your own OAuth client
-(advanced)"**, and paste your Client ID (and secret, if needed) there — no env
-vars, no file edits, no restart. Jarvis stores it as a secret for you. (You can
-still set it as an env var / credential-manager secret or edit
-`data/plugin_catalog.json`; see "Applying Client IDs" below.)
+(advanced)"**, and paste your Client ID and secret there — no env vars, no
+file edits, no restart. Jarvis stores it as a secret for you, and your own
+client always wins over the shared one. (You can still set it as an env var /
+credential-manager secret or edit `data/plugin_catalog.json`; see "Applying
+Client IDs" below.)
 
 | Plugin | App to register | Client ID placeholder to replace |
 |---|---|---|
@@ -60,9 +99,9 @@ still set it as an env var / credential-manager secret or edit
 6. **Credentials → Create credentials → OAuth client ID** → Application type
    **Desktop app** → Create. Copy the **Client ID**
    (looks like `1234567890-abc….apps.googleusercontent.com`).
-   The Desktop client's "secret" is usually not needed (PKCE protects the flow),
-   but if Google rejects the token exchange/refresh with `invalid_client` you can
-   also supply it (see below) — it is optional.
+   Copy the **Client secret** as well: Google refuses the token exchange and
+   refresh for a Desktop client without it, even with PKCE
+   (`invalid_request: "client_secret is missing."`).
 6b. **Redirect addresses.** A **Desktop app** client has no redirect URI
     setting: Google accepts any `http://127.0.0.1:<port>` loopback address for
     it, so there is nothing to register. Only if you created a **Web
@@ -84,7 +123,7 @@ still set it as an env var / credential-manager secret or edit
    ```bash
    # env var (simplest; works headless / VPS)
    set GOOGLE_OAUTH_CLIENT_ID=1234567890-abc….apps.googleusercontent.com
-   # optional, only if Google demands it:
+   # required for a Desktop client:
    set GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-…
    ```
 
@@ -225,7 +264,7 @@ Three ways, in precedence order:
    from the UI.
 2. **Secret directly (headless / scripted).** Set the credential-manager secret
    or env var yourself — Google: `google_oauth_client_id`
-   (+ optional `google_oauth_client_secret`); Asana: `asana_oauth_client_id`;
+   (+ `google_oauth_client_secret`); Asana: `asana_oauth_client_id`;
    Slack: `slack_oauth_client_id`. These override the catalog at connect-time
    *and* refresh-time and survive a catalog re-sync. On a headless host with no OS
    keyring they fall back to `.env` / a local file automatically.

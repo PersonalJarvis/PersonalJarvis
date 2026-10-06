@@ -11,6 +11,11 @@
  *
  * A crop is an annotation too: the last one sets the visible part of the
  * picture, and undo brings the rest back.
+ *
+ * More pictures can join the first one (``image`` layers: an earlier appshot
+ * or a file placed beside, below or on top). The document then spans all of
+ * them — its extent — and they are painted under every annotation, so marks
+ * can cross from one picture to the next.
  */
 
 export type Tool =
@@ -62,7 +67,9 @@ type Shape =
   | { kind: "counter"; at: Point; n: number; color: string; size: number }
   | { kind: "spotlight"; rect: Rect }
   | { kind: "redact"; rect: Rect; mode: RedactMode; block: number }
-  | { kind: "crop"; rect: Rect };
+  | { kind: "crop"; rect: Rect }
+  /** Another picture placed into the document; ``src`` names it in the editor's sources. */
+  | { kind: "image"; rect: Rect; src: string };
 
 /** One annotation. `id` survives moves, so a selection outlives an edit. */
 export type Op = Shape & { id: number };
@@ -210,23 +217,203 @@ function isBoxTool(tool: Tool): boolean {
   return tool === "rect" || tool === "filled" || tool === "ellipse" || tool === "spotlight" || tool === "redact";
 }
 
-/** The visible part of the picture: the last crop, or all of it. */
+/** The smallest rectangle around both. */
+export function unionRect(a: Rect, b: Rect): Rect {
+  const x = Math.min(a.x, b.x);
+  const y = Math.min(a.y, b.y);
+  return { x, y, w: Math.max(a.x + a.w, b.x + b.w) - x, h: Math.max(a.y + a.h, b.y + b.h) - y };
+}
+
+/** The whole document: the first picture and every picture placed with it. */
+export function extent(ops: readonly Draft[], width: number, height: number): Rect {
+  let area: Rect = { x: 0, y: 0, w: width, h: height };
+  for (const op of ops) if (op.kind === "image") area = unionRect(area, op.rect);
+  return area;
+}
+
+/** The visible part of the document: the last crop, or all of it. */
 export function viewport(ops: readonly Op[], width: number, height: number): Rect {
   for (let i = ops.length - 1; i >= 0; i -= 1) {
     const op = ops[i];
     if (op.kind === "crop") return op.rect;
   }
-  return { x: 0, y: 0, w: width, h: height };
+  return extent(ops, width, height);
 }
 
-/** Clamp a rect to the picture; `null` when nothing of it is left. */
-export function clampRect(rect: Rect, width: number, height: number): Rect | null {
-  const x = Math.max(0, Math.min(width, rect.x));
-  const y = Math.max(0, Math.min(height, rect.y));
-  const right = Math.max(0, Math.min(width, rect.x + rect.w));
-  const bottom = Math.max(0, Math.min(height, rect.y + rect.h));
+/** Clamp a rect into ``area``; `null` when nothing of it is left. */
+export function clampInto(rect: Rect, area: Rect): Rect | null {
+  const x = Math.max(area.x, Math.min(area.x + area.w, rect.x));
+  const y = Math.max(area.y, Math.min(area.y + area.h, rect.y));
+  const right = Math.max(area.x, Math.min(area.x + area.w, rect.x + rect.w));
+  const bottom = Math.max(area.y, Math.min(area.y + area.h, rect.y + rect.h));
   if (right - x < 2 || bottom - y < 2) return null;
   return { x, y, w: right - x, h: bottom - y };
+}
+
+/** Clamp a rect to a picture of this size; `null` when nothing of it is left. */
+export function clampRect(rect: Rect, width: number, height: number): Rect | null {
+  return clampInto(rect, { x: 0, y: 0, w: width, h: height });
+}
+
+// -- crop: an adjustable frame over the document ----------------------------------
+
+/** A grip on the crop frame: four corners, and the four edges for a free crop. */
+export type CropHandle = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+/** The smallest crop, in document pixels. */
+const MIN_CROP = 8;
+
+/** The grips the crop frame shows; a fixed ratio keeps only the corners. */
+export function cropHandles(rect: Rect, ratio: number | null): { id: CropHandle; at: Point }[] {
+  const { x, y, w, h } = rect;
+  const corners: { id: CropHandle; at: Point }[] = [
+    { id: "nw", at: { x, y } },
+    { id: "ne", at: { x: x + w, y } },
+    { id: "se", at: { x: x + w, y: y + h } },
+    { id: "sw", at: { x, y: y + h } },
+  ];
+  if (ratio !== null) return corners;
+  return [
+    ...corners,
+    { id: "n", at: { x: x + w / 2, y } },
+    { id: "e", at: { x: x + w, y: y + h / 2 } },
+    { id: "s", at: { x: x + w / 2, y: y + h } },
+    { id: "w", at: { x, y: y + h / 2 } },
+  ];
+}
+
+/** The crop grip under ``p`` (within ``radius``), nearest first. */
+export function cropHandleAt(rect: Rect, p: Point, radius: number, ratio: number | null): CropHandle | null {
+  let best: CropHandle | null = null;
+  let bestDistance = radius;
+  for (const handle of cropHandles(rect, ratio)) {
+    const distance = Math.hypot(handle.at.x - p.x, handle.at.y - p.y);
+    if (distance <= bestDistance) {
+      best = handle.id;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/**
+ * The crop frame ``original`` with grip ``handle`` dragged to ``p``, kept
+ * inside ``area``. A corner pulls against the opposite corner (and keeps a
+ * fixed ratio); an edge moves only itself.
+ */
+export function resizeCrop(original: Rect, handle: CropHandle, p: Point, area: Rect, ratio: number | null): Rect {
+  const left = original.x;
+  const top = original.y;
+  const right = original.x + original.w;
+  const bottom = original.y + original.h;
+  const px = Math.max(area.x, Math.min(area.x + area.w, p.x));
+  const py = Math.max(area.y, Math.min(area.y + area.h, p.y));
+  if (handle === "n") {
+    const y = Math.min(py, bottom - MIN_CROP);
+    return { x: left, y, w: original.w, h: bottom - y };
+  }
+  if (handle === "s") return { x: left, y: top, w: original.w, h: Math.max(py, top + MIN_CROP) - top };
+  if (handle === "w") {
+    const x = Math.min(px, right - MIN_CROP);
+    return { x, y: top, w: right - x, h: original.h };
+  }
+  if (handle === "e") return { x: left, y: top, w: Math.max(px, left + MIN_CROP) - left, h: original.h };
+  const anchor = {
+    x: handle === "nw" || handle === "sw" ? right : left,
+    y: handle === "nw" || handle === "ne" ? bottom : top,
+  };
+  const dirX = handle === "ne" || handle === "se" ? 1 : -1;
+  const dirY = handle === "sw" || handle === "se" ? 1 : -1;
+  const roomX = dirX > 0 ? area.x + area.w - anchor.x : anchor.x - area.x;
+  const roomY = dirY > 0 ? area.y + area.h - anchor.y : anchor.y - area.y;
+  let w = Math.max(MIN_CROP, Math.min(roomX, (px - anchor.x) * dirX));
+  let h = Math.max(MIN_CROP, Math.min(roomY, (py - anchor.y) * dirY));
+  if (ratio !== null && ratio > 0) {
+    w = Math.max(w, h * ratio);
+    h = w / ratio;
+    if (w > roomX) {
+      w = roomX;
+      h = w / ratio;
+    }
+    if (h > roomY) {
+      h = roomY;
+      w = h * ratio;
+    }
+  }
+  return { x: dirX > 0 ? anchor.x : anchor.x - w, y: dirY > 0 ? anchor.y : anchor.y - h, w, h };
+}
+
+/** The crop frame moved by ``dx``/``dy``, stopping at the edges of ``area``. */
+export function moveCrop(rect: Rect, dx: number, dy: number, area: Rect): Rect {
+  return {
+    ...rect,
+    x: Math.max(area.x, Math.min(area.x + area.w - rect.w, rect.x + dx)),
+    y: Math.max(area.y, Math.min(area.y + area.h - rect.h, rect.y + dy)),
+  };
+}
+
+/** The largest rectangle of ``ratio`` inside ``rect``, centred in it. */
+export function fitRatio(rect: Rect, ratio: number): Rect {
+  const w = Math.min(rect.w, rect.h * ratio);
+  const h = w / ratio;
+  return { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w, h };
+}
+
+/** Is ``rect`` all of ``area`` (so no crop is needed)? */
+export function coversAll(rect: Rect, area: Rect): boolean {
+  return (
+    Math.abs(rect.x - area.x) < 0.5 &&
+    Math.abs(rect.y - area.y) < 0.5 &&
+    Math.abs(rect.w - area.w) < 0.5 &&
+    Math.abs(rect.h - area.h) < 0.5
+  );
+}
+
+/** The document with one crop (or none): an earlier crop is replaced, not stacked. */
+export function withCrop(ops: readonly Op[], rect: Rect | null): Op[] {
+  const rest = ops.filter((op) => op.kind !== "crop");
+  return rect ? [...rest, withId({ kind: "crop", rect } as const)] : rest;
+}
+
+// -- more pictures ------------------------------------------------------------------
+
+/** Where another picture goes: right of what is visible, under it, or over its middle. */
+export type Placement = "beside" | "below" | "over";
+
+export const PLACEMENTS: readonly Placement[] = ["beside", "below", "over"];
+
+/**
+ * Place a ``width`` x ``height`` picture against what is visible now
+ * (``view``): beside it at the same height, below it at the same width, or
+ * over its middle at under half its size. The picture keeps its shape.
+ */
+export function placeImage(view: Rect, width: number, height: number, placement: Placement): Rect {
+  const aspect = Math.max(1, width) / Math.max(1, height);
+  if (placement === "beside") return { x: view.x + view.w, y: view.y, w: view.h * aspect, h: view.h };
+  if (placement === "below") return { x: view.x, y: view.y + view.h, w: view.w, h: view.w / aspect };
+  const w = Math.min(view.w * 0.45, view.h * 0.45 * aspect, width);
+  const h = w / aspect;
+  return { x: view.x + (view.w - w) / 2, y: view.y + (view.h - h) / 2, w, h };
+}
+
+/**
+ * The document with another picture added, and the new layer's id. With a
+ * crop in place the crop grows to take the new picture in, so it never lands
+ * out of sight.
+ */
+export function addImage(
+  ops: readonly Op[],
+  width: number,
+  height: number,
+  image: { src: string; width: number; height: number },
+  placement: Placement,
+): { ops: Op[]; id: number } {
+  const view = viewport(ops, width, height);
+  const rect = placeImage(view, image.width, image.height, placement);
+  const layer = withId({ kind: "image", rect, src: image.src } as const);
+  const next = [...ops, layer];
+  const cropped = ops.some((op) => op.kind === "crop");
+  return { ops: cropped ? withCrop(next, unionRect(view, rect)) : next, id: layer.id };
 }
 
 /** The number the next counter badge carries. */
@@ -288,7 +475,7 @@ function inside(p: Point, box: Rect, slop: number): boolean {
 }
 
 /** Areas that cover others: picked only when nothing drawn on them is hit. */
-const AREA_KINDS: ReadonlySet<Op["kind"]> = new Set(["spotlight", "redact"]);
+const AREA_KINDS: ReadonlySet<Op["kind"]> = new Set(["spotlight", "redact", "image"]);
 
 function hits(op: Op, p: Point, slop: number, measure?: MeasureText): boolean {
   switch (op.kind) {
@@ -468,6 +655,17 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
       return original;
     case "crop":
       return original;
+    case "image": {
+      // A picture keeps its shape: the larger pull wins, the opposite corner stays.
+      if (handle === "from" || handle === "to" || handle === "mid" || handle === "size") return original;
+      const anchor = corner(op.rect, OPPOSITE[handle]);
+      const aspect = op.rect.w / Math.max(1e-6, op.rect.h);
+      const w = Math.max(8, Math.abs(p.x - anchor.x), Math.abs(p.y - anchor.y) * aspect);
+      const h = w / aspect;
+      const x = handle === "ne" || handle === "se" ? anchor.x : anchor.x - w;
+      const y = handle === "sw" || handle === "se" ? anchor.y : anchor.y - h;
+      return { ...op, rect: { x, y, w, h } } as T;
+    }
     case "counter":
       return { ...op, size: Math.max(8, Math.hypot(p.x - op.at.x, p.y - op.at.y)) } as T;
     case "text": {
@@ -504,10 +702,11 @@ export function reshape<T extends Draft>(original: T, handle: HandleId, p: Point
 }
 
 /** The pointer cursor that fits a grip. */
-export function handleCursor(handle: HandleId): string {
+export function handleCursor(handle: HandleId | CropHandle): string {
   if (handle === "nw" || handle === "se") return "nwse-resize";
   if (handle === "ne" || handle === "sw") return "nesw-resize";
-  if (handle === "size") return "ew-resize";
+  if (handle === "size" || handle === "e" || handle === "w") return "ew-resize";
+  if (handle === "n" || handle === "s") return "ns-resize";
   return "grab";
 }
 
@@ -804,18 +1003,51 @@ function makeCanvas(width: number, height: number): HTMLCanvasElement {
 }
 
 /**
+ * The pictures of a document, flattened: ``source`` drawn at ``origin``
+ * covers ``area``. Redactions read their pixels from it, so they hide what
+ * any of the pictures shows.
+ */
+export interface Scene {
+  source: CanvasImageSource;
+  origin: Point;
+  area: Rect;
+}
+
+/** Flatten the first picture and every placed picture into one scene. */
+export function buildScene(
+  base: CanvasImageSource,
+  width: number,
+  height: number,
+  ops: readonly Draft[],
+  sources?: ReadonlyMap<string, CanvasImageSource>,
+): Scene {
+  const area = extent(ops, width, height);
+  const layers = ops.filter((op): op is Extract<Draft, { kind: "image" }> => op.kind === "image");
+  if (layers.length === 0) return { source: base, origin: { x: 0, y: 0 }, area };
+  const canvas = makeCanvas(area.w, area.h);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { source: base, origin: { x: 0, y: 0 }, area };
+  ctx.drawImage(base, -area.x, -area.y);
+  for (const layer of layers) {
+    const picture = sources?.get(layer.src);
+    if (picture) ctx.drawImage(picture, layer.rect.x - area.x, layer.rect.y - area.y, layer.rect.w, layer.rect.h);
+  }
+  return { source: canvas, origin: { x: area.x, y: area.y }, area };
+}
+
+/**
  * Hide a region. Pixelate keeps hard blocks; blur shrinks and grows the
  * region twice with smoothing, which every engine supports (canvas `filter`
  * is missing in some WebKit builds the macOS and Linux shells use).
  */
-function redact(ctx: CanvasRenderingContext2D, base: CanvasImageSource, rect: Rect, mode: RedactMode, block: number) {
+function redact(ctx: CanvasRenderingContext2D, scene: Scene, rect: Rect, mode: RedactMode, block: number) {
   const w = Math.max(1, Math.round(rect.w / block));
   const h = Math.max(1, Math.round(rect.h / block));
   const small = makeCanvas(w, h);
   const sctx = small.getContext("2d");
   if (!sctx) return;
   sctx.imageSmoothingEnabled = true;
-  sctx.drawImage(base, rect.x, rect.y, rect.w, rect.h, 0, 0, w, h);
+  sctx.drawImage(scene.source, rect.x - scene.origin.x, rect.y - scene.origin.y, rect.w, rect.h, 0, 0, w, h);
   ctx.save();
   ctx.beginPath();
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
@@ -900,8 +1132,8 @@ function paintCounter(ctx: CanvasRenderingContext2D, op: Extract<Draft, { kind: 
   ctx.fillText(String(op.n), op.at.x, op.at.y + op.size * 0.06);
 }
 
-/** Paint one annotation (crops and spotlights excluded — see paintOps). */
-export function paintShape(ctx: CanvasRenderingContext2D, base: CanvasImageSource, op: Draft) {
+/** Paint one annotation (crops, spotlights and pictures excluded — see paintOps). */
+export function paintShape(ctx: CanvasRenderingContext2D, scene: Scene, op: Draft) {
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
@@ -977,22 +1209,23 @@ export function paintShape(ctx: CanvasRenderingContext2D, base: CanvasImageSourc
       paintCounter(ctx, op);
       break;
     case "redact":
-      redact(ctx, base, op.rect, op.mode, op.block);
+      redact(ctx, scene, op.rect, op.mode, op.block);
       break;
     case "spotlight":
     case "crop":
+    case "image":
       break;
   }
   ctx.restore();
 }
 
 /** Dim everything outside the spotlights, in one layer so they never stack. */
-function paintSpotlights(ctx: CanvasRenderingContext2D, spots: Rect[], width: number, height: number) {
+function paintSpotlights(ctx: CanvasRenderingContext2D, spots: Rect[], area: Rect) {
   if (spots.length === 0) return;
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.beginPath();
-  ctx.rect(0, 0, width, height);
+  ctx.rect(area.x, area.y, area.w, area.h);
   for (const spot of spots) {
     roundedRectPath(ctx, spot, Math.min(spot.w, spot.h) * 0.06);
   }
@@ -1011,22 +1244,17 @@ function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: numb
 }
 
 /**
- * Paint the picture and every annotation in picture space. The caller sets
+ * Paint the pictures and every annotation in document space. The caller sets
  * the transform: identity for an export, a scale + offset for the screen.
  */
-export function paintOps(
-  ctx: CanvasRenderingContext2D,
-  base: CanvasImageSource,
-  ops: readonly Draft[],
-  size: { width: number; height: number },
-) {
-  ctx.drawImage(base, 0, 0);
+export function paintOps(ctx: CanvasRenderingContext2D, scene: Scene, ops: readonly Draft[]) {
+  ctx.drawImage(scene.source, scene.origin.x, scene.origin.y);
   const spots: Rect[] = [];
   for (const op of ops) {
     if (op.kind === "spotlight") spots.push(op.rect);
-    else paintShape(ctx, base, op);
+    else paintShape(ctx, scene, op);
   }
-  paintSpotlights(ctx, spots, size.width, size.height);
+  paintSpotlights(ctx, spots, scene.area);
 }
 
 /** Render the finished picture: cropped, annotated and framed. */
@@ -1034,6 +1262,7 @@ export function renderResult(
   base: HTMLImageElement,
   ops: readonly Op[],
   background: Background,
+  sources?: ReadonlyMap<string, CanvasImageSource>,
 ): HTMLCanvasElement {
   const iw = base.naturalWidth;
   const ih = base.naturalHeight;
@@ -1042,7 +1271,7 @@ export function renderResult(
   const pctx = picture.getContext("2d");
   if (!pctx) throw new Error("No 2D canvas available.");
   pctx.translate(-view.x, -view.y);
-  paintOps(pctx, base, ops, { width: iw, height: ih });
+  paintOps(pctx, buildScene(base, iw, ih, ops, sources), ops);
   if (!background.enabled) return picture;
 
   const layout = frameLayout(picture.width, picture.height, background);
@@ -1077,8 +1306,13 @@ export function renderResult(
 }
 
 /** The finished picture as a PNG blob. */
-export async function exportPng(base: HTMLImageElement, ops: readonly Op[], background: Background): Promise<Blob> {
-  const canvas = renderResult(base, ops, background);
+export async function exportPng(
+  base: HTMLImageElement,
+  ops: readonly Op[],
+  background: Background,
+  sources?: ReadonlyMap<string, CanvasImageSource>,
+): Promise<Blob> {
+  const canvas = renderResult(base, ops, background, sources);
   return await new Promise<Blob>((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Export failed."))), "image/png"),
   );

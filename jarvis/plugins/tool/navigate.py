@@ -39,8 +39,6 @@ KNOWN: frozenset[str] = frozenset(
         "profile",
         "memory",
         "apikeys",
-        # Local models: the Ollama server, installed models and the catalogue.
-        "local-models",
         # Computers: the user's servers and local VMs, reached over SSH.
         "computers",
         "settings",
@@ -48,7 +46,6 @@ KNOWN: frozenset[str] = frozenset(
         "telephony-setup",
         "socials",
         "taskbar",
-        "contacts",
         "feedback",
         "agent-instructions",
         # Appshots: the shortcut and destination for showing the front window.
@@ -172,8 +169,6 @@ _ALIASES: dict[str, str] = {
     "notizen": "memory",
     "notiz": "memory",
     "wiki": "memory",
-    "local models": "local-models",
-    "local-models": "local-models",
     "computers": "computers",
     "servers": "computers",
     "vps": "computers",
@@ -183,11 +178,6 @@ _ALIASES: dict[str, str] = {
     "virtuelle maschinen": "computers",  # i18n-allow: input vocab
     "ordenadores": "computers",  # i18n-allow: input vocab
     "servidores": "computers",  # i18n-allow: input vocab
-    "local model": "local-models",
-    "ollama": "local-models",
-    "lokale modelle": "local-models",  # i18n-allow: input vocab
-    "lokale models": "local-models",  # i18n-allow: input vocab
-    "modelos locales": "local-models",  # i18n-allow: input vocab
     "api keys": "apikeys",
     "api-keys": "apikeys",
     "api key": "apikeys",
@@ -233,11 +223,6 @@ _ALIASES: dict[str, str] = {
     "visualización": "visualization",  # i18n-allow: input vocab
     "visualizaciones": "visualization",  # i18n-allow: input vocab
     "gráficos": "visualization",  # i18n-allow: input vocab
-    "contact": "contacts",
-    "kontakt": "contacts",
-    "kontakte": "contacts",
-    "address book": "contacts",
-    "adressbuch": "contacts",
     # "Extensions" is the merged sidebar entry fronting skills + plugins + clis
     # + mcps. The bare name lands on the Skills tab; "tools" lands on the Tools
     # tab (which defaults to Plugins). The underlying section ids are unchanged.

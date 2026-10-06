@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ACCESSORY_SLOTS, type AccessoryChoice } from "./accessories";
 
 export const COMPANION_SHAPES = ["circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop"] as const;
 export type SymbolShape = typeof COMPANION_SHAPES[number];
@@ -8,11 +9,13 @@ export const COMPANION_FOLLOW_DISTANCE_M = 1;
 export const companionSchema = z.object({
   shape: z.enum(COMPANION_SHAPES), color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   eyes: z.enum(["dots", "lines"]).default("lines"), enabled: z.boolean().default(true),
+  // One item id per slot. Ids stay open so a newer catalog never invalidates a saved look.
+  accessories: z.record(z.enum(ACCESSORY_SLOTS), z.string().regex(/^[a-z0-9_]{1,40}$/)).default({}),
   // Accept earlier saved slider values, but every presentation uses one scale.
   sizeM: z.number().finite().min(0.25).max(0.8).default(COMPANION_SIZE_M).transform(() => COMPANION_SIZE_M),
   followDistanceM: z.number().finite().min(0.5).max(2).default(COMPANION_FOLLOW_DISTANCE_M).transform(() => COMPANION_FOLLOW_DISTANCE_M),
 }).strict();
-export type CompanionAppearance = z.infer<typeof companionSchema>;
+export type CompanionAppearance = Omit<z.infer<typeof companionSchema>, "accessories"> & { accessories: AccessoryChoice };
 
 function identityHash(identity: string): number {
   let hash = 2166136261;
@@ -24,7 +27,7 @@ export function defaultCompanion(identity: string): CompanionAppearance {
   return {
     shape: COMPANION_SHAPES[identityHash(`shape:${identity}`) % COMPANION_SHAPES.length]!,
     color: COMPANION_COLORS[identityHash(`color:${identity}`) % COMPANION_COLORS.length]!,
-    eyes: "lines", enabled: true, sizeM: COMPANION_SIZE_M, followDistanceM: COMPANION_FOLLOW_DISTANCE_M,
+    eyes: "lines", enabled: true, accessories: {}, sizeM: COMPANION_SIZE_M, followDistanceM: COMPANION_FOLLOW_DISTANCE_M,
   };
 }
 

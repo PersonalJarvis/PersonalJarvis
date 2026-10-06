@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { SectionNavButtons } from "./SectionNavButtons";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
@@ -21,7 +21,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("SectionNavButtons", () => {
-  it("renders back and forward with no sidebar toggle unless one is offered", () => {
+  it("renders back and forward with no sidebar toggle", () => {
     render(<SectionNavButtons />);
 
     expect(screen.getByTestId("section-nav-buttons")).toBeTruthy();
@@ -42,6 +42,26 @@ describe("SectionNavButtons", () => {
       expect(button.getAttribute("aria-label")).toBeTruthy();
       expect(button.getAttribute("title")).toBe(button.getAttribute("aria-label"));
     }
+  });
+
+  it.each(["agents", "agentic-ide", "profile"] as const)("leaves a freshly opened %s section for the front page", (section) => {
+    useEventStore.setState({ activeSection: section });
+    render(<SectionNavButtons />);
+
+    expect(backButton().disabled).toBe(false);
+    fireEvent.click(backButton());
+    expect(useEventStore.getState().activeSection).toBe("chats");
+  });
+
+  it("goes home to a fresh front-page chat from any section", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    render(<SectionNavButtons />);
+
+    const home = screen.getByTestId("section-nav-home") as HTMLButtonElement;
+    expect(home.disabled).toBe(false);
+    expect(home.getAttribute("title")).toBe(home.getAttribute("aria-label"));
+    fireEvent.click(home);
+    expect(useEventStore.getState().activeSection).toBe("chats");
   });
 
   it("walks back to the last visited section on every section", () => {
@@ -71,36 +91,6 @@ describe("SectionNavButtons", () => {
     fireEvent.click(forwardButton());
     expect(useEventStore.getState().activeSection).toBe("dictation");
     expect(forwardButton().disabled).toBe(true);
-  });
-
-  it("offers the sidebar toggle with its state and hands the click to the shell", () => {
-    const onToggle = vi.fn();
-    const { rerender } = render(
-      <SectionNavButtons sidebarToggle={{ collapsed: false, onToggle }} />,
-    );
-
-    const toggle = screen.getByTestId("section-nav-sidebar");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(toggle.getAttribute("aria-label")).toBeTruthy();
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-
-    rerender(
-      <SectionNavButtons sidebarToggle={{ collapsed: true, onToggle }} />,
-    );
-    expect(
-      screen.getByTestId("section-nav-sidebar").getAttribute("aria-expanded"),
-    ).toBe("false");
-  });
-
-  it("keeps a caller-provided test id for the sidebar toggle", () => {
-    render(
-      <SectionNavButtons
-        sidebarToggle={{ collapsed: true, onToggle: () => {}, testId: "settings-sidebar-toggle" }}
-      />,
-    );
-
-    expect(screen.getByTestId("settings-sidebar-toggle")).toBeTruthy();
   });
 
   it("stays out of a detached solo window", () => {

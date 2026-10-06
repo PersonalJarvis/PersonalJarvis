@@ -32,8 +32,15 @@
  *   identifies it when NumLock is off.
  */
 
+import { appZoomChordMatches } from "@/lib/appZoom";
+
 /** Which way the user asked the terminal text to go. */
 export type ZoomIntent = "in" | "out" | "reset";
+
+/** The chord per step, as stored under Settings → Keyboard shortcuts ("" = removed). */
+export type TerminalZoomBindings = Record<ZoomIntent, string>;
+
+const ZOOM_INTENTS: readonly ZoomIntent[] = ["in", "out", "reset"];
 
 export interface ZoomChordOptions {
   /** Cmd is the modifier on Apple keyboards, Ctrl everywhere else. */
@@ -62,6 +69,36 @@ export function zoomIntentFor(
   if (event.key === "+" || event.key === "=" || event.code === KEYPAD_IN) return "in";
   if (event.key === "-" || event.key === "_" || event.code === KEYPAD_OUT) return "out";
   if (event.key === "0" || event.code === KEYPAD_RESET) return "reset";
+  return null;
+}
+
+/** The shipped chord per step — the ones `zoomIntentFor` above answers to. */
+export function defaultTerminalZoomBindings(isMac: boolean): TerminalZoomBindings {
+  const mod = isMac ? "cmd" : "ctrl";
+  return { in: `${mod}+plus`, out: `${mod}+minus`, reset: `${mod}+0` };
+}
+
+/**
+ * Like `zoomIntentFor`, but against the chords the user chose. A step still on
+ * its shipped chord keeps the exact rules above (both spellings, the keypad,
+ * AltGr refused); a step the user recorded anew is matched the way the
+ * whole-app zoom matches its chords, by the character the key types.
+ */
+export function zoomIntentForBindings(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey"> & {
+    getModifierState?(key: string): boolean;
+  },
+  { isMac, bindings }: ZoomChordOptions & { bindings: TerminalZoomBindings },
+): ZoomIntent | null {
+  const shipped = defaultTerminalZoomBindings(isMac);
+  const legacy = zoomIntentFor(event, { isMac });
+  for (const intent of ZOOM_INTENTS) {
+    const combo = bindings[intent];
+    if (!combo) continue;
+    if (combo === shipped[intent] ? legacy === intent : appZoomChordMatches(event, combo)) {
+      return intent;
+    }
+  }
   return null;
 }
 
@@ -128,6 +165,11 @@ export interface ZoomKeyBridgeOptions
   extends ZoomChordOptions, ZoomBridgeOptions {
   /** The key bridge is installed once for a whole grid, so it must be asked. */
   enabled: () => boolean;
+  /**
+   * The user's chords, read per keystroke so a change in Settings applies at
+   * once. Absent: the shipped chords.
+   */
+  bindings?: () => TerminalZoomBindings;
 }
 
 /**
@@ -141,12 +183,14 @@ export interface ZoomKeyBridgeOptions
  */
 export function installZoomKeyBridge(
   target: Pick<EventTarget, "addEventListener" | "removeEventListener">,
-  { isMac, enabled, apply }: ZoomKeyBridgeOptions,
+  { isMac, enabled, apply, bindings }: ZoomKeyBridgeOptions,
 ): () => void {
   const onKeyDown = (event: Event) => {
     const key = event as KeyboardEvent;
     if (!enabled()) return;
-    const intent = zoomIntentFor(key, { isMac });
+    const intent = bindings
+      ? zoomIntentForBindings(key, { isMac, bindings: bindings() })
+      : zoomIntentFor(key, { isMac });
     if (intent === null) return;
     // Stops the WebView's own page zoom (the reason this is a shortcut the app
     // has to claim rather than inherit) and keeps the pane from typing it.

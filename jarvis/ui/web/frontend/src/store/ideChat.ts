@@ -6,6 +6,7 @@ import {
   type WorkspaceView,
 } from "@/components/agentic/workspaceView";
 import type { SplitAgentChoice } from "@/components/agentic/AgentPicker";
+import { useIdeThreadsStore } from "@/store/ideThreads";
 
 /**
  * Which face the Agentic IDE is wearing, for everyone who has to know.
@@ -124,7 +125,7 @@ interface IdeChatStore {
 
   setView: (next: WorkspaceView) => void;
   setWorkspace: (next: IdeWorkspace | null) => void;
-  /** Bring a pane to the front, switching workspace first when it lives elsewhere. */
+  /** Bring a pane to the front, switching to the grid and to its workspace when it lives elsewhere. */
   requestPane: (workspaceId: string, pane: string, options?: { maximize?: boolean }) => void;
   /** The grid maximized request `nonce`; drop its maximize flag. */
   settlePaneMaximize: (nonce: number) => void;
@@ -161,7 +162,10 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
   },
 
   setWorkspace: (next) => set({ workspace: next }),
-  requestPane: (workspaceId, pane, options) =>
+  requestPane: (workspaceId, pane, options) => {
+    // A pane lives only in the grid: the thread layout would keep whatever
+    // thread was open in front of it, so a request for a pane shows the grid.
+    useIdeThreadsStore.getState().setLayout("grid");
     set((state) => ({
       paneRequest: {
         workspaceId,
@@ -169,7 +173,8 @@ export const useIdeChatStore = create<IdeChatStore>((set) => ({
         nonce: (state.paneRequest?.nonce ?? 0) + 1,
         ...(options?.maximize ? { maximize: true } : {}),
       },
-    })),
+    }));
+  },
   settlePaneMaximize: (nonce) =>
     set((state) =>
       state.paneRequest?.nonce === nonce && state.paneRequest.maximize

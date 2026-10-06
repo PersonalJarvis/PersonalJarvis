@@ -51,7 +51,7 @@ export interface ChatRowsApi {
 }
 
 export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRowsApi {
-  const { conversations, openConversation } = useConversations({ poll });
+  const { conversations, openConversation, reopenLiveConversation } = useConversations({ poll });
   const sessions = useAgentChatStore((s) => s.sessions);
   const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
   const activeVoiceId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
@@ -101,6 +101,11 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
       // an agent's chat opened from the sidebar.
       useHomeStore.getState().openAgentChat(null);
       if (row.kind === "voice") {
+        if (reopenLiveConversation(row.id)) {
+          setSurface("voice");
+          setActiveSection("chats");
+          return;
+        }
         // End the agent session on stage first: the chat stage renders the
         // voice archive only while no agent chat is open, and its socket has
         // no business staying connected to a conversation nobody is looking at.
@@ -111,7 +116,11 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
         const stayOnVoice = useHomeStore.getState().surface === "voice";
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {
-          void opened.then((messages) => seedTranscript(transcriptFromMessages(messages)));
+          void opened.then((messages) => {
+            const active = useEventStore.getState();
+            if (messages === null || active.activeKind !== "voice" || active.activeThreadId !== row.id) return;
+            seedTranscript(transcriptFromMessages(messages));
+          });
         } else {
           void opened;
           setSurface("chat");
@@ -126,7 +135,7 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
       }
       setActiveSection("chats");
     },
-    [openConversation, seedTranscript, setActiveConversation, setActiveSection, setMessages, setSurface],
+    [openConversation, reopenLiveConversation, seedTranscript, setActiveConversation, setActiveSection, setMessages, setSurface],
   );
 
   const remove = useCallback((row: ChatRow) => {

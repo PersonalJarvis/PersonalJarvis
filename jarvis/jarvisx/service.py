@@ -518,7 +518,18 @@ class JarvisXService:
             await self.stop_recording()
 
     # --------------------------------------------------------------- events
+    async def _trim_old(self) -> None:
+        """``[jarvisx].keep_newest``: delete the captures past the newest N."""
+        try:
+            keep = int(getattr((await self._config()).jarvisx, "keep_newest", 0) or 0)
+            if keep > 0:
+                await asyncio.to_thread(self.store.prune, keep)
+        except Exception:  # noqa: BLE001 - the new capture is saved; the next one retries
+            log.warning("jarvisx: could not delete old captures", exc_info=True)
+
     async def _publish_created(self, item: Item) -> None:
+        # Trim first, so the library the page reloads on this event is final.
+        await self._trim_old()
         await self._publish(
             _event("JarvisXItemCreated", id=item.id, kind=item.kind, mode=item.mode)
         )

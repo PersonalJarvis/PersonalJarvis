@@ -16,6 +16,8 @@ import { Keyboard, X } from "lucide-react";
 import { useKeybinds } from "@/hooks/useHotkey";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
+import { useAppChordSettings } from "@/store/appChordSettings";
+import type { AppChordId } from "@/lib/appChords";
 import { appZoomCaps, type AppZoomIntent } from "@/lib/appZoom";
 import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import {
@@ -81,29 +83,25 @@ function ShortcutRow({ shortcut, isMac }: { shortcut: Shortcut; isMac: boolean }
   const { config } = useKeybinds();
   const quickSwitch = useQuickSwitchSettings();
   const appZoom = useAppZoomSettings();
+  const appChords = useAppChordSettings((s) => s.bindings);
 
   let chord: React.ReactNode;
-  if (shortcut.kind === "fixed") {
-    chord = (
-      <div className="flex flex-col items-end gap-1">
-        <Chord keys={shortcut.keys} isMac={isMac} />
-        {shortcut.alternateKeys?.map((alt, i) => (
-          <div key={i} className="flex items-center gap-1.5 opacity-60">
-            <span className="text-micro text-muted-foreground">
-              {t("shortcut_overlay.or")}
-            </span>
-            <Chord keys={alt} isMac={isMac} />
-          </div>
-        ))}
-      </div>
-    );
-  } else if (shortcut.kind === "app") {
+  if (shortcut.kind === "app") {
     // A per-device setting: show what this machine uses, or that it is off.
     const zoomIntent = APP_ZOOM_SETTING_INTENT[shortcut.setting];
-    const on = zoomIntent ? appZoom.enabled : quickSwitch.enabled;
-    const combo = zoomIntent ? appZoom.bindings[zoomIntent] : quickSwitch.combo;
+    const appChordId = shortcut.setting in appChords ? (shortcut.setting as AppChordId) : null;
+    const on = appChordId ? true : zoomIntent ? appZoom.enabled : quickSwitch.enabled;
+    const combo = appChordId
+      ? appChords[appChordId]
+      : zoomIntent
+        ? appZoom.bindings[zoomIntent]
+        : quickSwitch.combo;
     chord = on && combo ? (
-      zoomIntent ? <Chord keys={appZoomCaps(combo)} isMac={false} /> : <Chord keys={comboTokens(combo)} isMac={isMac} />
+      zoomIntent || appChordId ? (
+        <Chord keys={appZoomCaps(combo)} isMac={false} />
+      ) : (
+        <Chord keys={comboTokens(combo)} isMac={isMac} />
+      )
     ) : (
       <span className="text-xs italic text-muted-foreground">
         {t(on ? "shortcut_overlay.unassigned" : "shortcut_overlay.off")}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "atlassian",
+  "version": "1.0.0",
+  "description": "Jira issues and Confluence pages",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Atlassian (Jira & Confluence)",
+      "category": "Lists & Tasks",
+      "logo_slug": "atlassian",
+      "logo_color": "0052CC",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "discovery_url": "https://mcp.atlassian.com/.well-known/oauth-authorization-server",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.atlassian.com/v1/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_atlassian_access_token}"
+      },
+      "post_install_hint_md": "Needs a Jira or Confluence Cloud site. Sign in with your Atlassian account and pick the site to connect. Available projects and spaces follow your Jira and Confluence permissions."
+    }
+  }
+}

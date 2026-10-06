@@ -35,7 +35,7 @@ def test_canonical_fields_match_matrix_ui():
     matrix_fields = {
         "identity": {
             "name", "preferred_address", "pronouns", "primary_language",
-            "languages", "timezone", "devices",
+            "languages", "timezone", "devices", "about",
         },
         "communication": {"directness", "formality", "verbosity", "humor_types", "emoji_ok"},
         "work_style": {"focus_mode", "planning_horizon"},

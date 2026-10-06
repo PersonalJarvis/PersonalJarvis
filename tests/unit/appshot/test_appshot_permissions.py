@@ -1,4 +1,8 @@
-"""AppShot entry points preserve just-in-time consent and silent lifecycle checks."""
+"""AppShot entry points preserve just-in-time consent and silent lifecycle checks.
+
+They also say which OS permission is missing instead of arming or freezing for
+nothing.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +14,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.appshot import hotkey, region
+from jarvis.appshot import gesture, hotkey, region
+from jarvis.appshot import service as appshot_service
 from jarvis.appshot.service import _pick_area
 from jarvis.core.events import ConfigReloaded
 from jarvis.platform import permission_service, screen_access
@@ -373,3 +378,85 @@ def test_disable_is_available_even_with_duplicate_legacy_shortcuts(monkeypatch, 
         assert client.put("/api/appshot/settings", json={"enabled": False}).status_code == 200
     assert writes == [{"enabled": False}]
     assert gate.calls == []
+
+
+@pytest.fixture
+def mac_keys(monkeypatch, gate):
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
+    monkeypatch.setattr("jarvis.platform.probes.display_present", lambda: True)
+    monkeypatch.setattr(gesture, "_macos_probe", lambda family: f"probe:{family}")
+    return gate
+
+
+def test_a_mac_without_input_monitoring_does_not_arm_the_gesture(mac_keys):
+    mac_keys.script("input_monitoring", "denied")
+    probe, reason = gesture.make_probe("alt")
+    assert probe is None
+    assert "Input Monitoring" in reason
+    # The check is silent: the gesture never asks for the grant itself.
+    assert mac_keys.ensure_calls("input_monitoring") == []
+
+
+def test_a_mac_with_input_monitoring_arms_it(mac_keys):
+    mac_keys.grant("input_monitoring")
+    assert gesture.make_probe("shift") == ("probe:shift", "")
+
+
+class _IssueService:
+    def __init__(self, code: str, message: str) -> None:
+        self.issue = (code, message)
+
+    async def capture_permission_issue(self):
+        return self.issue
+
+
+def _region_config():
+    return SimpleNamespace(
+        screen_context=SimpleNamespace(enabled=True),
+        ui=SimpleNamespace(language="en"),
+        appshot=SimpleNamespace(),
+    )
+
+
+async def test_the_area_picker_never_opens_for_a_refusal_asking_cannot_fix(monkeypatch):
+    opened: list[bool] = []
+
+    async def pick_area(*_args, **_kwargs):
+        opened.append(True)
+        raise AssertionError("the screens must not freeze for a capture that will be refused")
+
+    monkeypatch.setattr(appshot_service, "_load_config", _region_config)
+    monkeypatch.setattr(appshot_service, "_pick_area", pick_area)
+    monkeypatch.setattr(
+        "jarvis.screen_context.turn.get_service",
+        lambda bus=None: _IssueService("wayland_portal", "Use an X11 session."),
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+
+    assert result.status == "refused"
+    assert result.reason_code == "wayland_portal"
+    assert result.message == "Use an X11 session."
+    assert opened == []
+
+
+async def test_a_missing_screen_recording_grant_is_left_to_the_just_in_time_ask(monkeypatch):
+    asked: list[bool] = []
+
+    async def pick_area(*_args, **_kwargs):
+        asked.append(True)
+        return appshot_service.AppshotResult(
+            status="refused", reason_code="capture_permission", message="macOS asked."
+        )
+
+    monkeypatch.setattr(appshot_service, "_load_config", _region_config)
+    monkeypatch.setattr(appshot_service, "_pick_area", pick_area)
+    monkeypatch.setattr(
+        "jarvis.screen_context.turn.get_service",
+        lambda bus=None: _IssueService("capture_permission", "Grant Screen Recording first."),
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+
+    assert asked == [True]
+    assert result.message == "macOS asked."

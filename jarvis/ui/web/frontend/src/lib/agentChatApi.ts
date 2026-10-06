@@ -61,6 +61,13 @@ export interface AgentChatProvider {
    * Absent on an older backend: then nothing opens.
    */
   typeahead?: string[];
+  /**
+   * The agents' surface only (`surface=society`): whether the API Keys page
+   * has this provider on for the agents, and the models it hid there.
+   * Absent elsewhere and on an older backend: on, nothing hidden.
+   */
+  enabled?: boolean;
+  hidden_models?: string[];
 }
 
 export interface AgentChatCatalog {
@@ -149,6 +156,12 @@ export interface AgentChatSession {
   preview: string;
   running?: boolean;
   pending_approvals?: string[];
+  /**
+   * The name the coding CLI gave this conversation itself (Claude Code's
+   * session title, Codex's thread name) — set on the IDE's own sessions while
+   * the stored title is still the first message's; absent otherwise.
+   */
+  cli_title?: string;
 }
 
 export const INTERNAL_DELIVERY_STATUSES = ["queued", "delivered", "failed"] as const;
@@ -493,6 +506,15 @@ export async function attachChatFiles(payload: {
   provider?: string;
   surface?: AgentChatSurface;
 }): Promise<ChatAttachment[]> {
+  return (await attachChatFilesIn(payload)).attachments;
+}
+
+/** {@link attachChatFiles}, plus the folder the files landed in. */
+export async function attachChatFilesIn(payload: Parameters<typeof attachChatFiles>[0]): Promise<{
+  attachments: ChatAttachment[];
+  /** Where the copies live; "" from a backend that does not say. */
+  cwd: string;
+}> {
   const form = new FormData();
   for (const file of payload.files ?? []) form.append("files", file, file.name);
   if (payload.paths?.length) form.append("paths", payload.paths.join("\n"));
@@ -501,11 +523,20 @@ export async function attachChatFiles(payload: {
   if (payload.provider) form.append("provider", payload.provider);
   if (payload.surface) form.append("surface", payload.surface);
 
-  const data = await json<{ attachments?: ChatAttachment[] }>(
+  const data = await json<{ attachments?: ChatAttachment[]; cwd?: string }>(
     await fetch("/api/agent-chat/attachments", { method: "POST", body: form }),
     "attach-failed",
   );
-  return Array.isArray(data.attachments) ? data.attachments : [];
+  return {
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
+    cwd: typeof data.cwd === "string" ? data.cwd : "",
+  };
+}
+
+/** The attached picture or video itself, for a thumbnail (images and videos only). */
+export function attachmentFileUrl(cwd: string, reference: string): string {
+  const query = new URLSearchParams({ cwd, reference });
+  return `/api/agent-chat/attachments/file?${query.toString()}`;
 }
 
 export async function cancelAgentChatTurn(sessionId: string): Promise<void> {
@@ -570,6 +601,25 @@ export async function skipAgentChatQuestion(sessionId: string, questionId: strin
   await json(
     await fetch(`${questionUrl(sessionId, questionId)}/skip`, { method: "POST" }),
     "question-failed",
+  );
+}
+
+/** A coding agent's plan card: `build` switches to building and sends the go-ahead. */
+export type PlanDecision = "build" | "keep";
+
+/** Answer the plan card of `turnId`. */
+export async function resolveAgentChatPlan(
+  sessionId: string,
+  turnId: string,
+  decision: PlanDecision,
+): Promise<void> {
+  await json(
+    await fetch(`/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/plan`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turn_id: turnId, decision }),
+    }),
+    "plan-failed",
   );
 }
 

@@ -1,16 +1,9 @@
-import { ArrowLeft, ArrowRight, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { ArrowLeft, ArrowRight, House } from "lucide-react";
 
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useSectionHistory } from "@/hooks/useSectionHistory";
-
-/** The sidebar toggle the caption owns — state lives in the shell (App.tsx). */
-export interface SidebarToggleState {
-  collapsed: boolean;
-  onToggle: () => void;
-  /** Test id for the button. Defaults to `section-nav-sidebar`. */
-  testId?: string;
-}
+import { startNewTextChat } from "@/lib/newChat";
 
 /**
  * One shape for every caption control in this group.
@@ -26,20 +19,18 @@ const NAV_BUTTON =
   "disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground";
 
 /**
- * The caption's leading navigation: sidebar toggle, back, forward.
+ * The caption's leading navigation: home, back and forward.
  *
  * Rendered at the far left of the window caption (see TopBar), so it is on
  * screen for EVERY section — chat, agents, voice, settings — with no second
  * bar per view. Back/forward walk the visited-section history
  * (`useSectionHistory`): back returns to the previously visited section, and
  * forward only re-applies an undone step, staying disabled until one exists.
+ * Home is always live: it opens the front page with a fresh chat, the same
+ * screen Jarvis starts on, from wherever the window is.
  * A detached solo window is pinned to one view, so the group stays out of it.
  */
-export function SectionNavButtons({
-  sidebarToggle,
-}: {
-  sidebarToggle?: SidebarToggleState;
-} = {}) {
+export function SectionNavButtons() {
   const t = useT();
   const solo = useEventStore((s) => s.solo);
   const { canGoBack, canGoForward, goBack, goForward } = useSectionHistory();
@@ -48,6 +39,7 @@ export function SectionNavButtons({
 
   const backLabel = t("topbar.nav_back");
   const forwardLabel = t("topbar.nav_forward");
+  const homeLabel = t("topbar.nav_home");
 
   return (
     <div
@@ -56,23 +48,16 @@ export function SectionNavButtons({
       role="group"
       aria-label={t("sidebar.sections")}
     >
-      {sidebarToggle && (
-        <button
-          type="button"
-          data-testid={sidebarToggle.testId ?? "section-nav-sidebar"}
-          onClick={sidebarToggle.onToggle}
-          aria-expanded={!sidebarToggle.collapsed}
-          aria-label={t(sidebarToggle.collapsed ? "sidebar.expand" : "sidebar.collapse")}
-          title={t(sidebarToggle.collapsed ? "sidebar.expand" : "sidebar.collapse")}
-          className={NAV_BUTTON}
-        >
-          {sidebarToggle.collapsed ? (
-            <PanelLeftOpen className="h-4 w-4" aria-hidden />
-          ) : (
-            <PanelLeftClose className="h-4 w-4" aria-hidden />
-          )}
-        </button>
-      )}
+      <button
+        type="button"
+        data-testid="section-nav-home"
+        onClick={() => startNewTextChat()}
+        aria-label={homeLabel}
+        title={homeLabel}
+        className={NAV_BUTTON}
+      >
+        <House className="h-4 w-4" aria-hidden />
+      </button>
       <button
         type="button"
         data-testid="section-nav-back"

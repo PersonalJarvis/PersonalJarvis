@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Download, Loader2, Square, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/i18n";
@@ -19,6 +19,10 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [shortcutNote, setShortcutNote] = useState<string | null>(null);
+  const onShortcutStatus = useCallback((text: string | null) => {
+    setShortcutNote((current) => (current === text ? current : text));
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -82,8 +86,13 @@ export function AppshotRecordingPanel({ settings, saving, onShortcut }: {
         <p className="text-sm text-foreground">{t("appshots.recording_shortcut")}</p>
         <AppshotShortcutField value={settings.recording_hotkey ?? ""} disabled={saving || Boolean(active)}
           isMac={/Mac/i.test(navigator.platform || "")} testId="appshots-recording-hotkey"
-          label={t("appshots.recording_shortcut")} onSave={onShortcut} />
+          label={t("appshots.recording_shortcut")} onSave={onShortcut} onStatus={onShortcutStatus} />
       </div>
+      {shortcutNote && (
+        <p className="mt-2 text-sm text-muted-foreground" data-testid="appshots-recording-hotkey-status">
+          {shortcutNote}
+        </p>
+      )}
       {settings.recording_shortcut?.detail && settings.recording_hotkey && !settings.recording_shortcut.armed && (
         <p className="mt-2 text-sm text-muted-foreground">{settings.recording_shortcut.detail}</p>
       )}

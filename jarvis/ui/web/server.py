@@ -132,6 +132,28 @@ class MemoryFactBody(BaseModel):
     category: str = "general"
 
 
+def _is_backend_path(path: str) -> bool:
+    """Paths the SPA catch-all must never claim: the API and the sockets."""
+    return path == "/api" or path.startswith(("/api/", "/ws"))
+
+
+class _SpaFallbackRoute(APIRoute):
+    """The SPA catch-all, invisible to API and socket paths.
+
+    A plain ``GET /{full_path:path}`` partially matches EVERY path, so the
+    router answered an unknown ``POST /api/...`` with 405 and ``Allow: GET`` —
+    pointing a client at a GET that does not exist — and a bare ``GET /api``
+    with the SPA's HTML. Declining backend paths lets the router answer
+    honestly: 404 for a route that does not exist, 405 only for a real route
+    asked with the wrong method.
+    """
+
+    def matches(self, scope: Scope) -> tuple[Match, Scope]:
+        if scope.get("type") == "http" and _is_backend_path(scope.get("path", "")):
+            return Match.NONE, {}
+        return super().matches(scope)
+
+
 class WebServer:
     """In-process uvicorn + FastAPI, run by the orchestrator loop."""
 
@@ -248,20 +270,6 @@ class WebServer:
         )
         if not defer_feature_routes:
             self._publish_app()
-
-    async def _forward_delegation_to_chat(self, event: Any) -> None:
-        """Persist a result in its originating chat without starting another model turn."""
-        service = getattr(self.app.state, "agent_chat", None)
-        if service is None:
-            return
-        session = service.store.get_session(event.session_id)
-        if session is None or session.surface != "jarvis":
-            return
-        await service.post_notice(event.session_id, {
-            "kind": "coding_result", "agent_name": event.agent_name,
-            "assignment_id": event.request_id, "status": event.status,
-            "text": event.text, "report": event.report,
-        })
 
     async def _forward_delegation_to_chat(self, event: Any) -> None:
         """Persist a result in its originating chat without starting another model turn."""
@@ -506,6 +514,7 @@ class WebServer:
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
+        from .ide_skills_routes import router as ide_skills_router
         from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
@@ -676,6 +685,8 @@ class WebServer:
         # the focused coding mode.
         # Before the IDE router, so its /{…} paths never shadow /git/….
         app.include_router(agentic_ide_git_router)
+        # The Skills tab's library of saved Markdown prompts (/api/agentic-ide/skills/*).
+        app.include_router(ide_skills_router)
         app.include_router(agentic_ide_router)
         # The pane-activity sweep has no bus of its own (the registry is a plain
         # holder by design); this is the one place that holds one, so the sweep
@@ -759,6 +770,23 @@ class WebServer:
         app.include_router(browser_profile_router)
         app.include_router(society_figure_router)
         app.include_router(drop_router)
+        # The Jarvis Verse level system (jarvis/progression): a bus listener
+        # that pays XP for real achievements. Constructing it opens nothing;
+        # start() subscribes it and the ledger opens on the first award.
+        from jarvis.progression import ProgressionService
+
+        from .progression_routes import router as progression_router
+
+        progression_data_dir = Path(
+            getattr(getattr(self.cfg, "memory", None), "data_dir", None) or "data"
+        )
+        self._progression = ProgressionService(
+            progression_data_dir / "progression.db",
+            bus=self.bus,
+            pet_id=lambda: str(getattr(getattr(self.cfg, "ui", None), "pet_id", "") or ""),
+        )
+        app.state.progression = self._progression
+        app.include_router(progression_router)
         # Default: no recorder wired up — _init_session_stack() in start()
         # sets this once it succeeds.
         app.state.session_store = None
@@ -2930,6 +2958,14 @@ class WebServer:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).warning("AchievementEvaluator.attach() failed")
 
+        # Level system on the bus: pays XP for finished turns, tasks and quests.
+        progression = getattr(self, "_progression", None)
+        if progression is not None:
+            try:
+                progression.attach()
+            except Exception as exc:  # noqa: BLE001 - levels are optional, the app is not
+                logger.opt(exception=exc).warning("ProgressionService.attach() failed")
+
         # Bio scheduler — subscribes to achievement unlocks only. It starts no
         # task and generates nothing here; the brain is resolved per
         # generation, when a board event actually asks for one.
@@ -4105,6 +4141,12 @@ class WebServer:
                 await self._bio_scheduler.stop()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug("BioScheduler.stop(): {}", exc)
+        progression = getattr(self, "_progression", None)
+        if progression is not None:
+            try:
+                progression.close()
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).debug("ProgressionService.close(): {}", exc)
         if self._board_evaluator is not None:
             try:
                 self._board_evaluator.close()

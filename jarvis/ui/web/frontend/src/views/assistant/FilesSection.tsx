@@ -143,7 +143,7 @@ export function FilesSection({
   return (
     <Section testId="assistant-files" title={t("assistant_view.files_title")}>
       <p className="-mt-2 mb-4 text-base text-muted-foreground">{t("assistant_view.files_hint")}</p>
-      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 2xl:grid-cols-4">
         {files.map((file) => (
           <li key={file.id}>
             <FilePreview file={file} onOpen={onOpen} />

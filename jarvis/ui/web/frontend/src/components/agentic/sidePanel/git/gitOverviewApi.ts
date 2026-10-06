@@ -6,6 +6,8 @@
  * are three separate facts on purpose — passing checks never mean "merged".
  */
 
+import type { DiffHunk } from "../explorer/explorerApi";
+
 export type PullRequestState = "draft" | "open" | "queued" | "merged" | "closed";
 export type CiState = "none" | "pending" | "running" | "success" | "failure";
 
@@ -159,4 +161,76 @@ export function bindGitHubRepo(workspaceId: string, repo: string): Promise<{ ok:
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspace_id: workspaceId, repo }),
   });
+}
+
+export interface BranchEditors {
+  /** False on a headless host or a remote browser: nothing opens on this screen. */
+  file_manager: boolean;
+  editors: { id: string; label: string }[];
+}
+
+export function fetchBranchEditors(): Promise<BranchEditors> {
+  return call<BranchEditors>(`/api/agentic-ide/git/branch/editors`);
+}
+
+/** Open the folder `branch` is checked out in, in the file manager (`folder`) or an editor. */
+export function openBranchCheckout(workspaceId: string, branch: string, target: string): Promise<{ opened: boolean; path: string }> {
+  return call(`/api/agentic-ide/git/branch/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspace_id: workspaceId, branch, target }),
+  });
+}
+
+export interface BranchCommit {
+  sha: string;
+  subject: string;
+  author: string;
+  committed_at: number;
+  /** GitHub has this commit; false while it exists only on this computer. */
+  on_github: boolean;
+}
+
+export interface BranchFile {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  /** null for a binary file. */
+  added: number | null;
+  removed: number | null;
+}
+
+export interface BranchContents {
+  available: boolean;
+  branch: string;
+  /** What the branch is compared with (`origin/main`); "" for the default branch itself. */
+  base: string;
+  commits: BranchCommit[];
+  commits_truncated: boolean;
+  files: BranchFile[];
+  files_truncated: boolean;
+  reason: string;
+}
+
+export interface BranchFileDiff {
+  path: string;
+  status: string;
+  binary: boolean;
+  added: number;
+  removed: number;
+  hunks: DiffHunk[];
+  truncated: boolean;
+}
+
+function branchQuery(workspaceId: string, branch: string, base: string, remote: boolean, extra: Record<string, string> = {}): string {
+  const query = new URLSearchParams({ workspace_id: workspaceId, branch, base, ...extra });
+  if (remote) query.set("remote", "true");
+  return query.toString();
+}
+
+export function fetchBranchContents(workspaceId: string, branch: string, base: string, remote: boolean): Promise<BranchContents> {
+  return call<BranchContents>(`/api/agentic-ide/git/branch/contents?${branchQuery(workspaceId, branch, base, remote)}`);
+}
+
+export function fetchBranchFileDiff(workspaceId: string, branch: string, base: string, remote: boolean, path: string): Promise<BranchFileDiff> {
+  return call<BranchFileDiff>(`/api/agentic-ide/git/branch/diff?${branchQuery(workspaceId, branch, base, remote, { path })}`);
 }

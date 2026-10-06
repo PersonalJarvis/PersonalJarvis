@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "square",
+  "version": "1.0.0",
+  "description": "Payments, orders, catalog and customers",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Square",
+      "category": "Knowledge & Reading",
+      "logo_slug": "square",
+      "logo_color": "3E4348",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.squareup.com/mcp",
+        "discovery_url": "https://mcp.squareup.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.squareup.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_square_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with the Square seller account you want to connect. Every write asks for approval first."
+    }
+  }
+}

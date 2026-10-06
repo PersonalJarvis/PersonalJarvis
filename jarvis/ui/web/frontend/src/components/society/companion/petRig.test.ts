@@ -68,6 +68,60 @@ describe("pet rig", () => {
     }
   });
 
+  it("trots the puppy on diagonal pairs and lifts each paw only on its way forward", () => {
+    const cocoa = spec("cocoa");
+    const state = createRigState();
+    let lifted = 0;
+    for (let i = 0; i < 90; i++) {
+      stepRig(state, cocoa, { dt: DT, speed: 1, mood: "idle", reduced: false });
+      const pose = rigPose(cocoa, state, "idle");
+      expect(pose.get("cocoa_Leg_FL")!.rx).toBeCloseTo(pose.get("cocoa_Leg_BR")!.rx);
+      expect(pose.get("cocoa_Leg_FL")!.rx).toBeCloseTo(-pose.get("cocoa_Leg_FR")!.rx);
+      // Forward swing is a falling rx (the paw moves to +z).
+      if (pose.get("cocoa_Leg_FL")!.dy > 0.001) { lifted++; expect(Math.cos(state.phase)).toBeLessThan(0); }
+    }
+    expect(lifted).toBeGreaterThan(0);
+  });
+
+  it("wags the puppy's tail all the time, faster while talking and slow asleep", () => {
+    const cocoa = spec("cocoa");
+    const wagRate = (mood: PetMood) => {
+      const state = createRigState();
+      let crossings = 0, last = 0, peak = 0;
+      for (let i = 0; i < 240; i++) {
+        stepRig(state, cocoa, { dt: DT, speed: 0, mood, reduced: false });
+        const ry = rigPose(cocoa, state, mood).get("cocoa_Tail")!.ry;
+        if (i > 0 && Math.sign(ry) !== Math.sign(last)) crossings++;
+        last = ry; peak = Math.max(peak, Math.abs(ry));
+      }
+      return { crossings, peak };
+    };
+    const idle = wagRate("idle"), talk = wagRate("talk"), sleep = wagRate("sleep");
+    expect(idle.peak).toBeGreaterThan(0.3);
+    expect(talk.crossings).toBeGreaterThan(idle.crossings);
+    expect(sleep.crossings).toBeLessThan(idle.crossings);
+    expect(sleep.peak).toBeLessThan(idle.peak);
+  });
+
+  it("lets the puppy pant and flap its ears while talking, and lie down asleep", () => {
+    const cocoa = spec("cocoa");
+    const state = createRigState();
+    let jaw = 0, ear = 0;
+    for (let i = 0; i < 120; i++) {
+      stepRig(state, cocoa, { dt: DT, speed: 0, mood: "talk", reduced: false });
+      const pose = rigPose(cocoa, state, "talk");
+      jaw = Math.max(jaw, pose.get("cocoa_Jaw")!.rx);
+      ear = Math.max(ear, pose.get("cocoa_Ear_R")!.rz);
+    }
+    expect(jaw).toBeGreaterThan(0.2);
+    expect(ear).toBeGreaterThan(0.15);
+    const asleep = createRigState();
+    for (let i = 0; i < 60; i++) stepRig(asleep, cocoa, { dt: DT, speed: 0, mood: "sleep", reduced: false });
+    const pose = rigPose(cocoa, asleep, "sleep");
+    expect(pose.get("cocoa_Body")!.dy).toBeLessThan(-0.05);
+    expect(pose.get("cocoa_Head")!.dy).toBeLessThan(-0.05);
+  });
+
   it("fills the battery's charge bars one by one while working", () => {
     const bolt = spec("bolt");
     const state = createRigState();
