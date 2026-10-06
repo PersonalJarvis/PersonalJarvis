@@ -55,10 +55,14 @@ export interface ChatAttachments {
   onPaste: (event: React.ClipboardEvent) => void;
   remove: (name: string) => void;
   clear: () => void;
+  /** Hand over the held files and empty the draft WITHOUT releasing their pictures. */
+  take: () => HeldFiles;
+  /** Put files handed over by `take` back into the draft. */
+  restore: (files: HeldFiles) => void;
 }
 
 /** The files one draft holds, with their pictures. */
-interface HeldFiles {
+export interface HeldFiles {
   attachments: ChatAttachment[];
   previews: Record<string, string>;
 }
@@ -91,6 +95,11 @@ function updateHeld(owner: object, key: string, update: (current: HeldFiles) => 
   if (next.attachments.length === 0 && Object.keys(next.previews).length === 0) drafts.delete(key);
   else drafts.set(key, next);
   listeners.forEach((listener) => listener());
+}
+
+/** Let go of the pictures of files handed over by `take` and never restored. */
+export function releaseHeldFiles(files: HeldFiles): void {
+  Object.values(files.previews).forEach(revokePreview);
 }
 
 /** Let go of every draft's held files for one owner, pictures included. */
@@ -252,6 +261,22 @@ export function useChatAttachments(
     });
   }, [owner, key]);
 
+  const take = useCallback((): HeldFiles => {
+    const current = heldFor(owner, key);
+    updateHeld(owner, key, () => NOTHING_HELD);
+    return current;
+  }, [owner, key]);
+
+  const restore = useCallback((files: HeldFiles) => {
+    updateHeld(owner, key, (current) => ({
+      attachments: [
+        ...files.attachments,
+        ...current.attachments.filter((item) => !files.attachments.some((back) => back.name === item.name)),
+      ],
+      previews: { ...files.previews, ...current.previews },
+    }));
+  }, [owner, key]);
+
   return {
     attachments,
     previews,
@@ -262,6 +287,8 @@ export function useChatAttachments(
     onPaste,
     remove,
     clear,
+    take,
+    restore,
   };
 }
 

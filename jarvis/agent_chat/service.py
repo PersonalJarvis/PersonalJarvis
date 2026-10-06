@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import shutil
+import sqlite3
 import time
 import uuid
 from collections.abc import Callable
@@ -64,6 +65,12 @@ from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
+
+#: What a turn cut off by a restart says (``_seal_orphaned_turns``).
+_ORPHANED_TURN_ERROR: Final = (
+    "Jarvis restarted while this turn was running. "
+    "Everything after the last step shown here was not captured."
+)
 
 Subscriber = asyncio.Queue[dict[str, Any]]
 DECISIONS: tuple[str, ...] = ("allow", "allow_always", "deny")
@@ -283,6 +290,49 @@ class AgentChatService:
         # The archived voice chat's history while one is continued (bind_voice_chat).
         self._voice_archive_history: Callable[[], list[Any]] | None = None
         self._retire_cli_seats()
+        self._seal_orphaned_turns()
+
+    def _seal_orphaned_turns(self) -> None:
+        """Close every turn a previous process left open.
+
+        The runner's task lives in memory, so a turn that was running when the
+        app quit, crashed or was restarted can never send another event: its
+        CLI's pipe went with the old process. Left open, the thread showed
+        "Working" for ever and froze on the last line the old process wrote,
+        while the agent's real ending never arrived (2026-10-05). This service
+        is built once per process, before it runs a turn of its own, so every
+        open turn here is such an orphan. It ends as failed, stamped with the
+        last moment the session heard anything, so the thread list keeps its
+        order. A CLI that outlived its parent is not hunted down here: a stop
+        by folder would also hit the person's own terminals in that folder.
+        """
+        try:
+            orphans = self.store.open_turns()
+        except sqlite3.Error:
+            log.warning("agent chat: could not look for turns a restart left open", exc_info=True)
+            return
+        for session_id, turn_id, started_ms, last_ms in orphans:
+            if not turn_id:
+                continue
+            self.store.append_event(
+                session_id,
+                {
+                    **make_event(
+                        "turn_finished",
+                        {
+                            "turn_id": turn_id,
+                            "status": "error",
+                            "duration_ms": max(0, last_ms - started_ms),
+                            "usage": {},
+                            "error": _ORPHANED_TURN_ERROR,
+                            "cost_usd": None,
+                        },
+                    ),
+                    "ts_ms": last_ms,
+                },
+            )
+        if orphans:
+            log.info("agent chat: closed %d turn(s) a restart left open", len(orphans))
 
     def _retire_cli_seats(self) -> None:
         """Move chats off a CLI seat their surface no longer offers.

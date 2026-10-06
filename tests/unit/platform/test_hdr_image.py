@@ -60,6 +60,17 @@ def test_sdr_white_becomes_srgb_white_and_highlights_clip() -> None:
     assert srgb[0, 1].tolist() == [255, 0, 0]
 
 
+def test_float16_lookup_matches_the_float_path_exactly() -> None:
+    rng = np.random.default_rng(3)
+    scrgb = (rng.random((64, 64, 4)) * 8.0 - 0.5).astype(np.float16)
+    scrgb[0, 0, :3] = (np.nan, np.inf, -np.inf)
+    fast = hdr_image.scrgb_to_srgb8(scrgb, 284.0)
+    exact = hdr_image.scrgb_to_srgb8(scrgb.astype(np.float32), 284.0)
+    assert fast.dtype == np.uint8 and fast.shape == (64, 64, 3)
+    assert np.array_equal(fast[1:], exact[1:])
+    assert fast[0, 0].tolist() == [0, 255, 0]
+
+
 def test_srgb_mid_grey_survives_the_trip_through_scrgb() -> None:
     grey = np.full((1, 1, 3), 128, np.uint8)
     scrgb = hdr_image.srgb8_to_scrgb(grey, 200.0)

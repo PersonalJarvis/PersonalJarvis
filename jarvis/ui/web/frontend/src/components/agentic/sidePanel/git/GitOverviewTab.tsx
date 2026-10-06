@@ -14,7 +14,6 @@ import {
   FolderGit2,
   FolderOpen,
   GitBranch,
-  GitCompareArrows,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -35,14 +34,20 @@ import { cn } from "@/lib/utils";
 import { QuickTooltip } from "@/components/ui/tooltip";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
-import { BranchMenu, branchPath, branchUrl } from "./BranchMenu";
+import { BranchMenu, branchUrl } from "./BranchMenu";
+import { DiffView } from "../explorer/DiffView";
 import { ConnectGitHubCard, GitHubRepoPicker } from "./GitHubRepoPicker";
 import {
   fetchBranchEditors,
   fetchGitOverview,
   GitOverviewError,
   openBranchCheckout,
+  fetchBranchContents,
+  fetchBranchFileDiff,
+  type BranchContents,
   type BranchEditors,
+  type BranchFile,
+  type BranchFileDiff,
   type BranchRow,
   type CiState,
   type CiStatus,
@@ -58,6 +63,8 @@ import {
  */
 const POLL_MS = 15_000;
 const POLL_JITTER_MS = 3_000;
+/** While GitHub's first read is still loading, the local branches are already shown and this re-asks soon. */
+const POLL_LOADING_MS = 1_500;
 
 // GitHub's pull request colours: open green, merged purple, closed red, the
 // merge queue amber, a draft grey. Each maps to a theme token that has a light
@@ -132,12 +139,14 @@ function useGitOverview(workspaceId: string | null) {
     let alive = true;
     let timer: number | undefined;
     let refresh = force > 0;
+    let githubLoading = false;
     const tick = async () => {
       if (useEventStore.getState().activeSection === "agentic-ide") {
         setLoading(true);
         try {
           const next = await fetchGitOverview(workspaceId, refresh);
           refresh = false;
+          githubLoading = next.github?.code === "loading";
           if (alive) {
             setData(next);
             setError("");
@@ -153,7 +162,8 @@ function useGitOverview(workspaceId: string | null) {
           if (alive) setLoading(false);
         }
       }
-      if (alive) timer = window.setTimeout(tick, POLL_MS + Math.random() * POLL_JITTER_MS);
+      const delay = githubLoading ? POLL_LOADING_MS + Math.random() * 500 : POLL_MS + Math.random() * POLL_JITTER_MS;
+      if (alive) timer = window.setTimeout(tick, delay);
     };
     void tick();
     return () => {
@@ -376,21 +386,92 @@ function DetailButton({
   );
 }
 
-function DetailSection({ icon: Icon, title, testId, children }: { icon: LucideIcon; title: string; testId: string; children: ReactNode }) {
+/** A file's change as one coloured letter, like the Explorer's change list. */
+const FILE_STATUS: Record<BranchFile["status"], { letter: string; tone: string }> = {
+  added: { letter: "A", tone: "text-success" },
+  deleted: { letter: "D", tone: "text-destructive" },
+  modified: { letter: "M", tone: "text-warning" },
+};
+
+function BranchFileRow({
+  file,
+  workspaceId,
+  branch,
+  base,
+  remote,
+}: {
+  file: BranchFile;
+  workspaceId: string;
+  branch: string;
+  base: string;
+  remote: boolean;
+}) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [diff, setDiff] = useState<BranchFileDiff | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!open || diff) return;
+    let alive = true;
+    fetchBranchFileDiff(workspaceId, branch, base, remote, file.path)
+      .then((answer) => alive && setDiff(answer))
+      .catch((err: Error) => alive && setError(err.message));
+    return () => {
+      alive = false;
+    };
+  }, [open, diff, workspaceId, branch, base, remote, file.path]);
+  const status = FILE_STATUS[file.status];
+  const slash = file.path.lastIndexOf("/");
   return (
-    <section data-testid={testId} className="space-y-1.5">
-      <h4 className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" aria-hidden />
-        {title}
-      </h4>
-      {children}
-    </section>
+    <li data-testid="git-branch-file" data-path={file.path}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <ChevronRight className={cn("h-3 w-3 shrink-0 text-muted-foreground transition-transform", open && "rotate-90")} aria-hidden />
+        <span className={cn("w-3 shrink-0 text-center font-mono text-[10.5px] font-semibold", status.tone)}>{status.letter}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
+          <span className="text-foreground">{file.path.slice(slash + 1)}</span>
+          {slash > 0 && <span className="ml-1.5 text-muted-foreground">{file.path.slice(0, slash)}</span>}
+        </span>
+        {file.added === null ? (
+          <span className="shrink-0 text-[10.5px] text-muted-foreground">{t("ide_side_panel.git.details.binary")}</span>
+        ) : (
+          <span className="shrink-0 font-mono text-[10.5px] tabular-nums">
+            <span className="text-success">+{file.added}</span> <span className="text-destructive">−{file.removed}</span>
+          </span>
+        )}
+      </button>
+      {open && (
+        <div data-testid="git-branch-file-diff" className="my-1 max-h-96 overflow-auto rounded-md border border-border/60 bg-background">
+          {error ? (
+            <p className="px-3 py-2 text-[11px] text-destructive">{error}</p>
+          ) : !diff ? (
+            <p className="flex items-center gap-1.5 px-3 py-2 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
+              {t("ide_side_panel.git.details.loading")}
+            </p>
+          ) : diff.binary ? (
+            <p className="px-3 py-2 text-[11px] text-muted-foreground">{t("ide_side_panel.git.details.binary")}</p>
+          ) : (
+            <DiffView hunks={diff.hunks} />
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 
+function DetailHeading({ children }: { children: ReactNode }) {
+  return <h4 className="text-[10.5px] font-semibold uppercase tracking-wide text-muted-foreground">{children}</h4>;
+}
+
 /**
- * What a clicked branch row folds open: where the branch lives on this
- * computer (with a way to open that folder) and on GitHub (with a way there).
+ * What a clicked branch row folds open: the branch itself — its own commits
+ * and the files it changes, each file's diff one click away — plus one row of
+ * ways out (an editor, the folder, GitHub, the pull request).
  */
 function BranchDetails({
   row,
@@ -408,6 +489,19 @@ function BranchDetails({
   const t = useT();
   const lang = useUiLanguage();
   const pushToast = useEventStore((state) => state.pushToast);
+  const [contents, setContents] = useState<BranchContents | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    fetchBranchContents(workspaceId, row.name, defaultBranch, row.remote_only)
+      .then((answer) => alive && setContents(answer))
+      .catch((err: Error) => alive && setError(err.message));
+    return () => {
+      alive = false;
+    };
+    // Re-read when the branch tip moves, not on every overview poll.
+  }, [workspaceId, row.name, row.head, row.remote_only, defaultBranch]);
+
   const url = branchUrl(repoUrl, row);
   const checkedOut = !row.remote_only && (row.current || Boolean(row.worktree));
   const pr = row.pull_requests[0];
@@ -426,85 +520,133 @@ function BranchDetails({
     );
   };
 
-  const localState = row.remote_only
+  const where = row.remote_only
     ? t("ide_side_panel.git.details.local_absent")
     : row.current
       ? t("ide_side_panel.git.current")
       : row.worktree
-        ? t("ide_side_panel.git.details.local_worktree")
+        ? `${t("ide_side_panel.git.details.local_worktree")} ${row.worktree}`
         : t("ide_side_panel.git.details.local_branch_only");
-  const commitLine =
-    row.head && row.committed_at
-      ? `${row.head.slice(0, 7)} · ${new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(row.committed_at * 1000))}`
-      : row.head.slice(0, 7);
+  const dateOf = (seconds: number) =>
+    seconds ? new Intl.DateTimeFormat(lang, { dateStyle: "medium", timeStyle: "short" }).format(new Date(seconds * 1000)) : "";
 
   return (
-    <div data-testid="git-branch-details" className="grid gap-3 border-t border-border/50 pb-3 pl-9 pr-3 pt-2.5 text-[11.5px]">
-      <DetailSection icon={Laptop} title={t("ide_side_panel.git.details.local_title")} testId="git-details-local">
-        <p className="text-foreground">{localState}</p>
-        {row.worktree && <p className="break-all font-mono text-[10.5px] text-muted-foreground">{row.worktree}</p>}
-        {!row.remote_only && commitLine && (
-          <p className="font-mono text-[10.5px] text-muted-foreground">{fill(t("ide_side_panel.git.last_commit"), { date: commitLine })}</p>
+    <div data-testid="git-branch-details" className="space-y-3 border-t border-border/50 pb-3 pl-8 pr-3 pt-2.5 text-[11.5px]">
+      <div className="flex flex-wrap gap-1.5">
+        {canOpen &&
+          editors?.editors.map((editor) => (
+            <DetailButton
+              key={editor.id}
+              icon={SquareTerminal}
+              label={fill(t("ide_side_panel.git.details.open_in"), { editor: editor.label })}
+              testId={`git-open-${editor.id}`}
+              onClick={() => openLocal(editor.id)}
+            />
+          ))}
+        {canOpen && (
+          <DetailButton icon={FolderOpen} label={t("ide_side_panel.git.details.open_folder")} testId="git-open-folder" onClick={() => openLocal("folder")} />
         )}
-        {row.upstream && (
-          <p className="text-[10.5px] text-muted-foreground">
-            {fill(t("ide_side_panel.git.tracks"), { upstream: row.upstream, ahead: row.ahead, behind: row.behind })}
-          </p>
+        {!checkedOut && !row.remote_only && (
+          <DetailButton icon={Copy} label={t("ide_side_panel.git.menu.copy_switch")} testId="git-copy-switch" onClick={() => copy(`git switch ${row.name}`)} />
         )}
-        <div className="flex flex-wrap gap-1.5 pt-0.5">
-          {canOpen && (
-            <>
-              <DetailButton icon={FolderOpen} label={t("ide_side_panel.git.details.open_folder")} testId="git-open-folder" primary onClick={() => openLocal("folder")} />
-              {editors?.editors.map((editor) => (
-                <DetailButton
-                  key={editor.id}
-                  icon={SquareTerminal}
-                  label={fill(t("ide_side_panel.git.details.open_in"), { editor: editor.label })}
-                  testId={`git-open-${editor.id}`}
-                  onClick={() => openLocal(editor.id)}
-                />
-              ))}
-            </>
-          )}
-          {!checkedOut && (
-            <DetailButton icon={Copy} label={t("ide_side_panel.git.menu.copy_switch")} testId="git-copy-switch" onClick={() => copy(`git switch ${row.name}`)} />
-          )}
-        </div>
-      </DetailSection>
-      <DetailSection icon={Globe} title={t("ide_side_panel.git.details.github_title")} testId="git-details-github">
-        <p className="text-foreground">
-          {url ? t("ide_side_panel.git.details.github_present") : repoUrl ? t("ide_side_panel.git.not_pushed") : t("ide_side_panel.git.menu.no_repo")}
-        </p>
+        {url && <DetailButton icon={Globe} label={t("ide_side_panel.git.details.open_github")} testId="git-open-github" onClick={() => void openExternalUrl(url)} />}
         {pr && (
-          <p className="truncate text-[10.5px] text-muted-foreground">
-            #{pr.number} · {prStateLabel(t, pr)} · {pr.title}
-          </p>
+          <DetailButton
+            icon={PR_ICON[pr.state]}
+            label={fill(t("ide_side_panel.git.menu.open_pr"), { number: pr.number })}
+            testId="git-open-pr"
+            onClick={() => void openExternalUrl(pr.url)}
+          />
         )}
-        <div className="flex flex-wrap gap-1.5 pt-0.5">
-          {url && (
-            <DetailButton icon={ExternalLink} label={t("ide_side_panel.git.details.open_github")} testId="git-open-github" primary onClick={() => void openExternalUrl(url)} />
+        {row.ci.url && (
+          <DetailButton icon={CirclePlay} label={t("ide_side_panel.git.menu.open_ci")} testId="git-open-ci" onClick={() => void openExternalUrl(row.ci.url)} />
+        )}
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        <Laptop className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden />
+        <span className="break-all">{where}</span>
+        {row.upstream && (
+          <span className="block pl-4">{fill(t("ide_side_panel.git.tracks"), { upstream: row.upstream, ahead: row.ahead, behind: row.behind })}</span>
+        )}
+      </p>
+
+      {error ? (
+        <p className="text-[11px] text-destructive">{error}</p>
+      ) : !contents ? (
+        <p data-testid="git-branch-loading" className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden />
+          {t("ide_side_panel.git.details.loading")}
+        </p>
+      ) : !contents.available ? (
+        <p className="text-[11px] text-muted-foreground">{contents.reason}</p>
+      ) : (
+        <>
+          <section data-testid="git-branch-commits" className="space-y-1">
+            <DetailHeading>
+              {contents.base
+                ? fill(t("ide_side_panel.git.details.commits_vs"), { n: contents.commits.length, base: contents.base })
+                : fill(t("ide_side_panel.git.details.commits_latest"), { n: contents.commits.length })}
+            </DetailHeading>
+            {contents.commits.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">{fill(t("ide_side_panel.git.details.no_commits"), { base: contents.base })}</p>
+            ) : (
+              <ol className="space-y-0.5">
+                {contents.commits.map((commit) => (
+                  <li key={commit.sha} data-testid="git-branch-commit" data-sha={commit.sha} className="flex min-w-0 items-baseline gap-2">
+                    {/* Only a commit GitHub has gets a link; one still only here would open a 404. */}
+                    {repoUrl && commit.on_github ? (
+                      <button
+                        type="button"
+                        data-testid="git-commit-link"
+                        onClick={() => void openExternalUrl(`${repoUrl}/commit/${encodeURIComponent(commit.sha)}`)}
+                        className="shrink-0 font-mono text-[10.5px] text-info hover:underline"
+                      >
+                        {commit.sha.slice(0, 7)}
+                      </button>
+                    ) : commit.on_github === false ? (
+                      <QuickTooltip content={t("ide_side_panel.git.local_only_tip")} side="bottom" className="inline-flex shrink-0">
+                        <span data-testid="git-commit-local" className="inline-flex items-center gap-1 font-mono text-[10.5px] text-warning">
+                          <Laptop className="h-3 w-3" aria-hidden />
+                          {commit.sha.slice(0, 7)}
+                        </span>
+                      </QuickTooltip>
+                    ) : (
+                      // An older backend does not say where the commit is: no link, no claim.
+                      <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{commit.sha.slice(0, 7)}</span>
+                    )}
+                    <QuickTooltip content={`${commit.subject}\n${commit.author} · ${dateOf(commit.committed_at)}`} side="bottom" className="flex min-w-0 flex-1">
+                      <span className="truncate text-foreground">{commit.subject}</span>
+                    </QuickTooltip>
+                    <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground">
+                      {commit.committed_at ? commitDateLabel(commit.committed_at, lang) : ""}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {contents.commits_truncated && <p className="text-[10.5px] text-muted-foreground">{t("ide_side_panel.git.details.more_commits")}</p>}
+          </section>
+          {contents.base && (
+            <section data-testid="git-branch-files" className="space-y-1">
+              <DetailHeading>{fill(t("ide_side_panel.git.details.files"), { n: contents.files.length })}</DetailHeading>
+              <ul>
+                {contents.files.map((file) => (
+                  <BranchFileRow
+                    key={file.path}
+                    file={file}
+                    workspaceId={workspaceId}
+                    branch={row.name}
+                    base={defaultBranch}
+                    remote={row.remote_only}
+                  />
+                ))}
+              </ul>
+              {contents.files_truncated && <p className="text-[10.5px] text-muted-foreground">{t("ide_side_panel.git.details.more_files")}</p>}
+            </section>
           )}
-          {pr && (
-            <DetailButton
-              icon={PR_ICON[pr.state]}
-              label={fill(t("ide_side_panel.git.menu.open_pr"), { number: pr.number })}
-              testId="git-open-pr"
-              onClick={() => void openExternalUrl(pr.url)}
-            />
-          )}
-          {url && !pr && defaultBranch && row.name !== defaultBranch && (
-            <DetailButton
-              icon={GitCompareArrows}
-              label={fill(t("ide_side_panel.git.menu.compare"), { target: defaultBranch })}
-              testId="git-open-compare"
-              onClick={() => void openExternalUrl(`${repoUrl}/compare/${branchPath(defaultBranch)}...${branchPath(row.name)}`)}
-            />
-          )}
-          {row.ci.url && (
-            <DetailButton icon={CirclePlay} label={t("ide_side_panel.git.menu.open_ci")} testId="git-open-ci" onClick={() => void openExternalUrl(row.ci.url)} />
-          )}
-        </div>
-      </DetailSection>
+        </>
+      )}
     </div>
   );
 }

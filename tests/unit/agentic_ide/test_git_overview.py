@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -348,6 +349,33 @@ def test_overview_joins_pull_requests_ci_and_squash_merges(
     # A second read inside the TTL reuses the answer instead of calling GitHub again.
     git_overview.overview(repo)
     assert len(calls) == 1
+
+
+@needs_git
+def test_a_first_read_lists_local_branches_without_waiting_for_github(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+
+    def slow_fetch(repo_name: str, token: str) -> git_overview._GitHubSnapshot:
+        release.wait(5)
+        return parse_github(_payload([]), fetched_at=git_overview.time.time())
+
+    monkeypatch.setattr(git_overview, "_fetch_github", slow_fetch)
+    monkeypatch.setattr(github_link, "credential", lambda: github_link.Credential("t", "app"))
+    monkeypatch.setattr(github_link, "bound_repository", lambda folder: "o/slow")
+    git_overview._CACHE.clear()
+    info = git_overview.overview(repo, wait_for_github=False)
+    assert info.github.code == "loading" and not info.github.available
+    assert {row.name for row in info.branches} >= {"main", "feature/wip"}
+    release.set()
+    deadline = git_overview.time.time() + 5
+    while git_overview.time.time() < deadline:
+        later = git_overview.overview(repo, wait_for_github=False)
+        if later.github.available:
+            break
+        git_overview.time.sleep(0.05)
+    assert later.github.available
 
 
 # ------------------------------------------------------------------ the one-time pick

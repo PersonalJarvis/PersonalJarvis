@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import en from "@/i18n/locales/en.json";
 import type { ToolBlock, TurnBlock, TurnStatus } from "@/components/agentchat/reduce";
-import { buildThreadRows, liveItem, thoughtPreview, type ThreadRow, type WorkGroup } from "./threadWork";
+import { buildThreadRows, GIST_MAX, thoughtGist, type ThreadRow, type WorkGroup } from "./threadWork";
 
 type Dict = Record<string, unknown>;
 const t = (key: string): string => {
@@ -22,45 +22,39 @@ const rows = (blocks: TurnBlock[], status: TurnStatus = "done"): ThreadRow[] => 
 const groups = (list: ThreadRow[]) => list.filter((row): row is WorkGroup => row.kind === "work");
 
 describe("thread work groups", () => {
-  it("folds thinking and calls up to the next prose into one group", () => {
+  it("reads every worded thought as a paragraph that splits the work around it", () => {
     const list = rows([
       thought("r1", "Looking at the repo"),
       tool("c1"),
-      thought("r2", "Now the tests"),
       tool("c2", { input: { command: "npm test" } }),
+      thought("r2", "Now the source"),
       read("f1", "src/a.ts"),
+      tool("c3", { input: { command: "npm run build" } }),
       text("n1", "Tests pass."),
     ]);
-    expect(list.map((row) => row.kind)).toEqual(["work", "text"]);
-    const [group] = groups(list);
-    expect(group.items.map((item) => item.kind)).toEqual(["thought", "call", "thought", "call", "call"]);
-    expect(group.summary).toBe("Ran 2 commands and read 1 file");
-    expect(group.live).toBe(false);
+    expect(list.map((row) => row.kind)).toEqual(["thought", "work", "thought", "work", "text"]);
+    const [commands, mixed] = groups(list);
+    expect(commands.items.map((item) => item.kind)).toEqual(["call", "call"]);
+    expect(commands.summary).toBe("Ran commands");
+    expect(mixed.items).toHaveLength(2);
+    expect(mixed.sole).toBeNull();
+    expect(commands.live).toBe(false);
   });
 
-  it("counts what it leaves out instead of dropping it", () => {
-    const [group] = groups(rows([
-      tool("c1"),
-      read("f1", "a.ts"),
-      tool("l1", { name: "LS", input: { path: "src" }, output: "x" }),
-      tool("e1", { name: "Edit", input: { file_path: "b.ts", old_string: "a", new_string: "b" }, output: "ok" }),
-    ]));
-    expect(group.summary).toBe("Ran 1 command, edited 1 file, and performed 2 other actions");
+  it("keeps every kind of call between two paragraphs in one group", () => {
+    const list = groups(rows([tool("c1"), read("f1", "a.ts"), tool("c2")]));
+    expect(list).toHaveLength(1);
+    expect(list[0].items).toHaveLength(3);
   });
 
-  it("names a lone call by itself and a lone thought as a thought", () => {
+  it("names a lone call by itself", () => {
     expect(groups(rows([tool("c1", { input: { command: "npm run build" } })]))[0].summary).toBe("npm run build");
-    const [solo] = groups(rows([thought("r1", "Plan the change")]));
-    expect(solo.summary).toBe("Thought");
-    expect(solo.sole).toBe("thought");
   });
 
-  it("keeps the running turn's newest group live and points at its running call", () => {
+  it("keeps the running turn's newest group live", () => {
     const list = rows([text("n1", "Starting."), tool("c1"), tool("c2", { input: { command: "npm test" }, output: null, durationMs: null })], "running");
     const [group] = groups(list);
     expect(group.live).toBe(true);
-    const item = liveItem(group);
-    expect(item.kind === "call" && item.call.text).toBe("npm test");
   });
 
   it("is not live once prose follows the group", () => {
@@ -68,10 +62,18 @@ describe("thread work groups", () => {
     expect(group.live).toBe(false);
   });
 
+  it("marks the thought the running turn is still writing as live", () => {
+    const list = rows([tool("c1"), thought("r1", "Weighing it", true)], "running");
+    expect(list.map((row) => row.kind)).toEqual(["work", "thought"]);
+    expect(list[1].kind === "thought" && list[1].live).toBe(true);
+  });
+
   it("drops wordless thinking unless it is the turn's live thought", () => {
     expect(rows([thought("r1", "")])).toEqual([]);
+    expect(rows([tool("c1"), thought("r1", ""), tool("c2")]).map((row) => row.kind)).toEqual(["work"]);
     const [group] = groups(rows([thought("r1", "", true)], "running"));
-    expect(group.items).toHaveLength(1);
+    expect(group.sole).toBe("thought");
+    expect(group.summary).toBe("Thinking");
   });
 
   it("breaks a group at a card that waits for the person", () => {
@@ -84,9 +86,19 @@ describe("thread work groups", () => {
   });
 });
 
-describe("thought preview", () => {
-  it("reads a Markdown thought as one plain line", () => {
-    expect(thoughtPreview("**Inspecting the repo**\n\nI need to read `src/app.ts` and [the docs](https://x.y).\n- one\n- two"))
-      .toBe("Inspecting the repo I need to read src/app.ts and the docs. one two");
+describe("thought gist", () => {
+  it("reads a thought's heading as its gist", () => {
+    expect(thoughtGist("**Checking the build**\n\nI will run the tests first and then look at the logs.")).toBe("Checking the build");
+    expect(thoughtGist("## Planning the fix\nMore text.")).toBe("Planning the fix");
+  });
+
+  it("falls back to the first sentence without Markdown marks", () => {
+    expect(thoughtGist("I need to read `src/app.ts` first. Then the router.")).toBe("I need to read src/app.ts first.");
+  });
+
+  it("cuts a long sentence at a word", () => {
+    const gist = thoughtGist(`${"word ".repeat(60)}end.`);
+    expect(gist.length).toBeLessThanOrEqual(GIST_MAX + 1);
+    expect(gist.endsWith("word…")).toBe(true);
   });
 });

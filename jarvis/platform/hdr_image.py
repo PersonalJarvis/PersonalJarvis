@@ -23,6 +23,7 @@ Pure numpy + zlib (+ Pillow for 8-bit); no platform code.
 
 from __future__ import annotations
 
+import functools
 import struct
 import zlib
 from typing import Any
@@ -104,7 +105,31 @@ def scrgb_to_srgb8(scrgb: Any, sdr_white_nits: float = SCRGB_NITS) -> Any:
     """scRGB -> 8-bit sRGB ``(h, w, 3)``, SDR white at full white, highlights clipped."""
     import numpy as np  # noqa: PLC0415
 
-    rgb = np.asarray(scrgb)[..., :3].astype(np.float32)
+    source = np.asarray(scrgb)
+    if source.dtype == np.float16:
+        # Desktop Duplication hands over float16: one table lookup per value
+        # gives the exact result of the float path ~10x faster (a 4K frame in
+        # well under 100 ms, fast enough to freeze the screen for the picker).
+        table = _srgb8_table(round(float(sdr_white_nits), 3))
+        return table[source[..., :3].view(np.uint16)]
+    return _scrgb_to_srgb8_float(source, sdr_white_nits)
+
+
+@functools.lru_cache(maxsize=4)
+def _srgb8_table(sdr_white_nits: float) -> Any:
+    """``uint8[65536]``: every float16 bit pattern -> its 8-bit sRGB value."""
+    import numpy as np  # noqa: PLC0415
+
+    values = np.arange(65536, dtype=np.uint32).astype(np.uint16).view(np.float16)
+    values = np.nan_to_num(values.astype(np.float32), nan=0.0, posinf=1e4, neginf=0.0)
+    return _scrgb_to_srgb8_float(values, sdr_white_nits, channels=False)
+
+
+def _scrgb_to_srgb8_float(scrgb: Any, sdr_white_nits: float, *, channels: bool = True) -> Any:
+    import numpy as np  # noqa: PLC0415
+
+    rgb = np.asarray(scrgb)
+    rgb = (rgb[..., :3] if channels else rgb).astype(np.float32)
     rgb *= SCRGB_NITS / max(1.0, float(sdr_white_nits))
     np.clip(rgb, 0.0, 1.0, out=rgb)
     low = rgb * 12.92

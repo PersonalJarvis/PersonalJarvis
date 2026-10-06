@@ -493,13 +493,29 @@ class _GitHubCache:
             self._entries[key] = snap
             return snap
 
-    def get(self, key: str, token: str, *, force: bool = False) -> _GitHubSnapshot:
-        """``key`` is the repository (``owner/name``)."""
+    def get(
+        self, key: str, token: str, *, force: bool = False, wait: bool = True
+    ) -> _GitHubSnapshot | None:
+        """``key`` is the repository (``owner/name``).
+
+        With ``wait=False`` a repository read for the first time answers None at
+        once and loads in the background: the first GitHub read takes seconds,
+        and the local branches should not wait for it.
+        """
         with self._guard:
             lock = self._locks.setdefault(key, threading.Lock())
             snap = self._entries.get(key)
-        if snap is None or force:
+        if force or (snap is None and wait):
             return self._load(key, token, lock, force)
+        if snap is None:
+            if not lock.locked():
+                threading.Thread(
+                    target=self._load,
+                    args=(key, token, lock, False),
+                    name="git-overview-github",
+                    daemon=True,
+                ).start()
+            return None
         if not self._fresh(snap, time.time(), False) and not lock.locked():
             # Stale-while-revalidate: a poll never waits seconds for GitHub;
             # it gets the last answer now and the new one on its next tick.
@@ -642,7 +658,9 @@ def _attach_github(row: BranchRow, remote: str, snap: _GitHubSnapshot) -> None:
             )
 
 
-def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapshot | None:
+def _github_for(
+    root: Path, info: RepoOverview, refresh: bool, wait: bool = True
+) -> _GitHubSnapshot | None:
     """GitHub's answer for the repository picked for ``root``, or None with
     ``info.github`` saying what is missing (a connection, or the choice)."""
     state = info.github
@@ -658,7 +676,12 @@ def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapsho
         state.reason = "Pick which GitHub repository this folder is."
         state.suggested_repo = github_link.remote_repository(root)
         return None
-    snap = _CACHE.get(state.repo, cred.token, force=refresh)
+    snap = _CACHE.get(state.repo, cred.token, force=refresh, wait=wait)
+    if snap is None:
+        state.code = "loading"
+        state.reason = "Reading pull requests and CI from GitHub…"
+        state.repo_url = f"https://github.com/{state.repo}"
+        return None
     state.available = snap.ok
     state.reason = snap.reason
     state.code = snap.code
@@ -688,8 +711,18 @@ def branch_checkout(folder: str | Path, branch: str) -> Path | None:
     return None
 
 
-def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) -> RepoOverview:
-    """Branches of the repository ``folder`` is in, with merge, PR and CI state."""
+def overview(
+    folder: str | Path,
+    *,
+    refresh: bool = False,
+    github: bool = True,
+    wait_for_github: bool = True,
+) -> RepoOverview:
+    """Branches of the repository ``folder`` is in, with merge, PR and CI state.
+
+    ``wait_for_github=False`` answers a repository's very first read with the
+    local branches only (``github.code == "loading"``) while GitHub loads.
+    """
     path = Path(folder).expanduser()
     if not path.is_dir():
         return RepoOverview(available=False, reason="The workspace folder is missing.")
@@ -712,7 +745,7 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
 
     snap: _GitHubSnapshot | None = None
     if github:
-        snap = _github_for(root, info, refresh)
+        snap = _github_for(root, info, refresh, wait_for_github)
 
     # Current and default branch always make the list, however old they are.
     keep = {head, info.default_branch}

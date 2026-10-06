@@ -93,6 +93,32 @@ let gate: Promise<void> | null = null;
 const calls: string[] = [];
 const puts: string[] = [];
 const opens: string[] = [];
+const diffs: string[] = [];
+const CONTENTS = {
+  available: true,
+  branch: "feature/wip",
+  base: "origin/main",
+  commits: [
+    { sha: "aaaaaaaaaaaa", subject: "Add the widget", author: "Ada", committed_at: 1_790_000_000, on_github: false },
+    { sha: "bbbbbbbbbbbb", subject: "Start the widget", author: "Ada", committed_at: 1_789_000_000, on_github: true },
+  ],
+  commits_truncated: false,
+  files: [
+    { path: "src/widget.ts", status: "added", added: 12, removed: 0 },
+    { path: "README.md", status: "modified", added: 2, removed: 1 },
+  ],
+  files_truncated: false,
+  reason: "",
+};
+const FILE_DIFF = {
+  path: "src/widget.ts",
+  status: "added",
+  binary: false,
+  added: 1,
+  removed: 0,
+  truncated: false,
+  hunks: [{ header: "@@ -0,0 +1 @@", lines: [{ kind: "add", text: "export const widget = 1;", old_no: null, new_no: 1 }] }],
+};
 const REPOS = {
   connected: true,
   source: "app",
@@ -111,6 +137,7 @@ beforeEach(() => {
   calls.length = 0;
   puts.length = 0;
   opens.length = 0;
+  diffs.length = 0;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -119,6 +146,11 @@ beforeEach(() => {
       const json = (body: unknown, code = 200) =>
         new Response(JSON.stringify(body), { status: code, headers: { "Content-Type": "application/json" } });
       if (url.includes("/github/repos")) return json(REPOS);
+      if (url.includes("/branch/contents")) return json(CONTENTS);
+      if (url.includes("/branch/diff")) {
+        diffs.push(url);
+        return json(FILE_DIFF);
+      }
       if (url.includes("/branch/editors")) return json({ file_manager: true, editors: [{ id: "code", label: "VS Code" }] });
       if (url.includes("/branch/open")) {
         opens.push(String(init?.body));
@@ -321,6 +353,7 @@ describe("GitOverviewTab", () => {
 
     fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));
     const details = within(row("feature/wip")).getByTestId("git-branch-details");
+    await within(details).findByTestId("git-branch-commits");
     fireEvent.click(await within(details).findByTestId("git-open-folder"));
     await vi.waitFor(() => expect(opens).toHaveLength(1));
     expect(JSON.parse(opens[0])).toEqual({ workspace_id: "w1", branch: "feature/wip", target: "folder" });
@@ -334,9 +367,26 @@ describe("GitOverviewTab", () => {
     // Not checked out anywhere: nothing local to open, the switch command instead; not on GitHub either.
     fireEvent.click(within(row("wip/local")).getByTestId("git-branch-toggle"));
     const local = within(row("wip/local")).getByTestId("git-branch-details");
+    await within(local).findByTestId("git-branch-commits");
     expect(within(local).queryByTestId("git-open-folder")).toBeNull();
     expect(within(local).getByTestId("git-copy-switch")).toBeTruthy();
     expect(within(local).queryByTestId("git-open-github")).toBeNull();
+
+    // The branch is readable in place: its commits and files, each file's diff one click away.
+    // A commit only on this computer gets no GitHub link (that page would be a 404).
+    const commit = (sha: string) => within(details).getAllByTestId("git-branch-commit").find((el) => el.dataset.sha === sha)!;
+    expect(within(commit("aaaaaaaaaaaa")).queryByTestId("git-commit-link")).toBeNull();
+    expect(within(commit("aaaaaaaaaaaa")).getByTestId("git-commit-local")).toBeTruthy();
+    fireEvent.click(within(commit("bbbbbbbbbbbb")).getByTestId("git-commit-link"));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://github.com/o/r/commit/bbbbbbbbbbbb");
+    expect(within(details).getByTestId("git-branch-commits").textContent).toContain("Add the widget");
+    expect(within(details).getByTestId("git-branch-commits").textContent).toContain("2 commits not in origin/main");
+    const file = within(details).getAllByTestId("git-branch-file").find((el) => el.dataset.path === "src/widget.ts")!;
+    fireEvent.click(within(file).getByRole("button"));
+    expect(await within(file).findByTestId("explorer-diff")).toBeTruthy();
+    expect(within(file).getByTestId("explorer-diff").textContent).toContain("export const widget = 1;");
+    expect(diffs[0]).toContain("path=src%2Fwidget.ts");
+    expect(diffs[0]).toContain("base=main");
 
     // A second click folds it away again.
     fireEvent.click(within(row("feature/wip")).getByTestId("git-branch-toggle"));

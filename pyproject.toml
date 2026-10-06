@@ -688,6 +688,14 @@ spotify = "jarvis.plugins.tool.spotify_rest:SpotifyRestTool"
 # (AP-5/AP-14). Entry-point name matches the catalog native_tool + token-store
 # key "youtube_music".
 youtube_music = "jarvis.plugins.tool.youtube_music_rest:YouTubeMusicRestTool"
+# Slack (marketplace plugin, 2026-10-05) — search/read/post over the Slack Web
+# API with the marketplace-stored user token. Native rather than Slack's hosted
+# MCP server: Slack admits only Marketplace-listed or internal apps to that
+# server, and the shared publisher app is a distributed but unlisted app.
+# Router-tier; reads are "safe", posting keeps "ask" (echo-confirm). Never a
+# spawn (AP-5/AP-14). Entry-point name matches the catalog native_tool +
+# token-store key "slack".
+slack = "jarvis.plugins.tool.slack_rest:SlackRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"

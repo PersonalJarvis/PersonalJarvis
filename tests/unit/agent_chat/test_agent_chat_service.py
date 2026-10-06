@@ -798,3 +798,32 @@ def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
         assert remembered == [(session.session_id, "RunCommand", {"command": "echo x"})]
 
     asyncio.run(scenario())
+
+
+def test_a_new_process_closes_turns_a_restart_left_open(tmp_path: Path) -> None:
+    """A turn whose runner died with the old process ends as failed, not Working for ever."""
+    db = tmp_path / "agent_chat.db"
+    store = AgentChatStore(db)
+    open_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
+    done_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
+    for sid, ts in ((open_chat.session_id, 1_000), (done_chat.session_id, 1_000)):
+        store.append_event(sid, {"kind": "turn_started", "ts_ms": ts, "payload": {"turn_id": f"t-{sid}"}})
+        store.append_event(sid, {"kind": "tool_call", "ts_ms": ts + 500, "payload": {"turn_id": f"t-{sid}", "call_id": "c"}})
+    store.append_event(
+        done_chat.session_id,
+        {"kind": "turn_finished", "ts_ms": 2_000, "payload": {"turn_id": f"t-{done_chat.session_id}", "status": "done"}},
+    )
+
+    AgentChatService(AgentChatStore(db))
+
+    sealed = store.list_events(open_chat.session_id)[-1]
+    assert sealed["kind"] == "turn_finished"
+    assert sealed["payload"]["turn_id"] == f"t-{open_chat.session_id}"
+    assert sealed["payload"]["status"] == "error"
+    assert sealed["payload"]["error"]
+    # Stamped with the last thing the chat heard, so the thread list keeps its order.
+    assert sealed["ts_ms"] == 1_500
+    assert sealed["payload"]["duration_ms"] == 500
+    finished = [e for e in store.list_events(done_chat.session_id) if e["kind"] == "turn_finished"]
+    assert len(finished) == 1
+    assert store.open_turns() == []

@@ -17,6 +17,10 @@ from typing import Any
 from uuid import uuid4
 
 _ID = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
+SHARED_PROFILE_NAME = "Shared browser"
+# The first release named the shared profile "Shared Chrome", which read as the
+# user's own Chrome; it is a Jarvis-managed profile.
+_LEGACY_SHARED_NAME = "Shared Chrome"
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS profiles (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
@@ -103,6 +107,7 @@ class BrowserProfiles:
         try:
             conn.executescript(_SCHEMA)
             conn.execute("BEGIN IMMEDIATE")
+            self._rename_legacy_shared(conn)
             yield conn
             conn.commit()
         except BaseException:
@@ -110,6 +115,18 @@ class BrowserProfiles:
             raise
         finally:
             conn.close()
+
+    @staticmethod
+    def _rename_legacy_shared(db: sqlite3.Connection) -> None:
+        """Rename the auto-created shared profile once; a user-chosen name stays."""
+        if db.execute("SELECT 1 FROM settings WHERE key='shared_name_v2'").fetchone():
+            return
+        db.execute(
+            "UPDATE profiles SET name=? WHERE name=? AND kind='managed' AND id="
+            "(SELECT value FROM settings WHERE key='default_profile')",
+            (SHARED_PROFILE_NAME, _LEGACY_SHARED_NAME),
+        )
+        db.execute("INSERT OR REPLACE INTO settings VALUES('shared_name_v2','1')")
 
     @staticmethod
     def _public(row: sqlite3.Row) -> dict[str, Any]:
@@ -242,7 +259,7 @@ class BrowserProfiles:
             pid = uuid4().hex
             db.execute(
                 "INSERT INTO profiles(id,name,kind,domains,created_at) VALUES(?,?,?,?,?)",
-                (pid, "Shared Chrome", "managed", "[]", time.time()),
+                (pid, SHARED_PROFILE_NAME, "managed", "[]", time.time()),
             )
             if source:
                 db.execute("INSERT INTO profile_sources VALUES(?,?)", (pid, source))
