@@ -967,10 +967,13 @@ class WorkspaceTextFileResponse(BaseModel):
     )
     version: str = Field(description="Content hash; send it back on save to detect conflicts.")
     size: int
-    encoding: Literal["utf-8", "utf-8-sig"]
+    encoding: str = Field(description="Python codec the file is saved back in, e.g. utf-8, cp1252.")
     eol: Literal["\n", "\r\n"]
     binary: bool = False
     too_large: bool = False
+    mixed_eol: bool = Field(
+        default=False, description="The file mixes line endings; a save writes `eol` throughout."
+    )
 
 
 class SaveWorkspaceFileRequest(BaseModel):
@@ -983,7 +986,7 @@ class SaveWorkspaceFileRequest(BaseModel):
         max_length=128,
         description="Version the editor loaded; null only when creating a new file.",
     )
-    encoding: Literal["utf-8", "utf-8-sig"] = "utf-8"
+    encoding: str = Field(default="utf-8", max_length=40)
     create: bool = False
 
 
@@ -2013,15 +2016,22 @@ def _text_file_response(workspace_id: str, loaded: file_editing.TextFile) -> dic
     response_model=WorkspaceTextFileResponse,
     summary="Load one workspace file for the code editor",
 )
-async def get_workspace_text_file(workspace_id: str, path: str) -> dict[str, object]:
+async def get_workspace_text_file(
+    workspace_id: str,
+    path: str,
+    encoding: Annotated[str | None, Query(max_length=40)] = None,
+) -> dict[str, object]:
     """The file's exact text plus the version a later save must name.
 
     Unlike ``/file-preview`` nothing is normalised: indentation, line endings
-    and a byte-order mark come back as they are on disk.
+    and a byte-order mark come back as they are on disk. ``encoding`` forces
+    how the bytes are read ("Reopen with encoding"); otherwise it is detected.
     """
     folder = _workspace_folder(workspace_id)
     try:
-        loaded = await asyncio.to_thread(file_editing.read_text_file, folder, path)
+        loaded = await asyncio.to_thread(
+            file_editing.read_text_file, folder, path, encoding=encoding
+        )
     except file_editing.EditError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except OSError as exc:

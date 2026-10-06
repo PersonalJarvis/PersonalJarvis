@@ -6188,6 +6188,7 @@
     "document_note": "Text read out of this document. Open it on this computer to edit it.",
     "truncated": "Only the beginning of the file is shown.",
     "empty": "This file has no readable content.",
+    "mixed_eol": "This file mixes line endings. Saving it writes {eol} throughout.",
     "tab_menu": "Tab actions",
     "menu": {
       "close": "Close",
@@ -6199,6 +6200,10 @@
       "reveal": "Reveal in Folder"
     },
     "status": {
+      "reopen_with": "Reopen with encoding",
+      "save_with": "Save with encoding",
+      "line_endings": "Line endings",
+      "change_encoding": "Change the encoding",
       "saving": "Saving…",
       "unsaved": "Unsaved changes",
       "saved": "Saved",

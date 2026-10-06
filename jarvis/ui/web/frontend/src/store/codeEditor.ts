@@ -46,6 +46,8 @@ export interface EditorFile {
   deleted: boolean;
   /** The file changed on disk while the buffer had unsaved edits. */
   conflict: { diskVersion: string | null } | null;
+  /** The file on disk mixes line endings; a save writes `eol` throughout. */
+  mixedEol: boolean;
   saving: boolean;
 }
 
@@ -134,6 +136,7 @@ const newFile = (workspaceId: string, path: string): EditorFile => ({
   dirty: false,
   deleted: false,
   conflict: null,
+  mixedEol: false,
   saving: false,
 });
 

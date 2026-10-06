@@ -79,6 +79,85 @@ def test_save_without_version_never_overwrites_an_existing_file(tmp_path: Path) 
     assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "new\n"
 
 
+def test_windows_1252_text_opens_and_saves_back_in_its_encoding(tmp_path: Path) -> None:
+    raw = "Déjà vu: café crème, naïve façade, résumé — señor.\r\n".encode("cp1252") * 4
+    (tmp_path / "legacy.txt").write_bytes(raw)
+
+    loaded = read_text_file(tmp_path, "legacy.txt")
+    assert loaded.binary is False
+    assert loaded.text is not None and "façade" in loaded.text
+    assert loaded.encoding not in ("utf-8", "utf-8-sig")
+
+    write_text_file(
+        tmp_path,
+        "legacy.txt",
+        loaded.text + "One more line.\r\n",
+        expected_version=loaded.version,
+        encoding=loaded.encoding,
+    )
+    assert (tmp_path / "legacy.txt").read_bytes() == raw + b"One more line.\r\n"
+
+
+def test_cyrillic_legacy_text_is_not_mistaken_for_western(tmp_path: Path) -> None:
+    raw = "Привет, мир! Это проверка кодировки файла.\n".encode("cp1251") * 6
+    (tmp_path / "ru.txt").write_bytes(raw)
+
+    loaded = read_text_file(tmp_path, "ru.txt")
+    assert loaded.text is not None and "Привет" in loaded.text
+
+
+def test_a_chosen_encoding_overrides_the_guess(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_bytes("naïve\n".encode("cp1252"))
+
+    forced = read_text_file(tmp_path, "a.txt", encoding="iso8859-15")
+    assert forced.encoding == "iso8859-15"
+    assert forced.text == "naïve\n"
+    with pytest.raises(EditError):
+        read_text_file(tmp_path, "a.txt", encoding="utf-8")
+    with pytest.raises(EditError):
+        read_text_file(tmp_path, "a.txt", encoding="no-such-codec")
+
+
+def test_utf16_with_bom_round_trips(tmp_path: Path) -> None:
+    raw = b"\xff\xfe" + "line one\r\nline two\r\n".encode("utf-16-le")
+    (tmp_path / "wide.txt").write_bytes(raw)
+
+    loaded = read_text_file(tmp_path, "wide.txt")
+    assert loaded.text == "line one\r\nline two\r\n"
+    assert loaded.encoding == "utf-16-le"
+
+    write_text_file(
+        tmp_path, "wide.txt", loaded.text, expected_version=loaded.version, encoding="utf-16-le"
+    )
+    assert (tmp_path / "wide.txt").read_bytes() == raw
+
+
+def test_characters_the_encoding_cannot_hold_are_refused(tmp_path: Path) -> None:
+    (tmp_path / "legacy.txt").write_bytes("café\n".encode("cp1252"))
+    loaded = read_text_file(tmp_path, "legacy.txt")
+
+    with pytest.raises(EditError, match="UTF-8"):
+        write_text_file(
+            tmp_path,
+            "legacy.txt",
+            "emoji 🙂\n",
+            expected_version=loaded.version,
+            encoding="cp1252",
+        )
+    saved = write_text_file(
+        tmp_path, "legacy.txt", "emoji 🙂\n", expected_version=loaded.version, encoding="utf-8"
+    )
+    assert saved.encoding == "utf-8"
+
+
+def test_mixed_line_endings_are_reported(tmp_path: Path) -> None:
+    (tmp_path / "mixed.txt").write_bytes(b"a\r\nb\nc\r\n")
+    (tmp_path / "clean.txt").write_bytes(b"a\nb\n")
+
+    assert read_text_file(tmp_path, "mixed.txt").mixed_eol is True
+    assert read_text_file(tmp_path, "clean.txt").mixed_eol is False
+
+
 def test_binary_and_large_files_are_not_loaded_as_text(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

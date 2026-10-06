@@ -1,6 +1,7 @@
 /** The code editor's file reads and writes against an open workspace. */
 
-export type TextEncoding = "utf-8" | "utf-8-sig";
+/** A Python codec name: utf-8, utf-8-sig, utf-16-le, cp1252, … (see encodings.ts). */
+export type TextEncoding = string;
 export type LineEnding = "\n" | "\r\n";
 
 export interface TextFile {
@@ -16,6 +17,8 @@ export interface TextFile {
   eol: LineEnding;
   binary: boolean;
   too_large: boolean;
+  /** The file mixes line endings; a save writes `eol` throughout. */
+  mixed_eol?: boolean;
 }
 
 /** A save was refused because the file changed on disk since it was loaded. */
@@ -67,8 +70,11 @@ function json(method: string, body: unknown): RequestInit {
   return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
-export function loadTextFile(workspaceId: string, path: string): Promise<TextFile> {
-  return send<TextFile>(`${base(workspaceId)}/text-file?${query(path)}`);
+/** `encoding` forces how the bytes are read ("Reopen with encoding"). */
+export function loadTextFile(workspaceId: string, path: string, encoding?: string): Promise<TextFile> {
+  const params = new URLSearchParams({ path });
+  if (encoding) params.set("encoding", encoding);
+  return send<TextFile>(`${base(workspaceId)}/text-file?${params.toString()}`);
 }
 
 /** The file's version on disk now; null when it no longer exists. */

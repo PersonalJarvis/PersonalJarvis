@@ -24,6 +24,7 @@ Safety rules every function follows:
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import os
 import shutil
@@ -64,7 +65,35 @@ _BINARY_SNIFF_BYTES = 8192
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
-_ENCODINGS = ("utf-8", "utf-8-sig")
+#: Byte-order marks that name a UTF-16 file; such a file has NUL bytes by
+#: nature, so it is recognised before the binary check.
+_UTF16_BOMS = {b"\xff\xfe": "utf-16-le", b"\xfe\xff": "utf-16-be"}
+_UTF16_BOM_BY_CODEC = {codec: bom for bom, codec in _UTF16_BOMS.items()}
+#: How sure the detector must be before a non-UTF-8 file opens as text.
+_MAX_CHAOS = 0.25
+#: Single-byte code pages the detector cannot tell apart on short text, by
+#: script. When it lands in a family and the bytes are valid in that script's
+#: Windows code page — by far the most common legacy encodings — the Windows
+#: code page wins; the status bar's "Reopen with encoding" corrects a wrong guess.
+_FAMILIES: dict[str, frozenset[str]] = {
+    "cp1252": frozenset(
+        {
+            "cp1250",
+            "cp1252",
+            "cp1254",
+            "cp1257",
+            "iso8859-1",
+            "iso8859-2",
+            "iso8859-9",
+            "iso8859-13",
+            "iso8859-15",
+            "mac-latin2",
+            "mac-roman",
+        }
+    ),
+    "cp1251": frozenset({"cp1251", "cp866", "koi8-r", "koi8-u", "iso8859-5", "mac-cyrillic"}),
+    "cp1253": frozenset({"cp1253", "iso8859-7", "mac-greek"}),
+}
 
 
 class EditError(ValueError):
@@ -91,6 +120,8 @@ class TextFile:
     eol: str
     binary: bool
     too_large: bool
+    #: The file mixes line endings; a save writes ``eol`` throughout.
+    mixed_eol: bool = False
 
 
 def _version_of(data: bytes) -> str:
@@ -175,8 +206,99 @@ def _detect_eol(text: str) -> str:
     return "\r\n" if crlf > lf else "\n"
 
 
-def read_text_file(root: str | os.PathLike[str], path: str) -> TextFile:
-    """Load one workspace file for editing, untouched."""
+def _mixed_eol(text: str) -> bool:
+    """True when more than one kind of line ending appears (CRLF, LF, lone CR)."""
+    crlf = text.count("\r\n")
+    lf = text.count("\n") - crlf
+    cr = text.count("\r") - crlf
+    return sum(1 for count in (crlf, lf, cr) if count) > 1
+
+
+def _canonical_codec(name: str) -> str | None:
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return None
+
+
+def _decode(data: bytes) -> tuple[str, str] | None:
+    """The text and the encoding to save it back in, or None for a binary file.
+
+    UTF-8 (with or without BOM) and BOM-marked UTF-16 are taken as they are.
+    Anything else is handed to the charset detector, and only a confident
+    answer opens as text: a wrong guess would garble the file on save.
+    """
+    for bom, codec in _UTF16_BOMS.items():
+        if data.startswith(bom):
+            try:
+                return data[len(bom) :].decode(codec), codec
+            except UnicodeDecodeError:
+                return None
+    if b"\x00" in data[:_BINARY_SNIFF_BYTES]:
+        return None
+    encoding = "utf-8-sig" if data.startswith(_UTF8_BOM) else "utf-8"
+    try:
+        return data.decode(encoding), encoding
+    except UnicodeDecodeError:
+        pass
+    # Lazy import: only a non-UTF-8 file pays for the detector.
+    from charset_normalizer import from_bytes
+
+    best = from_bytes(data).best()
+    if best is None or best.chaos > _MAX_CHAOS:
+        return None
+    codec = _canonical_codec(best.encoding)
+    if codec is None:
+        return None
+    for preferred, family in _FAMILIES.items():
+        if codec in family and codec != preferred:
+            try:
+                return data.decode(preferred), preferred
+            except UnicodeDecodeError:
+                break
+    try:
+        return data.decode(codec), codec
+    except UnicodeDecodeError:
+        return None
+
+
+def _decode_as(data: bytes, encoding: str) -> tuple[str, str]:
+    """Read the bytes in a chosen encoding, or say why that does not work."""
+    codec = _canonical_codec(encoding)
+    if codec is None:
+        raise EditError(f"The encoding {encoding!r} is not known.")
+    body = data
+    if codec in _UTF16_BOM_BY_CODEC and data.startswith(_UTF16_BOM_BY_CODEC[codec]):
+        body = data[2:]
+    try:
+        return body.decode(codec), codec
+    except UnicodeDecodeError as exc:
+        raise EditError(f"This file cannot be read as {codec}.") from exc
+
+
+def _encode(text: str, encoding: str) -> bytes:
+    """Text as bytes in the file's own encoding (UTF-16 keeps its BOM)."""
+    codec = _canonical_codec(encoding)
+    if codec is None:
+        raise EditError(f"The encoding {encoding!r} is not known.")
+    try:
+        if codec in _UTF16_BOM_BY_CODEC:
+            return _UTF16_BOM_BY_CODEC[codec] + text.encode(codec)
+        return text.encode(codec)
+    except UnicodeEncodeError as exc:
+        raise EditError(
+            f"Some characters cannot be stored as {codec}. Save the file as UTF-8 instead."
+        ) from exc
+
+
+def read_text_file(
+    root: str | os.PathLike[str], path: str, *, encoding: str | None = None
+) -> TextFile:
+    """Load one workspace file for editing, untouched.
+
+    ``encoding`` forces how the bytes are read ("Reopen with encoding");
+    without it the encoding is detected.
+    """
     relative, target = _resolve(root, path)
     if not target.is_file():
         raise EditError("That file does not exist.")
@@ -185,14 +307,13 @@ def read_text_file(root: str | os.PathLike[str], path: str) -> TextFile:
         return TextFile(relative, None, "", size, "utf-8", "\n", False, True)
     data = target.read_bytes()
     version = _version_of(data)
-    if b"\x00" in data[:_BINARY_SNIFF_BYTES]:
+    decoded = _decode(data) if encoding is None else _decode_as(data, encoding)
+    if decoded is None:
         return TextFile(relative, None, version, size, "utf-8", "\n", True, False)
-    encoding = "utf-8-sig" if data.startswith(_UTF8_BOM) else "utf-8"
-    try:
-        text = data.decode(encoding)
-    except UnicodeDecodeError:
-        return TextFile(relative, None, version, size, encoding, "\n", True, False)
-    return TextFile(relative, text, version, size, encoding, _detect_eol(text), False, False)
+    text, encoding = decoded
+    return TextFile(
+        relative, text, version, size, encoding, _detect_eol(text), False, False, _mixed_eol(text)
+    )
 
 
 def file_version(root: str | os.PathLike[str], path: str) -> str | None:
@@ -259,11 +380,7 @@ def write_text_file(
     and refused when a file already sits there.
     """
     relative, target = _resolve(root, path)
-    if encoding not in _ENCODINGS:
-        raise EditError("Only UTF-8 files can be saved from the editor.")
-    data = text.encode("utf-8")
-    if encoding == "utf-8-sig":
-        data = _UTF8_BOM + data
+    data = _encode(text, encoding)
     if len(data) > MAX_EDITABLE_BYTES:
         raise EditError("That file is too large to save from the editor.")
     if target.is_dir():
@@ -282,10 +399,11 @@ def write_text_file(
         None,
         _version_of(data),
         len(data),
-        encoding,
+        _canonical_codec(encoding) or encoding,
         _detect_eol(text),
         False,
         False,
+        _mixed_eol(text),
     )
 
 

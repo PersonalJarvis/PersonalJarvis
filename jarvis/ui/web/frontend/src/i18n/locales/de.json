@@ -6188,6 +6188,7 @@
     "document_note": "Aus diesem Dokument gelesener Text. Zum Bearbeiten auf diesem Computer öffnen.",
     "truncated": "Nur der Anfang der Datei wird gezeigt.",
     "empty": "Diese Datei hat keinen lesbaren Inhalt.",
+    "mixed_eol": "Diese Datei mischt Zeilenenden. Beim Speichern wird überall {eol} geschrieben.",
     "tab_menu": "Tab-Aktionen",
     "menu": {
       "close": "Schließen",
@@ -6199,6 +6200,10 @@
       "reveal": "Im Ordner zeigen"
     },
     "status": {
+      "reopen_with": "Mit Kodierung neu öffnen",
+      "save_with": "Mit Kodierung speichern",
+      "line_endings": "Zeilenenden",
+      "change_encoding": "Kodierung ändern",
       "saving": "Speichert…",
       "unsaved": "Ungespeicherte Änderungen",
       "saved": "Gespeichert",

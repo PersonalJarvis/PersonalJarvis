@@ -65,6 +65,10 @@ dependencies = [
     # malformed vision JSON; without it the repair path silently degrades on
     # every fresh install (found 2026-07-18, was never declared).
     "json-repair>=0.30",
+    # The code editor detects the encoding of non-UTF-8 text files with it
+    # (lazy import); already installed through requests, declared because
+    # Jarvis imports it directly.
+    "charset-normalizer>=3.4",
     # The code editor's delete moves files to the system trash (Recycle Bin,
     # macOS Trash, freedesktop trash) instead of erasing them; pure Python.
     "Send2Trash>=1.8.3",

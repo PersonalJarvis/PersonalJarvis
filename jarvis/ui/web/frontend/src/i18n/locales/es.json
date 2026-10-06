@@ -6188,6 +6188,7 @@
     "document_note": "Texto leído de este documento. Ábrelo en este equipo para editarlo.",
     "truncated": "Solo se muestra el comienzo del archivo.",
     "empty": "Este archivo no tiene contenido legible.",
+    "mixed_eol": "Este archivo mezcla finales de línea. Al guardarlo se usa {eol} en todo.",
     "tab_menu": "Acciones de pestaña",
     "menu": {
       "close": "Cerrar",
@@ -6199,6 +6200,10 @@
       "reveal": "Mostrar en la carpeta"
     },
     "status": {
+      "reopen_with": "Reabrir con codificación",
+      "save_with": "Guardar con codificación",
+      "line_endings": "Finales de línea",
+      "change_encoding": "Cambiar la codificación",
       "saving": "Guardando…",
       "unsaved": "Cambios sin guardar",
       "saved": "Guardado",

@@ -269,6 +269,7 @@ export async function loadFile(fileKey: string): Promise<void> {
       version: loaded.version,
       encoding: loaded.encoding,
       eol: loaded.eol,
+      mixedEol: loaded.mixed_eol ?? false,
       deleted: false,
       conflict: null,
       dirty: false,
@@ -330,7 +331,10 @@ export function loadHead(fileKey: string): Promise<Monaco.editor.ITextModel | nu
  * disk now. Without it a save names the version it was based on, and a file an
  * agent changed meanwhile turns into a conflict instead of being overwritten.
  */
-export async function saveFile(fileKey: string, { overwrite = false } = {}): Promise<boolean> {
+export async function saveFile(
+  fileKey: string,
+  { overwrite = false, encoding }: { overwrite?: boolean; encoding?: string } = {},
+): Promise<boolean> {
   const file = store().files[fileKey];
   const entry = entries.get(fileKey);
   if (!file || !entry || file.saving) return false;
@@ -344,7 +348,7 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
       path: file.path,
       text: entry.model.getValue(),
       expectedVersion: expected,
-      encoding: file.encoding,
+      encoding: encoding ?? file.encoding,
       create,
     });
     entry.saved = sent;
@@ -353,6 +357,8 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
     store().patchFile(fileKey, {
       saving: false,
       version: saved.version,
+      encoding: saved.encoding,
+      mixedEol: false,
       eol: saved.eol,
       deleted: false,
       conflict: null,
@@ -411,6 +417,42 @@ export async function revertFile(fileKey: string, { follow = false } = {}): Prom
   } catch (error) {
     toast((error as Error).message);
   }
+}
+
+/**
+ * Read the file again in another encoding ("Reopen with encoding"). Only a
+ * buffer without unsaved edits can be reopened; its edits would be lost.
+ */
+export async function reopenWithEncoding(fileKey: string, encoding: string): Promise<void> {
+  const file = store().files[fileKey];
+  const entry = entries.get(fileKey);
+  if (!file || !entry) return;
+  if (file.dirty) {
+    toast("Save or discard the changes before reopening the file in another encoding.");
+    return;
+  }
+  try {
+    const loaded = await loadTextFile(file.workspaceId, file.path, encoding);
+    if (loaded.text === null || entries.get(fileKey) !== entry) return;
+    replaceFromDisk(entry, loaded.text, loaded.eol);
+    store().patchFile(fileKey, {
+      version: loaded.version,
+      encoding: loaded.encoding,
+      eol: loaded.eol,
+      mixedEol: loaded.mixed_eol ?? false,
+      dirty: false,
+    });
+  } catch (error) {
+    toast((error as Error).message);
+  }
+}
+
+/** Switch the buffer's line endings; the change is an edit and saves like one. */
+export function setLineEnding(fileKey: string, eol: LineEnding): void {
+  const entry = entries.get(fileKey);
+  if (!entry || !api) return;
+  entry.model.pushEOL(eolSequence(eol));
+  store().patchFile(fileKey, { eol, mixedEol: false });
 }
 
 /** Forget unsaved edits without touching disk (closing with "Don't save"). */

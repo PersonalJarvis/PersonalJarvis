@@ -24,8 +24,9 @@ import { revealInExplorer } from "@/store/ideExplorer";
 import { tabsOf, useCodeEditorStore, type EditorTab } from "@/store/codeEditor";
 import { FileTypeIcon } from "@/components/agentic/sidePanel/explorer/FileTypeIcon";
 import { absoluteWorkspacePath } from "@/components/agentic/sidePanel/explorer/explorerApi";
-import { ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
-import { checkDisk, discardFile, languageName, revertFile, saveAll, saveFile } from "./editorModels";
+import { ThreadMenuHeading, ThreadMenuItem, ThreadMenuSeparator, ThreadPopover } from "@/components/agentic/threads/ThreadPopover";
+import { checkDisk, discardFile, languageName, reopenWithEncoding, revertFile, saveAll, saveFile, setLineEnding } from "./editorModels";
+import { ENCODINGS, encodingLabel } from "./encodings";
 import { QuickOpen } from "./QuickOpen";
 import { restoreWorkspace } from "./editorPersistence";
 import { SEARCH_FOCUS_EVENT } from "@/components/agentic/sidePanel/search/SearchPanel";
@@ -368,6 +369,13 @@ export function CodeEditorStage({
             <BannerButton onClick={() => void saveFile(activeTab.fileKey, { overwrite: true })}>{t("code_editor.conflict_keep_mine")}</BannerButton>
           </Banner>
         )}
+        {activeFile?.mixedEol && !activeFile.conflict && (
+          <Banner
+            tone="muted"
+            testId="code-editor-mixed-eol"
+            text={fill(t("code_editor.mixed_eol"), { eol: activeFile.eol === "\r\n" ? "CRLF" : "LF" })}
+          />
+        )}
         {activeFile?.deleted && !activeFile.conflict && (
           <Banner tone="muted" testId="code-editor-deleted" text={t("code_editor.deleted")} />
         )}
@@ -488,8 +496,16 @@ function StatusBar({ fileKey }: { fileKey: string }) {
   const t = useT();
   const file = useCodeEditorStore((state) => state.files[fileKey]);
   const cursor = useCodeEditorStore((state) => state.cursor);
+  const [menu, setMenu] = useState<"encoding" | "eol" | null>(null);
+  const anchor = useRef<HTMLElement | null>(null);
   if (!file) return null;
   const ready = file.status === "ready" && cursor;
+  const openMenu = (kind: "encoding" | "eol", target: HTMLElement) => {
+    anchor.current = target;
+    setMenu(kind);
+  };
+  const statusButton =
+    "rounded px-1 hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
   return (
     <div
       data-testid="code-editor-status"
@@ -505,11 +521,81 @@ function StatusBar({ fileKey }: { fileKey: string }) {
             {cursor.selected > 0 && ` ${fill(t("code_editor.status.selected"), { count: String(cursor.selected) })}`}
           </span>
           <span>{cursor.insertSpaces ? fill(t("code_editor.status.spaces"), { size: String(cursor.tabSize) }) : fill(t("code_editor.status.tabs"), { size: String(cursor.tabSize) })}</span>
-          <span>{file.encoding === "utf-8-sig" ? t("code_editor.status.utf8_bom") : "UTF-8"}</span>
-          <span>{file.eol === "\r\n" ? "CRLF" : "LF"}</span>
+          <button
+            type="button"
+            data-testid="code-editor-encoding"
+            title={t("code_editor.status.change_encoding")}
+            onClick={(event) => openMenu("encoding", event.currentTarget)}
+            className={statusButton}
+          >
+            {encodingLabel(file.encoding)}
+          </button>
+          <button
+            type="button"
+            data-testid="code-editor-eol"
+            title={t("code_editor.status.line_endings")}
+            onClick={(event) => openMenu("eol", event.currentTarget)}
+            className={statusButton}
+          >
+            {file.eol === "\r\n" ? "CRLF" : "LF"}
+          </button>
           <span>{languageName(cursor.language)}</span>
         </>
       )}
+      <ThreadPopover
+        anchor={anchor}
+        open={menu !== null}
+        onClose={() => setMenu(null)}
+        side="top"
+        align="end"
+        width={menu === "encoding" ? 300 : 200}
+        label={menu === "encoding" ? t("code_editor.status.change_encoding") : t("code_editor.status.line_endings")}
+      >
+        {menu === "eol" && (
+          <div role="menu">
+            {(["\n", "\r\n"] as const).map((eol) => (
+              <ThreadMenuItem
+                key={eol}
+                label={eol === "\r\n" ? "CRLF (Windows)" : "LF (macOS, Linux)"}
+                selected={file.eol === eol}
+                onSelect={() => {
+                  setMenu(null);
+                  setLineEnding(fileKey, eol);
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {menu === "encoding" && (
+          <div role="menu" data-testid="code-editor-encoding-menu">
+            <ThreadMenuHeading>{t("code_editor.status.save_with")}</ThreadMenuHeading>
+            {ENCODINGS.map((entry) => (
+              <ThreadMenuItem
+                key={`save-${entry.id}`}
+                label={entry.label}
+                selected={file.encoding === entry.id}
+                onSelect={() => {
+                  setMenu(null);
+                  void saveFile(fileKey, { encoding: entry.id });
+                }}
+              />
+            ))}
+            <ThreadMenuSeparator />
+            <ThreadMenuHeading>{t("code_editor.status.reopen_with")}</ThreadMenuHeading>
+            {ENCODINGS.map((entry) => (
+              <ThreadMenuItem
+                key={`reopen-${entry.id}`}
+                label={entry.label}
+                disabled={file.dirty}
+                onSelect={() => {
+                  setMenu(null);
+                  void reopenWithEncoding(fileKey, entry.id);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </ThreadPopover>
     </div>
   );
 }
