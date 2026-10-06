@@ -537,7 +537,7 @@ def put_team_proxy(body: TeamProxyBody, request: Request) -> dict[str, object]:
 # over /ws). Key-free same-origin route, like reply-language.
 # ----------------------------------------------------------------------
 
-_UI_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
+_UI_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "zh")
 
 
 class UiLanguageBody(BaseModel):

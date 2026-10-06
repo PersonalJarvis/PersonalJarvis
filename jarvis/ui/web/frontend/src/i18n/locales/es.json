@@ -3404,6 +3404,10 @@
       "es": {
         "label": "Español",
         "description": "Español para cada etiqueta y botón."
+      },
+      "zh": {
+        "label": "中文 (chino)",
+        "description": "Chino simplificado para cada etiqueta y botón."
       }
     },
     "reply_options": {

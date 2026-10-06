@@ -27,7 +27,11 @@ import { QuietAction } from "../ui";
 import { ConnectStep } from "./ConnectStep";
 import { WIZARD_STEP_IDS, type WizardStepId } from "./setupSteps";
 
-const LANGS: UiLanguage[] = ["en", "de", "es"];
+const LANGS: UiLanguage[] = ["en", "de", "es", "zh"];
+// Each language names itself, so a reader finds theirs before they can read
+// the rest of the window. Latin-script codes read fine as letters; Chinese
+// readers look for the characters.
+const LANG_SWITCH_LABEL: Record<UiLanguage, string> = { en: "EN", de: "DE", es: "ES", zh: "中文" };
 
 export function SetupWizard({
   step,
@@ -171,7 +175,7 @@ function LanguageSwitch({ className }: { className?: string }) {
             lang === code ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
           )}
         >
-          {code.toUpperCase()}
+          {LANG_SWITCH_LABEL[code]}
         </button>
       ))}
     </div>

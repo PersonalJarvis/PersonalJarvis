@@ -611,7 +611,7 @@ class UiLanguageChanged(Event):
     Emitted by the settings endpoint and (indirectly, via ``ConfigReloaded``) by
     a voice command / the Control API. Distinct from the reply language.
     """
-    language: str = ""  # "en" | "de" | "es"
+    language: str = ""  # "en" | "de" | "es" | "zh"
 
 
 @dataclass(frozen=True, slots=True)

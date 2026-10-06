@@ -412,9 +412,11 @@ def run(output: Path, language: str = "en") -> int:
 
 
 def main() -> int:
+    from jarvis.appshot.recording_labels import LABELS
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--language", choices=("en", "de", "es"), default="en")
+    parser.add_argument("--language", choices=tuple(LABELS), default="en")
     args = parser.parse_args()
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

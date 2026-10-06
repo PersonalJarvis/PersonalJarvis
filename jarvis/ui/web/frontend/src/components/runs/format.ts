@@ -13,6 +13,7 @@ import { useUiLanguage } from "@/i18n";
 export function localeForUiLanguage(language: string): string {
   if (language === "de") return "de-DE";
   if (language === "es") return "es-ES";
+  if (language === "zh") return "zh-CN";
   return "en-US";
 }
 

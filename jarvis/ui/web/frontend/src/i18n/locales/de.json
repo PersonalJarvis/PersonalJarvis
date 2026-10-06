@@ -3404,6 +3404,10 @@
       "es": {
         "label": "Español (Spanisch)",
         "description": "Spanisch für jede Beschriftung und Schaltfläche."
+      },
+      "zh": {
+        "label": "中文 (Chinesisch)",
+        "description": "Vereinfachtes Chinesisch für jede Beschriftung und Schaltfläche."
       }
     },
     "reply_options": {
