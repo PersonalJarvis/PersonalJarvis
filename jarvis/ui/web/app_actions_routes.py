@@ -1,6 +1,8 @@
-"""Settings > Jarvis actions: every app action, the person's mode for each, and
-what Jarvis recently ran. The brain never reaches these routes — they are
-excluded from its action catalog, so Jarvis cannot change its own permissions."""
+"""Every app action, the person's mode for each, and what Jarvis recently ran.
+
+The settings page that showed these was retired; the routes stay for the CLI.
+The brain never reaches them — they are excluded from its action catalog, so
+Jarvis cannot change its own permissions."""
 
 from __future__ import annotations
 

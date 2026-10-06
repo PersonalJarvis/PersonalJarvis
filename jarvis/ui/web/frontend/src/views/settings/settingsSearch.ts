@@ -32,7 +32,6 @@ const SEARCH_PAGES = [
   { id: "appshots", keys: ["appshots"] },
   { id: "shortcuts", keys: ["shortcuts_view", "settings_view.keybinds", "settings_view.quick_switch"] },
   { id: "pets", keys: ["pets"] },
-  { id: "jarvis-actions", keys: ["jarvis_actions"] },
   { id: "costs", keys: ["costs_view"] },
   { id: "feedback", keys: ["feedback"] },
 ] as const;

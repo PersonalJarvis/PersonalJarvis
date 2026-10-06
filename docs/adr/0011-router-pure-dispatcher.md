@@ -1392,7 +1392,8 @@ ASGI transport as `app-command`.
 ### Pure-Dispatcher spirit is preserved
 
 - Each call's tier comes from `risk_tier_for_args`: the person's per-action
-  mode from Settings > Jarvis actions (`allow` → monitor, `ask`, `block`),
+  mode from the stored action policy (`allow` → monitor, `ask`, `block`;
+  set through `/api/app-actions` since the settings page was retired),
   else the action default (read → safe, change → monitor, dangerous route →
   ask). `ToolExecutor.execute()` still evaluates and confirms (AP-3); a
   blocked action is refused by the evaluator. The same policy applies to the
