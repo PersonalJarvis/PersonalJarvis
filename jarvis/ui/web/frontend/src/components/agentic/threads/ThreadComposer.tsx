@@ -5,7 +5,7 @@ import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { DictationButton } from "@/components/agentchat/DictationButton";
 import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem } from "@/components/agentchat/reduce";
-import { useChatAttachments } from "@/components/agentchat/useChatAttachments";
+import { releaseHeldFiles, useChatAttachments, type HeldFiles } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
 import { useT } from "@/i18n";
@@ -26,6 +26,35 @@ interface QueuedMessage {
 const drafts = new Map<string, string>();
 /** Queued follow-ups per thread, so switching threads never drops one. */
 const queues = new Map<string, QueuedMessage[]>();
+
+/**
+ * The message sent last, with its files, so Escape can take it back while the
+ * agent has not started on it. Module-level: a thread's first message swaps
+ * the empty-thread composer for the timeline one.
+ */
+let lastSent: { text: string; files: HeldFiles } | null = null;
+
+function keepSent(next: { text: string; files: HeldFiles } | null): void {
+  if (lastSent && lastSent.files !== next?.files) releaseHeldFiles(lastSent.files);
+  lastSent = next;
+}
+
+/**
+ * True while the running turn answers `sent` and shows no work yet: no
+ * reasoning, no tool call, no words. The message right before the turn must be
+ * the one sent, so a queued follow-up or another thread's turn never hands back
+ * the wrong text.
+ */
+function untouchedReply(timeline: Timeline, sent: { text: string; files: HeldFiles }): boolean {
+  const turn = runningTurn(timeline);
+  if (!turn || !turn.blocks.every((block) => block.kind === "text" && !block.text.trim())) return false;
+  const index = timeline.items.indexOf(turn);
+  const asked = timeline.items.slice(0, index).reverse().find((item) => item.type === "user");
+  if (!asked || asked.type !== "user") return false;
+  if (sent.text) return asked.text.trim() === sent.text;
+  const names = sent.files.attachments.map((item) => item.name).sort().join("|");
+  return names !== "" && asked.attachments.map((item) => item.name).sort().join("|") === names;
+}
 
 /** The open question card of the newest turn, if any. */
 function openQuestion(timeline: Timeline): { block: ToolBlock; question: QuestionState } | null {
@@ -196,6 +225,7 @@ export function ThreadComposer({
   placeholder = "Ask for changes, send follow-ups, or attach images",
   autoFocusNonce,
   strip,
+  onScreen = true,
 }: {
   /** Which thread the box is typing for — the session id, or `draft:<project>`. */
   threadKey: string;
@@ -204,6 +234,8 @@ export function ThreadComposer({
   autoFocusNonce: number;
   /** The strip that hangs under the card — where the agent works and on which branch. */
   strip?: ReactNode;
+  /** False while the IDE section is hidden: its keys belong to whatever is on screen. */
+  onScreen?: boolean;
 }) {
   const draft = useThreadChatStore((state) => state.draft);
   const timeline = useThreadChatStore((state) => state.timeline);
@@ -348,21 +380,48 @@ export function ThreadComposer({
       setProblem("Choose a connected coding agent first.");
       return;
     }
-    const attachments = files.attachments;
+    const held = files.take();
+    const attachments = held.attachments;
     setValue("");
-    files.clear();
     setProblem("");
     setPaused(false);
     if (running || busy) {
+      releaseHeldFiles(held);
       setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
       return;
     }
+    keepSent({ text, files: held });
     const sent = await dispatch(text, attachments);
     if (!sent && !useThreadChatStore.getState().activeSessionId) {
       // Nothing was created: give the words back instead of losing them.
       setValue(text);
     }
   };
+
+  // Escape before the agent started on the message stops the turn and puts the
+  // message, files included, back into the box to edit and send again.
+  const recall = useRef<() => boolean>(() => false);
+  recall.current = () => {
+    if (!lastSent || !untouchedReply(timeline, lastSent)) return false;
+    const { text, files: held } = lastSent;
+    lastSent = null;
+    setPaused(true);
+    void useThreadChatStore.getState().cancel();
+    const current = drafts.get(threadKey) ?? "";
+    setValue(current.trim() ? `${text}\n${current}` : text);
+    files.restore(held);
+    textareaRef.current?.focus();
+    return true;
+  };
+  useEffect(() => {
+    if (!onScreen) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      if (recall.current()) event.preventDefault();
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [onScreen]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (typeahead.onKeyDown(event)) return;
