@@ -1,9 +1,11 @@
-"""``/api/runtime-gateway/v1`` — the model endpoint Hermes / OpenClaw agents
-on a ChatGPT subscription talk to (``jarvis.agent_runtimes.gateway``).
+"""``/api/runtime-gateway/v1`` — the one model endpoint Hermes / OpenClaw
+agents talk to (``jarvis.agent_runtimes.gateway``).
 
-OpenAI Responses shape (``POST /responses``, ``GET /models``) behind a
-per-agent Bearer token Jarvis minted. Not part of the Control API: no person
-or CLI calls it, so it stays out of the OpenAPI schema.
+OpenAI wire shapes behind a per-agent Bearer token Jarvis minted:
+``POST /chat/completions`` for every API-key and local provider,
+``POST /responses`` for the ChatGPT subscription, ``GET /models``. Not part
+of the Control API: no person or CLI calls it, so it stays out of the
+OpenAPI schema.
 """
 
 from __future__ import annotations
@@ -33,15 +35,40 @@ def _error(exc: gateway.GatewayError) -> JSONResponse:
     )
 
 
+async def _body(request: Request) -> Any:
+    try:
+        return await request.json()
+    except ValueError as exc:
+        raise gateway.GatewayError("The request body is not JSON.") from exc
+
+
+@router.post("/chat/completions")
+async def runtime_gateway_chat(request: Request) -> Any:
+    """One model call for a Hermes / OpenClaw agent, on its Jarvis provider."""
+    grant = _grant(request)
+    try:
+        if grant.provider == gateway.SUBSCRIPTION_PROVIDER:
+            raise gateway.GatewayError("This agent's subscription answers on /responses.")
+        body = await _body(request)
+        model, brain_request = gateway.chat_request(body)
+        if body.get("stream") is True:
+            chunks = await gateway.open_chat_stream(grant, model, brain_request)
+            return StreamingResponse(
+                chunks, media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+            )
+        return await gateway.complete_chat(grant, model, brain_request)
+    except gateway.GatewayError as exc:
+        return _error(exc)
+
+
 @router.post("/responses")
 async def runtime_gateway_responses(request: Request) -> Any:
     """One model turn for a Hermes / OpenClaw agent, on its ChatGPT subscription."""
     grant = _grant(request)
     try:
-        body = await request.json()
-    except ValueError:
-        return _error(gateway.GatewayError("The request body is not JSON."))
-    try:
+        if grant.provider != gateway.SUBSCRIPTION_PROVIDER:
+            raise gateway.GatewayError("This agent's provider answers on /chat/completions.")
+        body = await _body(request)
         args = gateway.request_args(body)
         if body.get("stream") is True:
             return StreamingResponse(
