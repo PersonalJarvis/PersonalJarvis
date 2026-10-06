@@ -539,6 +539,9 @@ class OpenClawRuntime:
                         log.info("agent runtimes: stopping idle OpenClaw gateway %s", key)
                         await self._stop_gateway(gateway)
 
+    def busy(self) -> bool:
+        return self._slots.busy()
+
     async def stop(self, agent_id: str | None = None) -> None:
         for key, gateway in list(self._gateways.items()):
             if agent_id is None or key in (agent_id, f"{agent_id}~runs"):

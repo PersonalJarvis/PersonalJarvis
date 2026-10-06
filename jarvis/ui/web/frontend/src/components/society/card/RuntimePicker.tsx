@@ -2,26 +2,28 @@
  * The agent's runtime: Jarvis (default), Hermes or OpenClaw
  * (docs/agent-runtimes.md). It is chosen once, in the create dialog
  * (`RuntimeChoice`), and fixed for the agent's life; the model menu only
- * shows it (`RuntimeStatusRow`). Hermes and OpenClaw are installed and
- * updated with their own official tools, only when the person presses the
- * button.
+ * shows it (`RuntimeStatusRow`). Nobody installs Hermes or OpenClaw by hand:
+ * picking one asks the backend to set it up (`ensure`), and Jarvis keeps it
+ * up to date on its own. The UI only says whether it is ready or still being
+ * set up — never a version number.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, Loader2 } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import {
+  ensureAgentRuntime,
   fetchAgentRuntimes,
-  startAgentRuntimeSetup,
   type AgentRuntimeStatus,
+  type ExternalRuntime,
 } from "@/lib/agentRuntimesApi";
 import { AGENT_RUNTIMES, type AgentRuntime } from "@/lib/societyApi";
 import { cn } from "@/lib/utils";
 
 export const AGENT_RUNTIMES_QUERY_KEY = ["agent-runtimes"] as const;
 
-/** Status of both external runtimes; polls while an install or update runs. */
+/** Status of both external runtimes; polls while a setup or update runs. */
 export function useAgentRuntimes() {
   return useQuery({
     queryKey: AGENT_RUNTIMES_QUERY_KEY,
@@ -41,91 +43,95 @@ function statusesByName(data: ReturnType<typeof useAgentRuntimes>["data"]) {
   return new Map<string, AgentRuntimeStatus>(rows.map((row) => [row.runtime, row]));
 }
 
+type SetupState = "ready" | "setting_up" | "failed" | "pending";
+
+function setupState(status: AgentRuntimeStatus | undefined): SetupState {
+  if (!status) return "pending";
+  if (status.job?.state === "running") return "setting_up";
+  if (status.ready) return "ready";
+  return status.job?.state === "failed" ? "failed" : "pending";
+}
+
 function RuntimeMark({ runtime, label }: { runtime: AgentRuntime; label: string }) {
   return runtime === "jarvis"
     ? <Bot className="size-4 shrink-0 text-muted-foreground" aria-hidden />
     : <ProviderLogo providerId={runtime} label={label} size="sm" />;
 }
 
-/** Install / update offer for one external runtime that is not ready. */
-function RuntimeSetup({ status }: { status: AgentRuntimeStatus }) {
-  const t = useT();
+/** Ask the backend to set a runtime up; refreshes the status either way. */
+function useEnsureRuntime() {
   const client = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const job = status.job;
-  const running = job?.state === "running";
-  // OpenClaw's own installer also adds the Node.js it needs.
-  const action: "install" | "update" =
-    status.installed && status.problem_kind !== "node" ? "update" : "install";
-  const label = t(`society.runtime.${status.runtime}`);
-  const problem =
-    status.problem_kind === "outdated"
-      ? fill(t("society.runtime.needs_update"), label, status.minimum_version)
-      : status.problem_kind === "node"
-        ? t("society.runtime.node_hint")
-        : status.problem_kind === "no_version"
-          ? fill(t("society.runtime.no_version"), label)
-          : fill(t("society.runtime.not_installed"), label);
-
-  async function setup() {
+  const ensure = useCallback(async (runtime: ExternalRuntime) => {
     setError(null);
     try {
-      await startAgentRuntimeSetup(status.runtime, action);
+      await ensureAgentRuntime(runtime);
     } catch (exc) {
-      setError(fill(t("society.runtime.setup_failed"), exc instanceof Error ? exc.message : String(exc)));
+      setError(exc instanceof Error ? exc.message : String(exc));
     }
     await client.invalidateQueries({ queryKey: AGENT_RUNTIMES_QUERY_KEY });
-  }
+  }, [client]);
+  return { ensure, error };
+}
 
+/** What a runtime that is not ready yet is doing, and a retry when its setup failed. */
+function RuntimeSetupNote({ status, onRetry, error }: {
+  status: AgentRuntimeStatus | undefined; onRetry: () => void; error: string | null;
+}) {
+  const t = useT();
+  const state = setupState(status);
+  if (state === "ready" || !status) return null;
+  const label = t(`society.runtime.${status.runtime}`);
+  const failure = error ?? (state === "failed" ? status.job?.message || status.job?.log_tail.at(-1) || status.problem : null);
   return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      <span>{problem}</span>
-      <button
-        type="button"
-        disabled={running}
-        onClick={() => void setup()}
-        className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs text-foreground hover:bg-secondary disabled:opacity-60"
-      >
-        {running ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
-        {running
-          ? t(job?.kind === "update" ? "society.runtime.updating" : "society.runtime.installing")
-          : t(`society.runtime.${action}`)}
-      </button>
-      {job?.state === "failed" ? (
-        <span role="alert" className="w-full text-destructive">
-          {fill(t("society.runtime.setup_failed"), job.message || job.log_tail.at(-1) || "")}
-        </span>
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="runtime-setup">
+      {state === "setting_up" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+      <span>
+        {fill(t(state === "setting_up" ? "society.runtime.setting_up_hint" : "society.runtime.auto_setup_hint"), label)}
+      </span>
+      {failure ? (
+        <>
+          <span role="alert" className="w-full text-destructive">{fill(t("society.runtime.setup_failed"), failure)}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="rounded-full border border-border px-2 py-0.5 text-xs text-foreground hover:bg-secondary"
+          >
+            {t("society.runtime.retry")}
+          </button>
+        </>
       ) : null}
-      {running && job?.log_tail.length ? (
-        <span className="w-full truncate font-mono text-[11px]">{job.log_tail.at(-1)}</span>
-      ) : null}
-      {error ? <span role="alert" className="w-full text-destructive">{error}</span> : null}
     </div>
   );
 }
 
-/** Whether a runtime can run a turn right now (Jarvis always can). */
-export function runtimeReady(
-  runtime: AgentRuntime,
-  data: ReturnType<typeof useAgentRuntimes>["data"],
-): boolean {
-  return runtime === "jarvis" || Boolean(statusesByName(data).get(runtime)?.ready);
-}
-
-/** The create dialog's choice: three cards, and setup for one that is not ready. */
+/** The create dialog's choice: three cards; picking Hermes or OpenClaw sets it up. */
 export function RuntimeChoice({ value, onChange, disabled = false }: {
   value: AgentRuntime; onChange: (runtime: AgentRuntime) => void; disabled?: boolean;
 }) {
   const t = useT();
   const runtimes = useAgentRuntimes();
   const byName = statusesByName(runtimes.data);
-  const chosen = value === "jarvis" ? null : byName.get(value);
+  const { ensure, error } = useEnsureRuntime();
+  const chosen = value === "jarvis" ? undefined : byName.get(value);
+  const chosenState = value === "jarvis" ? "ready" : setupState(chosen);
+
+  const asked = useRef(new Set<string>());
+  const loaded = Boolean(runtimes.data);
+  useEffect(() => {
+    // Picking a runtime starts its setup at once (once per runtime), so it is
+    // usually done by the time the agent gets its first message.
+    if (value === "jarvis" || !loaded || chosenState !== "pending" || asked.current.has(value)) return;
+    asked.current.add(value);
+    void ensure(value);
+  }, [value, loaded, chosenState, ensure]);
+
   return (
     <div className="flex flex-col gap-2" data-testid="runtime-choice">
       <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label={t("society.runtime.title")}>
         {AGENT_RUNTIMES.map((runtime) => {
-          const status = runtime === "jarvis" ? null : byName.get(runtime);
           const label = t(`society.runtime.${runtime}`);
+          const state = runtime === "jarvis" ? null : setupState(byName.get(runtime));
           return (
             <button
               key={runtime}
@@ -146,37 +152,46 @@ export function RuntimeChoice({ value, onChange, disabled = false }: {
                 <RuntimeMark runtime={runtime} label={label} />
                 {label}
               </span>
-              <span className="text-[11px] leading-snug">
-                {status
-                  ? status.ready
-                    ? fill(t("society.runtime.version"), status.version)
-                    : t(status.installed ? "society.runtime.needs_setup" : "society.runtime.not_installed_short")
-                  : t("society.runtime.built_in")}
+              <span className="inline-flex items-center gap-1 text-[11px] leading-snug">
+                {state === "setting_up" ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+                {t(
+                  state === null
+                    ? "society.runtime.built_in"
+                    : state === "ready"
+                      ? "society.runtime.ready"
+                      : state === "setting_up"
+                        ? "society.runtime.setting_up"
+                        : "society.runtime.auto_setup",
+                )}
               </span>
             </button>
           );
         })}
       </div>
       <p className="text-xs text-muted-foreground">{t(`society.runtime.${value}_hint`)}</p>
-      {chosen && !chosen.ready ? <RuntimeSetup status={chosen} /> : null}
+      {value !== "jarvis" ? (
+        <RuntimeSetupNote status={chosen} error={error} onRetry={() => void ensure(value)} />
+      ) : null}
     </div>
   );
 }
 
-/** The model menu's line: the runtime the agent runs on, and its update when needed. */
+/** The model menu's line: the runtime the agent runs on, and its setup while one runs. */
 export function RuntimeStatusRow({ runtime }: { runtime: AgentRuntime }) {
   const t = useT();
   const runtimes = useAgentRuntimes();
-  const status = runtime === "jarvis" ? null : statusesByName(runtimes.data).get(runtime);
+  const { ensure, error } = useEnsureRuntime();
+  const status = runtime === "jarvis" ? undefined : statusesByName(runtimes.data).get(runtime);
   const label = t(`society.runtime.${runtime}`);
   return (
     <div className="flex flex-col gap-1.5" data-testid="runtime-status">
       <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
         <RuntimeMark runtime={runtime} label={label} />
         {fill(t("society.runtime.runs_on"), label)}
-        {status?.version ? ` · ${fill(t("society.runtime.version"), status.version)}` : ""}
       </span>
-      {status && !status.ready ? <RuntimeSetup status={status} /> : null}
+      {runtime !== "jarvis" ? (
+        <RuntimeSetupNote status={status} error={error} onRetry={() => void ensure(runtime)} />
+      ) : null}
     </div>
   );
 }

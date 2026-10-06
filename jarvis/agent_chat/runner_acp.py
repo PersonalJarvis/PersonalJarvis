@@ -65,6 +65,42 @@ def _denied_native(agent: Any, plan_mode: bool) -> frozenset[str]:
     return frozenset(denied)
 
 
+async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
+    """Install or update the runtime first when it cannot run this turn.
+
+    Nobody sets Hermes or OpenClaw up by hand: the first turn on a fresh
+    machine (or after a failed update) waits for the official installer and
+    says so in the chat. A runtime that still is not ready ends the turn
+    with the reason.
+    """
+    from jarvis.agent_chat.events import make_event
+    from jarvis.agent_chat.runner_cli import CliUnavailable
+    from jarvis.agent_runtimes import manager
+
+    current = manager.job(runtime_name)
+    setting_up = current is not None and current.state == "running"
+    status = await asyncio.to_thread(runtime.detect)
+    if status.ready and not setting_up:
+        return
+    await handle.emit(
+        make_event(
+            "notice",
+            {
+                "kind": "runtime_setup",
+                "runtime": runtime_name,
+                "turn_id": handle.turn_id,
+                "text": f"Setting up {runtime.label} for this agent. The first time takes "
+                "a few minutes; the message is sent as soon as it is ready.",
+            },
+        )
+    )
+    status = await manager.wait_ready(runtime_name)
+    if not status.ready:
+        current = manager.job(runtime_name)
+        reason = (current.message if current is not None else "") or status.problem
+        raise CliUnavailable(f"{runtime.label} could not be set up. {reason}".strip())
+
+
 async def plan_runtime_turn(
     handle: Any,
     runner: str,
@@ -109,6 +145,7 @@ async def plan_runtime_turn(
         denied_native=_denied_native(agent, plan_mode),
     )
     runtime = driver(runtime_name)
+    await _ready(handle, runtime_name, runtime)
     try:
         launch = await runtime.launch(turn)
     except RuntimeUnavailable as exc:

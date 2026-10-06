@@ -7,10 +7,12 @@ A runtime module (``hermes``, ``openclaw``) answers three questions:
 * :meth:`AgentRuntimeDriver.launch` — the process to start for one chat turn
   and how to address the agent's conversation in it (a :class:`RuntimeLaunch`).
 * :meth:`AgentRuntimeDriver.install_command` / ``update_command`` — the
-  runtime's own official installer and updater, run only when the person asks.
+  runtime's own official installer and updater, run by ``manager`` when an
+  agent needs the runtime and once a day to keep it current.
 
-Everything a runtime writes lives under ``user_data_dir()/agent_runtimes/``;
-the person's own Hermes or OpenClaw setup is never read or changed.
+Every agent's runtime state lives under ``user_data_dir()/agent_runtimes/``;
+the person's own Hermes or OpenClaw configuration is never read or changed.
+The program itself is the standard install the official installer makes.
 """
 
 from __future__ import annotations
@@ -181,6 +183,10 @@ class AgentRuntimeDriver(Protocol):
 
     def update_command(self) -> list[str] | None: ...
 
+    def busy(self) -> bool:
+        """Whether a turn is running on this runtime (updates wait for idle)."""
+        ...
+
     async def stop(self, agent_id: str | None = None) -> None:
         """Stop background processes (all agents when ``agent_id`` is None)."""
         ...
@@ -217,6 +223,10 @@ class TurnSlots:
 
     def lock(self, key: str) -> asyncio.Lock:
         return self._locks.setdefault(key, asyncio.Lock())
+
+    def busy(self) -> bool:
+        """Whether any turn holds a slot right now."""
+        return any(lock.locked() for lock in self._locks.values())
 
     async def acquire(self, key: str) -> Callable[[], None]:
         lock = self.lock(key)

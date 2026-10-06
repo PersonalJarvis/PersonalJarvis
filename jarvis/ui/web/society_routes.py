@@ -376,6 +376,15 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
     if created and progression is not None:
         # Growing the team levels the person up (jarvis/progression).
         await progression.note_agent_hired(agent.agent_id)
+    if created and str(agent.runtime) not in ("", "jarvis"):
+        # Hermes / OpenClaw install or update themselves in the background;
+        # the agent's first turn waits for that (runner_acp._ready).
+        from jarvis.agent_runtimes import manager
+
+        try:
+            await manager.ensure(str(agent.runtime))
+        except Exception:  # noqa: BLE001 — the agent exists; its first turn retries the setup
+            log.warning("society: %s setup could not start", agent.runtime, exc_info=True)
     return {
         "agent": agent.to_dict(),
         "created": created,

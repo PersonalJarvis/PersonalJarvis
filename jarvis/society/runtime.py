@@ -289,8 +289,20 @@ class SocietyRuntime:
         await self.coding_supervision.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
+        self.background(self._keep_agent_runtimes_current())
         log.info("society runtime started (%s)", self.store.path)
         return self
+
+    async def _keep_agent_runtimes_current(self) -> None:
+        """Daily Hermes / OpenClaw updates for the runtimes agents use
+        (``agent_runtimes.manager.keep_current``; first round after 10 min)."""
+        from jarvis.agent_runtimes import manager
+
+        async def in_use() -> set[str]:
+            agents = await self.roster.list()
+            return {str(agent.runtime) for agent in agents} - {"", "jarvis"}
+
+        await manager.keep_current(in_use)
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""

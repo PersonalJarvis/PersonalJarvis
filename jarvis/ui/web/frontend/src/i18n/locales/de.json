@@ -5696,8 +5696,9 @@
     },
     "runtime": {
       "built_in": "Eingebaut",
-      "needs_setup": "Braucht ein Update",
-      "not_installed_short": "Nicht installiert",
+      "ready": "Bereit",
+      "auto_setup": "Richtet sich selbst ein",
+      "setting_up": "Wird eingerichtet …",
       "runs_on": "Läuft auf {0}",
       "title": "Laufzeit",
       "jarvis": "Jarvis",
@@ -5706,16 +5707,11 @@
       "jarvis_hint": "Jarvis' eigene Agenten-Schleife, auf dem Modell, das du im Chat wählst.",
       "hermes_hint": "Der Hermes-Agent mit seinen eigenen Werkzeugen – dazu Gedächtnis, Skills und Werkzeuge aus Jarvis.",
       "openclaw_hint": "Der OpenClaw-Agent mit seinen eigenen Werkzeugen – dazu Gedächtnis, Skills und Werkzeuge aus Jarvis.",
-      "install": "Installieren",
-      "update": "Aktualisieren",
-      "installing": "Wird installiert …",
-      "updating": "Wird aktualisiert …",
-      "version": "Version {0}",
-      "not_installed": "{0} ist auf diesem Computer nicht installiert.",
-      "needs_update": "{0} {1} oder neuer wird gebraucht.",
+      "setting_up_hint": "{0} wird gerade auf diesem Computer eingerichtet. Du kannst den Agenten schon anlegen; er antwortet, sobald die Einrichtung fertig ist.",
+      "auto_setup_hint": "Jarvis installiert {0} selbst und hält es aktuell.",
       "setup_failed": "Einrichtung nicht abgeschlossen: {0}",
-      "node_hint": "OpenClaw braucht Node.js 24.16 oder neuer. Sein Installer richtet eines nur für OpenClaw ein.",
-      "no_version": "{0} ist installiert, meldet aber keine Version. Installiere es neu."
+      "setting_up_chat": "{0} wird auf diesem Computer eingerichtet. Beim ersten Mal dauert das ein paar Minuten; deine Nachricht wird beantwortet, sobald alles bereit ist.",
+      "retry": "Erneut versuchen"
     },
     "approval_mode": {
       "title": "Agentenberechtigungen",

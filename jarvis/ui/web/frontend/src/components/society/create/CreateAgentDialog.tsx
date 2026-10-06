@@ -16,7 +16,7 @@ import { useT } from "@/i18n";
 import type { AgentRuntime } from "@/lib/societyApi";
 import { AgentNameTaken, useCreateSocietyAgent } from "../data";
 import { defaultCompanion, type CompanionAppearance } from "../companion/appearance";
-import { RuntimeChoice, runtimeReady, useAgentRuntimes } from "../card/RuntimePicker";
+import { RuntimeChoice, useAgentRuntimes } from "../card/RuntimePicker";
 import { useCreateAgentDialog } from "./createAgentStore";
 
 const CompanionEditor = lazy(() =>
@@ -67,9 +67,10 @@ function CreateAgentDialog() {
     if (external && !providers.includes(provider)) setProvider(providers[0] ?? "");
   }, [external, providers, provider]);
 
-  const ready = runtimeReady(runtime, runtimes.data);
+  // A runtime still being set up does not hold creation back: the agent's
+  // first turn waits for the setup (agent_runtimes.manager).
   const needsProvider = external && !provider;
-  const canCreate = !saving && ready && !needsProvider;
+  const canCreate = !saving && !needsProvider;
 
   async function submit() {
     if (!canCreate) return;

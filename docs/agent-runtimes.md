@@ -12,7 +12,39 @@ The runtime is chosen once, in the "new agent" dialog every plus in the
 society opens (name, runtime, the companion bot that follows the agent), and
 is fixed for the agent's life: the roster refuses a change, because the
 agent's sessions, runtime folder and tools belong to it. The model menu of
-the agent's chat shows the runtime and offers its update when one is due.
+the agent's chat shows the runtime.
+
+## Setup and updates
+
+Nobody installs Hermes or OpenClaw by hand (`jarvis/agent_runtimes/manager.py`):
+
+- **Picking a runtime sets it up.** The dialog sends
+  `POST /api/agent-runtimes/{runtime}/ensure` as soon as Hermes or OpenClaw is
+  picked; creating the agent sends it again. `ensure` runs the project's own
+  installer when the runtime is missing (OpenClaw's also adds the Node.js it
+  needs) and its own updater when it is too old. The agent can be created
+  while that runs.
+- **A turn waits for the setup.** A turn on a runtime that is not ready posts
+  a `runtime_setup` notice in the chat and waits for the job; a setup that
+  fails ends the turn with its reason.
+- **Daily updates.** While any agent uses a runtime, the society runtime runs
+  its updater once a day (first round 10 minutes after start), only when no
+  turn of it is running. An update that leaves the runtime unable to start is
+  repaired by a fresh install with the official installer.
+- **No version numbers in the UI.** The dialog says "Ready", "Setting up…" or
+  "Sets itself up"; versions stay internal (the minimum versions gate
+  readiness).
+
+None of this calls a model, so setup and updates never spend a key.
+
+## Models
+
+An agent on Hermes or OpenClaw runs on any Jarvis provider with an API key or
+a local server (`model_map.py`); the dialog lists the ones connected right now.
+Subscription seats (Claude Code, Codex, …) are not offered. A Claude
+subscription login (`sk-ant-oat…`) saved in the Anthropic API-key slot is
+not an API key either: Anthropic's API refuses it from these runtimes
+("OAuth access token is invalid"), so `route_for` treats that slot as empty.
 
 The runtime decides which agent loop, native tools and session store a turn
 uses. Everything that makes a Jarvis agent stays in Jarvis and is identical

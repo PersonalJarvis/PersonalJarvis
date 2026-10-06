@@ -9,8 +9,9 @@ vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 vi.mock("../companion/CompanionEditor", () => ({
   CompanionEditor: ({ value }: { value: { shape: string } }) => <div data-testid="companion-editor">{value.shape}</div>,
 }));
-const { createAgent, runtimes } = vi.hoisted(() => ({
+const { createAgent, ensureRuntime, runtimes } = vi.hoisted(() => ({
   createAgent: vi.fn(),
+  ensureRuntime: vi.fn(),
   runtimes: { value: null as unknown },
 }));
 vi.mock("../data", async () => {
@@ -19,7 +20,7 @@ vi.mock("../data", async () => {
 });
 vi.mock("@/lib/agentRuntimesApi", () => ({
   fetchAgentRuntimes: () => Promise.resolve(runtimes.value),
-  startAgentRuntimeSetup: vi.fn(),
+  ensureAgentRuntime: ensureRuntime,
 }));
 
 const READY: AgentRuntimesResponse = {
@@ -76,13 +77,18 @@ describe("CreateAgentDialog", () => {
     expect(screen.queryByTestId("create-agent-provider")).toBeNull();
   });
 
-  test("a runtime that is not installed cannot be created yet", async () => {
+  test("a runtime that is not installed yet sets itself up and can be created right away", async () => {
+    ensureRuntime.mockResolvedValue(null);
+    createAgent.mockResolvedValue({ agentId: "agent-3" });
     mount();
     act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
     fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.openclaw" }));
+    await waitFor(() => expect(ensureRuntime).toHaveBeenCalledWith("openclaw"));
     const submit = screen.getByTestId("create-agent-submit") as HTMLButtonElement;
-    await waitFor(() => expect(submit.disabled).toBe(true));
-    expect(screen.getByRole("button", { name: "society.runtime.install" })).toBeTruthy();
+    await waitFor(() => expect(submit.disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(createAgent).toHaveBeenCalled());
+    expect(createAgent.mock.calls[0][0]).toMatchObject({ runtime: "openclaw", provider: "openai" });
   });
 
   test("closing the dialog cancels the request quietly", async () => {
