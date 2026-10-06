@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -71,6 +71,12 @@ export interface ComboboxGroup {
   /** Rendered as a quiet micro heading; omit for an ungrouped lead band. */
   label?: string;
   options: ComboboxOption[];
+  /**
+   * Options folded behind one row at the group's end ("Older models · 7"),
+   * opened in place. Search always reaches them, and the fold opens by
+   * itself when it holds the current value.
+   */
+  more?: { label: string; options: ComboboxOption[] };
 }
 
 export interface ComboboxProps {
@@ -216,6 +222,19 @@ interface PanelPosition {
 interface OptionOccurrence {
   option: ComboboxOption;
   id: string;
+  /** Set on a group's fold row: the group whose `more` it opens. */
+  fold?: string;
+}
+
+interface VisibleGroup {
+  id: string;
+  label?: string;
+  options: ComboboxOption[];
+  fold?: { label: string; count: number; open: boolean; options: ComboboxOption[] };
+}
+
+function allOptions(group: ComboboxGroup): ComboboxOption[] {
+  return group.more ? [...group.options, ...group.more.options] : group.options;
 }
 
 function optionOccurrenceId(
@@ -256,6 +275,7 @@ export function Combobox({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [position, setPosition] = useState<PanelPosition | null>(null);
+  const [unfolded, setUnfolded] = useState<ReadonlySet<string>>(new Set());
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -268,15 +288,24 @@ export function Combobox({
 
   const selected = useMemo(() => {
     for (const group of groups) {
-      for (const option of group.options) {
+      for (const option of allOptions(group)) {
         if (option.value === value) return option;
       }
     }
     return null;
   }, [groups, value]);
 
-  const visibleGroups = useMemo(() => {
-    if (!query.trim()) return browseGroups ?? groups;
+  const visibleGroups = useMemo<VisibleGroup[]>(() => {
+    if (!query.trim()) {
+      return (browseGroups ?? groups).map((group) => ({
+        id: group.id,
+        label: group.label,
+        options: group.options,
+        fold: group.more?.options.length
+          ? { label: group.more.label, count: group.more.options.length, open: unfolded.has(group.id), options: group.more.options }
+          : undefined,
+      }));
+    }
     // Searching collapses the bands into one flat result list. Groups are a
     // browsing aid, and a shortlist band deliberately repeats entries that are
     // also in the full list below it — which is fine while browsing and reads
@@ -285,7 +314,7 @@ export function Combobox({
     const seen = new Set<string>();
     const hits: ComboboxOption[] = [];
     for (const group of groups) {
-      for (const option of group.options) {
+      for (const option of allOptions(group)) {
         if (seen.has(option.value)) continue;
         if (!matches(option, query)) continue;
         seen.add(option.value);
@@ -293,25 +322,34 @@ export function Combobox({
       }
     }
     return hits.length ? [{ id: "results", options: hits }] : [];
-  }, [groups, browseGroups, matches, query]);
+  }, [groups, browseGroups, matches, query, unfolded]);
 
   // Flat order of concrete rendered occurrences — arrow keys walk this, not
   // merely option values. A shortlist may repeat the same logical value in the
   // full group, so every occurrence needs its own DOM id and active state.
   const flat = useMemo<OptionOccurrence[]>(
     () =>
-      visibleGroups.flatMap((group, groupIndex) =>
-        group.options.map((option, optionIndex) => ({
+      visibleGroups.flatMap((group, groupIndex) => [
+        ...group.options.map((option, optionIndex) => ({
           option,
-          id: optionOccurrenceId(
-            listId,
-            group.id,
-            groupIndex,
-            optionIndex,
-            option.value,
-          ),
+          id: optionOccurrenceId(listId, group.id, groupIndex, optionIndex, option.value),
         })),
-      ),
+        ...(group.fold
+          ? [
+              {
+                option: { value: `\u0000fold:${group.id}`, label: group.fold.label },
+                id: `${listId}-fold-${encodeURIComponent(group.id)}-${groupIndex}`,
+                fold: group.id,
+              },
+              ...(group.fold.open
+                ? group.fold.options.map((option, optionIndex) => ({
+                    option,
+                    id: optionOccurrenceId(listId, `${group.id}-more`, groupIndex, optionIndex, option.value),
+                  }))
+                : []),
+            ]
+          : []),
+      ]),
     [listId, visibleGroups],
   );
   const enabled = useMemo(
@@ -476,6 +514,26 @@ export function Combobox({
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [open, close]);
 
+  // Each open starts folded, except a fold that holds the current value. Set
+  // in the same update as `open`, so the highlight can land on that value.
+  function openPanel() {
+    setUnfolded(new Set(groups.filter((group) => group.more?.options.some((option) => option.value === value)).map((group) => group.id)));
+    setOpen(true);
+  }
+
+  function toggleFold(groupId: string) {
+    setUnfolded((current) => {
+      const next = new Set(current);
+      if (!next.delete(groupId)) next.add(groupId);
+      return next;
+    });
+  }
+
+  function activate(occurrence: OptionOccurrence) {
+    if (occurrence.fold) toggleFold(occurrence.fold);
+    else commit(occurrence.option);
+  }
+
   function commit(option: ComboboxOption) {
     if (option.disabled) return;
     close();
@@ -511,14 +569,14 @@ export function Combobox({
     if (event.key === "Enter") {
       event.preventDefault();
       const occurrence = enabled[activeIndex];
-      if (occurrence) commit(occurrence.option);
+      if (occurrence) activate(occurrence);
     }
   }
 
   function onTriggerKeyDown(event: React.KeyboardEvent) {
     if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      if (!disabled) setOpen(true);
+      if (!disabled && !open) openPanel();
     }
   }
 
@@ -541,7 +599,11 @@ export function Combobox({
         disabled={disabled}
         data-testid={testId}
         data-value={value}
-        onClick={() => !disabled && setOpen((wasOpen) => !wasOpen)}
+        onClick={() => {
+          if (disabled) return;
+          if (open) close(false);
+          else openPanel();
+        }}
         onKeyDown={onTriggerKeyDown}
         // A field is a lift surface, so the fill does the separating and the
         // trigger carries no border at all. Every state used to be a --primary
@@ -649,7 +711,78 @@ export function Combobox({
                 </p>
               )}
 
-              {visibleGroups.map((group, groupIndex) => (
+              {visibleGroups.map((group, groupIndex) => {
+                const renderOption = (option: ComboboxOption, occurrenceId: string) => {
+                  const isActive = activeOption?.id === occurrenceId;
+                  const isSelected = option.value === value;
+                  return (
+                    <div
+                      key={option.value}
+                      id={occurrenceId}
+                      role="option"
+                      aria-selected={isSelected}
+                      aria-disabled={option.disabled || undefined}
+                      data-active={isActive}
+                      data-value={option.value}
+                      // Pointer, not mouse: the highlight has to follow a
+                      // pen or touch drag as well, and `onMouseMove` never
+                      // fires for either.
+                      onPointerMove={() => {
+                        if (!option.disabled) {
+                          setActiveIndex(
+                            enabled.findIndex(({ id }) => id === occurrenceId),
+                          );
+                        }
+                      }}
+                      onClick={() => commit(option)}
+                      // The highlight is drawn on the whole row, and it is a
+                      // sheen rather than a named surface because the ladder
+                      // has run out: the panel is already the float layer,
+                      // and --secondary would sit BELOW it in dark mode —
+                      // the "selection reads as a hole" defect. A true
+                      // overlay on a floating layer lifts on black and
+                      // deepens on paper, which is right in both themes.
+                      className={cn(
+                        "relative flex cursor-pointer flex-col rounded-md px-3 py-1.5 text-sm transition-colors",
+                        isActive && "bg-sheen/[0.08] text-foreground",
+                        isSelected && "font-medium text-foreground-strong",
+                        option.disabled && "cursor-not-allowed text-faint-foreground",
+                      )}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        {option.icon}
+                        <span className="min-w-0 truncate">{option.label}</span>
+                        {option.badge && (
+                          <span className="shrink-0 rounded-md border border-border-strong px-1.5 text-micro font-medium leading-5 text-muted-foreground">
+                            {option.badge}
+                          </span>
+                        )}
+                        <span className="flex-1" />
+                        {option.hint && (
+                          <span className="shrink-0 truncate text-sm font-normal text-muted-foreground">
+                            {option.hint}
+                          </span>
+                        )}
+                        {option.trailing}
+                        {isSelected && (
+                          <Check
+                            aria-hidden="true"
+                            className="h-3.5 w-3.5 shrink-0 text-foreground-strong"
+                          />
+                        )}
+                      </span>
+                      {option.description && (
+                        // Under the label, not under the icon: a 16 px glyph
+                        // plus the row's 8 px gap.
+                        <span className={cn("mt-0.5 line-clamp-2 text-xs font-normal leading-4 text-muted-foreground", option.icon && "pl-6")}>
+                          {option.description}
+                        </span>
+                      )}
+                    </div>
+                  );
+                };
+                const foldId = `${listId}-fold-${encodeURIComponent(group.id)}-${groupIndex}`;
+                return (
                 <div key={group.id}>
                   {group.label && (
                     // Micro, the scale's floor — not a 10px all-caps label.
@@ -659,84 +792,42 @@ export function Combobox({
                       {group.label}
                     </div>
                   )}
-                  {group.options.map((option, optionIndex) => {
-                    const occurrenceId = optionOccurrenceId(
-                      listId,
-                      group.id,
-                      groupIndex,
-                      optionIndex,
-                      option.value,
-                    );
-                    const isActive = activeOption?.id === occurrenceId;
-                    const isSelected = option.value === value;
-                    return (
-                      <div
-                        key={option.value}
-                        id={occurrenceId}
-                        role="option"
-                        aria-selected={isSelected}
-                        aria-disabled={option.disabled || undefined}
-                        data-active={isActive}
-                        data-value={option.value}
-                        // Pointer, not mouse: the highlight has to follow a
-                        // pen or touch drag as well, and `onMouseMove` never
-                        // fires for either.
-                        onPointerMove={() => {
-                          if (!option.disabled) {
-                            setActiveIndex(
-                              enabled.findIndex(({ id }) => id === occurrenceId),
-                            );
-                          }
-                        }}
-                        onClick={() => commit(option)}
-                        // The highlight is drawn on the whole row, and it is a
-                        // sheen rather than a named surface because the ladder
-                        // has run out: the panel is already the float layer,
-                        // and --secondary would sit BELOW it in dark mode —
-                        // the "selection reads as a hole" defect. A true
-                        // overlay on a floating layer lifts on black and
-                        // deepens on paper, which is right in both themes.
-                        className={cn(
-                          "relative flex cursor-pointer flex-col rounded-md px-3 py-1.5 text-sm transition-colors",
-                          isActive && "bg-sheen/[0.08] text-foreground",
-                          isSelected && "font-medium text-foreground-strong",
-                          option.disabled && "cursor-not-allowed text-faint-foreground",
-                        )}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          {option.icon}
-                          <span className="min-w-0 truncate">{option.label}</span>
-                          {option.badge && (
-                            <span className="shrink-0 rounded-md border border-border-strong px-1.5 text-micro font-medium leading-5 text-muted-foreground">
-                              {option.badge}
-                            </span>
-                          )}
-                          <span className="flex-1" />
-                          {option.hint && (
-                            <span className="shrink-0 truncate text-sm font-normal text-muted-foreground">
-                              {option.hint}
-                            </span>
-                          )}
-                          {option.trailing}
-                          {isSelected && (
-                            <Check
-                              aria-hidden="true"
-                              className="h-3.5 w-3.5 shrink-0 text-foreground-strong"
-                            />
-                          )}
-                        </span>
-                        {option.description && (
-                          // Under the label, not under the icon: a 16 px glyph
-                          // plus the row's 8 px gap.
-                          <span className={cn("mt-0.5 line-clamp-2 text-xs font-normal leading-4 text-muted-foreground", option.icon && "pl-6")}>
-                            {option.description}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {group.options.map((option, optionIndex) =>
+                    renderOption(option, optionOccurrenceId(listId, group.id, groupIndex, optionIndex, option.value)),
+                  )}
+                  {group.fold && (
+                    <div
+                      id={foldId}
+                      role="option"
+                      aria-selected={false}
+                      aria-expanded={group.fold.open}
+                      data-active={activeOption?.id === foldId}
+                      data-testid={testId ? `${testId}-fold` : undefined}
+                      onPointerMove={() => setActiveIndex(enabled.findIndex(({ id }) => id === foldId))}
+                      // Keep the search box focused: typing right after
+                      // opening the fold still searches.
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => toggleFold(group.id)}
+                      className={cn(
+                        "flex cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors",
+                        activeOption?.id === foldId && "bg-sheen/[0.08] text-foreground",
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{group.fold.label}</span>
+                      <span className="shrink-0 text-xs">{group.fold.count}</span>
+                      <ChevronRight
+                        aria-hidden="true"
+                        className={cn("h-3.5 w-3.5 shrink-0 transition-transform", group.fold.open && "rotate-90")}
+                      />
+                    </div>
+                  )}
+                  {group.fold?.open &&
+                    group.fold.options.map((option, optionIndex) =>
+                      renderOption(option, optionOccurrenceId(listId, `${group.id}-more`, groupIndex, optionIndex, option.value)),
+                    )}
                 </div>
-              ))}
+                );
+              })}
             </div>
             </div>
           </div>,

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Star } from "lucide-react";
 
-import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
+import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -100,43 +100,43 @@ export function ComposerBrainPicker({
 
   // Every row carries its star; the favourites tab lists the starred rows in
   // the order they were starred.
-  const starred = useMemo<ComboboxGroup[]>(
-    () =>
-      groups.map((group) => ({
-        ...group,
-        options: group.options.map((option) => {
-          const on = favorites.includes(option.value);
-          const label = on ? t("agent_chat.favorite_remove") : t("agent_chat.favorite_add");
-          return {
-            ...option,
-            trailing: (
-              <button
-                type="button"
-                aria-label={label}
-                aria-pressed={on}
-                title={label}
-                data-testid="composer-model-star"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleFavorite(option.value);
-                }}
-                className={cn(
-                  "-my-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-sheen/[0.08]",
-                  on ? "text-warning" : "text-faint-foreground hover:text-foreground",
-                )}
-              >
-                <Star className={cn("h-3.5 w-3.5", on && "fill-current")} aria-hidden />
-              </button>
-            ),
-          };
-        }),
-      })),
-    [groups, favorites, toggleFavorite, t],
-  );
+  const starred = useMemo<ComboboxGroup[]>(() => {
+    const withStar = (option: ComboboxOption): ComboboxOption => {
+      const on = favorites.includes(option.value);
+      const label = on ? t("agent_chat.favorite_remove") : t("agent_chat.favorite_add");
+      return {
+        ...option,
+        trailing: (
+          <button
+            type="button"
+            aria-label={label}
+            aria-pressed={on}
+            title={label}
+            data-testid="composer-model-star"
+            onClick={(event) => {
+              event.stopPropagation();
+              toggleFavorite(option.value);
+            }}
+            className={cn(
+              "-my-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-sheen/[0.08]",
+              on ? "text-warning" : "text-faint-foreground hover:text-foreground",
+            )}
+          >
+            <Star className={cn("h-3.5 w-3.5", on && "fill-current")} aria-hidden />
+          </button>
+        ),
+      };
+    };
+    return groups.map((group) => ({
+      ...group,
+      options: group.options.map(withStar),
+      more: group.more && { ...group.more, options: group.more.options.map(withStar) },
+    }));
+  }, [groups, favorites, toggleFavorite, t]);
 
   const browseGroups = useMemo<ComboboxGroup[]>(() => {
     if (section === FAVORITES) {
-      const all = starred.flatMap((group) => group.options);
+      const all = starred.flatMap((group) => [...group.options, ...(group.more?.options ?? [])]);
       const options = favorites
         .map((fav) => all.find((option) => option.value === fav))
         .filter((option): option is NonNullable<typeof option> => Boolean(option));

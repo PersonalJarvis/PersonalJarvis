@@ -1,10 +1,11 @@
 import { useMemo } from "react";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agentchat/permissionIcons";
-import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
+import { Combobox, type ComboboxGroup, type ComboboxOption } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
 import { effortLadder } from "@/lib/effortLadder";
+import { rankModels } from "@/lib/modelRanking";
 import { cn } from "@/lib/utils";
 import type { ComposerDraft, ProviderOption } from "@/store/agentChat";
 
@@ -61,28 +62,33 @@ export function AgentModelPicker({
   lockedProvider: string | null;
   onPick: (provider: string, model: string) => void;
 }) {
+  const olderLabel = useT()("agent_chat.older_models");
   const groups = useMemo<ComboboxGroup[]>(() => providers.map((provider) => {
     const locked = lockedProvider !== null && provider.id !== lockedProvider;
     const disabled = !provider.connected || locked;
     const hint = locked ? "new thread" : !provider.connected ? (provider.cli_installed === false ? "not installed" : "connect first") : undefined;
     const icon = <AgentMark agent={provider.agent ?? ""} label={provider.label} logoUrl={provider.logoUrl} variant="plain" size="sm" />;
     const models = modelsOf(provider, liveModels).filter((model) => model.id);
+    const toOption = (model: CuratedModel): ComboboxOption => ({
+      value: `${provider.id}${SEP}${model.id}`,
+      label: model.label || model.id,
+      hint: hint ?? model.note,
+      searchText: `${model.id} ${agentName(provider)}`,
+      icon,
+      disabled,
+    });
+    // Newest of each model line first; earlier versions fold away.
+    const ranked = rankModels(models);
     return {
       id: provider.id,
       label: agentName(provider),
       options: [
         { value: `${provider.id}${SEP}`, label: agentName(provider), hint: hint ?? "default model", icon, disabled },
-        ...models.map((model) => ({
-          value: `${provider.id}${SEP}${model.id}`,
-          label: model.label || model.id,
-          hint: hint ?? model.note,
-          searchText: `${model.id} ${agentName(provider)}`,
-          icon,
-          disabled,
-        })),
+        ...ranked.current.map(toOption),
       ],
+      more: ranked.older.length ? { label: olderLabel, options: ranked.older.map(toOption) } : undefined,
     };
-  }), [providers, liveModels, lockedProvider]);
+  }), [providers, liveModels, lockedProvider, olderLabel]);
   return <Combobox ariaLabel="Coding agent and model" testId="thread-model-picker"
     value={`${draft.provider}${SEP}${draft.model}`} groups={groups}
     onChange={(value) => { const [provider, model = ""] = value.split(SEP); onPick(provider, model); }}

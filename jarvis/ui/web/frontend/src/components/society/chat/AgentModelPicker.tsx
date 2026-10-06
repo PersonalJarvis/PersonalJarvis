@@ -9,6 +9,7 @@ import type { CuratedModel } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
+import { rankModels } from "@/lib/modelRanking";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
@@ -53,9 +54,13 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const titleKey = JSON.stringify(seats.map((seat) => providerTitle(seat, t)));
   const groups = useMemo(() => {
     const titles = JSON.parse(titleKey) as string[];
-    return seats.map((seat, index) => ({ seat, title: titles[index],
-      models: seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, titles[index])),
-    })).filter((group) => group.models.length > 0).sort((a, b) =>
+    return seats.map((seat, index) => {
+      const matched = seat.provider.curated_models.filter((model) => matchesModel(seat, model, search, titles[index]));
+      // Newest of each model line first; earlier versions fold away. Catalogs
+      // with their own fold (OpenCode, OpenRouter) keep their order.
+      const ranked = collapsibleModels(seat) ? { current: matched, older: [] } : rankModels(matched);
+      return { seat, title: titles[index], models: [...ranked.current, ...ranked.older], older: new Set(ranked.older) };
+    }).filter((group) => group.models.length > 0).sort((a, b) =>
       modelGroupOrder(a.seat) - modelGroupOrder(b.seat) || a.title.localeCompare(b.title));
   }, [seats, search, titleKey]);
   const sideSeat = seats.find((seat) => seat.provider.id === submenu?.provider);
@@ -199,29 +204,19 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
           {loading ? <p role="status" className="px-3 py-3 text-xs text-muted-foreground">{t("society.create.catalog_loading")}</p> : null}
           {failed ? <p role="alert" className="px-3 py-3 text-xs text-destructive">{t("society.chat.model_load_failed")}</p> : null}
           {!loading && !failed && groups.length === 0 ? <p className="px-3 py-3 text-xs text-muted-foreground">{t(refreshing ? "society.chat.models_loading" : "society.chat.model_no_matches")}</p> : null}
-          {!loading && !failed ? groups.map(({ seat, title, models }) => {
+          {!loading && !failed ? groups.map(({ seat, title, models, older }) => {
             const isExpanded = expanded[seat.provider.id] ?? false;
             const shown = visibleModels(seat, models, isExpanded, search);
             const foldable = collapsibleModels(seat) && !search.trim();
             const isRouter = seat.provider.family === "openrouter";
             const choicesId = `${menuId}-${seat.provider.id}-models`;
             const toggle = () => { setSubmenu(null); setExpanded((previous) => ({ ...previous, [seat.provider.id]: !isExpanded })); };
-            return <div key={seat.provider.id} role="group" aria-label={title}>
-            <div className="sticky top-0 z-10 flex items-center gap-1 bg-popover px-3 pb-1 pt-3">
-              {foldable && isRouter ? <button type="button" data-menu-choice disabled={busy || saving}
-                onClick={toggle} aria-label={title} aria-expanded={isExpanded} aria-controls={choicesId}
-                className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" aria-hidden /> : <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />}
-                <span className="truncate">{title}</span><span className="ml-auto">{models.length}</span>
-              </button> : <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={title}>{title}</span>}
-              {seat.accounts.length ? <button type="button" disabled={busy || saving} data-menu-choice
-                aria-label={`${t("society.chat.model_account")}: ${title}`} aria-haspopup="menu" aria-expanded={submenu?.provider === seat.provider.id && !submenu.model}
-                onClick={(event) => setSubmenu({ provider: seat.provider.id, anchor: event.currentTarget.getBoundingClientRect() })}
-                className="flex max-w-[140px] items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
-                <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
-              </button> : null}
-            </div>
-            <div id={choicesId}>{shown.map((model) => {
+            const olderKey = `older:${seat.provider.id}`;
+            const folded = search.trim() ? [] : shown.filter((model) => older.has(model));
+            const lineup = folded.length ? shown.filter((model) => !older.has(model)) : shown;
+            const olderOpen = expanded[olderKey] ?? folded.some((model) => agent.provider === seat.provider.id && agent.model === model.id);
+            const toggleOlder = () => { setSubmenu(null); setExpanded((previous) => ({ ...previous, [olderKey]: !olderOpen })); };
+            const row = (model: CuratedModel) => {
               const selected = agent.provider === seat.provider.id && agent.model === model.id && (agent.accountId ?? "") === currentAccount(seat);
               const effort = preferredEffort(seat, model);
               return <div key={model.id} className={cn("group flex items-center", selected && "bg-secondary/70")}>
@@ -242,7 +237,32 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                   <ChevronRight className="h-3 w-3" aria-hidden />
                 </button> : null}
               </div>;
-            })}</div>
+            };
+            return <div key={seat.provider.id} role="group" aria-label={title}>
+            <div className="sticky top-0 z-10 flex items-center gap-1 bg-popover px-3 pb-1 pt-3">
+              {foldable && isRouter ? <button type="button" data-menu-choice disabled={busy || saving}
+                onClick={toggle} aria-label={title} aria-expanded={isExpanded} aria-controls={choicesId}
+                className="flex min-w-0 flex-1 items-center gap-1 rounded text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                {isExpanded ? <ChevronDown className="h-3 w-3 shrink-0" aria-hidden /> : <ChevronRight className="h-3 w-3 shrink-0" aria-hidden />}
+                <span className="truncate">{title}</span><span className="ml-auto">{models.length}</span>
+              </button> : <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" title={title}>{title}</span>}
+              {seat.accounts.length ? <button type="button" disabled={busy || saving} data-menu-choice
+                aria-label={`${t("society.chat.model_account")}: ${title}`} aria-haspopup="menu" aria-expanded={submenu?.provider === seat.provider.id && !submenu.model}
+                onClick={(event) => setSubmenu({ provider: seat.provider.id, anchor: event.currentTarget.getBoundingClientRect() })}
+                className="flex max-w-[140px] items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
+              </button> : null}
+            </div>
+            <div id={choicesId}>
+              {lineup.map(row)}
+              {folded.length ? <button type="button" data-menu-choice disabled={busy || saving} aria-expanded={olderOpen} onClick={toggleOlder}
+                className={cn(menuRow, "text-muted-foreground")}>
+                <span className="min-w-0 flex-1 truncate">{t("agent_chat.older_models")}</span>
+                <span className="text-xs">{folded.length}</span>
+                <ChevronRight className={cn("h-3 w-3 shrink-0 transition-transform", olderOpen && "rotate-90")} aria-hidden />
+              </button> : null}
+              {olderOpen ? folded.map(row) : null}
+            </div>
             {foldable && !isRouter && (isExpanded || shown.length < models.length) ? <button type="button" data-menu-choice
               disabled={busy || saving} aria-expanded={isExpanded} aria-controls={choicesId} onClick={toggle}
               className={cn(menuRow, "text-muted-foreground")}>

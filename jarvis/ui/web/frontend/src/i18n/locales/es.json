@@ -830,6 +830,7 @@
     "search_providers": "Buscar proveedores…",
     "search_models": "Buscar modelos…",
     "no_models": "No se encontraron modelos",
+    "older_models": "Modelos anteriores",
     "favorites": "Favoritos",
     "favorites_empty": "Marca un modelo con la estrella para tenerlo aquí",
     "favorite_add": "Añadir a favoritos",

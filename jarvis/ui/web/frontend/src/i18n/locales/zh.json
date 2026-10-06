@@ -830,6 +830,7 @@
     "search_providers": "搜索服务商…",
     "search_models": "搜索模型…",
     "no_models": "未找到模型",
+    "older_models": "更早的模型",
     "favorites": "收藏",
     "favorites_empty": "给模型加星标，即可固定在这里",
     "favorite_add": "添加到收藏",

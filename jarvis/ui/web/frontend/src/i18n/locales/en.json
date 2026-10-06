@@ -830,6 +830,7 @@
     "search_providers": "Search providers…",
     "search_models": "Search models…",
     "no_models": "No models found",
+    "older_models": "Older models",
     "favorites": "Favorites",
     "favorites_empty": "Star a model to keep it here",
     "favorite_add": "Add to favorites",

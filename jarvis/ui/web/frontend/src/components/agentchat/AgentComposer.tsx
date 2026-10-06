@@ -23,7 +23,8 @@ import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { folderLeaf } from "@/lib/folderPath";
 import { effortLadder, snapEffort } from "@/lib/effortLadder";
-import { isApiRunner, pickAgentChatFolder } from "@/lib/agentChatApi";
+import { rankModels } from "@/lib/modelRanking";
+import { isApiRunner, pickAgentChatFolder, type CuratedModel } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -446,6 +447,16 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           <span className="truncate">{note ? `${p.label} · ${note}` : p.label}</span>
         </span>
       );
+      const toOption = (m: CuratedModel): ComboboxOption => ({
+        value: brainValue(p.id, m.id),
+        label: m.label || m.id,
+        description: owner(m.note),
+        hint,
+        disabled,
+        searchText: `${p.label} ${m.id}`,
+      });
+      // Newest of each model line first; earlier versions fold away.
+      const { current, older } = rankModels(models.filter((m) => m.id));
       return {
         id: p.id,
         label: p.label,
@@ -459,17 +470,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             disabled,
             searchText: `${p.label} ${p.family}`,
           },
-          ...models
-            .filter((m) => m.id)
-            .map((m) => ({
-              value: brainValue(p.id, m.id),
-              label: m.label || m.id,
-              description: owner(m.note),
-              hint,
-              disabled,
-              searchText: `${p.label} ${m.id}`,
-            })),
+          ...current.map(toOption),
         ],
+        more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
       };
     });
   }, [brainProviders, liveModels, providerMark, t]);
@@ -484,18 +487,22 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const modelGroups = useMemo<ComboboxGroup[]>(() => {
     if (!provider) return [];
+    const toOption = (m: CuratedModel): ComboboxOption => ({
+      value: m.id,
+      label: m.label || m.id,
+      hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
+      searchText: m.id,
+    });
+    const { current, older } = rankModels(modelList.filter((m) => m.id));
     const options: ComboboxOption[] = [
       { value: "", label: t("agent_chat.model_default"), hint: provider.label },
-      ...modelList
-        .filter((m) => m.id)
-        .map((m) => ({
-          value: m.id,
-          label: m.label || m.id,
-          hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
-          searchText: m.id,
-        })),
+      ...current.map(toOption),
     ];
-    return [{ id: "models", options }];
+    return [{
+      id: "models",
+      options,
+      more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
+    }];
   }, [provider, modelList, t]);
 
   // The effort ladder is the provider's, narrowed to the chosen model's own
