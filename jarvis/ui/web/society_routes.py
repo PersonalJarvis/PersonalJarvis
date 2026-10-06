@@ -84,7 +84,17 @@ def _validated_chat_runner(
     from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
-    runner = resolve_runner(provider, surface="society")
+    chosen_runtime = str(agent.runtime)
+    if chosen_runtime not in ("", "jarvis"):
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent.",
+            )
+    runner = resolve_runner(provider, surface="society", runtime=chosen_runtime)
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
@@ -136,6 +146,9 @@ class CreateAgentBody(BaseModel):
     browser_allowed_domains: list[str] | None = None
     #: Where the agent runs: "" = this computer, else a connected computer id.
     computer_id: str | None = None
+    #: The agent loop, chosen once here and fixed for the agent's life:
+    #: "jarvis" (default), "hermes" or "openclaw".
+    runtime: str | None = None
     #: Structured brief (jarvis.society.brief); rendered into ``description``.
     mission: str | None = Field(default=None, max_length=2_000)
     responsibilities: list[str] | None = None
@@ -193,6 +206,10 @@ class MessageBody(BaseModel):
 class ChatGroupBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     members: list[str] = Field(min_length=2, max_length=50)
+
+
+class MeetingMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8_000)
 
 
 class AssignBody(BaseModel):
@@ -316,11 +333,23 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         fields = inherit_creator_fields(fields, creator)
     requested_mode = str(fields.get("approval_mode") or "bypass")
     provider = str(fields.get("provider") or body.provider)
+    if str(fields.get("runtime") or "jarvis") != "jarvis":
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent first.",
+            )
     if provider:
         from jarvis.agent_chat.permissions import society_mode_supported
         from jarvis.agent_chat.service import resolve_runner
 
-        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+        runner = resolve_runner(
+            provider, surface="society", runtime=str(fields.get("runtime") or "")
+        )
+        if not society_mode_supported(runner, requested_mode):
             raise HTTPException(
                 422, "This runner cannot provide an actionable approval for that mode."
             )
@@ -518,7 +547,7 @@ async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[s
         raise HTTPException(422, "group members must be unique")
     for member_id in members:
         agent = await rt.roster.get(member_id)
-        if agent is None or agent.tier == "lead" or agent.state == "archived":
+        if agent is None or agent.state == "archived":
             raise HTTPException(422, f"agent {member_id} is unavailable for a group")
     return members
 
@@ -528,6 +557,39 @@ async def list_chat_groups(request: Request) -> dict[str, Any]:
     """List persistent Society group chats and their members."""
     rt = await _runtime(request)
     return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.get("/chat-groups/{group_id}/meeting")
+async def get_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Read the shared meeting transcript without starting an agent turn."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting", openapi_extra={"x-jarvis-dangerous": True})
+async def send_group_meeting(
+    group_id: str, body: MeetingMessageBody, request: Request,
+) -> dict[str, Any]:
+    """Ask each group member for one contribution in the shared meeting."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.start(group_id, body.text)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting/stop", openapi_extra={"x-jarvis-dangerous": True})
+async def stop_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Stop the group's meeting without interrupting unrelated agent work."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.stop(group_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
 
 
 @router.post("/chat-groups")
@@ -550,7 +612,10 @@ async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
     members = await _valid_group_members(rt, body.members)
-    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+    async with rt.meetings.group_mutation():
+        if rt.meetings.is_running(group_id):
+            raise HTTPException(409, "Stop the meeting before changing its members.")
+        return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
 
 
 @router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
@@ -559,7 +624,12 @@ async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
     rt = await _runtime(request)
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
-    await rt.store.delete_chat_group(group_id)
+    async with rt.meetings.group_mutation():
+        try:
+            await rt.meetings.stop(group_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        await rt.store.delete_chat_group(group_id)
     return {"deleted": True}
 
 

@@ -154,6 +154,9 @@ class SocietyRuntime:
         self.store = SocietyStore(self._data_dir / _DB_NAME)
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
+        from .meetings import Meetings
+
+        self.meetings = Meetings(self)
         self.approvals = Approvals(self.store)
         self.browser = BrowserJobs(self._data_dir)
         self.scheduler = SocietyScheduler(
@@ -451,12 +454,17 @@ class SocietyRuntime:
             ):
                 cleanup.callback(release)
             cleanup.push_async_callback(self.browser.close)
+            cleanup.push_async_callback(self.meetings.close)
             for attribute in ("_delivery_unsubscribe", "_lead_incoming_unsubscribe"):
                 unsubscribe = getattr(self, attribute)
                 if unsubscribe is not None:
                     cleanup.callback(unsubscribe)
                     setattr(self, attribute, None)
             cleanup.push_async_callback(self.coding_supervision.close)
+            # Hermes / OpenClaw agents: their Gateways must not outlive the app.
+            from jarvis.agent_runtimes import stop_all as stop_agent_runtimes
+
+            cleanup.push_async_callback(stop_agent_runtimes)
 
             tasks: set[asyncio.Task[Any]] = set(self._watchers)
             for task in (self._starting_task, self._context_start_task, self._delivery_task):
@@ -515,6 +523,11 @@ class SocietyRuntime:
             # These turns already have a successful durable-write receipt.
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
+            return
+        if self.meetings.is_contributing(session.session_id):
+            # A meeting contribution is a read-only reply in a shared round,
+            # often a silent pass; reviewing each one would add a model call
+            # per member to every message the person sends.
             return
         window_key = ""
         if completion.turn.direct_user:

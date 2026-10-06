@@ -57,6 +57,9 @@ export type AgentApprovalMode = (typeof AGENT_APPROVAL_MODES)[number];
 
 export const BROWSER_MODES = ["own", "attach"] as const;
 export type BrowserMode = (typeof BROWSER_MODES)[number];
+/** The agent loop that runs an agent's turns (docs/agent-runtimes.md). */
+export const AGENT_RUNTIMES = ["jarvis", "hermes", "openclaw"] as const;
+export type AgentRuntime = (typeof AGENT_RUNTIMES)[number];
 
 export const GRANT_MODES = ["all", "allowlist"] as const;
 export type GrantMode = (typeof GRANT_MODES)[number];
@@ -167,6 +170,8 @@ export interface SocietyAgentRow {
   browser_allowed_domains: string[];
   /** Where the agent runs: null = this computer, else a connected computer id. */
   computer_id: string | null;
+  /** The agent loop that runs its turns: Jarvis, Hermes or OpenClaw. */
+  runtime: AgentRuntime;
   session_id: string;
   created_ms: number;
   updated_ms: number;

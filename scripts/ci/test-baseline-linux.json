@@ -4,25 +4,11 @@
     "pytest::internal",
     "tests.integration.test_ollama_catalog_is_current::test_runtime_default_is_not_a_year_old[embeddinggemma]",
     "tests.integration.test_ollama_catalog_is_current::test_runtime_default_is_not_a_year_old[qwen3-embedding:4b]",
-    "tests.integration.test_tasks_recurring::test_runner_agent_delivers_result_as_announcement",
-    "tests.review.test_jarvis_agent_files::test_reviewer_body_contains_hard_rules",
-    "tests.review.test_jarvis_agent_files::test_subagent_file_exists[path0]",
-    "tests.review.test_jarvis_agent_files::test_subagent_file_exists[path1]",
-    "tests.review.test_jarvis_agent_files::test_worker_body_mentions_feedback_block",
-    "tests.review.test_jarvis_agent_files::test_worker_frontmatter",
     "tests.unit.agentic_ide.test_folders_search::test_device_name_falls_back_to_the_hostname",
-    "tests.unit.brain.test_manager_pointer::test_deictic_utterance_injects_pointer",
-    "tests.unit.brain.test_manager_pointer::test_pointer_turn_replaces_fullscreen_with_cursor_crop",
     "tests.unit.codex_app_server.test_transport::test_missing_dedicated_profile_is_a_login_required_capability",
     "tests.unit.codex_app_server.test_transport::test_reaper_launch_failure_releases_guard_and_state",
     "tests.unit.codex_app_server.test_transport::test_subscription_login_guard_covers_process_and_reaper",
     "tests.unit.codex_app_server.test_transport::test_subscription_login_spawn_failure_releases_guard",
-    "tests.unit.plugins.tts.test_realtime_surface_tts::test_pipeline_tts_cannot_see_a_realtime_only_key",
-    "tests.unit.plugins.tts.test_realtime_surface_tts::test_pipeline_tts_credential_map_lists_no_realtime_slots",
-    "tests.unit.pointer.test_turn::test_crop_radius_forwarded_to_default_resolver",
-    "tests.unit.test_bare_jarvis_starts_desktop::test_readme_still_documents_bare_jarvis_as_the_desktop_entry",
-    "tests.unit.test_provider_spec::test_non_gemini_providers_have_no_alt_credential",
-    "tests.unit.ui.test_icon_identity::test_bundled_app_icon_png_is_white_rounded_tile",
-    "tests.unit.web.test_realtime_provider_category::test_openai_realtime_spec_owns_a_dedicated_key"
+    "tests.unit.pointer.test_turn::test_crop_radius_forwarded_to_default_resolver"
   ]
 }

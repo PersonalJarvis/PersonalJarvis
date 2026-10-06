@@ -1,0 +1,1 @@
+const o=["jarvis","hermes","openclaw"];async function e(){const r=await fetch("/api/society/providers");if(!r.ok)throw new Error(`society providers ${r.status}`);const s=await r.json();return Array.isArray(s.providers)?s.providers:[]}export{o as A,e as f};

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS agent_chat_sessions (
     message_count    INTEGER NOT NULL DEFAULT 0,
     preview          TEXT NOT NULL DEFAULT '',
     surface          TEXT NOT NULL DEFAULT 'agent',
-    account_id       TEXT NOT NULL DEFAULT ''
+    account_id       TEXT NOT NULL DEFAULT '',
+    runtime          TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS agent_chat_events (
     session_id  TEXT NOT NULL,
@@ -127,6 +128,9 @@ class AgentChatSession:
     #: The subscription seat (``jarvis.agent_accounts`` id) a CLI turn runs on;
     #: empty = the platform's active account.
     account_id: str = ""
+    #: A society agent's external runtime (``hermes`` / ``openclaw``,
+    #: ``docs/agent-runtimes.md``); empty = the provider picks the runner.
+    runtime: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -177,6 +181,12 @@ class AgentChatStore:
             # active account (the pre-column behaviour).
             self._conn.execute(
                 "ALTER TABLE agent_chat_sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''"
+            )
+        if "runtime" not in have:
+            # The society agent's external runtime (hermes / openclaw); empty =
+            # the provider decides the runner (the pre-column behaviour).
+            self._conn.execute(
+                "ALTER TABLE agent_chat_sessions ADD COLUMN runtime TEXT NOT NULL DEFAULT ''"
             )
 
     def close(self) -> None:
@@ -235,6 +245,7 @@ class AgentChatStore:
         session_id: str | None = None,
         surface: str = DEFAULT_SURFACE,
         account_id: str = "",
+        runtime: str = "",
     ) -> AgentChatSession:
         if surface not in SURFACES:
             raise ValueError(f"surface must be one of {SURFACES}, not {surface!r}")
@@ -247,9 +258,22 @@ class AgentChatStore:
             self._conn.execute(
                 "INSERT INTO agent_chat_sessions (session_id, title, provider, model, effort, "
                 "cwd, permission_mode, vendor_session, created_ms, updated_ms, message_count, "
-                "preview, surface, account_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', ?, ?)",
-                (sid, title, provider, model, effort, cwd, mode, now, now, surface, account_id),
+                "preview, surface, account_id, runtime) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, '', ?, ?, ?)",
+                (
+                    sid,
+                    title,
+                    provider,
+                    model,
+                    effort,
+                    cwd,
+                    mode,
+                    now,
+                    now,
+                    surface,
+                    account_id,
+                    runtime,
+                ),
             )
             self._conn.commit()
         session = self.get_session(sid)
@@ -328,6 +352,7 @@ class AgentChatStore:
             "permission_mode",
             "vendor_session",
             "account_id",
+            "runtime",
         }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not updates:
@@ -589,4 +614,5 @@ class AgentChatStore:
             preview=row["preview"],
             surface=str(row["surface"] or DEFAULT_SURFACE),
             account_id=str(row["account_id"] or "") if "account_id" in row.keys() else "",
+            runtime=str(row["runtime"] or "") if "runtime" in row.keys() else "",
         )

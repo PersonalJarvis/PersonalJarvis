@@ -18,7 +18,10 @@ from jarvis.pointer import turn as pturn
 from jarvis.pointer.context import PointerContext
 from jarvis.screen_context.turn import TurnScreenContext
 from jarvis.vision.pointer_types import PointerElement
-from tests.fakes.fake_capabilities import fake_headless_capabilities
+from tests.fakes.fake_capabilities import (
+    fake_headless_capabilities,
+    fake_windows_capabilities,
+)
 
 _DRAFT_FOR_REVIEW = (
     "Write an English internal announcement draft, at most 80 words total including any handoff. "
@@ -90,6 +93,10 @@ async def test_deictic_utterance_injects_pointer(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(pturn, "resolve_pointer_context_async", fake_resolve)
+    # A desktop with a cursor: a headless CI runner would fast-skip the pointer.
+    monkeypatch.setattr(
+        "jarvis.platform.capabilities.detect_capabilities", fake_windows_capabilities
+    )
 
     manager, rec = _manager()
     await manager.generate("was ist das da?", use_history=False)
@@ -229,6 +236,9 @@ async def test_pointer_turn_replaces_fullscreen_with_cursor_crop(monkeypatch) ->
         )
 
     monkeypatch.setattr(pturn, "resolve_pointer_context_async", fake_resolve)
+    monkeypatch.setattr(
+        "jarvis.platform.capabilities.detect_capabilities", fake_windows_capabilities
+    )
 
     manager, rec = _manager(vision_images=(fullscreen,))
     await manager.generate("was ist das hier?", use_history=False)

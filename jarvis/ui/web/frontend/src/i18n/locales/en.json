@@ -5678,6 +5678,45 @@
       "monitor": "Monitor",
       "ask": "Ask first"
     },
+    "create_agent": {
+      "title": "New agent",
+      "subtitle": "Give it a name, pick what it runs on and choose its little companion.",
+      "name_label": "Name",
+      "name_placeholder": "Leave empty and the agent names itself",
+      "type_label": "Agent type",
+      "type_fixed": "The type is fixed once the agent exists.",
+      "provider_label": "Model provider",
+      "provider_hint": "Hermes and OpenClaw run on an API key or a local model. The model can be changed later in the chat.",
+      "no_provider": "No API key or local model is connected yet. Add one in Settings → API keys.",
+      "companion_label": "Companion",
+      "cancel": "Cancel",
+      "create": "Create agent",
+      "creating": "Creating…",
+      "name_taken": "An agent with this name already exists."
+    },
+    "runtime": {
+      "built_in": "Built in",
+      "needs_setup": "Needs an update",
+      "not_installed_short": "Not installed",
+      "runs_on": "Runs on {0}",
+      "title": "Runtime",
+      "jarvis": "Jarvis",
+      "hermes": "Hermes",
+      "openclaw": "OpenClaw",
+      "jarvis_hint": "Jarvis' own agent loop, on the model you pick in its chat.",
+      "hermes_hint": "The Hermes agent with its own tools — plus this agent's Jarvis memory, skills and tools.",
+      "openclaw_hint": "The OpenClaw agent with its own tools — plus this agent's Jarvis memory, skills and tools.",
+      "install": "Install",
+      "update": "Update",
+      "installing": "Installing…",
+      "updating": "Updating…",
+      "version": "Version {0}",
+      "not_installed": "{0} is not installed on this computer.",
+      "needs_update": "{0} {1} or newer is needed.",
+      "setup_failed": "Setup did not finish: {0}",
+      "node_hint": "OpenClaw needs Node.js 24.16 or newer. Its installer adds one for OpenClaw only.",
+      "no_version": "{0} is installed but did not report its version. Reinstall it."
+    },
     "approval_mode": {
       "title": "Agent permissions",
       "bypass": "Bypass permissions",
@@ -5931,6 +5970,19 @@
       "submit": "Create agent",
       "name_required": "Give the agent a name first.",
       "error": "The agent could not be created."
+    },
+    "meeting": {
+      "title": "Shared meeting",
+      "individual": "Individual chats",
+      "you": "You",
+      "description": "Each message gives every member one turn, in order. They can react to earlier replies or stay silent. No automatic discussion continues after that round.",
+      "empty": "Send a topic to start the discussion. To include {name}, add them through Edit group.",
+      "answering": "{0} is contributing…",
+      "failed": "The round could not finish. Open the agent’s individual chat for details. Earlier contributions are saved.",
+      "limit": "Meetings support two to six agents. Edit this group to reduce its members.",
+      "message": "Your message to the group",
+      "stop": "Stop round",
+      "send": "Ask the group"
     }
   },
   "chat_tools": {

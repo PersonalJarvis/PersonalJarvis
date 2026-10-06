@@ -105,7 +105,7 @@ const STAMP_GAP_MS = 30 * 60_000;
  * pane, so a wide window keeps the words in one comfortable, centred column
  * while the scroll area (and its edge) reaches the window's side.
  */
-const CHAT_MEASURE = "mx-auto w-full min-w-0 max-w-[52rem]";
+export const CHAT_MEASURE = "mx-auto w-full min-w-0 max-w-[52rem]";
 
 /** The line appended to a message that names an agent; Jarvis delegates on it. */
 const DELEGATE_MARK = "[to jarvis]";
@@ -1106,7 +1106,7 @@ function TurnBubble({
  * One scale serves both here: the answer inherits the bubble's ink, the
  * thought passes `muted`, and nothing else differs.
  */
-function Prose({ text, muted }: { text: string; muted?: boolean }) {
+export function Prose({ text, muted }: { text: string; muted?: boolean }) {
   return (
     <div
       className={cn(
