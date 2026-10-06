@@ -424,9 +424,12 @@ def check_macos_gesture_permission(report: Report) -> None:
     if _session() != "macos":
         return
     from jarvis.appshot.gesture import make_probe
-    from jarvis.platform.permissions import PermissionId, get_system_permission_port
+    from jarvis.platform.permission_service import get_permission_service
+    from jarvis.platform.permissions import PermissionId, PermissionState
 
-    granted = get_system_permission_port().runtime_access_granted(PermissionId.INPUT_MONITORING)
+    granted = (
+        get_permission_service().check(PermissionId.INPUT_MONITORING) is PermissionState.GRANTED
+    )
     probe, reason = make_probe("alt")
     if granted:
         report.add("both-Option shortcut arms with Input Monitoring", probe is not None, reason)
