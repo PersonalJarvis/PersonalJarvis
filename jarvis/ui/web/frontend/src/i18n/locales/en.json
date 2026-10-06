@@ -6256,6 +6256,7 @@
       "delete_body": "It goes to the trash, so you can still restore it.",
       "delete_permanent_body": "This computer has no trash to move it to. A permanent delete cannot be undone.",
       "delete_permanent": "Delete permanently",
+      "busy_saving": "A file in there is still saving. Try again in a moment.",
       "cancel": "Cancel"
     },
     "tabs": {

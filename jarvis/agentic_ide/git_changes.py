@@ -308,7 +308,8 @@ def head_text(folder: str | Path, path: str) -> str | None:
     result = _git(["show", f"HEAD:./{rel}"], root)
     if result is None or result.returncode != 0:
         return None
-    return result.stdout
+    # The editor shows a BOM file's text without its BOM; so must the diff.
+    return result.stdout.removeprefix("﻿")
 
 
 def file_diff(folder: str | Path, path: str) -> FileDiff:

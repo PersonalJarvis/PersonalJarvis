@@ -36,6 +36,14 @@ let api: MonacoApi | null = null;
 const entries = new Map<string, Entry>();
 const heads = new Map<string, Monaco.editor.ITextModel>();
 const viewStates = new Map<string, Monaco.editor.ICodeEditorViewState | null>();
+const headLoads = new Map<string, Promise<Monaco.editor.ITextModel | null>>();
+/**
+ * Bumped when a save starts and when it ends. A disk check that began before
+ * a save may come back with the version the save just replaced; comparing the
+ * epoch before and after the request drops such a stale answer.
+ */
+const saveEpochs = new Map<string, number>();
+const bumpEpoch = (fileKey: string) => saveEpochs.set(fileKey, (saveEpochs.get(fileKey) ?? 0) + 1);
 
 export function setMonaco(monaco: MonacoApi): void {
   api = monaco;
@@ -128,6 +136,8 @@ function disposeFile(fileKey: string): void {
   }
   heads.get(fileKey)?.dispose();
   heads.delete(fileKey);
+  headLoads.delete(fileKey);
+  saveEpochs.delete(fileKey);
   for (const key of [...viewStates.keys()]) if (key.endsWith(`:${fileKey}`)) viewStates.delete(key);
 }
 
@@ -198,21 +208,33 @@ export async function loadFile(fileKey: string): Promise<void> {
 }
 
 /** The committed text a diff tab compares against; empty for a new file. */
-export async function loadHead(fileKey: string): Promise<Monaco.editor.ITextModel | null> {
-  const file = store().files[fileKey];
-  if (!file || !api) return null;
-  const cached = heads.get(fileKey);
-  if (cached) return cached;
-  let text: string | null = null;
-  try {
-    text = await fetchHeadText(file.workspaceId, file.path);
-  } catch (error) {
-    toast((error as Error).message);
-  }
-  if (!store().files[fileKey]) return null;
-  const model = api.editor.createModel(text ?? "", languageFor(file.path), uriFor(file.workspaceId, file.path, "jarvis-head"));
-  heads.set(fileKey, model);
-  return model;
+export function loadHead(fileKey: string): Promise<Monaco.editor.ITextModel | null> {
+  // One request per file at a time: two diff tabs switching back and forth
+  // must not both create the same model. Each new showing re-reads the commit,
+  // so a commit made meanwhile shows up.
+  const pending = headLoads.get(fileKey);
+  if (pending) return pending;
+  const load = (async () => {
+    const file = store().files[fileKey];
+    if (!file || !api) return null;
+    let text: string | null = null;
+    try {
+      text = await fetchHeadText(file.workspaceId, file.path);
+    } catch (error) {
+      toast((error as Error).message);
+    }
+    if (!store().files[fileKey]) return null;
+    const existing = heads.get(fileKey);
+    if (existing) {
+      if (existing.getValue() !== (text ?? "")) existing.setValue(text ?? "");
+      return existing;
+    }
+    const model = api.editor.createModel(text ?? "", languageFor(file.path), uriFor(file.workspaceId, file.path, "jarvis-head"));
+    heads.set(fileKey, model);
+    return model;
+  })().finally(() => headLoads.delete(fileKey));
+  headLoads.set(fileKey, load);
+  return load;
 }
 
 /**
@@ -229,6 +251,7 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
   const expected = overwrite ? (file.conflict?.diskVersion ?? null) : file.version;
   const create = overwrite ? file.conflict?.diskVersion == null : file.deleted || file.version === null;
   const sent = entry.model.getAlternativeVersionId();
+  bumpEpoch(fileKey);
   store().patchFile(fileKey, { saving: true });
   try {
     const saved = await saveTextFile(file.workspaceId, {
@@ -239,6 +262,7 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
       create,
     });
     entry.saved = sent;
+    bumpEpoch(fileKey);
     store().patchFile(fileKey, {
       saving: false,
       version: saved.version,
@@ -249,6 +273,7 @@ export async function saveFile(fileKey: string, { overwrite = false } = {}): Pro
     });
     return true;
   } catch (error) {
+    bumpEpoch(fileKey);
     if (error instanceof SaveConflictError) {
       store().patchFile(fileKey, { saving: false, conflict: { diskVersion: error.currentVersion } });
     } else {
@@ -264,15 +289,27 @@ export async function saveAll(workspaceId: string): Promise<void> {
   for (const [key] of dirty) await saveFile(key);
 }
 
-/** Throw the buffer away and show what is on disk now. */
-export async function revertFile(fileKey: string): Promise<void> {
+/**
+ * Throw the buffer away and show what is on disk now.
+ *
+ * `follow` is the quiet reload of a clean buffer after an agent's edit: if the
+ * user starts typing while the file is being read, their edit wins and the
+ * disk version turns into a conflict instead of replacing what they typed.
+ */
+export async function revertFile(fileKey: string, { follow = false } = {}): Promise<void> {
   const file = store().files[fileKey];
   const entry = entries.get(fileKey);
   if (!file || !entry) return;
+  const before = entry.model.getAlternativeVersionId();
   try {
     const loaded = await loadTextFile(file.workspaceId, file.path);
+    if (entries.get(fileKey) !== entry) return;
     if (loaded.text === null) {
       toast("The file on disk can no longer be edited here.");
+      return;
+    }
+    if (follow && entry.model.getAlternativeVersionId() !== before) {
+      store().patchFile(fileKey, { conflict: { diskVersion: loaded.version } });
       return;
     }
     replaceFromDisk(entry, loaded.text, loaded.eol);
@@ -304,6 +341,7 @@ export function discardFile(fileKey: string): void {
 export async function checkDisk(fileKey: string): Promise<void> {
   const before = store().files[fileKey];
   if (!before || before.saving || before.status === "loading" || before.status === "error") return;
+  const epoch = saveEpochs.get(fileKey) ?? 0;
   let version: string | null;
   try {
     version = await fetchFileVersion(before.workspaceId, before.path);
@@ -311,7 +349,8 @@ export async function checkDisk(fileKey: string): Promise<void> {
     return; // the next check asks again; a failed poll changes nothing
   }
   const file = store().files[fileKey];
-  if (!file || file.saving) return;
+  // A save started or finished meanwhile: this answer may predate it.
+  if (!file || file.saving || (saveEpochs.get(fileKey) ?? 0) !== epoch) return;
   if (version === null) {
     if (!file.deleted) store().patchFile(fileKey, { deleted: true });
     return;
@@ -321,7 +360,7 @@ export async function checkDisk(fileKey: string): Promise<void> {
     await loadFile(fileKey);
     return;
   }
-  if (!file.dirty) await revertFile(fileKey);
+  if (!file.dirty) await revertFile(fileKey, { follow: true });
   else if (file.conflict?.diskVersion !== version) store().patchFile(fileKey, { conflict: { diskVersion: version } });
 }
 

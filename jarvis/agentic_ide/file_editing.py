@@ -108,9 +108,34 @@ def _normalise_relative(path: str) -> str:
     parts = [part for part in pure.parts if part not in ("", ".")]
     if not parts or any(part == ".." for part in parts):
         raise EditError("That path leaves the workspace folder.")
-    if any(part.lower() == ".git" for part in parts):
-        raise EditError("Files inside .git cannot be edited here.")
+    _refuse_git(parts)
+    if os.name == "nt" and any(":" in part for part in parts):
+        # An NTFS alternate data stream (``a.txt:hidden``) is not a file to edit.
+        raise EditError("That is not a valid file name here.")
     return "/".join(parts)
+
+
+def _refuse_git(parts: list[str] | tuple[str, ...]) -> None:
+    """Refuse a path inside git's own database.
+
+    Windows drops trailing dots and spaces from a name, so ``.git.`` opens
+    ``.git``; compare the name as the file system will read it.
+    """
+    if any(part.rstrip(". ").lower() == ".git" for part in parts):
+        raise EditError("Files inside .git cannot be edited here.")
+
+
+def _check_resolved(root: str | os.PathLike[str], target: Path) -> None:
+    """Refuse a target that only reaches ``.git`` through a symlink.
+
+    ``hooks -> .git/hooks`` passes the textual check and still stays inside the
+    workspace, but a write there is a git hook, i.e. code that runs later.
+    """
+    real_root = Path(os.path.realpath(os.fspath(root)))
+    try:
+        _refuse_git(target.relative_to(real_root).parts)
+    except ValueError as exc:  # contained_path already guarantees this
+        raise EditError("That path leaves the workspace folder.") from exc
 
 
 def _resolve(root: str | os.PathLike[str], path: str) -> tuple[str, Path]:
@@ -122,6 +147,7 @@ def _resolve(root: str | os.PathLike[str], path: str) -> tuple[str, Path]:
         raise EditError("That path leaves the workspace folder.") from exc
     if target == Path(os.path.realpath(os.fspath(root))):
         raise EditError("Give a file path inside the workspace.")
+    _check_resolved(root, target)
     return relative, target
 
 
@@ -139,6 +165,7 @@ def _resolve_entry(root: str | os.PathLike[str], path: str) -> tuple[str, Path]:
         folder = contained_path(root, parent or ".")
     except UnsafePathError as exc:
         raise EditError("That path leaves the workspace folder.") from exc
+    _check_resolved(root, folder / name)
     return relative, folder / name
 
 
@@ -175,11 +202,17 @@ def file_version(root: str | os.PathLike[str], path: str) -> str | None:
     too large to edit reports an empty version, as :func:`read_text_file` does.
     """
     _, target = _resolve(root, path)
-    if not target.is_file():
+    try:
+        if target.stat().st_size > MAX_EDITABLE_BYTES:
+            return ""
+        return _version_of(target.read_bytes())
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
         return None
-    if target.stat().st_size > MAX_EDITABLE_BYTES:
-        return ""
-    return _version_of(target.read_bytes())
+    except PermissionError:
+        # Windows reports reading a folder as "access denied".
+        if target.is_dir():
+            return None
+        raise
 
 
 def _atomic_write(target: Path, data: bytes) -> None:
@@ -278,8 +311,14 @@ def rename_entry(root: str | os.PathLike[str], source: str, destination: str) ->
     if not (source_path.is_symlink() or source_path.exists()):
         raise EditError("That file or folder no longer exists.")
     # On a case-insensitive disk "readme.md" -> "README.md" names the same
-    # entry; that is a rename, not a collision.
-    same_entry = target.exists() and os.path.samefile(source_path, target)
+    # entry; that is a rename, not a collision. Only a change of case counts:
+    # a hard-linked sibling is also "the same file" and must not be replaced.
+    same_entry = (
+        target.exists()
+        and source_path.parent == target.parent
+        and source_path.name.lower() == target.name.lower()
+        and os.path.samefile(source_path, target)
+    )
     if (target.exists() or target.is_symlink()) and not same_entry:
         raise EditError("Something with that name already exists.")
     source_key = os.path.normcase(str(source_path))
@@ -344,6 +383,7 @@ def list_files(root: str | os.PathLike[str]) -> tuple[list[str], bool]:
     base = Path(os.path.realpath(os.fspath(root)))
     listed = _git_listed_files(base)
     if listed is None:
+        logger.debug("Quick Open: no git listing for {}, walking the folder", base.name)
         return _walked_files(base)
     return listed[:MAX_LISTED_FILES], len(listed) > MAX_LISTED_FILES
 

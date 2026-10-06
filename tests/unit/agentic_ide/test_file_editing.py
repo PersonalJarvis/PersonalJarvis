@@ -113,6 +113,31 @@ def test_symlink_escape_is_refused(tmp_path: Path) -> None:
     assert not (outside / "evil.txt").exists()
 
 
+def test_git_database_is_refused_by_any_spelling_or_link(tmp_path: Path) -> None:
+    hooks = tmp_path / ".git" / "hooks"
+    hooks.mkdir(parents=True)
+    with pytest.raises(EditError):
+        create_entry(tmp_path, ".git./hooks/pre-commit", directory=False)
+    try:
+        os.symlink(hooks, tmp_path / "hooks", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this machine cannot create symlinks")
+    with pytest.raises(EditError):
+        write_text_file(tmp_path, "hooks/pre-commit", "evil", expected_version=None, create=True)
+    assert not (hooks / "pre-commit").exists()
+
+
+def test_rename_never_replaces_a_hard_linked_sibling(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    try:
+        os.link(tmp_path / "a.txt", tmp_path / "b.txt")
+    except (OSError, NotImplementedError):
+        pytest.skip("this file system has no hard links")
+    with pytest.raises(EditError):
+        rename_entry(tmp_path, "a.txt", "b.txt")
+    assert (tmp_path / "a.txt").exists()
+
+
 def test_create_rename_and_permanent_delete(tmp_path: Path) -> None:
     assert create_entry(tmp_path, "src/pkg", directory=True) == "src/pkg"
     assert create_entry(tmp_path, "src/pkg/mod.py", directory=False) == "src/pkg/mod.py"
@@ -227,6 +252,20 @@ async def test_version_route_tracks_changes_and_deletion(workspace: Path) -> Non
     (workspace / "a.txt").unlink()
     gone = await routes.get_workspace_text_file_version("workspace-1", "a.txt")
     assert gone["version"] is None
+
+
+async def test_version_route_reports_an_unreadable_file_as_busy_not_deleted(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace / "a.txt").write_text("one\n", encoding="utf-8")
+
+    def locked(root: object, path: str) -> str:
+        raise PermissionError("held by another process")
+
+    monkeypatch.setattr(file_editing, "file_version", locked)
+    with pytest.raises(HTTPException) as caught:
+        await routes.get_workspace_text_file_version("workspace-1", "a.txt")
+    assert caught.value.status_code == 503
 
 
 async def test_routes_reject_unknown_workspace_and_escapes(workspace: Path) -> None:

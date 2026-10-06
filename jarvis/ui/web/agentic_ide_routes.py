@@ -2008,8 +2008,13 @@ async def get_workspace_text_file_version(workspace_id: str, path: str) -> dict[
         version = await asyncio.to_thread(file_editing.file_version, folder, path)
     except file_editing.EditError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except OSError:
-        version = None
+    except OSError as exc:
+        # A locked or unreadable file is not a deleted one: answer "try again"
+        # so the editor keeps the file as it is instead of marking it deleted.
+        log.debug("Agentic IDE editor: version check failed for %s: %s", path, exc)
+        raise HTTPException(
+            status_code=503, detail="The file could not be read right now."
+        ) from exc
     return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "version": version}
 
 

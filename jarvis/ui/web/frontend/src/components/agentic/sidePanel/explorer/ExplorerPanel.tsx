@@ -636,6 +636,14 @@ function FileTree({
 
   const rename = async (path: string, name: string) => {
     setRenaming(null);
+    const saving = Object.values(useCodeEditorStore.getState().files).some(
+      (file) => file.workspaceId === workspaceId && file.saving && isUnder(file.path, path),
+    );
+    // A save in flight would land under the old name; wait for it.
+    if (saving) {
+      pushToast("error", t("ide_side_panel.explorer.busy_saving"));
+      return;
+    }
     const destination = joinPath(parentPath(path), name);
     try {
       const moved = await moveEntry(workspaceId, path, destination);

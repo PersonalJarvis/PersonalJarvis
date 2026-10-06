@@ -6223,6 +6223,7 @@
       "delete_body": "Irá a la papelera, así que aún podrás restaurarlo.",
       "delete_permanent_body": "Este equipo no tiene papelera. Una eliminación definitiva no se puede deshacer.",
       "delete_permanent": "Eliminar definitivamente",
+      "busy_saving": "Un archivo de ahí aún se está guardando. Inténtalo de nuevo en un momento.",
       "cancel": "Cancelar"
     },
     "tabs": {

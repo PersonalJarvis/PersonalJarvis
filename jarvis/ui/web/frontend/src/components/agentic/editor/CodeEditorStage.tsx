@@ -112,6 +112,10 @@ export function CodeEditorStage({
       const key = event.key.toLowerCase();
       const state = useCodeEditorStore.getState();
       if (key === "p" && !event.shiftKey) {
+        // A text field outside the editor (a rename box, the chat composer)
+        // keeps its keys; the editor's own text area does not count as one.
+        const field = target?.closest("input, textarea, [contenteditable='true']");
+        if (field && !stage.current?.contains(field)) return;
         event.preventDefault();
         event.stopPropagation();
         state.setQuickOpen(true);
