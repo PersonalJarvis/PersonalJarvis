@@ -14,6 +14,7 @@ import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
 import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
 import { IDE_SECTIONS } from "@/lib/ideSections";
+import { IdeCaptionTools, IdeCommandSearch } from "@/components/layout/IdeCaptionTools";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
 
 /**
@@ -22,7 +23,9 @@ import { useDesktopChrome, WindowControls } from "@/components/layout/WindowCont
  * It is one thin row at the top of the window: back/forward at the left, the
  * empty middle to drag the window, and minimize, maximize and close at the
  * right. Theme, restart and the sidebar toggles are not caption buttons; the
- * theme lives in Settings.
+ * theme lives in Settings. On the Agentic IDE the caption also carries the
+ * IDE's own tools: command search and the layout switch in the middle, add
+ * agent, voice, git and the side panel at the right end.
  *
  * The update button below (rendered in the sidebar) restarts through
  * ``/api/settings/restart-app``, which spawns a detached relauncher (see
@@ -95,6 +98,7 @@ export function TopBar() {
       <IdeCaptionSwitch />
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
+        <IdeCaptionRight />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}
@@ -104,19 +108,30 @@ export function TopBar() {
 }
 
 /**
- * The Agentic IDE's grid / threads switch, centred in the caption. Only on the
- * IDE: everywhere else the caption's middle stays the window's drag handle.
- * It floats over that handle rather than splitting it, so the strip keeps
- * dragging on both sides of the switch.
+ * The Agentic IDE's grid / threads switch, centred in the caption, with the
+ * command search to its left. Only on the IDE: everywhere else the caption's
+ * middle stays the window's drag handle. Both float over that handle rather
+ * than splitting it, so the strip keeps dragging on both sides. The search
+ * hangs off the switch's left edge, so the switch stays exactly centred, and
+ * it steps aside on a narrow window where it would reach back/forward.
  */
 function IdeCaptionSwitch() {
   const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
   if (!onIde) return null;
   return (
     <div className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center">
-      <IdeLayoutSwitch className="pointer-events-auto" />
+      <div className="relative flex items-center">
+        <IdeCommandSearch className="pointer-events-auto absolute right-full mr-2 hidden lg:flex" />
+        <IdeLayoutSwitch className="pointer-events-auto" />
+      </div>
     </div>
   );
+}
+
+/** The IDE's tools at the caption's right end, beside the window buttons. */
+function IdeCaptionRight() {
+  const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
+  return onIde ? <IdeCaptionTools /> : null;
 }
 
 // The restart can fail transiently right after an apply (the backend is busy,

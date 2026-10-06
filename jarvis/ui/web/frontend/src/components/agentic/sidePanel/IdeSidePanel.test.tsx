@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { useIdeChatStore } from "@/store/ideChat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IdeSidePanelFrame } from "./IdeSidePanel";
+import { IdeSidePanelToggle } from "./IdeSidePanelToggle";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
@@ -25,6 +26,7 @@ vi.mock("@/components/society/office/OfficeStage", () => ({
 function Harness() {
   return (
     <>
+      <IdeSidePanelToggle />
       <IdeSidePanelFrame>
         <div data-testid="grid">grid</div>
       </IdeSidePanelFrame>
@@ -63,7 +65,7 @@ describe("IdeSidePanel", () => {
     expect(screen.getByRole("tab", { name: "Terminal 2" })).toBeTruthy();
     fireEvent.click(screen.getByTestId("ide-side-panel-tab-agents"));
     expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
-    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.getByTestId(`shell-${first.id}`)).toBe(firstNode);
     expect(firstNode.dataset.active).toBe("false");
     fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
@@ -113,7 +115,7 @@ describe("IdeSidePanel", () => {
     expect(screen.getByTestId("ide-side-panel-resizer")).toBeTruthy();
     expect(localStorage.getItem("jarvis.agenticIde.sidePanelOpen")).toBe("1");
 
-    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.queryByTestId("ide-side-panel")).toBeNull();
     expect(localStorage.getItem("jarvis.agenticIde.sidePanelOpen")).toBe("0");
   });
@@ -122,7 +124,7 @@ describe("IdeSidePanel", () => {
     render(<Harness />);
     const grid = screen.getByTestId("grid");
     fireEvent.click(screen.getByTestId("ide-side-panel-rail-agents"));
-    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(screen.getByTestId("grid")).toBe(grid);
   });
 
@@ -237,7 +239,7 @@ describe("IdeSidePanel", () => {
     act(() => useIdeSidePanelStore.setState({ open: true, tabs: ["agents"], active: "agents" }));
     render(<Harness />);
     fireEvent.click(screen.getByTestId("ide-side-panel-maximize"));
-    fireEvent.click(screen.getByTestId("ide-side-panel-collapse"));
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(useIdeSidePanelStore.getState().maximized).toBe(false);
   });
 

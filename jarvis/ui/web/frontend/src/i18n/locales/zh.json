@@ -1739,7 +1739,8 @@
       "app_zoom_reset": "将应用缩放重置为 100 %",
       "open_overlay": "打开此列表",
       "quick_switch": "快速切换到任意板块",
-      "ide_menu": "Agentic IDE 按键菜单（按两次会把按键发送给窗格）"
+      "ide_menu": "Agentic IDE 按键菜单（按两次会把按键发送给窗格）",
+      "ide_commands": "Agentic IDE 命令面板（搜索所有 IDE 命令）"
     }
   },
   "quick_switch": {

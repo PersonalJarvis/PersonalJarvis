@@ -1739,7 +1739,8 @@
       "app_zoom_reset": "App-Zoom auf 100 % zurücksetzen",
       "open_overlay": "Diese Liste öffnen",
       "quick_switch": "Schnell zu jedem Bereich springen",
-      "ide_menu": "Tastenmenü der Agentic IDE (zweimal drücken: an das Fenster senden)"
+      "ide_menu": "Tastenmenü der Agentic IDE (zweimal drücken: an das Fenster senden)",
+      "ide_commands": "Befehlspalette der Agentic IDE (alle IDE-Befehle durchsuchen)"
     }
   },
   "quick_switch": {

@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { Building2, LayoutGrid, MessagesSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -8,9 +7,10 @@ import {
 import { useIdeSidePanelStore, type SidePanelTabId } from "@/store/ideSidePanel";
 import { useIdeThreadsStore, type IdeLayout } from "@/store/ideThreads";
 
-type Choice = IdeLayout | "verse";
+/** One face of the Agentic IDE: a layout of the terminals, or the Verse over them. */
+export type IdeFace = IdeLayout | "verse";
 
-const CHOICES: { choice: Choice; label: string; Icon: typeof LayoutGrid }[] = [
+const CHOICES: { choice: IdeFace; label: string; Icon: typeof LayoutGrid }[] = [
   { choice: "grid", label: "Terminal grid", Icon: LayoutGrid },
   { choice: "threads", label: "Threads", Icon: MessagesSquare },
   { choice: "verse", label: "Jarvis Verse", Icon: Building2 },
@@ -21,6 +21,47 @@ interface PanelBefore {
   open: boolean;
   active: SidePanelTabId;
   hadOffice: boolean;
+}
+
+// Module-level, not per component: the caption switch and the command palette
+// both change faces, and leaving the Verse must restore the panel whichever
+// of them entered it.
+let before: PanelBefore | null = null;
+
+/** Is the Verse (the office, maximized over the whole view) on right now? */
+function verseIsOn(): boolean {
+  const panel = useIdeSidePanelStore.getState();
+  return panel.open && panel.maximized && panel.active === "office";
+}
+
+function enterVerse(): void {
+  const panel = useIdeSidePanelStore.getState();
+  before = { open: panel.open, active: panel.active, hadOffice: panel.tabs.includes("office") };
+  panel.openTab("office");
+  useIdeSidePanelStore.getState().setMaximized(true);
+}
+
+function leaveVerse(): void {
+  const panel = useIdeSidePanelStore.getState();
+  panel.setMaximized(false);
+  const prior = before;
+  before = null;
+  // Entered some other way (the panel's own maximize button): just restore.
+  if (!prior) return;
+  if (!prior.hadOffice) panel.closeTab("office");
+  const after = useIdeSidePanelStore.getState();
+  if (!prior.open) after.setOpen(false);
+  else after.select(prior.active);
+}
+
+/** Show one face of the IDE, from the caption switch or anywhere else. */
+export function pickIdeFace(choice: IdeFace): void {
+  if (choice === "verse") {
+    if (!verseIsOn()) enterVerse();
+    return;
+  }
+  if (verseIsOn()) leaveVerse();
+  useIdeThreadsStore.getState().setLayout(choice);
 }
 
 /**
@@ -35,40 +76,9 @@ interface PanelBefore {
  */
 export function IdeLayoutSwitch({ className }: { className?: string }) {
   const layout = useIdeThreadsStore((state) => state.layout);
-  const setLayout = useIdeThreadsStore((state) => state.setLayout);
   const verseOn = useIdeSidePanelStore((state) => state.open && state.maximized && state.active === "office");
-  const before = useRef<PanelBefore | null>(null);
-  const current: Choice = verseOn ? "verse" : layout;
+  const current: IdeFace = verseOn ? "verse" : layout;
   const index = Math.max(0, CHOICES.findIndex((item) => item.choice === current));
-
-  const enterVerse = () => {
-    const panel = useIdeSidePanelStore.getState();
-    before.current = { open: panel.open, active: panel.active, hadOffice: panel.tabs.includes("office") };
-    panel.openTab("office");
-    useIdeSidePanelStore.getState().setMaximized(true);
-  };
-
-  const leaveVerse = () => {
-    const panel = useIdeSidePanelStore.getState();
-    panel.setMaximized(false);
-    const prior = before.current;
-    before.current = null;
-    // Entered some other way (the panel's own maximize button): just restore.
-    if (!prior) return;
-    if (!prior.hadOffice) panel.closeTab("office");
-    const after = useIdeSidePanelStore.getState();
-    if (!prior.open) after.setOpen(false);
-    else after.select(prior.active);
-  };
-
-  const pick = (choice: Choice) => {
-    if (choice === "verse") {
-      if (!verseOn) enterVerse();
-      return;
-    }
-    if (verseOn) leaveVerse();
-    setLayout(choice);
-  };
 
   return <div role="radiogroup" aria-label="IDE layout" data-testid="ide-layout-switch"
     className={cn(CAPTION_TRACK, className)}>
@@ -77,7 +87,7 @@ export function IdeLayoutSwitch({ className }: { className?: string }) {
       className={CAPTION_THUMB} />
     {CHOICES.map(({ choice, label, Icon }) => <button key={choice} type="button" role="radio"
       data-testid={`ide-layout-${choice}`} aria-checked={current === choice} aria-label={label} title={label}
-      onClick={() => pick(choice)}
+      onClick={() => pickIdeFace(choice)}
       style={{ width: SEGMENT_PX }}
       className={cn(CAPTION_SEGMENT, current === choice ? CAPTION_SEGMENT_ON : CAPTION_SEGMENT_OFF)}>
       <Icon aria-hidden className={CAPTION_ICON_CLASS} strokeWidth={CAPTION_ICON_STROKE} />
