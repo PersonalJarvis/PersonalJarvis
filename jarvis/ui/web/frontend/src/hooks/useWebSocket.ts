@@ -32,7 +32,7 @@ import { MEMORY_WRITE_EVENT, useMemoryWrites } from "@/store/memoryWrites";
 import { useHomeStore } from "@/store/home";
 import { PANE_ACTIVITY_EVENT } from "@/store/workspacePanes";
 import { WSAudioLevel, WSEventEnvelope, WSWelcome } from "@/schema/ws";
-import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, translate } from "@/i18n";
+import { useI18nStore, hydrateUiLanguage, hydrateReplyLanguage, isUiLanguage, translate } from "@/i18n";
 import { hydrateUiTheme } from "@/hooks/useTheme";
 import { announceDictationSettings } from "@/hooks/usePromptMode";
 import { petKeys } from "@/hooks/usePets";
@@ -657,7 +657,7 @@ export function useWebSocket(): void {
         // so receiving the broadcast does not echo a PUT back.
         if (env.event_name === "UiLanguageChanged") {
           const p = env.payload as { language?: string };
-          if (p.language === "en" || p.language === "de" || p.language === "es") {
+          if (isUiLanguage(p.language)) {
             useI18nStore.getState().setUi(p.language, { push: false });
           }
         }

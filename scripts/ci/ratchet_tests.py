@@ -19,6 +19,7 @@ Commands::
     ratchet_tests.py check --baseline B.json report*.json     # per shard, blocking
     ratchet_tests.py summary --baseline B.json --floor report*.json
     ratchet_tests.py update --out B.json report*.json          # regenerate
+    ratchet_tests.py prune --baseline B.json --os linux run1/ run2/ run3/
     ratchet_tests.py durations --out D.json dur*.json          # merge timing caches
 
 A missing baseline means no failures have been approved for that OS.
@@ -194,6 +195,46 @@ def cmd_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def junit_outcomes(run_dir: Path, os_name: str) -> dict[str, str]:
+    """Outcome per test id in one run's merged JUnit files; any failure wins."""
+    import xml.etree.ElementTree as ET
+
+    outcomes: dict[str, str] = {}
+    for path in sorted(run_dir.rglob(f"junit-{os_name}-*.xml")):
+        root = ET.parse(path).getroot()  # noqa: S314 - our own CI artifact
+        for case in root.iter("testcase"):
+            fid = normalize(f"{case.get('classname', '')}::{case.get('name', '')}")
+            if case.find("failure") is not None or case.find("error") is not None:
+                outcomes[fid] = "failed"
+            elif case.find("skipped") is not None:
+                outcomes.setdefault(fid, "skipped")
+            elif outcomes.get(fid) != "failed":
+                outcomes[fid] = "passed"
+    return outcomes
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    """Drop baseline entries that PASSED (not skipped) in every given full run.
+
+    Each positional directory holds one run's downloaded ``tests-<os>-*``
+    artifacts. Requiring several runs keeps tests that flip between runs.
+    """
+    data = json.loads(args.baseline.read_text(encoding="utf-8"))
+    known = data.get("known_failures", [])
+    runs = [junit_outcomes(run_dir, args.os) for run_dir in args.runs]
+    if not runs or any(not run for run in runs):
+        print("::error::every run directory needs JUnit evidence for this OS")
+        return 1
+    proven = {fid for fid in known if all(run.get(normalize(fid)) == "passed" for run in runs)}
+    data["known_failures"] = [fid for fid in known if fid not in proven]
+    args.baseline.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"[ratchet] pruned {len(proven)} of {len(known)} known failures "
+        f"(passed in all {len(runs)} runs); {len(data['known_failures'])} remain"
+    )
+    return 0
+
+
 def cmd_durations(args: argparse.Namespace) -> int:
     merged: dict[str, float] = {}
     if args.base and args.base.is_file():
@@ -222,6 +263,10 @@ def main(argv: list[str] | None = None) -> int:
     update = sub.add_parser("update")
     update.add_argument("--out", type=Path, required=True)
     update.add_argument("reports", nargs="+", type=Path)
+    prune = sub.add_parser("prune")
+    prune.add_argument("--baseline", type=Path, required=True)
+    prune.add_argument("--os", required=True, choices=["linux", "windows", "macos"])
+    prune.add_argument("runs", nargs="+", type=Path)
     durations = sub.add_parser("durations")
     durations.add_argument("--base", type=Path)
     durations.add_argument("--out", type=Path, required=True)
@@ -231,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "summary": cmd_summary,
         "update": cmd_update,
+        "prune": cmd_prune,
         "durations": cmd_durations,
     }[args.cmd]
     return handler(args)

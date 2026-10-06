@@ -227,7 +227,7 @@ def pill_center_y(_height: float) -> float:
 
 class JarvisBarRenderer:
     def __init__(self, accent: str = "#e7c46e") -> None:
-        # Retained for saved-config compatibility; the authored sphere is blue.
+        # The Prompt Mode mark takes this colour; the indicator keeps its own sky.
         try:
             value = accent.lstrip("#")
             if len(value) != 6:
@@ -277,37 +277,46 @@ class JarvisBarRenderer:
         layout = controls.pet_strip_layout(strip_scale())
         _, x0, x1 = next(slot for slot in layout.slots if slot[0] == "orb")
         cx, cy = (x0 + x1) / 2, WIN_H / 2
-        r = max(2, (layout.pill[3] - layout.pill[1]) * 0.16)
+        pill_h = layout.pill[3] - layout.pill[1]
+        r = max(2, pill_h * 0.16)
         draw = ImageDraw.Draw(frame)
-        color = controls.PET_ICON
         width = max(1, round(strip_scale() * 2))
-        if actual in DICTATION_MODES:
-            draw.rounded_rectangle((cx - r, cy - r, cx + r, cy + r), radius=1, fill=color)
-        elif prompt_mode:
-            color = self.accent
-            draw.line(
-                [(cx - r, cy), (cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)],
-                fill=color,
-                width=width,
-            )
-            if prompt_mode_paused:
-                draw.line(
-                    (cx - r, cy - r, cx + r, cy + r), fill=controls.PET_ICON_MUTED, width=width
-                )
+        backdrop = controls.PET_FILL_HOVER if hovered_action == "orb" else controls.PET_FILL
+        clear_r = pill_h * 0.40
+
+        def clear_indicator() -> None:
+            # A mark replaces the indicator; drawn over the strokes it is unreadable.
+            draw.ellipse((cx - clear_r, cy - clear_r, cx + clear_r, cy + clear_r), fill=backdrop)
+
         if (
             drop_state in (DROP_STATE_OK, DROP_STATE_REJECTED)
             and drop_elapsed >= DROP_CONFIRM_TOTAL_S
         ):
             drop_state = DROP_STATE_NONE
         if actual in NOTICE_MODES or drop_state == DROP_STATE_REJECTED:
+            clear_indicator()
             red = tuple(round(c * notice_alpha(t)) for c in controls.PET_ICON_MUTED)
             draw.line((cx - r, cy - r, cx + r, cy + r), fill=red, width=width)
             draw.line((cx - r, cy + r, cx + r, cy - r), fill=red, width=width)
         elif drop_state == DROP_STATE_OK:
+            clear_indicator()
             draw.line(
                 [(cx - r, cy), (cx, cy + r), (cx + r, cy - r)], fill=(126, 200, 133), width=width
             )
-        elif drop_state == DROP_STATE_ARMED:
+        elif prompt_mode and motion == "rest":
+            # Prompt Mode marks the resting bar only; once a voice or a
+            # dictation runs, the moving strokes tell more than the mark.
+            clear_indicator()
+            draw.line(
+                [(cx - r, cy), (cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)],
+                fill=self.accent,
+                width=width,
+            )
+            if prompt_mode_paused:
+                draw.line(
+                    (cx - r, cy - r, cx + r, cy + r), fill=controls.PET_ICON_MUTED, width=width
+                )
+        if drop_state == DROP_STATE_ARMED:
             draw.rounded_rectangle(
                 layout.pill, radius=WIN_H / 2, outline=controls.PET_ORB_HIGHLIGHT, width=width
             )

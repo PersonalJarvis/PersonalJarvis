@@ -850,6 +850,10 @@ async def _run_headless(args) -> int:
     from jarvis.agentic_ide.session import schedule_boot_restore
 
     schedule_boot_restore()
+    # Carry on the IDE thread turns the turn host kept running.
+    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+    schedule_turn_reattach(server.app.state)
 
     # The full app's init chain is done and the chat handler is subscribed — hand
     # the real ASGI app to the already-listening bootstrap server, which now

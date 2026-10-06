@@ -83,6 +83,23 @@ _LABELS: dict[str, dict[str, str]] = {
         "text_copied": "Texto copiado",  # i18n-allow: product UI string
         "no_text": "No se encontró texto",  # i18n-allow: product UI string
     },
+    "zh": {
+        "edit": "编辑",  # i18n-allow: UI
+        "copy": "复制",  # i18n-allow: UI
+        "save": "保存",  # i18n-allow: UI
+        "close": "关闭",  # i18n-allow: UI
+        "pin": "固定在屏幕上",  # i18n-allow: UI
+        "unpin": "取消固定",  # i18n-allow: UI
+        "copy_text": "复制文字",  # i18n-allow: UI
+        "copied": "已复制",  # i18n-allow: UI
+        "saved": "已保存到“下载”",  # i18n-allow: UI
+        "failed": "操作未成功",  # i18n-allow: UI
+        "no_access": "没有保存到“下载”文件夹的权限",  # i18n-allow: UI
+        "no_access_mac": "请在“隐私与安全性 > 文件和文件夹”中允许访问“下载”",  # i18n-allow: UI
+        "gone": "已不再保留",  # i18n-allow: UI
+        "text_copied": "文字已复制",  # i18n-allow: UI
+        "no_text": "未找到文字",  # i18n-allow: UI
+    },
 }
 
 

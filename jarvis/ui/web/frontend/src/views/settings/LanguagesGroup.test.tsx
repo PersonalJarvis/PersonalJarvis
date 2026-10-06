@@ -48,7 +48,7 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     );
     fireEvent.click(screen.getByTestId("ui-language"));
     const ui = await waitFor(() => screen.getByTestId("ui-language-panel"));
-    for (const code of ["en", "de", "es"]) {
+    for (const code of ["en", "de", "es", "zh"]) {
       expect(ui.textContent).toContain(`languages_view.options.${code}.label`);
     }
     fireEvent.click(screen.getByTestId("reply-language"));

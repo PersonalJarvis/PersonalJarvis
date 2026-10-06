@@ -53,6 +53,15 @@ gh run download <run-id> -p 'tests-linux-*' -D reports
 python scripts/ci/ratchet_tests.py update --out scripts/ci/test-baseline-linux.json reports
 ```
 
+Shrink a list with proof instead of by hand: download the `tests-<os>-*`
+artifacts of several full runs on main, one directory per run, and drop every
+entry that passed (not skipped) in all of them:
+
+```bash
+for id in <run-1> <run-2> <run-3>; do gh run download "$id" -p 'tests-linux-*' -D "runs/$id"; done
+python scripts/ci/ratchet_tests.py prune --baseline scripts/ci/test-baseline-linux.json --os linux runs/*
+```
+
 A missing list means no failures have been approved for that OS; new failures
 block immediately. Missing, empty or malformed reports also block.
 

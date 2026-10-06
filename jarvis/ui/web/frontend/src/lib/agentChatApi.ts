@@ -63,10 +63,15 @@ export interface AgentChatProvider {
   typeahead?: string[];
   /**
    * The agents' surface only (`surface=society`): whether the API Keys page
-   * has this provider on for the agents, and the models it hid there.
-   * Absent elsewhere and on an older backend: on, nothing hidden.
+   * has this provider on for the agents. Absent elsewhere and on an older
+   * backend: on.
    */
   enabled?: boolean;
+  /**
+   * The models the API Keys page hid for this provider, on every surface;
+   * every model picker leaves them out (`offeredModels`). Absent on an older
+   * backend: nothing hidden.
+   */
   hidden_models?: string[];
 }
 

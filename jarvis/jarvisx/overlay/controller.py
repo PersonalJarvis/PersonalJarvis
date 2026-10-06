@@ -63,6 +63,12 @@ _TEXTS: dict[str, dict[str, str]] = {
         "edit": "Haz clic para editar",  # i18n-allow: localized overlay UI string
         "stop": "Detener",  # i18n-allow: localized overlay UI string
     },
+    "zh": {
+        "select_capture": "拖动选择截图区域  ·  按 Esc 取消",  # i18n-allow: product UI string
+        "select_record": "拖动选择录制区域  ·  按 Esc 取消",  # i18n-allow: product UI string
+        "edit": "点击编辑",  # i18n-allow: product UI string
+        "stop": "停止",  # i18n-allow: product UI string
+    },
 }
 
 

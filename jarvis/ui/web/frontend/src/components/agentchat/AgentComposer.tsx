@@ -22,7 +22,10 @@ import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatS
 import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { folderLeaf } from "@/lib/folderPath";
-import { isApiRunner, pickAgentChatFolder } from "@/lib/agentChatApi";
+import { effortLadder, snapEffort } from "@/lib/effortLadder";
+import { rankModels } from "@/lib/modelRanking";
+import { isApiRunner, pickAgentChatFolder, type CuratedModel } from "@/lib/agentChatApi";
+import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -146,6 +149,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
   const connections = useAgentChat((s) => s.connections);
   const liveModels = useAgentChat((s) => s.liveModels);
+  const savedHidden = useSavedHiddenModels((s) => s.hidden);
   const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
   const timeline = useAgentChat((s) => s.timeline);
@@ -432,7 +436,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const brainGroups = useMemo<ComboboxGroup[]>(() => {
     return brainProviders.map((p) => {
       const live = liveModels[p.id];
-      const models = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      const listed = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      // Models switched off on the API Keys page stay out; the current pick stays.
+      const models = offeredModels(p, listed, p.id === draft.provider ? draft.model : "", savedHidden);
       const disabled = !p.connected;
       const hint = disabled
         ? p.cli_installed === false
@@ -445,6 +451,16 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           <span className="truncate">{note ? `${p.label} · ${note}` : p.label}</span>
         </span>
       );
+      const toOption = (m: CuratedModel): ComboboxOption => ({
+        value: brainValue(p.id, m.id),
+        label: m.label || m.id,
+        description: owner(m.note),
+        hint,
+        disabled,
+        searchText: `${p.label} ${m.id}`,
+      });
+      // Newest of each model line first; earlier versions fold away.
+      const { current, older } = rankModels(models.filter((m) => m.id));
       return {
         id: p.id,
         label: p.label,
@@ -458,20 +474,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
             disabled,
             searchText: `${p.label} ${p.family}`,
           },
-          ...models
-            .filter((m) => m.id)
-            .map((m) => ({
-              value: brainValue(p.id, m.id),
-              label: m.label || m.id,
-              description: owner(m.note),
-              hint,
-              disabled,
-              searchText: `${p.label} ${m.id}`,
-            })),
+          ...current.map(toOption),
         ],
+        more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
       };
     });
-  }, [brainProviders, liveModels, providerMark, t]);
+  }, [brainProviders, liveModels, providerMark, t, draft.provider, draft.model, savedHidden]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -483,38 +491,38 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const modelGroups = useMemo<ComboboxGroup[]>(() => {
     if (!provider) return [];
+    const toOption = (m: CuratedModel): ComboboxOption => ({
+      value: m.id,
+      label: m.label || m.id,
+      hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
+      searchText: m.id,
+    });
+    // Models switched off on the API Keys page stay out; the current pick stays.
+    const { current, older } = rankModels(offeredModels(provider, modelList, draft.model, savedHidden).filter((m) => m.id));
     const options: ComboboxOption[] = [
       { value: "", label: t("agent_chat.model_default"), hint: provider.label },
-      ...modelList
-        .filter((m) => m.id)
-        .map((m) => ({
-          value: m.id,
-          label: m.label || m.id,
-          hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
-          searchText: m.id,
-        })),
+      ...current.map(toOption),
     ];
-    return [{ id: "models", options }];
-  }, [provider, modelList, t]);
+    return [{
+      id: "models",
+      options,
+      more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
+    }];
+  }, [provider, modelList, t, draft.model, savedHidden]);
 
   // The effort ladder is the provider's, narrowed to the chosen model's own
   // levels when the catalog knows them (agy's Pro: low/high; its Claude
   // models: none at all, so the pick disappears).
-  const effortLevels = useMemo<string[]>(() => {
-    if (!provider) return [];
-    const model = modelList.find((m) => m.id === draft.model);
-    if (model && Array.isArray(model.efforts)) return model.efforts;
-    return provider.effort_levels ?? [];
-  }, [provider, modelList, draft.model]);
+  const effortLevels = useMemo<string[]>(
+    () => effortLadder(provider, modelList, draft.model),
+    [provider, modelList, draft.model],
+  );
 
   useEffect(() => {
     // A model change can leave the picked effort off that model's ladder;
-    // snap to the nearest lower level (else the first) like the backend does.
-    if (!provider || !effortLevels.length || effortLevels.includes(draft.effort)) return;
-    const order = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-    const idx = order.indexOf(draft.effort);
-    const lower = effortLevels.filter((l) => order.indexOf(l) <= idx && order.indexOf(l) >= 0);
-    const next = lower.length ? lower[lower.length - 1] : effortLevels[0];
+    // fold it the way the backend does, so the label is the level that runs.
+    if (!provider || !effortLevels.some(Boolean)) return;
+    const next = snapEffort(draft.effort, effortLevels, provider.default_effort);
     if (next !== draft.effort) void setDraft({ effort: next });
   }, [provider, effortLevels, draft.effort, setDraft]);
 

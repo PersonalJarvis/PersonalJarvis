@@ -62,6 +62,30 @@ def test_effort_note_names_the_level_the_turn_runs_on():
     assert "provider's own default" in effort.effort_note("grok", "")
     # A provider without an effort knob is told nothing.
     assert effort.effort_note("kimi", "") == ""
+    # Nor is a model without one (Haiku 4.5, agy's Claude models).
+    assert effort.effort_note("claude-api", "", ()) == ""
+
+
+@pytest.mark.parametrize(
+    ("provider", "picked", "ladder", "expected"),
+    [
+        # Claude Code runs --effort xhigh as high on Opus 4.6: say high.
+        ("claude-api", "xhigh", ("low", "medium", "high", "max"), "high"),
+        ("claude-api", "medium", None, "medium"),
+        # No knob on the model: no level at all.
+        ("claude-api", "medium", (), ""),
+        # "Default" cannot be picked on Claude's ladder: its default level runs.
+        ("claude-api", "", None, "high"),
+        ("openai-codex", "ultra", ("low", "medium", "high", "xhigh", "max"), "max"),
+        ("antigravity", "medium", ("low", "high"), "low"),
+        # A level only the model's live list knows is kept.
+        ("openai-codex", "future", ("future",), "future"),
+        # A ladder with a "Default" entry keeps it.
+        ("grok", "", None, ""),
+    ],
+)
+def test_effort_for_model_is_the_level_the_turn_runs_on(provider, picked, ladder, expected):
+    assert effort.effort_for_model(provider, picked, ladder) == expected
 
 
 def test_catalog_rows_carry_ladders_and_curated_models_for_cli_runners():

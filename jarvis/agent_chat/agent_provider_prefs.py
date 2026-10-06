@@ -12,8 +12,13 @@ the user data folder:
   subscription.
 - ``hidden_models`` — per provider id, model ids left out of the pickers.
 
-Read on the agents' surface only (``surface="society"``): the coding panes
-and the front page's chat keep every seat they had.
+``disabled`` and ``api_only`` narrow the agents' surface only
+(``surface="society"``): the coding panes and the front page's chat keep
+every seat they had. ``hidden_models`` narrows every model picker — the
+agents', the threads', the coding panes' and the front page's — because a
+model switched off on the API Keys page is one the person does not want to
+scroll past anywhere. A hidden model still runs when a session already sits
+on it; hiding only takes it out of the lists.
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ from typing import Any
 
 from loguru import logger
 
-#: The agents' surface; the only one these preferences narrow.
+#: The agents' surface; the only one ``disabled`` and ``api_only`` narrow.
 AGENT_SURFACE = "society"
 
 _MAX_IDS = 256
@@ -124,6 +129,12 @@ def save(prefs: AgentProviderPrefs) -> AgentProviderPrefs:
     with _lock:
         _cache = None
     return prefs
+
+
+def offered_models(provider_id: str, models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``models`` minus the ones hidden for ``provider_id`` on the API Keys page."""
+    hidden = set(load().hidden(provider_id))
+    return [m for m in models if m.get("id") not in hidden] if hidden else models
 
 
 def forces_api(provider_id: str, surface: str) -> bool:

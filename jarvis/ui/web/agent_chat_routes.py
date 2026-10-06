@@ -303,6 +303,41 @@ def _service_from_state(state: Any) -> AgentChatService | None:
     return svc
 
 
+#: How long after the server is up the boot reattach waits, so it never sits
+#: on the path to a usable window (AP-26).
+_REATTACH_DELAY_S: Final = 2.0
+
+
+def schedule_turn_reattach(state: Any) -> asyncio.Task[None] | None:
+    """Carry on the thread turns the turn host kept running, right after boot.
+
+    Called by the two real app entry points beside the Agentic IDE's
+    ``schedule_boot_restore``. Without it a reattached turn waited for the
+    first window to open a chat: its output piled up in the host and an
+    approval its CLI asked for stayed unanswered meanwhile. Building the
+    service is what reattaches (``AgentChatService._seal_orphaned_turns``),
+    so this builds it only when the host or its spool holds something.
+    """
+    from jarvis.agent_chat import turn_host_client
+
+    if not turn_host_client.host_available():
+        return None
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        log.debug("agent chat: boot reattach not scheduled — no running loop")
+        return None
+
+    async def _run() -> None:
+        await asyncio.sleep(_REATTACH_DELAY_S)
+        if not await asyncio.to_thread(turn_host_client.may_hold_turns):
+            return
+        if _service_from_state(state) is None:
+            log.warning("agent chat: thread turns wait — the chat service could not be built")
+
+    return loop.create_task(_run(), name="agent-chat-boot-reattach")
+
+
 def _service(request: Request) -> AgentChatService:
     svc = _service_from_state(request.app.state)
     if svc is None:
@@ -414,9 +449,11 @@ def _catalog_rows(
     """The provider rows for ``surface`` with this machine's runner facts."""
     from jarvis.agent_chat import agent_provider_prefs
 
-    # The agents' own seats carry the API Keys page's on/off and hidden
-    # models; their pickers filter on them. Other surfaces keep every seat.
-    prefs = agent_provider_prefs.load() if surface == agent_provider_prefs.AGENT_SURFACE else None
+    # Every surface's rows carry the models hidden on the API Keys page, and
+    # every model picker leaves them out. The on/off switch is the agents'
+    # own: other surfaces keep every seat.
+    prefs = agent_provider_prefs.load()
+    agents = surface == agent_provider_prefs.AGENT_SURFACE
     rows: list[dict[str, Any]] = []
     for row in rows_for(surface):
         d = row.to_dict()
@@ -447,9 +484,9 @@ def _catalog_rows(
         # decided here, from the runner, so the box never offers a "/" list
         # to a seat that would read it as plain text.
         d["typeahead"] = list(typeahead.triggers_for(runner, surface))
-        if prefs is not None:
+        if agents:
             d["enabled"] = prefs.enabled(row.id)
-            d["hidden_models"] = list(prefs.hidden(row.id))
+        d["hidden_models"] = list(prefs.hidden(row.id))
         rows.append(d)
     return rows
 

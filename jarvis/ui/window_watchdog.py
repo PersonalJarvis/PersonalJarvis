@@ -344,7 +344,7 @@ class BlankWindowPolicy:
 # The explanation page
 # ---------------------------------------------------------------------------
 
-#: One entry per reason per language. German and Spanish are product surface
+#: One entry per reason per language. German, Spanish and Chinese are product surface
 #: (AGENTS.md §1): this page is shown TO the user, and it cannot reach the
 #: bundle's i18n — the bundle is exactly what failed to load. The language is
 #: picked in the page from ``navigator.language``, the same way
@@ -395,6 +395,21 @@ _TEXTS: dict[str, dict[str, str]] = {
         "view_empty": ("Personal Jarvis responde, pero la ventana no cargó su página."),
         "button": "Recargar",
         "retrying": "Reintentando…",
+    },
+    "zh": {
+        # i18n-allow: product surface, no bundle available here.
+        "title": "窗口一直是空白的。",
+        "backend_dead": (
+            "Personal Jarvis 正在运行，但负责这个窗口的部分已经停止。"
+            "重新启动应用即可恢复。"
+        ),
+        "backend_silent": (
+            "Personal Jarvis 正忙，暂时还没有响应这个窗口。"
+            "一旦恢复响应，它会自动重新加载。"
+        ),
+        "view_empty": ("Personal Jarvis 已响应，但窗口没有加载出页面。"),
+        "button": "重新加载",
+        "retrying": "正在重试…",
     },
 }
 

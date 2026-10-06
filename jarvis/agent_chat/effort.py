@@ -93,7 +93,9 @@ def default_effort(provider: str) -> str:
     return _LADDERS.get((provider or "").strip().lower(), _FALLBACK_LADDER)[1]
 
 
-def effort_note(provider: str, effort: str) -> str:
+def effort_note(
+    provider: str, effort: str, model_ladder: tuple[str, ...] | list[str] | None = None
+) -> str:
     """Tell the model the reasoning effort its turn really runs on.
 
     A model does not see the level's name — only how long it may think — so
@@ -101,9 +103,12 @@ def effort_note(provider: str, effort: str) -> str:
     seat the person set to medium reads as a broken picker. ``effort`` is the
     level the runner actually passes on; the CLI runners put this block in
     front of the message, the API runner in the system prompt. ``""`` when
-    the provider has no effort knob at all.
+    the provider — or the picked model (an empty ``model_ladder``) — has no
+    effort knob at all.
     """
     if not any(effort_levels(provider)):
+        return ""
+    if model_ladder is not None and not any(model_ladder):
         return ""
     level = effort or "the provider's own default"
     return (
@@ -131,6 +136,34 @@ def snap_to_ladder(level: str | None, ladder: tuple[str, ...] | list[str]) -> st
     idx = ORDER.index(picked)
     lower = [lvl for lvl in offered if lvl in ORDER and ORDER.index(lvl) <= idx]
     return lower[-1] if lower else offered[0]
+
+
+def effort_for_model(
+    provider: str, level: str | None, model_ladder: tuple[str, ...] | list[str] | None
+) -> str:
+    """The level a turn really runs on: the provider fold, then the model's own.
+
+    ``model_ladder`` is the picked model's ``efforts`` from the catalog
+    (``None`` = the provider ladder applies unchanged; empty = the model has
+    no effort knob). The CLIs fold an unsupported level silently — Claude
+    Code sends ``high`` for ``--effort xhigh`` on Opus 4.6 — so the runner
+    must pass, and tell the model, the folded level rather than the pick.
+    The composer applies the same rule (``snapEffort`` in the frontend).
+    """
+    picked = (level or "").strip().lower()
+    if model_ladder is not None and picked and picked in model_ladder:
+        # The model's own list is the newer word (a level a CLI added after
+        # this table was written): it wins over the provider ladder.
+        return picked
+    effort = normalize_effort(provider, level)
+    if not effort and "" not in effort_levels(provider):
+        # The picker cannot offer "Default" on this ladder, so it shows the
+        # provider's default level — run that, not whatever the CLI's own
+        # settings file happens to say.
+        effort = default_effort(provider)
+    if model_ladder is None:
+        return effort
+    return snap_to_ladder(effort, model_ladder)
 
 
 def normalize_effort(provider: str, level: str | None) -> str:

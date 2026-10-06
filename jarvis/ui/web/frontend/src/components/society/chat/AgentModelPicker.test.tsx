@@ -177,7 +177,7 @@ test("a cold menu renders models without waiting for subscription account discov
   let release!: () => void;
   accountsGate = new Promise<void>((resolve) => { release = resolve; });
   try {
-    mount(); await open();
+    mount(); await open(); show("gemini");
     expect(screen.getByTitle("gemini-small")).toBeTruthy();
     expect(screen.queryByText("Loading the provider catalog…")).toBeNull();
   } finally {
@@ -199,10 +199,18 @@ async function open() {
   return screen.getByRole("textbox", { name: "Search models" });
 }
 
+/** Lists one provider's models, as a click on its rail mark does. */
+function show(id: string) {
+  fireEvent.click(screen.getByTestId(`agent-model-rail-${id}`));
+}
+
 test("groups connected models and hides disconnected or empty local endpoints", async () => {
   mount(); await open();
   expect(screen.getByRole("group", { name: "openai · API key" })).toBeTruthy();
+  show("gemini");
   expect(screen.getByTitle("gemini-small")).toBeTruthy();
+  expect(screen.queryByTestId("agent-model-rail-offline")).toBeNull();
+  expect(screen.queryByTestId("agent-model-rail-ollama")).toBeNull();
   expect(screen.queryByTitle("offline-small")).toBeNull();
   expect(screen.queryByTitle("ollama-small")).toBeNull();
   expect(screen.queryByRole("combobox")).toBeNull();
@@ -221,7 +229,7 @@ test("clicking a model persists immediately, preserves the account and updates t
 });
 
 test("changing provider resets the subscription account and uses a supported effort", async () => {
-  mount(); await open();
+  mount(); await open(); show("gemini");
   fireEvent.click(screen.getByTitle("gemini-small"));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-small", effort: "low", account_id: "" });
@@ -254,7 +262,7 @@ test("search filters by model and provider, and Escape closes without saving", a
 });
 
 test("the effort submenu commits the model and chosen effort together", async () => {
-  mount(); await open();
+  mount(); await open(); show("gemini");
   fireEvent.click(within(screen.getByRole("group", { name: "gemini · API key" })).getByRole("button", { name: "Thinking effort: Large" }));
   fireEvent.click(within(screen.getByRole("menu", { name: "Thinking effort" })).getByRole("menuitemradio", { name: "Medium" }));
   await waitFor(() => expect(posts[0]).toEqual({ provider: "gemini", model: "gemini-large", effort: "medium", account_id: "" }));
@@ -263,7 +271,7 @@ test("the effort submenu commits the model and chosen effort together", async ()
 test("OpenCode models are offered without a duplicate app-managed login", async () => {
   extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true,
     curated_models: [{ id: "opencode/test-free", label: "Free model" }] })];
-  mount(); await open();
+  mount(); await open(); show("opencode");
   fireEvent.click(screen.getByTitle("opencode/test-free"));
   await waitFor(() => expect(posts[0].provider).toBe("opencode"));
   expect(posts[0].model).toBe("opencode/test-free");
@@ -275,7 +283,7 @@ test("all connected subscription accounts are selectable for a model", async () 
     { id: "work", label: "Work", connected: true }, { id: "personal", label: "Personal", connected: true },
     { id: "expired", label: "Expired", connected: false },
   ] }];
-  mount(); await open();
+  mount(); await open(); show("openai-codex");
   fireEvent.click(screen.getByRole("button", { name: "Account: ChatGPT / Codex subscription" }));
   expect(screen.queryByRole("menuitemradio", { name: "Expired" })).toBeNull();
   fireEvent.click(screen.getByRole("menuitemradio", { name: "Personal" }));
@@ -288,6 +296,7 @@ test("refresh reloads catalogs and reveals newly available models", async () => 
   mount(); await open();
   extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true })];
   fireEvent.click(screen.getByRole("button", { name: "Refresh models" }));
+  fireEvent.click(await screen.findByTestId("agent-model-rail-opencode"));
   fireEvent.click(await screen.findByRole("button", { name: /Show more models/ }));
   await screen.findByTitle("opencode-small");
   expect(catalogCalls).toBe(2);
@@ -296,6 +305,7 @@ test("refresh reloads catalogs and reveals newly available models", async () => 
 test("local endpoints show only installed models, and search works by model id", async () => {
   liveModels.ollama = [{ id: "qwen3:8b", label: "Qwen 3" }];
   mount(); const input = await open();
+  fireEvent.click(await screen.findByTestId("agent-model-rail-ollama"));
   await screen.findByTitle("qwen3:8b");
   fireEvent.change(input, { target: { value: "qwen3:8b" } });
   fireEvent.click(screen.getByTitle("qwen3:8b"));
@@ -305,9 +315,9 @@ test("local endpoints show only installed models, and search works by model id",
 test("keyboard navigation moves through results and closes back to the trigger", async () => {
   mount(); const input = await open();
   fireEvent.keyDown(input, { key: "ArrowDown" });
-  expect(document.activeElement).toBe(screen.getByTitle("gemini-small"));
+  expect(document.activeElement).toBe(screen.getByTitle("openai-small"));
   fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
-  expect(document.activeElement).toBe(screen.getByTitle("gemini-large"));
+  expect(document.activeElement).toBe(screen.getByTitle("openai-large"));
   fireEvent.keyDown(document.activeElement!, { key: "Escape" });
   expect(document.activeElement).toBe(screen.getByRole("button", { name: "Model" }));
 });
@@ -326,9 +336,9 @@ test("subscriptions precede OpenCode, which initially shows only explicit free m
     { id: "opencode/big-pickle", label: "Big Pickle" },
   ] }), provider("z-plan", { runner: "grok-cli", cli_installed: true })];
   mount(); await open();
-  const groups = screen.getAllByRole("group");
-  expect(groups[0].getAttribute("aria-label")).toBe("Grok subscription");
-  expect(groups[1].getAttribute("aria-label")).toBe("opencode");
+  const rail = screen.getAllByTestId(/^agent-model-rail-/).map((mark) => mark.getAttribute("aria-label"));
+  expect(rail.slice(0, 3)).toEqual(["Favorites", "Grok subscription", "opencode"]);
+  show("opencode");
   expect(screen.getByTitle("opencode/test-free")).toBeTruthy();
   expect(screen.getByTitle("opencode/big-pickle")).toBeTruthy();
   expect(screen.queryByTitle("opencode/paid")).toBeNull();
@@ -341,8 +351,8 @@ test("subscriptions precede OpenCode, which initially shows only explicit free m
 
 test("OpenRouter folds independently, searching finds hidden models, and clearing restores the fold", async () => {
   extraProviders = [provider("openrouter")];
-  mount(); const input = await open();
-  const toggle = screen.getByRole("button", { name: "openrouter · API key" });
+  mount(); const input = await open(); show("openrouter");
+  const toggle = within(screen.getByRole("menu", { name: "Model" })).getByRole("button", { name: "openrouter · API key" });
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByTitle("openrouter-small")).toBeNull();
   fireEvent.click(toggle);
@@ -358,7 +368,7 @@ test("OpenRouter folds independently, searching finds hidden models, and clearin
 
 test("hidden OpenCode models remain selectable through search and a reopened menu is compact", async () => {
   extraProviders = [provider("opencode", { runner: "opencode-cli", cli_installed: true })];
-  mount(); const input = await open();
+  mount(); const input = await open(); show("opencode");
   fireEvent.click(screen.getByRole("button", { name: /Show more models/ }));
   fireEvent.keyDown(input, { key: "Escape" });
   const reopened = await open();
@@ -373,8 +383,21 @@ test.each([
   ["glm", "glm-cli"], ["deepseek-harness", "dsh-cli"],
 ] as const)("%s can use its CLI account without a published model list", async (id, runner) => {
   extraProviders = [provider(id, { runner, cli_installed: true, curated_models: [], default_model: "", effort_levels: [], default_effort: "" })];
-  mount(); await open();
+  mount(); await open(); show(id);
   const group = screen.getByRole("group", { name: id });
   fireEvent.click(within(group).getByRole("menuitemradio", { name: /Default model/ }));
   await waitFor(() => expect(posts[0]).toEqual({ provider: id, model: "", effort: "", account_id: "" }));
+});
+
+test("rail marks move with Alt+Arrow and keep their place on reopen", async () => {
+  localStorage.removeItem("jarvis.chat.providerOrder");
+  mount(); const input = await open();
+  const railOrder = () => screen.getAllByTestId(/^agent-model-rail-(?!favorites)/).map((mark) => mark.getAttribute("data-testid"));
+  expect(railOrder()).toEqual(["agent-model-rail-gemini", "agent-model-rail-openai"]);
+  fireEvent.keyDown(screen.getByTestId("agent-model-rail-openai"), { key: "ArrowUp", altKey: true });
+  expect(railOrder()).toEqual(["agent-model-rail-openai", "agent-model-rail-gemini"]);
+  fireEvent.keyDown(input, { key: "Escape" });
+  await open();
+  expect(railOrder()).toEqual(["agent-model-rail-openai", "agent-model-rail-gemini"]);
+  localStorage.removeItem("jarvis.chat.providerOrder");
 });

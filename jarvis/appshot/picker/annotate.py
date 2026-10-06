@@ -164,6 +164,40 @@ _LABELS: dict[str, dict[str, str]] = {
         "done": "Listo — enviar al asistente",  # i18n-allow: product UI string
         "placeholder": "Escribe un texto",  # i18n-allow: product UI string
     },
+    "zh": {
+        mm.MOVE: "选择并移动",  # i18n-allow: product UI string
+        mm.RECT: "矩形",  # i18n-allow: product UI string
+        mm.FILLED: "实心矩形",  # i18n-allow: product UI string
+        mm.ELLIPSE: "椭圆",  # i18n-allow: product UI string
+        mm.LINE: "直线",  # i18n-allow: product UI string
+        mm.ARROW: "箭头",  # i18n-allow: product UI string
+        mm.TEXT: "文字",  # i18n-allow: product UI string
+        mm.REDACT: "像素化 / 模糊",  # i18n-allow: product UI string
+        mm.SPOTLIGHT: "聚光灯",  # i18n-allow: product UI string
+        mm.COUNTER: "编号步骤",  # i18n-allow: product UI string
+        mm.PEN: "画笔",  # i18n-allow: product UI string
+        mm.HIGHLIGHT: "荧光笔",  # i18n-allow: product UI string
+        mm.BACKGROUND: "背景",  # i18n-allow: product UI string
+        "arrow_tapered": "渐细",  # i18n-allow: product UI string
+        "arrow_classic": "经典",  # i18n-allow: product UI string
+        "arrow_double": "双向",  # i18n-allow: product UI string
+        "text_plain": "纯文字",  # i18n-allow: product UI string
+        "text_label": "标签",  # i18n-allow: product UI string
+        "text_outline": "描边",  # i18n-allow: product UI string
+        "redact_pixelate": "像素化",  # i18n-allow: product UI string
+        "redact_blur": "模糊",  # i18n-allow: product UI string
+        "background_off": "无背景",  # i18n-allow: product UI string
+        "color": "颜色",  # i18n-allow: product UI string
+        "width": "粗细（1-5，鼠标滚轮）",  # i18n-allow: product UI string
+        "undo": "撤销",  # i18n-allow: product UI string
+        "redo": "重做",  # i18n-allow: product UI string
+        "copy": "复制",  # i18n-allow: product UI string
+        "save": "保存到“下载”",  # i18n-allow: product UI string
+        "edit": "在编辑器中打开",  # i18n-allow: product UI string
+        "cancel": "取消",  # i18n-allow: product UI string
+        "done": "完成 — 发送给助手",  # i18n-allow: product UI string
+        "placeholder": "输入文字",  # i18n-allow: product UI string
+    },
 }
 
 #: Shortcut shown in each tooltip.

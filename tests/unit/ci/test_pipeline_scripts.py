@@ -299,6 +299,40 @@ def test_update_writes_a_baseline_the_check_accepts(tmp_path):
     assert ratchet_tests.main(["check", "--baseline", str(out), str(report)]) == 0
 
 
+def _junit(run_dir: Path, cases: dict[str, str]) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    body = {"passed": "", "failed": "<failure/>", "skipped": "<skipped/>"}
+    xml = ""
+    for fid, outcome in cases.items():
+        module, name = fid.split("::")
+        xml += f'<testcase classname="{module}" name="{name}">{body[outcome]}</testcase>'
+    (run_dir / "junit-linux-1.xml").write_text(f"<testsuite>{xml}</testsuite>", encoding="utf-8")
+    return run_dir
+
+
+def test_prune_drops_only_entries_that_passed_in_every_run(tmp_path):
+    baseline = tmp_path / "b.json"
+    known = ["t.a::stable", "t.a::flips", "t.a::skipped", "t.a::still_fails", "t.a::gone"]
+    baseline.write_text(json.dumps({"known_failures": known}), encoding="utf-8")
+    first = {"stable": "passed", "flips": "passed", "skipped": "skipped", "still_fails": "failed"}
+    second = {"stable": "passed", "flips": "failed", "skipped": "passed", "still_fails": "failed"}
+    run1 = _junit(tmp_path / "r1", {f"t.a::{k}": v for k, v in first.items()})
+    run2 = _junit(tmp_path / "r2", {f"t.a::{k}": v for k, v in second.items()})
+    args = ["prune", "--baseline", str(baseline), "--os", "linux", str(run1), str(run2)]
+    assert ratchet_tests.main(args) == 0
+    remaining = json.loads(baseline.read_text(encoding="utf-8"))["known_failures"]
+    assert remaining == ["t.a::flips", "t.a::skipped", "t.a::still_fails", "t.a::gone"]
+
+
+def test_prune_refuses_a_run_without_evidence(tmp_path):
+    baseline = tmp_path / "b.json"
+    baseline.write_text(json.dumps({"known_failures": ["t.a::x"]}), encoding="utf-8")
+    (tmp_path / "empty").mkdir()
+    args = ["prune", "--baseline", str(baseline), "--os", "linux", str(tmp_path / "empty")]
+    assert ratchet_tests.main(args) == 1
+    assert json.loads(baseline.read_text(encoding="utf-8"))["known_failures"] == ["t.a::x"]
+
+
 # --------------------------------------------------------------------------- selection
 
 

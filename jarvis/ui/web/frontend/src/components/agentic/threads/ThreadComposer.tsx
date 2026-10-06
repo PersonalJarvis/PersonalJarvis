@@ -4,7 +4,7 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { ComposerTypeahead } from "@/components/agentchat/ComposerTypeahead";
 import { DictationButton } from "@/components/agentchat/DictationButton";
-import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem } from "@/components/agentchat/reduce";
+import { runningTurn, type QuestionState, type Timeline, type ToolBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
 import { releaseHeldFiles, useChatAttachments, type HeldFiles } from "@/components/agentchat/useChatAttachments";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
 import { useComposerTypeahead } from "@/components/agentchat/useComposerTypeahead";
@@ -12,7 +12,9 @@ import { useT } from "@/i18n";
 import type { ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
 import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
-import { AccessPicker, AgentModelPicker, EffortPicker } from "./ThreadPickers";
+import { effortLadder, snapEffort } from "@/lib/effortLadder";
+import { AccessPicker, AgentModelPicker, EffortPicker, modelsOf } from "./ThreadPickers";
+import { useRecalledMessages } from "./recalledMessages";
 import { rememberSeat, rememberedSeat, threadAgents, useThreadChatStore } from "./threadModel";
 
 /** A message typed while the agent was still working, sent when it is free. */
@@ -28,32 +30,60 @@ const drafts = new Map<string, string>();
 const queues = new Map<string, QueuedMessage[]>();
 
 /**
- * The message sent last, with its files, so Escape can take it back while the
- * agent has not started on it. Module-level: a thread's first message swaps
- * the empty-thread composer for the timeline one.
+ * The message sent last, with its files, when it went and where the thread
+ * stood then, so Escape can take it back. Module-level: a thread's first
+ * message swaps the empty-thread composer for the timeline one.
  */
-let lastSent: { text: string; files: HeldFiles } | null = null;
+interface SentMessage {
+  text: string;
+  files: HeldFiles;
+  sentMs: number;
+  /** The thread it went to; null when the send creates the thread. */
+  sessionId: string | null;
+  /** The newest event seq the thread had shown before the send. */
+  afterSeq: number;
+}
+let lastSent: SentMessage | null = null;
 
-function keepSent(next: { text: string; files: HeldFiles } | null): void {
+/** How long after sending Escape still takes a message back once the agent started thinking. */
+export const RECALL_WINDOW_MS = 15_000;
+
+function keepSent(next: SentMessage | null): void {
   if (lastSent && lastSent.files !== next?.files) releaseHeldFiles(lastSent.files);
   lastSent = next;
 }
 
+/** The event seq a user item was built from (`u-<seq>`), or 0. */
+function itemSeq(item: UserItem): number {
+  const seq = Number(item.id.slice(2));
+  return Number.isFinite(seq) ? seq : 0;
+}
+
 /**
- * True while the running turn answers `sent` and shows no work yet: no
- * reasoning, no tool call, no words. The message right before the turn must be
- * the one sent, so a queued follow-up or another thread's turn never hands back
- * the wrong text.
+ * The user item `sent` became, when Escape may still take it back: the one
+ * message that arrived in its thread after the send, with nothing after it
+ * but the reply still running and the notices around it. While that reply
+ * shows no work the message comes back however long the agent takes to
+ * connect; once it reasons or writes, only inside RECALL_WINDOW_MS; once it
+ * ran a tool, never — that work may have touched files.
+ *
+ * Matched by position, never by text: what the backend stores is not always
+ * byte for byte what the box held (a dictated transcript can come back with
+ * other Unicode forms), and one changed character must not leave the person
+ * with nothing but the Stop button.
  */
-function untouchedReply(timeline: Timeline, sent: { text: string; files: HeldFiles }): boolean {
+function recallableItem(timeline: Timeline, sent: SentMessage, sessionId: string | null, now: number): UserItem | null {
+  if (!sessionId || (sent.sessionId !== null && sent.sessionId !== sessionId)) return null;
+  const fresh = timeline.items.filter((item): item is UserItem => item.type === "user" && itemSeq(item) > sent.afterSeq);
+  if (fresh.length !== 1) return null;
+  const asked = fresh[0];
   const turn = runningTurn(timeline);
-  if (!turn || !turn.blocks.every((block) => block.kind === "text" && !block.text.trim())) return false;
-  const index = timeline.items.indexOf(turn);
-  const asked = timeline.items.slice(0, index).reverse().find((item) => item.type === "user");
-  if (!asked || asked.type !== "user") return false;
-  if (sent.text) return asked.text.trim() === sent.text;
-  const names = sent.files.attachments.map((item) => item.name).sort().join("|");
-  return names !== "" && asked.attachments.map((item) => item.name).sort().join("|") === names;
+  const after = timeline.items.slice(timeline.items.indexOf(asked) + 1);
+  if (after.some((item) => item.type === "user" || (item.type === "turn" && item !== turn))) return null;
+  if (!turn) return asked;
+  if (turn.blocks.some((block) => block.kind === "tool")) return null;
+  const working = turn.blocks.some((block) => block.kind !== "text" || block.text.trim());
+  return !working || now - sent.sentMs <= RECALL_WINDOW_MS ? asked : null;
 }
 
 /** The open question card of the newest turn, if any. */
@@ -287,6 +317,21 @@ export function ThreadComposer({
     if (first && first.id !== draft.provider) void useThreadChatStore.getState().setDraft({ provider: first.id });
   }, [activeSessionId, providers, draft.provider]);
 
+  // A model change can leave the picked effort off that model's ladder (Opus
+  // 4.6 has no xhigh, Gemini 3.1 Pro no medium); fold it the way the backend
+  // does, so the label always names the level the agent runs on. With a
+  // thread open, only once the draft mirrors that thread — never onto a
+  // session whose snapshot has not arrived yet.
+  useEffect(() => {
+    if (!provider) return;
+    if (activeSessionId && (activeSession?.session_id !== activeSessionId
+      || activeSession.model !== draft.model || activeSession.effort !== draft.effort)) return;
+    const ladder = effortLadder(provider, modelsOf(provider, liveModels), draft.model);
+    if (!ladder.some(Boolean)) return;
+    const next = snapEffort(draft.effort, ladder, provider.default_effort);
+    if (next !== draft.effort) void useThreadChatStore.getState().setDraft({ effort: next });
+  }, [provider, liveModels, draft.model, draft.effort, activeSessionId, activeSession]);
+
   const setValue = useCallback((next: string) => {
     setValueState(next);
     drafts.set(threadKey, next);
@@ -390,7 +435,8 @@ export function ThreadComposer({
       setQueue((current) => [...current, { id: ++queueId.current, text, attachments }]);
       return;
     }
-    keepSent({ text, files: held });
+    const before = useThreadChatStore.getState();
+    keepSent({ text, files: held, sentMs: Date.now(), sessionId: before.activeSessionId, afterSeq: before.timeline.lastSeq });
     const sent = await dispatch(text, attachments);
     if (!sent && !useThreadChatStore.getState().activeSessionId) {
       // Nothing was created: give the words back instead of losing them.
@@ -398,14 +444,16 @@ export function ThreadComposer({
     }
   };
 
-  // Escape before the agent started on the message stops the turn and puts the
-  // message, files included, back into the box to edit and send again.
+  // Escape soon after sending stops the turn, takes the message out of the
+  // thread and puts it, files included, back into the box to edit and send again.
   const recall = useRef<() => boolean>(() => false);
   recall.current = () => {
-    if (!lastSent || !untouchedReply(timeline, lastSent)) return false;
+    const asked = lastSent && recallableItem(timeline, lastSent, activeSessionId, Date.now());
+    if (!lastSent || !asked) return false;
     const { text, files: held } = lastSent;
     lastSent = null;
     setPaused(true);
+    if (activeSessionId) useRecalledMessages.getState().hide(activeSessionId, asked.id);
     void useThreadChatStore.getState().cancel();
     const current = drafts.get(threadKey) ?? "";
     setValue(current.trim() ? `${text}\n${current}` : text);
@@ -415,12 +463,17 @@ export function ThreadComposer({
   };
   useEffect(() => {
     if (!onScreen) return;
+    // Capture phase: a handler further down (the IDE's own key layers) must
+    // not swallow the Escape first. It only takes the key in the seconds
+    // after a send, when the message is still recallable.
     const onEscape = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
-      if (recall.current()) event.preventDefault();
+      if (!recall.current()) return;
+      event.preventDefault();
+      event.stopPropagation();
     };
-    window.addEventListener("keydown", onEscape);
-    return () => window.removeEventListener("keydown", onEscape);
+    window.addEventListener("keydown", onEscape, true);
+    return () => window.removeEventListener("keydown", onEscape, true);
   }, [onScreen]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {

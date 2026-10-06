@@ -21,7 +21,7 @@ import {
  * without one view importing the other. The mascot reuses the real Gigi SVG.
  *
  * The canonical bar uses the existing Pet control-strip preview, including
- * its write, microphone, blue talk sphere, speaker and phone controls.
+ * its write, microphone, voice indicator, speaker and phone controls.
  *
  * These are still previews, not instruments: they animate nothing. Three
  * thumbnails oscillating side by side on a settings screen is noise, and with

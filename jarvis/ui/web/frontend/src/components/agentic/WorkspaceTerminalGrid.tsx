@@ -507,7 +507,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onRename={(name) => rename(terminal, name)}
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
             onSplit={(direction) => onAdd(terminal.name, direction)}
-            branch={terminal.branch || undefined}
+            branch={terminal.branch || undefined} folder={terminal.folder || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             workspaceItems={transferring || saving || disabled ? [] : movable
               .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}

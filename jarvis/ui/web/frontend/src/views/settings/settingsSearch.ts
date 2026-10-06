@@ -1,11 +1,14 @@
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
-import type { UiLanguage } from "@/i18n";
+import { uiDictionary, type UiLanguage } from "@/i18n";
 
 type LocaleTree = Record<string, unknown>;
 
-const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es };
+// Chinese is not bundled here: its dictionary is large and only loads when
+// someone picks it, so search reads the resident copy the i18n store holds.
+const LOCALES: Partial<Record<UiLanguage, LocaleTree>> = { en, de, es };
+const localeTree = (language: UiLanguage): LocaleTree => LOCALES[language] ?? uiDictionary(language);
 
 /** Each Settings page group owns the copy used to search its controls. */
 const SEARCH_GROUPS = [
@@ -74,7 +77,7 @@ export function searchSettingsOptions(
 ): SettingsOptionMatch[] {
   const needle = normalize(query.trim());
   if (!needle) return [];
-  const settings = atPath(LOCALES[language], "settings_view") as LocaleTree;
+  const settings = atPath(localeTree(language), "settings_view") as LocaleTree;
 
   return SEARCH_GROUPS.flatMap(({ id, keys }) => {
     const label = translate(`settings_view.nav.${id.replaceAll("-", "_")}`);
@@ -93,7 +96,7 @@ export function searchSettingsPages(
 ) {
   const needle = normalize(query.trim());
   if (!needle) return [];
-  const locale = LOCALES[language];
+  const locale = localeTree(language);
 
   return SEARCH_PAGES.flatMap(({ id, keys }) => {
     const label = translate(`nav.${id === "agent-instructions" ? "agent_instructions" : id}`);

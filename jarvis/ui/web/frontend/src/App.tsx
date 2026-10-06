@@ -25,6 +25,7 @@ import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
 import { AppshotEditorHost } from "@/components/appshot/AppshotEditorHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
+import { useMacWindowCloseFallback } from "@/lib/macWindowClose";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
   layout table and the keybind hook — none of which anything needs before
@@ -138,6 +139,11 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || !eventMatchesChord(event, switcherCombo)) return;
       if (document.querySelector('[data-keybind-recording="true"]')) return;
+      // Inside the code editor Ctrl+Space asks for suggestions, as in every
+      // code editor; any other switcher chord still works there.
+      const inEditor = event.target instanceof Element && event.target.closest(".monaco-editor");
+      const ctrlSpace = event.code === "Space" && event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
+      if (inEditor && ctrlSpace) return;
       event.preventDefault();
       event.stopPropagation();
       useQuickSwitcher.getState().toggle();
@@ -146,6 +152,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [switcherEnabled, switcherCombo]);
 
+  useMacWindowCloseFallback();
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();

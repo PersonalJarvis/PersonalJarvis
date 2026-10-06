@@ -1,10 +1,11 @@
 import type { ReactNode } from "react";
-import { Bot, Building2, CreditCard, FileDiff, Files, FolderTree, GitBranch, type LucideIcon } from "lucide-react";
+import { Bot, Building2, CreditCard, FileDiff, Files, FolderTree, GitBranch, Search, type LucideIcon } from "lucide-react";
 import type { SidePanelTabId } from "@/store/ideSidePanel";
 import { AgentsOverview } from "./AgentsOverview";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
 import { GitOverviewTab } from "./git/GitOverviewTab";
 import { OfficeTab } from "./OfficeTab";
+import { SearchPanel } from "./search/SearchPanel";
 import { SkillsTab } from "./skills/SkillsTab";
 import { SubscriptionsTab } from "./subscriptions/SubscriptionsTab";
 
@@ -42,6 +43,12 @@ export const SIDE_PANEL_TABS: readonly SidePanelTabDef[] = [
     labelKey: "ide_side_panel.tabs.files",
     icon: FolderTree,
     render: () => <ExplorerPanel view="files" />,
+  },
+  {
+    id: "search",
+    labelKey: "ide_side_panel.tabs.search",
+    icon: Search,
+    render: () => <SearchPanel />,
   },
   {
     id: "git",
