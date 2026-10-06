@@ -41,7 +41,6 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
   const [base, setBase] = useState("");
   const [projectMenu, setProjectMenu] = useState(false);
   const [composerHeight, setComposerHeight] = useState(160);
-  const composerBox = useRef<HTMLDivElement | null>(null);
   // The sub-agent whose conversation shows instead of the main thread's, by its spawn call.
   const [openAgent, setOpenAgent] = useState<string | null>(null);
   // Sub-agents the CLI filed on its own (Codex), read for the open thread.
@@ -124,13 +123,19 @@ export function ThreadView({ onScreen }: { onScreen: boolean }) {
     if (row && onScreen) useIdeThreadsStore.getState().markSeen(row.session_id, row.updated_ms);
   }, [sessions, selection.sessionId, onScreen]);
 
-  // How tall the composer is, so the conversation scrolls clear of it.
-  useEffect(() => {
-    const box = composerBox.current;
-    if (!box || typeof ResizeObserver === "undefined") return;
+  // How tall the composer is, so the conversation scrolls clear of it. The
+  // box only exists once the thread has messages — a draft's first send
+  // mounts it later — so it is measured whenever it attaches, not on mount.
+  const composerObserver = useRef<ResizeObserver | null>(null);
+  const composerBox = useCallback((box: HTMLDivElement | null) => {
+    composerObserver.current?.disconnect();
+    composerObserver.current = null;
+    if (!box) return;
+    setComposerHeight(box.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => setComposerHeight(box.offsetHeight));
     observer.observe(box);
-    return () => observer.disconnect();
+    composerObserver.current = observer;
   }, []);
 
   const prepareDraft = useCallback(async (): Promise<string | null> => {
