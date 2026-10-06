@@ -4,6 +4,7 @@ import { isUnguardedPermissionMode, permissionModeIcon } from "@/components/agen
 import { Combobox, type ComboboxGroup } from "@/components/ui/combobox";
 import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
+import { effortLadder } from "@/lib/effortLadder";
 import { cn } from "@/lib/utils";
 import type { ComposerDraft, ProviderOption } from "@/store/agentChat";
 
@@ -97,11 +98,10 @@ export function EffortPicker({ provider, draft, liveModels, onPick, separated = 
   onPick: (effort: string) => void;
 }) {
   const t = useT();
-  const levels = useMemo(() => {
-    if (!provider) return [];
-    const model = modelsOf(provider, liveModels).find((entry) => entry.id === draft.model);
-    return model?.efforts ?? provider.effort_levels;
-  }, [provider, liveModels, draft.model]);
+  const levels = useMemo(
+    () => (provider ? effortLadder(provider, modelsOf(provider, liveModels), draft.model) : []),
+    [provider, liveModels, draft.model],
+  );
   if (levels.length === 0 || (levels.length === 1 && levels[0] === "")) return null;
   return <>
     {separated && <Separator />}

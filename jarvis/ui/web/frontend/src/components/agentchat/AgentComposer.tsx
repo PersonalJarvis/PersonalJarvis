@@ -22,6 +22,7 @@ import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatS
 import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { folderLeaf } from "@/lib/folderPath";
+import { effortLadder, snapEffort } from "@/lib/effortLadder";
 import { isApiRunner, pickAgentChatFolder } from "@/lib/agentChatApi";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
@@ -500,21 +501,16 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // The effort ladder is the provider's, narrowed to the chosen model's own
   // levels when the catalog knows them (agy's Pro: low/high; its Claude
   // models: none at all, so the pick disappears).
-  const effortLevels = useMemo<string[]>(() => {
-    if (!provider) return [];
-    const model = modelList.find((m) => m.id === draft.model);
-    if (model && Array.isArray(model.efforts)) return model.efforts;
-    return provider.effort_levels ?? [];
-  }, [provider, modelList, draft.model]);
+  const effortLevels = useMemo<string[]>(
+    () => effortLadder(provider, modelList, draft.model),
+    [provider, modelList, draft.model],
+  );
 
   useEffect(() => {
     // A model change can leave the picked effort off that model's ladder;
-    // snap to the nearest lower level (else the first) like the backend does.
-    if (!provider || !effortLevels.length || effortLevels.includes(draft.effort)) return;
-    const order = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-    const idx = order.indexOf(draft.effort);
-    const lower = effortLevels.filter((l) => order.indexOf(l) <= idx && order.indexOf(l) >= 0);
-    const next = lower.length ? lower[lower.length - 1] : effortLevels[0];
+    // fold it the way the backend does, so the label is the level that runs.
+    if (!provider || !effortLevels.some(Boolean)) return;
+    const next = snapEffort(draft.effort, effortLevels, provider.default_effort);
     if (next !== draft.effort) void setDraft({ effort: next });
   }, [provider, effortLevels, draft.effort, setDraft]);
 

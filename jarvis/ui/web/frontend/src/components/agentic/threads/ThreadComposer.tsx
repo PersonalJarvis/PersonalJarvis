@@ -12,7 +12,8 @@ import { useT } from "@/i18n";
 import type { ChatAttachment, PlanDecision } from "@/lib/agentChatApi";
 import { joinProviderOptions, type ComposerDraft, type ProviderOption } from "@/store/agentChat";
 import { cn } from "@/lib/utils";
-import { AccessPicker, AgentModelPicker, EffortPicker } from "./ThreadPickers";
+import { effortLadder, snapEffort } from "@/lib/effortLadder";
+import { AccessPicker, AgentModelPicker, EffortPicker, modelsOf } from "./ThreadPickers";
 import { rememberSeat, rememberedSeat, threadAgents, useThreadChatStore } from "./threadModel";
 
 /** A message typed while the agent was still working, sent when it is free. */
@@ -286,6 +287,21 @@ export function ThreadComposer({
     const first = providers.find((option) => option.connected) ?? providers[0];
     if (first && first.id !== draft.provider) void useThreadChatStore.getState().setDraft({ provider: first.id });
   }, [activeSessionId, providers, draft.provider]);
+
+  // A model change can leave the picked effort off that model's ladder (Opus
+  // 4.6 has no xhigh, Gemini 3.1 Pro no medium); fold it the way the backend
+  // does, so the label always names the level the agent runs on. With a
+  // thread open, only once the draft mirrors that thread — never onto a
+  // session whose snapshot has not arrived yet.
+  useEffect(() => {
+    if (!provider) return;
+    if (activeSessionId && (activeSession?.session_id !== activeSessionId
+      || activeSession.model !== draft.model || activeSession.effort !== draft.effort)) return;
+    const ladder = effortLadder(provider, modelsOf(provider, liveModels), draft.model);
+    if (!ladder.some(Boolean)) return;
+    const next = snapEffort(draft.effort, ladder, provider.default_effort);
+    if (next !== draft.effort) void useThreadChatStore.getState().setDraft({ effort: next });
+  }, [provider, liveModels, draft.model, draft.effort, activeSessionId, activeSession]);
 
   const setValue = useCallback((next: string) => {
     setValueState(next);

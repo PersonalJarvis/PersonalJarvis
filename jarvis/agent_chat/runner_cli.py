@@ -72,7 +72,13 @@ from typing import Any, Final
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
 from jarvis.agent_chat.cli_catalog import CatalogCache, catalog_key, discover_codex_models
-from jarvis.agent_chat.effort import ORDER, effort_note, normalize_effort, snap_to_ladder
+from jarvis.agent_chat.effort import (
+    ORDER,
+    effort_for_model,
+    effort_note,
+    normalize_effort,
+    snap_to_ladder,
+)
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.permissions import default_permission, normalize_permission
 from jarvis.agent_chat.questions import (
@@ -3018,6 +3024,18 @@ async def resume_hosted_cli_turn(handle: TurnHandle, proc: Any) -> str | None:
     return outcome.vendor_session
 
 
+def _agy_model_ladder(model: str) -> list[str] | None:
+    """agy's effort levels for ``model`` from the cached catalog (``None`` = unknown)."""
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        return None
+    for row in rows or []:
+        if row.get("id") == model and "efforts" in row:
+            return list(row["efforts"])
+    return None
+
+
 def _agy_effective_effort(model: str, effort: str) -> str:
     """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
     try:
@@ -3040,6 +3058,9 @@ async def _run_cli_once(
     session = handle.session
     cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
+    # The picked model's own levels when the catalog knows them (``None`` =
+    # the provider ladder applies); see ``effort_for_model``.
+    model_ladder: list[str] | tuple[str, ...] | None = None
     planner = _PLANNERS[runner]
     vendor_session: str | None = None
     from jarvis.society.remote import placement_for_session
@@ -3078,17 +3099,29 @@ async def _run_cli_once(
                     )
                 for row in models or []:
                     if row["id"] == session.model:
-                        effort = snap_to_ladder(session.effort, list(row.get("efforts", [])))
+                        model_ladder = list(row.get("efforts", []))
                         break
+            if runner == "claude-cli":
+                from jarvis.agent_chat.catalog import claude_model_efforts
+
+                # Claude Code folds a level the model lacks on its own (Opus
+                # 4.6 runs ``--effort xhigh`` as high); fold it here first so
+                # the flag, the note below and the composer name one level.
+                model_ladder = claude_model_efforts(session.model)
             if runner == "agy-cli" and placement is None:
                 # A chat can start before the model picker has loaded its catalog.
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
+            if runner == "agy-cli":
+                model_ladder = _agy_model_ladder(session.model)
+            effort = effort_for_model(session.provider, session.effort, model_ladder)
             told_effort = (
                 _agy_effective_effort(session.model, effort) if runner == "agy-cli" else effort
             )
-            planned_prompt = effort_note(session.provider, told_effort) + planned_prompt
+            planned_prompt = (
+                effort_note(session.provider, told_effort, model_ladder) + planned_prompt
+            )
             if runner == "claude-cli":
                 await asyncio.to_thread(warm_claude_capabilities)
             plan: CliPlan = planner(
