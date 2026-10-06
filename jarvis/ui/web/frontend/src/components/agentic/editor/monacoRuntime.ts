@@ -6,20 +6,27 @@
  * time someone opens a file. Everything is bundled locally: no CDN, so the
  * editor works offline.
  *
- * Deliberately lean: the editor core with all its editing features, syntax
- * highlighting for every language Monaco ships, and the JSON language service.
- * The TypeScript, CSS and HTML language services would add about 9 MB of
- * workers for completions that the coding agents beside the editor already
- * provide.
+ * It carries the editor core with all its editing features, syntax
+ * highlighting for every language Monaco ships, and the language services for
+ * JSON, CSS/SCSS/Less, HTML and TypeScript/JavaScript (completions, hovers,
+ * formatting, syntax errors). Each service runs in its own web worker, and a
+ * worker only starts when a file of its language opens.
  */
 import * as monaco from "monaco-editor/editor/editor.api";
 import "monaco-editor/features/register.all";
 import "monaco-editor/languages/definitions/register.all";
 import "monaco-editor/languages/features/json/register";
+import "monaco-editor/languages/features/css/register";
+import "monaco-editor/languages/features/html/register";
+import { javascriptDefaults, typescriptDefaults, JsxEmit, ModuleKind, ModuleResolutionKind, ScriptTarget } from "monaco-editor/languages/features/typescript/register";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import JsonWorker from "monaco-editor/languages/features/json/json.worker?worker";
+import CssWorker from "monaco-editor/languages/features/css/css.worker?worker";
+import HtmlWorker from "monaco-editor/languages/features/html/html.worker?worker";
+import TsWorker from "monaco-editor/languages/features/typescript/ts.worker?worker";
 
 import { setMonaco } from "./editorModels";
+import "./editorGutter.css";
 
 declare global {
   interface Window {
@@ -29,9 +36,30 @@ declare global {
 
 self.MonacoEnvironment = {
   getWorker(_workerId: string, label: string) {
-    return label === "json" ? new JsonWorker() : new EditorWorker();
+    if (label === "json") return new JsonWorker();
+    if (label === "css" || label === "scss" || label === "less") return new CssWorker();
+    if (label === "html" || label === "handlebars" || label === "razor") return new HtmlWorker();
+    if (label === "typescript" || label === "javascript") return new TsWorker();
+    return new EditorWorker();
   },
 };
+
+// The editor sees one file at a time, not the project: its imports cannot be
+// resolved, so type errors would paint every import red. Syntax errors,
+// completions and hovers stay on; the agents and the project's own build
+// check the types.
+for (const defaults of [typescriptDefaults, javascriptDefaults]) {
+  defaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false });
+  defaults.setCompilerOptions({
+    target: ScriptTarget.ESNext,
+    module: ModuleKind.ESNext,
+    moduleResolution: ModuleResolutionKind.NodeJs,
+    jsx: JsxEmit.ReactJSX,
+    allowJs: true,
+    allowNonTsExtensions: true,
+    esModuleInterop: true,
+  });
+}
 
 setMonaco(monaco);
 

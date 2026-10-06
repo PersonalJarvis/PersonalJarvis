@@ -324,6 +324,17 @@ export function loadHead(fileKey: string): Promise<Monaco.editor.ITextModel | nu
   return load;
 }
 
+/** The file's committed text for the gutter markers; null when git has none. */
+export async function loadHeadText(fileKey: string): Promise<string | null> {
+  const file = store().files[fileKey];
+  if (!file) return null;
+  try {
+    return await fetchHeadText(file.workspaceId, file.path);
+  } catch {
+    return null; // no markers is the honest answer when git cannot say
+  }
+}
+
 /**
  * Write a buffer to disk.
  *

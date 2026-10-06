@@ -4,7 +4,8 @@ import { Loader2 } from "lucide-react";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useCodeEditorStore, type EditorTab } from "@/store/codeEditor";
-import { languageFor, loadFile, loadHead, modelOf, rememberViewState, viewStateOf } from "./editorModels";
+import { languageFor, loadFile, loadHead, loadHeadText, modelOf, rememberViewState, viewStateOf } from "./editorModels";
+import { gutterChanges } from "./lineDiff";
 import { EDITOR_OPTIONS, applyTheme, monaco } from "./monacoRuntime";
 import { renderKindOf } from "./fileKinds";
 import { ExtractedPreview, MediaViewer, Notice, RenderedPreview } from "./FileViewers";
@@ -116,6 +117,53 @@ export default function EditorSurface({
     }
     reportCursor(editor);
     editor.focus();
+  }, [tab.key, tab.fileKey, tab.mode, ready]);
+
+  // Gutter markers against the last commit: green added, blue modified, a red
+  // notch where lines were deleted. Recomputed shortly after each edit.
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = modelOf(tab.fileKey);
+    if (tab.mode !== "edit" || !ready || !editor || !model) return;
+    let alive = true;
+    let base: string | null = null;
+    let timer: number | undefined;
+    const collection = editor.createDecorationsCollection();
+    const paint = () => {
+      if (!alive || base === null || editor.getModel() !== model) {
+        collection.clear();
+        return;
+      }
+      const lines = model.getLineCount();
+      const changes = gutterChanges(base, model.getValue()) ?? [];
+      collection.set(
+        changes.map((change) => {
+          const below = change.kind === "deleted" && change.start > lines;
+          const start = Math.min(change.start, lines);
+          return {
+            range: new monaco.Range(start, 1, Math.min(change.end, lines), 1),
+            options: {
+              isWholeLine: true,
+              linesDecorationsClassName: below ? "jarvis-gutter-deleted-below" : `jarvis-gutter-${change.kind}`,
+            },
+          };
+        }),
+      );
+    };
+    void loadHeadText(tab.fileKey).then((text) => {
+      base = text;
+      paint();
+    });
+    const listener = model.onDidChangeContent(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(paint, 250);
+    });
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      listener.dispose();
+      collection.clear();
+    };
   }, [tab.key, tab.fileKey, tab.mode, ready]);
 
   // Diff tabs: the committed text on the left, the live (editable) buffer on the right.
