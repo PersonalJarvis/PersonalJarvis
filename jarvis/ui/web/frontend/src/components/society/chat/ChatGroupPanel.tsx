@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Pencil, Trash2 } from "lucide-react";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 import { BrandedSelect } from "@/components/ui/select";
 import { deleteSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
 import { createAgentChatStore } from "@/store/agentChat";
@@ -11,6 +12,16 @@ import { RosterRail } from "../roster/RosterRail";
 import { AgentChatPanel } from "./AgentChatPanel";
 import { ChatGroupDialog } from "./ChatGroupDialog";
 import { MeetingChat } from "./MeetingChat";
+
+/** The active view reads as selected; both states keep the same box size. */
+function viewToggle(active: boolean): string {
+  return cn(
+    "rounded-md border px-3 py-2 text-sm transition-colors",
+    active
+      ? "border-border-strong bg-secondary text-foreground"
+      : "border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
+  );
+}
 
 interface Props {
   group: SocietyChatGroup;
@@ -139,9 +150,9 @@ export function ChatGroupPanel({
     <div className="flex min-h-0 min-w-0 flex-col border-l border-border">
       <div className="flex shrink-0 gap-2 border-b border-border p-2">
         <button type="button" aria-pressed={shared} onClick={() => setShared(true)}
-          className="rounded-md px-3 py-2 text-sm text-foreground hover:bg-secondary">{t("society.meeting.title")}</button>
+          className={viewToggle(shared)}>{t("society.meeting.title")}</button>
         <button type="button" aria-pressed={!shared} onClick={() => setShared(false)}
-          className="rounded-md px-3 py-2 text-sm text-foreground hover:bg-secondary">{t("society.meeting.individual")}</button>
+          className={viewToggle(!shared)}>{t("society.meeting.individual")}</button>
       </div>
       {shared ? <MeetingChat key={group.group_id} group={group} roster={roster} /> : <div className="grid min-h-0 min-w-0 flex-1 grid-cols-2 divide-x-2 divide-border-strong overflow-hidden bg-background"
       data-testid="society-group-split">

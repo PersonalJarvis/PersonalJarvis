@@ -35,7 +35,12 @@ it("opens two existing agent chats in separate stores and keeps each pane indepe
   /></QueryClientProvider>);
 
   expect(screen.getByTestId("meeting")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "society.meeting.individual" }));
+  const meetingView = screen.getByRole("button", { name: "society.meeting.title" });
+  const individualView = screen.getByRole("button", { name: "society.meeting.individual" });
+  expect(meetingView.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(individualView);
+  expect(individualView.getAttribute("aria-pressed")).toBe("true");
+  expect(meetingView.getAttribute("aria-pressed")).toBe("false");
   const left = screen.getByTestId("society-group-pane-left");
   const right = screen.getByTestId("society-group-pane-right");
   expect(within(left).getByTestId("society-group-avatar-left")).toBeTruthy();

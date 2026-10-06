@@ -27,7 +27,11 @@ export function MeetingChat({ group, roster }: { group: SocietyChatGroup; roster
   const client = useQueryClient();
   const key = ["society", "meeting", group.group_id];
   const url = `/api/society/chat-groups/${encodeURIComponent(group.group_id)}/meeting`;
-  const query = useQuery({ queryKey: key, queryFn: () => request(url), refetchInterval: 2000 });
+  // Poll only while a round runs; an idle transcript changes only when someone sends.
+  const query = useQuery({
+    queryKey: key, queryFn: () => request(url),
+    refetchInterval: (current) => current.state.data?.running ? 2000 : false,
+  });
   const [text, setText] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");

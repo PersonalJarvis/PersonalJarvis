@@ -58,3 +58,12 @@ it("keeps an unsent message when the request fails and blocks oversized meetings
   expect(screen.getByText("society.meeting.limit")).toBeTruthy();
   expect((screen.getByRole("button", { name: "society.meeting.send" }) as HTMLButtonElement).disabled).toBe(true);
 });
+
+it("does not poll an idle meeting", async () => {
+  const fetcher = vi.fn(async () => ({ ok: true, json: async () => empty }));
+  vi.stubGlobal("fetch", fetcher);
+  mount();
+  await waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+  await new Promise((resolve) => setTimeout(resolve, 2_300));
+  expect(fetcher).toHaveBeenCalledOnce();
+});
