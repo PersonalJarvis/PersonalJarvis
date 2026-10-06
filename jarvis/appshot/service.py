@@ -119,6 +119,10 @@ async def take_appshot(
             issue = await check() if check is not None else None
             if issue is not None:
                 return AppshotResult(status="refused", reason_code=issue[0], message=issue[1])
+            # The picture is the screen at the press, as the picker shows it
+            # frozen — not whatever a video has played on to by the time the
+            # user finishes selecting.
+            frozen = await service.freeze_screens()
             picked = await _pick_area(service, _language(config))
             if isinstance(picked, AppshotResult):
                 return picked
@@ -134,6 +138,7 @@ async def take_appshot(
                     trace_id=trace_id or uuid.uuid4(),
                     region=bbox,
                     master=True,
+                    frozen=frozen,
                 )
             finally:
                 shutter_markup.reset(token)

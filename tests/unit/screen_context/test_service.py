@@ -1161,3 +1161,162 @@ async def test_focus_settling_after_the_picker_does_not_void_an_area() -> None:
 
     assert outcome.status == "captured"
     assert len(capturer.grabs) == 1
+
+
+# --------------------------------------------------------------------------
+# Frozen screens: the area is the screen at the press, not after selecting
+# --------------------------------------------------------------------------
+
+_SMALL_MONITORS = [
+    {"left": 0, "top": 0, "width": 400, "height": 100},
+    {"left": 0, "top": 0, "width": 200, "height": 100},
+    {"left": 200, "top": 0, "width": 200, "height": 100},
+]
+
+
+class _PlayingVideo:
+    """A screen whose colour changes between grabs, like a playing video."""
+
+    name = "fake-video"
+
+    def __init__(self) -> None:
+        self.colour = (255, 0, 0)
+        self.grabs: list[tuple] = []
+
+    def grab(self, bbox, *, window_handle=None):
+        self.grabs.append((tuple(bbox), window_handle))
+        width, height = int(bbox[2]), int(bbox[3])
+        return ((width, height), bytes(self.colour) * (width * height))
+
+
+@pytest.fixture
+def _sdr_monitors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No HDR duplication and no ICC lookup on the test host's real monitors."""
+    from types import SimpleNamespace
+
+    import jarvis.platform.display_color as display_color
+    import jarvis.platform.hdr_grab as hdr_grab
+
+    monkeypatch.setattr(hdr_grab, "grab_extended", lambda _bbox: None)
+    monkeypatch.setattr(
+        display_color, "display_color", lambda *_a, **_k: SimpleNamespace(icc_profile=None)
+    )
+
+
+def _centre_colour(jpeg: bytes) -> tuple[int, int, int]:
+    from PIL import Image
+
+    with Image.open(io.BytesIO(jpeg)) as image:
+        rgb = image.convert("RGB")
+        return rgb.getpixel((rgb.width // 2, rgb.height // 2))
+
+
+@pytest.mark.usefixtures("_sdr_monitors")
+async def test_a_frozen_area_is_cut_from_the_press_not_grabbed_after_selecting() -> None:
+    screen = _PlayingVideo()
+    service = make_service(capturer=screen, displays=FakeDisplays(_SMALL_MONITORS))
+
+    frozen = await service.freeze_screens()
+    screen.colour = (0, 0, 255)  # the video played on while the user selected
+    outcome = await service.capture(region=(210, 10, 120, 60), master=True, frozen=frozen)
+
+    assert outcome.status == "captured"
+    # One grab per monitor at the press; none after the selection.
+    assert sorted(screen.grabs) == [((0, 0, 200, 100), None), ((200, 0, 200, 100), None)]
+    red, green, blue = _centre_colour(outcome.context.image)
+    assert red > 200 and blue < 60
+    assert outcome.context.target.bbox == (210, 10, 120, 60)
+
+
+@pytest.mark.usefixtures("_sdr_monitors")
+async def test_an_area_outside_the_frozen_screens_is_grabbed_live() -> None:
+    screen = _PlayingVideo()
+    service = make_service(capturer=screen, displays=FakeDisplays(_SMALL_MONITORS))
+    frozen = _service_module.FrozenScreens(
+        frames=(
+            _service_module._FrozenMonitor(
+                bbox=(0, 0, 200, 100),
+                size=(200, 100),
+                rgb=bytes((0, 255, 0)) * (200 * 100),
+                master=_service_module.MasterImage(pixels=None),
+            ),
+        )
+    )
+
+    outcome = await service.capture(region=(210, 10, 120, 60), frozen=frozen)
+
+    assert outcome.status == "captured"
+    assert screen.grabs == [((210, 10, 120, 60), None)]
+
+
+def test_a_cut_follows_backing_pixels_and_slices_the_master() -> None:
+    import numpy as np
+
+    # A macOS-style frame: 2x the monitor's points.
+    pixels = np.zeros((200, 400, 4), dtype=np.float16)
+    pixels[20:40, 60:100] = 1.0
+    frame = _service_module._FrozenMonitor(
+        bbox=(100, 0, 200, 100),
+        size=(400, 200),
+        rgb=bytes(400 * 200 * 3),
+        master=_service_module.MasterImage(pixels=pixels, hdr=True),
+    )
+    frozen = _service_module.FrozenScreens(frames=(frame,))
+
+    size, rgb, master = frozen.cut((130, 10, 20, 10))
+
+    assert size == (40, 20)
+    assert len(rgb) == 40 * 20 * 3
+    assert master.pixels.shape == (20, 40, 4)
+    assert float(master.pixels.min()) == 1.0
+    assert frozen.cut((290, 0, 20, 10)) is None  # runs off the frozen monitor
+
+
+@pytest.mark.usefixtures("_sdr_monitors")
+async def test_a_denylisted_window_in_the_frozen_frame_blocks_the_area() -> None:
+    class VaultClosesAfterThePress(FakeWindowProbe):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reads = 0
+
+        def visible_windows(self):
+            self.reads += 1
+            if self.reads == 1:
+                return (
+                    WindowFacts(app_name="vault", title="1Password", frame_rect=(0, 0, 150, 90)),
+                )
+            return (WindowFacts(app_name="editor", title="notes", frame_rect=(0, 0, 400, 100)),)
+
+    screen = _PlayingVideo()
+    service = make_service(
+        settings=ScreenContextSettings(denylist=("1password",)),
+        window_probe=VaultClosesAfterThePress(),
+        capturer=screen,
+        displays=FakeDisplays(_SMALL_MONITORS),
+    )
+
+    frozen = await service.freeze_screens()
+    outcome = await service.capture(region=(10, 10, 100, 60), master=True, frozen=frozen)
+
+    assert outcome.status == "refused"
+    assert outcome.reason_kind == "policy"
+    assert outcome.context is None
+
+
+def test_a_full_depth_frame_turns_only_the_cut_area_into_8_bit() -> None:
+    import numpy as np
+
+    pixels = np.zeros((100, 200, 4), dtype=np.float16)
+    pixels[10:30, 20:60, :3] = 1.0  # SDR white at 80 nits
+    frame = _service_module._FrozenMonitor(
+        bbox=(0, 0, 200, 100),
+        size=(200, 100),
+        rgb=None,
+        master=_service_module.MasterImage(pixels=pixels, hdr=True, sdr_white_nits=80.0),
+    )
+
+    size, rgb, master = _service_module.FrozenScreens(frames=(frame,)).cut((20, 10, 40, 20))
+
+    assert size == (40, 20)
+    assert rgb == b"\xff" * (40 * 20 * 3)
+    assert master.hdr and master.pixels.shape == (20, 40, 4)

@@ -50,6 +50,10 @@ selection, so nothing stays resident. The picker provides:
 - every screen is frozen under a light dim the moment the picker opens, so
   nothing moves under the selection (where a frozen frame cannot be grabbed,
   a dim layer over the live desktop is used instead);
+- the appshot is that same instant: every screen is grabbed at the shortcut
+  press, before the picker opens, and the finished area is cut out of that
+  frame (at full depth on an HDR monitor), so a video that plays on while
+  the area is selected does not change the picture;
 - the pointer is a thin crosshair with a small ring, and two small numbers
   beside it show the position — while dragging, the width and height in real
   pixels. No lens, no boxed labels, no banner;

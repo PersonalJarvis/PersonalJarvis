@@ -144,9 +144,20 @@ class RegionCaptureService:
     def __init__(self) -> None:
         self.regions: list = []
         self.displays = Displays()
+        self.steps: list[str] = []
+        self.frozen = object()
+        self.frozen_used: list = []
 
-    async def capture(self, *, verdict=None, trace_id=None, region=None, master=False):
+    async def freeze_screens(self):
+        self.steps.append("freeze")
+        return self.frozen
+
+    async def capture(
+        self, *, verdict=None, trace_id=None, region=None, master=False, frozen=None
+    ):
+        self.steps.append("capture")
         self.regions.append((verdict, region))
+        self.frozen_used.append(frozen)
         context = ScreenContext(
             image=b"jpeg",
             mime="image/jpeg",
@@ -174,6 +185,7 @@ def flow(monkeypatch):
     picks: list = []
 
     async def pick_region(**_kwargs):
+        service.steps.append("pick")
         return picks.pop(0) if picks else None
 
     monkeypatch.setattr(turn, "get_service", lambda bus=None: service)
@@ -201,6 +213,24 @@ async def test_an_area_appshot_captures_exactly_the_selected_rectangle(flow) -> 
     assert verdict.intent is VisualIntent.SCREEN
     assert result.shot.label == "selected area"
     assert result.shot.delivered_to == "message"
+
+
+async def test_an_area_appshot_is_the_screen_at_the_press_not_after_selecting(flow) -> None:
+    # A video plays on while the user selects: the screens freeze BEFORE the
+    # picker opens and the area is cut from that frame.
+    service, picks = flow
+    picks.append(
+        region.Selection(
+            screen={"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0, "dpr": 1.0},
+            rect=(0.25, 0.5, 0.5, 0.25),
+        )
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+
+    assert result.ok
+    assert service.steps == ["freeze", "pick", "capture"]
+    assert service.frozen_used == [service.frozen]
 
 
 async def test_esc_on_the_picker_takes_nothing(flow) -> None:
