@@ -210,7 +210,8 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
   const { changes, error: changesError, refresh } = useWorkspaceChanges(workspaceId);
   const [treeNonce, setTreeNonce] = useState(0);
   const [collapseNonce, setCollapseNonce] = useState(0);
-  const [creating, setCreating] = useState<{ folder: string; kind: "file" | "directory"; nonce: number } | null>(null);
+  // `folder: null` = where the selection is, as the header's New File / New Folder do.
+  const [creating, setCreating] = useState<CreateRequest | null>(null);
   const editorTabs = useCodeEditorStore((state) => (workspaceId ? state.tabs.filter((tab) => tab.workspaceId === workspaceId).length : 0));
   const editorVisible = useCodeEditorStore((state) => state.visible);
 
@@ -273,10 +274,10 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
           <span className="ml-auto flex shrink-0 items-center">
             {view === "files" && (
               <>
-                <HeaderButton label={t("ide_side_panel.explorer.new_file")} testId="explorer-new-file" onClick={() => setCreating({ folder: "", kind: "file", nonce: Date.now() })}>
+                <HeaderButton label={t("ide_side_panel.explorer.new_file")} testId="explorer-new-file" onClick={() => setCreating({ folder: null, kind: "file", nonce: Date.now() })}>
                   <FilePlus className="h-3.5 w-3.5" aria-hidden />
                 </HeaderButton>
-                <HeaderButton label={t("ide_side_panel.explorer.new_folder")} onClick={() => setCreating({ folder: "", kind: "directory", nonce: Date.now() })}>
+                <HeaderButton label={t("ide_side_panel.explorer.new_folder")} onClick={() => setCreating({ folder: null, kind: "directory", nonce: Date.now() })}>
                   <FolderPlus className="h-3.5 w-3.5" aria-hidden />
                 </HeaderButton>
                 <HeaderButton label={t("ide_side_panel.explorer.collapse_all")} onClick={() => setCollapseNonce((value) => value + 1)}>
@@ -420,6 +421,13 @@ export function ExplorerPanel({ view }: { view: ExplorerView }) {
   );
 }
 
+interface CreateRequest {
+  /** The folder to create in; null = the selected folder, or the selected file's folder. */
+  folder: string | null;
+  kind: "file" | "directory";
+  nonce: number;
+}
+
 interface TreeProps {
   workspaceId: string;
   filter: string;
@@ -429,7 +437,7 @@ interface TreeProps {
   changesKey: string;
   reloadNonce: number;
   collapseNonce: number;
-  creating: { folder: string; kind: "file" | "directory"; nonce: number } | null;
+  creating: CreateRequest | null;
   onCreatingDone: () => void;
   onCreate: (folder: string, kind: "file" | "directory") => void;
   absolute: (relative: string) => string;
@@ -444,12 +452,15 @@ function NameField({
   initial,
   depth,
   icon,
+  where,
   onSubmit,
   onCancel,
 }: {
   initial: string;
   depth: number;
   icon: ReactNode;
+  /** The folder the name lands in, shown on hover. */
+  where?: string;
   onSubmit: (name: string) => void;
   onCancel: () => void;
 }) {
@@ -477,6 +488,7 @@ function NameField({
         ref={field}
         defaultValue={initial}
         data-testid="explorer-name-field"
+        title={where}
         onKeyDown={(event) => {
           event.stopPropagation();
           if (event.key === "Enter") finish(true);
@@ -612,9 +624,29 @@ function FileTree({
     setFocused(activePath);
   }, [activePath, expand]);
 
-  // A new entry is typed inside its folder, so that folder must be open.
+  // Where a new entry goes, fixed when New File / New Folder is pressed: the
+  // folder the request names, else the selected folder, else the selected
+  // file's folder, else the workspace root. That folder opens for the name field.
+  const [createAt, setCreateAt] = useState<string | null>(null);
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
+  const childrenRef = useRef(children);
+  childrenRef.current = children;
   useEffect(() => {
-    if (creating?.folder) expand(creating.folder);
+    if (!creating) {
+      setCreateAt(null);
+      return;
+    }
+    let folder = creating.folder;
+    if (folder === null) {
+      const selected = focusedRef.current;
+      const item = selected
+        ? Object.values(childrenRef.current).flat().find((entry) => entry.path === selected)
+        : undefined;
+      folder = !selected ? "" : item?.is_directory ? selected : parentPath(selected);
+    }
+    setCreateAt(folder);
+    if (folder) expand(folder);
   }, [creating, expand]);
 
   const editor = useCodeEditorStore.getState();
@@ -685,7 +717,7 @@ function FileTree({
 
   const rows: Row[] = [];
   const walk = (path: string, depth: number) => {
-    if (creating && creating.folder === path) rows.push({ kind: "create", folder: path, entry: creating.kind, depth });
+    if (creating && createAt === path) rows.push({ kind: "create", folder: path, entry: creating.kind, depth });
     for (const item of sortEntries(children[path] ?? [])) {
       // Only entries that really sit inside this folder; a bad listing must not loop.
       if (path && !item.path.startsWith(`${path}/`)) continue;
@@ -749,6 +781,11 @@ function FileTree({
         role="tree"
         aria-label={t("ide_side_panel.explorer.view_files")}
         className="min-h-full"
+        // A click on the empty space below the rows clears the selection, so
+        // New File / New Folder go to the workspace root again.
+        onClick={(event) => {
+          if (event.target === event.currentTarget) setFocused(null);
+        }}
         onContextMenu={(event) => openMenu(event, "", true)}
       >
         {error && <li className="px-3 py-2 text-[11px] text-destructive">{error}</li>}
@@ -759,6 +796,7 @@ function FileTree({
                 <NameField
                   initial=""
                   depth={row.depth}
+                  where={absolute(row.folder).replace(/[\\/]+$/, "")}
                   icon={row.entry === "directory" ? <Folder className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden /> : <FilePlus className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />}
                   onSubmit={(name) => void create(row.folder, row.entry, name)}
                   onCancel={onCreatingDone}

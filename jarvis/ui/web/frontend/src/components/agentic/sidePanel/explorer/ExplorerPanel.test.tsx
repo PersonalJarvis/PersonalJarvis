@@ -36,7 +36,12 @@ function respond(url: string): unknown {
   if (url.includes("/text-file/version")) return { version: url.includes("src") ? null : "v1" };
   if (url.includes("/entries")) return { path: "src/new.ts", trashed: true };
   if (url.includes("/files")) {
-    if (url.includes("?path=")) return { workspace_id: "w1", root_name: "app", path: "src", truncated: false, entries: [] };
+    if (url.includes("?path=src")) {
+      return { workspace_id: "w1", root_name: "app", path: "src", truncated: false, entries: [
+        { name: "app.ts", path: "src/app.ts", is_directory: false, is_symlink: false },
+      ] };
+    }
+    if (url.includes("?path=")) return { workspace_id: "w1", root_name: "app", path: "", truncated: false, entries: [] };
     return { workspace_id: "w1", root_name: "app", path: "", truncated: false, entries: [
       { name: "src", path: "src", is_directory: true, is_symlink: false },
       { name: "README.md", path: "README.md", is_directory: false, is_symlink: false },
@@ -136,6 +141,30 @@ describe("ExplorerPanel", () => {
     await waitFor(() => expect(useCodeEditorStore.getState().tabs).toMatchObject([{ path: "src/new.ts", preview: false }]));
     const create = calls.find((call) => call.url.endsWith("/entries"));
     expect(JSON.parse(create!.body)).toEqual({ path: "src/new.ts", kind: "file" });
+  });
+
+  it("creates a new entry in the selected folder, or beside the selected file", async () => {
+    render(<ExplorerPanel view="files" />);
+    await waitFor(() => expect(screen.getAllByTestId("explorer-tree-row")).toHaveLength(2));
+    const row = (path: string) => screen.getAllByTestId("explorer-tree-row").find((entry) => entry.dataset.path === path)!;
+    const createVia = async (button: string, name: string) => {
+      fireEvent.click(screen.getByLabelText(button));
+      const field = await screen.findByTestId("explorer-name-field");
+      fireEvent.change(field, { target: { value: name } });
+      fireEvent.keyDown(field, { key: "Enter" });
+      await waitFor(() => expect(screen.queryByTestId("explorer-name-field")).toBeNull());
+    };
+    const sent = () => calls.filter((call) => call.url.endsWith("/entries")).map((call) => JSON.parse(call.body).path);
+
+    fireEvent.click(row("src"));
+    await waitFor(() => expect(row("src/app.ts")).toBeTruthy());
+    await createVia("New file", "new.ts");
+    fireEvent.click(row("src/app.ts"));
+    await createVia("New folder", "lib");
+    fireEvent.click(screen.getByTestId("explorer-tree"));
+    await createVia("New file", "top.ts");
+
+    await waitFor(() => expect(sent()).toEqual(["src/new.ts", "src/lib", "top.ts"]));
   });
 
   it("asks before deleting and sends the file to the trash", async () => {
