@@ -80,7 +80,15 @@ def _claude_cli_installed() -> bool:
     return bool(shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"))
 
 
-def resolve_runner(provider: str, *, surface: str = "agent") -> str:
+#: Society agent runtimes that replace the provider's runner (``AgentRuntime``
+#: minus ``jarvis``), each answered by its ACP driver in ``runner_cli``.
+EXTERNAL_RUNTIME_RUNNERS: Final[dict[str, str]] = {
+    "hermes": "hermes-cli",
+    "openclaw": "openclaw-cli",
+}
+
+
+def resolve_runner(provider: str, *, surface: str = "agent", runtime: str = "") -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
     ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
@@ -94,6 +102,10 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     answers there — not even the dual Claude row, which runs on the Anthropic
     API behind its key like every other seat.
     """
+    if runtime in EXTERNAL_RUNTIME_RUNNERS and surface == "society":
+        # A Hermes / OpenClaw agent: that runtime's loop answers every turn and
+        # the provider only names the model it is configured with.
+        return EXTERNAL_RUNTIME_RUNNERS[runtime]
     kit = kit_for(surface)
     api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
@@ -109,6 +121,15 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     if row.runner == "api":
         return api_runner
     return row.runner
+
+
+def session_runner(session: Any) -> str:
+    """:func:`resolve_runner` for a stored chat session (its runtime included)."""
+    return resolve_runner(
+        session.provider,
+        surface=session.surface,
+        runtime=str(getattr(session, "runtime", "") or ""),
+    )
 
 
 #: ``AgentChatStore.data_version`` after the front page's chat gave up its
@@ -877,7 +898,7 @@ class AgentChatService:
                         },
                     ),
                 )
-            runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
+            runner = selected_runner or session_runner(session)
             turn_started_emitted = True
             await self._emit(
                 session_id,
@@ -1725,4 +1746,5 @@ __all__ = [
     "SessionBusy",
     "Subscriber",
     "resolve_runner",
+    "session_runner",
 ]

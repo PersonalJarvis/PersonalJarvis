@@ -75,6 +75,10 @@ Runner = Literal[
     "glm-cli",
     "dsh-cli",
     "cursor-cli",
+    # Society agent runtimes (``service.EXTERNAL_RUNTIME_RUNNERS``): picked by
+    # the agent's runtime, never by a provider row.
+    "hermes-cli",
+    "openclaw-cli",
 ]
 
 

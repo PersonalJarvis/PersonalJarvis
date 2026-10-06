@@ -31,6 +31,7 @@ from pydantic import ValidationError
 from .companion import random_companion, validate_avatar_companion
 from .events import (
     AgentApprovalMode,
+    AgentRuntime,
     AgentState,
     BrowserMode,
     Checkpoint,
@@ -183,6 +184,9 @@ class AgentRecord:
     #: Where the agent's work executes: ``None`` = this computer, else the id
     #: of a connected machine (``jarvis.computers``) reached over SSH.
     computer_id: str | None = None
+    #: The agent loop that executes turns (``AgentRuntime``); ``jarvis`` for
+    #: every agent created before runtimes existed.
+    runtime: AgentRuntime = AgentRuntime.JARVIS
 
     @property
     def session_id(self) -> str:
@@ -226,6 +230,7 @@ class AgentRecord:
             "browser_mode": str(self.browser_mode),
             "browser_allowed_domains": list(self.browser_allowed_domains),
             "computer_id": self.computer_id,
+            "runtime": str(self.runtime),
             "session_id": self.session_id,
             "created_ms": self.created_ms,
             "updated_ms": self.updated_ms,
@@ -276,6 +281,7 @@ class AgentRecord:
                 str(x) for x in _loads(row.get("browser_allowed_domains_json"), [])
             ],
             computer_id=str(row["computer_id"]) if row.get("computer_id") else None,
+            runtime=AgentRuntime(str(row.get("runtime") or "jarvis")),
             created_ms=int(row.get("created_ms") or 0),
             updated_ms=int(row.get("updated_ms") or 0),
         )
@@ -311,6 +317,7 @@ _EDITABLE: Final[frozenset[str]] = frozenset(
         "browser_mode",
         "browser_allowed_domains",
         "computer_id",
+        "runtime",
     }
 )
 
@@ -375,6 +382,15 @@ def _validate_computer(value: Any) -> str | None:
     return computer_id
 
 
+def _check_runtime_placement(runtime: Any, computer_id: Any) -> None:
+    """An external runtime (Hermes, OpenClaw) runs on this computer only, for now."""
+    if str(runtime or "jarvis") != "jarvis" and computer_id:
+        raise RosterError(
+            FailureReason.BLOCKED_BY_POLICY,
+            "Hermes and OpenClaw agents run on this computer; clear the connected computer first",
+        )
+
+
 def _coerce(field_name: str, value: Any) -> Any:
     """Validate one editable field and return its column value."""
     if field_name == "name":
@@ -399,6 +415,8 @@ def _coerce(field_name: str, value: Any) -> Any:
         return _enum(AgentApprovalMode, value, field_name)
     if field_name == "browser_mode":
         return _enum(BrowserMode, value, field_name)
+    if field_name == "runtime":
+        return _enum(AgentRuntime, value, field_name)
     if field_name == "browser_allowed_domains":
         if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
             raise RosterError(
@@ -564,6 +582,9 @@ class Roster:
             raise RosterError(
                 FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
             )
+        if tier_value is Tier.LEAD and str(fields.get("runtime") or "jarvis") != "jarvis":
+            raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead always runs on Jarvis")
+        _check_runtime_placement(fields.get("runtime"), fields.get("computer_id"))
         if tier_value is Tier.LEAD and "approval_mode" in fields:
             raise RosterError(
                 FailureReason.BLOCKED_BY_POLICY,
@@ -655,6 +676,8 @@ class Roster:
                 raise RosterError(
                     FailureReason.TIER_NOT_ALLOWED, "the lead always runs on this computer"
                 )
+            if key == "runtime" and agent_id == LEAD_AGENT_ID and str(value) != "jarvis":
+                raise RosterError(FailureReason.TIER_NOT_ALLOWED, "the lead always runs on Jarvis")
             if key == "tier" and str(value) == str(Tier.LEAD) and agent_id != LEAD_AGENT_ID:
                 raise RosterError(FailureReason.TIER_NOT_ALLOWED, "only Jarvis is the lead")
             if key == "parent_agent_id" and value:
@@ -665,6 +688,11 @@ class Roster:
                 if await self._store.get_agent_row(str(value)) is None:
                     raise RosterError(FailureReason.TARGET_UNKNOWN, f"parent {value!r} not found")
             columns[_JSON_FIELDS.get(key, key)] = _coerce(key, value)
+        if "runtime" in columns or "computer_id" in columns:
+            _check_runtime_placement(
+                columns.get("runtime", current.get("runtime")),
+                columns.get("computer_id", current.get("computer_id")),
+            )
         try:
             await self._store.update_agent(agent_id, columns)
         except sqlite3.IntegrityError as exc:

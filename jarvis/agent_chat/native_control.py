@@ -81,9 +81,9 @@ class NativeClaudeGoal:
 
     async def available(self, session: Any) -> bool:
         from .runner_cli import ACCOUNT_OVERRIDE, _account_env, claude_argv_prefix
-        from .service import resolve_runner
+        from .service import session_runner
 
-        if resolve_runner(session.provider, surface=session.surface) not in (
+        if session_runner(session) not in (
             "claude-cli",
             "glm-cli",
         ):
@@ -201,7 +201,7 @@ class NativeClaudeGoal:
 
         from .runner_api import TurnHandle
         from .runner_cli import run_cli_turn
-        from .service import resolve_runner
+        from .service import session_runner
 
         session = service.store.get_session(sid)
         if not session or not session.vendor_session:
@@ -223,7 +223,7 @@ class NativeClaudeGoal:
             tools_disabled=True,
         )
         await run_cli_turn(
-            handle, "/goal clear", resolve_runner(session.provider, surface=session.surface)
+            handle, "/goal clear", session_runner(session)
         )
         if any(
             e["kind"] == "turn_finished" and e["payload"].get("status") != "done" for e in captured
@@ -398,9 +398,9 @@ class NativeCodexGoal:
 
     async def available(self, session: Any) -> bool:
         from .runner_cli import codex_argv_prefix
-        from .service import resolve_runner
+        from .service import session_runner
 
-        if resolve_runner(session.provider, surface=session.surface) != "codex-cli":
+        if session_runner(session) != "codex-cli":
             return False
         try:
             prefix = codex_argv_prefix()

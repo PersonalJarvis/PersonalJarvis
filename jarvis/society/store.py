@@ -148,6 +148,13 @@ class SocietyStore:
                 "ALTER TABLE society_agents ADD COLUMN computer_id TEXT DEFAULT NULL"
             )
             log.info("society store: migration applied — added computer_id")
+        if "runtime" not in existing:
+            # Every existing agent keeps running on Jarvis' own runtime.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN runtime TEXT NOT NULL DEFAULT 'jarvis' "
+                "CHECK (runtime IN ('jarvis', 'hermes', 'openclaw'))"
+            )
+            log.info("society store: migration applied — added runtime")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:
