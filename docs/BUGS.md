@@ -2527,6 +2527,17 @@ unifying both overlays under a SINGLE long-lived Tk root and swapping rendered
 content (canvas / widgets) instead of the root — a larger refactor, never the
 per-style-root approach.
 
+**Update 2026-10-06:** waiting for a restart left the old surface on screen
+(the pet stayed beside a freshly picked bar until the app restarted). A style
+the app has not built yet now starts in its own host process
+(`DesktopApp._build_hosted_surface`, the `jarvis.ui.jarvisbar.host` used on
+macOS since BUG-057), so the switch applies live on every OS without a second
+in-process root; the surface being left is hidden (in-process) or stopped
+(hosted) at once. `restart_required` remains only for a host that fails to
+start. The same change reads "what is on screen" from the app instead of
+`cfg.ui.orb_style`, which the settings route had already overwritten — an idle
+pet switched to the mascot now leaves the screen as it should.
+
 ### Regression test
 
 `tests/unit/ui/test_desktop_swap_overlay.py` pins the contract: `none` +
