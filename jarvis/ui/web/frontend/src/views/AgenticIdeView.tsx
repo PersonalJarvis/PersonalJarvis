@@ -15,13 +15,8 @@ import { isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
-import { assignAgentKeys, leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
-import { IdeCommandPalette } from "@/components/agentic/IdeCommandPalette";
-import { buildIdeCommands, type IdeCommandRun } from "@/components/agentic/ideCommands";
-import { SIDE_PANEL_TABS } from "@/components/agentic/sidePanel/sidePanelTabs";
-import { pickIdeFace } from "@/components/agentic/threads/IdeLayoutSwitch";
-import { appZoomCaps, appZoomChordMatches } from "@/lib/appZoom";
-import { appChord, useAppChordSettings } from "@/store/appChordSettings";
+import { leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { appChord } from "@/store/appChordSettings";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -133,14 +128,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     { kind: "terminal"; terminal: TerminalState; workspaceId: string } | { kind: "workspace"; workspaceId: string } | null
   >(null);
   const [voiceOpen, setVoiceOpen] = useState(storedVoiceBubbleOpen);
-  // The command palette (caption search or its chord, see components/agentic/ideCommands).
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const leaderChord = useAppChordSettings((settings) => settings.bindings.ide_menu);
-  const panelOpen = useIdeSidePanelStore((panel) => panel.open);
-  const verseOn = useIdeSidePanelStore((panel) => panel.open && panel.maximized && panel.active === "office");
-  // The caption asks for key-menu commands through the store; they run through
-  // `runHotkey`, which is declared further down and changes every render.
-  const runHotkeyRef = useRef<(hotkey: IdeHotkeyAction) => void>(() => undefined);
   // One fixed, dense text size (the look of a standalone terminal); the
   // maintainer does not want a per-user zoom for the workspace terminals.
   const fontSize = FONT_DEFAULT;
@@ -328,8 +315,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       setVoiceOpen((current) => { const next = !current; storeVoiceBubbleOpen(next); return next; });
       return;
     }
-    if (action.kind === "command") { runHotkeyRef.current(action.command); return; }
-    if (action.kind === "command-palette") { setPaletteOpen(true); return; }
     if (action.kind === "new-workspace") {
       const project = projects.find((entry) => entry.id === action.projectId);
       if (project) {
@@ -502,7 +487,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
   // key menu. Pane commands go to the grid that owns the pane; the rest are
   // the same calls the buttons and the sidebar make.
-  const hotkeysEnabled = onScreen && !threads && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest && !paletteOpen;
+  const hotkeysEnabled = onScreen && !threads && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
   const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
   const sendPaneCommand = (command: PaneCommand) => {
     if (!session || !selected) return;
@@ -571,45 +556,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       case "connect-project": setProjectDialog(true); return;
     }
   };
-  runHotkeyRef.current = runHotkey;
-
-  // Ctrl+Shift+P (rebindable) opens the command palette from anywhere in the
-  // IDE. Capture phase, like the key menu, so a focused terminal never sees it.
-  useEffect(() => {
-    if (!onScreen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      const combo = appChord("ide_commands");
-      if (!combo || event.isComposing || !appZoomChordMatches(event, combo)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      setPaletteOpen((open) => !open);
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onScreen]);
-  const runCommand = (run: IdeCommandRun): void => {
-    switch (run.type) {
-      case "hotkey": runHotkey(run.action); return;
-      case "face": pickIdeFace(run.face); return;
-      case "panel-tab": useIdeSidePanelStore.getState().openTab(run.tab); return;
-      case "panel-toggle": {
-        const panel = useIdeSidePanelStore.getState();
-        panel.setOpen(!panel.open);
-        return;
-      }
-    }
-  };
-  const paletteCommands = paletteOpen ? buildIdeCommands({
-    agents: assignAgentKeys(hotkeyAgents),
-    leaderCaps: leaderChord ? appZoomCaps(leaderChord) : [],
-    hasSession: Boolean(session),
-    threads,
-    workspaces: openWorkspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
-    activeWorkspaceId: session?.id ?? null,
-    panelTabs: SIDE_PANEL_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey) })),
-    panelOpen,
-    face: verseOn ? "verse" : layout,
-  }) : [];
   const closeTarget: CloseTarget | null = !closeRequest ? null
     : closeRequest.kind === "terminal"
       ? { kind: "terminal", name: closeRequest.terminal.name, agent: closeRequest.terminal.agent, displayName: closeRequest.terminal.display_name }
@@ -663,7 +609,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
       }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
-    <IdeCommandPalette open={paletteOpen && onScreen} onOpenChange={setPaletteOpen} commands={paletteCommands} onRun={runCommand} />
 
     {agentPicker && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm"
       role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setAgentPicker(null); }}>

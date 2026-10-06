@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "Reset the app zoom to 100 %",
       "open_overlay": "Open this list",
       "quick_switch": "Quick switch to any section",
-      "ide_menu": "Agentic IDE key menu (press twice to send it to the pane)",
-      "ide_commands": "Agentic IDE command palette (search every IDE command)"
+      "ide_menu": "Agentic IDE key menu (press twice to send it to the pane)"
     }
   },
   "quick_switch": {

@@ -22,7 +22,7 @@ const git = vi.hoisted(() => ({ inspectGit: vi.fn(), prepareGit: vi.fn() }));
 vi.mock("@/lib/gitApi", async (importOriginal) => ({ ...(await importOriginal<object>()), ...git }));
 vi.mock("@/lib/agenticIdeApi", () => api);
 vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
-vi.mock("@/store/events", () => ({ useEventStore: Object.assign((select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }), { getState: () => ({ pushToast: api.pushToast, activeSection: "agentic-ide" }) }) }));
+vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }) }));
 vi.mock("@/components/agentic/FolderPicker", () => ({ FolderPicker: ({ onSelect }: { onSelect: (path: string) => void }) => <button onClick={() => onSelect("/code/app")}>Pick folder</button> }));
 vi.mock("@/components/agentic/VoiceBubble", () => ({ VoiceBubble: () => null, storedVoiceBubbleOpen: () => false, storeVoiceBubbleOpen: vi.fn() }));
 vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session, onAdd }: { session: { id: string }; onAdd: () => void }) => <><div data-testid="live-grid">{session.id}</div><button onClick={onAdd}>Pane add</button></> }));
@@ -275,30 +275,6 @@ describe("Agentic IDE project flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(api.renameWorkspace).toHaveBeenCalledWith("w1", "Installer"));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Rename workspace" })).toBeNull());
-  });
-
-  it("runs caption commands and the command palette against the open workspace", async () => {
-    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
-      focus_mode: false, project: { name: "App" }, terminals: [] };
-    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
-    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_project_id: "p1", active_workspace_id: "w1", max_terminals: 8 });
-    // cmdk measures its list and scrolls the selected row into view; jsdom has neither.
-    vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-    if (!("scrollIntoView" in Element.prototype)) Object.assign(Element.prototype, { scrollIntoView() {} });
-    render(<AgenticIdeView />);
-    await screen.findByTestId("live-grid");
-    // The caption's "+" asks through the store, like the sidebar does.
-    act(() => useIdeProjectsStore.getState().runCommand({ kind: "agent-picker" }));
-    expect(await screen.findByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    // Ctrl+Shift+P opens the palette; a picked row runs the same command.
-    fireEvent.keyDown(window, { key: "P", code: "KeyP", ctrlKey: true, shiftKey: true });
-    const input = await screen.findByTestId("ide-command-palette-input");
-    fireEvent.change(input, { target: { value: "add coding" } });
-    fireEvent.click(await screen.findByTestId("ide-command-agent-picker"));
-    await waitFor(() => expect(screen.queryByTestId("ide-command-palette")).toBeNull());
-    expect(await screen.findByRole("dialog", { name: "Add coding agent" })).toBeTruthy();
-    vi.unstubAllGlobals();
   });
 
   it("keeps six incrementally added agents in a balanced 3 by 2 layout", async () => {

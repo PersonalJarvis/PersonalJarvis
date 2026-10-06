@@ -3,10 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "./TopBar";
 import { useEventStore } from "@/store/events";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
-import { useIdeChatStore } from "@/store/ideChat";
-import { useIdeProjectsStore } from "@/store/ideProjects";
 import { useIdeSidePanelStore } from "@/store/ideSidePanel";
-import { useIdeThreadsStore } from "@/store/ideThreads";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -37,33 +34,10 @@ describe("TopBar caption buttons", () => {
   });
 });
 
-describe("TopBar Agentic IDE tools", () => {
-  beforeEach(() => {
-    useIdeChatStore.setState({ workspace: { id: "w1", name: "Jarvis", path: "/repo" } });
-    useIdeThreadsStore.setState({ layout: "grid" });
+describe("TopBar side panel toggle", () => {
+  it("opens and closes the IDE side panel from the caption", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
     useIdeSidePanelStore.setState({ open: false, maximized: false });
-    useIdeProjectsStore.setState({ action: null });
-  });
-
-  it("stays out of every other section", () => {
-    render(<TopBar />);
-    expect(screen.queryByTestId("ide-caption-tools")).toBeNull();
-    expect(screen.queryByTestId("ide-command-search")).toBeNull();
-  });
-
-  it("asks the IDE for the agent picker, the palette and git", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    render(<TopBar />);
-    fireEvent.click(screen.getByTestId("ide-caption-add-agent"));
-    expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "command", command: { kind: "agent-picker" } });
-    fireEvent.click(screen.getByTestId("ide-command-search"));
-    expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "command-palette" });
-    fireEvent.click(screen.getByTestId("ide-caption-git"));
-    expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "git-panel", workspaceId: "w1" });
-  });
-
-  it("opens and closes the side panel from the caption", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
     render(<TopBar />);
     fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
     expect(useIdeSidePanelStore.getState().open).toBe(true);
@@ -71,16 +45,9 @@ describe("TopBar Agentic IDE tools", () => {
     expect(useIdeSidePanelStore.getState().open).toBe(false);
   });
 
-  it("disables workspace tools until a workspace is open, and hides add agent in threads", () => {
-    useEventStore.setState({ activeSection: "agentic-ide" });
-    useIdeChatStore.setState({ workspace: null });
-    const { rerender } = render(<TopBar />);
-    expect((screen.getByTestId("ide-caption-add-agent") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("ide-caption-git") as HTMLButtonElement).disabled).toBe(true);
-    act(() => useIdeThreadsStore.setState({ layout: "threads" }));
-    rerender(<TopBar />);
-    expect(screen.queryByTestId("ide-caption-add-agent")).toBeNull();
-    expect(screen.getByTestId("ide-caption-voice")).toBeTruthy();
+  it("stays out of every other section", () => {
+    render(<TopBar />);
+    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
   });
 });
 

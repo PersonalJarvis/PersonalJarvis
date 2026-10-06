@@ -1738,8 +1738,7 @@
       "app_zoom_reset": "Restablecer el zoom de la aplicación al 100 %",
       "open_overlay": "Abrir esta lista",
       "quick_switch": "Saltar rápido a cualquier sección",
-      "ide_menu": "Menú de teclas del IDE agéntico (pulsa dos veces para enviarlo al panel)",
-      "ide_commands": "Paleta de comandos del IDE agéntico (busca cualquier comando del IDE)"
+      "ide_menu": "Menú de teclas del IDE agéntico (pulsa dos veces para enviarlo al panel)"
     }
   },
   "quick_switch": {

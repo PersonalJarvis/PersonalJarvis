@@ -38,7 +38,7 @@ import { AppZoomChordRow, AppZoomKeybinds, sameChord } from "@/views/settings/Ap
 import { CharacterChordRow } from "@/views/settings/CharacterChordRow";
 import { KeyCaps, NoKeys, ShortcutListRow } from "@/views/settings/ShortcutListRow";
 import { AppshotShortcutField } from "@/views/AppshotShortcutField";
-import { appZoomChordMatches, appZoomIntentFor, type AppZoomComboProblem, type AppZoomIntent } from "@/lib/appZoom";
+import { appZoomIntentFor, type AppZoomComboProblem, type AppZoomIntent } from "@/lib/appZoom";
 import { APP_CHORD_IDS, appChordProblem, defaultAppChords, type AppChordId } from "@/lib/appChords";
 import { useAppZoomSettings } from "@/store/appZoomSettings";
 import { terminalZoomBindings, useAppChordSettings } from "@/store/appChordSettings";
@@ -213,8 +213,6 @@ function KeyTester({ config }: { config: KeybindsConfig | null }) {
         meaningKey = "shortcut_overlay.workspace.open_overlay";
       } else if (isLeaderChord(event, appChords.ide_menu)) {
         meaningKey = "shortcut_overlay.workspace.ide_menu";
-      } else if (appChords.ide_commands && appZoomChordMatches(event, appChords.ide_commands)) {
-        meaningKey = "shortcut_overlay.workspace.ide_commands";
       } else if (combo) {
         const mine = [...normalizedComboTokens(combo)].sort().join("+");
         const hit = Object.entries(config?.keybinds ?? {}).find(
@@ -445,7 +443,7 @@ function AppChordRow({ shortcut, id }: { shortcut: AppSettingShortcut; id: AppCh
       // purpose: inside a terminal the terminal wins. Everything else must be
       // unique among the in-window chords.
       const others = APP_CHORD_IDS.filter((other) => other !== id).map((other) => bindings[other]);
-      if (id === "shortcut_overlay" || id === "ide_menu" || id === "ide_commands") others.push(...Object.values(appZoom));
+      if (id === "shortcut_overlay" || id === "ide_menu") others.push(...Object.values(appZoom));
       const problem = appChordProblem(id, next, others);
       if (problem) return t(CHORD_PROBLEM_KEY[problem]);
       if (quickSwitch.enabled && sameChord(next, quickSwitch.combo)) {
