@@ -40,7 +40,7 @@ export function RecentChats() {
 
   useHistoryPolling(loadSessions);
 
-  // Every chat is listed, the way the Claude app's column lists them: the
+  // Every chat is listed in one column: the
   // sidebar scrolls instead of hiding the history behind "Show all"
   // (maintainer, 2026-10-01). The archive dialog stays for searching it.
   const shown = recentRows;

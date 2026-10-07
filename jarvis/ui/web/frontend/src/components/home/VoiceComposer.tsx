@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Voice mode's composer — the chat composer's card, spoken instead of typed
- * (2026-10-01, after the Claude app's voice mode).
+ * (2026-10-01).
  *
  * Same shape as the front page's typed composer (components/agentchat/
  * AgentComposer, minimal): one rounded row. Where the text would be, the

@@ -127,7 +127,7 @@ export default function App() {
   /*
     The quick switcher's chord (Ctrl+Space; ⌥+Space on a Mac — both can be
     changed or switched off under Settings → Keyboard shortcuts) opens the
-    Spotlight-style "type a section, press Enter" launcher. Listened for in the
+    "type a section, press Enter" launcher. Listened for in the
     CAPTURE phase so it also works while a terminal pane has focus: xterm
     handles keys on its own textarea and would otherwise send the chord to the
     agent. Pressing it again closes the switcher, the way Spotlight's own

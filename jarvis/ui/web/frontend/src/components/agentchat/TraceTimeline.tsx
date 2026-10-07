@@ -160,7 +160,7 @@ function Chevron({ open }: { open: boolean }) {
 
 function ActivityView({ entry, renderers }: { entry: ActivityEntry; renderers: TimelineRenderers }) {
   const [open, setOpen] = useState(false);
-  // A stretch is always exactly ONE line, as in the Codex app. While a call
+  // A stretch is always exactly ONE line. While a call
   // runs, that line IS the running call; when it settles, the line becomes
   // the summary again. Drawing the running call as an extra line made the
   // whole chat grow and shrink by a line on every call (the bounce bug).

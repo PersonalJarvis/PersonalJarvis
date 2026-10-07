@@ -16,7 +16,7 @@ mission dies in the circling-guard cap.
 
 User voice command (German, confidence 0.965):
 
-> "Ich bin verwirrt in ShareX … navigiere durch die Einstellungen, damit die
+> "Ich bin verwirrt in meinem Screenshot-Tool … navigiere durch die Einstellungen, damit die
 > Screenshots direkt angezeigt werden."
 
 The CU loop ran:
@@ -175,7 +175,7 @@ cap, and it carries no per-unit-counter reset hazard (BUG-032 class avoided).
 
 In-window modals with no separate top-level HWND (Electron / web overlays,
 custom-painted in-process dialogs) are **not** detected by HWND-level probing.
-The ShareX case is a native Win32 dialog and is covered. For web/Electron
+The screenshot-tool case is a native Win32 dialog and is covered. For web/Electron
 overlays the behavior is unchanged from today (no regression) — the model still
 sees them in the screenshot and can interact with them. Documented, not fixed.
 

@@ -16073,7 +16073,7 @@ child window, and the real outer window kept affinity 0 (measured on the live
 child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
 the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
 real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
-Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+Side effect: the overlays also vanish from other capture and streaming tools,
 which is the documented intent of the module. Guard:
 `tests/unit/platform/test_capture_exclusion.py`.
 

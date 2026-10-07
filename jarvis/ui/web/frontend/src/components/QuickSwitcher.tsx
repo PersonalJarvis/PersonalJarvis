@@ -2,7 +2,7 @@
  * The quick switcher's Spotlight window — Ctrl+Space anywhere, type where you
  * want to go, Enter.
  *
- * Modelled on the Mac's Spotlight bar: one large field floating high on the
+ * One large field floating high on the
  * screen over a frosted panel, results directly underneath with the first one
  * already selected, the app still visible behind it (no dimming scrim). The
  * results themselves are `QuickSwitchList`, the same list the sidebar search
