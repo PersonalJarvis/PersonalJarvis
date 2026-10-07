@@ -222,8 +222,12 @@ class Worker:
 
         if self.owns_context:
             await self.context.route("**/*", route_request)
-            # Chromium can return its first page before publishing the CDP port file.
-            async with asyncio.timeout(15):
+            # Chromium can return its first page before publishing the CDP port
+            # file. A cold first launch (fresh profile, antivirus scanning the
+            # binary, a loaded ARM machine) has taken longer than 15 s, which
+            # failed the start long before the caller's 90 s start budget
+            # (``_START_TIMEOUT_S`` in live.py). Stay inside that budget.
+            async with asyncio.timeout(60):
                 while True:
                     try:
                         port = int((profile / "DevToolsActivePort").read_text().splitlines()[0])
@@ -561,8 +565,12 @@ class Worker:
             if len(candidates) == 1:
                 self.page = candidates[0]
             else:
+                # Chrome updates its native caption after the page title, so
+                # right after a navigation (a form submit, an upload) no tab
+                # matches it yet. Visibility then decides among ALL tabs
+                # instead of failing a single-tab run as "ambiguous".
                 visible = []
-                for page in candidates:
+                for page in candidates or list(self.tabs.values()):
                     if await page.evaluate("document.visibilityState === 'visible'"):
                         visible.append(page)
                 if len(visible) == 1:
