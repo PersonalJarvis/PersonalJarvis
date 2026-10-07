@@ -513,3 +513,119 @@ def test_a_streamed_answer_ends_cleanly_with_the_real_key_and_cost_context(
     assert answer.status_code == 200
     assert '"error"' not in answer.text
     assert answer.text.rstrip().endswith("data: [DONE]")
+
+
+# ------------------------------------------------ which failures end the turn
+
+
+class _Overflow(Exception):
+    status_code = 400
+    body = {"error": {"code": "context_length_exceeded", "type": "invalid_request_error"}}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_context_overflow_goes_back_to_the_runtime_to_compress(brain, guarded, monkeypatch,
+                                                                  stream) -> None:
+    async def deltas(grant, model, request):
+        raise _Overflow("This model's maximum context length is 400000 tokens.")
+        yield  # pragma: no cover — keep this a stream
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    assert answer.status_code == 400
+    error = answer.json()["error"]
+    assert error["code"] == "context_length_exceeded"
+    assert "context length exceeded" in error["message"].lower()
+    # The runtime compresses and resends; the Jarvis turn keeps running.
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+@pytest.mark.parametrize(("status", "expected"), [(500, 502), (529, 503)])
+def test_a_transient_provider_failure_leaves_the_retry_to_the_runtime(
+    brain, guarded, status, expected
+) -> None:
+    brain["fail"] = status
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    assert _chat(guarded, token, {**_CHAT, "stream": True}).status_code == expected
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_refused_key_ends_the_turn_at_once(brain, guarded) -> None:
+    brain["fail"] = 401
+    token = gateway.grant_token("agent-1", "openai")
+    signal = gateway.watch_failure(token)
+    answer = _chat(guarded, token, _CHAT)
+    assert answer.status_code == 401 and answer.json()["error"]["code"] == "provider_auth"
+    assert "API keys" in signal.result(timeout=1)
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_subscription_overflow_tells_the_runtime_to_compress(fake, guarded, monkeypatch):
+    async def overflow(**kwargs):
+        raise SubscriptionReasoningError(
+            "This request exceeds the selected ChatGPT model's context limit. (HTTP 400)",
+            code="context_length_exceeded",
+            status=400,
+        )
+        yield  # pragma: no cover - keep this a stream
+
+    monkeypatch.setattr(fake, "stream", overflow)
+    token = gateway.grant_token("agent-1", "openai-codex")
+    signal = gateway.watch_failure(token)
+    answer = _post(guarded, token, {"model": "m", "input": "hello", "stream": True})
+    assert answer.status_code == 400
+    assert answer.json()["error"]["code"] == "context_length_exceeded"
+    assert "context length exceeded" in answer.json()["error"]["message"].lower()
+    assert not signal.done()
+    gateway.unwatch_failure(token, signal)
+
+
+def test_a_subscription_overflow_mid_stream_keeps_its_code(fake, guarded, monkeypatch):
+    async def overflow(**kwargs):
+        yield {"type": "response.created", "response": {"id": "r1"}}
+        raise SubscriptionReasoningError("ChatGPT subscription reasoning failed.",
+                                         code="context_length_exceeded")
+
+    monkeypatch.setattr(fake, "stream", overflow)
+    token = gateway.grant_token("agent-1", "openai-codex")
+    answer = _post(guarded, token, {"model": "m", "input": "hello", "stream": True})
+    failed = [json.loads(line[5:]) for line in answer.text.splitlines()
+              if line.startswith("data:") and "response.failed" in line]
+    assert failed[0]["response"]["error"]["code"] == "context_length_exceeded"
+
+
+async def test_an_expired_claude_login_says_how_to_renew_it(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+    import jarvis.core.config as config
+    from jarvis.agent_runtimes.provider_errors import ProviderRefusal
+    from jarvis.core.protocols import BrainMessage, BrainRequest
+
+    monkeypatch.setattr(model_map, "login_route", lambda provider, account: (True, None))
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    request = BrainRequest(messages=(BrainMessage("user", "Hi"),), max_tokens=16)
+    with pytest.raises(ProviderRefusal) as caught:
+        async for _ in gateway._deltas(gateway.Grant("a", "claude-api"), "claude-x", request):
+            pass
+    failure = gateway._failure("claude-api", caught.value)
+    assert (failure.status, failure.code) == (401, "claude_login_expired")
+    assert "Open Claude Code" in str(failure)
+
+
+async def test_a_request_the_subscription_client_refuses_is_a_400_not_a_retry():
+    from jarvis.live.subscription_reasoning import SubscriptionReasoning
+
+    async def credentials(**kwargs):
+        raise AssertionError("refused before any credential is read")
+
+    client = SubscriptionReasoning(credentials)
+    with pytest.raises(SubscriptionReasoningError) as caught:
+        async for _ in client.stream(model="m", input=[], instructions="", tools=[],
+                                     reasoning_effort="NOT AN EFFORT"):
+            pass
+    failure = gateway._subscription_failure(gateway.Grant("a", "openai-codex"), caught.value)
+    assert (failure.status, failure.code) == (400, "invalid_request")

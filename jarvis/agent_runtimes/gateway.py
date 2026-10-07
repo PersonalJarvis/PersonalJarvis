@@ -265,7 +265,12 @@ def _report_failure(
             while len(_COOLDOWNS) > 512:
                 _COOLDOWNS.popitem(last=False)
         failure = _limited(grant.provider, seconds)
-    if signal is not None:
+    from jarvis.agent_runtimes.provider_errors import is_terminal
+
+    # Only a failure no runtime can recover from ends the turn here. A
+    # timeout, an overloaded provider or a context overflow goes back to the
+    # runtime, whose own retry and conversation compression handle it.
+    if signal is not None and is_terminal(failure.code):
         # A request captures its turn's signal before awaiting the provider.
         # Late failures therefore cannot stop a later turn on the same session.
         from concurrent.futures import InvalidStateError
@@ -399,7 +404,6 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
                 started = True
                 yield _sse(event)
     except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
-        log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
         failure = _report_failure(grant, model, _subscription_failure(grant, exc), signal)
         if not started:
             raise failure from exc
@@ -438,16 +442,17 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     try:
         check_cooldown(grant.provider, model, grant.account_id)
         items: list[dict[str, Any]] = []
-        async for event in _client(grant.account_id).stream(**args):
-            finished = event.get("response")
-            if event.get("type") == "response.output_item.done" and isinstance(
-                event.get("item"), dict
-            ):
-                items.append(event["item"])
-            if event.get("type") == "response.completed" and isinstance(finished, dict):
-                # ChatGPT's backend streams the output items and sends the
-                # completed response with an empty ``output``.
-                return {**finished, "output": finished.get("output") or items}
+        async with contextlib.aclosing(_client(grant.account_id).stream(**args)) as upstream:
+            async for event in upstream:
+                finished = event.get("response")
+                if event.get("type") == "response.output_item.done" and isinstance(
+                    event.get("item"), dict
+                ):
+                    items.append(event["item"])
+                if event.get("type") == "response.completed" and isinstance(finished, dict):
+                    # ChatGPT's backend streams the output items and sends the
+                    # completed response with an empty ``output``.
+                    return {**finished, "output": finished.get("output") or items}
     except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
         raise _report_failure(grant, model, _subscription_failure(grant, exc), signal) from exc
     raise _report_failure(
@@ -458,15 +463,54 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     )
 
 
+#: The subscription client's request-failure codes, as the gateway's codes.
+_SUBSCRIPTION_CODES: Final[dict[str, str]] = {
+    "invalid_function_parameters": "invalid_tool_schema",
+    "invalid_tool_schema": "invalid_tool_schema",
+    "model_not_found": "model_not_found",
+}
+
+
 def _subscription_failure(grant: Grant, exc: Exception) -> GatewayError:
+    """A subscription failure as a status and code the runtime can act on.
+
+    The subscription client already words its errors without provider text,
+    so its message is kept; the code decides whether the turn ends (a
+    terminal code) or the runtime handles it (overflow: compress).
+    """
+    from jarvis.live.subscription_auth import SubscriptionAuthError
+
     if isinstance(exc, GatewayError) or getattr(exc, "status", 0) == 429:
         return _failure(grant.provider, exc)
-    status = getattr(exc, "status", 0)
-    return GatewayError(
-        str(exc),
-        status=status if status in (400, 401, 403, 404, 413, 422) else 502,
-        code=getattr(exc, "code", "subscription_unavailable"),
+    log.warning(
+        "runtime gateway: %s subscription call failed: %s", grant.agent_id, _describe(exc)
     )
+    if isinstance(exc, SubscriptionAuthError):
+        return GatewayError(str(exc), status=401, code="provider_auth")
+    status = getattr(exc, "status", 0)
+    code = str(getattr(exc, "code", "") or "")
+    if code == "context_length_exceeded":
+        return GatewayError(
+            f"Context length exceeded: {exc} Compress or shorten the conversation and "
+            "send it again.",
+            status=400,
+            code="context_length_exceeded",
+        )
+    if status in (401, 403):
+        return GatewayError(str(exc), status=401, code="provider_auth")
+    if status == 404 or code == "model_not_found":
+        return GatewayError(str(exc), status=404, code="model_not_found")
+    if status in (400, 413, 422):
+        return GatewayError(
+            str(exc), status=400, code=_SUBSCRIPTION_CODES.get(code, "invalid_request")
+        )
+    return GatewayError(str(exc), status=502, code="subscription_unavailable")
+
+
+def _describe(exc: BaseException) -> str:
+    from jarvis.agent_runtimes.provider_errors import describe
+
+    return describe(exc)
 
 
 async def list_models(grant: Grant) -> list[dict[str, Any]]:
@@ -651,38 +695,21 @@ def chat_request(body: Any) -> tuple[str, Any]:
     )
 
 
-def _failure(provider: str, exc: Exception) -> GatewayError:
-    """A provider error as a status the runtime can back off on, and a plain
-    message — never the provider's own response body."""
-    from jarvis.agent_runtimes.provider_errors import classify
+def _failure(provider: str, exc: Exception, model: str = "") -> GatewayError:
+    """A provider error as a status and code the runtime acts on, and a plain
+    message — never the provider's own response body (that goes to the log,
+    bounded and redacted)."""
+    from jarvis.agent_runtimes.provider_errors import gateway_refusal
 
-    if (refusal := classify(provider, exc)) is not None:
-        # No credits, provider unreachable, Claude Extra Usage off: a retry
-        # cannot help, so the runtime must not read it as a rate limit.
-        return GatewayError(refusal.message, status=refusal.status, code=refusal.code)
     if isinstance(exc, GatewayError):
         return exc
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if not isinstance(status, int):
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", None)
-    if status == 429:
-        return GatewayError(
-            f"{provider} returned HTTP 429 (rate limit).",
-            status=429,
-            code="rate_limited",
-            retry_after=_retry_after(exc),
-        )
-    if status in (401, 403):
-        return GatewayError(
-            f"{provider} refused the saved key. Check it in Settings → API keys.",
-            status=401,
-            code="provider_auth",
-        )
+    log.warning("runtime gateway: %s call failed: %s", provider, _describe(exc))
+    refusal = gateway_refusal(provider, exc, model)
     return GatewayError(
-        f"{provider} could not answer ({type(exc).__name__}).",
-        status=502,
-        code="provider_error",
+        refusal.message,
+        status=refusal.status,
+        code=refusal.code,
+        retry_after=_retry_after(exc) if refusal.code == "rate_limited" else None,
     )
 
 
@@ -698,7 +725,8 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     it — a context variable set there could not be reset (``ValueError``).
     """
     from jarvis.agent_chat.runner_api import build_brain
-    from jarvis.agent_runtimes.model_map import login_token_for
+    from jarvis.agent_runtimes.model_map import login_route
+    from jarvis.agent_runtimes.provider_errors import login_expired
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
 
@@ -710,7 +738,13 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context("agent-runtime"):
-                login = await asyncio.to_thread(login_token_for, grant.provider, grant.account_id)
+                on_login, login = await asyncio.to_thread(
+                    login_route, grant.provider, grant.account_id
+                )
+                if on_login and not login:
+                    # Only the Claude CLI renews the login; without it the
+                    # API-key path would only say "no key".
+                    raise login_expired()
                 if login:
                     # No API key: the person's Claude Code login answers,
                     # which Anthropic bills as extra usage.
@@ -803,14 +837,8 @@ async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncItera
     try:
         check_cooldown(grant.provider, model, grant.account_id)
         first = await anext(stream, None)
-    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error, logged below
-        log.info(
-            "runtime gateway: %s on %s failed up front (%s)",
-            grant.agent_id,
-            grant.provider,
-            type(exc).__name__,
-        )
-        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
+    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
+        raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     return _chat_chunks(grant, model, stream, first, started, signal)
 
 
@@ -842,13 +870,7 @@ async def _chat_chunks(
                 finish = _FINISH.get(delta.finish_reason, "stop")
             delta = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — the stream already began: an error chunk tells the runtime
-        failure = _report_failure(grant, model, _failure(grant.provider, exc), signal)
-        log.info(
-            "runtime gateway: %s on %s failed mid-stream (%s)",
-            grant.agent_id,
-            grant.provider,
-            type(exc).__name__,
-        )
+        failure = _report_failure(grant, model, _failure(grant.provider, exc, model), signal)
         payload = {"error": {"message": str(failure), "type": failure.code, "code": failure.code}}
         yield f"data: {json.dumps(payload)}\n\n".encode()
         return
@@ -900,8 +922,8 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
                     usage[key] = usage.get(key, 0) + int(value or 0)
             if delta.finish_reason:
                 finish = _FINISH.get(delta.finish_reason, "stop")
-    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error
-        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
+    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
+        raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
     if calls:
         message["tool_calls"] = [{k: v for k, v in call.items() if k != "index"} for call in calls]

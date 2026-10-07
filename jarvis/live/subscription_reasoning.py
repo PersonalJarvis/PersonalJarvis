@@ -96,6 +96,11 @@ def _failure(
     return SubscriptionReasoningError(message, code=code, status=status, retry_after=retry_after)
 
 
+def _invalid_request(message: str) -> SubscriptionReasoningError:
+    """A request this client refuses before sending it: never worth a retry."""
+    return SubscriptionReasoningError(message, code="invalid_request_error", status=400)
+
+
 async def _http_failure(response: Any) -> SubscriptionReasoningError:
     """Read bounded error metadata, never expose provider text or request content."""
     import httpx
@@ -238,15 +243,13 @@ class SubscriptionReasoning:
         import httpx
 
         if not model.strip():
-            raise SubscriptionReasoningError(
+            raise _invalid_request(
                 "Select a ChatGPT subscription thinking model before starting voice."
             )
         if any(tool.get("type") != "function" for tool in tools):
-            raise SubscriptionReasoningError(
-                "Subscription reasoning accepts only Jarvis function tools."
-            )
+            raise _invalid_request("Subscription reasoning accepts only Jarvis function tools.")
         if reasoning_effort and not _SAFE_EFFORT.fullmatch(reasoning_effort):
-            raise SubscriptionReasoningError("The subscription thinking effort is invalid.")
+            raise _invalid_request("The subscription thinking effort is invalid.")
         if reasoning_effort in {"none", "minimal"}:
             reasoning_effort = await self._lightest_effort(model, reasoning_effort)
         if reasoning_effort and reasoning_effort not in _KNOWN_EFFORTS:
@@ -255,12 +258,12 @@ class SubscriptionReasoning:
             if model not in self._model_efforts:
                 await self.list_models()
             if reasoning_effort not in self._model_efforts.get(model, ()):
-                raise SubscriptionReasoningError(
+                raise _invalid_request(
                     "The selected ChatGPT model does not advertise this thinking effort."
                 )
         supported = self._model_efforts.get(model)
         if reasoning_effort and supported is not None and reasoning_effort not in supported:
-            raise SubscriptionReasoningError(
+            raise _invalid_request(
                 "The selected ChatGPT model does not support this thinking effort."
             )
         reasoning = {"summary": "auto"}

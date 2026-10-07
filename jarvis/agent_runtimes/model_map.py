@@ -127,19 +127,26 @@ def _saved_key(provider: str, endpoint: _Endpoint) -> str | None:
     return _api_key(provider, resolved.credential)
 
 
-def login_token_for(provider: str, account_id: str = "") -> str | None:
-    """The Claude login ``provider`` answers on, or ``None`` when it runs on
-    an API key (or cannot use a login at all). ``account_id`` may pin the
-    agent to its key or to the login (``catalog.ACCESS_ACCOUNTS``); without a
-    pin the API key wins. Blocking (keyring)."""
+def login_route(provider: str, account_id: str = "") -> tuple[bool, str | None]:
+    """Whether ``provider`` answers on the person's Claude Code login for
+    ``account_id``, and that login's live bearer (``None`` once it expired).
+    ``account_id`` may pin the agent to its key or to the login
+    (``catalog.ACCESS_ACCOUNTS``); without a pin the API key wins. Blocking
+    (keyring)."""
     from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
 
     endpoint = _ENDPOINTS.get(provider)
     if endpoint is None or not endpoint.claude_login or account_id == API_KEY_ACCOUNT:
-        return None
+        return False, None
     if account_id != SUBSCRIPTION_ACCOUNT and _saved_key(provider, endpoint) is not None:
-        return None
-    return claude_login_token()
+        return False, None
+    return True, claude_login_token()
+
+
+def login_token_for(provider: str, account_id: str = "") -> str | None:
+    """The Claude login ``provider`` answers on, or ``None`` when it runs on
+    an API key (or cannot use a login at all). Blocking (keyring)."""
+    return login_route(provider, account_id)[1]
 
 
 def login_providers() -> list[str]:
