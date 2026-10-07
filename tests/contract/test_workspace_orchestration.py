@@ -9,10 +9,15 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.agentic_ide import library, resume_store
+from jarvis.agentic_ide import library, orchestration, resume_store
 from jarvis.agentic_ide.folders import probe_project
 from jarvis.agentic_ide.orchestration import WorkspaceOrchestrator
-from jarvis.agentic_ide.session import Registry, Session, SessionError, Terminal
+from jarvis.agentic_ide.session import (
+    AgentBusyError,
+    Registry,
+    Session,
+    Terminal,
+)
 from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
 from jarvis.brain.workspace_tool import WorkspaceOrchestrationTool
 from jarvis.core.protocols import ExecutionContext, SupervisorToolRequest
@@ -22,21 +27,39 @@ from tests.fakes.fake_pty_manager import FakePtyManager
 
 
 class Sessions:
+    """The coding-session gateway; ``refused`` is a pane in a running turn."""
+
     def __init__(self):
         self.calls = []
         self.fail = False
         self.refused = False
+        self.steerable = True  # the CLI takes input mid-turn
+        self.settles = True  # Stop ends the turn in time
+        self.typed = []  # every prompt that actually reached the pane
 
     async def run(self, args):
         self.calls.append(args)
         await asyncio.sleep(0)
+        mid_turn = False
         if self.refused:
-            raise SessionError("The selected coding agent is busy; nothing was sent.")
+            mode = args.get("when_busy", "refuse") if args["action"] == "send" else "refuse"
+            if mode == "steer" and self.steerable:
+                mid_turn = True
+            elif mode == "interrupt" and self.settles:
+                self.refused = False
+            else:
+                raise AgentBusyError(
+                    "The selected coding agent is busy; nothing was sent.",
+                    interrupted=mode == "interrupt",
+                )
         if self.fail:
             raise RuntimeError("transport interrupted after possible write")
         if args["action"] in {"input", "observe"}:
             return {"input_token": "token-1", "response_mode": "dialog", "screen_excerpt": "?"}
-        return {"delivery": "accepted", "submitted": True, "completed": False}
+        if args["action"] == "send":
+            self.typed.append(args["prompt"])
+        return {"delivery": "accepted", "submitted": True, "completed": False,
+                **({"mid_turn": True} if mid_turn else {})}
 
 
 @pytest.fixture
@@ -255,13 +278,39 @@ def test_send_runs_without_a_spoken_question_and_reads_remain_safe(rig):
 
 
 async def test_prewrite_refusal_is_recorded_without_claiming_uncertainty(rig):
+    # Live 2026-10-07: an approved brief refused as "busy" kept echoing that
+    # receipt for its request_id after the pane was idle; nothing ever went.
     resolved = await target(rig)
     rig[2].refused = True
     args = {"action": "send", **resolved, "request_id": uuid4().hex, "prompt": "Task"}
     first = await rig[0].run(args)
     assert first["status"] == "not_accepted"
-    assert await rig[0].run(args) == first
-    assert len(rig[2].calls) == 1
+    again = await rig[0].run(args)
+    assert again["status"] == "not_accepted"
+    assert again["request_id"] == first["request_id"]
+    assert len(rig[2].calls) == 2
+    rig[2].refused = False
+    delivered = await rig[0].run(args)
+    assert delivered["status"] == "accepted"
+    assert delivered["request_id"] == first["request_id"]
+    # Once typed, the same request is a receipt read, never a second write.
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert len(rig[2].calls) == 3
+    # A refused request ID still cannot carry a different assignment.
+    assert (await rig[0].run({**args, "prompt": "Correction"}))["success"] is False
+    assert len(rig[2].calls) == 3
+
+
+async def test_retry_after_uncertain_write_is_never_retyped(rig):
+    resolved = await target(rig)
+    args = {"action": "send", **resolved, "request_id": uuid4().hex, "prompt": "Task"}
+    rig[2].refused = True
+    assert (await rig[0].run(args))["status"] == "not_accepted"
+    rig[2].refused, rig[2].fail = False, True
+    assert (await rig[0].run(args))["status"] == "uncertain"
+    rig[2].fail = False
+    assert (await rig[0].run(args))["status"] == "uncertain"
+    assert len(rig[2].calls) == 2
 
 
 async def test_later_same_task_has_an_app_minted_distinct_request(rig):
@@ -558,3 +607,215 @@ def test_pane_reads_are_safe_and_every_new_action_validates(rig):
     for action in ("respond", "keys", "interrupt", "close", "open_workspace", "restore", "show"):
         jsonschema.validate({"action": action}, tool.schema)
         assert tool.risk_tier_for_args({"action": action}) == "monitor"
+
+
+# --- Reaching an agent that is in a turn ---------------------------------------
+#
+# Live 2026-10-07: a scope correction sent to a working Claude pane came back
+# not_accepted ("The selected coding agent is busy; nothing was sent."), with
+# no way to deliver it. A busy refusal now says how the USER's correction can
+# reach the turn, and a resend of the same request delivers it exactly once.
+
+
+@pytest.fixture
+def fast_queue(monkeypatch):
+    monkeypatch.setattr(orchestration, "_QUEUE_POLL_S", 0.01)
+    monkeypatch.setattr(orchestration.random, "uniform", lambda *_: 0.0)
+
+
+async def until(predicate, timeout_s: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        assert time.monotonic() < deadline, "condition never became true"
+        await asyncio.sleep(0.01)
+
+
+async def busy_send(rig, **extra):
+    resolved = await target(rig)
+    rig[2].refused = True
+    args = {"action": "send", **resolved, "request_id": uuid4().hex,
+            "prompt": "Narrow the review to the save flow", **extra}
+    return args, await rig[0].run(args)
+
+
+async def test_ordinary_send_to_a_busy_agent_types_nothing_and_says_how(rig):
+    args, refused = await busy_send(rig)
+    assert refused["status"] == "not_accepted" and refused["busy"] is True
+    assert refused["input_written"] is False
+    assert refused["while_busy_options"] == {"steer": True, "interrupt": True, "queue": True}
+    assert "while_busy='steer'" in refused["next"]
+    assert rig[2].calls[-1]["when_busy"] == "refuse"
+    assert rig[2].typed == []
+
+
+async def test_busy_refusal_then_steer_delivers_the_correction_exactly_once(rig):
+    args, refused = await busy_send(rig)
+    assert refused["status"] == "not_accepted"
+    steered = await rig[0].run({**args, "while_busy": "steer"})
+    assert steered["status"] == "accepted" and steered["mid_turn"] is True
+    assert steered["request_id"] == refused["request_id"]
+    assert rig[2].typed == [args["prompt"]]
+    # Any retry of the request reads its receipt, whatever mode it names.
+    for mode in ("steer", "interrupt", "queue", "refuse"):
+        again = await rig[0].run({**args, "while_busy": mode})
+        assert again["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_steer_on_a_cli_without_mid_turn_input_is_refused_with_options(rig):
+    rig[2].steerable = False
+    args, refused = await busy_send(rig, while_busy="steer")
+    assert refused["status"] == "not_accepted" and refused["busy"] is True
+    assert rig[2].typed == []
+
+
+async def test_interrupt_stops_the_turn_and_delivers_once(rig):
+    args, delivered = await busy_send(rig, while_busy="interrupt")
+    assert delivered["status"] == "accepted"
+    assert rig[2].calls[-1]["when_busy"] == "interrupt"
+    assert rig[2].typed == [args["prompt"]]
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_interrupt_that_does_not_settle_is_queued_then_delivered_once(rig, fast_queue):
+    rig[2].settles = False
+    args, held = await busy_send(rig, while_busy="interrupt")
+    assert held["status"] == "queued" and held["interrupted"] is True
+    assert held["input_written"] is False and rig[2].typed == []
+    # The turn ends on its own; the queue types the correction at the prompt.
+    rig[2].refused = False
+    await until(lambda: rig[2].typed)
+    await until(lambda: not rig[0]._queued)
+    receipt = await rig[0].run(args)
+    assert receipt["status"] == "accepted" and receipt["queued"] is True
+    assert rig[2].typed == [args["prompt"]]
+    # The queue never presses Stop again: only the first attempt interrupted.
+    assert [c.get("when_busy") for c in rig[2].calls].count("interrupt") == 1
+
+
+async def test_queue_holds_the_message_until_the_turn_ends(rig, fast_queue):
+    args, held = await busy_send(rig, while_busy="queue")
+    assert held["status"] == "queued" and "interrupted" not in held
+    assert all(c["when_busy"] == "refuse" for c in rig[2].calls)
+    # While it waits, a retry reads the queued receipt and sends nothing.
+    await asyncio.sleep(0.05)
+    assert (await rig[0].run(args))["status"] == "queued"
+    assert rig[2].typed == []
+    rig[2].refused = False
+    await until(lambda: not rig[0]._queued)
+    assert rig[2].typed == [args["prompt"]]
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_queue_that_never_frees_expires_unsent_and_can_be_retried(
+    rig, fast_queue, monkeypatch,
+):
+    monkeypatch.setattr(orchestration, "_QUEUE_TTL_S", 0.05)
+    args, held = await busy_send(rig, while_busy="queue")
+    assert held["status"] == "queued"
+    await until(lambda: not rig[0]._queued)
+    retried = await rig[0].run({**args, "while_busy": "refuse"})
+    # The expired receipt proved nothing was typed, so this retry was a fresh
+    # attempt, refused again because the pane is still busy.
+    assert retried["status"] == "not_accepted" and retried["busy"] is True
+    rig[2].refused = False
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_a_queue_left_by_an_earlier_app_run_is_expired_not_trusted(rig, fast_queue):
+    args, held = await busy_send(rig, while_busy="queue")
+    assert held["status"] == "queued"
+    # The app stops: its queue task ends without typing. A new orchestrator over
+    # the same receipt store has no task holding that message.
+    for task in list(rig[0]._queued.values()):
+        task.cancel()
+    await until(lambda: not rig[0]._queued)
+    restarted = WorkspaceOrchestrator(rig[1], rig[2], rig[0].ledger)
+    rig[2].refused = False
+    assert (await restarted.run(args))["status"] == "accepted"
+    assert (await restarted.run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_a_receipt_still_marked_queued_without_its_task_is_not_trusted(rig, fast_queue):
+    args, held = await busy_send(rig, while_busy="queue")
+    receipt_id = next(iter(rig[0]._queued))
+    # A hard stop: the task vanished without filing its final receipt.
+    rig[0]._queued.pop(receipt_id).cancel()
+    await asyncio.sleep(0.05)
+    rig[0].ledger.finish("workspace-orchestration", receipt_id, held)
+    rig[2].refused = False
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_unknown_or_misplaced_while_busy_is_rejected(rig):
+    resolved = await target(rig)
+    with pytest.raises(ValueError, match="while_busy must be one of"):
+        await rig[0].run({"action": "send", **resolved, "prompt": "x", "while_busy": "kill"})
+    with pytest.raises(ValueError, match="belongs to send"):
+        await rig[0].run({"action": "context", **resolved, "while_busy": "steer"})
+    assert rig[2].calls == []
+
+
+def test_tool_schema_offers_while_busy_and_shows_it_for_approval():
+    tool = WorkspaceOrchestrationTool(gateway=None)
+    assert tool.schema["properties"]["while_busy"]["enum"] == [
+        "refuse", "steer", "interrupt", "queue",
+    ]
+    described = tool.describe_args({"action": "send", "prompt": "x", "while_busy": "interrupt"})
+    assert described["while_busy"] == "interrupt"
+    assert "while_busy" not in tool.describe_args({"action": "send", "prompt": "x"})
+
+
+async def test_a_stop_while_the_queue_is_typing_is_uncertain_never_retyped(rig, fast_queue):
+    args, held = await busy_send(rig, while_busy="queue")
+    typing = asyncio.Event()
+    finish = asyncio.Event()
+    plain_run = rig[2].run
+
+    async def slow_run(call):
+        if call["action"] == "send" and not rig[2].refused:
+            typing.set()
+            await finish.wait()  # the app stops while this write is in flight
+        return await plain_run(call)
+
+    rig[2].run = slow_run
+    rig[2].refused = False
+    await asyncio.wait_for(typing.wait(), 2)
+    for task in list(rig[0]._queued.values()):
+        task.cancel()
+    await until(lambda: not rig[0]._queued)
+    again = await rig[0].run(args)
+    assert again["status"] == "uncertain"
+    assert rig[2].typed == []  # the cancelled write never completed, and no retry typed
+
+
+async def test_a_failed_look_at_the_pane_is_retried_not_dropped(rig, fast_queue, monkeypatch):
+    args, held = await busy_send(rig, while_busy="queue")
+    looks = []
+
+    async def flaky(term):
+        looks.append(term)
+        if len(looks) == 1:
+            raise OSError("transcript locked")
+        return ""
+
+    monkeypatch.setattr(rig[1], "turn_in_progress", flaky)
+    rig[2].refused = False
+    await until(lambda: not rig[0]._queued)
+    assert len(looks) >= 2
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_messages_queued_for_one_pane_arrive_in_order(rig, fast_queue):
+    first, held = await busy_send(rig, while_busy="queue")
+    second = {**first, "request_id": uuid4().hex, "prompt": "And keep the tests green"}
+    assert (await rig[0].run(second))["status"] == "queued"
+    rig[2].refused = False
+    await until(lambda: not rig[0]._queued)
+    assert rig[2].typed == [first["prompt"], second["prompt"]]

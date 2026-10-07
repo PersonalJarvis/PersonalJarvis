@@ -293,6 +293,7 @@ def test_frame_resizing_scales_popup_hit_coordinates(scene):
 
 def test_parking_preserves_monitor_geometry_and_does_not_activate(scene):
     window, desktop, _codec = scene
+    desktop.windows[1]["rect"] = (100, 50, 1400, 900)
     window.park()
     args = desktop.positions[-1]
     assert args[:2] == (1, 1)  # Owned Chrome, HWND_BOTTOM.
@@ -304,9 +305,28 @@ def test_old_offscreen_parking_position_is_recovered_without_activation(scene):
     desktop.windows[1]["rect"] = (-16000, -16000, -15900, -15920)
     window.park()
     args = desktop.positions[-1]
-    assert args[2:4] == (0, 0)
-    assert args[-1] & 0x2 == 0  # Move back onto its nearest monitor.
-    assert args[-1] & 0x11 == 0x11  # Preserve size and foreground focus.
+    assert args[2:6] == (0, 0, 1440, 810)  # Back on the monitor at a usable size.
+    assert args[-1] & 0x3 == 0
+    assert args[-1] & 0x10 == 0x10  # Preserve foreground focus.
+
+
+def test_thin_partly_offscreen_window_is_restored_fully_onto_the_monitor(scene):
+    window, desktop, _codec = scene
+    # A crashed session restored Chrome as a 300 px strip hanging off the left edge.
+    desktop.windows[1]["rect"] = (-1872, 700, 45, 1000)
+    window.park()
+    x, y, width, height, flags = desktop.positions[-1][2:]
+    assert (x, y) == (0, 270) and (width, height) == (1917, 810)
+    assert flags & 0x3 == 0 and flags & 0x10 == 0x10
+
+
+def test_large_window_partly_offscreen_moves_without_resizing(scene):
+    window, desktop, _codec = scene
+    desktop.windows[1]["rect"] = (-200, 100, 1400, 1000)
+    window.park()
+    x, y, width, height, flags = desktop.positions[-1][2:]
+    assert (x, y, width, height) == (0, 100, 1600, 900)
+    assert flags & 0x2 == 0 and flags & 0x1 == 0x1
 
 
 def test_event_hooks_and_com_thread_are_released_once(scene, monkeypatch):

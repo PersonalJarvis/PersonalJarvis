@@ -134,13 +134,12 @@ async def _screen_appshot(trace_id, ctx=None):
 def _picture(shot, ctx=None, config=None):
     import base64
 
-    from jarvis.core.image_references import get_store, instruction, scope_for
+    from jarvis.core.image_references import get_store, instruction, scope_for, ttl_for
     from jarvis.core.protocols import ToolResult
 
+    scope = scope_for(getattr(ctx, "config", None), getattr(ctx, "trace_id", ""))
     ref = get_store().add(
-        scope_for(getattr(ctx, "config", None), getattr(ctx, "trace_id", "")),
-        shot.image, shot.mime, source="appshot",
-        ttl_s=float(config.screen_context.ttl_s) if config is not None else 120,
+        scope, shot.image, shot.mime, source="appshot", ttl_s=ttl_for(scope, config),
     )
 
     return ToolResult(

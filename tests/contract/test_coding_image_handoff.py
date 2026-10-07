@@ -73,7 +73,7 @@ def delivery(rig, runnable, monkeypatch, tmp_path):  # noqa: F811
     return WorkspaceOrchestrationTool(orchestrator), registry, ctx
 
 
-async def source_ref(source, delivery, monkeypatch, tmp_path):
+async def source_ref(source, delivery, monkeypatch, tmp_path, image_store=None):
     tool, registry, ctx = delivery
     data = png()
     if source == "upload":
@@ -106,6 +106,32 @@ async def source_ref(source, delivery, monkeypatch, tmp_path):
         ref = re.search(r"img_[0-9a-f]{32}", note)[0]
         # Original upload may disappear; the selected bytes remain bound.
         (tmp_path / dereference(attached[0].reference)).unlink()
+    elif source == "voice":
+        # A hotkey appshot supplied into a subscription voice call: the backend
+        # sees the pixels for the whole call and must be able to forward them.
+        from jarvis.live.config import LiveConfig
+        from jarvis.live.subscription import SubscriptionLiveVoiceSession
+        from tests.fakes.fake_subscription_session import (
+            SubscriptionConnection,
+            subscription_provider,
+        )
+
+        async def send(_value):
+            pass  # No client socket in this contract.
+
+        session = SubscriptionLiveVoiceSession(
+            session_id="call-A", providers=[subscription_provider()],
+            config=SimpleNamespace(
+                live=LiveConfig(configured=True, auth_mode="chatgpt_subscription"),
+                brain=SimpleNamespace(reply_language="en"),
+                screen_context=SimpleNamespace(ttl_s=120),
+            ),
+            send_binary=send, send_json=send,
+        )
+        session._connection = SubscriptionConnection()
+        assert await session.attach_appshot(data, "image/png", "Supplied appshot")
+        ref = re.search(r"img_[0-9a-f]{32}", session._pending_images[0]["text"])[0]
+        image_store[1][0] += 600  # The user keeps talking before asking for the fix.
     else:
         from jarvis.appshot import service
         from jarvis.plugins.tool import appshot
@@ -148,12 +174,12 @@ async def assignment(delivery, ctx, action, refs, *, prompt="Fix the pictured bu
     return await tool.execute(args, ctx), args
 
 
-@pytest.mark.parametrize("source", ["upload", "appshot"])
+@pytest.mark.parametrize("source", ["upload", "appshot", "voice"])
 @pytest.mark.parametrize("action", ["create", "send"])
 async def test_actual_pixels_reach_new_and_existing_cli(
-    source, action, delivery, monkeypatch, tmp_path
+    source, action, delivery, monkeypatch, tmp_path, image_store
 ):
-    ref, data, ctx = await source_ref(source, delivery, monkeypatch, tmp_path)
+    ref, data, ctx = await source_ref(source, delivery, monkeypatch, tmp_path, image_store)
     # A screenshot from a previous topic must not be included by recency.
     old = image_references.get_store().add(
         image_references.scope_for(ctx.config), png("blue"), "image/png", source="unrelated"
@@ -217,6 +243,25 @@ async def test_unavailable_image_refuses_whole_task(failure, delivery, image_sto
     assert not result.success, result
     assert not registry._pty.writes
     assert result.output["status"] == "not_accepted"
+
+
+@pytest.mark.parametrize("ending", ["call_closed", "call_bound"])
+async def test_live_call_reference_ends_with_the_call(ending, delivery, image_store):
+    from jarvis.live.tools import LiveTools
+
+    store, now = image_store
+    _, registry, ctx = delivery
+    image_references.appshot_context(
+        "call-A", png(), "image/png", SimpleNamespace(screen_context=SimpleNamespace(ttl_s=120)),
+    )
+    [row] = store.available("live:call-A")
+    if ending == "call_closed":
+        await LiveTools(None, None, "call-A", language="en", backend_model="").close()
+    else:
+        now[0] = image_references.LIVE_CALL_TTL_SECONDS + 1
+    result, _ = await assignment(delivery, ctx, "send", [row["id"]])
+    assert not result.success and result.output["status"] == "not_accepted"
+    assert not registry._pty.writes
 
 
 async def test_expired_create_does_not_open_empty_pane(delivery, image_store):

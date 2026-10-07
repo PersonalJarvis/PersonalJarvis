@@ -27,6 +27,9 @@ export interface BrainSeat {
   kind: BrainKind;
   /** Signed-in logins of that CLI; empty on an API or local seat. */
   accounts: SocietyAccount[];
+  /** A subscription billed per use outside its plan (Claude on Hermes /
+   *  OpenClaw: Anthropic charges it as extra usage). */
+  extraUsage?: boolean;
 }
 
 const KIND_ORDER: Record<BrainKind, number> = { subscription: 0, api: 1, local: 2 };

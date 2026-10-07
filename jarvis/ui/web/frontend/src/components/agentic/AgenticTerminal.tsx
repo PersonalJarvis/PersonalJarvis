@@ -742,6 +742,8 @@ export function AgenticTerminal({
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
   const claimResizeRef = useRef<(() => void) | null>(null);
+  /** The refit a pane makes on coming back on stage — see `returnResize`. */
+  const returnResizeRef = useRef<(() => void) | null>(null);
   /** Asks the agent to paint its whole screen again — see RETURN_REPAINT_NUDGE_MS. */
   const repaintOnReturnRef = useRef<(() => void) | null>(null);
   /** Was this pane parked off the stage since it last took it? */
@@ -1218,6 +1220,22 @@ export function AgenticTerminal({
     } catch {
       /* not measured yet — the ResizeObserver below will fit */
     }
+    /*
+     * Did this socket's handshake go out without a size (`UNMEASURED_SIZE`),
+     * with the server's report of the agent's real size still to come?
+     *
+     * The server replays the agent's screen BEFORE it sends that report, and
+     * the screen is addressed by row at the agent's size. Parsed into this
+     * grid first — xterm's constructed 80x24 when the pane mounted hidden or
+     * in a minimized window — every row below the 24th landed on the last one
+     * (the status line written over the prompt box), and the report then grew
+     * the grid with blank rows underneath. Nothing repaired it: the PTY
+     * already had the size the pane went on to ask for, so the agent was never
+     * asked to paint again (reported 2026-10-06, the window reloading while
+     * the IDE showed the thread layout). So output is held until the report
+     * arrives and drawn after the grid has taken it (see `onGeometry`).
+     */
+    let awaitingSizeReport = false;
 
     const report = (status: PaneStatus, detail?: string) => {
       statusRef.current = status;
@@ -1344,7 +1362,10 @@ export function AgenticTerminal({
         return;
       }
       paneVisible = true;
-      flushHeld(afterFlush);
+      // Held output waits for the size report (see `awaitingSizeReport`); its
+      // deadline flush is still armed, so waiting cannot freeze the pane.
+      if (awaitingSizeReport) afterFlush?.();
+      else flushHeld(afterFlush);
     };
 
     const parkPane = () => {
@@ -1506,7 +1527,7 @@ export function AgenticTerminal({
       // at it. Cheap to call per chunk: React bails out on an unchanged value.
       setPainted(true);
       if (!paneVisible) recheckParked();
-      if (paneVisible) {
+      if (paneVisible && !awaitingSizeReport) {
         writeToTerminal(text, afterWrite);
         return;
       }
@@ -1577,7 +1598,10 @@ export function AgenticTerminal({
       // callback, `setTailReady(false)` may not reach the DOM before xterm's
       // write queue starts parsing. Hide the canvas host imperatively BEFORE
       // reset/write; React still mirrors the curtain below for later renders.
-      const curtain = paneVisible && activeRef.current;
+      // A replay waiting for the size report is held (see
+      // `awaitingSizeReport`), and the callback that would lift a curtain
+      // goes with it.
+      const curtain = paneVisible && !awaitingSizeReport && activeRef.current;
       if (curtain) {
         container.style.visibility = "hidden";
         replayCurtainRef.current = true;
@@ -1727,6 +1751,12 @@ export function AgenticTerminal({
       // well as at the gate: a deferred fit runs a moment later, and the tile it
       // was asked for may be gone by then.
       if (disposed || !measurable()) return;
+      // A pane off the stage never sizes its agent. A grid covered by the
+      // maximized side panel is invisible but still laid out, in a tile the
+      // panel narrowed: fitting there squeezed every agent behind it to a strip
+      // (37 columns, measured) and its output stayed wrapped at that width in
+      // the scrollback. Coming back on stage refits (the `active` effect).
+      if (!activeRef.current) return;
       // The pane draws at the READER'S text size, never one it picked itself.
       // An auto-shrink that walked this size down until the floor grid fit the
       // tile shipped and was rejected within hours (2026-08-11): it silently
@@ -1928,24 +1958,48 @@ export function AgenticTerminal({
      * tile is deliberately silent (see `applyResize`).
      */
     const repaintOnReturn = () => {
-      const size = sentSize;
+      // The grid this pane HOLDS, never the size it last asked for. The two
+      // differ while the pane follows a geometry the server chose (see
+      // `onGeometry`), and a nudge carrying the old request was granted
+      // silently: the agent went back to the tile's width while xterm stayed
+      // at the followed one, so every line it drew wrapped into word
+      // fragments down the pane's edge (reported 2026-10-06, after switching
+      // from the thread layout back to the grid).
+      const size = sentSize ? { cols: term.cols, rows: term.rows } : null;
       if (disposed || !size || !socket) return;
-      const claimOwner = viewerMayOwn();
+      // Coming back on stage is a change made in THIS window (see `returnResize`).
+      const claimOwner = activeRef.current && mayLead();
       const kind = claimOwner ? "claim" : "r";
       const shorter = Math.max(MIN_REAL_ROWS, size.rows - 1);
       if (shorter === size.rows) return;
       if (!socket.send({ t: kind, cols: size.cols, rows: shorter })) return;
       window.setTimeout(() => {
         if (disposed) return;
-        // A refit may have landed during the wait; give back the newest size.
-        const back = sentSize ?? size;
-        if (socket?.send({ t: kind, cols: back.cols, rows: back.rows }) && claimOwner) {
+        // A refit may have landed during the wait; give back the grid as it is now.
+        const back = { cols: term.cols, rows: term.rows };
+        if (!socket?.send({ t: kind, cols: back.cols, rows: back.rows })) return;
+        // What the agent was last asked for, so the next refit of the tile is
+        // compared against it and not against an older request.
+        sentSize = back;
+        if (claimOwner) {
           owned = true;
           displaced = false;
         }
       }, RETURN_REPAINT_NUDGE_MS);
     };
     repaintOnReturnRef.current = repaintOnReturn;
+    /**
+     * Refit a pane that comes back on stage, taking the size if this window may.
+     *
+     * A layout switch, a workspace switch or leaving the Verse is something the
+     * user did in this window, so it claims like a gesture in the pane does —
+     * without asking `document.hasFocus()`, whose answer the desktop shell lets
+     * lag (see `viewerMayOwn`). Only asking left a pane that had followed
+     * another geometry while it was hidden at that geometry: `applyResize`
+     * stays silent for a tile it already requested.
+     */
+    const returnResize = () => sendResize(activeRef.current && mayLead());
+    returnResizeRef.current = returnResize;
     /**
      * The same, on the strength of a gesture INSIDE this pane.
      *
@@ -2028,6 +2082,9 @@ export function AgenticTerminal({
      */
     let openedWithClaim = viewerMayOwn();
     const connectSize = () => {
+      // Without a size the server answers with the agent's (see
+      // `awaitingSizeReport`), and output waits for that answer.
+      awaitingSizeReport = true;
       if (!mountMeasured || !measurable()) return UNMEASURED_SIZE;
       let proposed: { cols: number; rows: number } | undefined;
       try {
@@ -2038,6 +2095,7 @@ export function AgenticTerminal({
       const cols = proposed?.cols ?? term.cols;
       const rows = proposed?.rows ?? term.rows;
       if (!Number.isFinite(cols) || !Number.isFinite(rows)) return UNMEASURED_SIZE;
+      awaitingSizeReport = false;
       // The same floors `applyResize` puts on the grid.
       return {
         cols: Math.max(cols, MIN_REAL_COLS),
@@ -2118,6 +2176,19 @@ export function AgenticTerminal({
               /* the terminal is being torn down — nothing left to reconcile */
             }
           };
+          // The report a handshake without a size was waiting for. What this
+          // pane holds — the replayed screen and anything after it — was
+          // drawn at THIS size, so the grid takes it first (see
+          // `awaitingSizeReport`). Something already parsing was flushed
+          // early by the hold's deadline; it keeps the ordinary order below.
+          if (awaitingSizeReport) {
+            awaitingSizeReport = false;
+            if (parsing === 0) {
+              applyGeometry();
+              flushHeld();
+              return;
+            }
+          }
           // A size frame belongs BETWEEN the output before and after it.
           // xterm parses writes asynchronously, and a hidden workspace can
           // still hold older output outside xterm. Resizing immediately made
@@ -2415,6 +2486,7 @@ export function AgenticTerminal({
       resizeRef.current = null;
       claimResizeRef.current = null;
       repaintOnReturnRef.current = null;
+      returnResizeRef.current = null;
       takeOwnershipRef.current = null;
       if (visibilityRef.current === visibility) visibilityRef.current = null;
     };
@@ -2467,7 +2539,7 @@ export function AgenticTerminal({
     const returningViewport = preservedViewportRef.current;
     const restoreViewport = () => {
       resizeRef.current?.();
-      claimResizeRef.current?.();
+      (returning ? returnResizeRef : claimResizeRef).current?.();
       restoreTerminalViewport(termRef.current, returningViewport);
     };
     // Measure the now-mounted stage before parsing held output. Once xterm has

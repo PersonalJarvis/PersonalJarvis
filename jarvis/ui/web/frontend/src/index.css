@@ -949,6 +949,53 @@ body {
   --tw-prose-invert-links: hsl(var(--accent));
 }
 
+/* A docs guide reads from theme tokens only, so the same class list serves
+   light and dark; the plugin's inverted palette is pointed at the same
+   values. Body copy sits one step below heading ink. */
+.docs-prose {
+  --tw-prose-body: hsl(var(--foreground-secondary));
+  --tw-prose-headings: hsl(var(--foreground-strong));
+  --tw-prose-lead: hsl(var(--muted-foreground));
+  --tw-prose-bold: hsl(var(--foreground-strong));
+  --tw-prose-counters: hsl(var(--muted-foreground));
+  --tw-prose-bullets: hsl(var(--foreground-faint));
+  --tw-prose-hr: hsl(var(--border));
+  --tw-prose-quotes: hsl(var(--foreground-secondary));
+  --tw-prose-quote-borders: hsl(var(--border-strong));
+  --tw-prose-code: hsl(var(--foreground-strong));
+  --tw-prose-th-borders: hsl(var(--border));
+  --tw-prose-td-borders: hsl(var(--border));
+  --tw-prose-invert-body: hsl(var(--foreground-secondary));
+  --tw-prose-invert-headings: hsl(var(--foreground-strong));
+  --tw-prose-invert-bold: hsl(var(--foreground-strong));
+  --tw-prose-invert-bullets: hsl(var(--foreground-faint));
+  --tw-prose-invert-hr: hsl(var(--border));
+  --tw-prose-invert-code: hsl(var(--foreground-strong));
+  font-size: 16px;
+  line-height: 28px;
+  letter-spacing: 0;
+}
+
+/* Headings are wrapped in their own anchor (rehype-autolink-headings). The
+   anchor keeps heading ink and reveals a quiet "#" on hover, so a section
+   link can be copied without turning every heading into link colour. */
+.docs-prose :is(h2, h3, h4) > a {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+}
+.docs-prose :is(h2, h3, h4) > a::after {
+  content: "#";
+  margin-left: 0.4em;
+  color: hsl(var(--foreground-faint));
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.docs-prose :is(h2, h3, h4):hover > a::after,
+.docs-prose :is(h2, h3, h4) > a:focus-visible::after {
+  opacity: 1;
+}
+
 /* Selecting text answers in the theme's own material, not the engine's
    default blue — the one saturated slab a black-and-white product used to
    show every time someone dragged across a sentence. */

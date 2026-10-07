@@ -138,6 +138,7 @@ def build_pkce_config(plugin_id: str, auth: OAuthPkceLoopbackAuth) -> PkceLoopba
         plugin_id=plugin_id,
         authorization_url=auth.authorization_url,
         token_url=auth.token_url,
+        refresh_url=auth.refresh_url,
         client_id=client_id,
         client_secret=client_secret,
         callback_port=auth.callback_port or 0,

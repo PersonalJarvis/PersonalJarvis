@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
-from jarvis.core.protocols import CodingSessionGateway
-
 from .approvals import Approvals
 from .bridge import MissionBridge
 from .browser.session import BrowserJobs
@@ -134,12 +132,10 @@ class SocietyRuntime:
     ) -> None:
         self._data_dir = Path(data_dir)
         self._plugin_state = plugin_state
-        self.coding_request_lock = asyncio.Lock()
-        self._coding_sessions: CodingSessionGateway | None = None
         self._usable_cache: _UsablePlugins | None = None
-        from .coding_supervision import CodingSupervision
+        from .coding_threads import CodingThreads
 
-        self.coding_supervision = CodingSupervision(self, app_bus)
+        self.coding_threads = CodingThreads(self)
         self._get_manager = mission_manager or (lambda: None)
         self._get_mission_bus = mission_bus or (lambda: None)
         self._get_budget = budget_tracker or (lambda: None)
@@ -286,11 +282,23 @@ class SocietyRuntime:
         self._started = True
         self._delivery_task = asyncio.create_task(self._deliver_pending())
         set_current_runtime(self)
-        await self.coding_supervision.start()
+        await self.coding_threads.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
+        self.background(self._keep_agent_runtimes_current())
         log.info("society runtime started (%s)", self.store.path)
         return self
+
+    async def _keep_agent_runtimes_current(self) -> None:
+        """Daily Hermes / OpenClaw updates for the runtimes agents use
+        (``agent_runtimes.manager.keep_current``; first round after 10 min)."""
+        from jarvis.agent_runtimes import manager
+
+        async def in_use() -> set[str]:
+            agents = await self.roster.list()
+            return {str(agent.runtime) for agent in agents} - {"", "jarvis"}
+
+        await manager.keep_current(in_use)
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""
@@ -460,7 +468,11 @@ class SocietyRuntime:
                 if unsubscribe is not None:
                     cleanup.callback(unsubscribe)
                     setattr(self, attribute, None)
-            cleanup.push_async_callback(self.coding_supervision.close)
+            cleanup.push_async_callback(self.coding_threads.close)
+            # Hermes / OpenClaw agents: their Gateways must not outlive the app.
+            from jarvis.agent_runtimes import stop_all as stop_agent_runtimes
+
+            cleanup.push_async_callback(stop_agent_runtimes)
 
             tasks: set[asyncio.Task[Any]] = set(self._watchers)
             for task in (self._starting_task, self._context_start_task, self._delivery_task):
@@ -708,22 +720,13 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ catalog
 
-    def coding_sessions(self) -> CodingSessionGateway:
-        """Lazy composition root for the scoped IDE protocol."""
-        if self._coding_sessions is None:
-            from jarvis.agentic_ide.control import CodingSessionControl
-            from jarvis.agentic_ide.session import get_registry
-
-            self._coding_sessions = CodingSessionControl(get_registry())
-        return self._coding_sessions
-
     def catalog(self) -> list[CapabilityRow]:
         from .browser.tool import BrowserTool
-        from .coding_tool import CodingSessionTool
+        from .coding_threads import CodingThreadTool
 
         tools = dict(self._get_tools() or {})
         tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
-        tools[CodingSessionTool.name] = CodingSessionTool(self, "")
+        tools[CodingThreadTool.name] = CodingThreadTool(self, "")
         try:
             skills = list(self._get_skills() or [])
         except Exception:  # noqa: BLE001 — a broken skill registry costs the skill rows only

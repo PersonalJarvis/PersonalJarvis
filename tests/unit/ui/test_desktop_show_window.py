@@ -226,6 +226,56 @@ def test_focus_window_now_leaves_a_quitting_window_alone() -> None:
     assert window.calls == []
 
 
+def test_a_shown_window_windows_would_not_activate_is_reported_as_shown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-10-06: Windows' foreground lock refused the activation of a
+    healthy, visible window. The reply said only "not focused", and the second
+    launch offered to kill the app as "probably stuck". A window on screen is
+    reported as shown, and its taskbar button flashes."""
+    app = DesktopApp.__new__(DesktopApp)
+    window = _RecordingWindow()
+    app._window = window  # noqa: SLF001
+    app._restore_overlay_for_visible_window = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    flashed: list[str] = []
+    monkeypatch.setattr("jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda _t: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_restores_maximized", lambda _title: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app._flash_taskbar_button", flashed.append)
+
+    assert app._focus_window_now() == {  # noqa: SLF001
+        "ok": True,
+        "focused": False,
+        "shown": True,
+        "reason": "foreground_lock",
+    }
+    assert flashed == [desktop_app_title()]
+
+
+def test_a_window_still_minimized_after_a_refused_activation_is_not_shown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = DesktopApp.__new__(DesktopApp)
+    app._window = _RecordingWindow()  # noqa: SLF001
+    app._restore_overlay_for_visible_window = lambda: None  # type: ignore[method-assign]  # noqa: SLF001
+    flashed: list[str] = []
+    monkeypatch.setattr("jarvis.ui.desktop_app._bring_window_to_front_by_title", lambda _t: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_needs_restore", lambda _title: True)
+    monkeypatch.setattr("jarvis.ui.desktop_app.window_restores_maximized", lambda _title: False)
+    monkeypatch.setattr("jarvis.ui.desktop_app._flash_taskbar_button", flashed.append)
+
+    reply = app._focus_window_now()  # noqa: SLF001
+    assert reply["shown"] is False
+    assert reply["ok"] is False
+    assert flashed == []
+
+
+def desktop_app_title() -> str:
+    from jarvis.ui.desktop_app import WINDOW_TITLE
+
+    return WINDOW_TITLE
+
+
 class _Reply:
     def __init__(self, payload: dict) -> None:
         self.status_code = 200

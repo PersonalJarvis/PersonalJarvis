@@ -177,6 +177,8 @@ class Worker:
                 ignore_default_args=["about:blank"] if self.login_mode else None,
                 args=[
                     "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
+                    # Stopping the worker ends Chrome without a clean exit.
+                    "--hide-crash-restore-bubble",
                     # Explicit handback resumes the tabs the person just used.
                     *(["--restore-last-session"] if self.login_mode else []),
                 ],

@@ -1144,7 +1144,7 @@ def step_jarvis_agent_harness_check() -> None:
         _println(f"✓ Worker-harness binary found: {binary}")
     else:
         _println("–  'openclaw' harness binary not on PATH (optional).")
-        _println("   Install: npm i -g openclaw   (pin: 2026.5.7, see AD-21)")
+        _println("   Install it from an agent's Brain settings (OpenClaw 2026.9.8 or newer).")
         _println("   The harness stays inactive until the binary is available — no crash.")
 
     # 2. Show the provider mapping (lazy import — the wizard should also run

@@ -20,11 +20,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTLINES = ROOT / "art/studies/agent-symbol-companions/source/outlines.json"
+# Written by build_agent_companions.py: body surface depth (m) under each slot anchor.
+BODY_DEPTHS = ROOT / "art/studies/agent-symbol-companions/source/body_depths.json"
 OUTPUT = ROOT / "jarvis/ui/web/frontend/src/components/society/companion/accessories.json"
 
 # Draw order of the flat symbol; also the persisted slot names.
 SLOTS = ["back", "outfit", "neck", "mouth", "face", "head", "held"]
-# Anchor depth as a fraction of the body's front surface (0 = body centre).
+# Fallback anchor depth as a fraction of frontDepthM (0 = body centre); each shape
+# carries its measured surface depth per slot in "depth".
 SLOT_DEPTH = {"back": -1, "outfit": 1, "neck": 1, "mouth": 1, "face": 1, "head": 0, "held": 0.4}
 
 EYE_Y = {"cloud": 23, "triangle": 23, "drop": 25}
@@ -469,6 +472,7 @@ def rounded(value):
 
 def main():
     outlines = json.loads(OUTLINES.read_text(encoding="utf-8"))
+    depths = json.loads(BODY_DEPTHS.read_text(encoding="utf-8"))
     shapes = {}
     for name, anchors in ANCHORS.items():
         ys = [y for _, y in outlines[name]]
@@ -479,6 +483,7 @@ def main():
             "anchors": {**anchors, "neck": NECK[name], "outfit": NECK[name], "face": [20, eye, face_k],
                         "mouth": [20, eye + MOUTH_DROP * face_k, round(face_k * MOUTH_BOOST, 3)],
                         "held": [*anchors["held"][:2], round(anchors["held"][2] * HELD_BOOST, 3)]},
+            "depth": depths[name],
         }
     groups = {"outfit": outfit_items(), "head": head_items(), "face": face_items(), "mouth": mouth_items()}
     for group in groups.values():

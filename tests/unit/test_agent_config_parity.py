@@ -117,7 +117,7 @@ def test_a_global_settings_change_follows_through(native: Path) -> None:
     (native / "settings.json").write_text(json.dumps({"model": "sonnet"}), encoding="utf-8")
     ensure_parity("claude", account.id)
     settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
-    assert settings == {"model": "sonnet"}
+    assert settings == {"model": "sonnet", "claudeMdExcludes": [_memory_pattern(native)]}
 
 
 def test_the_user_scope_mcp_servers_are_merged_without_the_identity(native: Path) -> None:
@@ -537,3 +537,60 @@ def test_a_marker_the_account_wrote_itself_is_never_overwritten(
     ensure_parity("claude", account.id)
     doc = json.loads((account.config_dir / ".claude.json").read_text(encoding="utf-8"))
     assert doc["lastOnboardingVersion"] == "2.1.226"
+
+
+# ------------------------------------------------- the user's memory loads once
+
+
+def _memory_pattern(native: Path) -> str:
+    return (native / "CLAUDE.md").as_posix()
+
+
+def _excludes(account: agent_accounts.AgentAccount) -> list[str] | None:
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    return settings.get("claudeMdExcludes")
+
+
+def test_a_mirrored_memory_file_is_not_read_a_second_time_from_home(native: Path) -> None:
+    """Claude Code also reads ~/.claude/CLAUDE.md as a parent folder's project file.
+
+    In a folder under the home directory a pane on an added account then got
+    the user's whole global instructions twice; a terminal gets them once.
+    """
+    account = _account()
+    ensure_parity("claude", account.id)
+    assert _excludes(account) == [_memory_pattern(native)]
+    settings = json.loads((account.config_dir / "settings.json").read_text(encoding="utf-8"))
+    assert settings["model"] == "opus"  # the rest of the mirror is unchanged
+    second = ensure_parity("claude", account.id)
+    assert second.shared["settings.json"] == "current"
+
+
+def test_the_users_own_excludes_are_kept_and_extended(native: Path) -> None:
+    (native / "settings.json").write_text(
+        json.dumps({"claudeMdExcludes": ["**/vendor/CLAUDE.md"]}), encoding="utf-8"
+    )
+    account = _account()
+    ensure_parity("claude", account.id)
+    assert _excludes(account) == ["**/vendor/CLAUDE.md", _memory_pattern(native)]
+
+
+def test_an_account_with_its_own_settings_gets_the_exclusion_merged(native: Path) -> None:
+    account = _account()
+    own = account.config_dir / "settings.json"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text(json.dumps({"model": "haiku"}), encoding="utf-8")
+    ensure_parity("claude", account.id)
+    assert json.loads(own.read_text(encoding="utf-8"))["model"] == "haiku"
+    assert _excludes(account) == [_memory_pattern(native)]
+    assert ensure_parity("claude", account.id).shared["settings.json"] == "current"
+
+
+def test_an_account_with_its_own_memory_still_reads_the_users(native: Path) -> None:
+    """Its CLAUDE.md is not the user's, so home's copy is the only one it has."""
+    account = _account()
+    own = account.config_dir / "CLAUDE.md"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text("Account house style.\n", encoding="utf-8")
+    ensure_parity("claude", account.id)
+    assert _excludes(account) is None

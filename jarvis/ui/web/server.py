@@ -477,12 +477,12 @@ class WebServer:
         from .agent_accounts_routes import router as agent_accounts_router
         from .agent_chat_routes import router as agent_chat_router
         from .agent_mcp_routes import router as agent_mcp_router
+        from .agent_runtime_routes import router as agent_runtime_router
         from .agentic_ide_git_routes import router as agentic_ide_git_router
         from .agentic_ide_routes import router as agentic_ide_router
         from .antigravity_routes import router as antigravity_router
         from .app_actions_routes import router as app_actions_router
         from .appshot_routes import router as appshot_router
-        from .jarvisx_routes import router as jarvisx_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -515,6 +515,7 @@ class WebServer:
         from .frontier_routes import router as frontier_router
         from .grok_build_routes import router as grok_build_router
         from .ide_skills_routes import router as ide_skills_router
+        from .jarvisx_routes import router as jarvisx_router
         from .live_routes import router as live_router
         from .local_models_assistant_routes import (
             router as local_models_assistant_router,
@@ -542,6 +543,7 @@ class WebServer:
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
         from .routine_hooks_routes import router as routine_hooks_router
+        from .runtime_gateway_routes import router as runtime_gateway_router
         from .screen_context_routes import router as screen_context_router
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
@@ -763,6 +765,8 @@ class WebServer:
 
         set_society_factory(self._build_society_runtime)
         app.include_router(society_router)
+        app.include_router(agent_runtime_router)
+        app.include_router(runtime_gateway_router)
         from .mars_routes import router as mars_router
 
         app.include_router(mars_router)

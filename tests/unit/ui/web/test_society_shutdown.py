@@ -70,7 +70,7 @@ async def test_server_stop_closes_real_roster_store_and_delivery(tmp_path, monke
         await runtime.close()
 
 
-@pytest.mark.parametrize("component", ["browser", "coding_supervision"])
+@pytest.mark.parametrize("component", ["browser", "coding_threads"])
 async def test_component_failure_still_closes_store_and_finishes_server(
     tmp_path, monkeypatch, component
 ):

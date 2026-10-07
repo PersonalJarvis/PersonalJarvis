@@ -248,6 +248,8 @@ class HostedCli:
 
     def release(self) -> None:
         """The turn is over and handled: the host (or the spool) may drop it."""
+        if self.detached:
+            return
         if self._spool_path is not None:
             with contextlib.suppress(OSError):
                 self._spool_path.unlink()
@@ -377,6 +379,12 @@ class TurnHostClient:
         return cli
 
     def _register(self, cli: HostedCli) -> None:
+        previous = self._procs.get(cli.host_id)
+        if previous is not None and previous is not cli:
+            # A second recovery in this app used to silently strand the old
+            # reader until its one-hour timeout, even after the CLI exited.
+            # Wake it with the same ownership signal as a cross-app handover.
+            previous._on_handed_over()
         self._procs[cli.host_id] = cli
         for frame in self._early.pop(cli.host_id, []):
             self._deliver(cli, frame)
