@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -43,6 +44,8 @@ from .events import (
 )
 from .failure_reasons import FailureReason
 from .store import SocietyStore
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "AgentRecord",
@@ -380,6 +383,40 @@ def _validate_computer(value: Any) -> str | None:
             FailureReason.TARGET_UNKNOWN, f"computer {computer_id!r} is not connected"
         )
     return computer_id
+
+
+#: Roster columns whose change moves an agent off the model route its
+#: Hermes / OpenClaw runtime was granted.
+_SEAT_COLUMNS: Final[tuple[str, ...]] = ("provider", "model", "account_id")
+
+
+def _seat_left(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Whether a runtime agent's model gateway grants stopped being its own.
+
+    True for an agent on Hermes / OpenClaw whose provider, model or paying
+    account changed, or that was archived.
+    """
+    if str(after.get("runtime") or "jarvis") == "jarvis":
+        return False
+    if str(after.get("state") or "") == str(AgentState.ARCHIVED) != str(before.get("state") or ""):
+        return True
+    return any(str(before.get(key) or "") != str(after.get(key) or "") for key in _SEAT_COLUMNS)
+
+
+def _revoke_runtime_grants(agent_id: str) -> None:
+    """Drop the agent's model gateway tokens, so a runtime process still
+    holding one cannot spend the old seat; the next turn is granted anew."""
+    from jarvis.agent_runtimes import gateway
+
+    revoke = getattr(gateway, "revoke_agent", None)
+    if revoke is None:  # a build without grant revocation: tokens end with the app
+        return
+    try:
+        revoked = revoke(agent_id)
+    except Exception:  # noqa: BLE001 — the roster change stands; the stale grant is logged
+        log.warning("society: runtime grants of %s not revoked", agent_id, exc_info=True)
+        return
+    log.info("society: revoked %s runtime gateway grant(s) of %s", revoked, agent_id)
 
 
 def _check_runtime_placement(runtime: Any, computer_id: Any) -> None:
@@ -732,6 +769,8 @@ class Roster:
         assert row is not None
         record = await self._hydrate(row)
         await self.refresh()
+        if _seat_left(current, row):
+            _revoke_runtime_grants(agent_id)
         return record
 
     async def archive(self, agent_id: str) -> AgentRecord:
