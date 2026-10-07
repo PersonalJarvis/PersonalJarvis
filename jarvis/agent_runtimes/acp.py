@@ -55,6 +55,13 @@ RESUME_LOST_ERROR: Final[str] = "ACP session not found"
 #: JSON-RPC "method not found".
 _METHOD_NOT_FOUND: Final[int] = -32601
 
+#: ``stopReason`` values that end a turn before its answer was complete.
+_STOPPED_EARLY: Final[dict[str, str]] = {
+    "max_tokens": "The answer stopped at the model's output limit.",
+    "max_turn_requests": "The agent reached its step limit for one turn.",
+    "cancelled": "The turn was cancelled before it finished.",
+}
+
 #: ``mcp_<server>_<tool>`` (Hermes) and ``<server>__<tool>`` spellings of a
 #: Jarvis MCP tool, normalised to the ``mcp__jarvis__<tool>`` form the
 #: society checkpoints and quests read.
@@ -203,6 +210,27 @@ class AcpTurn:
             }
         )
 
+    def cancel_frame(self) -> dict[str, Any] | None:
+        """The ``session/cancel`` notification for the running prompt (``None`` when
+        no prompt is in flight). The agent answers the prompt with
+        ``stopReason: cancelled`` once its turn has wound down."""
+        if not self._acp_session or self.saw_result:
+            return None
+        return {
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": {"sessionId": self._acp_session},
+        }
+
+    @property
+    def handshaken(self) -> bool:
+        """Whether the session is open (``session/new`` / ``session/load`` answered)."""
+        return bool(self._acp_session)
+
+    def tool_running(self) -> bool:
+        """Whether a tool call started and has not reported its end yet."""
+        return any(call not in self._finished_tools for call in self._tool_started)
+
     def _session_params(self) -> dict[str, Any]:
         return {"cwd": self.cwd, "mcpServers": [s.to_acp() for s in self.mcp_servers]}
 
@@ -292,8 +320,21 @@ class AcpTurn:
             self._take_usage(res.get("usage"))
             if self.stop_reason == "refusal" and not self.emitted_text:
                 self._fail("The model refused this request.")
-            elif self.stop_reason in {"max_tokens", "max_turn_requests"} and not self.emitted_text:
-                self._fail(f"The agent stopped early ({self.stop_reason}).")
+            elif self.stop_reason in _STOPPED_EARLY and not self.emitted_text:
+                self._fail(_STOPPED_EARLY[self.stop_reason])
+            elif self.stop_reason in _STOPPED_EARLY:
+                # The answer stands, but the chat says it is not the whole one.
+                await io.emit(
+                    make_event(
+                        "notice",
+                        {
+                            "kind": "stop_reason",
+                            "turn_id": self.turn_id,
+                            "stop_reason": self.stop_reason,
+                            "text": _STOPPED_EARLY[self.stop_reason],
+                        },
+                    )
+                )
             return
 
     async def _on_agent_request(self, obj: dict[str, Any], method: str, io: AcpIO) -> None:

@@ -360,3 +360,173 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
     assert _texts(recovered) == ["I review contributor pull requests for security issues."]
     assert len(state["calls"]) == 2 and released == [1, 1]
     assert not gateway._FAILURES
+
+
+# ------------------------------------------- cancel, watchdog, containment
+
+
+def _run_live(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    text: str,
+    *,
+    env: dict[str, str] | None = None,
+    mode: str = "bypass",
+    cancel_after: float | None = None,
+    ask_delay: float = 0.0,
+) -> tuple[list[dict[str, Any]], Path]:
+    """One turn against the fake agent; returns its events and frame log."""
+    frames = tmp_path / "frames.log"
+
+    async def fake_plan(handle: Any, runner: str, *, prompt: str, cwd: Path, resume, identity):
+        child_env = dict(os.environ)
+        child_env.update(FAKE_ACP_STORE=str(tmp_path / "store.json"), FAKE_ACP_LOG=str(frames))
+        child_env.update(env or {})
+        return rc.CliPlan(
+            argv=[sys.executable, str(_AGENT)],
+            env=child_env,
+            stdin_text=None,
+            shape="acp",
+            vendor_session=None,
+            keep_stdin=True,
+            acp=AcpTurn(
+                turn_id=handle.turn_id,
+                cwd=str(cwd),
+                prompt_text=prompt,
+                auto_allow=mode == "bypass",
+            ),
+        )
+
+    monkeypatch.setattr(runner_acp, "plan_runtime_turn", fake_plan)
+    events: list[dict[str, Any]] = []
+
+    async def emit(event: dict[str, Any]) -> None:
+        events.append(event)
+
+    async def ask(call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+        await asyncio.sleep(ask_delay)
+        return "allow"
+
+    async def run() -> None:
+        handle = TurnHandle(
+            session=_session(tmp_path, vendor=None, mode=mode),
+            turn_id="t-live",
+            emit=emit,
+            request_approval=ask,
+            cancel=asyncio.Event(),
+        )
+        if cancel_after is not None:
+            asyncio.get_running_loop().call_later(cancel_after, handle.cancel.set)
+        await asyncio.wait_for(rc.run_cli_turn(handle, text, "hermes-cli"), timeout=60)
+
+    asyncio.run(run())
+    return events, frames
+
+
+def _methods(frames: Path) -> list[str]:
+    if not frames.is_file():
+        return []
+    return [
+        str(json.loads(line).get("method") or "")
+        for line in frames.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_stop_asks_the_runtime_to_cancel_before_killing_it(monkeypatch, tmp_path):
+    """An OpenClaw run lives in its Gateway: killing the bridge alone never stops it."""
+    started = time.monotonic()
+    events, frames = _run_live(monkeypatch, tmp_path, "SLOW please", cancel_after=1.5)
+    assert _finished(events)["status"] == "cancelled"
+    assert "session/cancel" in _methods(frames)
+    assert time.monotonic() - started < 15
+
+
+def test_a_runtime_that_ignores_cancel_is_still_ended(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_CANCEL_GRACE_S", 0.5)
+    events, frames = _run_live(
+        monkeypatch, tmp_path, "SLOW", env={"FAKE_ACP_IGNORE_CANCEL": "1"}, cancel_after=1.0
+    )
+    assert _finished(events)["status"] == "cancelled"
+    assert "session/cancel" in _methods(frames)
+
+
+def test_a_runtime_that_never_opens_its_session_is_stopped(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_HANDSHAKE_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(rc, "_ACP_WATCH_TICK_S", 0.2)
+    events, _ = _run_live(monkeypatch, tmp_path, "hi", env={"FAKE_ACP_MODE": "hang-after-init"})
+    finished = _finished(events)
+    assert finished["status"] == "error"
+    assert "did not open its session" in finished["error"]
+
+
+def test_a_silent_model_is_stopped_with_a_plain_reason(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_IDLE_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(rc, "_ACP_WATCH_TICK_S", 0.2)
+    events, frames = _run_live(monkeypatch, tmp_path, "SLOW")
+    finished = _finished(events)
+    assert finished["status"] == "error"
+    assert "stopped responding" in finished["error"]
+    assert "session/cancel" in _methods(frames)
+
+
+def test_a_long_tool_call_is_not_a_stall(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_IDLE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(rc, "_ACP_WATCH_TICK_S", 0.1)
+    events, _ = _run_live(monkeypatch, tmp_path, "TOOLWAIT", cancel_after=2.5)
+    # Ended by the person after 2.5 s, not by the 0.5 s watchdog.
+    assert _finished(events)["status"] == "cancelled"
+
+
+def test_an_open_approval_card_is_not_a_stall(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_ACP_IDLE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(rc, "_ACP_WATCH_TICK_S", 0.1)
+    events, _ = _run_live(monkeypatch, tmp_path, "ASK now", mode="ask", ask_delay=2.0)
+    assert _finished(events)["status"] == "done"
+    assert _texts(events) == ["permission: yes"]
+
+
+def test_an_oversized_frame_ends_the_turn_cleanly(monkeypatch, tmp_path):
+    monkeypatch.setattr(rc, "_READLINE_LIMIT", 64 * 1024)
+    events, _ = _run_live(monkeypatch, tmp_path, "BIG", env={"FAKE_ACP_BIG_BYTES": "200000"})
+    finished = _finished(events)
+    assert finished["status"] == "error"
+    assert "larger than" in finished["error"]
+
+
+def test_a_runtime_that_exits_without_answering_is_an_error(monkeypatch, tmp_path):
+    events, _ = _run_live(monkeypatch, tmp_path, "EXIT now")
+    finished = _finished(events)
+    assert finished["status"] == "error"
+    assert "3" in (finished["error"] or "")
+
+
+def test_a_cut_off_answer_stands_and_says_so(monkeypatch, tmp_path):
+    events, _ = _run_live(monkeypatch, tmp_path, "MAXTOK")
+    assert _finished(events)["status"] == "done"
+    assert _texts(events) == ["echo: MAXTOK"]
+    notices = [e["payload"] for e in events if e["kind"] == "notice"]
+    assert [n["stop_reason"] for n in notices] == ["max_tokens"]
+
+
+def test_a_detached_child_of_the_runtime_is_reaped_with_the_turn(monkeypatch, tmp_path):
+    """Hermes starts shell commands in their own session (POSIX setsid);
+    killpg never reaches them, the descendant tracker does (Windows: the job)."""
+    import psutil
+
+    child_file = tmp_path / "child.pid"
+    events, _ = _run_live(
+        monkeypatch, tmp_path, "SETSID", env={"FAKE_ACP_CHILD_FILE": str(child_file)}
+    )
+    assert _finished(events)["status"] == "done"
+    pid = int(child_file.read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 5
+    while psutil.pid_exists(pid) and time.monotonic() < deadline:
+        try:
+            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                break
+        except psutil.NoSuchProcess:
+            break
+        time.sleep(0.1)
+    alive = psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    assert not alive
