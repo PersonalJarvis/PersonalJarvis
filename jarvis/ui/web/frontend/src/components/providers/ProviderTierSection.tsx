@@ -824,7 +824,9 @@ export function ProviderCard({
   // assistive tech, and the billing line already says how you sign in.
   const summary = t(`provider_billing.${billingOverride ?? descriptor.billing}`);
   const collapsible = Boolean(onToggleExpanded);
-  const rowTitle = descriptor.active
+  const rowTitle = descriptor.active && !descriptor.configured
+    ? t("apikeys_view.needs_credentials")
+    : descriptor.active
     ? t("apikeys_view.active_tooltip")
     : !isBrainSwitchable
       ? t("apikeys_view.agents_only_short").replace("{0}", agentsBrand(assistantName))
@@ -1258,7 +1260,9 @@ export function ActiveControl({
   disabledReason?: string;
 }) {
   const t = useT();
-  const labelTitle = descriptor.active
+  const labelTitle = descriptor.active && !descriptor.configured
+    ? t("apikeys_view.needs_credentials")
+    : descriptor.active
     ? t("apikeys_view.activate_tooltip_active")
     : disabled
       ? disabledReason ?? t("apikeys_view.activate_tooltip_blocked")
@@ -1314,7 +1318,9 @@ export function ActiveControl({
       {activating
         ? t("apikeys_view.provider_activating")
         : descriptor.active
-          ? t("apikeys_view.provider_active")
+          ? descriptor.configured
+            ? t("apikeys_view.provider_active")
+            : t(PROVIDER_STATE_CHIPS[providerStateChip(descriptor)].key)
           : t("apikeys_view.provider_set_active")}
     </label>
   );
@@ -3802,7 +3808,8 @@ export function providerStateChip(
   descriptor: ProviderDescriptor,
   verification: Verification = null,
 ): ProviderStateChip {
-  if (descriptor.active) return "active";
+  // Selection alone proves neither a saved key nor a connected account.
+  if (descriptor.active && descriptor.configured) return "active";
   if (descriptor.auth_mode === "codex") {
     const status = descriptor.codex_status;
     // Transient: the status is being probed right now. Neither "missing" nor
@@ -3824,7 +3831,7 @@ export function providerStateChip(
   // A live verdict outranks everything below: the provider was asked and
   // answered (or did not).
   if (verification === "failed") return "not_working";
-  if (verification === "ok") return "ready";
+  if (verification === "ok" && descriptor.configured) return "ready";
   // On-device engine: the server's on-disk probe is the verdict.
   if (descriptor.local_runtime) {
     return descriptor.local_runtime.ready ? "ready" : "not_installed";
