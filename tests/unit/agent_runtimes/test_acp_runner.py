@@ -521,13 +521,15 @@ def test_a_detached_child_of_the_runtime_is_reaped_with_the_turn(monkeypatch, tm
     )
     assert _finished(events)["status"] == "done"
     pid = int(child_file.read_text(encoding="utf-8"))
-    deadline = time.monotonic() + 5
-    while psutil.pid_exists(pid) and time.monotonic() < deadline:
+
+    def running() -> bool:
+        # Gone or a zombie both mean reaped; the pid can vanish between calls.
         try:
-            if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
-                break
+            return psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
         except psutil.NoSuchProcess:
-            break
+            return False
+
+    deadline = time.monotonic() + 5
+    while running() and time.monotonic() < deadline:
         time.sleep(0.1)
-    alive = psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
-    assert not alive
+    assert not running()
