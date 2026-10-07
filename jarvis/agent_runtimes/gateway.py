@@ -101,8 +101,33 @@ _DEFAULT_COOLDOWN_S: Final = 30.0
 _SIGNATURES: OrderedDict[str, str] = OrderedDict()
 _SIGNATURES_MAX: Final[int] = 4096
 
-#: The finish reasons a Chat Completions client knows.
-_FINISH: Final[dict[str, str]] = {"max_tokens": "length", "length": "length"}
+#: Provider stop reasons that mean "cut off", in lower case without an enum
+#: prefix (Gemini's ``FinishReason.MAX_TOKENS``, Anthropic's
+#: ``model_context_window_exceeded``), and those that mean "withheld".
+_LENGTH_REASONS: Final[frozenset[str]] = frozenset(
+    {"length", "max_tokens", "model_context_window_exceeded"}
+)
+_FILTER_REASONS: Final[frozenset[str]] = frozenset(
+    {"content_filter", "safety", "refusal", "recitation", "blocklist", "prohibited_content",
+     "spii"}
+)
+
+
+def _finish(raw: Any) -> str:
+    """A provider stop reason as one Chat Completions knows."""
+    name = str(raw).rsplit(".", 1)[-1].strip().lower()
+    if name in _LENGTH_REASONS:
+        return "length"
+    if name in _FILTER_REASONS:
+        return "content_filter"
+    return "stop"
+
+
+def _final_finish(finish: str, calls: int) -> str:
+    """Tool calls end a normal turn, but a cut-off answer stays "length": a
+    tool call truncated by the output limit has broken arguments, and the
+    runtimes retry it with a larger budget instead of running it."""
+    return "tool_calls" if calls and finish == "stop" else finish
 
 _EFFORTS: Final[frozenset[str]] = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -891,7 +916,7 @@ async def _chat_chunks(
             if delta.usage:
                 _merge_usage(usage, delta.usage)
             if delta.finish_reason:
-                finish = _FINISH.get(delta.finish_reason, "stop")
+                finish = _finish(delta.finish_reason)
             delta = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — the stream already began: an error chunk tells the runtime
         failure = _report_failure(grant, model, _failure(grant.provider, exc, model), signal)
@@ -908,7 +933,7 @@ async def _chat_chunks(
         chat_id,
         model,
         {},
-        finish="tool_calls" if calls else finish,
+        finish=_final_finish(finish, calls),
         usage=_openai_usage(usage),
     )
     yield b"data: [DONE]\n\n"
@@ -944,7 +969,7 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
             if delta.usage:
                 _merge_usage(usage, delta.usage)
             if delta.finish_reason:
-                finish = _FINISH.get(delta.finish_reason, "stop")
+                finish = _finish(delta.finish_reason)
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
         raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
@@ -956,7 +981,7 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
         "created": int(time.time()),
         "model": model,
         "choices": [
-            {"index": 0, "message": message, "finish_reason": "tool_calls" if calls else finish}
+            {"index": 0, "message": message, "finish_reason": _final_finish(finish, len(calls))}
         ],
         "usage": _openai_usage(usage),
     }

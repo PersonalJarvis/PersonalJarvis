@@ -662,3 +662,79 @@ def test_the_prompt_size_includes_cached_tokens(brain, guarded, monkeypatch, str
         "total_tokens": 99_740,
         "prompt_tokens_details": {"cached_tokens": 98_000, "cache_write_tokens": 500},
     }
+
+
+class _StreamOf:
+    """An OpenAI SDK stream stand-in: async-iterates prepared chunks."""
+
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = chunks
+
+    def __aiter__(self) -> AsyncIterator[Any]:
+        async def chunks() -> AsyncIterator[Any]:
+            for chunk in self._chunks:
+                yield chunk
+
+        return chunks()
+
+
+def _sdk_chunk(*, finish: str | None = None, tool_args: str | None = None) -> Any:
+    from types import SimpleNamespace
+
+    calls = None
+    if tool_args is not None:
+        calls = [SimpleNamespace(index=0, id="call_9", function=SimpleNamespace(
+            name="write_file", arguments=tool_args))]
+    delta = SimpleNamespace(content=None, tool_calls=calls)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)],
+                           usage=None)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_tool_call_cut_off_by_the_output_limit_stays_length(
+    brain, guarded, monkeypatch, stream
+) -> None:
+    """The real OpenAI-compatible adapter on a stream the output limit cut
+    off mid-arguments: the runtime must see "length", never a finished
+    tool call it would run with broken input."""
+    from types import SimpleNamespace
+
+    from jarvis.plugins.brain import _openai_base
+
+    class Completions:
+        async def create(self, **kwargs: Any) -> Any:
+            return _StreamOf([_sdk_chunk(tool_args='{"path": "a.py", "content": "def f():'),
+                              _sdk_chunk(finish="length")])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()), base_url="fake")
+
+    async def deltas(grant, model, request):
+        async for delta in _openai_base.stream_complete(client, model, request):
+            yield delta
+
+    monkeypatch.setattr(gateway, "_deltas", deltas)
+    token = gateway.grant_token("agent-1", "openai")
+    answer = _chat(guarded, token, {**_CHAT, "stream": stream})
+    if stream:
+        lines = [line[5:].strip() for line in answer.text.splitlines()
+                 if line.startswith("data:")]
+        finish = json.loads(lines[-2])["choices"][0]["finish_reason"]
+    else:
+        finish = answer.json()["choices"][0]["finish_reason"]
+    assert finish == "length"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("FinishReason.MAX_TOKENS", "length"),  # google-genai's enum as str()
+        ("max_tokens", "length"),
+        ("model_context_window_exceeded", "length"),
+        ("FinishReason.SAFETY", "content_filter"),
+        ("refusal", "content_filter"),
+        ("end_turn", "stop"),
+        ("tool_use", "stop"),
+    ],
+)
+def test_provider_stop_reasons_become_chat_completions_ones(raw, expected) -> None:
+    assert gateway._finish(raw) == expected
