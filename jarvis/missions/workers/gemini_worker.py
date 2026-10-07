@@ -50,7 +50,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from jarvis.missions.stream_evidence import extract_stream_evidence
 
@@ -284,6 +284,8 @@ class GeminiWorker:
     """
 
     cli: Literal["claude"] = "claude"
+    # Provider family this worker bills (jarvis/missions/capacity.worker_family).
+    family: ClassVar[str] = "gemini"
 
     def __init__(
         self,

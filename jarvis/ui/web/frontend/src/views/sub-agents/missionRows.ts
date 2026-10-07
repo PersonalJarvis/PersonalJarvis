@@ -45,6 +45,8 @@ const STATE_STATUS: Record<string, SubAgentNode["status"]> = {
   RUNNING: "running",
   CRITIQUING: "running",
   LOOPING: "running",
+  // Parked for capacity: not landed, resumes from its checkpoint.
+  WAITING_CAPACITY: "running",
   APPROVED: "completed",
   FAILED: "failed",
   TIMED_OUT: "failed",

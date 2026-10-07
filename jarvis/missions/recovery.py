@@ -147,6 +147,11 @@ async def startup_recover(
     owner_dead_ids: list[str] = []
 
     for mission_id, prompt, last_state in stale:
+        # A mission parked for capacity is idle ON PURPOSE: no process owns it
+        # and its checkpoint holds the work (jarvis/missions/capacity.py). It
+        # is not an orphan, so no restart or periodic sweep may fail it.
+        if last_state == MissionState.WAITING_CAPACITY.value:
+            continue
         events = await store.events_for_mission(mission_id)
 
         # 1. Reconcile: a terminal event was recorded but the header lagged

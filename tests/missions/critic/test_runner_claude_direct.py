@@ -1019,7 +1019,14 @@ async def test_dead_claude_cli_critic_crosses_to_api_family(
     auth, the critic used to spawn ``claude --print`` unconditionally — two
     returncode=1 runs → ``critic_unavailable`` → the mission FAILED even though
     the worker (running on OpenRouter after the family walk) had delivered.
-    A non-viable Claude CLI must fall through to the in-process API critic."""
+    A non-viable Claude CLI must fall through to the in-process API critic.
+
+    Only for an install NOT pinned to a subscription (key-only, no claude
+    CLI): a pinned one parks instead of grading on a paid key — see
+    tests/missions/test_capacity_critic.py."""
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._critic_subscription_only", lambda _p: False
+    )
     monkeypatch.setattr(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: ("claude-api", "claude-sonnet-4-6"),

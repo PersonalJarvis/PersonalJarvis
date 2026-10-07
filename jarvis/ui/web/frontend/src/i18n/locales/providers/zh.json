@@ -154,5 +154,25 @@
     "thinking_pick": "在通话中回答并使用工具",
     "voice_ready": "就绪",
     "voice_not_ready": "未设置"
+  },
+  "mission_billing": {
+    "section": "任务",
+    "title": "订阅用完时改用 API 密钥继续",
+    "state_off": "关闭 · 任务会等待，直到某个订阅重新有额度",
+    "state_on": "开启 · {provider} · 每个任务最多 {mission_cap}，每天最多 {daily_cap}",
+    "state_on_no_key": "开启 · 还没有价格已知的 API 密钥",
+    "state_key_only": "任务已经在使用你的 API 密钥运行",
+    "state_no_key": "需要一个价格已知的 API 密钥",
+    "spent": "过去 24 小时已花费 {amount}",
+    "less_than_cent": "不到 $0.01",
+    "load_error": "无法加载此设置：{detail}",
+    "save_error": "未保存：{detail}",
+    "confirm_title": "改用你的 API 密钥继续？",
+    "confirm_intro": "当所有已连接的订阅都用完时，任务会使用你自己的 API 密钥继续运行，而不是等待。",
+    "confirm_billing": "{provider} 会按每次请求向该密钥计费：",
+    "confirm_no_key": "还没有设置价格已知的 API 密钥，因此不会产生任何费用。",
+    "confirm_caps": "每个任务在 {mission_cap} 时停止，所有自动使用每天在 {daily_cap} 时停止。",
+    "confirm_off": "你可以随时关闭。从下一次请求开始生效。",
+    "confirm_action": "开启"
   }
 }

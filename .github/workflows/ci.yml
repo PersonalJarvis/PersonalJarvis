@@ -495,6 +495,12 @@ jobs:
           merge-multiple: true
       - name: Min-passed floor across all Linux shards (BLOCKING)
         run: python scripts/ci/ratchet_tests.py summary --floor --expected-shards 6 --baseline scripts/ci/test-baseline-linux.json reports
+      # Report only: flaky files (failed in a batch, passed alone) and new vs
+      # known failures. On main the cross-OS view and the "Flaky tests on main"
+      # issue come from .github/workflows/flaky-tests.yml.
+      - name: Flaky files and failures (report only)
+        if: ${{ !cancelled() }}
+        run: python scripts/ci/flaky_report.py summary reports
       - name: Merge the duration cache (main only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: python scripts/ci/ratchet_tests.py durations --out test_durations.json reports
