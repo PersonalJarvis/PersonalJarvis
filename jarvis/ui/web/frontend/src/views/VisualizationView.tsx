@@ -50,6 +50,7 @@ import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 import { artifactKind, isTextKind } from "@/lib/artifactKind";
+import { CapacityDecisionPanel } from "@/components/missions/CapacityDecisionPanel";
 import { cleanRequest } from "@/lib/runRequest";
 import { useEventStore } from "@/store/events";
 import { openExternalUrl } from "@/lib/openExternal";
@@ -343,6 +344,7 @@ export function VisualizationView() {
                 total={ordered.length}
                 onStep={step}
               />
+              <RunCapacityDecision run={target.run} />
               <BuildingStage run={target.run} />
             </>
           ) : target.run === null && target.visual === null ? (
@@ -551,6 +553,7 @@ function Stage({
   return (
     <>
       {nav}
+      {run && <RunCapacityDecision run={run} />}
       <ArtifactToolbar
         run={run}
         visual={visual}
@@ -885,6 +888,16 @@ function ArtifactSource({ slug, path }: { slug: string; path: string }) {
 }
 
 /* ------------------------------------------------------------------------- */
+
+/**
+ * A mission parked in WAITING_CAPACITY asks here: wait for its own
+ * subscription, approve paid API use for this one mission, or cancel. Nothing
+ * is billed without that explicit approval.
+ */
+function RunCapacityDecision({ run }: { run: OutputSummary }) {
+  if (!run.waiting_capacity || !run.mission_id) return null;
+  return <CapacityDecisionPanel missionId={run.mission_id} state="WAITING_CAPACITY" />;
+}
 
 function BuildingStage({ run }: { run: OutputSummary }) {
   const t = useT();

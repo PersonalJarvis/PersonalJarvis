@@ -1058,6 +1058,7 @@
       "attempts_timed_out": "Every attempt ran out of time",
       "budget_exceeded": "The cost budget was exceeded",
       "worktree_setup_failed": "The workspace could not be set up",
+      "checkpoint_missing": "The saved progress was missing, so the run could not continue",
       "critic_unavailable": "No reviewer was available to check the result",
       "critic_rejected": "The reviewer rejected the result",
       "review_time_budget_exhausted": "The review ran out of time",
@@ -4260,7 +4261,23 @@
     "timeline_label": "Event timeline",
     "no_events": "No events for this mission yet.",
     "no_critic_verdicts": "No critic verdicts for this mission yet.",
-    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…"
+    "no_missions_yet": "No missions yet. Main Jarvis will dispatch one shortly…",
+    "capacity_wait": {
+      "provider_quota": "{provider} capacity is used up for now.",
+      "provider_auth": "The {provider} sign-in has expired.",
+      "provider_unavailable": "{provider} cannot be used right now.",
+      "provider_fallback": "AI provider",
+      "saved": "The progress so far has been saved.",
+      "progress": "{done} of {total} steps done, {open} open.",
+      "progress_single": "The task itself is still open.",
+      "files": "Files saved: {files}.",
+      "wait": "The mission is waiting until capacity is available again.",
+      "wait_auth": "The mission is waiting until you sign in again.",
+      "paid": "Paid API use only with your approval in Artifacts, or when you allow it in Settings → API Keys.",
+      "paid_cap_reached": "The approved cost limit for {provider} is reached.",
+      "paid_daily_cap_reached": "Automatic paid use on {provider} reached its daily limit.",
+      "paid_consent_revoked": "Automatic paid use on {provider} was switched off."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Approvals",
@@ -4351,7 +4368,8 @@
     "approved": "done",
     "failed": "error",
     "cancelled": "cancelled",
-    "timed_out": "timeout"
+    "timed_out": "timeout",
+    "waiting_capacity": "waiting for capacity"
   },
   "mascot_gigi": {
     "aria_label": "{name} mascot Gigi",
@@ -7168,5 +7186,46 @@
       "create": "Create pet",
       "creating": "Creating…"
     }
+  },
+  "capacity_decision": {
+    "title": "Mission waiting for capacity – your decision",
+    "loading": "Checking for a paid alternative …",
+    "provider": "Provider",
+    "model": "Model",
+    "estimate": "Estimated cost",
+    "estimate_value": "about {cost} for {steps} open steps",
+    "cap": "Hard cost cap",
+    "spent": "Already spent",
+    "reason": "Reason",
+    "reasons": {
+      "provider_quota": "Subscription capacity used up",
+      "provider_auth": "Subscription sign-in expired",
+      "provider_unavailable": "Subscription cannot be used right now",
+      "paid_cap_reached": "Approved cost cap reached",
+      "paid_daily_cap_reached": "Daily limit for automatic paid use reached",
+      "paid_consent_revoked": "Automatic paid use was switched off"
+    },
+    "no_offer": "No paid API access with a known price is available. The mission waits for its subscription.",
+    "over_cap": "The estimate is above the cost cap. The mission pauses once the cap is reached; its progress stays saved.",
+    "scope": "An approval covers only this mission and this one run, never later missions.",
+    "covers_review": "The approval also pays for the checks that review the result.",
+    "settings_hint": "Always allow this in Settings → API Keys",
+    "wait": "Wait",
+    "approve": "Approve paid API for this mission",
+    "cancel": "Cancel mission",
+    "confirm_approve": "Use {provider} / {model} for this mission, at most {cap}?",
+    "confirm_cancel": "Cancel the mission? The saved progress is kept.",
+    "confirm": "Confirm",
+    "back": "Back",
+    "error": "Decision not applied: {detail}",
+    "waiting_ack": "The mission keeps waiting for its subscription.",
+    "logged": {
+      "wait": "Decision: wait.",
+      "approve_paid": "Decision: paid API approved.",
+      "cancel": "Decision: cancelled."
+    },
+    "logged_offer": "{provider} / {model}, estimated {cost}, cap {cap}.",
+    "paid_usage": "Paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap}).",
+    "paid_usage_automatic": "Automatic paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap})."
   }
 }

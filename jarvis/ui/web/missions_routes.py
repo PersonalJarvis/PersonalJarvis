@@ -127,6 +127,18 @@ class RerunBody(BaseModel):
     confirmed: bool = False
 
 
+class CapacityDecisionBody(BaseModel):
+    """The user's answer to a parked mission's paid-API offer.
+
+    ``provider``/``model`` echo the offer the user saw; an approval only
+    applies when they still match the current offer.
+    """
+
+    decision: Literal["wait", "approve_paid", "cancel"]
+    provider: str | None = None
+    model: str | None = None
+
+
 class DenyToolApprovalBody(BaseModel):
     """Optional audit reason for denying one paused supervisor tool call."""
 
@@ -532,6 +544,80 @@ async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
         "event_seq": env.seq,
         "worker_killed": worker_killed,
     }
+
+
+def _offer_json(offer: Any, *, spent_usd: float = 0.0) -> dict[str, Any] | None:
+    if offer is None:
+        return None
+    return {
+        "provider": offer.provider,
+        "model": offer.model,
+        "estimated_cost_usd": offer.estimated_cost_usd,
+        "cost_cap_usd": offer.cost_cap_usd,
+        "reason": offer.reason,
+        "open_steps": offer.open_steps,
+        # Already paid by this mission (every run, worker and critic); an
+        # approval grants up to ``cost_cap_usd`` MORE on top of it.
+        "spent_usd": round(float(spent_usd), 6),
+        # An approval covers the mission's critic calls too (same cap).
+        "covers_critic": True,
+    }
+
+
+@router.get("/{mission_id}/paid-offer")
+async def get_paid_offer(mission_id: str, request: Request) -> dict[str, Any]:
+    """The paid-API alternative for a mission waiting for capacity.
+
+    Shows provider, model, estimated cost, the hard cost cap and why the
+    mission stopped. Read-only: nothing is approved or billed here. ``offer``
+    is null when the mission is not waiting or no priced API key is usable.
+    """
+    mgr = _require_manager(request)
+    view = await mgr.mission(mission_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    kontrollierer = _optional_kontrollierer(request)
+    offer_fn = getattr(kontrollierer, "paid_offer", None)
+    offer = await offer_fn(mission_id) if offer_fn is not None else None
+    spent_fn = getattr(kontrollierer, "paid_spent_usd", None)
+    spent = await spent_fn(mission_id) if offer is not None and spent_fn is not None else 0.0
+    return {
+        "mission_id": mission_id,
+        "state": view.state.value,
+        "offer": _offer_json(offer, spent_usd=spent),
+    }
+
+
+@router.post(
+    "/{mission_id}/capacity-decision", openapi_extra={"x-jarvis-dangerous": True}
+)
+async def decide_capacity(
+    mission_id: str, body: CapacityDecisionBody, request: Request
+) -> dict[str, Any]:
+    """Wait, approve paid API use for THIS mission only, or cancel.
+
+    An approval must name the provider and model of the offer currently
+    shown; it covers one run of this one mission — worker and critic calls,
+    up to the offer's cost cap more than the mission already paid — and is
+    never stored or reused. Returns ``409`` when the mission is no longer
+    waiting or the offer changed — nothing is decided or billed then.
+    """
+    from jarvis.missions.capacity import CapacityDecisionRejected
+
+    mgr = _require_manager(request)
+    if await mgr.mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    kontrollierer = _optional_kontrollierer(request)
+    decide = getattr(kontrollierer, "decide_capacity", None)
+    if decide is None:
+        raise HTTPException(status_code=503, detail="Mission runner is not available")
+    try:
+        state = await decide(
+            mission_id, body.decision, provider=body.provider, model=body.model
+        )
+    except CapacityDecisionRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {"ok": True, "mission_id": mission_id, "decision": body.decision, "state": state.value}
 
 
 # States from which a mission may be re-run. APPROVED is deliberately excluded
