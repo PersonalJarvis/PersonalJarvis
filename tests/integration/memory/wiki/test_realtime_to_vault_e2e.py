@@ -157,7 +157,14 @@ def _turn(
     )
 
 
-async def _wait_for_page(path: Path, timeout_s: float = 3.0) -> None:
+# Hang guard, not a latency budget: each wait ends as soon as its condition
+# holds (about half a second on a desktop), but a loaded Windows CI runner
+# took longer than the former 3 s to carry one turn through the extractor,
+# judge and writer into the vault.
+_HANG_GUARD_S = 60.0
+
+
+async def _wait_for_page(path: Path, timeout_s: float = _HANG_GUARD_S) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:  # noqa: ASYNC110 -- bounded test polling
         if path.is_file():  # noqa: ASYNC240 -- bounded integration-test probe
@@ -171,7 +178,7 @@ async def _wait_for_idle(
     journal: CandidateJournal,
     *,
     calls: int,
-    timeout_s: float = 3.0,
+    timeout_s: float = _HANG_GUARD_S,
 ) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:  # noqa: ASYNC110 -- bounded test polling
