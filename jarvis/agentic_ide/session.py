@@ -6741,13 +6741,17 @@ class Registry:
             mid_turn = False
             if require_idle:
                 busy = await self.turn_in_progress(term)
-                if busy == "working" and when_busy == "interrupt":
-                    busy = await self._interrupt_turn(owner, term)
-                    if busy == "working":
+                if busy in ("working", "starting") and when_busy == "interrupt":
+                    busy, pressed = await self._interrupt_turn(owner, term)
+                    if busy in ("working", "starting"):
                         raise AgentBusyError(
                             f"Stop was pressed, but {term.name} had not ended its turn after "
-                            f"{INTERRUPT_SETTLE_S:.0f} s; nothing was typed.",
-                            interrupted=True,
+                            f"{INTERRUPT_SETTLE_S:.0f} s; nothing was typed."
+                            if pressed
+                            else f"{term.name} was still starting its turn after "
+                            f"{INTERRUPT_SETTLE_S:.0f} s, so Stop was not pressed; "
+                            "nothing was typed.",
+                            interrupted=pressed,
                         )
                 if busy in ("failed", "exited"):
                     raise SessionError(
@@ -6809,31 +6813,38 @@ class Registry:
             return activity
         # An interrupted turn ("stopped") sits at its prompt like a finished
         # one; only a pane that is still starting with a task already handed
-        # over waits — it is about to work.
+        # over waits — it is about to work, but no turn is proven yet.
         if has_submission and activity not in ("waiting", "stopped"):
-            return "working"
+            return "starting"
         return ""
 
-    async def _interrupt_turn(self, owner: Session, term: Terminal) -> str:
-        """Press Stop once and wait for the turn to end; the busy word left, if any.
+    async def _interrupt_turn(self, owner: Session, term: Terminal) -> tuple[str, bool]:
+        """Press Stop once and wait for the turn to end.
 
-        Re-read right before the key: a turn that ended meanwhile is not
-        stopped again, because Escape at an idle prompt opens some CLIs'
-        history views. One key, never a kill — the process and its
-        conversation stay, and an unsaved edit in the step in flight is the
-        CLI's own Stop semantics.
+        Returns the busy word left (if any) and whether Stop was pressed.
+
+        Stop is pressed only on a PROVEN turn ("working"): Escape at an idle
+        prompt opens some CLIs' history views or clears a draft, so a pane
+        that is merely starting is watched until it works or settles, and a
+        turn that ended meanwhile is not stopped again. One key, never a kill —
+        the process and its conversation stay, and an unsaved edit in the step
+        in flight is the CLI's own Stop semantics.
         """
+        deadline = time.monotonic() + INTERRUPT_SETTLE_S
         busy = await self.turn_in_progress(term)
+        while busy == "starting" and time.monotonic() < deadline:
+            await asyncio.sleep(_INTERRUPT_POLL_S)
+            busy = await self.turn_in_progress(term)
         if busy != "working":
-            return busy
+            return busy, False
         if not self.write("pane:" + term.history_id, _INTERRUPT_KEY, owner.id):
             raise SessionError(f"{term.name} is not running; nothing was sent.")
         logger.info("Agentic IDE: pressed Stop on {} to deliver a correction", term.name)
         deadline = time.monotonic() + INTERRUPT_SETTLE_S
-        while busy == "working" and time.monotonic() < deadline:
+        while busy in ("working", "starting") and time.monotonic() < deadline:
             await asyncio.sleep(_INTERRUPT_POLL_S)
             busy = await self.turn_in_progress(term)
-        return busy
+        return busy, True
 
     @staticmethod
     def input_token(term: Terminal) -> str:

@@ -330,3 +330,34 @@ async def test_unknown_busy_delivery_is_refused(pane):
     with pytest.raises(SessionError, match="Unknown busy delivery"):
         await correct(registry, workspace, term, "kill")
     assert sent == []
+
+
+async def test_interrupt_never_presses_stop_on_a_pane_that_is_only_starting(pane, monkeypatch):
+    # No turn is proven yet: Escape there could clear a draft or open history.
+    registry, workspace, term, record, sent = pane
+    monkeypatch.setattr(session_module, "_INTERRUPT_POLL_S", 0.01)
+    readings = iter(["starting", "starting", "starting", ""])
+
+    async def reading(_term):
+        return next(readings, "")
+
+    monkeypatch.setattr(registry, "turn_in_progress", reading)
+    pressed = keys_pressed(registry, monkeypatch)
+    await correct(registry, workspace, term, "interrupt")
+    assert pressed == [] and sent == ["Narrow the review to the save flow"]
+
+
+async def test_interrupt_on_a_pane_that_never_starts_working_presses_nothing(pane, monkeypatch):
+    registry, workspace, term, record, sent = pane
+    monkeypatch.setattr(session_module, "_INTERRUPT_POLL_S", 0.01)
+    monkeypatch.setattr(session_module, "INTERRUPT_SETTLE_S", 0.05)
+
+    async def reading(_term):
+        return "starting"
+
+    monkeypatch.setattr(registry, "turn_in_progress", reading)
+    pressed = keys_pressed(registry, monkeypatch)
+    with pytest.raises(AgentBusyError, match="Stop was not pressed") as refused:
+        await correct(registry, workspace, term, "interrupt")
+    assert refused.value.interrupted is False
+    assert pressed == [] and sent == []

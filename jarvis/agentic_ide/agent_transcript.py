@@ -678,6 +678,8 @@ class _EventLog:
         #: A finished thought waits for the NEXT record's timestamp, which is
         #: the only place its duration can be read from.
         self._thought: tuple[str, str, int] | None = None
+        # The event a message typed mid-turn became, until anything follows it.
+        self._queued_event: dict[str, Any] | None = None
 
     # ----------------------------------------------------------------- core
     def _emit(self, kind: str, payload: dict[str, Any], ts: int) -> None:
@@ -743,13 +745,14 @@ class _EventLog:
         self.turn_id = None
 
     # -------------------------------------------------------------- records
-    def user(self, text: str, ts: int) -> None:
+    def user(self, text: str, ts: int, *, queued: bool = False) -> None:
         body = _clip(text)
         if not body:
             return
         if (
-            self.events
-            and self.events[-1]["kind"] == "user_message"
+            not queued
+            and self.events
+            and self.events[-1] is self._queued_event
             and self.events[-1]["payload"].get("text") == body
         ):
             # The record of a message typed mid-turn, followed by the CLI
@@ -757,6 +760,7 @@ class _EventLog:
             return
         self.close_turn(ts)
         self._emit("user_message", {"text": body}, ts)
+        self._queued_event = self.events[-1] if queued else None
 
     def thinking(self, text: str, message_id: str, ts: int) -> None:
         self._ensure_turn(ts)
@@ -986,6 +990,7 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                 log.user(
                     _spoken(str(queued.get("prompt") or "")),
                     _ts_ms(row.get("timestamp") or queued.get("timestamp")) or log.last_ms,
+                    queued=True,
                 )
             continue
         if kind not in ("user", "assistant"):

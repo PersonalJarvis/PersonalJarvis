@@ -261,6 +261,8 @@ class WorkspaceOrchestrator:
         # free. A "queued" receipt with no task here was left by an earlier
         # run of the app and was never typed.
         self._queued: dict[str, asyncio.Task] = {}
+        # receipt_id -> its pane, in the order the messages were queued.
+        self._queued_for: dict[str, str] = {}
         # Announces new panes to the open UI; set by the runtime that owns a bus.
         self.publish: Callable[[Any], Awaitable[Any]] | None = None
 
@@ -1364,6 +1366,7 @@ class WorkspaceOrchestrator:
         The returned event releases the queue once that receipt is filed.
         """
         armed = asyncio.Event()
+        self._queued_for[receipt_id] = delivery["target"]["terminal_id"]
         self._queued[receipt_id] = asyncio.create_task(
             self._drain(receipt_id, delivery, time.monotonic() + _QUEUE_TTL_S, armed),
             name=f"workspace-queue:{receipt_id}",
@@ -1386,30 +1389,58 @@ class WorkspaceOrchestrator:
     async def _drain(
         self, receipt_id: str, delivery: dict[str, Any], deadline: float, armed: asyncio.Event,
     ) -> None:
-        """Deliver one queued message once its pane is free, then file the receipt."""
+        """Deliver one queued message once its pane is free, then file the receipt.
+
+        Messages queued for one pane go out in the order they were queued: only
+        the oldest one still waiting may type. A cancel that lands while an
+        attempt is typing files ``uncertain``, never "nothing was typed".
+        """
         target = delivery["target"]
         result: dict[str, Any] | None = None
+        delivering = False
+        problem = ""
         try:
             await armed.wait()
             while time.monotonic() < deadline:
                 await asyncio.sleep(_QUEUE_POLL_S + random.uniform(0.0, 1.0))  # noqa: S311
-                found = self.registry.find_terminal(target["terminal_id"], target["workspace_id"])
-                # A cheap fresh check first: an attempt resolves and copies
-                # images, which is wasted on a pane that is still working.
-                if found is not None and await self.registry.turn_in_progress(found[1]):
+                if self._queued_ahead(receipt_id, target["terminal_id"]):
                     continue
+                try:
+                    found = self.registry.find_terminal(
+                        target["terminal_id"], target["workspace_id"]
+                    )
+                    # A cheap fresh check first: an attempt resolves and copies
+                    # images, which is wasted on a pane that is still working.
+                    if found is not None and await self.registry.turn_in_progress(found[1]):
+                        continue
+                except Exception as exc:  # noqa: BLE001 - a failed look is retried, never fatal
+                    from loguru import logger
+
+                    problem = f"{type(exc).__name__}: {exc}"
+                    logger.warning("Queued delivery could not read its pane: {}", problem)
+                    continue
+                delivering = True
                 outcome = await self._deliver(delivery, when_busy="refuse")
+                delivering = False
                 if outcome.get("busy"):
                     continue  # Someone else's prompt got there first.
                 result = outcome
                 break
         except asyncio.CancelledError:
-            result = {
-                "status": "expired", "success": False, "target": target,
-                "input_written": False,
-                "reason": "The app stopped before the queued message was delivered; "
-                          "nothing was typed.",
-            }
+            result = (
+                {
+                    "status": "uncertain", "success": False, "target": target,
+                    "reason": "The app stopped while the queued message was being typed. "
+                              "Inspect the session; do not resend automatically.",
+                }
+                if delivering
+                else {
+                    "status": "expired", "success": False, "target": target,
+                    "input_written": False,
+                    "reason": "The app stopped before the queued message was delivered; "
+                              "nothing was typed.",
+                }
+            )
             raise
         finally:
             if result is None:
@@ -1417,7 +1448,8 @@ class WorkspaceOrchestrator:
                     "status": "expired", "success": False, "target": target,
                     "input_written": False,
                     "reason": f"The turn did not end within {_QUEUE_TTL_S // 60} minutes; "
-                              "the queued message was not typed.",
+                              "the queued message was not typed."
+                              + (f" Last error reading the pane: {problem}" if problem else ""),
                 }
             result = {**result, "request_id": delivery["request_id"], "queued": True}
             try:
@@ -1429,6 +1461,16 @@ class WorkspaceOrchestrator:
 
                 logger.warning("Queued delivery receipt was not saved: {}", exc)
             self._queued.pop(receipt_id, None)
+            self._queued_for.pop(receipt_id, None)
+
+    def _queued_ahead(self, receipt_id: str, terminal_id: str) -> bool:
+        """Is an older message still waiting for the same pane?"""
+        for queued, pane in self._queued_for.items():
+            if queued == receipt_id:
+                return False
+            if pane == terminal_id:
+                return True
+        return False
 
 
 _orchestrators: dict[int, WorkspaceOrchestrator] = {}

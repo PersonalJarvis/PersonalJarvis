@@ -769,3 +769,53 @@ def test_tool_schema_offers_while_busy_and_shows_it_for_approval():
     described = tool.describe_args({"action": "send", "prompt": "x", "while_busy": "interrupt"})
     assert described["while_busy"] == "interrupt"
     assert "while_busy" not in tool.describe_args({"action": "send", "prompt": "x"})
+
+
+async def test_a_stop_while_the_queue_is_typing_is_uncertain_never_retyped(rig, fast_queue):
+    args, held = await busy_send(rig, while_busy="queue")
+    typing = asyncio.Event()
+    finish = asyncio.Event()
+    plain_run = rig[2].run
+
+    async def slow_run(call):
+        if call["action"] == "send" and not rig[2].refused:
+            typing.set()
+            await finish.wait()  # the app stops while this write is in flight
+        return await plain_run(call)
+
+    rig[2].run = slow_run
+    rig[2].refused = False
+    await asyncio.wait_for(typing.wait(), 2)
+    for task in list(rig[0]._queued.values()):
+        task.cancel()
+    await until(lambda: not rig[0]._queued)
+    again = await rig[0].run(args)
+    assert again["status"] == "uncertain"
+    assert rig[2].typed == []  # the cancelled write never completed, and no retry typed
+
+
+async def test_a_failed_look_at_the_pane_is_retried_not_dropped(rig, fast_queue, monkeypatch):
+    args, held = await busy_send(rig, while_busy="queue")
+    looks = []
+
+    async def flaky(term):
+        looks.append(term)
+        if len(looks) == 1:
+            raise OSError("transcript locked")
+        return ""
+
+    monkeypatch.setattr(rig[1], "turn_in_progress", flaky)
+    rig[2].refused = False
+    await until(lambda: not rig[0]._queued)
+    assert len(looks) >= 2
+    assert (await rig[0].run(args))["status"] == "accepted"
+    assert rig[2].typed == [args["prompt"]]
+
+
+async def test_messages_queued_for_one_pane_arrive_in_order(rig, fast_queue):
+    first, held = await busy_send(rig, while_busy="queue")
+    second = {**first, "request_id": uuid4().hex, "prompt": "And keep the tests green"}
+    assert (await rig[0].run(second))["status"] == "queued"
+    rig[2].refused = False
+    await until(lambda: not rig[0]._queued)
+    assert rig[2].typed == [first["prompt"], second["prompt"]]

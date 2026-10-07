@@ -368,6 +368,16 @@ class TestClaudeEvents:
         users = [ev["payload"]["text"] for ev in events if ev["kind"] == "user_message"]
         assert users == ["Review the folder editor", "Only review the save flow"]
 
+    def test_a_message_said_twice_by_the_person_stays_twice(self, tmp_path: Path) -> None:
+        # Only the CLI's own resubmission of a mid-turn message is folded.
+        _claude_session(tmp_path, "abc", [_user("continue", 0), _user("continue", 1)])
+        events = agent_transcript.read_events("claude", "abc", home=tmp_path, live=False)
+        assert events is not None
+        assert [ev["payload"]["text"] for ev in events if ev["kind"] == "user_message"] == [
+            "continue",
+            "continue",
+        ]
+
     def test_no_file_is_none_not_an_error(self, tmp_path: Path) -> None:
         assert agent_transcript.read_events("claude", "nope", home=tmp_path) is None
         assert agent_transcript.read_events("shell", "abc", home=tmp_path) is None

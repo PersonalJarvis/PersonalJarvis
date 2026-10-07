@@ -164,3 +164,33 @@ def test_coding_question_is_returned_as_input_needed(recorded):
         ),
     )
     assert delegation_wait._read(term, (1, 100))["status"] == "needs_input"
+
+
+def _claude_steered_turn(term, write):
+    term.agent = "claude"
+    write(
+        {"type": "user", "timestamp": stamp(101), "message": {"content": "Fix the bug"}},
+        {"type": "assistant", "timestamp": stamp(102), "message": {
+            "content": [{"type": "tool_use", "id": "c1", "name": "Read", "input": {}}]}},
+        {"type": "attachment", "timestamp": stamp(103), "attachment": {
+            "type": "queued_command", "prompt": "Only the save flow",
+            "commandMode": "prompt", "origin": {"kind": "human"}}},
+        {"type": "assistant", "timestamp": stamp(104), "message": {
+            "content": [{"type": "text", "text": "Report"}], "stop_reason": "end_turn"}},
+    )
+
+
+def test_a_note_typed_into_the_running_turn_does_not_orphan_the_job(recorded):
+    # The note is part of the same work: the job still completes with its report.
+    term, write = recorded
+    _claude_steered_turn(term, write)
+    result = delegation_wait._read(term, (1, 100))
+    assert result["status"] == "completed" and result["report"] == "Report"
+
+
+def test_a_steered_correction_completes_with_the_turn_it_joined(recorded):
+    term, write = recorded
+    term.last_prompt, term.last_submit_at = "Only the save flow", 102.5
+    _claude_steered_turn(term, write)
+    result = delegation_wait._read(term, (1, 102.5))
+    assert result["status"] == "completed" and result["report"] == "Report"
