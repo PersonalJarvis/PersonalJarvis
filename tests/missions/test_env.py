@@ -290,8 +290,13 @@ def test_seed_creates_real_symlink_when_privilege_available(
     assert target.is_symlink(), (
         f"target must be a symlink, but is {target.stat()!s}"
     )
-    # Read the link back -- must resolve to the source.
-    assert Path(os.readlink(target)).resolve() == source.resolve()
+    # Read the link back -- must resolve to the source. On Windows readlink
+    # returns the stored NT substitute name, which carries the extended-length
+    # "\\?\" prefix that Path.resolve() keeps; it names the same path.
+    link = os.readlink(target)
+    if link.startswith("\\\\?\\"):
+        link = link[len("\\\\?\\"):]
+    assert Path(link).resolve() == source.resolve()
 
 
 def test_seed_eperm_keeps_target_missing(

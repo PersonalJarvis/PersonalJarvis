@@ -22,13 +22,47 @@ from jarvis.missions.isolation.job_object import (
 _IS_WIN = sys.platform == "win32"
 
 # CREATE_BREAKAWAY_FROM_JOB — the test runner itself might already be in a
-# job (e.g. under VS Code / Windows Terminal), so the worker MUST be spawned
-# with breakaway, otherwise AssignProcessToJobObject fails with
-# ERROR_ACCESS_DENIED. The constant only ships in subprocess from Python 3.7
-# onward — we take it from subprocess when present, otherwise the hex literal.
+# job (VS Code, Windows Terminal, the py launcher, a CI runner). Breakaway
+# keeps the sleeper out of that job when the job allows it. A job that forbids
+# breakaway (the GitHub Actions Windows runner) makes CreateProcess itself fail
+# with ERROR_ACCESS_DENIED, so ``_spawn_sleeper`` then spawns without the bit,
+# exactly like ``create_worker_subprocess``: the sleeper stays in the runner's
+# job and the test's job nests inside it (Windows 8+ nested jobs), which still
+# kills the sleeper on close.
 _CREATE_BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 _CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_SLEEPER_ARGV = [sys.executable, "-c", "import time; time.sleep(60)"]
+# Upper bound for the OS to reap a killed sleeper. The poll loop ends as soon
+# as the process is gone (usually <100 ms); the bound only matters on a loaded
+# CI runner.
+_REAP_TIMEOUT_S = 15.0
+
+
+def _spawn_sleeper() -> subprocess.Popen[bytes]:
+    """Start a 60 s sleeper, outside the runner's job when that is allowed."""
+    base_flags = _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
+    try:
+        return subprocess.Popen(  # noqa: S603 - controlled test argv
+            _SLEEPER_ARGV, creationflags=base_flags | _CREATE_BREAKAWAY_FROM_JOB
+        )
+    except PermissionError:
+        # The enclosing job forbids breakaway; nest instead (see above).
+        return subprocess.Popen(  # noqa: S603 - controlled test argv
+            _SLEEPER_ARGV, creationflags=base_flags
+        )
+
+
+async def _wait_reaped(proc: subprocess.Popen[bytes]) -> None:
+    deadline = time.monotonic() + _REAP_TIMEOUT_S
+    while time.monotonic() < deadline and proc.poll() is None:  # noqa: ASYNC110
+        await asyncio.sleep(0.05)
+
+
+def _kill_leftover(proc: subprocess.Popen[bytes]) -> None:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait(timeout=_REAP_TIMEOUT_S)
 
 
 # --- No-op branch (all platforms) --------------------------------------------
@@ -69,15 +103,9 @@ async def test_close_kills_assigned_process() -> None:
     psutil = pytest.importorskip("psutil")
 
     # Long-lived sleeper — runs 60s if not killed.
-    proc = subprocess.Popen(  # noqa: ASYNC220, S603 — controlled args
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        creationflags=(
-            _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
-        ),
-    )
+    proc = _spawn_sleeper()
     try:
-        # Wait until the subprocess actually exists
-        await asyncio.sleep(0.1)
+        # CreateProcess has returned, so the process exists already.
         assert psutil.pid_exists(proc.pid), "Subprocess should have started"
 
         job = WindowsJobObject("kill-on-close-test")
@@ -85,21 +113,13 @@ async def test_close_kills_assigned_process() -> None:
         # Closing should atomically kill the process
         await job.close()
 
-        # Wait up to 2s for the OS to reap — usually <100ms
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            await asyncio.sleep(0.05)
-
+        await _wait_reaped(proc)
         assert proc.poll() is not None, (
             "Process should have been killed by job close"
         )
     finally:
         # Safety net in case the test logic failed
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=2)
+        _kill_leftover(proc)
 
 
 @pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
@@ -122,54 +142,33 @@ async def test_close_is_idempotent() -> None:
 @pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_async_context_manager_closes_on_exit() -> None:
     pytest.importorskip("psutil")
-    proc = subprocess.Popen(  # noqa: ASYNC220, S603
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        creationflags=(
-            _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
-        ),
-    )
+    proc = _spawn_sleeper()
     try:
-        await asyncio.sleep(0.1)
         async with WindowsJobObject("ctx-mgr-test") as job:
             job.assign(proc.pid)
             assert not job.closed
 
         # After the with block: process must be dead
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            if proc.poll() is not None:
-                break
-            await asyncio.sleep(0.05)
+        await _wait_reaped(proc)
         assert proc.poll() is not None
     finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=2)
+        _kill_leftover(proc)
 
 
 @pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
 async def test_ctypes_fallback_kills_assigned_process_without_pywin32() -> None:
     """Base Windows installs retain kernel-enforced tree containment."""
-    proc = subprocess.Popen(  # noqa: ASYNC220, S603 - controlled test argv
-        [sys.executable, "-c", "import time; time.sleep(60)"],
-        creationflags=(
-            _CREATE_BREAKAWAY_FROM_JOB | _CREATE_NO_WINDOW | _CREATE_NEW_PROCESS_GROUP
-        ),
-    )
+    proc = _spawn_sleeper()
     try:
         job = job_module._Win32CtypesJobObjectImpl(
             "ctypes-fallback-test", allow_breakaway=False
         )
         job.assign(proc.pid)
         await job.close()
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and proc.poll() is None:  # noqa: ASYNC110
-            await asyncio.sleep(0.05)
+        await _wait_reaped(proc)
         assert proc.poll() is not None
     finally:
-        if proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=2)
+        _kill_leftover(proc)
 
 
 @pytest.mark.skipif(not _IS_WIN, reason="Job objects are Windows-only")
