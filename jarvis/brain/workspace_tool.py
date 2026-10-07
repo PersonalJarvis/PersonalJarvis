@@ -65,8 +65,12 @@ class WorkspaceOrchestrationTool:
         "terminal_id): observe reads its screen, question and newest events; respond types "
         "the answer to the question or permission prompt it shows (prompt = the answer); keys "
         "presses keys such as enter, escape, up/down, digits, shift+tab (permission mode); "
-        "interrupt stops its current turn; close removes it. These are the user's own app "
-        "actions: run them when asked, without asking back. "
+        "interrupt stops its current turn; restart starts a stopped or failed agent again "
+        "under the same terminal_id on its own conversation (a running one is left alone, so "
+        "a repeat is harmless); close removes it. These are the user's own app "
+        "actions: run them when asked, without asking back. A send refused because the agent "
+        "is not running (stopped: true) types nothing: when the user wants that agent to do "
+        "the task, restart it and resend with the same request_id and prompt. "
         "Inspect the current graph; "
         "resolve explicit project/workspace/agent references (names or IDs) before sending. "
         "With no named workspace resolve uses the visible workspace, and selects an idle agent "
@@ -116,6 +120,7 @@ class WorkspaceOrchestrationTool:
                     "respond",
                     "keys",
                     "interrupt",
+                    "restart",
                     "close",
                 ],
             },

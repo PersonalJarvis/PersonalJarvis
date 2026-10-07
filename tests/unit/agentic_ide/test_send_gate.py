@@ -159,6 +159,36 @@ async def test_an_interrupted_turn_accepts_the_next_instruction(pane):
     assert sent == ["Updated brief"]
 
 
+def codex_event(moment: float, kind: str, **payload) -> dict:
+    return {"timestamp": at(moment), "type": "event_msg", "payload": {"type": kind, **payload}}
+
+
+async def test_a_failed_codex_turn_accepts_the_next_instruction(pane, monkeypatch):
+    """Live 2026-10-07: a Codex turn that ended in an error left the pane
+    "not running (failed); nothing was sent" for every later task, although
+    the CLI sat at its prompt."""
+    registry, workspace, term, record, sent = pane
+    term.agent = "codex"
+    monkeypatch.setattr(task_state.agent_transcript, "_codex_file", lambda *_: record)
+    now = time.time()
+    submitted(term, now - 300)
+    write(record, codex_event(now - 299, "task_started"),
+          codex_event(now - 200, "task_complete", error="stream disconnected"))
+    await task_state.probe(term)
+    assert activity.read_activity(term) == "failed"  # the badge still says so
+    await send(registry, workspace, term)
+    assert sent == ["Updated brief"]
+
+
+@pytest.mark.parametrize("status", ["exited", "error"])
+async def test_a_stopped_agent_is_refused_with_the_way_back(pane, status):
+    registry, workspace, term, record, sent = pane
+    term.status = status
+    with pytest.raises(SessionError, match="not running.*Restart it"):
+        await send(registry, workspace, term)
+    assert sent == []
+
+
 @pytest.mark.parametrize("last", ["tool_use", "question"])
 async def test_a_running_turn_or_open_question_still_refuses(pane, last):
     registry, workspace, term, record, sent = pane
