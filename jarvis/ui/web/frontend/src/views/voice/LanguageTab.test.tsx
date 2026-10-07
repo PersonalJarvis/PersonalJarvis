@@ -349,7 +349,7 @@ describe("LanguageTab", () => {
     );
   });
 
-  it("says why automatic is the right choice for almost everyone", async () => {
+  it("says automatic is the right choice for almost everyone", async () => {
     installFetchMock(routes());
     render(<LanguageTab hideHeader />);
 
@@ -358,7 +358,22 @@ describe("LanguageTab", () => {
     );
     const hint = screen.getByTestId("dictation-language-hint").textContent ?? "";
     expect(hint.toLowerCase()).toContain("almost everyone");
-    expect(hint.toLowerCase()).toContain("worse");
+    // Nothing to warn about while detection is automatic.
+    expect(screen.queryByTestId("dictation-language-pinned")).toBeNull();
+  });
+
+  it("explains what a pinned language costs once one is pinned", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, language: "de" }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const note = await waitFor(() => screen.getByTestId("dictation-language-pinned"));
+    expect((note.textContent ?? "").toLowerCase()).toContain("worse");
   });
 
   it("saves the pick through the dictation settings endpoint", async () => {
@@ -630,9 +645,12 @@ describe("LanguageTab — the wording pass", () => {
     // sends the words to the Agentic IDE's writer — a cloud model on most
     // installs. Neither is inherited from a default.
     expect(toggle.getAttribute("aria-checked")).toBe("false");
+    // The cost (seconds) is in its own sentence; where the words go is the
+    // Writing section's shared note, on screen while the switch is off.
     expect(
-      screen.getByTestId("dictation-prompt-mode-sends-text").textContent,
-    ).toBeTruthy();
+      screen.getByTestId("dictation-prompt-mode-description").textContent,
+    ).toMatch(/seconds/);
+    expect(screen.getByTestId("dictation-polish-sends-text").textContent).toBeTruthy();
     // The "outranks the other passes" note describes nothing while off.
     expect(screen.queryByTestId("dictation-prompt-mode-outranks")).toBeNull();
   });
@@ -684,8 +702,8 @@ describe("LanguageTab — the wording pass", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     // And the latency question is answered before anyone has to ask it.
     expect(
-      screen.getByTestId("dictation-conversation-latency").textContent,
-    ).toBeTruthy();
+      screen.getByTestId("dictation-conversation-description").textContent,
+    ).toMatch(/never wait/);
   });
 
   it("saves the conversation switch", async () => {
@@ -934,6 +952,72 @@ describe("LanguageTab — the wording pass", () => {
 
 });
 
+
+describe("LanguageTab layout", () => {
+  it("puts the four switches in one Writing group, each named and described", async () => {
+    installFetchMock(routes());
+    render(<LanguageTab hideHeader />);
+
+    const group = await waitFor(() => screen.getByTestId("dictation-writing-group"));
+    for (const id of [
+      "dictation-polish-toggle",
+      "dictation-precision-toggle",
+      "dictation-prompt-mode-toggle",
+      "dictation-translate-toggle",
+    ]) {
+      const toggle = screen.getByTestId(id);
+      expect(group.contains(toggle)).toBe(true);
+      expect(toggle.getAttribute("role")).toBe("switch");
+      expect(toggle.getAttribute("aria-label")).toBeTruthy();
+      // The row's sentence describes the switch for assistive tech.
+      const described = toggle.getAttribute("aria-describedby");
+      expect(described && document.getElementById(described)?.textContent).toBeTruthy();
+    }
+    expect(screen.getByRole("heading", { name: "Recognition language" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Writing" })).toBeTruthy();
+  });
+
+  it("nests the target language and its provider under the translate row", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: {
+            settings: { ...SETTINGS, translate: true },
+            choices: CHOICES,
+            wording_provider: WORDING_READY,
+          },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    const row = await waitFor(() => screen.getByTestId("dictation-translate-card"));
+    await waitFor(() =>
+      expect(row.contains(screen.getByTestId("dictation-translate-target"))).toBe(true),
+    );
+    expect(row.contains(screen.getByTestId("dictation-translate-provider"))).toBe(true);
+    // The shared provider and the dry run sit on their own row, once.
+    const model = screen.getByTestId("dictation-text-model-row");
+    expect(model.contains(screen.getByTestId("dictation-polish-provider"))).toBe(true);
+    expect(model.contains(screen.getByTestId("dictation-polish-test"))).toBe(true);
+  });
+
+  it("keeps the text model row away while every pass is off", async () => {
+    installFetchMock(
+      routes({
+        "GET /api/dictation/settings": () => ({
+          body: { settings: { ...SETTINGS, polish: false }, choices: CHOICES },
+        }),
+      }),
+    );
+    render(<LanguageTab hideHeader />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("dictation-polish-toggle")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("dictation-text-model-row")).toBeNull();
+  });
+});
 
 describe("LanguageTab feature combinations", () => {
   it("ignores a late test result after settings change on another surface", async () => {

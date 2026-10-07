@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import {
   cleanupReasonLabel,
   DICTATION_OUTCOMES,
@@ -11,15 +10,14 @@ import {
 } from "@/hooks/useDictation";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { VoiceGroup, VoiceTag } from "@/views/voice/voiceUi";
 
 /**
- * One day's worth of dictations — a small date label and one framed list.
+ * One day's worth of dictations — a quiet date label over one grouped list.
  *
- * Grouping by day is what turns a flat list into something you can actually
- * read back: "what did I dictate this morning" is a question about a day, not
- * about entry number 34. Each day is one bordered surface with hairlines
- * between its rows, so a day reads as a single page of a journal rather than
- * as a pile of separate cards.
+ * Grouping by day turns a flat list into something you can read back: "what
+ * did I dictate this morning" is a question about a day, not about entry
+ * number 34.
  */
 export interface DictationHistoryGroupProps {
   /** Already-localized day label — "Today", "Yesterday", or a formatted date. */
@@ -46,27 +44,29 @@ export function DictationHistoryGroup({
   copiedId,
 }: DictationHistoryGroupProps) {
   return (
-    <section data-testid="dictation-history-group">
-      <h5
-        className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground"
+    <section className="flex flex-col gap-2" data-testid="dictation-history-group">
+      <h3
+        className="px-1 text-xs font-medium text-muted-foreground"
         data-testid="dictation-history-group-label"
       >
         {label}
-      </h5>
-      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card shadow-rim">
-        {entries.map((entry) => (
-          <HistoryRow
-            key={entry.id}
-            entry={entry}
-            busy={busyIds.has(entry.id)}
-            copied={copiedId === entry.id}
-            onCopy={() => onCopy(entry)}
-            onDiscard={() => onDiscard(entry)}
-            onRestore={() => onRestore(entry)}
-            onDelete={() => onDelete(entry)}
-          />
-        ))}
-      </ul>
+      </h3>
+      <VoiceGroup divided={false}>
+        <ul className="divide-y divide-border">
+          {entries.map((entry) => (
+            <HistoryRow
+              key={entry.id}
+              entry={entry}
+              busy={busyIds.has(entry.id)}
+              copied={copiedId === entry.id}
+              onCopy={() => onCopy(entry)}
+              onDiscard={() => onDiscard(entry)}
+              onRestore={() => onRestore(entry)}
+              onDelete={() => onDelete(entry)}
+            />
+          ))}
+        </ul>
+      </VoiceGroup>
     </section>
   );
 }
@@ -81,13 +81,16 @@ export function DictationHistoryGroup({
  * to go. "Cancelled" in particular stays quiet: a bright chip on the one
  * outcome the user caused themselves inverts the whole ramp.
  */
-function outcomeVariant(outcome: string): "fault" | "degraded" | null {
-  if (outcome === "failed") return "fault";
+function outcomeTone(outcome: string): "error" | "warning" | null {
+  if (outcome === "failed") return "error";
   if (outcome === "unavailable" || outcome === "partial" || outcome === "empty") {
-    return "degraded";
+    return "warning";
   }
   return null;
 }
+
+/** Past this many characters a transcript folds to four lines with a toggle. */
+const LONG_TEXT = 280;
 
 function HistoryRow({
   entry,
@@ -108,14 +111,17 @@ function HistoryRow({
 }) {
   const t = useT();
   // Permanent deletion is a second, deliberate step: the trash icon only
-  // discards, and this flag is what turns the discarded row's follow-up button
-  // into the one that really removes the entry and its audio.
+  // discards, and arming this is what lets the discarded row's follow-up
+  // button remove the entry and its audio for good.
   const [confirmDelete, setConfirmDelete] = useState(false);
   // What the recognizer actually heard stays one click away instead of being
   // printed under every row — it is there to check a cleanup, not to be read
   // twice.
   const [showRaw, setShowRaw] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
+  const text = entry.text || entry.raw_text;
+  const long = text.length > LONG_TEXT;
   const cleaned = Boolean(entry.raw_text) && entry.text !== entry.raw_text;
   // A row from before either field existed carries neither badge. "off" is the
   // one polish value worth hiding — the feature being switched off is not an
@@ -145,33 +151,45 @@ function HistoryRow({
     entry.audio_available ||
     entry.outcome === "failed" ||
     entry.outcome === "partial";
-  const variant = entry.outcome ? outcomeVariant(entry.outcome) : null;
+  const tone = entry.outcome ? outcomeTone(entry.outcome) : null;
 
   return (
     <li
-      className="group grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-4 px-5 py-4 transition-colors hover:bg-secondary/60 focus-within:bg-secondary/60 sm:grid-cols-[84px_minmax(0,1fr)_auto]"
+      className="group grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-4 py-3.5 sm:grid-cols-[4.5rem_minmax(0,1fr)_auto] sm:gap-x-4 sm:px-5"
       data-testid="dictation-history-row"
       data-entry-id={entry.id}
     >
+      {/* Its own column from `sm` up; above the text on a phone-width pane so
+          the transcript keeps the width. */}
       <time
         dateTime={entry.created_at}
-        className="pt-0.5 text-sm tabular-nums text-muted-foreground"
+        className="col-span-2 mb-1 text-sm tabular-nums text-muted-foreground sm:col-span-1 sm:mb-0 sm:pt-px"
       >
         {formatTime(entry.created_at)}
       </time>
 
       <div className="min-w-0">
-        {/* The transcript is the reason this screen exists, so it is set as
-            prose in body ink; everything else on the row is smaller and
-            quieter than it. */}
         <p
           className={cn(
-            "whitespace-pre-wrap break-words text-base leading-6",
-            entry.discarded ? "text-muted-foreground line-through" : "text-foreground",
+            "whitespace-pre-wrap break-words text-base text-foreground",
+            entry.discarded && "text-muted-foreground line-through",
+            long && !expanded && "line-clamp-4",
           )}
+          data-testid="dictation-entry-text"
         >
-          {entry.text || entry.raw_text}
+          {text}
         </p>
+        {long && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            data-testid="dictation-toggle-more"
+            className="mt-1 rounded-sm text-sm font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {expanded ? t("dictation.show_less") : t("dictation.show_more")}
+          </button>
+        )}
         {entry.error && (
           <p
             className="mt-1 break-words text-sm text-destructive"
@@ -182,26 +200,27 @@ function HistoryRow({
         )}
         {cleaned && showRaw && (
           <p
-            className="mt-2 break-words border-l-2 border-border-strong pl-3 text-sm text-muted-foreground"
+            className="mt-2 break-words rounded-md bg-secondary px-3 py-2 text-sm text-muted-foreground"
             data-testid="dictation-raw-text"
           >
-            {t("dictation.raw_prefix")} {entry.raw_text}
+            <span className="font-medium text-foreground">{t("dictation.raw_prefix")}</span>{" "}
+            {entry.raw_text}
           </p>
         )}
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
           {entry.outcome &&
-            (variant ? (
-              <Badge variant={variant} data-testid="dictation-outcome-badge">
-                {outcomeLabel(t, entry.outcome)}
-              </Badge>
+            (tone ? (
+              <VoiceTag tone={tone}>
+                <span data-testid="dictation-outcome-badge">{outcomeLabel(t, entry.outcome)}</span>
+              </VoiceTag>
             ) : (
               <span data-testid="dictation-outcome-badge">{outcomeLabel(t, entry.outcome)}</span>
             ))}
           {entry.discarded && (
-            <Badge variant="secondary" data-testid="dictation-discarded-badge">
-              {t("dictation.discarded_badge")}
-            </Badge>
+            <VoiceTag>
+              <span data-testid="dictation-discarded-badge">{t("dictation.discarded_badge")}</span>
+            </VoiceTag>
           )}
           {polishBadge && (
             <MetaItem testId="dictation-polish-badge" title={polishTitle || undefined}>
@@ -220,60 +239,58 @@ function HistoryRow({
             </MetaItem>
           )}
           {cleaned && (
-            <button
-              type="button"
+            <MetaButton
               onClick={() => setShowRaw((v) => !v)}
-              aria-expanded={showRaw}
-              data-testid="dictation-toggle-raw"
-              className="inline-flex items-center gap-0.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
+              ariaExpanded={showRaw}
+              testId="dictation-toggle-raw"
             >
-              <Dot />
               {showRaw ? t("dictation.hide_original") : t("dictation.show_original")}
               <ChevronDown
                 aria-hidden="true"
-                className={cn("h-3 w-3 transition-transform", showRaw && "rotate-180")}
+                className={cn(
+                  "h-3 w-3 transition-transform motion-reduce:transition-none",
+                  showRaw && "rotate-180",
+                )}
               />
-            </button>
+            </MetaButton>
           )}
-          {entry.discarded && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                if (!confirmDelete) {
-                  setConfirmDelete(true);
-                  return;
-                }
-                onDelete();
-              }}
-              data-testid="dictation-delete-permanently"
-              className={cn(
-                "rounded-sm text-xs transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50",
-                confirmDelete ? "font-medium text-destructive" : "text-muted-foreground",
-              )}
-            >
-              {confirmDelete
-                ? `${t("dictation.delete_permanently")} ?`
-                : t("dictation.delete_permanently")}
-            </button>
-          )}
+          {entry.discarded &&
+            (confirmDelete ? (
+              <span className="inline-flex items-center gap-2">
+                <MetaButton
+                  disabled={busy}
+                  onClick={onDelete}
+                  testId="dictation-delete-permanently"
+                  destructive
+                >
+                  {t("dictation.delete_permanently_confirm")}
+                </MetaButton>
+                <MetaButton onClick={() => setConfirmDelete(false)} testId="dictation-delete-cancel">
+                  {t("dictation.cancel")}
+                </MetaButton>
+              </span>
+            ) : (
+              <MetaButton
+                disabled={busy}
+                onClick={() => setConfirmDelete(true)}
+                testId="dictation-delete-permanently"
+              >
+                {t("dictation.delete_permanently")}
+              </MetaButton>
+            ))}
         </div>
       </div>
 
-      {/* Row actions appear with the row's hover. They stay in the document
-          and reachable by keyboard — focus inside the row reveals them the
-          same way the pointer does. */}
-      <div className="-my-1 flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      {/* The row's actions come up with the pointer or with keyboard focus
+          anywhere in the row; they always hold their place, so nothing shifts,
+          and stay visible on a touch screen that cannot hover. */}
+      <div className="-my-1 flex items-start gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100">
         <RowAction
           onClick={onCopy}
           label={copied ? t("dictation.copied") : t("dictation.copy")}
           testId="dictation-copy-entry"
         >
-          {copied ? (
-            <Check aria-hidden="true" className="h-4 w-4" />
-          ) : (
-            <Copy aria-hidden="true" className="h-4 w-4" />
-          )}
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
         </RowAction>
         {canRestore && (
           <RowAction
@@ -283,7 +300,7 @@ function HistoryRow({
             title={t("dictation.restore_hint")}
             testId="dictation-restore-entry"
           >
-            <RotateCcw aria-hidden="true" className="h-4 w-4" />
+            <RotateCcw aria-hidden="true" />
           </RowAction>
         )}
         {!entry.discarded && (
@@ -294,7 +311,7 @@ function HistoryRow({
             testId="dictation-discard-entry"
             destructive
           >
-            <Trash2 aria-hidden="true" className="h-4 w-4" />
+            <Trash2 aria-hidden="true" />
           </RowAction>
         )}
       </div>
@@ -302,7 +319,7 @@ function HistoryRow({
   );
 }
 
-/** A quiet "· label" in the row's meta line. */
+/** A quiet label in the row's meta line. */
 function MetaItem({
   children,
   testId,
@@ -313,28 +330,48 @@ function MetaItem({
   title?: string;
 }) {
   return (
-    <span className="inline-flex items-center">
-      <Dot />
-      <span className="inline-flex items-center gap-1" data-testid={testId} title={title}>
-        {children}
-      </span>
+    <span className="inline-flex items-center gap-1" data-testid={testId} title={title}>
+      {children}
     </span>
   );
 }
 
-function Dot() {
+/** A text button in the meta line, at the meta line's size. */
+function MetaButton({
+  children,
+  onClick,
+  testId,
+  ariaExpanded,
+  disabled,
+  destructive,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  testId: string;
+  ariaExpanded?: boolean;
+  disabled?: boolean;
+  destructive?: boolean;
+}) {
   return (
-    <span aria-hidden="true" className="mr-1 text-faint-foreground">
-      ·
-    </span>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-expanded={ariaExpanded}
+      data-testid={testId}
+      className={cn(
+        "inline-flex min-h-6 items-center gap-0.5 rounded-sm text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+        destructive
+          ? "font-medium text-destructive hover:text-destructive/80"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
-/**
- * One icon button in a row's action strip. All three answer the pointer the
- * same way — one step up the surface ladder; only discarding, which changes
- * something, keeps a hue.
- */
+/** One 32 px icon button in a row's action strip. Only discarding keeps a hue. */
 function RowAction({
   children,
   label,
@@ -361,7 +398,7 @@ function RowAction({
       title={title ?? label}
       data-testid={testId}
       className={cn(
-        "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50",
+        "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 [&>svg]:h-4 [&>svg]:w-4",
         destructive ? "hover:text-destructive" : "hover:text-foreground",
       )}
     >

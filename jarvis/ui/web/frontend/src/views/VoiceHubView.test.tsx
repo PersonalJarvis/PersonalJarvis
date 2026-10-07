@@ -20,18 +20,6 @@ vi.mock("@/i18n", () => ({
   useT: () => (key: string) => key,
 }));
 
-// ViewHeader lives in ChatsView, which drags in the whole chat surface. The hub
-// only needs the header's shape, so stub it — and give it a testid so "exactly
-// one header" is assertable.
-vi.mock("@/views/ChatsView", () => ({
-  ViewHeader: ({ title, subtitle }: { title: string; subtitle?: string }) => (
-    <header data-testid="view-header">
-      <span data-testid="view-header-title">{title}</span>
-      <span data-testid="view-header-subtitle">{subtitle}</span>
-    </header>
-  ),
-}));
-
 // Stub every embedded tab — VoiceHubView is a thin wrapper; we assert which
 // child it renders and that it tells that child to stand its own header down,
 // not the children's behaviour.
@@ -120,16 +108,19 @@ describe("VoiceHubView tab switching", () => {
 });
 
 describe("VoiceHubView single header", () => {
+  it("labels the tab bar as the section's navigation", () => {
+    render(<VoiceHubView />);
+    expect(screen.getByRole("navigation", { name: "nav.voice" })).toBeTruthy();
+  });
+
   it("renders exactly one header, titled from the brand-carrying nav.voice key", () => {
     render(<VoiceHubView />);
 
-    // Two stacked bordered bands (hub header + child header) read as a
-    // rendering fault — the section title is drawn once, here.
-    expect(screen.getAllByTestId("view-header")).toHaveLength(1);
-    expect(screen.getByTestId("view-header-title").textContent).toBe("nav.voice");
-    expect(screen.getByTestId("view-header-subtitle").textContent).toBe(
-      "voice.hub.subtitle",
-    );
+    // Two stacked headers (hub header + child header) read as a rendering
+    // fault — the section title is drawn once, here.
+    expect(screen.getAllByTestId("section-header")).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("nav.voice");
+    expect(screen.getByText("voice.hub.subtitle")).toBeTruthy();
   });
 
   it("tells the mounted tab to stand its own header down", () => {
