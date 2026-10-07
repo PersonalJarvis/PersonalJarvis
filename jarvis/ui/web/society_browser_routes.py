@@ -297,7 +297,7 @@ async def agent_browser_live(websocket: WebSocket, agent_id: str) -> None:
                     # Motion recorded before this input is older than it.
                     hover.clear()
                     commands.put_nowait(item)
-            except asyncio.QueueFull:
+            except asyncio.QueueFull:  # the client is told below and may resend
                 await send(
                     {
                         "kind": "control",

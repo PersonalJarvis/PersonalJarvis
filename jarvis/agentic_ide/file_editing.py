@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import codecs
 import hashlib
+import logging
 import os
 import shutil
 import stat
@@ -40,6 +41,8 @@ from jarvis.core.path_safety import UnsafePathError, contained_path
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 from .folders import _SKIP_DIRS
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_EDITABLE_BYTES",
@@ -218,7 +221,7 @@ def _mixed_eol(text: str) -> bool:
 def _canonical_codec(name: str) -> str | None:
     try:
         return codecs.lookup(name).name
-    except LookupError:
+    except LookupError:  # a codec Python does not know is no codec here
         return None
 
 
@@ -233,14 +236,14 @@ def _decode(data: bytes) -> tuple[str, str] | None:
         if data.startswith(bom):
             try:
                 return data[len(bom) :].decode(codec), codec
-            except UnicodeDecodeError:
+            except UnicodeDecodeError:  # a broken UTF-16 body is binary to the editor
                 return None
     if b"\x00" in data[:_BINARY_SNIFF_BYTES]:
         return None
     encoding = "utf-8-sig" if data.startswith(_UTF8_BOM) else "utf-8"
     try:
         return data.decode(encoding), encoding
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # not UTF-8: the detector below decides
         pass
     # Lazy import: only a non-UTF-8 file pays for the detector.
     from charset_normalizer import from_bytes
@@ -255,11 +258,11 @@ def _decode(data: bytes) -> tuple[str, str] | None:
         if codec in family and codec != preferred:
             try:
                 return data.decode(preferred), preferred
-            except UnicodeDecodeError:
+            except UnicodeDecodeError:  # the family's base codec fails: use the match
                 break
     try:
         return data.decode(codec), codec
-    except UnicodeDecodeError:
+    except UnicodeDecodeError:  # undecodable text opens as binary
         return None
 
 
@@ -328,7 +331,7 @@ def file_version(root: str | os.PathLike[str], path: str) -> str | None:
         if target.stat().st_size > MAX_EDITABLE_BYTES:
             return ""
         return _version_of(target.read_bytes())
-    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):  # no file, no version
         return None
     except PermissionError:
         # Windows reports reading a folder as "access denied".
@@ -342,7 +345,7 @@ def _atomic_write(target: Path, data: bytes) -> None:
     mode: int | None = None
     try:
         mode = stat.S_IMODE(target.stat().st_mode)
-    except FileNotFoundError:
+    except FileNotFoundError:  # a new file has no mode to keep
         mode = None
     handle, temp_name = tempfile.mkstemp(
         prefix=f".{target.name}.", suffix=".jarvis-save", dir=target.parent
@@ -522,7 +525,10 @@ def _git_listed_files(base: Path) -> list[str] | None:
             check=False,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except FileNotFoundError:  # no git on this machine: the caller walks the folder
+        return None
+    except subprocess.TimeoutExpired:
+        log.info("file editing: git ls-files timed out in %s; walking the folder", base)
         return None
     if result.returncode != 0:
         return None
@@ -567,7 +573,7 @@ def _move_to_trash(target: Path) -> bool:
     """
     try:
         from send2trash import send2trash  # type: ignore[import-not-found]
-    except ImportError:
+    except ImportError:  # no recycle bin support: the caller deletes
         return False
     try:
         send2trash(str(target))

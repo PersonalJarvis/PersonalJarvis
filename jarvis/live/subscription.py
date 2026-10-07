@@ -773,7 +773,7 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
         # session and would ask the user to attach an image it already has.
         try:
             note += "\n\n" + appshot_context(self.session_id, image, mime, self._config)
-        except ImageReferenceError as exc:
+        except ImageReferenceError as exc:  # the model is told why, in the note
             note += "\n\nVisual handoff unavailable: " + str(exc)
         self._pending_images = [
             {"type": "input_text", "text": note},
