@@ -460,3 +460,68 @@ async def test_turn_slots_run_one_turn_at_a_time():
     second = await asyncio.wait_for(waiting, timeout=1)
     second()
     other()
+
+
+# ------------------------------------------------- effort and capabilities
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    [("high", "high"), ("none", "none"), ("xhigh", "xhigh"), ("", None), ("bogus", None)],
+)
+def test_hermes_writes_the_agents_effort(tmp_path, effort, expected):
+    config = HermesRuntime().config_for(_turn(tmp_path, effort=effort))
+    assert config["agent"].get("reasoning_effort") == expected
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    [("high", "high"), ("none", "off"), ("minimal", "minimal"), ("", None), ("bogus", None)],
+)
+def test_openclaw_writes_the_agents_thinking_default(tmp_path, effort, expected):
+    config = OpenClawRuntime().config_for(_turn(tmp_path, effort=effort), port=1, token=_TOKEN)
+    assert config["agents"]["defaults"].get("thinkingDefault") == expected
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "vision", "inputs", "reasons"),
+    [
+        (True, True, ["text", "image"], True),
+        (False, False, ["text"], None),
+        (None, None, ["text"], None),  # unknown: OpenClaw's own defaults stand
+    ],
+)
+def test_openclaw_declares_only_capabilities_the_catalog_names(
+    tmp_path, reasoning, vision, inputs, reasons
+):
+    turn = _turn(tmp_path, reasoning=reasoning, vision=vision)
+    model = OpenClawRuntime().config_for(turn, port=1, token=_TOKEN)["models"]["providers"][
+        "jarvis"
+    ]["models"][0]
+    assert model["input"] == inputs
+    assert model.get("reasoning") is reasons
+
+
+def test_capabilities_come_from_the_catalog_never_the_name(monkeypatch):
+    from jarvis.agent_chat import runner_acp
+    from jarvis.brain import model_catalog
+    from jarvis.brain.model_catalog import ModelInfo
+
+    rows = {
+        ("openrouter", "a/thinks-sees"): ModelInfo(
+            id="a/thinks-sees",
+            label="x",
+            input_modalities=("text", "image"),
+            supported_parameters=("tools", "reasoning"),
+        ),
+        ("ollama", "plain"): ModelInfo(
+            id="plain", label="x", input_modalities=("text",), supported_parameters=("tools",)
+        ),
+    }
+    monkeypatch.setattr(
+        model_catalog.ModelCatalog, "cached_model", lambda self, p, m: rows.get((p, m))
+    )
+    assert runner_acp.model_capabilities("openrouter", "a/thinks-sees") == (True, True)
+    assert runner_acp.model_capabilities("ollama", "plain") == (False, False)
+    # A name that "sounds" capable but has no catalog entry stays unknown.
+    assert runner_acp.model_capabilities("openai", "gpt-vision-reasoner") == (None, None)

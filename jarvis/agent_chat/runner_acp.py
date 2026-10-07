@@ -57,6 +57,35 @@ def _config() -> Any:
     return load_config()
 
 
+#: ``supported_parameters`` a catalog lists for a model that reasons.
+_REASONING_PARAMETERS: frozenset[str] = frozenset(
+    {"reasoning", "include_reasoning", "reasoning_effort"}
+)
+
+
+def model_capabilities(provider: str, model: str) -> tuple[bool | None, bool | None]:
+    """``(reasons, reads_images)`` as the model catalog DECLARES them.
+
+    ``None`` = the catalog says nothing (no cached entry, or a provider whose
+    feed carries no such field): the runtime keeps its own default. Never a
+    provider- or model-name rule (AP-21). Blocking (catalog cache file).
+    """
+    from jarvis.brain.model_catalog import ModelCatalog
+
+    try:
+        info = ModelCatalog().cached_model(provider, model)
+    except Exception as exc:  # noqa: BLE001 — an unreadable cache means "unknown"
+        log.debug("agent runtimes: catalog entry of %s/%s unreadable: %s", provider, model, exc)
+        return None, None
+    if info is None:
+        return None, None
+    params = info.supported_parameters
+    inputs = info.input_modalities
+    reasons = bool(_REASONING_PARAMETERS & set(params)) if params is not None else None
+    vision = ("image" in inputs) if inputs is not None else None
+    return reasons, vision
+
+
 def _denied_native(agent: Any, plan_mode: bool) -> frozenset[str]:
     grants = set(agent.grants or [])
     denies = set(agent.denies or [])
@@ -141,6 +170,9 @@ async def plan_runtime_turn(
         raise CliUnavailable(str(exc)) from exc
     plan_mode = session.permission_mode in ("plan", "read-only")
     tools = not getattr(handle, "tools_disabled", False)
+    from jarvis.agent_chat.effort import normalize_effort
+
+    reasoning, vision = await asyncio.to_thread(model_capabilities, route.provider, route.model)
     turn = RuntimeTurn(
         agent_id=agent.agent_id,
         agent_name=agent.name,
@@ -152,6 +184,9 @@ async def plan_runtime_turn(
         mcp_url=jarvis_harness.endpoint() if tools else None,
         control_key=jarvis_harness.control_key() if tools else None,
         denied_native=_denied_native(agent, plan_mode),
+        effort=normalize_effort(session.provider, getattr(session, "effort", "") or ""),
+        reasoning=reasoning,
+        vision=vision,
     )
     runtime = driver(runtime_name)
     await _ready(handle, runtime_name, runtime)

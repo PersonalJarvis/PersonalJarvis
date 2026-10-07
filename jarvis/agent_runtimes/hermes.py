@@ -85,6 +85,12 @@ _SETUP_KEY: Final[str] = "~setup"
 #: scheduler (Jarvis owns routines and their budgets).
 _ALWAYS_DISABLED: Final[frozenset[str]] = frozenset({"browser", "computer_use", "cronjob"})
 
+#: Effort levels Hermes accepts in ``agent.reasoning_effort``
+#: (``hermes_constants.VALID_REASONING_EFFORTS`` plus ``none``).
+_HERMES_EFFORTS: Final[frozenset[str]] = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
 _BIN_BLOCKER_TEXT: Final[str] = (
     "Personal Jarvis keeps this a file on purpose. Hermes' home maintenance\n"
     "publishes launchers into <data root>/bin and puts that folder on the\n"
@@ -415,6 +421,10 @@ class HermesRuntime:
             # Never put the data root on the user's PATH (POSIX; see prepare_root).
             "cli": {"expose_on_path": False},
         }
+        if turn.effort in _HERMES_EFFORTS:
+            # Hermes' ACP sessions resolve this per model (agent.reasoning_effort;
+            # "none" disables reasoning). No level = the model's own default.
+            config["agent"]["reasoning_effort"] = turn.effort
         config_version = versions.pin(NAME).config_version
         if config_version is not None:
             # Without it Hermes reads the file as pre-version-12 and refuses to
