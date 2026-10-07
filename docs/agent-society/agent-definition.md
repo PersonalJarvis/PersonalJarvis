@@ -5,7 +5,7 @@ refines §3.1 (roster), §3.2 (runners), §4.2 (model card), §6 (safety) and an
 the build plan left open: how an agent gets its hands (plugins, CLIs, MCPs, skills), how it knows
 the Jarvis ecosystem, and how the Obsidian wiki becomes the society's shared memory.
 
-The reference product is Grok Bot (§1). The whole thing is built in-house (MASTERPLAN §10.7).
+The whole thing is built in-house (MASTERPLAN §10.7).
 
 ---
 
@@ -104,7 +104,7 @@ card; nothing hidden drives behavior.
 
 **Safety & economy** (§3.4)
 - `permission_ceiling` (`safe | monitor | ask`; block is block, never a bypass).
-- `approval_rules` JSON: Grok-style rules — `require_approval: [patterns]`,
+- `approval_rules` JSON: plain-language rules — `require_approval: [patterns]`,
   `always_allow: [patterns]`; require wins; patterns are capability ids or `capability:verb`
   (`plugin:gmail:send`). Global blacklist and `always_confirm_tiers` sit above all of it.
 - `daily_budget_usd`, `max_concurrent_runs` (default 1 for specialists, 3 for orchestrators).

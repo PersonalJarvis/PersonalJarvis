@@ -44,7 +44,7 @@ versioning per [SemVer](https://semver.org/).
 ### Added
 
 - An editor for appshots, opened from the corner card
-- Draw traces the way the Codex app does
+- Draw traces as quiet prose lines
 - Change floors with the elevator doors and a real button panel
 - A clickable, draggable appshot card in the screen corner
 - Make the area picker's magnifier a round lens
@@ -57,13 +57,13 @@ versioning per [SemVer](https://semver.org/).
 - Bring back the quiet session counts in the project tree
 - Drop the workspace pane limit and the 4x4 grid bound
 - Drop the running marks from the project tree
-- Restyle the project tree as a quiet Codex-style folder list
+- Restyle the project tree as a quiet folder list
 - Arcade floor with ten playable retro cabinets
 - The SOUL.md section shows the assistant's whole profile
 - Drag a stack of side-by-side seams as one line from a seam's ends
 - Record the appshot shortcuts and default the area to both Shift keys
-- Give the area picker ShareX's region-capture look
-- Draw turns as a Claude/Codex-style timeline
+- Give the area picker a cleaner region-capture look
+- Draw turns as a timeline
 - Select an area of the screen on its own shortcut
 - Tell a finished turn's work as a written report
 - Jarvis follows the person as their chosen pet, in 3D
@@ -176,7 +176,7 @@ versioning per [SemVer](https://semver.org/).
 
 ### Added
 
-- A quiet, Claude-style front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
+- A quiet front page: one greeting, one composer, and a voice mode that lives inside the chat with a flowing aurora glow.
 - Open any agent's chat on the front page from the sidebar; `@` in the Jarvis chat names your agents and connected plugins.
 - Reasoning traces drawn as a threaded rail, with a wider, calmer column for agent chats.
 - A restyled sidebar with search, your most-used agents, every recent chat, and the update button in its footer.

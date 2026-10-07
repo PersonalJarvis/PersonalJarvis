@@ -328,7 +328,7 @@ export function Sidebar({
   // Lit while any hub section is on screen — the profile button IS the hub's
   // entry point now, so it carries the "you are here" state for all of them.
   const hubActive = (SETTINGS_HUB_IDS as readonly string[]).includes(active);
-  // Rows read like the Claude app's column: regular weight, light ink at
+  // Rows read quietly: regular weight, light ink at
   // rest (muted grey made every entry look disabled), the icon in the same
   // ink, a lift on hover. Section labels and tail rows stay muted.
   const rowClass = "flex min-h-8 w-full items-center gap-3 rounded-lg px-3 text-base text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";

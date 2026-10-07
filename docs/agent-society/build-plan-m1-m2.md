@@ -166,7 +166,7 @@ Create/modify:
 - `src/components/layout/MainView.tsx` — lazy loader (`:87`) + switch case (`:548`) for `"agents"` now import SocietyView; `FULL_BLEED_SECTIONS` (`:397-401`) += `"agents"`. Sticky branch (`:480-524`) deliberately untouched (M3 concern). Section registry untouched — id, labels, nav keys all stay.
 
 **Guards:** `tests/unit/ui/web/test_section_id_parity.py` + `tests/unit/plugins/tool/test_navigate.py` (green by construction — run anyway), vitest for the view, `npm run build` + bundle-consistency + bundle budget (SocietyView is a lazy chunk), light+dark, `check_boot_budget.py` manual run.
-**Exit:** open Agents: board center, Hermes-style roster right, "+" creates an agent, row click expands exactly one chat over the stage with the reasoning trail, second row switches, collapse returns the stage. Old view unmounted but still compiling.
+**Exit:** open Agents: board center, roster right, "+" creates an agent, row click expands exactly one chat over the stage with the reasoning trail, second row switches, collapse returns the stage. Old view unmounted but still compiling.
 
 ### Wave 9 — Model card, approvals queue + cards, [agent:*] routines (M/L) → **M2 exit**
 

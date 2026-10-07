@@ -8,7 +8,7 @@
 
 A microphone button inside the chat composer that runs the project's **own STT
 model** and streams the transcript **live into the chat text input** (text
-appears progressively as the user speaks, Claude-style). The transcript is
+appears progressively as the user speaks). The transcript is
 **not** auto-dispatched to the brain — it lands in the input box, where the user
 edits and sends it manually (Enter / send button).
 
@@ -90,7 +90,7 @@ Server handler: new `elif cmd.action == "stt_dictate":` branch in
 
 ### Empty state (already done in main, mirror here)
 
-The empty chat is now Claude-style: centered mascot + greeting, **no** prompt
+The empty chat is now calm: centered mascot + greeting, **no** prompt
 cards. This worktree's baseline already has that. No further change unless the
 user wants the composer centered in the empty state (separate follow-up).
 

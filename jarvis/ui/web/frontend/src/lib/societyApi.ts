@@ -93,7 +93,7 @@ export interface SocietyEnvelope {
   payload: Record<string, unknown>;
 }
 
-/** Approval rules — Grok-style, require wins (agent-definition §3.4). */
+/** Approval rules — plain-language, require wins (agent-definition §3.4). */
 export interface ApprovalRules {
   require_approval: string[];
   always_allow: string[];

@@ -25,10 +25,10 @@
   contributor list — readable at 4K / on pause. It is also **stale** (the public
   history has since been anonymized, so the video would show data that no longer
   exists in the live repo).
-- **One secondary, non-video finding:** a stray ShareX capture
+- **One secondary, non-video finding:** a stray screenshot-tool capture
   `video/pythonw_xpdq2qZtJg.png` shows the **private email
   `maintainer@example.com`** twice. It is `.gitignore`d and is **NOT** used in
-  the film, but it is sitting in `video/` and should be removed / ShareX repointed.
+  the film, but it is sitting in `video/` and should be removed / the screenshot tool repointed.
 
 ---
 
@@ -71,7 +71,7 @@ That tutorial-that-demos-a-report is the "Report" + "Tutorial" combination.
   `scripts/ci/privacy_gate/references/distribution-denylist.txt:134`
   (rationale lines 126–133).
 - Additionally `.gitignore`d (never tracked at all): the rendered films
-  (`git check-ignore video/out/onboarding.mp4` → IGNORED) and the stray ShareX
+  (`git check-ignore video/out/onboarding.mp4` → IGNORED) and the stray screenshot-tool
   PNGs in the `video/` root (`video/pythonw_xpdq2qZtJg.png` → IGNORED).
 
 ### 4. Format/type.
@@ -171,7 +171,7 @@ and that screenshot is not used in the film.)
   `video/src/intro/onboarding/scenes/CreatorIntro.tsx:29`, displayed near native
   width → readable at 4K). **Primary finding.**
 - `video/pythonw_xpdq2qZtJg.png` — shows the **private email** twice. **Not in the
-  film**; stray ShareX capture, `.gitignore`d.
+  film**; stray screenshot-tool capture, `.gitignore`d.
 - `video/public/shot-outputs.png` — shows an internal **German mission prompt**
   ("…That was just rigid. Could you do a deep dive?…") + first name.
   **Not referenced by any scene → not in the film.**
@@ -267,9 +267,9 @@ you…"). The concern is therefore not about the git repo (protected) but about
    it shows data that no longer exists live). Either recapture it from the
    anonymized repo, blur the commit-author line + contributor sidebar, or
    consciously accept the surname being public.
-2. **Remove the stray ShareX capture.** `video/pythonw_xpdq2qZtJg.png` embeds the
-   private email; delete it and repoint ShareX out of the repo (a known issue —
-   stray `pythonw_*.png` are ShareX captures, not a Jarvis artifact).
+2. **Remove the stray screenshot-tool capture.** `video/pythonw_xpdq2qZtJg.png` embeds the
+   private email; delete it and repoint the screenshot tool out of the repo (a known issue —
+   stray `pythonw_*.png` are screenshot-tool captures, not a Jarvis artifact).
 3. **Everything else is fine to ship as-is.** First name "Alex" / "Hey Alex",
    the masked-key API screenshot, the clean `app-home.png`, and the thumbnail
    carry no secrets and reflect the maintainer's intended public identity.

@@ -1,5 +1,5 @@
 /**
- * The quick switcher's destinations and ranking — the Spotlight-style "type a
+ * The quick switcher's destinations and ranking — the "type a
  * section's name, press Enter, be there" launcher.
  *
  * Pure on purpose: what the switcher lists and in which order is the whole
