@@ -102,6 +102,41 @@ async def test_native_uses_authenticated_resource_read(monkeypatch, status, payl
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload,accepted",
+    [
+        ({"ok": True, "user_id": "U1", "team_id": "T1"}, True),
+        ({"ok": False, "error": "invalid_auth"}, False),
+        ({"ok": False, "user_id": "U1"}, False),
+    ],
+)
+async def test_slack_verifies_with_side_effect_free_auth_test(monkeypatch, payload, accepted):
+    """Slack reports failures as HTTP 200 + ok=false; auth.test writes nothing."""
+    original = httpx.AsyncClient
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(
+        verification.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(**kwargs, transport=httpx.MockTransport(handle)),
+    )
+    if accepted:
+        await verification.verify_connection(plugin("slack"), Tokens(access="t"))
+    else:
+        with pytest.raises(verification.ConnectionVerificationError) as caught:
+            await verification.verify_connection(plugin("slack"), Tokens(access="t"))
+        assert "invalid_auth" not in str(caught.value)
+    assert len(requests) == 1
+    assert requests[0].method == "GET"
+    assert str(requests[0].url) == "https://slack.com/api/auth.test"
+    assert requests[0].headers["Authorization"] == "Bearer t"
+
+
+@pytest.mark.asyncio
 async def test_unknown_verifier_fails_closed():
     spec = plugin("gmail").model_copy(update={"id": "unknown", "native_tool": "unknown"})
     with pytest.raises(verification.ConnectionVerificationError, match="no supported"):

@@ -24,7 +24,6 @@ import { AlertTriangle, Bot, CheckCircle2, ChevronRight, CircleAlert, Radio, Wre
 
 import type { SubAgentNode } from "@/store/jarvisAgents";
 import type { SectionHealth } from "@/hooks/useProviders";
-import { ExplicitSpawnHint } from "@/components/ExplicitSpawnHint";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Cell,
@@ -308,8 +307,6 @@ export function DepartureBoard({
               </div>
             </div>
           </Panel>
-
-          <ExplicitSpawnHint className="px-1" />
         </div>
       </ScrollArea>
     </div>

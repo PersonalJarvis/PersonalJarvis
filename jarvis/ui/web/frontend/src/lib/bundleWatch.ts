@@ -21,7 +21,9 @@
  *   publishes an `index.html` whose chunks are not all written yet, and
  *   reloading into that is the flicker loop preloadRecovery was written for;
  * * the user must be idle for a moment, because a reload in the middle of a
- *   sentence loses the sentence.
+ *   sentence loses the sentence — and nothing may hold reloads off: a live
+ *   voice call is owned by this document, and "no keystroke for two seconds"
+ *   is exactly what a user who is talking looks like (see ./reloadHold).
  *
  * And two rules keep it from quietly dying, which is the failure that was
  * actually reported (2026-08-23: the desktop window ran a morning-old build
@@ -67,12 +69,16 @@ export function bundleFingerprint(html: string): string {
 }
 
 export interface BundleWatchDeps {
+  /** Identity of the loaded document, never of a later server response. */
+  baseline?: string;
   /** Fetch the SPA entry document the server would hand a fresh window. */
   fetchIndex: () => Promise<string>;
   /** Reload this window. */
   reload: () => void;
   /** Milliseconds since the last keystroke or pointer press, or null if none. */
   idleFor: () => number | null;
+  /** Is something in this window (a live voice call) holding reloads off? */
+  held?: () => boolean;
   /** Is this window on screen? A hidden window polls {@link HIDDEN_EVERY_N_TICKS}× slower. */
   visible: () => boolean;
   /** Schedule the repeating check. Returns a handle for {@link stop}. */
@@ -92,16 +98,21 @@ export function shouldReload({
   seen,
   confirmed,
   idleMs,
+  held = false,
 }: {
   baseline: string;
   seen: string;
   confirmed: string | null;
   idleMs: number | null;
+  held?: boolean;
 }): boolean {
   if (!baseline || !seen || seen === baseline) return false;
   // A build in flight can serve a half-written index; the same fingerprint
   // twice means the build finished and this is what it produced.
   if (confirmed !== seen) return false;
+  // A reload would hang up a call this document owns; the next poll after the
+  // hold is released picks the build up.
+  if (held) return false;
   // No input at all means nothing to interrupt.
   return idleMs === null || idleMs >= IDLE_MS;
 }
@@ -109,12 +120,14 @@ export function shouldReload({
 /**
  * Start watching. Returns a function that stops the watch.
  *
- * The first successful fetch establishes what this window is running, so a
- * window that starts up during a rebuild adopts whatever it actually loaded
- * rather than reloading into it.
+ * Production supplies the loaded document's fingerprint. The first response
+ * is only a fallback for callers without a document, never a newer build's
+ * claim about what an already open window is running.
  */
 export function installBundleWatch(deps: BundleWatchDeps): () => void {
-  let baseline = "";
+  let baseline = deps.baseline ?? "";
+  let stopped = false;
+  let reloading = false;
   let confirmed: string | null = null;
   // Ticks the current check has been waiting for its answer; 0 = none open.
   let inflightTicks = 0;
@@ -124,6 +137,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
   let hiddenTicks = 0;
 
   const check = () => {
+    if (stopped || reloading) return;
     if (inflightTicks > 0 && inflightTicks < STALE_INFLIGHT_TICKS) {
       // One check at a time — a slow answer is not a reason to stack another.
       inflightTicks += 1;
@@ -143,7 +157,7 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
     void deps
       .fetchIndex()
       .then((html) => {
-        if (mine !== generation) return;
+        if (stopped || mine !== generation) return;
         const seen = bundleFingerprint(html);
         if (!seen) return;
         if (!baseline) {
@@ -151,8 +165,15 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
           return;
         }
         if (
-          shouldReload({ baseline, seen, confirmed, idleMs: deps.idleFor() })
+          shouldReload({
+            baseline,
+            seen,
+            confirmed,
+            idleMs: deps.idleFor(),
+            held: deps.held?.() ?? false,
+          })
         ) {
+          reloading = true;
           deps.reload();
           return;
         }
@@ -169,5 +190,9 @@ export function installBundleWatch(deps: BundleWatchDeps): () => void {
 
   check();
   const handle = deps.every(check, POLL_MS);
-  return () => deps.stop(handle);
+  return () => {
+    stopped = true;
+    generation += 1;
+    deps.stop(handle);
+  };
 }

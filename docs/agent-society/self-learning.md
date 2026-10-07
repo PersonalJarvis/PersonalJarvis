@@ -1,5 +1,40 @@
 # Private, evidence-backed agent learning
 
+## Learning loop v2 (2026-10-05)
+
+A created agent has one endless chat (MASTERPLAN §2.10), so its learning is
+paced and kept tidy instead of firing after every answer:
+
+- **Review windows** (`jarvis/society/review_cadence.py`). The person's turns
+  collect in a window per chat. The window is reviewed as a whole when the
+  person gives a clear learning signal (an explicit "remember", a lasting
+  language choice, a correction or frustration, detected without a model),
+  after 6 of their turns, after 8 tool steps, or on the next turn once the
+  window is older than 12 hours. There is no timer: an idle agent costs
+  nothing. Turns started by Jarvis, teammates or routines keep their per-turn
+  review. Board messages in the window never count as the person's words.
+- **Better review rules** (`jarvis/society/review.py`, `_LEARNING_RULES`). A
+  correction is the strongest signal; a lesson is one rule plus one clause of
+  why; skills are improved before new ones are made, and a new skill covers a
+  class of work. Environment failures the person can fix, "tool X does not
+  work" claims, transient errors, one-off narratives and unresolved failures
+  are never captured. Unattended reviews remove an entry only on the person's
+  own retraction.
+- **Notebook limits** (`jarvis/society/memory_books.py`, `HARD_LIMITS`, twice
+  the prompt budget). Past it, an agent or its review must consolidate
+  (replace or remove) before adding; the review is told how full each notebook
+  is. The person's own explicit requests are never refused.
+- **Skill lifecycle** (`jarvis/society/skill_lifecycle.py`). Each private skill
+  has a usage record. Unused for 14 days it is `stale`, for 30 days
+  `archived`: left out of the briefing, never deleted, active again once it is
+  run or rewritten. The briefing lists at most 12 skills, most recently used
+  first, so a long-lived agent's prompt does not grow with every skill.
+- **Visible learning.** Memory writes and learned skills already post a line
+  into the agent's chat (`memory_updated`, `learned_skill`).
+
+The seat rule below is unchanged: reviews and skill authoring run only on the
+agent's own seat.
+
 > **Status (2026-09-30):** the experience journal described below
 > (`jarvis/society/experience.py`, `learning/LEARNING.md`, the lead's voice
 > learning snapshot and `tests/contract/test_agent_learning_loop.py`) is not
@@ -147,5 +182,6 @@ HEAD `44945d224c2ccd6e0a55f16223c7ab0dd39331bf` (2026-09-19), and its
 Relevant ideas are private profiles, concise persistent memory, source recall,
 and procedural skill reuse. Jarvis extends these ideas with per-owner concurrent
 review, failure learning, exact-source checks, correction retirement, replay-safe
-receipts and explicit reuse measurements. This implementation was independently
-written; no upstream source code was copied.
+receipts and explicit reuse measurements. Since 2026-10-05 a few well-separated
+portions are adapted from the upstream project under its MIT License; each
+carries a header comment, and the list lives in `third_party/hermes-agent/`.

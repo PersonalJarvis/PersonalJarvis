@@ -11,6 +11,7 @@ x/y) so it never clobbers the orb's ``[overlay.mascot]`` pin, and serialises
 through ``config_writer._WRITE_LOCK`` so it cannot race other config writes
 (AP-7). The orb's own writer predates that lock; ours is stricter.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,23 +33,6 @@ def classify_release(*, moved: bool) -> str:
     return "drag" if moved else "click"
 
 
-# NOTE: there is intentionally no coarse `click_action(mode)` helper. A bar
-# click is resolved ONLY through `resolve_click`, which gates the destructive
-# hang-up on the close-X hit-box. A "any active click = hangup" shortcut was
-# exactly the silent-hangup bug (2026-06-19) and must not be re-introduced.
-
-# Minimum tap radius (px) around the close-X glyph, so the hit-box stays
-# fingertip-tappable even when the pill is tiny. The effective radius also
-# scales with the pill width (``_CLOSE_X_HIT_FRAC``) so it tracks the glyph the
-# renderer actually draws (``renderer._draw_close_x`` at ``cx - 0.42*pw``).
-_CLOSE_X_HIT_PX: float = 10.0
-_CLOSE_X_HIT_FRAC: float = 0.14
-_CLOSE_X_CENTRE_FRAC: float = 0.42  # X centre offset from pill centre (mirror of renderer)
-# The Prompt Mode sparkle's centre, mirroring ``renderer.SPARKLE_CENTRE_FRAC``
-# (this module must not import the renderer — see the module docstring).
-_SPARKLE_CENTRE_FRAC: float = 0.33
-
-
 def resolve_click(
     x: float,
     width: int,
@@ -57,113 +41,28 @@ def resolve_click(
     hovered: bool = False,
     pill_w: float | None = None,
     prompt_mode: bool = False,
+    y: float | None = None,
 ) -> str:
-    """Resolve a click on the bar into an action by its horizontal zone + state.
+    """Resolve the shared strip's visible controls, never a hidden old zone."""
+    from ui.orb.controls import pet_hit_test, pet_strip_size
 
-    Returns one of ``"hangup"`` / ``"dictation_stop"`` / ``"mute"`` / ``"talk"``
-    / ``"prompt_mode_toggle"`` / ``"none"``.
-
-    The RIGHT zone is the microphone mute toggle (mic muted FOR JARVIS only —
-    non-destructive, so it keeps a generous zone). When IDLE, a click anywhere
-    starts a normal session.
-
-    The hang-up X is different: it ENDS the session, so its hit-box is
-    deliberately narrow and must match what the user can see. The renderer draws
-    the close-X ONLY while the bar is ``hovered`` (and as a small glyph at
-    ``cx - 0.42*pw``), so a hang-up fires ONLY when (a) the controls are shown
-    (``hovered``) AND (b) the click lands on the X glyph itself. A low-intent
-    click on the active bar's body — where no X is visible — returns ``"none"``
-    instead of silently hanging up. This closes the "Jarvis hangs up by itself"
-    trap (live bug 2026-06-19): the old code hung up on ANY click in the left
-    40% of the bar, decoupled from the visible affordance.
-
-    The dictation modes (``dictate`` while recording, ``dictate_transcribing``
-    while the text is being produced) resolve exactly ONE thing: a click on the
-    visible close-X is ``"dictation_stop"``. Everything else there is inert on
-    purpose — without that, a stray click would fall through to "not active"
-    and START A VOICE SESSION in the middle of dictating, and the mic zone
-    would mute Jarvis's ear while the user is dictating into it. The X used to
-    be inert too, on the theory that another way to stop always existed (the
-    key, the Dictation view, the CLI). It did not: a hold recording whose
-    release edge was lost had the key refusing every press as "already
-    running", and the one control the user could see — the X the renderer
-    draws for these modes — resolved to nothing (BUG-191). The renderer and
-    this resolver now agree: a drawn X is a working X.
-
-    The IDLE pill's left control is the Prompt Mode sparkle, and it exists
-    ONLY while ``prompt_mode`` is on — the renderer draws it exactly then, so
-    a click there switches the mode off, and with the mode off the same spot
-    is ordinary body and starts a session. That asymmetry is deliberate
-    (maintainer, 2026-08-28): the bar reports a state the user might have
-    forgotten and offers the way out of it; it is not a place to switch the
-    feature on, which is what the settings card and the front-page pill are
-    for. The glyph mirrors the mic's inset rather than the close-X's, because
-    at the X's offset its left tip drew outside the pill.
-
-    ``NOTICE_MODES`` is inert for the same reason and one more. A notice is a
-    transient ANSWER, not a control: it appears unrequested, it opens the pill
-    under wherever the pointer happens to be, and it clears itself a moment
-    later. Letting it resolve a click would mean a click aimed at the bar's
-    resting state lands on whatever the notice replaced it with — starting a
-    voice session or toggling the mic by accident. Worse, a notice can be raised
-    WHILE a conversation is live (a refused dictation says so mid-session), and
-    the "not active → talk" fall-through would then fire a second session on a
-    bar the user could not see the truth of.
-    """
-    frac = x / max(1, width)
-    if mode in NOTICE_MODES:
+    scale = width / pet_strip_size()[0]
+    action = pet_hit_test(x, pet_strip_size(scale)[1] / 2 if y is None else y, scale)
+    if action is None or mode in NOTICE_MODES:
         return "none"
     if mode in DICTATION_MODES:
-        if hovered and _on_close_x(x, width, pill_w):
-            return "dictation_stop"
-        return "none"
-    active = mode in ("listen", "think", "speak")
-    if frac >= 0.60:            # right zone → the mic mute toggle (non-destructive)
+        return "dictation_stop" if action == "orb" else "none"
+    if action == "bell":
+        return "compose"
+    if action == "mic_mute":
         return "mute"
-    if not active:
-        # Idle: the sparkle on the left switches Prompt Mode OFF; the rest of
-        # the body starts a normal session. Gated on ``prompt_mode`` and not
-        # on ``hovered``, because the renderer draws the sparkle exactly when
-        # the mode is on — hovered or at rest — and a drawn glyph is a working
-        # glyph. With the mode off nothing is drawn there and the spot talks,
-        # which is also why the bar can only ever turn the mode OFF: an unlit
-        # switch would be an advert for a feature that is not running.
-        if prompt_mode and _on_prompt_sparkle(x, width, pill_w):
-            return "prompt_mode_toggle"
-        return "talk"
-    # Active session: the ONLY destructive bar action is the close-X hang-up,
-    # which must be a deliberate click ON the visible X glyph.
-    if hovered and _on_close_x(x, width, pill_w):
-        return "hangup"
-    return "none"              # active body / no visible X → nothing
-
-
-def _on_close_x(x: float, width: int, pill_w: float | None) -> bool:
-    """Does a click at ``x`` land on the close-X glyph the renderer draws?
-
-    In production ``pill_w`` is always the active pill width (ACTIVE_W); the
-    ``width`` fallback is just a sane default for direct callers. The glyph
-    centre mirrors ``renderer._draw_close_x`` (``cx - 0.42*pw``).
-    """
-    pw = float(pill_w) if pill_w is not None else float(width)
-    x_glyph = width / 2.0 - _CLOSE_X_CENTRE_FRAC * pw
-    hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
-    return abs(x - x_glyph) <= hit
-
-
-def _on_prompt_sparkle(x: float, width: int, pill_w: float | None) -> bool:
-    """Does a click at ``x`` land on the Prompt Mode sparkle?
-
-    The sparkle mirrors the MIC rather than sharing the close-X's slot: it is
-    the bigger glyph, and at the X's ``0.42`` its left tip crossed the rim and
-    drew outside the pill (2026-08-28). ``_SPARKLE_CENTRE_FRAC`` restates
-    ``renderer.SPARKLE_CENTRE_FRAC`` — this module stays dependency-free, so
-    it cannot import the renderer; a test pins the two together.
-    """
-    pw = float(pill_w) if pill_w is not None else float(width)
-    x_glyph = width / 2.0 - _SPARKLE_CENTRE_FRAC * pw
-    hit = max(_CLOSE_X_HIT_PX, _CLOSE_X_HIT_FRAC * pw)
-    return abs(x - x_glyph) <= hit
+    if action == "speaker":
+        return "speaker"
+    if action == "orb" and prompt_mode:
+        return "prompt_mode_toggle"
+    if action in ("orb", "call"):
+        return "hangup" if mode in ("listen", "think", "speak") else "talk"
+    return "none"
 
 
 def default_bottom_center(

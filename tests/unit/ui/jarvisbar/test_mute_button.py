@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from jarvis.ui.jarvisbar import renderer as R
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+from ui.orb.controls import pet_strip_layout
 
 
 class _FakePipeline:
@@ -29,7 +30,8 @@ class _FakePipeline:
 
 def _mic_x() -> int:
     """The on-screen microphone-button centre (mirror renderer x_right)."""
-    return round(R.WIN_W / 2.0 + 0.30 * R.ACTIVE_W)
+    slot = next(s for s in pet_strip_layout(R.strip_scale()).slots if s[0] == "mic_mute")
+    return round((slot[1] + slot[2]) / 2)
 
 
 def _patch_pipeline(monkeypatch, fake) -> None:
@@ -100,16 +102,9 @@ def test_muted_render_is_safe_for_every_mode():
         assert img.size == (R.WIN_W, R.WIN_H)
 
 
-def test_muted_idle_pill_stays_open_not_collapsed():
-    """A muted user must not be left with the tiny empty collapsed pill: the bar
-    stays OPEN so the red rim + slashed mic (the ONLY unmute target — voice can't
-    unmute while Jarvis is deaf) are always on screen. Forensic 2026-06-29: a
-    user got 'stuck muted' and read the silent collapsed bar as 'frozen'."""
-    assert R.target_pill_size("idle", hovered=False, muted=True) == (R.OPEN_W, R.OPEN_H)
-    assert R.target_pill_size("idle", hovered=False, muted=False) == (
-        R.COLLAPSED_W,
-        R.COLLAPSED_H,
-    )
+def test_muted_idle_keeps_all_controls_available():
+    assert R.target_pill_size("idle", muted=True) == (R.WIN_W, R.WIN_H)
+    assert R.target_pill_size("idle", muted=False) == (R.WIN_W, R.WIN_H)
 
 
 def test_muted_idle_shows_slashed_mic_without_hover():

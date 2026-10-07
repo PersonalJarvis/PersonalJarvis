@@ -344,7 +344,7 @@ class BlankWindowPolicy:
 # The explanation page
 # ---------------------------------------------------------------------------
 
-#: One entry per reason per language. German and Spanish are product surface
+#: One entry per reason per language. German, Spanish and Chinese are product surface
 #: (AGENTS.md §1): this page is shown TO the user, and it cannot reach the
 #: bundle's i18n — the bundle is exactly what failed to load. The language is
 #: picked in the page from ``navigator.language``, the same way
@@ -395,6 +395,21 @@ _TEXTS: dict[str, dict[str, str]] = {
         "view_empty": ("Personal Jarvis responde, pero la ventana no cargó su página."),
         "button": "Recargar",
         "retrying": "Reintentando…",
+    },
+    "zh": {
+        # i18n-allow: product surface, no bundle available here.
+        "title": "窗口一直是空白的。",
+        "backend_dead": (
+            "Personal Jarvis 正在运行，但负责这个窗口的部分已经停止。"
+            "重新启动应用即可恢复。"
+        ),
+        "backend_silent": (
+            "Personal Jarvis 正忙，暂时还没有响应这个窗口。"
+            "一旦恢复响应，它会自动重新加载。"
+        ),
+        "view_empty": ("Personal Jarvis 已响应，但窗口没有加载出页面。"),
+        "button": "重新加载",
+        "retrying": "正在重试…",
     },
 }
 
@@ -673,6 +688,7 @@ class BlankWindowWatchdog:
         caller: _WindowCaller | None = None,
         action_caller: _WindowCaller | None = None,
         end_hung_renderer: Callable[[], list[int]] | None = None,
+        stack_probe: Any = None,
     ) -> None:
         self._window = window
         self._url = url
@@ -694,6 +710,9 @@ class BlankWindowWatchdog:
         self._caller = caller or _WindowCaller()
         self._action_caller = action_caller or _WindowCaller()
         self._end_hung_renderer = end_hung_renderer or end_busy_renderers
+        # Names the script a hung page is stuck in before the renderer, and
+        # with it the evidence, is ended (``jarvis/ui/webview_hang_probe.py``).
+        self._stack_probe = stack_probe
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -732,9 +751,12 @@ class BlankWindowWatchdog:
             if window is None:
                 continue
             try:
+                page = self._page_state(window)
+                if page == "up" and self._stack_probe is not None:
+                    self._stack_probe.arm()
                 verdict = self._policy.decide(
                     Observation(
-                        page=self._page_state(window),
+                        page=page,
                         backend_alive=self._safe(self._backend_alive, default=True),
                         server_healthy=self._safe(self._health_probe, default=False),
                         now=time.monotonic(),
@@ -818,6 +840,14 @@ class BlankWindowWatchdog:
             "Desktop window stopped answering while the server is healthy — "
             "its page is hung; ending its renderer and reloading."
         )
+        if self._stack_probe is not None:
+            stack = self._safe(self._stack_probe.capture, default=[])
+            if stack:
+                logger.warning(
+                    "Hung window: the page's JavaScript was stuck here:\n{}", "\n".join(stack)
+                )
+            else:
+                logger.warning("Hung window: no JavaScript stack could be captured.")
         self._safe(self._end_hung_renderer, default=[])
         self._caller = _WindowCaller()
 

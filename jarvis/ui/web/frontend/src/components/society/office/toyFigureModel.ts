@@ -55,6 +55,37 @@ export interface ToyLook {
   blush: boolean;
   outfit: OutfitId;
   eyewear: Eyewear;
+  /** A uniform worn over the look (a level reward): replaces the outfit's cut and colours. */
+  uniform?: UniformStyle;
+}
+
+/**
+ * A military uniform as the toy figure draws it. The cut decides the chest
+ * (an open shirt collar and tie, a field jacket's stand collar and zip, a
+ * belted service coat, a short mess jacket); the colours and trims do the rest.
+ */
+export interface UniformStyle {
+  cut: "shirt" | "field" | "service" | "mess";
+  /** Coat or shirt body. */
+  coat: string;
+  /** The shirt showing at the collar under a coat. */
+  shirt: string;
+  tie: string;
+  tieKind: "long" | "bow";
+  trousers: string;
+  /** A stripe down the outer seam of each trouser leg. */
+  stripe?: string;
+  shoes: string;
+  buttons: string;
+  /** Pocket flaps on the chest (and the skirt of a coat). */
+  pockets: 0 | 2 | 4;
+  belt?: string;
+  /** Gold braid round each cuff. */
+  cuffBraid?: string;
+  /** Lapel facing colour of a mess jacket. */
+  lapels?: string;
+  /** Name and service tapes over the pockets of a field jacket. */
+  tapes?: string;
 }
 
 /** Natural skin tones, light to dark; the fallback and the snap target for fantasy skins. */

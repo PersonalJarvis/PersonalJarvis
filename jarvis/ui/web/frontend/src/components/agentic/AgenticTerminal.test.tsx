@@ -212,6 +212,7 @@ import {
   REBUILD_SETTLE_MAX_MS,
   REPAINT_WAIT_MAX_MS,
   RESIZE_PARSE_WAIT_MS,
+  RETURN_REPAINT_NUDGE_MS,
   UNMEASURED_SIZE,
 } from "./AgenticTerminal";
 import { FONT_WAIT_MS } from "@/lib/terminalFont";
@@ -1577,6 +1578,86 @@ describe("pane refit", () => {
   });
 
   /*
+   * A workspace the IDE keeps warm is not rebuilt when the user switches back
+   * to it, so its panes never get the replay and repaint a fresh pane gets.
+   * Reported 2026-10-03: a Claude pane drawing for fewer rows than its tile,
+   * the prompt and status line halfway up with empty rows below. Coming back
+   * asks the agent for a whole new screen — one row short, then back.
+   */
+  it("asks the agent for a whole new screen when a kept-warm pane comes back", () => {
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    const frames = terminalHarness.send.mock.calls.map(([frame]) => frame);
+    const shorter = frames.findIndex((frame) => JSON.stringify(frame) === JSON.stringify({ t: "claim", cols: 80, rows: 23 }));
+    expect(shorter).toBeGreaterThanOrEqual(0);
+    expect(frames.slice(shorter + 1)).toContainEqual({ t: "claim", cols: 80, rows: 24 });
+  });
+
+  /*
+   * Reported 2026-10-06: back from the thread layout, a pane that had followed
+   * another geometry while hidden kept that grid, and the return nudge then
+   * put the agent on the tile's size — lines wrapped into word fragments down
+   * the pane's edge. Coming back on stage is a change made in this window, so
+   * it takes the size back whatever `document.hasFocus()` answers.
+   */
+  it("takes the size back when a displaced pane returns to the stage without window focus", () => {
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({ t: "claim", cols: 80, rows: 24 });
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(expect.objectContaining({ t: "r" }));
+  });
+
+  it("never sizes the agent while the pane is off the stage", () => {
+    // The grid behind the maximized side panel is invisible but still laid
+    // out in a narrowed tile; fitting there squeezed every agent to a strip.
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 37, rows: 24 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
+  it("does not nudge a pane taking the stage for the first time", () => {
+    const view = render(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(expect.objectContaining({ rows: 23 }));
+  });
+
+  /*
    * A pane open in two places — the desktop app and a tab some tool opened to
    * take a look — has two screens and ONE pseudo-terminal, and the server
    * hands the size to one of them. The other is told what the owner chose
@@ -2111,6 +2192,43 @@ describe("pane refit", () => {
       settle();
 
       expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
+    });
+
+    it.each(["light", "dark"] as const)("immediately gives a maximized %s pane the office viewer's size lead", (appearance) => {
+      const expanded = (maximized: boolean) => (
+        <AgenticTerminal key="grid" name="Dana" displayName="Claude Code" appearance={appearance} fontSize={13} maximized={maximized} />
+      );
+      const view = render(<>{expanded(false)}{office}</>);
+      open(0);
+      open(1);
+      settle();
+      displace(0);
+      clearSent();
+      terminalHarness.size = { cols: 160, rows: 60 };
+      const focused = document.activeElement;
+
+      view.rerender(<>{expanded(true)}{office}</>);
+
+      // No observer, animation frame, timer, or second click may be needed.
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 160, rows: 60 }]);
+      expect(document.activeElement).toBe(focused);
+      expect(terminalHarness.sockets).toHaveLength(2);
+      settle();
+      expect(claimsOn(0)).toHaveLength(1);
+
+      // A passive gesture cannot return the size to the small office viewer.
+      displace(1);
+      clearSent();
+      fireEvent.pointerMove(document.body);
+      settle();
+      expect(claimsOn(1)).toEqual([]);
+
+      // Restoring also lands its geometry immediately, without reconnecting.
+      terminalHarness.size = { cols: 80, rows: 24 };
+      clearSent();
+      view.rerender(<>{expanded(false)}{office}</>);
+      expect(claimsOn(0)).toEqual([{ t: "claim", cols: 80, rows: 24 }]);
+      expect(terminalHarness.sockets).toHaveLength(2);
     });
 
     it("gives the lead to the viewer the user presses", () => {

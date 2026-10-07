@@ -62,7 +62,7 @@ export function SocialsView() {
         subtitle={t("socials.subtitle")}
       />
 
-      <div className="mx-auto w-full max-w-4xl p-6">
+      <div className="w-full px-8 pb-10 pt-2">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground">
             <Loader2
@@ -80,7 +80,7 @@ export function SocialsView() {
             <p className="text-sm text-muted-foreground">{t("socials.empty")}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {groups.map((group) => (
               <SocialTile
                 key={group.platform}

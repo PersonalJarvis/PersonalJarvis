@@ -106,7 +106,10 @@ describe("Combobox non-search listbox accessibility", () => {
     });
 
     expect(commonEnglish.id).not.toBe(allEnglish.id);
-    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    // The list opens on the current value, not on its first row.
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(
+      screen.getByRole("option", { name: "Baseline" }).id,
+    );
     fireEvent.keyDown(listbox, { key: "ArrowDown" });
     expect(listbox.getAttribute("aria-activedescendant")).toBe(allEnglish.id);
     expect(document.querySelectorAll('[data-active="true"]')).toHaveLength(1);
@@ -296,5 +299,46 @@ describe("isComboboxPanelEvent", () => {
       }),
     ).toBe(true);
     expect(isComboboxPanelEvent({ target: document.createElement("div") })).toBe(false);
+  });
+});
+
+describe("Combobox fold", () => {
+  const FOLDED = [
+    {
+      id: "models",
+      options: [{ value: "new", label: "Newest" }],
+      more: { label: "Older models", options: [{ value: "old", label: "Oldest" }] },
+    },
+  ];
+
+  it("folds older options behind one row that opens in place", async () => {
+    const onChange = vi.fn();
+    render(<Combobox value="new" groups={FOLDED} onChange={onChange} ariaLabel="Model" searchPlaceholder="Search" testId="m" />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    const fold = await screen.findByTestId("m-fold");
+    expect(screen.queryByRole("option", { name: "Oldest" })).toBeNull();
+
+    fireEvent.click(fold);
+    fireEvent.click(await screen.findByRole("option", { name: "Oldest" }));
+    expect(onChange).toHaveBeenCalledWith("old");
+  });
+
+  it("opens the fold by keyboard and by search", async () => {
+    render(<Combobox value="new" groups={FOLDED} onChange={() => {}} ariaLabel="Model" searchPlaceholder="Search" testId="m" />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    const search = await screen.findByTestId("m-search");
+    fireEvent.keyDown(search, { key: "ArrowDown" });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(await screen.findByRole("option", { name: "Oldest" })).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "oldest" } });
+    expect(screen.queryByTestId("m-fold")).toBeNull();
+    expect(screen.getByRole("option", { name: "Oldest" })).toBeTruthy();
+  });
+
+  it("starts unfolded when the current value is folded", async () => {
+    render(<Combobox value="old" groups={FOLDED} onChange={() => {}} ariaLabel="Model" searchPlaceholder="Search" testId="m" />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Model" }));
+    expect(await screen.findByRole("option", { name: "Oldest" })).toBeTruthy();
   });
 });

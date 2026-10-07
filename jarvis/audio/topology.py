@@ -14,7 +14,8 @@ This module owns the ONE cross-platform cure, in three parts:
    (`jarvis.audio.devices._query_tables_fresh`), which is safe while this
    process holds live streams, and compare a name-based topology signature.
    No OS-specific listener; Windows, macOS, and Linux share the poller.
-2. **Coordinated refresh** — when the topology changed: discard every
+2. **Coordinated refresh** — when a topology change persists and native
+   playback is idle: discard every
    registered capture stream and the player's output stream, re-initialize
    PortAudio under the established re-init lock (safe ONLY with no live
    streams — the BUG-058 native-fault hazard), and invalidate every resolve
@@ -24,8 +25,8 @@ This module owns the ONE cross-platform cure, in three parts:
 3. **The open guard** — every native stream open holds ``stream_open_guard``
    so no stream can come to life BETWEEN terminate and initialize.
 
-Everything fails open: a failed probe means "no judgment", a failed refresh
-leaves the process exactly where it was, and a headless install without
+Everything degrades safely: a failed probe means "no judgment", a failed
+stream close prevents re-initialization, and a headless install without
 sounddevice never gets past the first probe. Nothing here runs on the boot
 critical path (AP-26) — the watcher starts after honest voice readiness.
 """
@@ -37,7 +38,7 @@ import contextlib
 import logging
 import threading
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 log = logging.getLogger("jarvis.audio.topology")
@@ -45,6 +46,12 @@ log = logging.getLogger("jarvis.audio.topology")
 # Serializes native stream opens against the PortAudio re-init window. An
 # RLock so a guarded open path may nest (candidate loops re-enter freely).
 _OPEN_LOCK = threading.RLock()
+# A cancelled asyncio waiter can leave a native output worker running. Count
+# the synchronous operations themselves, including open-to-publication gaps.
+_native_operations = 0
+# Keep handles until close succeeds, including streams awaiting publication or
+# asynchronous disposal. Losing the Python owner does not close a native handle.
+_native_streams: dict[int, Any] = {}
 
 # Live MicrophoneCapture instances that a refresh must quiesce. WeakSet: a
 # capture that forgot to unregister can never be kept alive by the watcher.
@@ -93,9 +100,39 @@ def stream_open_guard() -> threading.RLock:
     return _OPEN_LOCK
 
 
+@contextlib.contextmanager
+def native_stream_operation() -> Iterator[None]:
+    """Keep PortAudio alive until a synchronous native operation has exited.
+
+    Only admission holds the open lock. Playback and abort must remain able
+    to run concurrently, and a topology refresh defers instead of waiting on
+    a potentially wedged native write.
+    """
+    global _native_operations
+    with _OPEN_LOCK:
+        _native_operations += 1
+    try:
+        yield
+    finally:
+        with _OPEN_LOCK:
+            _native_operations -= 1
+
+
 def register_capture(capture: Any) -> None:
     with _captures_lock:
         _captures.add(capture)
+
+
+def register_native_stream(stream: Any) -> None:
+    """Called under the open guard as soon as PortAudio returns a handle."""
+    with _OPEN_LOCK:
+        _native_streams[id(stream)] = stream
+
+
+def unregister_native_stream(stream: Any) -> None:
+    """Remove a handle only after its native close completed successfully."""
+    with _OPEN_LOCK:
+        _native_streams.pop(id(stream), None)
 
 
 def unregister_capture(capture: Any) -> None:
@@ -161,22 +198,32 @@ def refresh_audio_backend(player: Any, output_device: Any = None) -> bool:
         from jarvis.audio.device_init import _REINIT_LOCK
 
         with _OPEN_LOCK:
+            if _native_operations or getattr(player, "audio_backend_busy", False):
+                log.debug("Audio backend refresh deferred until playback is idle")
+                return False
             with _captures_lock:
                 captures = list(_captures)
             for capture in captures:
                 try:
-                    capture.discard_native_stream()
-                except Exception:  # noqa: BLE001 — one dead capture never blocks
-                    log.debug(
+                    if capture.discard_native_stream() is False:
+                        return False
+                except Exception:  # noqa: BLE001 — a live stream forbids re-init
+                    log.warning(
                         "Capture discard during refresh failed", exc_info=True
                     )
+                    return False
             if player is not None:
                 try:
-                    player.invalidate_device_cache()
+                    if player.invalidate_device_cache() is False:
+                        return False
                 except Exception:  # noqa: BLE001
                     log.debug(
                         "Player invalidate during refresh failed", exc_info=True
                     )
+                    return False
+            if _native_streams:
+                log.debug("Audio backend refresh deferred: native streams remain open")
+                return False
             with _REINIT_LOCK:
                 with contextlib.suppress(Exception):
                     sd._terminate()
@@ -232,19 +279,25 @@ async def watch_topology(
         if signature == last:
             continue
         await asyncio.sleep(_SETTLE_S)
-        settled = await asyncio.to_thread(probe) or signature
+        settled = await asyncio.to_thread(probe)
+        if settled is None or settled == last:
+            # A transient enumeration change (e.g. PipeWire closing a mic)
+            # does not justify terminating the process-wide audio backend.
+            continue
         log.info(
             "Audio device topology changed — refreshing the audio backend "
             "(streams reopen automatically)."
         )
         ok = await asyncio.to_thread(refresh)
-        log.info("Audio backend refresh %s.", "completed" if ok else "failed")
-        last = settled
+        log.info("Audio backend refresh %s.", "completed" if ok else "deferred or failed")
+        if ok:
+            last = settled
 
 
 __all__ = [
     "DEFAULT_POLL_S",
     "refresh_audio_backend",
+    "native_stream_operation",
     "register_capture",
     "stream_open_guard",
     "topology_signature",

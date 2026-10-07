@@ -20,13 +20,18 @@ def chat_is_read_only(session_id: str) -> bool:
 
 
 def allows_read(tool: Any, args: dict[str, Any] | None = None) -> bool:
-    # A safe-tier message sender is still an action. Tier alone is not a read proof.
-    describe = getattr(tool, "describe_args", None)
-    if args is not None and callable(describe):
+    """Use trusted tool metadata, never a presentation/command heuristic.
+
+    Mixed tools declare a separate argument-aware capability. Neither risk
+    tiers nor remote presentation metadata establish read authority.
+    """
+    capability = getattr(tool, "read_only_for_args", None)
+    if callable(capability):
+        if args is None:
+            return True
         try:
-            description = describe(args)
+            return capability(args) is True
         except Exception:
-            # Unclassifiable calls are refused in this restrictive mode.
+            # A broken capability cannot grant permissions in a restrictive mode.
             return False
-        return isinstance(description, dict) and description.get("level") == "read"
-    return not getattr(tool, "is_action_tool", False) and getattr(tool, "risk_tier", None) == "safe"
+    return getattr(tool, "read_only", False) is True

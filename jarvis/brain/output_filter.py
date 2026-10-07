@@ -565,7 +565,17 @@ _A_BEFORE_AGENT_RE = re.compile(rf"\ba(?=\s+{_JARGON_COMPOUND_BRAND}\b)")
 # "OpenClaw-" compound prefix ("OpenClaw-Mission" -> "Mission"; "OpenClaw-
 # Subagent" -> "Subagent", which JARGON_COMPOUND_RE then drops) and any
 # standalone "OpenClaw"/"OpenClore" (common STT mis-spelling of the brand).
-LEGACY_BRAND_RE = re.compile(r"\bOpenCl(?:aw|ore)-?", re.IGNORECASE)
+#
+# 2026-10-06: OpenClaw is also a society agent runtime now (docs/agent-runtimes.md).
+# The runtime is real, so its name survives where it means the runtime: before
+# "agent" ("your OpenClaw agent") and after "on/as/with/to" or their German
+# forms ("moved to OpenClaw"). The retired worker compounds stay scrubbed.
+LEGACY_BRAND_RE = re.compile(
+    r"(?<!\bon\s)(?<!\bto\s)(?<!\bas\s)(?<!\bwith\s)"
+    r"(?<!\bauf\s)(?<!\bals\s)(?<!\bmit\s)(?<!\bzu\s)"  # i18n-allow: German prepositions
+    r"\bOpenCl(?:aw|ore)-?(?![-\s]?agent(?:en|s)?\b)",
+    re.IGNORECASE,
+)
 
 # A1 drift (Mandate A1): remove the "Sir" honorific from the output.
 # The pattern matches ``Sir`` as an honorific in three forms:

@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "study": "jarvis-pet-companions",
+  "brief": "brief.md",
+  "assets": [
+    {
+      "id": "miso",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_miso",
+      "export": "exports/miso.glb"
+    },
+    {
+      "id": "ember",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_ember",
+      "export": "exports/ember.glb"
+    },
+    {
+      "id": "shelly",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_shelly",
+      "export": "exports/shelly.glb"
+    },
+    {
+      "id": "mochi",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_mochi",
+      "export": "exports/mochi.glb"
+    },
+    {
+      "id": "brew",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_brew",
+      "export": "exports/brew.glb"
+    },
+    {
+      "id": "bolt",
+      "kind": "character",
+      "source": "source/pets.blend",
+      "collection": "Pet_bolt",
+      "export": "exports/bolt.glb"
+    }
+  ],
+  "runtime_evidence": [],
+  "technical_report": "evidence/technical-review.md",
+  "approval": {
+    "status": "pending",
+    "record": "review.md",
+    "evidence_sha256": ""
+  }
+}

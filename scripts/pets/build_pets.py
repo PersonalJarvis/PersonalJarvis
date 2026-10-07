@@ -7087,7 +7087,1575 @@ EMBER = PetDesign(
 )
 
 
-PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY, EMBER)
+# -- Cocoa: the chocolate Labrador puppy -----------------------------------------
+#
+# A baby chocolate Lab sitting on its haunches: deep brown fur all over, long
+# soft ears hanging beside a big round head, huge blue-grey puppy eyes, a
+# broad short muzzle with a shiny dark nose, a chunky body on oversized front
+# paws and an otter tail that hardly ever stops. It tilts its head to listen,
+# does zoomies when something works, digs while it works, sniffs along the
+# floor while it searches and naps in a plaid dog bed. Besides the front view
+# there is a side view for running, digging and sniffing. Both heads are
+# painted on their own and sheared column by column for a tilt, so the face
+# stays crisp at any angle.
+
+COCOA_FUR = hexc("#6e3b22")
+COCOA_LIGHT = hexc("#9c5a36")
+COCOA_SHINE = hexc("#b8734a")
+COCOA_DARK = hexc("#4a2414")
+COCOA_DEEP = hexc("#33180c")
+COCOA_EAR = hexc("#5a2c18")
+COCOA_EAR_LIGHT = hexc("#7a4128")
+COCOA_MUZZLE = hexc("#88492a")
+COCOA_NOSE = hexc("#2a1610")
+COCOA_NOSE_SHINE = hexc("#a8857a")
+COCOA_IRIS = hexc("#687e96")
+COCOA_IRIS_LIGHT = hexc("#a6bccf")
+COCOA_PUPIL = hexc("#1d1720")
+COCOA_BLUSH = hexc("#d8707c")
+COCOA_TONGUE_DARK = hexc("#d9506a")
+COCOA_HEART = hexc("#ff5c7a")
+COCOA_HEART_SHINE = hexc("#ffd0da")
+COCOA_BONE = hexc("#f6ecd8")
+#: Soil: lighter and greyer than the fur, so a mound never merges with paws.
+COCOA_DIRT = hexc("#a08060")
+COCOA_DIRT_LIGHT = hexc("#c9a983")
+COCOA_DIRT_DARK = hexc("#6f5640")
+COCOA_GRASS = hexc("#6cbf5c")
+COCOA_DUST = hexc("#c9bfb3")
+COCOA_CLOUD = hexc("#9aa2b0")
+COCOA_CLOUD_LIGHT = hexc("#cdd3dd")
+COCOA_CLOUD_DARK = hexc("#6e7684")
+#: The scent a sniffing nose follows: a violet that holds on dark AND light.
+COCOA_SCENT = hexc("#9d82dc")
+COCOA_SCENT_FADE = hexc("#cbbcf2")
+COCOA_PRINT = hexc("#a26a46")
+COCOA_BED = hexc("#c9483f")
+COCOA_BED_LIGHT = hexc("#ec7563")
+COCOA_BED_DARK = hexc("#8f2c28")
+COCOA_PLAID = hexc("#f2d39c")
+COCOA_BALL = hexc("#d6ee4f")
+COCOA_BALL_DARK = hexc("#9fbe27")
+COCOA_BALL_SEAM = hexc("#fbffe6")
+COCOA_BUTTERFLY = hexc("#6cb8ff")
+COCOA_BUTTERFLY_DARK = hexc("#2f72c9")
+COCOA_NOTE = hexc("#3d9be0")
+
+_COCOA_HEART_S = ("#.#", "###", ".#.")
+_COCOA_HEART_L = ("##.##", "#o###", "#####", ".###.", "..#..")
+_COCOA_HEART_PALETTE = {"#": COCOA_HEART, "o": COCOA_HEART_SHINE}
+_COCOA_BONE = ("#...#", "#####", "#...#")
+_COCOA_BONE_L = ("##...##", "#o#####", "##...##")
+_COCOA_BONE_PALETTE = {"#": COCOA_BONE, "o": FX_WHITE}
+
+#: The top-left of each 5 x 6 eye box.
+_COCOA_EYE_AT: tuple[Px, Px] = ((16, 13), (27, 13))
+#: Where the 3 x 4 pupil sits in the eye box per look.
+_COCOA_PUPIL: dict[str, Px] = {
+    "open": (1, 1),
+    "wide": (1, 1),
+    "sad": (1, 1),
+    "look_left": (0, 1),
+    "look_right": (2, 1),
+    "up_left": (0, 0),
+    "up_right": (2, 0),
+    "down": (1, 2),
+}
+#: Closed-eye shapes on the 5 x 6 eye box (the right eye is mirrored).
+_COCOA_LIDS: dict[str, tuple[str, ...]] = {
+    "closed": (".....", ".....", ".....", "#...#", ".###.", "....."),
+    "sleep": (".....", ".....", ".....", "#...#", ".###.", "....."),
+    "happy": (".....", ".###.", "#...#", ".....", ".....", "....."),
+    "squint": (".....", "##...", "..##.", "....#", "..##.", "##..."),
+    "dizzy": (".###.", "#...#", "#.#.#", "#.##.", "#....", ".####"),
+}
+#: Ear shapes: the (control, tip) of the hanging end for the left ear, from a
+#: root at the side of the crown; the right ear is mirrored.
+_COCOA_EAR_ROOT = (15.0, 11.0)
+_COCOA_EARS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
+    "rest": ((11.0, 13.0), (10.5, 22.0)),
+    "half": ((10.0, 12.0), (8.0, 19.0)),
+    "perk": ((9.5, 9.0), (6.0, 13.5)),
+    "flick": ((10.0, 11.0), (7.0, 17.5)),
+    "droop": ((12.5, 16.0), (12.5, 25.0)),
+    #: Flapping out to the sides on a hop.
+    "fly": ((9.5, 9.5), (5.0, 10.0)),
+    #: Flung up and out by a shake.
+    "flap": ((10.0, 9.0), (7.5, 8.5)),
+    #: Draped down over the rim of the dog bed, asleep.
+    "drape": ((11.0, 16.5), (10.5, 27.5)),
+    #: Spread out flat on the cushion, asleep.
+    "flop": ((11.0, 14.0), (9.5, 20.0)),
+}
+
+#: Idle: the thumping wag (tail angle; positive points down), where Cocoa
+#: looks, and a blep over the seven breathing cells.
+_COCOA_IDLE_TAIL = (14, -24, 14, -24, 10, -14, 10)
+_COCOA_IDLE_EYES = ("open", "open", "open", "look_right", "open", "open", "open")
+_COCOA_IDLE_MOUTH = ("rest", "rest", "rest", "rest", "rest", "blep", "blep")
+#: Listening: the head tilt (a column shear) and how far the head leans.
+_COCOA_TILT = (0.0, 0.1, 0.16, 0.16, 0.16, 0.08)
+_COCOA_TILT_LEAN = (0, 1, 1, 1, 1, 0)
+#: Talking: the ears bounce with every bark.
+_COCOA_TALK_EARS = ("rest", "rest", "half", "flick")
+#: Success: zoomies. Which view each frame shows: front, or the side view
+#: running left / right; then a skid, a hop and a happy landing.
+_COCOA_ZOOM = ("front", "left", "left", "right", "right", "front", "front", "front")
+_COCOA_ZOOM_DY = (1, -2, -1, -2, -1, 0, -3, 0)
+#: Error: a small shake of the lowered head.
+_COCOA_SHAKE = (-1, 1, -1, 1, 0, 0)
+#: Working: which front paw scrapes (True = the near one is up).
+_COCOA_DIG = (True, False, True, False, True, False, True, False)
+#: Held: the swing from the cursor and the tail that still wags.
+_COCOA_SWAY = (-1, 0, 1, 1, 0, -1)
+_COCOA_HELD_TAIL = (-40, 8, -40, 8, -40, 8)
+
+
+def cocoa_pose(state: str, i: int) -> Pose:
+    pose = base_pose(state, i)
+    if state == "idle":
+        if i < len(_COCOA_IDLE_EYES):
+            return replace(pose, eyes=_COCOA_IDLE_EYES[i], mouth=_COCOA_IDLE_MOUTH[i])
+        return replace(pose, mouth="rest")
+    if state == "listening":
+        return replace(pose, mouth="closed")
+    if state == "thinking":
+        return replace(pose, eyes="up_right", mouth="blep_side" if 2 <= i <= 5 else "rest")
+    if state == "success":
+        stretch = (-1, 0, 0, 0, 0, -1, 1, -1)[i]
+        return Pose(state, i, dy=_COCOA_ZOOM_DY[i], eyes="happy", mouth="pant", stretch=stretch)
+    if state == "error":
+        return Pose(state, i, dx=_COCOA_SHAKE[i], dy=1, eyes="sad", mouth="frown")
+    if state == "sleeping":
+        return Pose(state, i, eyes="sleep", mouth="blep")
+    if state == "working":
+        return Pose(state, i, eyes="down", mouth="blep")
+    if state == "searching":
+        return Pose(state, i, eyes="down", mouth="closed")
+    if state == "held":
+        return Pose(state, i, dx=_COCOA_SWAY[i % len(_COCOA_SWAY)], eyes="open", mouth="blep")
+    return pose
+
+
+@dataclass(frozen=True)
+class _CocoaLook:
+    """How the sitting puppy holds itself, beyond the pose's eyes and mouth."""
+
+    ears: tuple[str, str] = ("rest", "rest")
+    #: The tail's angle in degrees: 0 points right, negative is up.
+    tail: int = 10
+    #: Ghost tails at these angles: a wag too fast to see.
+    blur: tuple[int, ...] = ()
+    #: The head tilt as a column shear (positive drops the right side).
+    tilt: float = 0.0
+    #: The head's offset from the body.
+    head: Px = (0, 0)
+    brows: str = "rest"
+    blush: bool = True
+    #: The right front paw lifted to this point (its centre), or None.
+    paw: tuple[float, float] | None = None
+    #: Both front paws tucked up against the chest (the top of a hop).
+    beg: bool = False
+    #: The nose twitching up a pixel.
+    sniff: bool = False
+
+
+def _cocoa_fur(f: Frame, mask: Mask, depth: int = 2) -> None:
+    f.part(mask, _shade(mask, COCOA_FUR, COCOA_LIGHT, COCOA_DARK, depth))
+
+
+def _cocoa_far(f: Frame, mask: Mask) -> None:
+    """A limb on the far side: a shade darker, so it sits behind."""
+    f.part(mask, _shade(mask, COCOA_DARK, COCOA_FUR, COCOA_DEEP, 1))
+
+
+def _cocoa_in_cell(mask: Iterable[Px], margin: int = 1) -> Mask:
+    """``mask`` clipped so that it AND its outline stay inside the cell, with
+    ``margin - 1`` pixels to spare for a shake or a bob."""
+    return {(x, y) for x, y in mask if margin <= x < CELL - margin and margin <= y < CELL - margin}
+
+
+def _cocoa_lobe(
+    root: tuple[float, float],
+    ctrl: tuple[float, float],
+    tip: tuple[float, float],
+    scale: float = 1.0,
+) -> Mask:
+    """A floppy ear: round blobs along a curve from the root to the hanging
+    end, wider towards the bottom, the tip curling out."""
+    ear: Mask = set()
+    steps = 7
+    for k in range(steps + 1):
+        t = k / steps
+        x = (1 - t) ** 2 * root[0] + 2 * (1 - t) * t * ctrl[0] + t * t * tip[0]
+        y = (1 - t) ** 2 * root[1] + 2 * (1 - t) * t * ctrl[1] + t * t * tip[1]
+        r = (1.8 + 1.7 * t) * scale
+        ear |= ellipse(x, y, r, r)
+    return ear | ellipse(tip[0] - 1.0, tip[1] + 0.5, 2.0 * scale, 2.0 * scale)
+
+
+def _cocoa_ear(f: Frame, mask: Mask) -> None:
+    f.part(mask, _shade(mask, COCOA_EAR, COCOA_EAR_LIGHT, COCOA_DEEP, 1))
+
+
+def _cocoa_eyes(f: Frame, style: str) -> None:
+    for side, (x, y) in enumerate(_COCOA_EYE_AT):
+        if style in _COCOA_LIDS:
+            rows = _COCOA_LIDS[style]
+            if side:
+                rows = tuple(r[::-1] for r in rows)
+            f.paint(from_rows(x, y, rows), OUTLINE)
+            continue
+        top, h = (y - 1, 7) if style == "wide" else (y, 6)
+        eye = _oval(x, top, 5, h)
+        f.paint(eye, COCOA_IRIS)
+        f.paint({p for p in eye if p[1] == top + h - 1}, COCOA_IRIS_LIGHT)
+        if style == "cross":
+            px, py = (2, 2) if side == 0 else (0, 2)
+        else:
+            px, py = _COCOA_PUPIL[style]
+        px, py = x + px, top + py + (1 if style == "wide" else 0)
+        f.paint(rect(px, py, px + 2, py + 3), COCOA_PUPIL)
+        f.paint(rect(px + 1, py, px + 2, py + 1), FX_WHITE)
+        if style == "sad":
+            # Heavy outer lids and a wet shine: the puppy-eyes look.
+            lid = {(x, y + 1), (x + 1, y), (x + 2, y)}
+            f.paint(mirrored(lid, x + 3) if side else lid, OUTLINE)
+            f.paint({(px, py + 3)}, FX_WHITE)
+
+
+def _cocoa_brows(f: Frame, style: str) -> None:
+    """Two tufts of lighter fur above the eyes that carry the mood."""
+    rows = {
+        "rest": ((1, -2), (2, -2), (3, -2)),
+        "up": ((1, -3), (2, -3), (3, -3)),
+        "sad": ((0, -1), (1, -2), (2, -2), (3, -3)),
+    }[style]
+    for side, (x, y) in enumerate(_COCOA_EYE_AT):
+        tuft = {(x + dx, y + dy) for dx, dy in rows}
+        f.paint(mirrored(tuft, x + 3) if side else tuft, COCOA_SHINE)
+
+
+_COCOA_W = {(20, 22), (21, 23), (22, 23), (23, 22), (24, 22), (25, 23), (26, 23), (27, 22)}
+
+
+def _cocoa_tongue(f: Frame, x: int, y: int, w: int, h: int) -> None:
+    """A pink tongue with a darker centre crease, outlined where it hangs out."""
+    tongue = rect(x, y, x + w - 1, y + h - 1) - {(x, y + h - 1), (x + w - 1, y + h - 1)}
+    f.part(tongue, TONGUE)
+    if h >= 3:
+        f.paint(line(x + w // 2, y + 1, x + w // 2, y + h - 2), COCOA_TONGUE_DARK)
+
+
+def _cocoa_mouth(f: Frame, mouth: str) -> None:
+    if mouth in ("rest", "closed"):
+        f.paint(_COCOA_W, OUTLINE)
+    elif mouth == "smile":
+        f.paint(_COCOA_W | {(19, 21), (28, 21)}, OUTLINE)
+    elif mouth == "blep":
+        _cocoa_tongue(f, 23, 24, 2, 2)
+        f.paint(_COCOA_W, OUTLINE)
+    elif mouth == "blep_side":
+        _cocoa_tongue(f, 25, 24, 2, 2)
+        f.paint(_COCOA_W, OUTLINE)
+    elif mouth == "frown":
+        f.paint(
+            {(23, 22), (24, 22), (21, 24), (22, 23), (23, 23), (24, 23), (25, 23), (26, 24)},
+            OUTLINE,
+        )
+    elif mouth == "o":
+        f.paint({(23, 22), (24, 22)}, OUTLINE)
+        f.part(rect(23, 24, 24, 25), MOUTH_DARK)
+    elif mouth == "awoo":
+        f.part(ellipse(CX, 25.0, 2.0, 2.2), MOUTH_DARK)
+        f.paint({(23, 22), (24, 22)}, OUTLINE)
+    elif mouth == "pant":
+        f.paint(rect(20, 23, 27, 24) - {(20, 24), (27, 24)}, MOUTH_DARK)
+        f.paint({(19, 22), (20, 23), (27, 23), (28, 22)} | rect(21, 22, 26, 22), OUTLINE)
+        _cocoa_tongue(f, 22, 24, 4, 5)
+    elif mouth in ("half", "open", "wide"):
+        depth = {"half": 1, "open": 2, "wide": 3}[mouth]
+        inside = rect(21, 23, 26, 23 + depth) - {(21, 23 + depth), (26, 23 + depth)}
+        f.paint(inside, MOUTH_DARK)
+        f.paint(rect(20, 22, 27, 22) | {(19, 21), (28, 21)}, OUTLINE)
+        if depth >= 2:
+            f.paint(rect(22, 22 + depth, 25, 23 + depth) & inside, TONGUE)
+    else:
+        raise KeyError(mouth)
+
+
+#: Mouths that drop the jaw below the round of the head.
+_COCOA_JAW_DROP = {"pant": 2.5, "wide": 2.0, "open": 1.0, "awoo": 1.5}
+
+
+def _cocoa_face(f: Frame, pose: Pose, look: _CocoaLook) -> None:
+    """Head, face and ears at the neutral spot (head centred on (CX, 17.5))."""
+    head = ellipse(CX, 17.5, 12.5, 10)
+    drop = _COCOA_JAW_DROP.get(pose.mouth, 0.0)
+    if drop:
+        head |= ellipse(CX, 24.0 + drop, 5.5, 3.5)
+    _cocoa_fur(f, head)
+    # A sheen on the crown, where a hand would pat.
+    f.paint({(19, 9), (20, 9), (21, 8), (22, 8), (18, 10)} & head, COCOA_SHINE)
+    muzzle = ellipse(CX, 22.5, 6.5, 4.0)
+    if drop:
+        muzzle |= ellipse(CX, 24.0 + drop, 4.5, 2.5)
+    f.paint_map(shade(muzzle, COCOA_MUZZLE, light=COCOA_LIGHT, dark_depth=0))
+    if look.blush:
+        f.paint(rect(14, 21, 16, 21) | rect(31, 21, 33, 21), COCOA_BLUSH)
+    _cocoa_eyes(f, pose.eyes)
+    if pose.eyes not in _COCOA_LIDS or pose.eyes == "sleep":
+        _cocoa_brows(f, look.brows)
+    lift = -1 if look.sniff else 0
+    nose = rect(21, 19 + lift, 26, 19 + lift) | rect(22, 20 + lift, 25, 20 + lift)
+    nose |= {(23, 21 + lift), (24, 21 + lift)}
+    f.paint(nose, COCOA_NOSE)
+    f.paint({(22, 19 + lift), (23, 19 + lift)}, COCOA_NOSE_SHINE)
+    _cocoa_mouth(f, pose.mouth)
+    for side, name in enumerate(look.ears):
+        ctrl, tip = _COCOA_EARS[name]
+        ear = _cocoa_lobe(_COCOA_EAR_ROOT, ctrl, tip)
+        _cocoa_ear(f, mirrored(ear) if side else ear)
+
+
+def _cocoa_sheared(
+    f: Frame, sub: Frame, k: float, pivot: float, offset: Px = (0, 0), *, flip: bool = False
+) -> None:
+    """Lay ``sub`` onto ``f``, every column moved down by ``(x - pivot) * k``
+    (a tilt) and the whole thing mirrored when ``flip``."""
+    ox, oy = offset
+    out: dict[Px, RGBA] = {}
+    for (x, y), color in sub.px.items():
+        nx, ny = x + ox, y + oy + math.floor((x + 0.5 - pivot) * k + 0.5)
+        out[(2 * CX - 1 - nx, ny) if flip else (nx, ny)] = color
+    f.paint_map(out)
+
+
+def _cocoa_head(f: Frame, pose: Pose, look: _CocoaLook) -> None:
+    """The front head painted on its own, sheared for the tilt and laid on top."""
+    sub = Frame()
+    _cocoa_face(sub, pose, look)
+    _cocoa_sheared(f, sub, look.tilt, CX, look.head)
+
+
+def _cocoa_tail_points(
+    angle: float, hip: tuple[float, float], bend: float, length: float
+) -> list[tuple[float, float, float]]:
+    x, y = hip
+    points = [(x, y, 2.5)]
+    steps = 6
+    for k in range(1, steps + 1):
+        t = k / steps
+        a = math.radians(angle + bend * t)
+        x += round(math.cos(a) * length / steps, 6)
+        y += round(math.sin(a) * length / steps, 6)
+        points.append((x, y, 2.5 - 1.2 * t))
+    return points
+
+
+def _cocoa_tail_mask(
+    angle: float, hip: tuple[float, float], bend: float = -25.0, length: float = 12.0
+) -> Mask:
+    """The otter tail: thick at the root, tapering, curving up at the end."""
+    mask: Mask = set()
+    for x, y, r in _cocoa_tail_points(angle, hip, bend, length):
+        mask |= ellipse(x, y, r, r)
+    return _cocoa_in_cell(mask, 2)
+
+
+_COCOA_HIP = (35.0, 42.5)
+
+
+def _cocoa_tail_tip(angle: float, hip: tuple[float, float] = _COCOA_HIP) -> Px:
+    x, y, _r = _cocoa_tail_points(angle, hip, -25.0, 12.0)[-1]
+    return math.floor(x), math.floor(y)
+
+
+def _cocoa_tail(
+    f: Frame,
+    angle: float,
+    blur: Sequence[float] = (),
+    hip: tuple[float, float] = _COCOA_HIP,
+    bend: float = -25.0,
+) -> None:
+    for ghost in blur:
+        # The swish the tip draws on its way from where it just was.
+        steps = 4
+        swish = {
+            (math.floor(x), math.floor(y))
+            for k in range(steps + 1)
+            for x, y, _r in _cocoa_tail_points(
+                ghost + (angle - ghost) * k / steps, hip, bend, 14.5
+            )[-1:]
+        }
+        f.paint(_cocoa_in_cell(swish), ARC_FADE)
+    _cocoa_fur(f, _cocoa_tail_mask(angle, hip, bend), 1)
+
+
+def _cocoa_paw(
+    f: Frame, cx: float, cy: float, rx: float = 3.6, ry: float = 2.4, *, far: bool = False
+) -> None:
+    """An oversized puppy paw with two toe creases."""
+    paw = ellipse(cx, cy, rx, ry)
+    if far:
+        _cocoa_far(f, paw)
+    else:
+        _cocoa_fur(f, paw, 1)
+    bottom = max(y for _x, y in paw)
+    x = math.floor(cx)
+    toes = {(x - 1, bottom), (x + 1, bottom)} if ry < 2.2 else set()
+    if ry >= 2.2:
+        toes = {(x - 1, bottom), (x - 1, bottom - 1), (x + 1, bottom), (x + 1, bottom - 1)}
+    f.paint(toes & paw, COCOA_DEEP)
+
+
+def _cocoa_sit(f: Frame, pose: Pose, look: _CocoaLook) -> None:
+    """The puppy sitting on its haunches, facing out: one body mask with soft
+    creases for the thighs and legs, big paws, the head on top."""
+    planted = (pose.dx, min(pose.dy, 0))
+    with f.offset(pose.dx, pose.dy):
+        _cocoa_tail(f, look.tail, look.blur)
+        haunch = ellipse(14.5, 40.0, 5.5, 5.5)
+        body = ellipse(CX, 35.5, 9, 9) | haunch | mirrored(haunch)
+        legs: Mask = set()
+        if not look.beg:
+            legs = rect(18, 34, 21, 42)
+            legs = legs if look.paw is not None else legs | mirrored(legs)
+        _cocoa_fur(f, body | legs)
+        f.paint(ellipse(CX, 32.5, 4.0, 3.5), COCOA_LIGHT)
+        f.paint({(23, 30), (24, 30), (22, 31)}, COCOA_SHINE)
+        creases = line(16, 38, 17, 42) | line(31, 38, 30, 42)
+        if legs:
+            creases |= line(22, 38, 22, 42)
+            if look.paw is None:
+                creases |= line(25, 38, 25, 42)
+                f.paint(line(26, 36, 26, 41), COCOA_LIGHT)
+            f.paint(line(18, 36, 18, 41), COCOA_LIGHT)
+        f.paint(creases, COCOA_DARK)
+        if look.beg:
+            _cocoa_paw(f, 19.5, 36.5, 3.0, 2.2)
+            _cocoa_paw(f, 28.5, 36.5, 3.0, 2.2)
+    with f.offset(*planted):
+        foot = ellipse(12.0, 45.2, 3.0, 1.9)
+        _cocoa_fur(f, foot, 1)
+        _cocoa_fur(f, mirrored(foot), 1)
+        if not look.beg:
+            _cocoa_paw(f, 19.5, 44.6)
+            if look.paw is None:
+                _cocoa_paw(f, 28.5, 44.6)
+    with f.offset(pose.dx, pose.dy):
+        if look.paw is not None:
+            px, py = look.paw
+            _cocoa_fur(f, thick(thick(line(26, 34, math.floor(px) - 1, math.floor(py)))), 1)
+            _cocoa_paw(f, px, py, 3.0, 2.3)
+        _cocoa_head(f, pose, look)
+
+
+# -- Cocoa from the side (facing right; mirrored to face left) ------------------
+
+#: The profile head's centre, which its tilt turns about.
+_COCOA_SIDE_HEAD = (32.0, 19.0)
+_COCOA_SIDE_EAR_ROOT = (27.5, 12.5)
+_COCOA_SIDE_EARS: dict[str, tuple[tuple[float, float], tuple[float, float]]] = {
+    "rest": ((25.0, 15.0), (25.0, 23.5)),
+    #: Streaming back on a run.
+    "fly": ((23.5, 10.5), (18.5, 12.5)),
+    #: Hanging forward with the nose down.
+    "swing": ((27.0, 17.0), (28.0, 24.5)),
+    "perk": ((24.0, 11.5), (21.0, 16.0)),
+}
+_COCOA_SIDE_NOSE = rect(42, 20, 44, 21) | {(43, 22), (44, 22)}
+
+
+@dataclass(frozen=True)
+class _CocoaSide:
+    """One frame of the puppy in profile (facing right)."""
+
+    #: Paw centres: far hind, far front, near hind, near front.
+    paws: tuple[tuple[float, float], ...] = (
+        (17.5, 44.8),
+        (32.5, 44.8),
+        (13.0, 44.8),
+        (28.5, 44.8),
+    )
+    #: How far the rump and the chest sit below their standing height.
+    rump: int = 0
+    chest: int = 0
+    head: Px = (0, 0)
+    #: Positive tips the snout down.
+    tilt: float = 0.0
+    ear: str = "rest"
+    tail: int = -130
+    blur: tuple[int, ...] = ()
+    sniff: bool = False
+
+
+def _cocoa_side_face(f: Frame, pose: Pose, s: _CocoaSide) -> None:
+    """The head in profile: round skull, short muzzle, one big eye, the ear
+    hanging behind it."""
+    hx, hy = _COCOA_SIDE_HEAD
+    lift = -1 if s.sniff else 0
+    nose = shifted(_COCOA_SIDE_NOSE, 0, lift)
+    head = ellipse(hx, hy, 9.5, 8.5)
+    muzzle = ellipse(40.0, 23.5, 5.0, 3.5)
+    pant = pose.mouth == "pant"
+    if pant:
+        muzzle |= ellipse(38.5, 26.5, 3.5, 2.2)
+    _cocoa_fur(f, head | muzzle | nose)
+    f.paint({(26, 12), (27, 11), (28, 11), (29, 11), (25, 13)} & head, COCOA_SHINE)
+    f.paint_map(shade(muzzle - head, COCOA_MUZZLE, light=COCOA_LIGHT, dark_depth=0))
+    f.paint({(35, 24), (36, 24)}, COCOA_BLUSH)
+    f.paint(nose, COCOA_NOSE)
+    f.paint({(42, 20 + lift)}, COCOA_NOSE_SHINE)
+    if pant:
+        f.paint(rect(37, 25, 42, 26), MOUTH_DARK)
+        f.paint(line(37, 24, 43, 24), OUTLINE)
+        _cocoa_tongue(f, 38, 26, 3, 4)
+    elif pose.mouth in ("o", "awoo"):
+        f.paint({(43, 24), (39, 25), (38, 24)}, OUTLINE)
+        f.part(rect(41, 25, 42, 26), MOUTH_DARK)
+    else:
+        f.paint({(43, 24), (42, 25), (41, 25), (40, 25), (39, 25), (38, 24)}, OUTLINE)
+        if pose.mouth == "blep":
+            _cocoa_tongue(f, 40, 26, 2, 2)
+    x, y = 32, 15
+    if pose.eyes in ("happy", "closed", "sleep", "squint"):
+        happy = pose.eyes == "happy"
+        lid = (
+            {(x, y + 2), (x + 1, y + 1), (x + 2, y + 1), (x + 3, y + 2)}
+            if happy
+            else {(x, y + 2), (x + 1, y + 3), (x + 2, y + 3), (x + 3, y + 2)}
+        )
+        f.paint(lid, OUTLINE)
+    else:
+        eye = _oval(x, y, 4, 5)
+        f.paint(eye, COCOA_IRIS)
+        f.paint({p for p in eye if p[1] == y + 4}, COCOA_IRIS_LIGHT)
+        py = y + (2 if pose.eyes == "down" else 1)
+        f.paint(rect(x + 1, py, x + 3, py + 2), COCOA_PUPIL)
+        f.paint({(x + 2, py), (x + 3, py)}, FX_WHITE)
+        f.paint({(x, y - 2), (x + 1, y - 2), (x + 2, y - 2)}, COCOA_SHINE)
+    ctrl, tip = _COCOA_SIDE_EARS[s.ear]
+    scale = 0.8 if s.ear == "fly" else 1.0
+    _cocoa_ear(f, _cocoa_lobe(_COCOA_SIDE_EAR_ROOT, ctrl, tip, scale))
+
+
+def _cocoa_limb(start: Px, end: Px) -> Mask:
+    """A stubby leg, three pixels wide, from the joint to just above the paw."""
+    return thick(thick(line(*start, *end)))
+
+
+def _cocoa_side(f: Frame, pose: Pose, s: _CocoaSide, *, left: bool = False) -> None:
+    """The whole puppy in profile: standing, running, digging or sniffing."""
+    sub = Frame()
+    far_hind, far_front, near_hind, near_front = s.paws
+    rump, chest = 32 + s.rump, 32 + s.chest
+    for (px, py), joint in ((far_hind, (16, rump + 5)), (far_front, (31, chest + 4))):
+        _cocoa_far(sub, _cocoa_limb(joint, (math.floor(px) - 1, math.floor(py) - 2)))
+        _cocoa_paw(sub, px, py, 3.0, 1.9, far=True)
+    _cocoa_tail(sub, s.tail, s.blur, hip=(8.5, rump - 3.5), bend=25.0)
+    thigh = ellipse(13.0, rump + 3.5, 5.0, 5.5)
+    body = (
+        ellipse(12.5, rump, 5.5, 6.5)
+        | ellipse(20.0, (rump + chest) / 2 + 0.5, 10.0, 7.0)
+        | ellipse(28.0, chest + 0.5, 5.0, 6.5)
+        | thigh
+    )
+    body |= _cocoa_limb(
+        (12, rump + 6), (math.floor(near_hind[0]) - 1, math.floor(near_hind[1]) - 2)
+    )
+    body |= _cocoa_limb(
+        (27, chest + 4), (math.floor(near_front[0]) - 1, math.floor(near_front[1]) - 2)
+    )
+    _cocoa_fur(sub, body)
+    sub.paint(ellipse(30.0, chest + 2.0, 2.0, 3.0) & body, COCOA_LIGHT)
+    # The thigh's curve and the belly line, as creases instead of outlines.
+    sub.paint(
+        {p for p in outer_ring(thigh) if p in body and p[0] >= 13 and p[1] < rump + 8}, COCOA_DARK
+    )
+    for px, py in (near_hind, near_front):
+        _cocoa_paw(sub, px, py, 3.2, 2.0)
+    head = Frame()
+    _cocoa_side_face(head, pose, s)
+    _cocoa_sheared(sub, head, s.tilt, _COCOA_SIDE_HEAD[0], (s.head[0], s.head[1] + s.chest))
+    with f.offset(pose.dx, pose.dy):
+        _cocoa_sheared(f, sub, 0.0, 0.0, flip=left)
+
+
+#: Running: legs stretched out in the gallop, then gathered under the body.
+_COCOA_GALLOP = (
+    _CocoaSide(
+        paws=((8.5, 41.0), (41.5, 38.5), (4.5, 40.0), (38.5, 40.0)),
+        rump=-1,
+        chest=-2,
+        head=(0, 1),
+        ear="fly",
+        tail=175,
+    ),
+    _CocoaSide(
+        paws=((22.5, 42.0), (25.5, 41.0), (19.5, 42.5), (22.5, 42.5)),
+        rump=-2,
+        chest=-1,
+        head=(0, 1),
+        ear="fly",
+        tail=-165,
+    ),
+)
+
+
+def _cocoa_look(pose: Pose) -> _CocoaLook:
+    """The sitting puppy's own body language per state."""
+    state, i = pose.state, pose.i
+    if state == "idle":
+        if i >= len(_COCOA_IDLE_TAIL):
+            return _CocoaLook(ears=("flick", "rest"), tail=10)  # the accent's ear twitch
+        ears = ("rest", "flick") if i == 4 else ("rest", "rest")
+        return _CocoaLook(ears=ears, tail=_COCOA_IDLE_TAIL[i])
+    if state == "listening":
+        return _CocoaLook(
+            ears=("perk", "half"),
+            tail=(-30, -10)[(i // 2) % 2],
+            tilt=_COCOA_TILT[i],
+            head=(_COCOA_TILT_LEAN[i], 0),
+            brows="up",
+        )
+    if state == "thinking":
+        tap = 1 if i % 4 in (1, 2) else 0
+        return _CocoaLook(
+            ears=("half", "rest"),
+            tail=(0, -10, -20, -10, 0, -10, -20, -10)[i],
+            tilt=-0.08,
+            brows="up",
+            paw=(31.5, 36.0 - tap),
+        )
+    if state == "talking":
+        return _CocoaLook(
+            ears=(_COCOA_TALK_EARS[i],) * 2,
+            tail=(-10, -30, -10, -30)[i],
+            brows="up" if i == 3 else "rest",
+        )
+    if state == "success":
+        return _CocoaLook(
+            ears=("half", "half") if pose.dy < 0 else ("perk", "perk"),
+            tail=-40 + 50 * (i % 2),
+            blur=(-60, 20),
+            beg=pose.dy <= -3,
+        )
+    if state == "error":
+        return _CocoaLook(ears=("droop", "droop"), tail=30, brows="sad", head=(0, 1))
+    return _CocoaLook()
+
+
+def draw_cocoa(f: Frame, pose: Pose) -> None:
+    state, i = pose.state, pose.i
+    if pose.act:
+        _draw_cocoa_act(f, pose)
+    elif state == "sleeping":
+        _draw_cocoa_bed(f, pose)
+    elif state == "held":
+        _draw_cocoa_dangling(f, pose)
+    elif state == "working":
+        _draw_cocoa_digging(f, pose)
+    elif state == "searching":
+        _draw_cocoa_sniffing(f, pose)
+    elif state == "success" and _COCOA_ZOOM[i] != "front":
+        _cocoa_side(f, pose, _COCOA_GALLOP[i % 2 == 0], left=_COCOA_ZOOM[i] == "left")
+    else:
+        _cocoa_sit(f, pose, _cocoa_look(pose))
+
+
+def _draw_cocoa_digging(f: Frame, pose: Pose) -> None:
+    """Working: digging in profile, rump up, tail going, front paws scrabbling."""
+    i = pose.i
+    near_up = _COCOA_DIG[i % len(_COCOA_DIG)]
+    up, down = (36.5, 40.0), (30.5, 44.8)
+    s = _CocoaSide(
+        paws=(
+            (17.5, 44.8),
+            down if near_up else (37.5, 40.5),
+            (13.0, 44.8),
+            up if near_up else down,
+        ),
+        rump=-3,
+        chest=3,
+        head=(1, 4),
+        tilt=0.2,
+        ear="swing",
+        tail=-150 + 25 * (i % 2),
+    )
+    _cocoa_side(f, pose, s)
+
+
+#: Searching: which way Cocoa sniffs (left first, then right) and its steps.
+_COCOA_SNIFF_LEFT = (True, True, True, True, False, False, False, False)
+_COCOA_STEP = (
+    ((17.5, 44.8), (32.5, 44.8), (13.0, 44.8), (28.5, 44.8)),
+    ((16.5, 44.8), (33.5, 44.8), (14.0, 44.8), (27.5, 44.8)),
+)
+
+
+def _draw_cocoa_sniffing(f: Frame, pose: Pose) -> None:
+    """Searching: nose to the floor in profile, tail up and waving."""
+    i = pose.i
+    s = _CocoaSide(
+        paws=_COCOA_STEP[(i // 2) % 2],
+        rump=-1,
+        chest=2,
+        head=(1, 6),
+        tilt=0.25,
+        ear="swing",
+        tail=-145 + 20 * (i % 2),
+        sniff=i % 2 == 1,
+    )
+    _cocoa_side(f, pose, s, left=_COCOA_SNIFF_LEFT[i % 8])
+
+
+def _draw_cocoa_dangling(f: Frame, pose: Pose) -> None:
+    """Held: scooped up under the front legs, the same chunky puppy with its
+    round belly out, fat paws hanging, hind legs dangling and the tail
+    swinging from side to side."""
+    i = pose.i
+    lag = -pose.dx
+    angle = _COCOA_HELD_TAIL[i % len(_COCOA_HELD_TAIL)]
+    swung = _COCOA_HELD_TAIL[(i - 1) % len(_COCOA_HELD_TAIL)]
+    with f.offset(pose.dx, 0):
+        hip = (31.5, 37.5)
+        _cocoa_tail(f, angle, hip=hip)
+        # A short motion arc hugging the tip, back towards where it swung from.
+        arc = {
+            (math.floor(x), math.floor(y))
+            for k in range(1, 4)
+            for x, y, _r in _cocoa_tail_points(angle + (swung - angle) * k / 6, hip, -25.0, 13.5)[
+                -1:
+            ]
+        }
+        f.paint(_cocoa_in_cell(arc) - set(f.px), ARC_FADE)
+        # The hind legs kick in turn as they dangle.
+        for side in (0, 1):
+            drop = (i + side) % 2
+            foot = (17 + lag, 39 + drop)
+            leg = _cocoa_limb((18, 36), foot) | ellipse(18.0, 37.0, 4.5, 4.5)
+            paw = (17.5 + lag, 42.5 + drop)
+            if side:
+                leg, paw = mirrored(leg, CX + lag), (30.5 + lag, paw[1])
+            _cocoa_fur(f, leg, 1)
+            _cocoa_paw(f, *paw, 3.2, 2.2)
+        body = ellipse(CX, 31.5, 9.5, 8.5)
+        _cocoa_fur(f, body)
+        f.paint(ellipse(CX, 33.5, 5.5, 5.0), COCOA_LIGHT)
+        f.paint({(22, 30), (23, 30), (21, 31)}, COCOA_SHINE)
+        for shoulder, paw in (((17, 27), (14.5, 35.5)), ((30, 27), (33.5, 35.5))):
+            arm = _cocoa_limb(shoulder, (math.floor(paw[0]), math.floor(paw[1]) - 2))
+            _cocoa_fur(f, arm | shifted(arm, 1 if shoulder[0] < CX else -1, 0), 1)
+            _cocoa_paw(f, paw[0] + 0.5 * lag, paw[1], 3.4, 2.4)
+        _cocoa_head(f, pose, _CocoaLook(ears=("half", "half"), head=(0, -4), brows="up"))
+
+
+#: Sleeping: the paw that twitches in a dream.
+_COCOA_SLEEP_PAW = (0, 0, 0, 0, 1, 0)
+
+
+def _draw_cocoa_bed(f: Frame, pose: Pose) -> None:
+    """Asleep in a round plaid dog bed: the back rising and falling on the
+    cushion, the head resting on the front rim turned towards the viewer,
+    one ear draped over the rim and a paw hanging over it too."""
+    i = pose.i
+    rise = SLEEP_BREATH[i % len(SLEEP_BREATH)]
+    bed = ellipse(CX, 38.5, 23.0, 8.5)
+    hollow = ellipse(CX, 36.0, 18.0, 5.0)
+    f.part(bed, _cocoa_plaid(bed))
+    f.paint(hollow, COCOA_BED_DARK)
+    f.paint({p for p in hollow if p[1] <= 32}, COCOA_DEEP)
+    back = ellipse(32, 33.5 - rise, 10, 6 + rise)
+    _cocoa_fur(f, back)
+    f.paint({(32, 28 - rise), (33, 28 - rise), (31, 29 - rise)}, COCOA_SHINE)
+    _cocoa_tail(f, 150, hip=(42.5, 34.5), bend=-20.0)
+    front = _cocoa_in_cell(bed - hollow - rect(0, 0, CELL - 1, 38))
+    f.part(front, _cocoa_plaid(front))
+    look = _CocoaLook(ears=("drape", "half"), head=(-5, 12), tilt=-0.08)
+    _cocoa_head(f, pose, look)
+    twitch = _COCOA_SLEEP_PAW[i % len(_COCOA_SLEEP_PAW)]
+    _cocoa_paw(f, 29.5, 41.5 - twitch, 3.4, 2.4)
+
+
+def _cocoa_plaid(mask: Mask) -> dict[Px, RGBA]:
+    """Red tartan: lit top, dark bottom edge, cream stripes every few pixels."""
+    colors = _shade(mask, COCOA_BED, COCOA_BED_LIGHT, COCOA_BED_DARK, 1)
+    for (x, y), color in list(colors.items()):
+        if color != COCOA_BED:
+            continue
+        if x % 6 == 0 and y % 4 == 0:
+            colors[(x, y)] = COCOA_BED_DARK
+        elif x % 6 == 0 or y % 4 == 0:
+            colors[(x, y)] = COCOA_PLAID
+    return colors
+
+
+# -- Cocoa's effects ----------------------------------------------------------
+
+
+def _cocoa_spot(f: Frame, x: int, y: int, color: RGBA) -> None:
+    if 1 <= x < CELL - 1 and 1 <= y < CELL - 1:
+        f.part({(x, y)}, color)
+
+
+def _cocoa_puff(f: Frame, x: float, y: float, r: float, color: RGBA = COCOA_DUST) -> None:
+    """A round dust puff with a lighter top-left, kept inside the cell."""
+    puff = _cocoa_in_cell(ellipse(x, y, r, r * 0.85))
+    if puff:
+        f.part(puff, {p: FX_WHITE if (p[0] - 1, p[1] - 1) not in puff else color for p in puff})
+
+
+def _cocoa_idle_fx(f: Frame, pose: Pose) -> None:
+    """Thump, thump: the wagging tail slaps the floor."""
+    i = pose.i
+    if i not in (0, 4):
+        return
+    x, y = _cocoa_tail_tip(_COCOA_IDLE_TAIL[i])
+    f.paint(
+        {(x + 2, y + 1), (x + 3, y), (x + 2, y - 2), (x + 3, y - 3)} & rect(1, 1, 46, 46), ARC_FADE
+    )
+
+
+def _cocoa_listening_fx(f: Frame, pose: Pose) -> None:
+    """Sound ripples come in from both sides, high, towards the lifted ears."""
+    with f.offset(pose.dx, pose.dy):
+        fx_arcs(f, pose.i, (8, 6), (39, 8))
+
+
+def _cocoa_thinking_fx(f: Frame, pose: Pose) -> None:
+    """A thought bubble inflates over the head and holds a wobbling bone."""
+    i = pose.i
+    f.part({(30, 6)}, FX_WHITE)
+    if i >= 1:
+        f.part(rect(32, 3, 33, 4), FX_WHITE)
+    if i < 2:
+        return
+    cloud = (
+        ellipse(40.5, 6.0, 5.5, 4.0) | ellipse(37.0, 7.5, 2.8, 2.6) | ellipse(44.0, 7.0, 2.6, 2.6)
+    )
+    cloud = _cocoa_in_cell(cloud)
+    f.part(cloud, {p: FX_WHITE if p[1] < 8 else FX_DIM for p in cloud})
+    wobble = (0, 1, 0, -1)[i % 4]
+    f.glyph(37, 5 + (wobble > 0), _COCOA_BONE_L, _COCOA_BONE_PALETTE)
+    if i in (4, 7):
+        fx_sparkles(f, 1, ((43, 3, 0),))
+
+
+#: Bark strokes per loudness, (dx, dy) from the origin going outwards (left).
+_COCOA_BARKS: tuple[tuple[Px, ...], ...] = (
+    (),
+    ((0, 0), (-1, 0)),
+    ((0, 0), (-1, 0), (-2, 0), (0, -3), (-1, -4), (0, 3), (-1, 4)),
+    ((0, 0), (-1, 0), (-2, 0), (-3, 0), (0, -3), (-1, -4), (-2, -5), (0, 3), (-1, 4), (-2, 5)),
+)
+
+
+def _cocoa_bark(f: Frame, size: int, x: int, y: int, *, right: bool) -> None:
+    """A fan of bark strokes bursting out from ``(x, y)``."""
+    side = 1 if right else -1
+    f.paint({(x + side * dx, y + dy) for dx, dy in _COCOA_BARKS[size]}, ARC)
+
+
+def _cocoa_talking_fx(f: Frame, pose: Pose) -> None:
+    """Little barks: fans of strokes pop out under the ears, bigger each frame."""
+    i = pose.i
+    if i == 0:
+        return
+    with f.offset(pose.dx, pose.dy):
+        _cocoa_bark(f, i, 12, 29, right=False)
+        _cocoa_bark(f, i, 35, 29, right=True)
+        if i == 3:
+            f.glyph(3, 17, _SPARK_S, _SPARK_PALETTE)
+            f.glyph(42, 17, _SPARK_S, _SPARK_PALETTE)
+
+
+#: Success: hearts that float up (x, y, first frame), and the bone confetti
+#: that bursts out at the top of the hop.
+_COCOA_HEARTS = ((7, 18, 5), (41, 14, 5), (6, 32, 6), (42, 30, 6))
+_COCOA_CONFETTI: tuple[tuple[int, int, int], ...] = (
+    (5, 8, 0),
+    (40, 6, 1),
+    (12, 3, 2),
+    (35, 2, 3),
+    (3, 22, 2),
+    (45, 18, 1),
+)
+_COCOA_CONFETTI_COLORS = (COCOA_HEART, SPARK, COCOA_NOTE, COCOA_GRASS)
+
+
+def _cocoa_success_fx(f: Frame, pose: Pose) -> None:
+    """Zoomies: speed lines and kicked-up dust as it races back and forth, a
+    skid, then a hop with hearts, sparkles and a burst of bones and confetti."""
+    i = pose.i
+    view = _COCOA_ZOOM[i]
+    if view != "front":
+        # Speed lines trail behind, dust kicks up off the back paws.
+        back = 1 if view == "left" else -1
+        x0 = 46 if back > 0 else 1
+        for y, n in ((22, 4), (28, 6), (34, 5)):
+            f.paint(line(x0 - back * (n - 1), y + (i % 2), x0, y + (i % 2)), ARC_FADE)
+        _cocoa_puff(f, CX + back * 17, 43.5, 2.0 + 0.6 * (i % 2))
+        _cocoa_puff(f, CX + back * 21, 41.0, 1.3)
+    if i == 5:
+        # The skid: dust both sides.
+        _cocoa_puff(f, 5.5, 43.5, 2.4)
+        _cocoa_puff(f, 42.5, 43.5, 2.4)
+        f.paint(line(2, 46, 8, 46) | line(39, 46, 45, 46), COCOA_DUST)
+    if i >= 6:
+        t = i - 6
+        for k, (x, y, kind) in enumerate(_COCOA_CONFETTI):
+            yy = y + 3 * t
+            if kind == 0:
+                f.glyph(x - 2, yy, _COCOA_BONE, _COCOA_BONE_PALETTE)
+            else:
+                _cocoa_spot(f, x + (k % 2) * t, yy, _COCOA_CONFETTI_COLORS[(kind + t) % 4])
+    for x, y, start in _COCOA_HEARTS:
+        age = i - start
+        if 0 <= age <= 2:
+            rows = _COCOA_HEART_L if age == 1 else _COCOA_HEART_S
+            half = len(rows) // 2
+            f.glyph(x - half, y - half - 2 * age, rows, _COCOA_HEART_PALETTE)
+    fx_sparkles(f, i, ((10, 12, 5), (38, 8, 6), (44, 24, 7)))
+
+
+_COCOA_RAIN_X = (19, 23, 27, 31)
+
+
+def _cocoa_error_fx(f: Frame, pose: Pose) -> None:
+    """A little grey rain cloud over the drooping head, and one tear."""
+    i = pose.i
+    cloud = ellipse(CX + 0.5, 5.0, 9.0, 2.2) | ellipse(19.5, 4.0, 3.5, 2.8)
+    cloud |= ellipse(24.5, 3.0, 4.0, 2.8) | ellipse(29.5, 4.0, 3.0, 2.4)
+    cloud = _cocoa_in_cell(cloud)
+    with f.offset(pose.dx, 0):
+        f.part(cloud, _shade(cloud, COCOA_CLOUD, COCOA_CLOUD_LIGHT, COCOA_CLOUD_DARK, 1))
+        for k, x in enumerate(_COCOA_RAIN_X):
+            y = 8 + (2 * i + 3 * k) % 6
+            f.paint({(x, y), (x, y + 1)}, SWEAT)
+        # The tear rolls from the corner of the left eye down the cheek.
+        f.glyph(15, min(20 + i, 24), _DROP, {"#": SWEAT, "o": SWEAT_SHINE})
+
+
+def _cocoa_sleeping_fx(f: Frame, pose: Pose) -> None:
+    """Z marks drift up, and a dream bubble with a tiny bone."""
+    i = pose.i
+    drift = _Z_DRIFT[i % len(_Z_DRIFT)]
+    for index in _Z_PHASES[i % len(_Z_PHASES)]:
+        dx, dy, rows = _ZS[index]
+        f.glyph(34 + dx, 17 + dy + drift, rows, _Z_PALETTE)
+    if i >= 2:
+        f.part({(14, 20)}, FX_WHITE)
+        f.part(rect(11, 16, 12, 17), FX_WHITE)
+        bubble = _cocoa_in_cell(ellipse(9.5, 8.0, 7.0, 5.0))
+        f.part(bubble, {p: FX_WHITE if p[1] < 9 else FX_DIM for p in bubble})
+        f.glyph(6, 7 - (i % 2), _COCOA_BONE_L, _COCOA_BONE_PALETTE)
+
+
+#: Working: the two arcs a clod flies along, one point per frame of age:
+#: scraped up by the front paws, flung back under the belly and out behind.
+_COCOA_CLOD_PATHS = (
+    ((23, 45), (11, 41), (6, 33), (3, 27), (1, 29)),
+    ((24, 45), (12, 43), (7, 37), (3, 33), (1, 37)),
+)
+
+
+def _cocoa_clod(f: Frame, x: int, y: int, big: bool) -> None:
+    mask = _cocoa_in_cell(rect(x, y, x + 1, y + 1) if big else {(x, y)})
+    f.part(mask, {p: COCOA_DIRT_LIGHT if p == (x, y) else COCOA_DIRT for p in mask})
+
+
+def _cocoa_working_fx(f: Frame, pose: Pose) -> None:
+    """Digging: a hole under the front paws, a mound growing behind, dirt
+    clods flying back in arcs, and at last a bone turning up."""
+    i = pose.i
+    hole = ellipse(35.5, 46.0, 7.0, 1.6) & rect(0, 0, CELL - 1, 46)
+    f.paint(hole, COCOA_DIRT_DARK)
+    f.paint({(30, 46), (31, 46), (40, 46), (41, 46)} & hole, COCOA_DIRT)
+    grow = min(i, 5)
+    mound = _cocoa_in_cell(ellipse(6.0, 47.0, 5.0 + grow * 0.5, 2.5 + grow * 0.5))
+    f.part(mound, _shade(mound, COCOA_DIRT, COCOA_DIRT_LIGHT, COCOA_DIRT_DARK, 1))
+    f.paint({(9, 45), (3, 46)} & mound, COCOA_DIRT_DARK)
+    if i >= 5:
+        f.glyph(33, 44 - (i - 5), _COCOA_BONE_L, _COCOA_BONE_PALETTE)
+    if i == 7:
+        fx_sparkles(f, 1, ((42, 40, 0),))
+    for age in range(5):
+        x, y = _COCOA_CLOD_PATHS[(i - age) % 2][age]
+        _cocoa_clod(f, x, y, age < 3)
+        if age in (1, 2):
+            _cocoa_clod(f, x + 2, y + 3, False)  # a crumb trailing it
+    if i % 2 == 0:
+        f.paint({(40, 38), (41, 37), (42, 39)}, ARC_FADE)
+
+
+_COCOA_PRINT = ("#.#", "...", ".#.")
+#: Searching: paw prints left behind on the floor, (x, y, first frame);
+#: the first two while it sniffs to the left, the rest to the right.
+_COCOA_PRINTS = ((40, 44, 1), (44, 41, 2), (6, 44, 5), (1, 41, 6))
+
+
+def _cocoa_searching_fx(f: Frame, pose: Pose) -> None:
+    """Nose to the floor: a ribbon of scent curls up from the floor into the
+    twitching nose, sniff marks pop beside it, and paw prints appear where it
+    has been."""
+    i = pose.i
+    left = _COCOA_SNIFF_LEFT[i % 8]
+    for x, y, start in _COCOA_PRINTS:
+        if 0 <= i - start <= 3:
+            f.glyph(x, y, _COCOA_PRINT, {"#": COCOA_PRINT})
+    ribbon: dict[Px, RGBA] = {}
+    for y in range(36, 46):
+        x = 43 + round(1.4 * math.sin((y + 2 * i) * 0.9), 6)
+        color = COCOA_SCENT if y < 41 else COCOA_SCENT_FADE
+        if y % 3 != (2 * i) % 3 or y < 40:
+            ribbon[(math.floor(x), y)] = color
+    for k in range(2):
+        dy = (i + 3 * k) % 6
+        ribbon[(40 + 5 * k, 44 - 2 * dy)] = COCOA_SCENT_FADE
+    if left:
+        ribbon = {(2 * CX - 1 - x, y): c for (x, y), c in ribbon.items()}
+    f.paint_map(ribbon)
+    if i % 2:
+        marks = {(41, 29), (42, 28), (44, 29), (45, 28)}
+        f.paint(mirrored(marks) if left else marks, ARC)
+
+
+def _cocoa_held_fx(f: Frame, pose: Pose) -> None:
+    """Little hearts rise beside the happy dangling puppy."""
+    i = pose.i
+    for x, y, start in ((7, 12, 0), (40, 10, 3)):
+        age = (i - start) % 6
+        if age <= 3:
+            f.glyph(x - 1, y - age, _COCOA_HEART_S, _COCOA_HEART_PALETTE)
+
+
+# -- Cocoa's idle acts ----------------------------------------------------------
+
+
+def _cocoa_back(f: Frame, pose: Pose, look: _CocoaLook) -> None:
+    """Mid-spin, seen from behind: haunches, the back of the head between the
+    ears, and the tail standing up in front of it all."""
+    with f.offset(pose.dx, min(pose.dy, 0)):
+        foot = ellipse(12.0, 45.2, 3.0, 1.9)
+        _cocoa_fur(f, foot, 1)
+        _cocoa_fur(f, mirrored(foot), 1)
+    with f.offset(pose.dx, pose.dy):
+        haunch = ellipse(14.5, 40.0, 5.5, 5.5)
+        _cocoa_fur(f, ellipse(CX, 35.5, 9, 9) | haunch | mirrored(haunch))
+        f.paint(line(16, 38, 17, 42) | line(31, 38, 30, 42) | line(23, 30, 23, 37), COCOA_DARK)
+        head = ellipse(CX, 17.5, 12.5, 10)
+        _cocoa_fur(f, head)
+        f.paint({(19, 9), (20, 9), (21, 8), (22, 8), (18, 10)}, COCOA_SHINE)
+        f.paint(line(23, 22, 24, 26) | {(22, 24)}, COCOA_DARK)
+        for side, name in enumerate(look.ears):
+            ctrl, tip = _COCOA_EARS[name]
+            ear = _cocoa_lobe(_COCOA_EAR_ROOT, ctrl, tip)
+            _cocoa_ear(f, mirrored(ear) if side else ear)
+        _cocoa_tail(f, look.tail, hip=(CX, 41.5), bend=20.0)
+
+
+def _cocoa_lying(f: Frame, pose: Pose, look: _CocoaLook) -> None:
+    """Lying down, seen from the front: the back a low hump behind the head,
+    the chin resting between the forelegs stretched out flat."""
+    with f.offset(pose.dx, pose.dy):
+        _cocoa_tail(f, look.tail, hip=(33.5, 35.5))
+        _cocoa_fur(f, ellipse(CX, 33.0, 12.0, 6.0))
+        for paw, elbow in (((15.5, 44.6), (17, 38)), ((32.5, 44.6), (30, 38))):
+            _cocoa_fur(f, _cocoa_limb(elbow, (math.floor(paw[0]), math.floor(paw[1]) - 2)), 1)
+            _cocoa_paw(f, *paw)
+        _cocoa_head(f, pose, look)
+
+
+#: Belly-up: the paws (far hind, far front, near hind, near front) of the
+#: side view that is turned upside down, two ways round as they wave.
+_COCOA_BELLY_KICKS = (
+    ((16.5, 44.5), (30.5, 45.5), (12.5, 45.5), (26.5, 44.5)),
+    ((17.5, 45.5), (29.5, 44.5), (11.5, 44.5), (27.5, 45.5)),
+)
+
+
+def _cocoa_belly(f: Frame, pose: Pose, kick: int) -> None:
+    """On its back: the body from the side turned upside down, four paws
+    waving in the air and the tail swishing on the floor; the head from the
+    side, lying at the chest end and looking up, tongue out."""
+    paws = _COCOA_BELLY_KICKS[kick % 2]
+    sub = Frame()
+    _cocoa_tail(sub, 160 - 25 * (kick % 2), hip=(9.5, 33.5), bend=-20.0)
+    for k, ((px, py), joint) in enumerate(
+        zip(paws, ((16, 36), (30, 36), (13, 37), (27, 36)), strict=True)
+    ):
+        limb = _cocoa_limb(joint, (math.floor(px) - 1, math.floor(py) - 2))
+        if k < 2:
+            _cocoa_far(sub, limb)
+            _cocoa_paw(sub, px, py, 2.8, 1.9, far=True)
+        else:
+            _cocoa_fur(sub, limb, 1)
+            _cocoa_paw(sub, px, py, 3.0, 2.0)
+    body = (
+        ellipse(12.5, 32.0, 5.5, 6.0)
+        | ellipse(20.0, 32.5, 10.0, 6.5)
+        | ellipse(28.0, 32.5, 5.0, 6.0)
+    )
+    _cocoa_fur(sub, body)
+    belly = ellipse(19.0, 37.0, 7.5, 2.5) & eroded(body)
+    sub.paint(belly, COCOA_LIGHT)
+    sub.paint({(16, 37), (22, 37)} & belly, COCOA_BLUSH)  # the pink tummy spots
+    head = Frame()
+    _cocoa_side_face(head, pose, _CocoaSide(ear="perk"))
+    with f.offset(pose.dx, pose.dy):
+        # Turned half a circle: the chest end comes to the left, paws up.
+        f.paint_map({(48 - x, 70 - y): color for (x, y), color in sub.px.items()})
+        _cocoa_sheared(f, head, -0.3, _COCOA_SIDE_HEAD[0], (0, 16), flip=True)
+
+
+def _cocoa_scratch_leg(f: Frame, reach: int) -> None:
+    """A hind leg lifted from the right haunch, bent at the knee, up to the
+    ear: 1 on the way, 2 and 3 the two ends of the scratch."""
+    knee, paw = {
+        1: ((37, 37), (39.5, 33.0)),
+        2: ((38, 33), (39.5, 24.5)),
+        3: ((39, 34), (40.5, 27.5)),
+    }[reach]
+    leg = thick(thick(polyline([(33, 40), knee, (math.floor(paw[0]) - 1, math.floor(paw[1]) + 1)])))
+    _cocoa_fur(f, leg | ellipse(34.5, 39.5, 3.5, 3.0), 1)
+    _cocoa_paw(f, paw[0], paw[1], 3.0, 2.4)
+
+
+@dataclass(frozen=True)
+class _CocoaFrame:
+    """One frame of an idle act: the view, the pose and the parts it moves."""
+
+    #: sit, side, back, lying or belly.
+    view: str = "sit"
+    dx: int = 0
+    dy: int = 0
+    eyes: str = "open"
+    mouth: str = "rest"
+    stretch: int = 0
+    look: _CocoaLook = _CocoaLook()
+    side: _CocoaSide = _CocoaSide()
+    left: bool = False
+    #: Belly-up: which way round the paws wave.
+    kick: int = 0
+    #: The hind leg scratching the ear (0 = down).
+    scratch: int = 0
+
+
+_F = _CocoaFrame
+_L = _CocoaLook
+_PERKED = ("perk", "perk")
+_SPIN = _CocoaSide(
+    paws=((20.5, 43.0), (27.5, 42.5), (16.5, 43.5), (31.5, 43.0)),
+    rump=-1,
+    head=(-1, 2),
+    tilt=-0.15,
+    ear="fly",
+    tail=-95,
+)
+
+#: The play bow in profile: forelegs flat out in front, chest down, rump up.
+_BOW = _CocoaSide(
+    paws=((17.5, 44.8), (42.0, 44.8), (13.0, 44.8), (38.5, 44.8)),
+    rump=-4,
+    chest=6,
+    head=(1, 2),
+    tail=-130,
+)
+_HOP = _CocoaSide(
+    paws=((17.5, 43.0), (33.5, 42.0), (13.0, 43.5), (30.5, 42.5)),
+    rump=-1,
+    chest=-1,
+    head=(0, 1),
+    ear="fly",
+    tail=-120,
+)
+
+#: Howling in profile: the snout pointed at the sky, ears falling back.
+_HOWL = _CocoaSide(rump=1, chest=-1, head=(-1, -1), tilt=-0.5, ear="perk", tail=-150)
+
+_COCOA_ACT_FRAMES: dict[str, tuple[_CocoaFrame, ...]] = {
+    #: It spots its own tail, spins after it (side, back, side, back) and
+    #: ends up sitting dizzy, tongue out.
+    "chase_tail": (
+        _F(eyes="look_right", look=_L(ears=("rest", "half"), tail=-40, tilt=0.08, head=(1, 0))),
+        _F(view="side", eyes="happy", mouth="pant", side=_SPIN),
+        _F(view="back", look=_L(ears=("half", "half"), tail=-70)),
+        _F(view="side", eyes="happy", mouth="pant", side=_SPIN, left=True),
+        _F(view="side", eyes="happy", mouth="pant", side=_SPIN),
+        _F(view="back", look=_L(ears=("half", "half"), tail=-110)),
+        _F(eyes="dizzy", mouth="blep", look=_L(ears=("half", "flick"), tilt=-0.1)),
+        _F(eyes="dizzy", mouth="pant", look=_L(ears=("rest", "half"), tilt=0.06)),
+    ),
+    #: A tennis ball bounces in from the right; Cocoa tracks it, jumps, snaps
+    #: it out of the air and sits proudly with it.
+    "ball_catch": (
+        _F(eyes="up_right", look=_L(ears=("rest", "half"), brows="up")),
+        _F(eyes="up_right", look=_L(ears=_PERKED, brows="up", tilt=0.06, head=(1, 0))),
+        _F(eyes="look_right", look=_L(ears=_PERKED, brows="up", tail=-30)),
+        _F(dy=1, stretch=-1, eyes="wide", look=_L(ears=_PERKED, brows="up", tail=-10)),
+        _F(dy=-3, stretch=1, eyes="wide", mouth="o", look=_L(ears=("half", "half"), beg=True)),
+        _F(dy=-1, eyes="happy", mouth="closed", look=_L(ears=("half", "half"), tail=-40)),
+        _F(eyes="happy", mouth="closed", look=_L(tail=-40, blur=(0,))),
+        _F(eyes="happy", mouth="blep", look=_L(tail=0, blur=(-40,))),
+    ),
+    #: A hind leg comes up and scratches behind the ear, eyes shut in bliss,
+    #: tufts of fur flying; then a little head shake.
+    "ear_scratch": (
+        _F(eyes="look_right"),
+        _F(eyes="happy", look=_L(tilt=0.1, ears=("rest", "half")), scratch=1),
+        _F(eyes="happy", mouth="blep", look=_L(tilt=0.16, ears=("rest", "half")), scratch=2),
+        _F(eyes="happy", mouth="blep", look=_L(tilt=0.16, ears=("rest", "flick")), scratch=3),
+        _F(eyes="happy", mouth="blep", look=_L(tilt=0.16, ears=("rest", "half")), scratch=2),
+        _F(eyes="happy", mouth="blep", look=_L(tilt=0.16, ears=("rest", "flick")), scratch=3),
+        _F(eyes="happy", look=_L(tilt=0.08), scratch=1),
+        _F(eyes="closed", look=_L(ears=("flick", "flick"))),
+    ),
+    #: Dripping wet, it shakes from the head down: ears flapping, water
+    #: spraying everywhere, then a fluffy, happy pause.
+    "shake_off": (
+        _F(eyes="open", mouth="closed", look=_L(ears=("droop", "droop"), brows="sad")),
+        _F(dx=-1, eyes="squint", look=_L(ears=("flap", "half"), head=(-2, 0), tilt=-0.14)),
+        _F(dx=1, eyes="squint", look=_L(ears=("half", "flap"), head=(2, 0), tilt=0.14)),
+        _F(dx=-1, eyes="squint", look=_L(ears=("flap", "half"), head=(-2, 0), tilt=-0.14)),
+        _F(dx=1, eyes="squint", look=_L(ears=("half", "flap"), head=(2, 0), tilt=0.14)),
+        _F(eyes="squint", look=_L(ears=("flap", "flap"), head=(-1, 0), tilt=-0.06)),
+        _F(eyes="happy", mouth="blep", look=_L(ears=("half", "half"))),
+        _F(eyes="happy", mouth="smile", look=_L(tail=-20)),
+    ),
+    #: Down onto the floor, a roll onto its back, paws waving in the air,
+    #: and back up again.
+    "belly_roll": (
+        _F(eyes="look_left"),
+        _F(view="lying", eyes="happy", mouth="blep", look=_L(head=(0, 12))),
+        _F(view="lying", eyes="squint", look=_L(head=(-2, 12), tilt=-0.3)),
+        _F(view="belly", eyes="happy", mouth="pant", kick=0),
+        _F(view="belly", eyes="happy", mouth="pant", kick=1),
+        _F(view="belly", eyes="happy", mouth="blep", kick=0),
+        _F(view="lying", eyes="squint", look=_L(head=(2, 12), tilt=0.3)),
+        _F(eyes="happy", mouth="smile", look=_L(tail=-20)),
+    ),
+    #: The invitation to play, from the side: chest down, rump up, tail
+    #: going like mad, a bounce, and down again.
+    "play_bow": (
+        _F(eyes="wide", look=_L(ears=_PERKED, brows="up")),
+        _F(view="side", eyes="open", mouth="pant", side=_CocoaSide(tail=-120)),
+        _F(view="side", eyes="happy", mouth="pant", side=replace(_BOW, tail=-100, blur=(-150,))),
+        _F(view="side", eyes="open", mouth="pant", side=replace(_BOW, tail=-150, blur=(-100,))),
+        _F(view="side", dy=-3, eyes="happy", mouth="pant", side=_HOP),
+        _F(view="side", eyes="happy", mouth="pant", side=replace(_BOW, tail=-110)),
+        _F(view="side", eyes="open", mouth="pant", side=replace(_BOW, tail=-150, blur=(-110,))),
+        _F(eyes="happy", mouth="smile", look=_L(ears=_PERKED)),
+    ),
+    #: A deep breath, the head goes up and out comes a tiny "awoo", music
+    #: notes drifting away.
+    "howl": (
+        _F(eyes="up_right"),
+        _F(stretch=1, eyes="closed", mouth="closed", look=_L(head=(0, -1), brows="up")),
+        _F(view="side", eyes="closed", mouth="awoo", side=_HOWL),
+        _F(view="side", eyes="closed", mouth="awoo", side=replace(_HOWL, ear="rest")),
+        _F(view="side", eyes="closed", mouth="awoo", side=_HOWL),
+        _F(view="side", eyes="closed", mouth="o", side=replace(_HOWL, tilt=-0.3, head=(0, 0))),
+        _F(eyes="happy", mouth="closed", look=_L(tail=-20)),
+        _F(eyes="happy", mouth="blep"),
+    ),
+    #: A butterfly flutters in and lands on its nose; Cocoa goes cross-eyed,
+    #: ah ... ah ... CHOO, and the butterfly tumbles away.
+    "butterfly": (
+        _F(eyes="up_left", look=_L(brows="up")),
+        _F(eyes="up_left", look=_L(ears=("half", "rest"), brows="up")),
+        _F(eyes="cross", look=_L(brows="up")),
+        _F(eyes="cross", look=_L(brows="up")),
+        _F(dy=-1, stretch=1, eyes="squint", mouth="o", look=_L(ears=_PERKED, sniff=True)),
+        _F(
+            dy=1,
+            stretch=-1,
+            eyes="squint",
+            mouth="wide",
+            look=_L(ears=("flap", "flap"), head=(0, 1)),
+        ),
+        _F(eyes="wide", mouth="closed", look=_L(ears=("half", "half"), brows="up")),
+        _F(eyes="happy", mouth="smile"),
+    ),
+}
+
+
+def _cocoa_act_pose(name: str, i: int) -> Pose:
+    c = _COCOA_ACT_FRAMES[name][i]
+    return Pose("idle", i, dx=c.dx, dy=c.dy, eyes=c.eyes, mouth=c.mouth, stretch=c.stretch)
+
+
+def _draw_cocoa_act(f: Frame, pose: Pose) -> None:
+    """An idle act's frame through the matching view."""
+    c = _COCOA_ACT_FRAMES[pose.act][pose.i]
+    if c.view == "side":
+        _cocoa_side(f, pose, c.side, left=c.left)
+    elif c.view == "back":
+        _cocoa_back(f, pose, c.look)
+    elif c.view == "lying":
+        _cocoa_lying(f, pose, c.look)
+    elif c.view == "belly":
+        _cocoa_belly(f, pose, c.kick)
+    else:
+        _cocoa_sit(f, pose, c.look)
+        if c.scratch:
+            with f.offset(pose.dx, pose.dy):
+                _cocoa_scratch_leg(f, c.scratch)
+
+
+def _cocoa_chase_tail_fx(f: Frame, pose: Pose) -> None:
+    """Speed lines whirl round the spin, dust kicks up, and stars circle the
+    dizzy head at the end."""
+    i = pose.i
+    if 1 <= i <= 5:
+        arcs = (
+            {(3, 30), (2, 33), (2, 36), (3, 39)},
+            {(44, 30), (45, 33), (45, 36), (44, 39)},
+            {(8, 24), (6, 26)},
+            {(39, 24), (41, 26)},
+        )
+        for k, arc in enumerate(arcs):
+            if (k + i) % 2 == 0 or k < 2:
+                f.paint(arc, ARC if k < 2 else ARC_FADE)
+        _cocoa_puff(f, 8.5 + 30 * (i % 2), 44.0, 1.8)
+    if i in (0,):
+        f.paint({(44, 30), (45, 29)}, ARC_FADE)  # the tail's swish catches its eye
+    if i >= 6:
+        spots = ((12, 5), (35, 4), (24, 2)) if i == 6 else ((15, 3), (32, 6), (8, 8))
+        for x, y in spots:
+            f.glyph(x - 1, y - 1, _SPARK_S, _SPARK_PALETTE)
+
+
+_COCOA_BALL_ROWS = (".#s#.", "##s##", "#s##d", "##ddd", ".ddd.")
+_COCOA_BALL_SQUASH = (".##s##.", "##s####", ".ddddd.")
+_COCOA_BALL_PALETTE = {"#": COCOA_BALL, "s": COCOA_BALL_SEAM, "d": COCOA_BALL_DARK}
+#: The ball per frame: its top-left, or None; squashed where it bounces.
+_COCOA_BALL_AT: tuple[tuple[int, int, bool] | None, ...] = (
+    (41, 2, False),
+    (38, 14, False),
+    (36, 41, True),
+    (32, 26, False),
+    (26, 21, False),
+    (22, 25, False),
+    (22, 26, False),
+    (13, 41, False),
+)
+
+
+def _cocoa_ball_catch_fx(f: Frame, pose: Pose) -> None:
+    """The tennis ball: falling with a trail, a squashed bounce with dust,
+    snapped out of the air, held proudly, then dropped at the paws."""
+    i = pose.i
+    spot = _COCOA_BALL_AT[i]
+    if spot is None:
+        return
+    x, y, squash = spot
+    if i in (5, 6):
+        y += pose.dy
+    if squash:
+        f.glyph(x - 1, y + 2, _COCOA_BALL_SQUASH, _COCOA_BALL_PALETTE)
+        _cocoa_puff(f, x - 3.5, 45.0, 1.6)
+        _cocoa_puff(f, x + 7.5, 45.0, 1.6)
+    else:
+        f.glyph(x, y, _COCOA_BALL_ROWS, _COCOA_BALL_PALETTE)
+    if i == 1:
+        f.paint(line(x + 3, y - 6, x + 3, y - 3) | line(x + 1, y - 4, x + 1, y - 2), ARC_FADE)
+    if i == 3:
+        f.paint(line(x + 6, y + 7, x + 8, y + 10) | line(x + 4, y + 8, x + 5, y + 10), ARC_FADE)
+    if i == 5:
+        fx_sparkles(f, 1, ((10, 12, 0), (38, 10, 0)))
+    if i == 6:
+        f.glyph(39, 9, _COCOA_HEART_S, _COCOA_HEART_PALETTE)
+
+
+#: Fur tufts flying off the scratched ear: (x, y) per frame.
+_COCOA_TUFTS: tuple[tuple[Px, ...], ...] = (
+    (),
+    (),
+    ((43, 20), (44, 27)),
+    ((45, 17), (42, 30)),
+    ((44, 21), (45, 29)),
+    ((46, 15), (43, 31)),
+    ((45, 24),),
+    (),
+)
+
+
+def _cocoa_ear_scratch_fx(f: Frame, pose: Pose) -> None:
+    """Scratch lines by the busy paw, little tufts of fur floating away."""
+    i = pose.i
+    for k, (x, y) in enumerate(_COCOA_TUFTS[i]):
+        _cocoa_spot(f, x, y, COCOA_LIGHT if k % 2 else COCOA_SHINE)
+    if 2 <= i <= 5:
+        f.paint(
+            {(43, 23), (44, 24), (44, 26), (45, 27)} if i % 2 else {(43, 25), (44, 26), (44, 22)},
+            ARC,
+        )
+    if i == 4:
+        f.glyph(5, 9, _COCOA_HEART_S, _COCOA_HEART_PALETTE)
+
+
+#: Water drops per frame: (x, y) of each, flung outward from the shaking head.
+_COCOA_DROPS: tuple[tuple[Px, ...], ...] = (
+    ((10, 26), (37, 24), (24, 6)),
+    ((38, 10), (42, 18), (44, 26), (35, 4)),
+    ((5, 12), (3, 20), (6, 27), (11, 4)),
+    ((40, 7), (44, 14), (45, 22), (38, 28), (31, 2)),
+    ((3, 9), (2, 17), (4, 25), (14, 2), (8, 31)),
+    ((42, 5), (45, 12), (3, 6), (2, 14)),
+    ((45, 9), (2, 10), (44, 34), (3, 36)),
+    ((44, 40), (3, 42)),
+)
+
+
+def _cocoa_shake_off_fx(f: Frame, pose: Pose) -> None:
+    """Water flying off in every direction, motion lines round the head."""
+    i = pose.i
+    for x, y in _COCOA_DROPS[i]:
+        drop = _cocoa_in_cell({(x, y), (x, y + 1)})
+        f.part(drop, {p: SWEAT_SHINE if p == (x, y) else SWEAT for p in drop})
+    if 1 <= i <= 5:
+        side = -1 if i % 2 else 1
+        lines = line(4, 14, 4, 20) | line(2, 16, 2, 19)
+        f.paint(mirrored(lines) if side > 0 else lines, ARC_FADE)
+    if i == 0:
+        f.paint({(13, 26), (13, 27), (35, 26), (35, 27)}, SWEAT)  # dripping ears
+
+
+_COCOA_NOTE = (".#.", ".##", ".#.", "##.", "##.")
+_COCOA_NOTE_2 = (".###", ".#.#", ".#.#", "##.#", "##..")
+#: Music notes leave the raised snout one per frame and drift back over the
+#: puppy's head: the frame each is born.
+_COCOA_NOTES = (2, 3, 4, 5)
+
+
+def _cocoa_belly_roll_fx(f: Frame, pose: Pose) -> None:
+    """Little motion arcs round the waving paws and a happy heart."""
+    i = pose.i
+    if i in (2, 6):
+        f.paint({(6, 30), (5, 32), (5, 34), (42, 30), (43, 32), (43, 34)}, ARC_FADE)
+    if 3 <= i <= 5:
+        k = i % 2
+        f.paint({(6, 12 + k), (5, 14 + k), (42, 12 - k), (43, 14 - k)}, ARC_FADE)
+        if i == 4:
+            f.glyph(38, 3, _COCOA_HEART_L, _COCOA_HEART_PALETTE)
+            f.glyph(6, 4, _COCOA_HEART_S, _COCOA_HEART_PALETTE)
+
+
+def _cocoa_play_bow_fx(f: Frame, pose: Pose) -> None:
+    """Excited marks pop over the raised rump; dust from the bounce."""
+    i = pose.i
+    if i in (2, 3, 6):
+        f.paint(line(14, 6, 15, 8) | line(33, 6, 32, 8) | line(24, 3, 24, 5), ARC)
+    if i == 4:
+        _cocoa_puff(f, 12.5, 45.0, 1.8)
+        _cocoa_puff(f, 35.5, 45.0, 1.8)
+    if i == 5:
+        f.paint(line(8, 46, 12, 46) | line(36, 46, 40, 46), COCOA_DUST)
+
+
+def _cocoa_howl_fx(f: Frame, pose: Pose) -> None:
+    """Music notes drift up and away from the little howl."""
+    i = pose.i
+    for k, start in enumerate(_COCOA_NOTES):
+        age = i - start
+        if 0 <= age <= 3:
+            rows = _COCOA_NOTE_2 if k % 2 else _COCOA_NOTE
+            f.glyph(40 - 6 * age, 5 - age + (age % 2), rows, {"#": COCOA_NOTE})
+    if 2 <= i <= 4:
+        # The "awoo" rings out from the raised snout.
+        k = i - 2
+        f.paint({(44 - k, 3 + k), (45, 5 + k), (46, 7)} if k < 2 else {(45, 4), (46, 6)}, ARC_FADE)
+
+
+_COCOA_WINGS_OPEN = ("ww.ww", "wdbdw", ".wbw.")
+_COCOA_WINGS_SHUT = (".w.", "ww.", ".b.")
+_COCOA_WING_PALETTE = {"w": COCOA_BUTTERFLY, "d": COCOA_BUTTERFLY_DARK, "b": OUTLINE}
+#: The butterfly per frame: top-left and whether its wings are open.
+_COCOA_FLIGHT: tuple[tuple[int, int, bool] | None, ...] = (
+    (4, 3, True),
+    (9, 8, False),
+    (15, 12, True),
+    (22, 15, False),
+    (21, 14, True),
+    (33, 6, True),
+    (40, 2, False),
+    None,
+)
+
+
+def _cocoa_butterfly_fx(f: Frame, pose: Pose) -> None:
+    """The butterfly's flight, the landing on the nose and the sneeze that
+    blows it away."""
+    i = pose.i
+    spot = _COCOA_FLIGHT[i]
+    if spot is not None:
+        x, y, open_ = spot
+        if i in (3, 4):
+            y += pose.dy
+        f.glyph(x, y, _COCOA_WINGS_OPEN if open_ else _COCOA_WINGS_SHUT, _COCOA_WING_PALETTE)
+    if i in (1, 2):
+        f.paint({(x - 2, y + 3), (x - 4, y + 2), (x - 6, y + 4)}, ARC_FADE)
+    if i == 5:
+        # CHOO: a spray from the nose and blast lines.
+        for px, py in ((17, 27), (30, 27), (14, 24), (33, 24), (20, 30), (27, 30)):
+            _cocoa_spot(f, px, py + pose.dy, SWEAT)
+        f.paint(line(10, 20, 13, 21) | line(34, 21, 37, 20), ARC)
+        f.paint(line(30, 12, 32, 10), ARC_FADE)
+
+
+def _cocoa_act(name: str, fps: int, fx: Effect) -> IdleAct:
+    frames = len(_COCOA_ACT_FRAMES[name])
+    return IdleAct(name, frames, fps, lambda i: _cocoa_act_pose(name, i), fx)
+
+
+COCOA_ACTS = (
+    _cocoa_act("chase_tail", 10, _cocoa_chase_tail_fx),
+    _cocoa_act("ball_catch", 9, _cocoa_ball_catch_fx),
+    _cocoa_act("ear_scratch", 12, _cocoa_ear_scratch_fx),
+    _cocoa_act("shake_off", 12, _cocoa_shake_off_fx),
+    _cocoa_act("belly_roll", 7, _cocoa_belly_roll_fx),
+    _cocoa_act("play_bow", 9, _cocoa_play_bow_fx),
+    _cocoa_act("howl", 6, _cocoa_howl_fx),
+    _cocoa_act("butterfly", 7, _cocoa_butterfly_fx),
+)
+
+
+COCOA = PetDesign(
+    id="cocoa",
+    name="Cocoa",
+    description=(
+        "A chocolate Labrador puppy who tilts its head to listen, digs while it works"
+        " and does zoomies when something goes right."
+    ),
+    draw=draw_cocoa,
+    pose=cocoa_pose,
+    waist=40,
+    anchors=Anchors(
+        arcs_left=(8, 18),
+        arcs_right=(39, 18),
+        dots=(19, 3),
+        zzz=(34, 17),
+        bang=(42, 3),
+        sparkles=((10, 12, 5), (38, 8, 6), (44, 24, 7)),
+    ),
+    fx={
+        "idle": _cocoa_idle_fx,
+        "listening": _cocoa_listening_fx,
+        "thinking": _cocoa_thinking_fx,
+        "talking": _cocoa_talking_fx,
+        "success": _cocoa_success_fx,
+        "error": _cocoa_error_fx,
+        "sleeping": _cocoa_sleeping_fx,
+        "working": _cocoa_working_fx,
+        "searching": _cocoa_searching_fx,
+        "held": _cocoa_held_fx,
+    },
+    acts=COCOA_ACTS,
+)
+
+
+PETS: tuple[PetDesign, ...] = (GIGI, MISO, BREW, BOLT, MOCHI, SHELLY, EMBER, COCOA)
 
 
 # ---------------------------------------------------------------------------

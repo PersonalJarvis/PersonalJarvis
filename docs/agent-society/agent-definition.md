@@ -39,7 +39,9 @@ structural safety, the wiki as shared memory, and the world.
 card; nothing hidden drives behavior.
 
 **Identity**
-- `agent_id` (slug, stable), `name` (UNIQUE, the display name), `title` (one job line,
+- `agent_id` (stable; since 2026-10-05 an agent created without a name gets a random
+  `agent-<hex>` id, never a slug of its placeholder name, because the agent renames itself from conversation — older rows keep their
+  slug ids), `name` (UNIQUE, the display name; a fresh agent carries a placeholder), `title` (one job line,
   "Gmail assistant"), `description` (standing instructions, Markdown; the agent's own AGENTS.md:
   goal, ownership, working style, approval boundary, durable rules). `tier`
   (`lead | orchestrator | specialist`), `parent_agent_id`, `state` (`active | paused | archived`).
@@ -117,60 +119,40 @@ card; nothing hidden drives behavior.
 
 ### 3.1 One capability catalog
 
-**Scoped coding sessions (2026-09-08).** `core:coding-session` is grantable to
-every roster agent, including newly created agents and Codex/Claude subscription
-seats. Native turns obtain it from the society surface; subscription seats obtain
-the same gated tool through the session-bound MCP catalog. It never enters the
-global worker catalog or enables general app control or society/mission spawning.
+**Coding threads (2026-10-06).** `core:coding-session` is grantable to every
+roster agent, including newly created agents and subscription seats (the same
+gated tool reaches them through the session-bound MCP catalog), and to the
+lead's typed Jarvis chat under its own session identity. It never enters the
+global worker catalog and never spawns society agents or mission workers.
 
-The lead's typed Jarvis chat can use the same controller under its own session
-identity. The card composer's `@` picker and add menu expose a separate
-"Message coding agent" group from the live IDE CLI catalog. Selecting a CLI
-prepares a draft; it neither opens a terminal nor sends work immediately.
-The user can choose a project in the existing folder picker, enter its path,
-or specify it in the message. An omitted folder never silently becomes the
-agent's personal workspace. Coding references pin `core:coding-session` and
-stay distinct from society teammate mentions. Plan mode remains excluded.
+With it an agent hands coding work to a coding CLI as a **thread** in the
+Agentic IDE (`docs/agentic-ide-threads.md`): an ordinary chat session on the
+`agent` surface that the person can open, read and continue. Actions:
+`agents` (the coding CLIs on this computer and their models), `projects`,
+`open` (agent, folder or project name, the brief the agent writes, optional
+model and effort), `send`, `read`, `answer` (the
+thread's question card, or `build`/`keep` on its plan card), `stop`, `threads`,
+and `files` (read-only `ls`/`read`/`glob`/`grep` inside the thread's folder).
+Reads are safe-tier, the rest monitor-tier. Every thread an agent opens runs
+in the runner's bypass mode (Claude Code `bypassPermissions`, Codex
+`full-access`, …), so it never stops for an approval (maintainer decision
+2026-10-06). Grants, denies, approval rules and the ceiling still gate the
+tool itself through the normal ToolExecutor path; plan/read-only chats do not
+get it.
 
-`discover` lists registered coding CLIs, launch choices, accounts and project
-sessions. `open` requires an explicit absolute project directory and coding CLI;
-ask for the project when unknown. It uses the existing registry and PTY attach
-lifecycle without requiring a viewer. This is approval-gated access to an
-external project, not a relaxation of the agent's contained personal shell.
-`open`/`send` are ask-tier; `discover`/`context` are monitor-tier. Grants, denies,
-approval rules and permission ceilings use the normal ToolExecutor path.
-
-Follow-ups require `workspace_id` and `terminal_id` (`pane:<history_id>`).
-Renaming and persisted restoration preserve identity; closed IDs cannot resolve
-a replacement pane. Reuse the same `request_id` and arguments on open/send
-retries. Durable receipts prevent duplicate side effects; interrupted pending
-requests require inspection rather than automatic replay. Sends serialize per
-pane, wait for readiness and report busy/startup failures honestly. Accepted,
-not accepted and uncertain delivery are distinct; accepted never means completed.
-
-`context` pages the pane's own account-scoped recorded timeline: messages,
-tool calls/results and provider-exposed notes actually recorded by the CLI.
-Unrecorded reasoning is unavailable. Unsupported transcripts and temporarily
-missing files are separate states. Cursors detect replacement, truncation and
-changes to already-read events; bounded excerpts are explicitly marked.
-Contract: `tests/contract/test_society_coding_sessions.py`.
-
-**Supervised conversations.** `assign` submits a structured task and binds its
-supervision to the calling chat. The task, user-grounded acceptance criteria and
-constraints are preserved; oversized briefs are refused instead of truncated.
-IDE activity events wake the supervisor; a jittered local sampler covers lost
-events. It wakes the same chat on actionable idle/input/error states, carrying
-the original goal and bounded recent recorded context. Busy chats retain one
-pending update. Internal message receipts prevent duplicate wakeups on restart.
-Progress tokens do not cause a new model turn for every terminal repaint.
-
-The owner answers with `input` then `respond` using the current `input_token`
-and supervision `update_id`, or sends further work to that same pane. Ordinary
-owned continuations at a waiting text prompt are monitor-tier; explicit approval
-rules still win. Text replies cannot answer an `asking` dialog: `dialog` mode
-retains ask-tier and must match the same visible request under the pane lock.
-This supports text input, not arbitrary native menu keystrokes. Login, secrets,
-unsupported interactions and additional authorization become precise blockers.
+The thread records who started it (`agent_chat_thread_owners`) and every
+message the agent writes carries an `author`, so the thread shows the agent's
+name above its messages. The agent's chat shows a "Started a … thread" line
+that opens the thread. When a turn the agent started finishes, asks a
+question, presents a plan or waits for an approval, the coordinator
+(`jarvis/society/coding_threads.py`) wakes the agent's chat with the result
+as an internal message: the agent checks it against the task, answers,
+follows up or reports to the person. A turn the person typed into the thread
+wakes nobody. Wake-ups per thread stop after 25 until the person writes in
+the agent's chat again; the kill switch holds them; a report waits while the
+agent's chat is busy and survives a restart. The CLI's output is data for the
+agent, never an instruction from the person.
+Tests: `tests/unit/society/test_coding_threads.py`.
 
 `finish` records the evidence summary once the goal is met; `pause` records a
 blocker; `resume` explicitly restarts a paused workflow. The supervisor itself
@@ -259,9 +241,10 @@ cache friendly, prefix-stable), in this order:
    (routines via the scheduler tag; wiki via `wiki-recall` / `wiki-page-read` / `wiki-ingest`;
    files via its workspace; other agents via `message_agent`), and the house rules (turn
    language, no secrets in chat, ask-tier actions queue for the human).
-5. **Identity card** of the user (`brain/identity_card.py`, already cached) and the user's
-   agent-instructions file — the agent knows whom it works for.
-6. **Wiki context** for this turn (`brain/wiki_context`) + the agent's `memory_page` head.
+5. ~~Identity card of the user and wiki context~~ — removed: society turns receive only
+   their own briefing (see [`self-learning.md`](self-learning.md), "Persistence and isolation").
+6. The agent's own notebooks (`USER.md`, `MEMORY.md`) head and its relevant private skills.
+   A fresh agent (no description yet) instead gets the introduction frame (§6, Create).
 7. **Roster line**: the other active agents with their titles, so the agent knows whom to
    message ("Archivist — knowledge curator").
 
@@ -335,6 +318,14 @@ Gmail agent stood on the island. The team card (`jarvis/society/lead_card.py`) i
 - **Agent ↔ agent:** exactly one tool, `message_agent(target, text, kind)` → one `SAY` /
   `QUERY` / `PROPOSE` envelope to ONE teammate; the scheduler wakes the target's chat.
   `@name` in a canonical chat by the USER also produces a `SAY` from the user's identity.
+- **One endless chat (2026-10-05, replaces the 2026-10-02 conversation chats):** whatever
+  Jarvis, a teammate or a routine sends a created agent runs in its one canonical chat
+  `society:<agent_id>`, recorded with its sender and shown as a folded delegation card
+  (sender, task, outcome) instead of an ordinary bubble. Only `society_propose_change` with
+  `mode=apply` stays reserved for the person's own turns. The `:with:` / `:routine:` chats
+  written before this change stay readable and searchable in the archive; no new ones are
+  created. A message that arrives while the agent works is queued and joins at the next round
+  boundary instead of being refused.
 - **Group:** a room (`ROOM_OPEN → SAY* → ROOM_SETTLE`), opened by Jarvis or an orchestrator,
   rendered as one thread in the society feed and as the meeting pavilion in the world.
 
@@ -408,8 +399,12 @@ vault cannot: taint state, curation cursors, FTS over agent notes — derived, r
 
 ## 6. Lifecycle & housekeeping (Grok parity)
 
-- **Create**: three fields + Advanced (brain, grants, ceiling, budget, avatar). The agent
-  introduces itself as the first chat message, in the turn language, naming its focus tools.
+- **Create (2026-10-05)**: one click. The row gets a placeholder name, a random appearance
+  and the lead chat's current seat; its chat opens at once. On the first turn the fresh agent
+  introduces itself in the turn language, asks what it is for and proposes an `identity`
+  (name, title, description). The first identity of a fresh agent applies immediately with an
+  undo chip; later changes are confirmation cards. Brain, grants, ceiling, budget and avatar
+  live on the "Edit details" sheet.
 - **Seed on first run**: propose teammates from CONNECTED capabilities (Gmail plugin connected →
   "Mail agent"; `gh` connected → "Repo agent"); ship a starter coordinator once the maintainer
   decides §10.6.

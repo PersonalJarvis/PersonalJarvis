@@ -134,6 +134,9 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_LATE_ARRIVAL_WINDOW_S", 0.04)
     monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
     monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 0.08)
+    # Submit mechanics, not the startup-question wait (tested on its own).
+    monkeypatch.setattr(fleet_actions, "COLOUR_PROBE_SETTLE_S", 0.0)
+    monkeypatch.setattr(fleet_actions, "STARTUP_QUIET_S", 0.0)
     return Registry(pty_manager=fake_pty)
 
 
@@ -182,9 +185,21 @@ async def test_a_booting_codex_is_not_typed_into_until_its_input_line_exists(
         term.pty_id,
         "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
     )
+    await asyncio.sleep(0.03)
+    # The composer is up, but Codex has not asked for its colours yet: a
+    # prompt typed now turns the colour reply into composer text.
+    assert fake_pty.typed == [], "typed before Codex's startup colour question"
+
+    # A healthy Codex reads the reply instead of drawing it, so the fake must
+    # not echo it into its composer either.
+    fake_pty.tui_echo = False
+    await fake_pty.emit(term.pty_id, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\")
+    answered = len(fake_pty.typed)
+    assert answered == 1 and "rgb:" in fake_pty.typed[0], fake_pty.typed
+    fake_pty.tui_echo = True
     delivered = await sending
 
-    assert fake_pty.typed[:2] == ["review the pipeline", "\r"]
+    assert fake_pty.typed[answered : answered + 2] == ["review the pipeline", "\r"]
     assert delivered.submitted is True
 
 

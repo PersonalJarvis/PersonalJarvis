@@ -19,8 +19,9 @@ async def main() -> None:
 
     async with async_playwright() as pw:
         context = await pw.chromium.launch_persistent_context(
-            sys.argv[2], executable_path=sys.argv[1], headless=False,
-            viewport={"width": 1280, "height": 800},
+            # No emulated viewport: the page then fills the real widget, whose
+            # size follows the window that park() fits to the work area.
+            sys.argv[2], executable_path=sys.argv[1], headless=False, no_viewport=True,
         )
         native = None
         try:
@@ -57,18 +58,29 @@ async def main() -> None:
                 u.EnumChildWindows(native.hwnd, child, 0)
             assert children
             x, y, width = children[-1]
-            scale = width / 1280
-            native.input("click", {"x": x + 100 * scale, "y": y + 70 * scale})
+            # Widget pixels per CSS pixel, measured instead of assuming a width.
+            scale = width / await page.evaluate("window.innerWidth")
+            box = await page.get_by_label("Name").bounding_box()
+            assert box is not None
+            native.input("click", {
+                "x": x + (box["x"] + box["width"] / 2) * scale,
+                "y": y + (box["y"] + box["height"] / 2) * scale,
+            })
             native.input("text", {"text": "Typed through the preview"})
             await asyncio.sleep(0.3)
             value = await page.get_by_label("Name").input_value()
             assert value == "Typed through the preview", value
             assert native.input_hwnd != native.hwnd
             assert badge
-            native.input("click", {"x": 300 * scale, "y": y * 0.72})
+            # Focus the address bar through Chrome's own location command, not
+            # a click at a guessed toolbar position: on a slow runner the URL
+            # never reached the omnibox within the wait (CI run 37599288714).
+            # The command and the characters go to the same window queue, so
+            # the omnibox owns focus before the first character arrives.
+            native.input("key", {"key": "Control+l"})
             native.input("text", {"text": "about:blank#jarvis-input-probe"})
             native.input("key", {"key": "Enter"})
-            await page.wait_for_url("about:blank#jarvis-input-probe", timeout=5000)
+            await page.wait_for_url("about:blank#jarvis-input-probe", timeout=20_000)
             print(json.dumps({"typed": value, "badge": badge, "address": page.url}))
         finally:
             if native:

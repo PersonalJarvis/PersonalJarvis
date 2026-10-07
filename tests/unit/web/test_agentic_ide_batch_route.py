@@ -122,7 +122,7 @@ async def test_a_refusal_becomes_a_conflict_with_the_reason(
             account: str | None = None,
             workspace_id: str | None = None,
         ):
-            raise SessionError("This workspace already has the maximum of 8 terminals.")
+            raise SessionError("Claude Code is not installed or not on this machine's PATH.")
 
         def state(self) -> dict:
             return {}
@@ -132,7 +132,7 @@ async def test_a_refusal_becomes_a_conflict_with_the_reason(
     with pytest.raises(routes.HTTPException) as caught:
         await routes.add_terminals(_request(None), routes.AddTerminalsRequest(count=3))
     assert caught.value.status_code == 409
-    assert "maximum" in caught.value.detail
+    assert "not installed" in caught.value.detail
 
 
 async def test_no_bus_still_opens_the_panes(

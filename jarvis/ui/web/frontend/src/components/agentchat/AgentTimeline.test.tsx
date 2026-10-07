@@ -14,7 +14,8 @@ afterEach(() => { cleanup(); seq = 0; });
 it("replays persisted events through the new shared trace", () => {
  draw([ev("turn_started", { turn_id: "t1" }), ev("tool_call", { turn_id: "t1", call_id: "c1", name: "list_dir", input: { path: "src" } }), ev("tool_result", { turn_id: "t1", call_id: "c1", output: "index.ts", duration_ms: 800 }), ev("turn_finished", { turn_id: "t1", status: "done" })]);
  expect(screen.getByTestId("work-trace")).toBeTruthy();
- expect(screen.getByRole("button", { name: /List files/ })).toBeTruthy();
+ // The work stays in view, one quiet line per call.
+ expect(screen.getByRole("button", { name: /^Listed src/ })).toBeTruthy();
 });
 describe("the person's turn with files", () => {
   const SHOT = {

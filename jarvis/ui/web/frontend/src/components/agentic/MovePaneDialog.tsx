@@ -3,7 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Check, FolderInput, Loader2 } from "lucide-react";
 import { AgentMark } from "./AgentMark";
 import { treeLayout } from "./treeLayout";
-import { GRID_LIMIT_HINT, fitsWorkspace, previewSplit, workspaceLayout } from "./workspaceDocking";
+import { workspaceLayout } from "./workspaceDocking";
 import { fetchWorkspaceLayout, type TransferPlacement, type TransferSide, type WorkspaceLayoutView } from "@/lib/agenticIdeApi";
 import { cn } from "@/lib/utils";
 
@@ -34,8 +34,6 @@ const SIDES: { side: TransferSide; words: string; clip: string; key: string }[] 
   { side: "above", words: "above", clip: "polygon(0 0, 100% 0, 50% 50%)", key: "ArrowUp" },
   { side: "below", words: "below", clip: "polygon(0 100%, 50% 50%, 100% 100%)", key: "ArrowDown" },
 ];
-const SPLIT_DIRECTION = { left: "left", right: "right", above: "above", below: "down" } as const;
-const INCOMING = "__incoming__";
 const anchorOf = (pane: MapPane) => pane.history_id ? `pane:${pane.history_id}` : pane.name;
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -99,26 +97,18 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
   const panes = view?.terminals ?? [];
   const current = view ? workspaceLayout(view.layout, panes) : null;
   const boxes = treeLayout(current, panes).boxes;
-  const full = view !== null && panes.length >= view.max_terminals;
-  const fits = (pane: MapPane, side: TransferSide) =>
-    !full && current !== null && fitsWorkspace(previewSplit(current, pane.key, INCOMING, SPLIT_DIRECTION[side]));
+  // A workspace has no size limit: every side of every pane is a place.
+  const fits = (_pane: MapPane, _side: TransferSide) => current !== null;
   const shown = hover ?? choice;
   const paneName = request?.pane.name ?? "";
   const targetName = request?.target.name ?? "";
 
-  // The first place with room, nearest the end of the reading order: what an
-  // open-one-more would have done, but shown on the map and changeable.
+  // Beside the last pane in reading order: where an open-one-more lands, but
+  // shown on the map and changeable.
   useEffect(() => {
-    if (!view || !current || full) return;
-    for (const pane of [...view.terminals].reverse()) {
-      for (const side of ["right", "below"] as const) {
-        if (fitsWorkspace(previewSplit(current, pane.key, INCOMING, SPLIT_DIRECTION[side]))) {
-          setChoice({ anchor: anchorOf(pane), side });
-          return;
-        }
-      }
-    }
-    // A layout without room anywhere is left to the server's even grid.
+    const last = view?.terminals[view.terminals.length - 1];
+    if (!current || !last) return;
+    setChoice({ anchor: anchorOf(last), side: "right" });
     // Only a newly loaded workspace re-picks; everything else derives from it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
@@ -133,16 +123,14 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
 
   const summary = (() => {
     if (!view) return "";
-    if (full) return `${targetName} is full: a workspace holds ${view.max_terminals} terminals.`;
     if (!panes.length) return `${targetName} is empty, so ${paneName} fills it.`;
     if (!shown) return `${paneName} joins ${targetName}, and every pane gets an even share.`;
     const pane = panes.find((entry) => anchorOf(entry) === shown.anchor);
     const words = SIDES.find((entry) => entry.side === shown.side)?.words ?? shown.side;
     if (!pane) return "";
-    if (!fits(pane, shown.side)) return `No room ${words} ${pane.name}. ${GRID_LIMIT_HINT}`;
     return `${capital(words)} ${pane.name}: ${paneName} takes half of its space.`;
   })();
-  const submit = () => { if (!busy && !full && view) onConfirm(choice); };
+  const submit = () => { if (!busy && view) onConfirm(choice); };
 
   return <Dialog.Root open={request !== null} onOpenChange={(open) => { if (!open && !busy) onCancel(); }}>
     <Dialog.Portal>
@@ -214,7 +202,7 @@ export function MovePaneDialog({ request, busy, onCancel, onConfirm }: Props) {
             <button type="button" disabled={busy} onClick={onCancel}
               className="rounded-lg border border-border px-3.5 py-2 text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
               Cancel</button>
-            <button type="submit" data-testid="move-pane-confirm" disabled={busy || full || !view}
+            <button type="submit" data-testid="move-pane-confirm" disabled={busy || !view}
               className="flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover disabled:opacity-50">
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
               Move to {targetName}</button>

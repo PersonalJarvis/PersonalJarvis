@@ -42,6 +42,7 @@ export function transcriptFromTimeline(items: readonly TimelineItem[]): Transcri
  * history and its turns are filed into it. The lane opens with that chat's
  * lines, so talking reads as the next message, not as a new conversation.
  * A call from a blank page gets its own new chat; leaving voice mode opens it.
+ * An archived voice chat opened from the history is continued as itself.
  */
 export function useVoiceModeSwitch() {
   const surface = useHomeStore((s) => s.surface);
@@ -53,15 +54,21 @@ export function useVoiceModeSwitch() {
 
   const enter = useCallback(() => {
     const chat = useAgentChatStore.getState();
+    const events = useEventStore.getState();
+    // An archived voice chat on stage is continued as itself.
+    const voiceThread = !chat.activeSessionId && events.activeKind === "voice" ? events.activeThreadId : null;
+    if (voiceThread) useHomeStore.getState().setContinuedVoiceId(voiceThread);
     const startsCall = !active && !busy && !connecting && connected;
     // A call already running elsewhere keeps its own lane.
     if (!active && !connecting) {
-      useHomeStore.getState().seedTranscript(transcriptFromTimeline(chat.timeline.items));
+      useHomeStore.getState().seedTranscript(
+        voiceThread ? transcriptFromMessages(events.messages) : transcriptFromTimeline(chat.timeline.items),
+      );
     }
     setSurface("voice");
     setActiveSection("chats");
     if (!startsCall) return;
-    void bindVoiceChat(chat.activeSessionId)
+    void bindVoiceChat(chat.activeSessionId, voiceThread)
       .catch((err: unknown) => {
         // The call still starts; it just falls back to the newest chat.
         console.info("Voice chat binding failed.", err);
@@ -72,12 +79,13 @@ export function useVoiceModeSwitch() {
   const exit = useCallback(() => {
     if (active && !busy) void toggleCall();
     setSurface("chat");
+    if (useHomeStore.getState().freshVoicePending) return;
     if (useAgentChatStore.getState().activeSessionId) return;
     // A call from a blank page opened its chat on the backend: show it.
     void fetchVoiceChat()
       .then(({ session_id: sessionId }) => {
         const chat = useAgentChatStore.getState();
-        if (!sessionId || chat.activeSessionId) return;
+        if (!sessionId || chat.activeSessionId || useHomeStore.getState().freshVoicePending) return;
         chat.openSession(sessionId);
         void chat.loadSessions();
       })

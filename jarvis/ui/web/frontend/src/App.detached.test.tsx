@@ -99,6 +99,16 @@ describe("App shell around detached coding views", () => {
     expect(document.documentElement.classList.contains("jarvis-wallpaper")).toBe(false);
   });
 
+  it.each(["agents", "docs", "memory"] as const)("gives the %s section the whole window", (section) => {
+    useEventStore.setState({ activeSection: section });
+
+    render(<App />);
+
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.queryByTestId("sidebar-resizer")).toBeNull();
+    expect(screen.getByTestId("main-view")).toBeTruthy();
+  });
+
   it("keeps the sidebar reachable in the main window", () => {
     useEventStore.setState({
       activeSection: "agentic-ide",

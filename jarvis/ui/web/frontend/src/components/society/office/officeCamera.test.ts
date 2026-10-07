@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cameraHome, CAMERA_LIMITS, wheelZoomSpeed } from "./officeCamera";
+import { cameraHome, CAMERA_LIMITS, depthNear, wheelZoomSpeed } from "./officeCamera";
 
 /** OrbitControls' dolly factor for one wheel event at this zoom speed. */
 const step = (speed: number) => 1 / Math.pow(0.95, speed);
@@ -32,5 +32,26 @@ describe("office wheel zoom", () => {
   it("lets the camera come close enough to read a desk, and never inside the character", () => {
     expect(CAMERA_LIMITS.minDistance).toBeLessThanOrEqual(3);
     expect(CAMERA_LIMITS.minDistance).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/** Smallest depth step a 24-bit buffer resolves at `depth` metres with this near plane. */
+const depthStep = (depth: number, near: number) => (depth * depth) / (near * 2 ** 24);
+
+describe("office depth precision", () => {
+  it("keeps the oak floor 1 mm above the slab resolvable at every zoom", () => {
+    for (const distance of [CAMERA_LIMITS.minDistance, 15, 40, 90, CAMERA_LIMITS.maxDistance]) {
+      // The far edge of the floor lies up to ~30 m behind the orbit target.
+      expect(depthStep(distance + 30, depthNear(distance))).toBeLessThan(0.001);
+    }
+  });
+
+  it("never clips the floor or the walls in front of the camera", () => {
+    for (const distance of [CAMERA_LIMITS.minDistance, 15, 40, 90, CAMERA_LIMITS.maxDistance]) {
+      // At the flattest allowed tilt the camera still stands this high above the floor.
+      const height = distance * Math.cos(CAMERA_LIMITS.maxPolar);
+      expect(depthNear(distance)).toBeLessThan(Math.max(0.5, height - 3));
+    }
+    expect(depthNear(CAMERA_LIMITS.minDistance)).toBe(0.2);
   });
 });

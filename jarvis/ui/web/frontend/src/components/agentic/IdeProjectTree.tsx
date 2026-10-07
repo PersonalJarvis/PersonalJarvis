@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, Server, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Check, Copy, CopyPlus, Folder, FolderGit2, GitBranch, FolderOpen, FolderPlus, Globe, Loader2, Mic, MoreHorizontal, OctagonPause, Pencil, Pin, PinOff, Plus, Server, SquareCode, Trash2, X, type LucideIcon } from "lucide-react";
 import { ChatLibraryError, deleteProject, openProject, patchProject, reorderProjects, revealProject, fetchProjectLaunchers, openProjectIn, type ProjectLaunchers } from "@/lib/chatLibraryApi";
 import { robustCopy } from "@/lib/clipboard";
 import { useComputerChoices } from "@/hooks/useComputers";
 import { addTerminal, fetchWorkspacePanes, interruptTerminal, placeWorkspace, removeWorkspace, renameWorkspace, startIdeSession, IdeApiError, reorderWorkspaces, type IdeProject, type ProjectWorkspace, type WorkspacePaneRow } from "@/lib/agenticIdeApi";
 import { useEventStore } from "@/store/events";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import cursorLogo from "@/assets/editors/cursor.svg?url";
+import vscodeLogo from "@/assets/editors/vscode.svg?url";
 
 const EXPANSION_KEY = "jarvis.ide.projectExpansion.v1";
 const WORKSPACE_DRAG_MIME = "application/x-jarvis-workspace-id";
@@ -58,6 +60,32 @@ function removalErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const NO_LAUNCHERS: ProjectLaunchers = { file_manager: false, editors: [], remote_url: null, remote_label: null };
+
+// Launchers outlive the tree, so a menu opened after switching views is
+// complete at once instead of growing its editor rows a moment later.
+const launcherCache = new Map<string, ProjectLaunchers>();
+const launcherRequests = new Map<string, Promise<ProjectLaunchers>>();
+
+/** One launcher request per project at a time; settles into `launcherCache`. */
+function loadLaunchers(projectId: string): Promise<ProjectLaunchers> {
+  const pending = launcherRequests.get(projectId);
+  if (pending) return pending;
+  const request = fetchProjectLaunchers(projectId)
+    // A headless or older backend has no launchers; the menu simply omits them.
+    .catch(() => NO_LAUNCHERS)
+    .then((found) => { launcherCache.set(projectId, found); return found; })
+    .finally(() => { launcherRequests.delete(projectId); });
+  launcherRequests.set(projectId, request);
+  return request;
+}
+
+/** Test hook: forget every cached launcher set. */
+export function resetLauncherCacheForTests(): void {
+  launcherCache.clear();
+  launcherRequests.clear();
+}
+
 /**
  * The project's only workspace when it carries the project's own name. Such a
  * project renders as ONE row: a folder header over a child with the same name
@@ -69,10 +97,13 @@ function soloWorkspace(project: IdeProject): ProjectWorkspace | null {
   return workspace.name.trim().toLowerCase() === project.name.trim().toLowerCase() ? workspace : null;
 }
 
-/** Running agents glow, an open but idle workspace is a solid dot, a saved (closed) one a hollow ring. */
-function statusDotClass(workspace: ProjectWorkspace): string {
-  if (workspace.status !== "open") return "border border-muted-foreground/45";
-  return workspace.live_terminals > 0 ? "bg-accent ring-[3px] ring-accent/15" : "bg-muted-foreground/40";
+/** The agent sessions behind a row: a quiet number that makes room for the row's actions on hover. */
+function SessionCount({ count, hover }: { count: number; hover: "group" | "group/space" }) {
+  const fade = hover === "group"
+    ? "group-hover:opacity-0 group-focus-within:opacity-0"
+    : "group-hover/space:opacity-0 group-focus-within/space:opacity-0";
+  return <span aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}
+    className={`shrink-0 text-[13px] tabular-nums text-muted-foreground/70 transition-opacity [@media(hover:none)]:opacity-0 ${fade}`}>{count}</span>;
 }
 
 function readExpansion(): Record<string, boolean> {
@@ -120,7 +151,7 @@ export function IdeProjectTree() {
   // What the open menu can offer beyond the row itself: the project's editors
   // and remote, and the panes of the workspace. Fetched when a menu opens, so
   // an item is only shown when it can actually run.
-  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>({});
+  const [launchers, setLaunchers] = useState<Record<string, ProjectLaunchers>>(() => Object.fromEntries(launcherCache));
   const [menuPanes, setMenuPanes] = useState<WorkspacePaneRow[] | null>(null);
   const [confirmProject, setConfirmProject] = useState<string | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
@@ -257,13 +288,27 @@ export function IdeProjectTree() {
 
   const menuProjectId = contextMenu?.projectId ?? null;
   const menuWorkspaceId = contextMenu?.kind === "workspace" ? contextMenu.workspaceId : null;
+  // Fetched ahead, one project after another, so the menu is complete the
+  // moment it opens; opening it refreshes that project in the background.
+  const visibleProjectKey = visible.map((project) => project.id).join("\u0000");
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      for (const id of visibleProjectKey ? visibleProjectKey.split("\u0000") : []) {
+        if (!live) return;
+        if (launcherCache.has(id)) continue;
+        const found = await loadLaunchers(id);
+        if (live) setLaunchers((previous) => ({ ...previous, [id]: found }));
+      }
+    })();
+    return () => { live = false; };
+  }, [visibleProjectKey]);
+
   useEffect(() => {
     if (!menuProjectId) return;
     let live = true;
-    fetchProjectLaunchers(menuProjectId)
-      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); })
-      // A headless or older backend has no launchers; the menu simply omits them.
-      .catch(() => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: { file_manager: false, editors: [], remote_url: null, remote_label: null } })); });
+    loadLaunchers(menuProjectId)
+      .then((found) => { if (live) setLaunchers((previous) => ({ ...previous, [menuProjectId]: found })); });
     return () => { live = false; };
   }, [menuProjectId]);
 
@@ -277,9 +322,13 @@ export function IdeProjectTree() {
     return () => { live = false; };
   }, [menuWorkspaceId]);
 
-  const openIn = async (projectId: string, target: string) => {
-    try { await openProjectIn(projectId, target); }
-    catch (error) { pushToast("error", revealErrorMessage(error)); }
+  const openIn = async (projectId: string, target: string, label: string) => {
+    // A cold editor can take seconds to draw its first window; say at once
+    // that the click landed instead of leaving the user guessing.
+    pushToast("info", `Opening ${label}…`);
+    try {
+      if (!(await openProjectIn(projectId, target))) pushToast("error", `${label} could not be started`);
+    } catch (error) { pushToast("error", revealErrorMessage(error)); }
   };
 
   /** One more pane of the workspace's own agent, then bring the workspace to the front. */
@@ -427,12 +476,12 @@ export function IdeProjectTree() {
     const open = expansion[project.id] ?? (project.id === activeProject?.id || (!activeWorkspaceId && visible[0]?.id === project.id));
     const active = project.id === activeProject?.id;
     const working = mutatingId === project.id;
-    const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     const projectDraggable = renamingId !== project.id && !working && !reordering;
     const isProjectDragged = draggedProjectId === project.id;
     const isProjectDropBefore = projectDropTarget?.id === project.id && projectDropTarget.before;
     const isProjectDropAfter = projectDropTarget?.id === project.id && !projectDropTarget.before;
     const solo = soloWorkspace(project);
+    const count = project.workspaces.reduce((total, workspace) => total + workspace.terminals, 0);
     const soloSelected = solo !== null && solo.id === activeWorkspaceId;
     const soloPending = solo !== null && solo.id === pendingWorkspaceId;
     const soloBlocked = solo !== null && solo.status === "closed" && !solo.restorable;
@@ -500,18 +549,17 @@ export function IdeProjectTree() {
               void moveProject(project.id, neighbour.id, event.key === "ArrowUp");
             }}
             title={soloBlocked ? "This workspace cannot be restored on this machine" : `${project.name} — drag to reorder, or press Alt plus arrow keys to move`}
-            className={`flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-[15px] font-medium [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
-            {/* A one-row project has nothing to fold: its status dot takes the chevron's slot. */}
-            {solo
-              ? <span aria-hidden className="flex h-3 w-3 shrink-0 items-center justify-center">
-                  {soloPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <span className={`h-1.5 w-1.5 rounded-full ${statusDotClass(solo)}`} />}
-                </span>
-              : open ? <ChevronDown aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" /> : <ChevronRight aria-hidden className="h-3 w-3 shrink-0 text-muted-foreground/70" />}
-            <Folder aria-hidden className="ml-0.5 h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
-            <span className="ml-0.5 min-w-0 flex-1 truncate">{project.name}</span>
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2.5 rounded-md px-2 text-left text-[15px] [@media(hover:none)]:pr-14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${solo && solo.status !== "open" && !soloSelected && !soloPending ? "text-muted-foreground" : "text-foreground"}`}>
+            {/* The folder itself shows the fold: open while its rows show, closed when folded. */}
+            {soloPending
+              ? <Loader2 aria-hidden className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+              : open && !solo
+                ? <FolderOpen aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                : <Folder aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={1.75} />}
+            <span className="min-w-0 flex-1 truncate">{project.name}</span>
             {soloPending && <span className="sr-only">Switching workspace</span>}
             {/* An open project's rows carry their own counts; the total only speaks for a folded one. */}
-            {count > 0 && (solo || !open) && <span className="text-[13px] tabular-nums text-muted-foreground/80 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 [@media(hover:none)]:opacity-0" aria-label={`${count} agent ${count === 1 ? "session" : "sessions"}`}>{count}</span>}
+            {count > 0 && (solo || !open) && <SessionCount count={count} hover="group" />}
           </button>
           <div className={`absolute inset-y-0 right-0 flex items-center rounded-r-md bg-gradient-to-l from-muted from-60% to-transparent pl-5 pr-1 transition-opacity ${projectMenuOpen ? "opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"}`} data-project-menu={project.id}>
             <button type="button" aria-label={`Project actions for ${project.name}`} title="Project actions" aria-haspopup="menu" aria-expanded={projectMenuOpen}
@@ -529,7 +577,7 @@ export function IdeProjectTree() {
           </div>
         </>}
       </div>
-      {open && !solo && <div className="mb-1 ml-3.5 flex flex-col gap-px border-l border-border/60 pl-1.5">
+      {open && !solo && <div className="mb-1 flex flex-col gap-px">
         {project.workspaces.map((workspace: ProjectWorkspace) => {
           const pending = workspace.id === pendingWorkspaceId;
           const selected = workspace.id === activeWorkspaceId;
@@ -631,19 +679,27 @@ export function IdeProjectTree() {
               if (!neighbour) return;
               void moveWorkspace(workspace.id, neighbour.id, event.key === "ArrowUp");
             }}
-            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
-            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin" />
-              : <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDotClass(workspace)}`} />}
+            className={`flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-1 pl-[34px] pr-2 text-left text-[15px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 ${selected || pending ? "text-foreground" : workspace.status === "open" ? "text-foreground/80" : "text-muted-foreground"} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}>
+            {/* Text aligns under the project name, the way Codex indents threads under a folder. */}
             <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
-            <span className="text-[13px] tabular-nums text-muted-foreground/80 transition-opacity group-hover/space:opacity-0 group-focus-within/space:opacity-0 [@media(hover:none)]:opacity-0">{workspace.terminals}</span>
+            {pending ? <Loader2 aria-hidden className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+              : workspace.terminals > 0 && <SessionCount count={workspace.terminals} hover="group/space" />}
             {pending && <span className="sr-only">Switching workspace</span>}
             </button>
             {(() => {
               const spaceMenuOpen = contextMenu?.kind === "workspace" && contextMenu.workspaceId === workspace.id;
+              // The switching spinner sits exactly where this button appears;
+              // the row is still hovered right after the click, so the two
+              // glyphs stacked into one smudge. While switching, the spinner
+              // owns that spot.
+              const reveal = pending && !spaceMenuOpen
+                ? "pointer-events-none opacity-0"
+                : `focus-visible:opacity-100 group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`;
               return <button type="button" aria-label={`Workspace actions for ${workspace.name}`} title="Workspace actions"
                 aria-haspopup="menu" aria-expanded={spaceMenuOpen} data-tree-menu-anchor
+                tabIndex={pending && !spaceMenuOpen ? -1 : undefined}
                 onClick={(event) => toggleAnchoredMenu(event, { kind: "workspace", projectId: project.id, workspaceId: workspace.id })}
-                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover/space:opacity-100 group-focus-within/space:opacity-100 [@media(hover:none)]:opacity-100 ${spaceMenuOpen ? "bg-background/70 text-foreground opacity-100" : "opacity-0"}`}>
+                className={`absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-opacity hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reveal}`}>
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </button>;
             })()}
@@ -658,19 +714,23 @@ export function IdeProjectTree() {
 
   const run = (action: () => void) => () => { setContextMenu(null); action(); };
 
-  /** Up to two installed editors and the hosted remote, as menu items. */
+  /** VS Code, Cursor (greyed when not installed) and the hosted remote, as menu items. */
   const launcherItems = (project: IdeProject, scope: "project" | "workspace"): TreeMenuItem[] => {
     const found = launchers[project.id];
     if (!found) return [];
-    const items: TreeMenuItem[] = found.editors.slice(0, 2).map((editor) => ({
-      id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, testId: `ide-${scope}-menu-editor-${editor.id}`,
-      onSelect: run(() => void openIn(project.id, editor.id)),
-    }));
+    const items: TreeMenuItem[] = found.editors.map((editor) => {
+      const installed = editor.installed !== false;
+      return {
+        id: `editor-${editor.id}`, label: `Open in ${editor.label}`, icon: SquareCode, image: EDITOR_LOGOS[editor.id],
+        testId: `ide-${scope}-menu-editor-${editor.id}`, disabled: !installed, hint: installed ? undefined : "Not installed",
+        onSelect: run(() => void openIn(project.id, editor.id, editor.label)),
+      };
+    });
     if (scope === "project" && found.file_manager) {
       items.push({ id: "reveal", label: FILE_MANAGER_LABEL, icon: FolderOpen, testId: "ide-project-menu-reveal", onSelect: run(() => void revealFolder(project.id)) });
     }
     if (scope === "project" && found.remote_url) {
-      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote")) });
+      items.push({ id: "remote", label: `Open on ${found.remote_label ?? "the web"}`, icon: Globe, testId: "ide-project-menu-remote", onSelect: run(() => void openIn(project.id, "remote", found.remote_label ?? "the web page")) });
     }
     return items;
   };
@@ -845,12 +905,16 @@ const FILE_MANAGER_LABEL = (() => {
   return "Show in file manager";
 })();
 const TREE_MENU_MARGIN = 8;
+/** Each featured editor's own app icon, in its real colours. */
+const EDITOR_LOGOS: Record<string, string> = { code: vscodeLogo, cursor: cursorLogo };
 
 /** One row of the sidebar's action menu. */
 interface TreeMenuItem {
   id: string;
   label: string;
   icon: LucideIcon;
+  /** A brand mark drawn instead of `icon`; greyed out with the item when disabled. */
+  image?: string;
   testId: string;
   onSelect: () => void;
   disabled?: boolean;
@@ -971,7 +1035,10 @@ function TreeContextMenu({
                     : "text-foreground hover:bg-muted focus-visible:bg-muted"
                 }`}
               >
-                <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />
+                {item.image
+                  ? <img src={item.image} alt="" aria-hidden draggable={false} data-testid={`${item.testId}-logo`}
+                      className={`h-4 w-4 shrink-0 object-contain ${item.disabled ? "grayscale" : ""}`} />
+                  : <Icon aria-hidden className={`h-4 w-4 shrink-0 ${item.destructive ? "" : "text-muted-foreground"}`} />}
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{item.label}</span>
                   {item.hint && <span className="truncate text-[11px] text-muted-foreground">{item.hint}</span>}

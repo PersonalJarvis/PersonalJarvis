@@ -293,6 +293,153 @@ export function dragSeam(
   return withWeights(root, seam.path, weights);
 }
 
+/** Every seam of ``root``, without the pane names only the labels need. */
+export function treeSeams(root: LayoutNode): PaneSeam[] {
+  return treeLayout(
+    root,
+    treeLeaves(root).map((key) => ({ key, name: key })),
+  ).seams;
+}
+
+/**
+ * How much of a vertical seam's length, at EACH end, grabs the whole stack.
+ *
+ * A sideways drag means two different things depending on where the seam is
+ * held (asked for 2026-10-02): held near the middle of a pane's height it
+ * moves that one boundary, held near its top or bottom it moves every aligned
+ * boundary of the panes stacked above and below as one line — the way a
+ * horizontal seam already moves a whole row of panes.
+ */
+export const SEAM_END_ZONE = 0.3;
+
+/**
+ * How far apart two stacked seams may be and still count as one line.
+ *
+ * Generous on purpose: rows dragged separately rarely line up to the pixel
+ * (the first live workspace checked sat 9 px apart), and a line that sits
+ * within this much reads as "the same boundary" — the drag straightens it.
+ */
+export const SEAM_LINK_TOLERANCE_PX = 24;
+
+/** Do two seam ends touch? Both come from the same cursor sums. */
+const EDGE_EPSILON = 1e-6;
+
+/** Is ``clientY`` in the top or bottom end zone of a seam drawn at ``rect``? */
+export function grabsSeamEnd(
+  rect: { top: number; height: number },
+  clientY: number,
+): boolean {
+  if (!(rect.height > 0)) return false;
+  const along = (clientY - rect.top) / rect.height;
+  return along < SEAM_END_ZONE || along > 1 - SEAM_END_ZONE;
+}
+
+/**
+ * The grabbed vertical seam plus every seam that continues it straight up or
+ * down: the boundaries of the panes stacked above and below it.
+ *
+ * A seam joins the line when it sits at (nearly) the same x AND touches the
+ * line's current top or bottom end, so a full-width pane in between breaks
+ * the line — the panes past it are not "under each other" any more. The
+ * grabbed seam always comes first. A horizontal seam is returned alone.
+ */
+export function stackedSeams(
+  seams: readonly PaneSeam[],
+  grabbed: PaneSeam,
+  widthPx: number,
+): PaneSeam[] {
+  if (grabbed.orientation !== "vertical" || !(widthPx > 0)) return [grabbed];
+  const tolerance = SEAM_LINK_TOLERANCE_PX / widthPx;
+  const candidates = seams.filter(
+    (seam) =>
+      seam.orientation === "vertical" &&
+      seam.id !== grabbed.id &&
+      Math.abs(seam.x - grabbed.x) <= tolerance,
+  );
+  const line = [grabbed];
+  let top = grabbed.y;
+  let bottom = grabbed.y + grabbed.h;
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const seam of candidates) {
+      if (line.includes(seam)) continue;
+      if (Math.abs(seam.y + seam.h - top) <= EDGE_EPSILON) {
+        top = seam.y;
+      } else if (Math.abs(seam.y - bottom) <= EDGE_EPSILON) {
+        bottom = seam.y + seam.h;
+      } else {
+        continue;
+      }
+      line.push(seam);
+      grew = true;
+    }
+  }
+  return line;
+}
+
+/**
+ * How far ``seam`` may travel, in px from where it is, before a neighbour
+ * drops below `MIN_SEAM_PANE_PX` — or null when `dragSeam` would not move it
+ * by the pointer at all (no room, a vanished container, or two panes already
+ * too small to share anything but an even split).
+ */
+function seamTravel(
+  root: LayoutNode,
+  seam: PaneSeam,
+  axisPx: number,
+): { lo: number; hi: number } | null {
+  const span = axisPx * seam.axisFraction;
+  if (!Number.isFinite(span) || span <= 0) return null;
+  const node = containerAt(root, seam.path);
+  if (!node || seam.boundary < 1 || seam.boundary >= node.children.length) return null;
+  const before = cleanWeight(node.weights[seam.boundary - 1]);
+  const total = before + cleanWeight(node.weights[seam.boundary]);
+  const perPx = seam.groupWeight / span;
+  const min = MIN_SEAM_PANE_PX * perPx;
+  if (total <= min * 2) return null;
+  return {
+    lo: Math.min(0, (min - before) / perPx),
+    hi: Math.max(0, (total - min - before) / perPx),
+  };
+}
+
+/**
+ * Move a whole line of seams (see `stackedSeams`) as one.
+ *
+ * Every seam lands on the LEAD seam's new position, so a line whose members
+ * sat a few pixels apart comes out straight. The position is held to the
+ * range every member can reach, so the line stops as one when its tightest
+ * pane hits the minimum instead of bending there; members that cannot agree
+ * on any range fall back to each clamping on its own.
+ */
+export function dragSeams(
+  root: LayoutNode,
+  seams: readonly PaneSeam[],
+  lead: PaneSeam,
+  deltaPx: number,
+  axisPx: number,
+): LayoutNode {
+  if (seams.length <= 1) return dragSeam(root, lead, deltaPx, axisPx);
+  const at = (seam: PaneSeam) =>
+    (seam.orientation === "vertical" ? seam.x : seam.y) * axisPx;
+  let target = at(lead) + deltaPx;
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const seam of seams) {
+    const travel = seamTravel(root, seam, axisPx);
+    if (!travel) continue;
+    lo = Math.max(lo, at(seam) + travel.lo);
+    hi = Math.min(hi, at(seam) + travel.hi);
+  }
+  if (lo <= hi) target = Math.min(hi, Math.max(lo, target));
+  // The members divide different containers, so each edit leaves the others'
+  // weights exactly as the drag started with them.
+  return seams.reduce(
+    (tree, seam) => dragSeam(tree, seam, target - at(seam), axisPx),
+    root,
+  );
+}
+
 /**
  * How many pane stripes a subtree lines up along ``direction``.
  *

@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { StartupAudioQueue } from "./startupAudio";
 
+it("discards muted audio and resumes retention without releasing it early", () => {
+  const queue = new StartupAudioQueue(16000);
+  const output = new Float32Array(128);
+  queue.prepend(new Float32Array(128).fill(0.5));
+  queue.process(new Float32Array(128).fill(0.2), output);
+  queue.suspend();
+  queue.process(new Float32Array(128).fill(0.8), output);
+  expect(queue.pendingMs).toBe(0);
+  queue.resume();
+  queue.process(new Float32Array(128).fill(0.3), output);
+  expect(output.every(v => v === 0)).toBe(true);
+  queue.start();
+  queue.process(new Float32Array(), output);
+  expect(output.every(v => Math.abs(v - 0.3) < 0.001)).toBe(true);
+});
+
 describe("startup RTP audio", () => {
   it.each([16000, 24000, 44100, 48000])("pays down a two-second backlog despite constant room noise at %s Hz", rate => {
     const queue = new StartupAudioQueue(rate);

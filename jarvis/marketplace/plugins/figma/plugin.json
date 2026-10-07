@@ -16,13 +16,15 @@
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://www.figma.com/oauth",
-        "token_url": "https://www.figma.com/api/oauth/token",
+        "token_url": "https://api.figma.com/v1/oauth/token",
+        "refresh_url": "https://api.figma.com/v1/oauth/refresh",
+        "client_auth_method": "client_secret_basic",
         "client_id": "REPLACE_WITH_JARVIS_FIGMA_CLIENT_ID",
         "callback_port": 3127,
         "callback_path": "/oauth/callback",
         "scopes": [
           "current_user:read",
-          "projects:read",
+          "folders:read",
           "file_content:read",
           "file_comments:read"
         ],
@@ -34,7 +36,7 @@
         "token_creation_url": "https://www.figma.com/settings",
         "token_prefix": "",
         "validation_endpoint": "https://api.figma.com/v1/me",
-        "instruction_md": "Generate a Figma personal access token with current_user:read, projects:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
+        "instruction_md": "Generate a Figma personal access token with current_user:read, folders:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
         "auth_scheme": "figma"
       },
       "mcp_server": {

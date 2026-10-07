@@ -7,6 +7,8 @@ interface SettingsGroupBoundaryProps {
   children: ReactNode;
   /** Group name for the console log — never shown to the user. */
   group: string;
+  /** A row inside a settings card: the error takes the row's place, unframed. */
+  inline?: boolean;
 }
 
 interface SettingsGroupBoundaryState {
@@ -74,16 +76,20 @@ export class SettingsGroupBoundary extends Component<
     }
 
     return (
-      <div className="mt-2 rounded-lg border border-destructive/30 bg-card p-4">
+      <div
+        className={
+          this.props.inline
+            ? "px-4 py-3.5"
+            : "rounded-lg border border-destructive/30 bg-card p-4"
+        }
+      >
         <div className="flex items-start gap-3">
-          <div className="rounded-md bg-secondary p-2 text-destructive">
-            <AlertTriangle className="h-4 w-4" />
-          </div>
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
-            <h4 className="font-display text-sm font-semibold">
+            <h4 className="text-base font-medium text-foreground">
               {translate("view_error_boundary.group_title")}
             </h4>
-            <p className="mt-1 text-xs text-muted-foreground">
+            <p className="mt-0.5 text-sm text-muted-foreground">
               {translate("view_error_boundary.group_hint")}
             </p>
             {this.state.message && (

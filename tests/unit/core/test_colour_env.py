@@ -91,7 +91,7 @@ def test_sanitizing_a_clean_environment_is_a_no_op(
 
 
 def _main_stopped_at_arg_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run ``launcher.main`` up to the first thing that follows the drop.
+    """Run the boot body up to the first thing that follows the drop.
 
     Stopping at ``_parse_args`` is the assertion: everything the app does with
     its environment happens after it, so a drop that still ran is a drop that
@@ -107,7 +107,7 @@ def _main_stopped_at_arg_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(launcher, "_parse_args", _stop)
     with pytest.raises(RuntimeError, match="argument parsing reached"):
-        launcher.main([])
+        launcher._main([])
 
 
 def test_start_up_drops_the_claims_before_anything_else_runs(

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 244" role="img" aria-labelledby="title desc">
+  <title id="title">From request to result</title>
+  <desc id="desc">A user asks Jarvis. Jarvis coordinates the computer, browser, apps, agents, models, and services, then returns a result with run history.</desc>
+  <rect width="1200" height="244" rx="18" fill="#0d1117"/>
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <rect x="24" y="78" width="142" height="88" rx="12" fill="#19212c" stroke="#718096" stroke-width="2"/>
+    <text x="95" y="114" fill="#f7f7f4" font-size="24" font-weight="700">You</text>
+    <text x="95" y="142" fill="#c0c9d3" font-size="16">task</text>
+
+    <path d="M174 122h47" fill="none" stroke="#eac56b" stroke-width="3"/>
+    <path d="m221 122-12-8v16z" fill="#eac56b"/>
+
+    <rect x="231" y="78" width="174" height="88" rx="12" fill="#302a1d" stroke="#eac56b" stroke-width="2"/>
+    <text x="318" y="114" fill="#fff0bf" font-size="24" font-weight="700">Jarvis</text>
+    <text x="318" y="142" fill="#f0dca4" font-size="16">coordinate + act</text>
+
+    <path d="M413 122h45" fill="none" stroke="#eac56b" stroke-width="3"/>
+    <path d="m458 122-12-8v16z" fill="#eac56b"/>
+
+    <rect x="468" y="30" width="509" height="184" rx="12" fill="#151d27" stroke="#718096" stroke-width="2"/>
+    <text x="722" y="65" fill="#f7f7f4" font-size="19" font-weight="700">Your connected workspace</text>
+    <g fill="#222d3a" stroke="#758397" stroke-width="1.5">
+      <rect x="487" y="83" width="145" height="48" rx="8"/>
+      <rect x="650" y="83" width="145" height="48" rx="8"/>
+      <rect x="813" y="83" width="145" height="48" rx="8"/>
+      <rect x="487" y="147" width="145" height="48" rx="8"/>
+      <rect x="650" y="147" width="145" height="48" rx="8"/>
+      <rect x="813" y="147" width="145" height="48" rx="8"/>
+    </g>
+    <g fill="#f7f7f4" font-size="17" font-weight="600">
+      <text x="560" y="113">Computer</text>
+      <text x="722" y="113">Browser</text>
+      <text x="885" y="113">Apps</text>
+      <text x="560" y="177">Agents</text>
+      <text x="722" y="177">Models</text>
+      <text x="885" y="177">Services</text>
+    </g>
+
+    <path d="M985 122h39" fill="none" stroke="#eac56b" stroke-width="3"/>
+    <path d="m1024 122-12-8v16z" fill="#eac56b"/>
+
+    <rect x="1034" y="78" width="142" height="88" rx="12" fill="#19212c" stroke="#718096" stroke-width="2"/>
+    <text x="1105" y="114" fill="#f7f7f4" font-size="23" font-weight="700">Result</text>
+    <text x="1105" y="142" fill="#c0c9d3" font-size="16">+ run history</text>
+  </g>
+</svg>

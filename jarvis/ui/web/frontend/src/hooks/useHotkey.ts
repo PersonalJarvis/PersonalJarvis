@@ -233,6 +233,7 @@ export function codeToModifierToken(
     case "AltLeft":
       return "alt";
     case "AltRight":
+    case "AltGraph":
       return "right_alt";
     case "MetaLeft":
     case "MetaRight":

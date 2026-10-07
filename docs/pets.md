@@ -48,6 +48,11 @@ one click.
   what was asked, the start of the answer (see *Cards*).
 - **The pet "None"** (`pet_id = "none"`) shows the control strip and the
   cards without a figure.
+- **In the Jarvis Verse.** The chosen pet is also Jarvis in the office map:
+  a 3D version of it walks, crawls, hops or flies behind the person's
+  character (`docs/agent-society/office-map.md`, *Jarvis is the person's
+  pet*). A pet the person drew becomes a voxel figure cut from its idle
+  frames.
 
 The pet stays on screen while Jarvis is idle. The global shortcut
 (`[trigger] hotkey_pet_toggle`, default `alt+win+p`) hides it or brings it
@@ -257,6 +262,7 @@ committed PNGs match the script). User-created pets live in
 | `mochi` | Mochi | A jelly blob that wobbles while listening |
 | `shelly` | Shelly | A snail: the shell spins while thinking, it withdraws to sleep |
 | `ember` | Ember | A baby dragon: smoke rings while thinking, a fire breath on success, a sooty cough on errors, naps in its eggshell |
+| `cocoa` | Cocoa | A chocolate Labrador puppy: tilts its head to listen, digs while it works, sniffs along a scent trail while searching, does zoomies on success, droops its ears on errors and naps in its dog bed |
 
 ## Adding a pet
 
@@ -330,7 +336,7 @@ Control-strip actions: `bell` (handled in the surface, reported through
 | `GET /api/pets/{id}/sheet.png` | The sprite sheet |
 | `GET /api/pets/template.png` | The empty sprite-sheet template (48 px cells, rows in state order) |
 | `PUT /api/pets/active` | `{pet_id}` → saves `[ui] pet_id`, applies live |
-| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?}` → saves, applies live |
+| `PUT /api/pets/settings` | `{scale?, bubble?, strip_always?, preview?}` → applies live, then saves; `preview: true` (a size-slider drag step) only applies live, writes nothing and sends no `PetChanged` |
 | `POST /api/pets/visibility` | `{visible}` → runtime only |
 | `POST /api/pets` | multipart: `sheet` (PNG), `name`, `description`, optional `manifest` (JSON), optional `frame_size` → the new pet |
 | `DELETE /api/pets/{id}` | user-created pets only |

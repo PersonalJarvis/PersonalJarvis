@@ -286,13 +286,27 @@ export function useAgentBrowserOpen(agentId: string) {
     staleTime: 2_000,
     refetchInterval: import.meta.env.MODE === "test" ? false : 4_000,
     retry: false,
-    queryFn: async (): Promise<boolean> => {
-      const body = await getJson<{ open?: boolean }>(
+    queryFn: async (): Promise<AgentBrowserOpenStatus> => {
+      const body = await getJson<{
+        open?: boolean; mode?: string; profile_id?: string; profile_name?: string; connected?: boolean;
+      }>(
         "/api/society/agents/" + encodeURIComponent(agentId) + "/browser/open",
       );
-      return Boolean(body?.open);
+      return {
+        open: Boolean(body?.open), mode: body?.mode ?? "own",
+        profileId: body?.profile_id ?? null, profileName: body?.profile_name ?? "",
+        connected: Boolean(body?.connected),
+      };
     },
   });
+}
+
+export interface AgentBrowserOpenStatus {
+  open: boolean;
+  mode: string;
+  profileId: string | null;
+  profileName: string;
+  connected: boolean;
 }
 
 export function useBrowserInstallStatus() {

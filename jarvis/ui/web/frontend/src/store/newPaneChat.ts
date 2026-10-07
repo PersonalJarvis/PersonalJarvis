@@ -184,6 +184,7 @@ export function createNewPaneChatStore(options: NewPaneChatOptions) {
       startable,
       catalog,
       connections: [],
+      catalogStale: false,
       catalogError: null,
       backendOutdated: false,
       liveModels: {},
@@ -264,6 +265,7 @@ export function createNewPaneChatStore(options: NewPaneChatOptions) {
       decide: async () => undefined,
       answerQuestion: async () => undefined,
       skipQuestion: async () => undefined,
+      resolvePlan: async () => undefined,
       ingest: () => undefined,
       disconnect: () => undefined,
     };

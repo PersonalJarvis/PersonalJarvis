@@ -20,7 +20,13 @@ CREATE TABLE IF NOT EXISTS missions (
     -- Computer-Use) is never swept as orphaned. Not an event: must not bloat
     -- the event log or wake the flight-recorder wildcard subscriber.
     -- Existing DBs are upgraded via _apply_migrations() in event_store.py.
-    last_heartbeat_ms INTEGER NOT NULL DEFAULT 0
+    last_heartbeat_ms INTEGER NOT NULL DEFAULT 0,
+    -- Identity of the process that wrote the heartbeat (pid + process start
+    -- time in ms). Recovery sweeps a mission at once when this owner is
+    -- provably dead instead of waiting out the freshness window
+    -- (jarvis/missions/ownership.py). 0 = unknown.
+    owner_pid         INTEGER NOT NULL DEFAULT 0,
+    owner_start_ms    INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_missions_state ON missions(state);

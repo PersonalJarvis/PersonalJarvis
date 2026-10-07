@@ -77,12 +77,16 @@ type PluginStatus = "not_connected" | "connected" | "needs_reauth" | "error";
  *  already know. */
 type Category = string;
 type Longevity = "permanent" | "self_renewing" | "provider_limited";
+/** Mirrors `Acceptance` in jarvis/marketplace/catalog.py: "verified" only
+ *  after a completed end-to-end browser journey, "preview" otherwise. */
+type Acceptance = "verified" | "preview";
 /** Mirrors the backend's REAUTH_* codes (jarvis/marketplace/token_store.py). */
 type ReauthReason =
   | "provider_rejected"
   | "client_rejected"
   | "client_missing"
-  | "rotation_lost";
+  | "rotation_lost"
+  | "refresh_missing";
 
 /** What actually happened, in the user's terms, and what it means for them.
  *
@@ -91,17 +95,18 @@ type ReauthReason =
  *  breaking for no reason" and "my own OAuth app is still in Testing mode".
  */
 const REAUTH_EXPLANATION: Record<ReauthReason, string> = {
-  provider_rejected: "The provider withdrew the authorization",
+  provider_rejected: "The provider no longer accepts this authorization",
   client_rejected: "The provider no longer accepts this app's OAuth client",
   client_missing: "Connected before Jarvis stored the OAuth client",
   rotation_lost: "A renewed token could not be saved, so it was retired",
+  refresh_missing: "The access token expired and cannot be renewed automatically",
 };
 
 /** Whether Jarvis will keep trying on its own, so the card never implies the
  *  user must act when a retry is already scheduled — or stays silent when one
  *  is not. `rotation_lost` is deliberately never retried. */
 function retriesItself(reason: ReauthReason | string | null | undefined): boolean {
-  return reason !== "rotation_lost";
+  return reason !== "rotation_lost" && reason !== "refresh_missing";
 }
 
 /** Coarse age of a flag: "today", "3 days ago". Deliberately not minute-exact —
@@ -128,6 +133,7 @@ interface CatalogPlugin {
   featured?: boolean;
   longevity?: Longevity;
   longevity_note?: string | null;
+  acceptance?: Acceptance;
   oauth_client_family?: string | null;
   oauth_client_configured?: boolean;
   auth: { mode: AuthMode; [key: string]: unknown };
@@ -144,6 +150,7 @@ interface CatalogPlugin {
    *  reasons. Never carries provider error text. */
   reauth_reason?: ReauthReason | string | null;
   reauth_at?: string | null;
+  refresh_expires_at?: string | null;
   /** "seed" for a plugin the app ships, "community" for one installed from
    *  the marketplace. Drives the Marketplace mark and keeps an installed
    *  community plugin in the Installed tab before it is ever connected. */
@@ -188,6 +195,7 @@ function cachePluginStatus(
           status,
           reauth_reason: null,
           reauth_at: null,
+          refresh_expires_at: null,
           ...(status === "not_connected" ? { live_callable: false } : {}),
         };
       });
@@ -236,9 +244,12 @@ export interface Plugin {
   unavailableReason?: string;
   longevity: Longevity;
   longevityNote?: string;
+  /** Undefined only in hand-built fixtures; the catalog always states it. */
+  acceptance?: Acceptance;
   oauthClientFamily?: string;
   reauthReason?: ReauthReason | string;
   reauthAt?: string;
+  refreshExpiresAt?: string;
   oauthClientConfigured: boolean;
   /** Expert token fallback (browser-primary plugins only). */
   fallbackAuth?: PatPasteAuthDetail | null;
@@ -272,9 +283,11 @@ function adapt(p: CatalogPlugin): Plugin {
     unavailableReason: p.unavailable_reason ?? undefined,
     longevity: p.longevity ?? "self_renewing",
     longevityNote: p.longevity_note ?? undefined,
+    acceptance: p.acceptance ?? "preview",
     oauthClientFamily: p.oauth_client_family ?? undefined,
     reauthReason: p.reauth_reason ?? undefined,
     reauthAt: p.reauth_at ?? undefined,
+    refreshExpiresAt: p.refresh_expires_at ?? undefined,
     oauthClientConfigured: p.oauth_client_configured ?? false,
     fallbackAuth:
       p.fallback_auth != null && typeof p.fallback_auth === "object"
@@ -1383,6 +1396,7 @@ function PluginWindowCatalog({
                       <span className="block truncate text-[13px] leading-5 text-muted-foreground" title={plugin.description}>{plugin.description}</span>
                       {plugin.unavailableReason && <span className="block text-xs text-muted-foreground" title={plugin.unavailableReason}>Unsupported on this device</span>}
                       {plugin.status === "needs_reauth" && <span className="block text-xs text-warning"><ReauthExplanation plugin={plugin} inline /></span>}
+                      <GrantExpiry plugin={plugin} />
                     </span>
                   </button>
                   <WindowConnectButton plugin={plugin} onConnect={onConnect} onDisconnect={onDisconnect} />
@@ -1547,6 +1561,7 @@ function PluginTableRow({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-title font-medium">{plugin.name}</span>
+              <PreviewBadge plugin={plugin} />
               {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
               {plugin.selfUploaded && (
                 <span
@@ -1562,6 +1577,7 @@ function PluginTableRow({
                 <ReauthExplanation plugin={plugin} inline />
               </p>
             )}
+            <GrantExpiry plugin={plugin} />
           </div>
         </div>
       </Cell>
@@ -1637,6 +1653,7 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
         title={plugin.name}
         titleAccessory={
           <>
+            <PreviewBadge plugin={plugin} />
             {plugin.fromMarketplace && <MarketplaceBadge publisher={plugin.publisher} />}
             {plugin.selfUploaded && (
               <span
@@ -1714,6 +1731,8 @@ function PluginDetail({ plugin, onConnect, onDisconnect }: { plugin: Plugin } & 
           <ReauthExplanation plugin={plugin} />
         </div>
       ) : null}
+
+      <GrantExpiry plugin={plugin} />
 
       {plugin.description && (
         <ClampedText
@@ -1891,6 +1910,25 @@ export function BrandTile({ plugin, size = "md" }: { plugin: Plugin; size?: "sm"
  *  dies weeks later. `provider_limited` carries a note explaining how often — a
  *  warning without an answer would be worse than none.
  */
+/** "Not yet proven end to end." Built-in plugins only: a marketplace or
+ *  self-uploaded plugin already carries its own not-reviewed badge. Theme
+ *  tokens only, so it reads in light and dark mode. */
+export function PreviewBadge({ plugin }: { plugin: Plugin }) {
+  if (plugin.acceptance !== "preview" || plugin.fromMarketplace || plugin.selfUploaded) {
+    return null;
+  }
+  const title = translate("plugins_view.preview_tooltip");
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      className="shrink-0 rounded-full border border-border px-1.5 text-micro font-medium text-muted-foreground"
+    >
+      {translate("plugins_view.preview_badge")}
+    </span>
+  );
+}
+
 export function LongevityBadge({ plugin }: { plugin: Plugin }) {
   const limited = plugin.longevity === "provider_limited";
   return (
@@ -1918,6 +1956,19 @@ export function LongevityBadge({ plugin }: { plugin: Plugin }) {
  *  carries the actual fix (publish the OAuth app so Google stops expiring the
  *  grant every 7 days) — buried in a tooltip it never reached anyone.
  */
+export function GrantExpiry({ plugin }: { plugin: Plugin }) {
+  const stamp = plugin.refreshExpiresAt;
+  const end = stamp ? Date.parse(stamp) : NaN;
+  if (plugin.status !== "connected" || !Number.isFinite(end)) return null;
+  const expired = end <= Date.now();
+  const date = new Date(end).toLocaleString();
+  return (
+    <span className={cn("block text-xs", expired ? "text-warning" : "text-muted-foreground")}>
+      {fill(translate(expired ? "plugins_view.grant_expired" : "plugins_view.grant_ends"), { date })}
+    </span>
+  );
+}
+
 export function ReauthExplanation({ plugin, inline }: { plugin: Plugin; inline?: boolean }) {
   const reason = plugin.reauthReason;
   const explanation =

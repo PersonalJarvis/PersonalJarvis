@@ -11,7 +11,7 @@ signed installers.
 agent branch ──► pull request ──► CI (lanes) ──► CI gate ──► merge train ──► main
                                                                               │
      release-cut (manual) ──► tag ──► release gate ──► PyPI / installers / signatures
-                                                   └─► GitHub Release ──► in-app updater
+                                                   └─► draft assets ──► finalize ──► updater
 ```
 
 ## 1. CI — `.github/workflows/ci.yml`
@@ -24,25 +24,68 @@ agent branch ──► pull request ──► CI (lanes) ──► CI gate ─�
 | `tests linux 1..6` | The whole suite in six shards. Batches of files run in fresh processes with a wall-clock budget; a failed batch is re-run file by file, a failed file once more (a pass there is reported as flaky). | `scripts/ci/run_tests_parallel.py` |
 | `tests windows` | Four shards on full runs; on a pull request one runner takes only the tests the diff can reach. | `scripts/ci/select_tests.py` |
 | `tests macos 1..3` | Nightly and manual runs only (~10x runner cost). | — |
-| `test report + floor` | Sums all Linux shards, enforces the min-passed floor, lists baselined failures that now pass, and on main refreshes the per-file duration cache that balances the shards. | `scripts/ci/ratchet_tests.py` |
-| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. The `macOS desktop` lane's path gate covers every directory that asks for or acts on a macOS permission (`jarvis/audio/`, `cu/`, `dictation/`, `screen_context/`, `trigger/`, `vision/`, `platform/`), the packaging inputs (`jarvis.spec`, `packaging/macos/`, `jarvis/core/macos_privacy_strings.py`) and `permissions_routes.py` (`scripts/ci/classify_changes.py`); see [`macos-permissions.md`](macos-permissions.md). | — |
-| `CI gate` | Aggregates every job. **The only required check.** Skipped lanes pass; the nightly run is strict and fails on any skip. | `scripts/ci/required_results.py` |
+| `test report + floor` | Proves the six Linux shards cover every discovered file exactly once, enforces the min-passed floor, and on main refreshes the duration cache. Detection freezes one shared duration snapshot for all shards, including partial reruns. | `scripts/ci/ratchet_tests.py` |
+| Lanes | `frontend`, `jarvisctl`, `deps`, `realtime` (3 OS + slim container), `updater` (3 OS: in-app update, native handover, restart helper), `dragdrop`, `browser`, `macOS desktop`, `installer smoke` — each only when its paths change. | — |
+| `release qualification` | Tag CI requires a full run with macOS and the browser-auth E2E evidence gate: a plugin labeled verified needs a completed journey, every completed journey ships as verified, and every other plugin ships labeled preview. The step summary counts both. Ordinary branch/PR/nightly CI skips this release-only job. | `scripts/ci/check_plugin_auth_contract.py --require-e2e-pass` |
+| `CI gate` | Aggregates every job. **The only required check.** A missing or skipped selected lane fails. Unselected lanes may skip; nightly is strict except event-specific jobs. | `scripts/ci/required_results.py` |
+
+The realtime lane runs the subscription authentication, direct reasoning,
+voice transport, session orchestration, native login provisioning and Live catalog contracts on Windows,
+macOS and Linux, including the slim container without system audio. These
+focused tests are strict: they do not use the broad-suite failure baseline.
+Their fake credentials and transports also prove that a selected subscription
+cannot fall through to a retained API-key provider when its account is absent
+or unavailable. They make no paid inference calls. Real-account voice tests
+remain separate acceptance evidence.
 
 ### Known failures: the ratchet
 
 The suite carries a backlog of failures, mostly platform-specific. They are
-listed per OS in `scripts/ci/test-baseline-{linux,windows,macos}.json`. A
+listed per OS in `scripts/ci/test-baseline-<os>.json`. A
 failure in the list is reported and never blocks; any other failure blocks
-the change that introduced it. The list only shrinks: `test report` names the
-entries that pass again. Regenerate a list from a full run with:
+the change that introduced it. Whole-file flaky metadata cannot waive a new
+test failure. The list only shrinks: entries not observed in a report need
+proof that the test passed rather than skipped before removal. Regenerate a
+list from a full run with:
 
 ```bash
 gh run download <run-id> -p 'tests-linux-*' -D reports
 python scripts/ci/ratchet_tests.py update --out scripts/ci/test-baseline-linux.json reports
 ```
 
-A missing list puts that OS in report-only mode until the first full run
-produces one.
+Shrink a list with proof instead of by hand: download the `tests-<os>-*`
+artifacts of several full runs on main, one directory per run, and drop every
+entry that passed (not skipped) in all of them:
+
+```bash
+for id in <run-1> <run-2> <run-3>; do gh run download "$id" -p 'tests-linux-*' -D "runs/$id"; done
+python scripts/ci/ratchet_tests.py prune --baseline scripts/ci/test-baseline-linux.json --os linux runs/*
+```
+
+A missing list means no failures have been approved for that OS; new failures
+block immediately. Missing, empty or malformed reports also block.
+
+### Flaky tests
+
+A file that fails inside its batch and passes when re-run alone is reported
+as flaky. That almost always means test-order dependence, and the ratchet does
+not block on it, so it is tracked instead. `test report + floor` lists flaky
+files and new versus known failures in its step summary on every run. After
+each push, nightly and manual CI run on main, `.github/workflows/flaky-tests.yml`
+does the same for every OS and keeps one issue, "Flaky tests on main", updated
+with a rolling table (test file, OS, number of runs it was flaky in, last seen
+run). Rows age out after 30 days without a sighting. That workflow is the only
+place with `issues: write`; it never runs for pull requests and refuses any CI
+run that is not a finished run of this repository's main branch. Record an
+older run by hand with
+`gh workflow run flaky-tests.yml -f run_id=<ci-run-id>`; a run already
+recorded is never counted twice. Logic and tests: `scripts/ci/flaky_report.py`,
+`tests/unit/ci/test_flaky_report.py`.
+
+Static gates include repository workflow policy (immutable action pins, the
+complete aggregate dependency graph, tag-only PyPI publication and draft-only
+asset producers). CI additionally runs pinned Actionlint for workflow syntax,
+expressions and action inputs.
 
 ### Dispatch-only evidence runs
 
@@ -121,28 +164,148 @@ dirty worktree and never stashes or force-pushes.
 A release happens **only** when the maintainer asks for one.
 
 * **`release-cut.yml`** (manual): refuses unless main is green, bumps
-  `pyproject.toml`, `jarvis/__init__.py` and `uv.lock`, moves the `[Unreleased]` notes (or
+  `pyproject.toml` + `jarvis/__init__.py` + the root package in `uv.lock`, moves the `[Unreleased]` notes (or
   the Conventional Commits since the last tag) into a dated CHANGELOG section
-  (`scripts/ci/cut_release.py`), and commits on a unique candidate branch.
-  It opens a candidate PR, waits for its `pull_request` CI, merges normally,
-  tags the admitted version commit, and dispatches the publishing workflows.
-  GitHub does not count `workflow_dispatch` job checks toward protected-branch
-  requirements ([GitHub documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated)).
-  When repository policy blocks bot-created PRs, the workflow prints the
-  candidate compare link for a maintainer to open; an optional existing
-  `INTEGRATION_TOKEN` follows the merge train's token convention.
-  The optional `resume_sha` input finishes an already merged version commit
-  after an interrupted cut. It requires a full SHA on main, the current version,
-  and successful release admission; it cannot move an existing tag.
+  (`scripts/ci/cut_release.py`), lands the candidate through a CI-checked PR,
+  tags the resulting merge commit, and dispatches full CI with macOS on that
+  immutable tag. Its `cut` job runs in the `release-cut` environment, which
+  only `main` may deploy to and which holds the private key of the release
+  bot GitHub App (secret `RELEASE_APP_PRIVATE_KEY`, variable
+  `RELEASE_APP_ID`). Right before each write (candidate push and PR, merge,
+  tag push) the job mints a fresh installation token with
+  `actions/create-github-app-token`; CI waits use `GITHUB_TOKEN`, because an
+  installation token lasts one hour. Bot pushes fire the normal events: the
+  candidate PR runs CI by itself and the new tag starts the publishers, so no
+  duplicate PyPI publication is dispatched. Without the bot
+  (`RELEASE_APP_ID` unset) the job falls back to `GITHUB_TOKEN`, dispatches
+  the publishers itself, and a maintainer must open the candidate PR, since
+  `GITHUB_TOKEN` may not open pull requests here. Resume support accepts an
+  already merged version commit.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and
-  `CI gate` passed on that exact commit (`scripts/ci/release_admit.py`,
-  waiting while CI still runs).
+  the latest trusted CI workflow run for that tag passed on that exact commit, including
+  `CI gate` and `release qualification` (`scripts/ci/release_admit.py`, waiting
+  while CI still runs). A separate main run cannot replace this tag's evidence.
+  Tag CI is excluded from branch-run cancellation. The checkout, tag and SHA must identify the same commit;
+  failure to fetch main cannot fall back to stale ancestry.
 * The GitHub Release (notes + the resumable `personal-jarvis-src.tar.gz`) is
-  published after the same admission. The in-app updater follows
-  `releases/latest`, so a release reaches managed installs and installer
-  users only after main's CI proved it.
+  staged as a draft. `release_assets.py` waits for all three publishers and
+  verifies each actual publication job in its latest attempt; workflow success
+  with a skipped publication job is insufficient. It
+  verifies required assets and GitHub's stored digests against both checksum
+  manifests, checks the signed payload commit, uploads the source archive and
+  its checksum, and verifies those uploads before publishing. The release-cut
+  `publish` job is the normal finalizer. `release-finalize.yml` shares its
+  per-tag lock but only fires on its own (`workflow_run`) when a person or the
+  release bot started the publishers: publisher runs dispatched with
+  `GITHUB_TOKEN` raise no `workflow_run` event, so without the bot it
+  stays a manual retry path. Finalization can
+  also be retried manually from main with an existing draft tag. Producers
+  never edit release visibility or replace existing asset names. Before an
+  upload, the complete staged set must match any files already present;
+  identical files are reused, conflicting bytes fail before new writes.
+  A same-name upload conflict is accepted only after verifying identical
+  stored bytes. Provenance generation produces a workflow artifact and uses
+  this same uploader, so a publisher retry cannot revert visibility to draft.
+  Re-run failed jobs with their original build artifacts to recover a partial
+  upload; a full rebuild with different bytes requires an explicit decision.
+  The in-app updater follows `releases/latest`; draft releases remain hidden.
+* **Build provenance.** On a tag, `desktop-installers.yml` attests every
+  native installer listed in `installers-SHA256SUMS.txt` (`.exe`, both
+  `.dmg`, `.AppImage`, `.deb`) with `actions/attest-build-provenance` before
+  the upload. Anyone can check a download:
+
+  ```bash
+  gh attestation verify PersonalJarvis-Setup-x64.exe -R PersonalJarvis/PersonalJarvis
+  ```
+
+  Releases up to and including v2.9.0 predate this and have no attestation.
+* **`release-smoke.yml`** (read-only) checks a published release the way a
+  user meets it: the complete asset set and all manifests against GitHub's
+  stored digests, each OS's installers downloaded and matched against
+  `installers-SHA256SUMS.txt` plus their attestation, a container check
+  (`dpkg-deb`, ELF header, `hdiutil verify`; Authenticode and Gatekeeper are
+  reported, not required), and the released `install-verify.sh` /
+  `install-verify.ps1` in dry-run, no-launch mode on Linux, Windows and
+  macOS (`release-wrapper-smoke.yml`, which `installer-smoke.yml` also runs on
+  Linux). Release cut calls it after publishing and requires attestations; a
+  release published with `GITHUB_TOKEN` fires no `release` event. An
+  attestation lookup that keeps getting a server error (HTTP 5xx, retried
+  twice) fails only when attestations are required; otherwise it is a
+  warning, like a missing attestation on an older release. Re-check any
+  tag with `gh workflow run release-smoke.yml -f tag=vX.Y.Z`.
+
+### When a release is bad: roll forward
+
+PyPI versions and published release assets are immutable, so there is no
+"undo". A rollback is a new, higher patch release. What the updater does
+decides the order of steps:
+
+* Every install path follows GitHub's **Latest** release
+  (`releases/latest`): the native installers' updater, the one-line
+  installer's managed checkout, and the website download buttons
+  (`releases/latest/download/<name>`). A running app caches the answer for
+  30 minutes.
+* An update is offered only when Latest is **strictly newer** than the running
+  version (`_is_newer` in `jarvis/ui/web/update_routes.py`). Nothing ever
+  downgrades. A user already on the bad version leaves it only when a newer
+  version is published.
+* A native update downloads the installer from that same release and refuses
+  it unless it matches that release's `installers-SHA256SUMS.txt`
+  (`jarvis/core/installer_update.py`).
+
+Steps:
+
+1. **Confirm.** Reproduce the problem and run
+   `gh workflow run release-smoke.yml -f tag=vX.Y.Z` to see whether the
+   artifacts themselves are broken.
+2. **Stop the spread (optional, minutes).**
+   `gh release edit vX.Y.Z -R PersonalJarvis/PersonalJarvis --prerelease`
+   takes the release out of Latest, so Latest falls back to the previous
+   release. New downloads and apps on older versions stop receiving the bad
+   one (running apps within their 30-minute cache). Users already on it are
+   not downgraded. Check the result with
+   `gh api repos/PersonalJarvis/PersonalJarvis/releases/latest --jq .tag_name`.
+3. **Fix forward.** Land the revert or fix on main through a normal PR, then
+   cut a patch: `gh workflow run release-cut.yml -f bump=patch`. The new
+   version is newer than both the bad and the previous release, becomes
+   Latest, reaches every install path, and is smoke-tested by the cut.
+4. **PyPI (optional).** A maintainer may *yank* the bad version on pypi.org.
+   pip then skips it unless someone pins that exact version. Never delete it:
+   the number can never be reused anyway.
+5. **Leave the evidence.** Do not delete the bad release, its assets or its
+   tag, and never re-tag. Installs pinned with `JARVIS_INSTALL_TAG`, the
+   signed manifests and the attestations all point at them. Add a short note
+   to the release body instead.
+
+**Release approval.** Two GitHub environments guard the irreversible steps:
+`pypi` (the PyPI upload in `release.yml`) and `release-signing` (the `sign`
+job of `sign-installer.yml`, the only job that reads the offline Ed25519 and
+ML-DSA-65 private keys, `WAVE2_OFFLINE_KEY_B64` and `WAVE4_MLDSA65_KEY_B64`).
+Both admit deployments from `v*` tags only, never from a branch, and both
+require the maintainer's approval; administrators cannot bypass it. A
+release therefore pauses twice after tag admission: open the two waiting runs
+("Release to PyPI" and "Sign installer (Sigstore keyless)") in the Actions
+tab, choose **Review deployments**, tick the environment and approve. The
+desktop installers do not wait. Approve within the release-cut publisher's
+150-minute window; a later approval still finishes the release, because
+`release-finalize.yml` runs when the last publisher completes. Rejecting a
+deployment leaves the release a draft.
+
+**Release tags.** The `release tags` repository ruleset protects
+`refs/tags/v*` against update and deletion; only the repository admin role
+may bypass it. Creation stays open because `release-cut.yml` pushes the tag
+with `GITHUB_TOKEN`, and GitHub does not accept the GitHub Actions
+integration as a bypass actor on this repository's rulesets. A stray `v*` tag
+still publishes nothing on its own: release admission and both environment
+approvals stand between it and a published release.
+
+PyPI publishing retains a separate OIDC-only job and can run only after tag
+admission. Manual branch runs build packages without publishing or signing.
+Native macOS signing imports the publisher certificate into a temporary
+keychain and cleans it up even when the build fails. Native OS build and
+signing proof still requires hosted runners; local syntax checks cannot prove it.
 
 ## 4. Adapted from Hermes, and what was left out
 
@@ -157,3 +320,23 @@ A release happens **only** when the maintainer asks for one.
 | Stable release admits a claim before building | `release-gate.yml` |
 | Autofix PRs with a privileged/unprivileged split | not adopted: generated files are regenerated during integration instead |
 | 96-core runners, daily canary tags, Docker/Nix lanes | not adopted: standard runners, releases stay manual, no such artefacts |
+
+## 5. Security scans — `security.yml`, `scorecard.yml`
+
+All free for public repositories, all report into the Security tab beside
+CodeQL's default setup, and none is part of the required `CI gate`:
+
+* **zizmor** audits the workflow files on every pull request and push to
+  main. Accepted exceptions live in `.github/zizmor.yml`, each with its reason;
+  run `zizmor --config .github/zizmor.yml .github/workflows` locally before
+  touching a workflow. Expressions reach a `run:` block through `env:`, never
+  inline, and a checkout keeps its credential only when that job pushes.
+* **dependency-review** fails a pull request that adds a dependency with a
+  known high or critical advisory.
+* **osv-scanner** checks the shipped lockfiles against osv.dev on main and
+  weekly. It reports and never blocks.
+* **OpenSSF Scorecard** publishes a weekly repository security score.
+
+Dependabot covers npm through security updates only. Version updates for the
+frontend stay off for the same reason as pip: a bump also needs a rebuilt
+`dist/` bundle, which Dependabot cannot produce.

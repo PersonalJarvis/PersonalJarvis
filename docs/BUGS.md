@@ -2527,6 +2527,17 @@ unifying both overlays under a SINGLE long-lived Tk root and swapping rendered
 content (canvas / widgets) instead of the root — a larger refactor, never the
 per-style-root approach.
 
+**Update 2026-10-06:** waiting for a restart left the old surface on screen
+(the pet stayed beside a freshly picked bar until the app restarted). A style
+the app has not built yet now starts in its own host process
+(`DesktopApp._build_hosted_surface`, the `jarvis.ui.jarvisbar.host` used on
+macOS since BUG-057), so the switch applies live on every OS without a second
+in-process root; the surface being left is hidden (in-process) or stopped
+(hosted) at once. `restart_required` remains only for a host that fails to
+start. The same change reads "what is on screen" from the app instead of
+`cfg.ui.orb_style`, which the settings route had already overwritten — an idle
+pet switched to the mascot now leaves the screen as it should.
+
 ### Regression test
 
 `tests/unit/ui/test_desktop_swap_overlay.py` pins the contract: `none` +
@@ -15922,3 +15933,155 @@ permission need. The rows to close these are in `docs/macos-permissions.md` sect
 **Related.** BUG-058, BUG-083, BUG-159, BUG-161, BUG-217, BUG-222, BUG-223, BUG-224
 (each carries a "superseded" note), ADR-0038, `docs/os-parity.md`,
 `docs/product/privacy-safety-and-support/permissions.md`.
+
+## BUG-227: "send Jarvis Scout a message" found no agent when speech misheard the name (HIGH, FIXED 2026-10-02)
+
+**Symptom.** On a voice call the user asked Jarvis to message their agent
+Jarvis-Scout. Speech recognition delivered "the Java Scout and Quick Meshes";
+Jarvis answered "I couldn't find agents with those names in the open
+workspaces" and did nothing. The user's own later retelling was transcribed as
+"Jarvis Code" — the same name garbled a third way.
+
+**Cause.** Two gaps. (1) Every agent lookup compared strings exactly:
+`Roster.resolve` (id, case-insensitive name, slug) and the coding-pane
+resolver in `agentic_ide/orchestration.py` (exact or same word set), so any
+misheard spelling was "unknown". (2) The live backend's instructions only
+described `workspace-orchestrate`, so a request naming a Jarvis agent went to
+the coding-pane tool, which knows nothing about the team and answered "nothing
+open matches" — with no pointer to `delegate_to_agent` / `message_agent`.
+
+**Fix.** `jarvis/core/spoken_names.py` resolves a spoken name with
+normalization, aliases, Jaro-Winkler and Cologne phonetics, plus a small
+coding-context bonus, and returns act / ask / none; every resolution is logged
+(`name resolution [surface]: heard=... -> ... score=... method=...`).
+`jarvis/society/agent_names.py` applies it to the roster (exact matches first,
+so ids and REST paths are unchanged; title, role and user aliases stored as
+`agent_aliases:<id>` in `society_meta`). `delegate_to_agent`, `society_status`
+and the message tools use it: a close name returns `needs_clarification` with a
+"did you mean" question, an unknown one lists the available agents and says
+when it names a coding pane instead. `workspace-orchestrate` resolves misheard
+custom pane names the same way (positions stay exact) and, when a name is no
+pane but a Jarvis agent, says so in `jarvis_agent`. Guards:
+`tests/unit/core/test_spoken_names.py`, `tests/unit/society/test_agent_names.py`,
+`tests/unit/plugins/tool/test_delegate_to_agent.py`.
+
+## BUG-228: an appshot photographed only the mascot or the Jarvis bar, not the app window (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** "Take an appshot" during a voice call sometimes sent the model a
+small square of the mascot instead of the window the person was working in.
+The log showed `appshot: active window 288x288 via tool -> turn` right after
+a normal 1280x696 one.
+
+**Cause.** An appshot captures the foreground window. A click on the mascot or
+the bar (to talk, mute or hang up) gives that small topmost `JarvisOrb` Tk
+overlay the Windows focus, so `GetForegroundWindow` returned the overlay and
+the capture targeted its 288x288 rectangle.
+
+**Fix.** `window_state.foreground_app_window()` looks past this process's own
+overlays (tool, non-activating or capture-excluded windows) and walks down
+the Z-order to the first real app window under them — the window the person
+used last. It steps over the taskbar, which sits between the overlays and the
+apps, and returns `None` at the wallpaper so the capture falls back to the
+monitor. The Screen Context window probe reads this instead of the raw
+foreground window. macOS and X11 need no walk: their probes never report the
+floating overlays. Guards: `tests/unit/platform/test_foreground_app_window.py`,
+`tests/unit/screen_context/test_ports.py`.
+
+## BUG-229: a mission killed by an app restart stayed "running" for 37 minutes, then failed without an artifact (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An artifact build (a GitHub-stars history dashboard, mission
+`01a0fcc3`) showed as running, then ended as `crash_recovery` /
+Failed 38 minutes later with no artifact and no partial output.
+
+**Cause.** The desktop app process was ended without a shutdown 85 s after
+the worker started (15:19:40; no crash record, the next launcher started at
+15:19:44). The Claude worker died with it before writing any file. The new
+instance's recovery sweep then judged the mission only by its timestamps: its
+last heartbeat was younger than `RECOVERY_STALE_AFTER_MS` (30 min), so it was
+"presumed owned by a live instance" and skipped on every sweep — although no
+process was running it any more. The re-sweep finally failed it at 15:56:42.
+
+**Fix.** The orchestrator stamps its process identity (pid + process start
+time) next to every mission heartbeat, starting the moment `run_mission`
+begins (`missions.owner_pid` / `owner_start_ms`, migrated in place).
+`startup_recover` asks `jarvis/missions/ownership.py` whether that owner is
+alive: a provably dead owner (or a pid now reused by another process) is
+swept at once with an `error_detail` naming the exited process. An alive or
+unknown owner keeps the old freshness guard, so a second instance still never
+sweeps a mission a live first instance is running. The restart that killed
+the worker is outside this fix. Guard: `tests/missions/test_recovery_owner.py`.
+
+## BUG-230: the mascot and the bar showed up inside appshots and screenshots (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An appshot of the Personal Jarvis window, and a full-screen
+capture, both contained the floating mascot on top of the content, although
+the overlays are meant to stay out of every capture.
+
+**Cause.** The overlays call `exclude_tk_window_from_capture` before their
+first show. Tk creates a toplevel's outer window only when it is first mapped,
+so `GetParent(winfo_id())` was 0, the display affinity landed on the inner
+child window, and the real outer window kept affinity 0 (measured on the live
+`JarvisOrb`: `GetWindowDisplayAffinity` = 0x0).
+
+**Fix.** `jarvis/platform/capture_exclusion.py` no longer targets the inner
+child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
+the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
+real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
+Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+which is the documented intent of the module. Guard:
+`tests/unit/platform/test_capture_exclusion.py`.
+
+## BUG-231: browser voice could not start on a headless host, in any voice mode (HIGH, FIXED 2026-10-05)
+
+**Symptom.** On `jarvis serve` (a VPS, `JARVIS_VOICE=0`) typed chat worked,
+but the documented browser-voice path never opened `/ws/audio`. Every Start
+button answered "Voice is not running on this computer", and in pipeline mode
+a `[browser_voice] enabled = true` table changed nothing (GitHub issue #399).
+
+**Cause.** Three links were missing. (1) `[browser_voice]` was never a
+`JarvisConfig` field, so `load_config` dropped the table; the connect gate,
+inverted to default-off on 2026-07-08 (`0a4d541b4`), therefore kept
+`/ws/audio` closed in pipeline mode for everyone. (2) Every Start button posts
+`/api/voice/call`, which needs the desktop speech pipeline a headless host
+never has; the only browser-side start was the desktop's realtime hand-over
+(`BrowserVoiceRequested`). (3) The visible browser-microphone card that could
+start a call itself left the sidebar on 2026-09-12 (`51b4d4015`). The issue's
+note that Gemini Live lacks browser audio is not the cause: the provider
+declares it; `browser_audio` in `/api/settings/voice-mode` read only an
+explicitly pinned realtime provider (fixed separately as BUG-232).
+
+**Fix.** `BrowserVoiceConfig(enabled=True)` is now `JarvisConfig.browser_voice`;
+`browser_voice_enabled(cfg)` serves the classic bridge in pipeline mode by
+default and realtime mode always. `GET /api/voice/state` reports
+`browser_call` when no speech pipeline and no desktop shell exist. On a 503
+from `/api/voice/call`, `useVoiceCall` reads that flag and lets
+`BrowserRealtimeControl` hold the call in this browser
+(`lib/browserVoiceCall.ts`); the voice-state resync leaves such a call alone.
+Guards: `tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/browser_voice/test_route.py`,
+`tests/unit/ui/test_voice_call_routes.py`, `useVoiceCall.test.tsx`,
+`BrowserRealtimeControl.test.tsx`.
+
+## BUG-232: an unpinned browser-audio engine ran on the desktop's half-duplex path and was reported as "no browser audio" (MEDIUM, FIXED 2026-10-05)
+
+**Symptom.** With no `[brain.realtime].provider` pinned, a Gemini-only install
+showed `active_provider: gemini-live` next to `browser_audio: false` in
+`GET /api/settings/voice-mode` (seen in GitHub issue #399). On the desktop the
+same call ran on the native half-duplex path instead of the browser hand-over
+that a pinned Gemini Live call takes.
+
+**Cause.** `realtime_browser_audio(cfg)` read only the explicitly pinned
+primary. Without a pin, the session builder opens on the first
+credential-ready provider in effective order, so the transport decision and
+the provider the call actually used disagreed for every unpinned install.
+
+**Fix.** Without a pin, `realtime_browser_audio` reads the capability of the
+first credential-ready provider (`_identified_provider_candidates(...,
+limit=1)`: the same order and the same refusal rules as
+`build_realtime_session`); a pinned primary still answers for itself without
+reading credentials. The settings route and both pipeline call sites now read
+it off their loops. Speech-suite tests pick the transport as a keyless host
+does (`tests/unit/speech/conftest.py`), so a developer's real key no longer
+flips desktop-path tests. Guards: `tests/unit/realtime/test_factory.py`,
+`tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/speech/test_realtime_mode.py`.

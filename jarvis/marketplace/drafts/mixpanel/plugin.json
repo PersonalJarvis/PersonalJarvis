@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "mixpanel",
+  "version": "1.0.0",
+  "description": "Product analytics reports, funnels and events",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Mixpanel",
+      "category": "Knowledge & Reading",
+      "logo_slug": "mixpanel",
+      "logo_color": "7856FF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.mixpanel.com/mcp",
+        "discovery_url": "https://mcp.mixpanel.com/.well-known/oauth-protected-resource/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.mixpanel.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_mixpanel_access_token}"
+      },
+      "post_install_hint_md": "Sign in with Mixpanel (US data residency). Projects follow your Mixpanel permissions."
+    }
+  }
+}

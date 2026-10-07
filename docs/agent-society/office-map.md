@@ -68,6 +68,11 @@ target runs WebGL.
 - **South strip:** an open reception/lobby with the elevator, the reception desk
   and the agent board; a walled break room with couches, coffee bar, water
   cooler, arcade and beanbags.
+- **Level Hall (agents floor only):** an east wing one aisle beyond the office,
+  across the floor's whole depth, with doors onto the north aisle, the spawn
+  point's cross aisle (the main door with the sign) and the south aisle. The
+  coding floor keeps the office's footprint without it; both floors share the
+  same west edge, so the elevator stands at the same spot on each.
 - **Furniture** has fixed footprints (`FURNITURE_SIZE`) shared by renderer and
   navigation; **spots** are hangout places with pose and facing; **checkpoints**
   are action places; **obstacles** are every solid footprint.
@@ -115,7 +120,20 @@ target runs WebGL.
   The agent creator still shows the older rigged figures; switching it to the
   toy style is the rollout step after the maintainer approves this look.
 - **Pets**: each agent's symbol (the profile companion) follows it at about a
-  fifth of its height, reusing `AgentFollower`; the lead gets Gigi.
+  fifth of its height, reusing `AgentFollower`; the lead is drawn as the
+  person's own pet (see *Jarvis is the person's pet* below).
+- **Accessories** (`companion/accessories.ts`): a symbol can wear one item per
+  slot, chosen in the agent profile's Appearance tab or the companion editor
+  and stored as `companion.accessories` in the avatar JSON. The set is ten
+  finished pieces (suit, tuxedo, lab coat, coder hoodie, crown, top hat, cap,
+  headphones, sunglasses, cigar); clothing starts just below the eyes with
+  sloped shoulders so the face stays free, and the hoodie's hood frames the head.
+  `scripts/art/companion_accessories.py` writes one catalog of 3D primitives
+  (`accessories.json`); the flat symbol draws their front projection and
+  `scripts/art/build_companion_accessories.py` (background Blender) builds the
+  same parts into `assets/society/companions/accessories.glb`, so the profile
+  picture and the map companion always match. Clothing is clipped to each
+  silhouette; unknown ids from a newer build are skipped, never rejected.
 - **Live monitors** (`LiveMonitors.tsx`, `useDeskChats.ts`, `deskChat.ts`): an
   agent seated at its own desk shows the tail of its chat (user lines, replies,
   running tools) on its monitor, refreshed by jittered polling of the existing
@@ -132,9 +150,9 @@ A second floor for the coding agents that run in the Agentic IDE's terminal
 panes. It shares the office's engine, style and controls; only the people and
 the floor plan differ.
 
-- **Elevator**: the reception elevator is a checkpoint on both floors. Its
-  panel offers "Up to the coding floor" in the agents office and "Down to the
-  agents office" on the coding floor. The ride is a short door-like fade, and
+- **Elevator**: the reception elevator is a checkpoint on every floor. Its
+  call button opens the floor picker (see §5e; before the arcade floor it
+  simply went up or down). The ride is a short door-like fade, and
   the person steps out at the elevator of the other floor. The floor survives
   a remount of the stage.
 - **Floor plan** (`buildOfficeLayout(agents, { variant: "coding" })`): one
@@ -148,10 +166,30 @@ the floor plan differ.
   terminal and fittings in each floor's own materials (oak, bronze and a mint
   glow with the brass ghost downstairs; walnut, brass and amber with a brass
   `>_` upstairs); two gyroscope rings turn round the floor token.
-- **Gigi follows**: on the coding floor Jarvis (Gigi) flies in "follow" mode,
-  hovering beside and behind the person's head with a smoothed lag and never
-  inside a wall, including in the elevator. In the agents office Gigi keeps
-  its lead-office behaviour.
+- **Jarvis follows**: on the coding floor Jarvis flies (or walks) in "follow"
+  mode beside and behind the person with a smoothed lag and never inside a
+  wall, including in the elevator. In the agents office it keeps its
+  lead-office behaviour.
+- **Jarvis is the person's pet** (2026-10-02): Jarvis appears as the pet
+  chosen in Settings → My Pets (`docs/pets.md`), in 3D, not always as Gigi.
+  `companion/petCompanions.ts` maps a pet to its companion:
+  Gigi keeps its hover model; the seven other built-ins have authored Blender
+  models (`scripts/art/build_pet_companions.py`, study
+  `art/studies/jarvis-pet-companions`, one GLB per pet under
+  `assets/society/companions/pets/`) and a gait of their own: Ember the
+  dragon flies with beating wings, Miso the cat trots, Cocoa the puppy trots
+  with flopping ears and a wagging tail, Bolt the battery
+  waddles, Brew the teapot hops with a rattling lid, Mochi bounces and Shelly
+  the snail crawls. Pets that fly hover at head height with Gigi's halo and
+  sparkles; pets on the floor (`gigiFlight.ts` `ground` mode) walk right
+  behind the person's feet, take floor routes (`findPath`) on errands instead
+  of flying over desks, and carry their nameplate low. Limbs move by
+  `companion/petRig.ts`, phased by ground covered so feet do not slide;
+  reduced motion stops every gait. A pet the person drew becomes a voxel
+  figure extruded from its own idle frames (`voxelPet.ts`), facing the camera
+  and floating low. The stage feeds the choice through
+  `companion/companionPetStore.ts`, so a change in My Pets swaps the
+  companion live.
 - **Pane to character** (`codingFloor.ts`): every running coding-agent pane
   (Claude Code, Codex and the other agent CLIs; not plain shells, not archived
   panes) is one character. Its id is `pane:<workspace>:<history id or key>`,
@@ -241,6 +279,82 @@ navigation work as before. Still in the earlier style and waiting on the
 maintainer's review of this reference before they follow: the lead suite, the
 reception desk, the team room table and chairs, the lockers and
 mirror, the coffee bar, the water cooler and the arcade.
+
+## 5e. Arcade floor (2026-10-02)
+
+A third floor on top of the building: a retro arcade hall with ten playable
+cabinets. No agents work here; it is a place for the person (and their pet,
+which follows like on the coding floor).
+
+- **Elevator**: pressing the call button (click, or E at the doors) opens a
+  floor picker (`ElevatorPanel.tsx`) that lists all three floors top first;
+  a click, Enter on the focused floor or the floor's number key (0 agents,
+  1 coding, 2 arcade) rides there, Escape closes it. The call button shows
+  up, down or both arrows depending on the floor (`callDirection`).
+- **Floor plan** (`arcade/arcadeFloorLayout.ts`, `buildArcadeLayout()`),
+  reworked 2026-10-02 after the maintainer found the first open hall
+  confusing: it now reads like the floors below. North strip: three walled
+  game rooms (Classics: Pixel Raiders, Maze Muncher, City Defense, Paddle
+  Duel; Puzzle corner: Block Drop, Neon Snake, Brick Breaker; Action zone:
+  Asteroid Run, Desert Dash, Road Hopper), cabinets on each back wall facing
+  the door. Middle: the open hall (pinballs, air hockey, dance floor, floor
+  logo). South strip: the foyer with the elevator and token machines, the
+  prize shop (counter, claw machines) and the snack bar. The doors of north
+  and south rooms face each other on three lanes that stay clear. Cabinets
+  are furniture of kind `retroCabinet` with the id `cabinet-<gameId>`; the
+  person plays standing 0.85 m in front of one (`OfficePlayer`
+  nearest-interactable, E opens it). Tests prove every play spot, counter
+  and room is reachable from the elevator and that the lanes stay free.
+- **Look** (`arcade/ArcadeHall.tsx`, `ArcadeHallProps.tsx`,
+  `arcadeHallLook.ts`, `arcadeScreens.ts`): smoked-glass walls with a neon
+  cap in each room's colour (never hidden or popping away at any camera
+  angle; frames, glass and neon are three merged meshes), a lit name board
+  over every door, each room's own floor and neon floor logo, a calm
+  blacklight carpet in the hall. One shadow light plus hemisphere and
+  ambient; neon is self-lit. Cabinets show two-frame attract screens
+  flipped by a texture offset. The first version's live title-screen
+  preview froze the frame for 0.2-0.6 s whenever the person walked up to a
+  cabinet and was removed; frames at a cabinet now take 2-11 ms in a dev
+  build (measured with `window.__officeGl.info` and timed `__officeStep`).
+- **Games** (`arcade/games/*.ts`, contract in `arcade/retroGame.ts`, registry
+  in `arcade/arcadeGames.ts`): Neon Snake, Brick Breaker, Paddle Duel, Block
+  Drop, Maze Muncher, Desert Dash, Pixel Raiders, Road Hopper and City
+  Defense are original Canvas 2D games (pure state + fixed 60 Hz step, no
+  assets, no ROMs), code-split and loaded on first play. Asteroid Run, the
+  break room's 3D game, has a cabinet here too.
+- **Cabinet overlay** (`arcade/RetroArcadeOverlay.tsx`): a modal at the
+  cabinet with marquee, crisp integer scaling, start / pause (P, blur) /
+  game over, best score per game in localStorage, keyboard, gamepad, mouse
+  where a game aims with it, and a touch pad on coarse pointers. Escape or E
+  leaves.
+
+## 5f. Levels (2026-10-03, ranks 2026-10-05)
+
+The person, their pet and every agent level up from real work: finished
+Jarvis turns, agent results, quests, missions, new agents, plus small metered
+actions in the Verse (daily visit, floors, the office dog, arcade rounds, team
+meetings, walks with the pet). Levels climb a military rank ladder from
+private to a five-star general. A level card sits under the floor title,
+every name plate wears a rank chip, `L` opens the Level Hall screen, and a
+promotion plays a gold ring and a rising insignia plate in the world plus the
+promotion card on screen. Figures wear their insignia on the sleeves or
+shoulder boards, and the person their unlocked uniform, cap and decorations.
+The whole contract lives in [level-system.md](level-system.md).
+
+The Level Hall is the levels' own room on the agents floor, dressed as a hall
+of honour: cream and charcoal marble underfoot, walnut and brass, a red
+runner up the middle. The rank wall in the north holds all 24 insignia in a
+walnut-framed velvet shadow box (held ranks struck in metal, the current one
+framed in brass, the ones ahead as pewter silhouettes) above a brass plaque
+with the person's rank, level, XP and next promotion; the studio dais stands
+in front of it. Display cases line the runner, one per uniform piece (lowest
+unlock in the south): a mannequin in the uniform with the person's own
+insignia, a cap on a velvet head form, or the decoration on a slanted velvet
+board — the same geometry the figures wear. Unlocked cases are lit, locked
+ones stay dim behind smoked glass; a brass plaque names the piece and its
+rank, and a click opens it on the promotion road. The framed service guide
+stands at the runner's start. Its two checkpoints, the dais (`studio`) and the
+guide (`levels`), open the Level Hall screen (level-system.md §6).
 
 ## 6. Plan
 

@@ -1302,6 +1302,27 @@ async def update_apply(request: Request, force: bool = False) -> dict[str, objec
             raise
 
 
+async def managed_checkout_root() -> Path | None:
+    """The managed checkout this process runs from, or ``None``.
+
+    The public face of the managed-install guard for ``jarvis update``
+    (``jarvis/cli/app_update.py``), which finalizes the update itself.
+    """
+    return await _resolve_managed_repo()
+
+
+async def stage_managed_update() -> dict[str, object]:
+    """Stage the newest release for a managed checkout from the terminal.
+
+    The twin of ``POST /api/update/apply`` for ``jarvis update`` while the app
+    is closed: same guard, same pinned tag, same pending-update manifest. The
+    caller then runs ``relauncher.finalize_pending_update`` instead of a
+    restart. Raises ``HTTPException`` exactly like the route does.
+    """
+    async with _apply_lock:
+        return await _apply_managed()
+
+
 async def _apply_managed() -> dict[str, object]:
     """Stage the latest published tag for a managed checkout. Does NOT restart.
 

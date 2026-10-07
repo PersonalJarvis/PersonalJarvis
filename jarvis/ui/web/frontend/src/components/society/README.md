@@ -1,7 +1,12 @@
-# components/society — Agent Society frontend (scaffold)
+# components/society — Agent Society frontend
 
-Not built yet. Reserved home for the society surfaces planned in
-`docs/agent-society/MASTERPLAN.md` (§4, §9):
+The Jarvis Agents section. Agents v2 (MASTERPLAN §2.10): one click creates an
+agent (`data.ts` `useQuickCreateAgent`) and opens its one endless chat
+(`chat/AgentChatPanel.tsx`); delegations, waiting messages and routine runs
+render as folded cards there (`chat/ChatActivity.tsx`), and an agent's
+self-chosen identity offers Undo (`IdentityNotice`).
+
+Folders, as planned in `docs/agent-society/MASTERPLAN.md` (§4, §9):
 
 - `world/` — the isometric retro pixel open-island world (three + @react-three/fiber v8 + drei,
   orthographic dimetric camera, ~320×180 nearest-filtered render target / `RenderPixelatedPass`),

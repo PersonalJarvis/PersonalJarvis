@@ -215,7 +215,7 @@ pages:
     summary: See the difference between conversation history and a detailed run trace, then use both to understand an answer.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/SessionsView.tsx
-      - jarvis/ui/web/frontend/src/views/RunInspectorView.tsx
+      - jarvis/ui/web/frontend/src/components/agentchat/WorkTrace.tsx
       - jarvis/ui/web/sessions_routes.py
       - jarvis/ui/web/diagnostics_routes.py
       - jarvis/sessions/recorder.py
@@ -405,7 +405,7 @@ pages:
     diataxis: howto
     summary: Shape how Jarvis responds without changing providers, memories, or safety rules.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AgentInstructionsView.tsx
+      - jarvis/ui/web/frontend/src/views/AssistantProfileView.tsx
       - jarvis/brain/agent_instructions.py
       - jarvis/brain/persona_loader.py
       - jarvis/brain/JARVIS_PERSONA.md

@@ -18,9 +18,10 @@ vi.mock("@/components/MascotGigi", () => ({
 }));
 
 // The three data hooks resolve to safe, loaded defaults.
+const overlayState = vi.hoisted(() => ({ style: "jarvis_bar" }));
 vi.mock("@/hooks/useOverlayStyle", () => ({
   useOverlayStyle: () => ({
-    config: { style: "jarvis_bar", options: ["jarvis_bar", "mascot", "none"] },
+    config: { style: overlayState.style, options: ["jarvis_bar", "mascot", "none"] },
     loading: false,
     error: null,
     saveStyle: vi.fn(),
@@ -50,16 +51,32 @@ import { NonePreview } from "@/components/overlay/OverlayStylePreviews";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  overlayState.style = "jarvis_bar";
 });
 
 describe("OverlayTaskbarGroup", () => {
-  it("renders the group heading and both sub-headings", () => {
+  it("shows the bar with the voice indicator as the default preview", () => {
+    render(<OverlayTaskbarGroup />);
+    expect(screen.getByTestId("jarvis-bar-preview")).toBeDefined();
+    const bar = screen.getByTestId("jarvis-bar-preview");
+    expect(bar.querySelector('[data-testid="pet-strip-indicator"]')?.children).toHaveLength(3);
+    expect(screen.getByTestId("pet-strip-call")).toBeDefined();
+  });
+
+  it("does not offer bar-only controls for another display style", () => {
+    overlayState.style = "mascot";
+    render(<OverlayTaskbarGroup />);
+    expect(screen.queryByText("taskbar_view.bar_persistent.title")).toBeNull();
+    expect(screen.queryByText("taskbar_view.follow_cursor.title")).toBeNull();
+    expect(screen.queryByText("settings_view.bar_size.title")).toBeNull();
+    expect(screen.getByText("taskbar_view.mute_music.title")).toBeDefined();
+  });
+  it("renders the group heading over the style and behaviour cards", () => {
     render(<OverlayTaskbarGroup />);
     expect(
       screen.getByText("settings_view.overlay_taskbar_group_title"),
     ).toBeDefined();
-    expect(screen.getByText("taskbar_view.appearance_title")).toBeDefined();
-    expect(screen.getByText("taskbar_view.behavior_title")).toBeDefined();
+    expect(screen.getByText("settings_view.overlay_style.title")).toBeDefined();
   });
 
   it("renders the overlay-style panel and all four behavior toggles", () => {

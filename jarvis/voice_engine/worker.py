@@ -219,7 +219,11 @@ class Worker:
         return True
 
     async def _configure(self, message: dict[str, Any]) -> None:
-        from jarvis.voice_engine.runtime import RuntimeConfig, build_models  # noqa: PLC0415
+        from jarvis.voice_engine.runtime import (  # noqa: PLC0415
+            RuntimeConfig,
+            build_models,
+            selftest,
+        )
 
         loop = asyncio.get_running_loop()
         config = RuntimeConfig.from_message(message)
@@ -230,6 +234,15 @@ class Worker:
         self._state("loading", "start", 0.0)
         try:
             models, described = await asyncio.to_thread(build_models, config, progress)
+            self._state("loading", "selftest", 0.95)
+            report = await asyncio.to_thread(selftest, models, config.languages)
+            described["selftest"] = report
+            if not report.get("ok"):
+                log.warning("voice engine readiness self-test failed: %s", report)
+                self._state("failed", reason="The local voice loaded but its speech "
+                            "self-test failed. Run setup again on the Local voice card.",
+                            detail=described)
+                return
         except Exception as exc:
             log.exception("loading the voice engine failed")
             self._state("failed", reason=f"The local voice could not load: {exc}")

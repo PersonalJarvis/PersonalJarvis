@@ -78,7 +78,12 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_WITHHELD,
 )
 from jarvis.speech.echo_guard import SelfEchoGuard
-from jarvis.speech.hangup import END_CALL_SIGNAL, HANGUP_RE
+from jarvis.speech.hangup import (
+    END_CALL_SIGNAL,
+    HangupConfirmation,
+    hangup_cancelled_reply,
+    hangup_confirmation_question,
+)
 from jarvis.speech.interrupt_intent import (
     INTERRUPT_NONE,
     INTERRUPT_STOP,
@@ -215,9 +220,6 @@ _TOOL_TRANSCRIPT_WAIT_S = 3.0
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
 _END_CALL_GRACE_S = 10.0
-# Gemini emits is_final per transcript CHUNK, so hang-up matching runs on a
-# per-turn accumulator; the tail-trim bounds it without losing recent words.
-_HANGUP_BUFFER_MAX_CHARS = 300
 # Ceiling on how far ahead of wall-clock the echo guard's activity stamp may
 # be dated (estimated playback drain, BUG-089). Bounds a runaway estimate
 # from a mis-reported sample rate; real replies stay far below it.
@@ -233,8 +235,9 @@ _OUTAGE_NOTICE_COOLDOWN_S = 30.0
 _END_CALL_DECLARATION: dict[str, Any] = {
     "name": "end_call",
     "description": (
-        "End the voice call. Call ONLY when the user explicitly says goodbye "
-        "or clearly asks to end the conversation."
+        "Request to end the voice call only when the user clearly asks to leave. "
+        "Jarvis asks for confirmation first and ends only after a separate yes. "
+        "Never end a call because a task finished, the user paused, or approved an action."
     ),
     "parameters": {"type": "object", "properties": {}},
 }
@@ -2203,9 +2206,26 @@ def _learned_block(*, compact: bool = False) -> str:
         return ""
 
 
+def _identity_block(config: Any, *, compact: bool = False) -> str:
+    """Name directive and SOUL.md character (``jarvis.brain.identity``).
+
+    Without it a live call answered "I'm Personal Jarvis" instead of the
+    wake-word name (2026-10-02). Cached on SOUL.md's mtime, so it costs one
+    ``stat`` at most; degrades to ``""`` so it never blocks the handshake.
+    """
+    try:
+        from jarvis.brain.identity import identity_block
+
+        return identity_block(config, compact=compact)
+    except Exception:  # noqa: BLE001 — never break the voice session on an identity fault
+        log.warning("realtime: identity block unavailable", exc_info=True)
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
+    identity: str = "",
     input_language: str = "auto",
     provider: str = "",
     model: str = "",
@@ -2356,6 +2376,7 @@ def _session_instructions(
         # re-reading it; only the tail (workspace roster, skill, clock,
         # language) changes between per-turn session updates.
         parts = [
+            identity,
             persona,
             preferences,
             learned,
@@ -2377,6 +2398,8 @@ def _session_instructions(
         ]
         return "\n\n".join(part for part in parts if part)
     parts = [
+        # Who the assistant is (wake-word name + SOUL.md) frames everything.
+        identity,
         persona,
         # The user's own standing instructions come right after the persona and
         # before every operational directive: they refine who the assistant is
@@ -2929,7 +2952,8 @@ class RealtimeVoiceSession:
         self._stale_generation_transcript: list[str] = []
         self._stale_generations_dropped = 0
         self._hangup_reason = ""
-        self._turn_final_text = ""
+        self._hangup_confirmation = HangupConfirmation()
+        self._hangup_control_turn = ""
         self._end_after_turn = False
         self._end_call_timer: asyncio.Task[None] | None = None
         self._scrub_cancelled_for_turn = False
@@ -3634,6 +3658,9 @@ class RealtimeVoiceSession:
             )
             ready = {
                 "type": "audio_ready",
+                "sound_effects": bool(
+                    getattr(getattr(self._config, "ui", None), "sound_effects", True)
+                ),
                 "provider": self.active_provider,
                 "model": self._active_model,
                 # The call's output language, from the ONE resolver
@@ -3845,6 +3872,12 @@ class RealtimeVoiceSession:
             session_config = RealtimeSessionConfig(
                 instructions=_session_instructions(
                     self._language,
+                    identity=_identity_block(
+                        self._config,
+                        compact=bool(
+                            getattr(provider, "prefers_compact_instructions", False)
+                        ),
+                    ),
                     input_language=self._input_language,
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
@@ -4273,7 +4306,10 @@ class RealtimeVoiceSession:
         from jarvis.voice.echo_confirmation import classify_response
 
         bridge = self._tool_bridge
-        if bridge is None or not bridge.has_pending_confirmation:
+        if not (
+            self._hangup_confirmation.pending_turn is not None
+            or (bridge is not None and bridge.has_pending_confirmation)
+        ):
             return False
         stamp = self._last_voiced_input_monotonic
         now = time.monotonic()
@@ -5240,6 +5276,11 @@ class RealtimeVoiceSession:
                                     transcript,
                                 )
                             ).strip()
+                    if transcript and event.is_final:
+                        if await self._handle_voice_hangup_input():
+                            if self._hangup_reason:
+                                break
+                            continue
                     if event.is_final and input_observed:
                         # BARGE-IN DURING AN ACTION. Everything below this
                         # point routes the utterance as a REQUEST; a request
@@ -5445,6 +5486,12 @@ class RealtimeVoiceSession:
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
+                                identity=_identity_block(
+                                    self._config,
+                                    compact=getattr(
+                                        self, "_compact_instructions", False
+                                    ),
+                                ),
                                 input_language=self._input_language,
                                 provider=self.active_provider,
                                 model=self._active_model,
@@ -5582,22 +5629,6 @@ class RealtimeVoiceSession:
                             message,
                             recoverable=True,
                         )
-                    if transcript and event.is_final:
-                        # Per-turn accumulator: Gemini emits is_final per
-                        # transcript chunk, so "auflegen" may arrive split
-                        # across finals. The space-join reconstructs the
-                        # spoken sequence; turn_complete resets the buffer so
-                        # words never match across turn boundaries.
-                        self._turn_final_text = (
-                            f"{self._turn_final_text} {transcript}".strip()
-                        )[-_HANGUP_BUFFER_MAX_CHARS:]
-                        if HANGUP_RE.search(self._turn_final_text):
-                            log.info(
-                                "realtime[%s] voice hang-up phrase matched",
-                                self.session_id,
-                            )
-                            await self._finish_with_hangup()
-                            break
                     if event.is_final and input_observed and self._pending_tool_events:
                         self._cancel_tool_transcript_wait()
                         pending = self._pending_tool_events
@@ -6197,6 +6228,8 @@ class RealtimeVoiceSession:
                         # a tool bridge and must not be held back by the
                         # missing-transcript guard below.
                         await self._handle_end_call(event)
+                    elif self._hangup_control_turn and self._hangup_control_turn == self._turn_id:
+                        await self._reject_stale_generation_tool_call(event)
                     elif not self._last_user_text:
                         # Providers may emit a speculative tool call before the
                         # input transcript carried by the same response. Buffer
@@ -7340,6 +7373,10 @@ class RealtimeVoiceSession:
             await self._session.update_session(
                 instructions=_session_instructions(
                     self._language,
+                    identity=_identity_block(
+                        self._config,
+                        compact=getattr(self, "_compact_instructions", False),
+                    ),
                     input_language=self._input_language,
                     provider=self.active_provider,
                     model=self._active_model,
@@ -9713,7 +9750,6 @@ class RealtimeVoiceSession:
                 await self._handle_local_output_failure(exc)
             await self._publish_turn_completed()
         self._reset_output_state(reason="surface turn boundary")
-        self._turn_final_text = ""
         self._schedule_late_delegate_flush()
 
     def _remember_delegate_turn(self, user_text: str, assistant_text: str) -> None:
@@ -9796,7 +9832,6 @@ class RealtimeVoiceSession:
         self._executed_tool_names.clear()
         self._direct_tool_results.clear()
         self._output_language_blocked_reply = ""
-        self._turn_final_text = ""
         self._surface_spoke_this_turn = False
         self._delegate_required_for_turn = False
         self._handoff_action_seen_for_turn = False
@@ -11641,54 +11676,59 @@ class RealtimeVoiceSession:
             detail=f"tool={original_name};success={success};late=True;duration_ms={elapsed_ms}",
         )
 
-    async def _handle_end_call(self, event: Any) -> None:
-        from jarvis.speech.hangup import user_asked_to_hang_up
-
-        if not user_asked_to_hang_up(self._last_user_text):
-            # A model tool call alone never ends the call (live 2026-10-01:
-            # "Ja" to an approval became end_call). An explicit command that
-            # arrives after a speculative call still ends it via HANGUP_RE.
-            log.info(
-                "realtime[%s] end_call refused: the user's turn holds no hang-up request",
-                self.session_id,
+    async def _handle_voice_hangup_input(self) -> bool:
+        """Own voice termination before this utterance can authorize other tools."""
+        decision = self._hangup_confirmation.observe(self._last_user_text, self._turn_id)
+        if not decision:
+            return False
+        self._hangup_control_turn = self._turn_id
+        self._cancel_tool_transcript_wait()
+        pending, self._pending_tool_events = self._pending_tool_events, []
+        for pending_event in pending:
+            await self._reject_stale_generation_tool_call(pending_event)
+        self._response_requested_for_turn = True
+        self._drop_provider_output_until_user_turn = True
+        await self._publish_transcription(self._last_user_text, True)
+        await self._send_json({
+            "type": "transcript", "role": "user",
+            "text": self._last_user_text, "is_final": True,
+        })
+        if decision == "confirmed":
+            await self._finish_with_hangup()
+        elif decision in {"request", "cancelled"}:
+            question = (
+                hangup_confirmation_question(self._language) if decision == "request"
+                else hangup_cancelled_reply(self._language)
             )
-            if self._session is not None and self._session_takes_tool_results():
-                try:
-                    await self._session.send_tool_result(
-                        str(getattr(event, "call_id", "") or ""),
-                        "end_call",
-                        {
-                            "success": False,
-                            "error": "The user did not ask to hang up. Stay on the call.",
-                        },
-                    )
-                except Exception:  # noqa: BLE001 — the call simply stays open
-                    log.warning(
-                        "realtime[%s] end_call refusal could not be sent",
-                        self.session_id,
-                        exc_info=True,
-                    )
-            return
+            self._output_transcript.append(question)
+            await self._send_json(self._surface_speech_message(question))
+            if decision == "request":
+                self._hangup_confirmation.arm(self._turn_id)
+        return True
+
+    async def _handle_end_call(self, event: Any) -> None:
+        # The model cannot supply confirmation on the user's behalf. Only a
+        # later input transcript answering our own question closes the call.
         if self._session is not None and self._session_takes_tool_results():
             try:
                 await self._session.send_tool_result(
                     str(getattr(event, "call_id", "") or ""),
                     "end_call",
-                    {"success": True},
+                    {
+                        "success": False,
+                        "confirmation_required": True,
+                        "error": (
+                            "Stay on the call. Jarvis handles the hang-up question "
+                            "and requires a separate explicit yes from the user. "
+                            "Do not say goodbye or treat task approval as hang-up approval."
+                        ),
+                    },
                 )
-            except Exception:  # noqa: BLE001 — still hang up on a dead wire
+            except Exception:  # noqa: BLE001 - a dead wire never authorizes hang-up
                 log.warning(
-                    "realtime[%s] end_call acknowledgement could not be sent; "
-                    "hanging up anyway",
-                    self.session_id,
-                    exc_info=True,
+                    "realtime[%s] end_call refusal could not be sent",
+                    self.session_id, exc_info=True,
                 )
-        self._end_after_turn = True
-        if self._end_call_timer is None or self._end_call_timer.done():
-            self._end_call_timer = asyncio.create_task(
-                self._finish_hangup_after_grace(),
-                name=f"rt-end-call-{self.session_id}",
-            )
 
     def _start_deterministic_delegate(
         self,
@@ -13808,7 +13848,7 @@ class RealtimeVoiceSession:
 
     @property
     def hangup_reason(self) -> str:
-        """Non-empty once the user ended the call by voice (regex or end_call)."""
+        """Non-empty once the user confirmed ending the call by voice."""
         return self._hangup_reason
 
     @property

@@ -1,22 +1,26 @@
 /* Floors, the elevator ride and the compact (IDE side panel) HUD. Theme tokens only: light and dark mode both work. */
 
-/* The elevator: two doors slide shut over the scene, the floor switches behind them, they slide open. */
-.office-elevator { position:absolute; inset:0; z-index:62; pointer-events:none; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-.office-elevator-door { position:absolute; top:0; bottom:0; width:50%; background:linear-gradient(90deg, hsl(var(--secondary)), hsl(var(--muted))); box-shadow:inset 0 0 0 1px hsl(var(--border)); transition:transform 480ms cubic-bezier(.6,0,.3,1); }
-.office-elevator-door[data-side="left"] { left:0; transform:translateX(-100%); }
-.office-elevator-door[data-side="right"] { right:0; transform:translateX(100%); }
-.office-elevator[data-phase="closing"] .office-elevator-door,
-.office-elevator[data-phase="riding"] .office-elevator-door { transform:translateX(0); }
-/* A fresh mount starts open, so closing animates from open; opening animates back out. */
-.office-elevator[data-phase="closing"] .office-elevator-door { animation:office-door-close 480ms cubic-bezier(.6,0,.3,1); }
-@keyframes office-door-close { from { transform:translateX(var(--office-door-from, 0)); } }
-.office-elevator[data-phase="closing"] .office-elevator-door[data-side="left"] { --office-door-from:-100%; }
-.office-elevator[data-phase="closing"] .office-elevator-door[data-side="right"] { --office-door-from:100%; }
-.office-elevator-sign { position:relative; padding:6px 14px; border-radius:999px; border:1px solid hsl(var(--border)); background:hsl(var(--popover)); color:hsl(var(--popover-foreground)); font-size:13px; font-weight:600; opacity:0; transition:opacity 200ms ease; }
-.office-elevator[data-phase="riding"] .office-elevator-sign { opacity:1; }
+/*
+ * The floor change (ElevatorDoors): the elevator's two brushed-steel doors slide shut over the stage, the
+ * floor switches behind them, they slide open. Part of the diorama: one palette in light and dark mode.
+ */
+.office-doors { position:absolute; inset:0; z-index:62; pointer-events:none; overflow:hidden; }
+.office-doors-leaf {
+  position:absolute; top:0; bottom:0; width:50%;
+  background:repeating-linear-gradient(90deg, rgb(255 255 255 / .05) 0 1px, transparent 1px 3px), linear-gradient(90deg, #969ca4, #c4c8ce 50%, #9ca2a9);
+  transition:transform 640ms cubic-bezier(.45,0,.2,1);
+}
+.office-doors-leaf[data-side="left"] { left:0; transform:translateX(-101%); box-shadow:inset -3px 0 0 #2f3338, inset -18px 0 26px -16px rgb(0 0 0 / .5); }
+.office-doors-leaf[data-side="right"] { right:0; transform:translateX(101%); box-shadow:inset 3px 0 0 #2f3338, inset 18px 0 26px -16px rgb(0 0 0 / .5); }
+.office-doors[data-phase="closing"] .office-doors-leaf,
+.office-doors[data-phase="closed"] .office-doors-leaf { transform:translateX(0); }
+/* A fresh mount starts open, so closing slides in from the sides; opening slides back out. */
+.office-doors[data-phase="closing"] .office-doors-leaf { animation:office-doors-close 640ms cubic-bezier(.45,0,.2,1); }
+@keyframes office-doors-close { from { transform:translateX(var(--office-door-from, 0)); } }
+.office-doors[data-phase="closing"] .office-doors-leaf[data-side="left"] { --office-door-from:-101%; }
+.office-doors[data-phase="closing"] .office-doors-leaf[data-side="right"] { --office-door-from:101%; }
 @media (prefers-reduced-motion: reduce) {
-  .office-elevator-door { transition:none; animation:none !important; }
-  .office-elevator-sign { transition:none; }
+  .office-doors-leaf { transition:none; animation:none !important; }
 }
 
 /* The pill over the elevator's call button. Like the name pills it is part of the diorama, which keeps one palette in both modes. */
@@ -40,3 +44,73 @@
 .office-stage-compact .office-panel-slot { top:auto; bottom:48px; right:8px; width:calc(100% - 16px); max-height:62%; }
 .office-stage-compact .office-prompt { bottom:48px; max-width:calc(100% - 16px); font-size:12px; }
 .office-stage-compact .office-note { font-size:11px; }
+
+/*
+ * The elevator's button panel (ElevatorPanel): a steel plate with the floor indicator on top and one round
+ * push button per floor, its name engraved beside it. A pressed button lights its rim. Part of the diorama:
+ * one palette in light and dark mode.
+ */
+.office-lift-backdrop { position:absolute; inset:0; z-index:64; display:flex; align-items:center; justify-content:center; padding:16px; background:rgb(8 9 12 / .32); }
+.office-lift {
+  position:relative; width:min(230px, 100%); padding:18px 18px 14px; border-radius:10px;
+  background:
+    radial-gradient(circle, #6a7078 0 1.7px, transparent 2.3px) left 4px top 4px / 14px 14px no-repeat,
+    radial-gradient(circle, #6a7078 0 1.7px, transparent 2.3px) right 4px top 4px / 14px 14px no-repeat,
+    radial-gradient(circle, #6a7078 0 1.7px, transparent 2.3px) left 4px bottom 4px / 14px 14px no-repeat,
+    radial-gradient(circle, #6a7078 0 1.7px, transparent 2.3px) right 4px bottom 4px / 14px 14px no-repeat,
+    repeating-linear-gradient(90deg, rgb(255 255 255 / .05) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #d5d9de, #aeb4bb);
+  box-shadow:0 18px 48px rgb(0 0 0 / .45), inset 0 1px 0 rgb(255 255 255 / .7), inset 0 0 0 1px rgb(0 0 0 / .16);
+  animation:office-lift-in 200ms cubic-bezier(.2,.8,.2,1);
+}
+@keyframes office-lift-in { from { opacity:0; transform:translateY(8px); } }
+.office-lift-close {
+  position:absolute; top:8px; right:8px; width:24px; height:24px; border:0; border-radius:6px; background:transparent;
+  color:#4a4f56; font-size:17px; line-height:1; cursor:pointer;
+}
+.office-lift-close:hover { background:rgb(0 0 0 / .08); }
+.office-lift-close:focus-visible { outline:2px solid #2f7fb0; outline-offset:1px; }
+/* The indicator: black glass with an orange dot-matrix number and the direction arrow once a floor is pressed. */
+.office-lift-display {
+  display:flex; align-items:center; justify-content:center; gap:8px; width:96px; height:46px; margin:0 auto 16px; border-radius:5px;
+  background:linear-gradient(180deg, #121316, #050506); box-shadow:inset 0 0 0 1px rgb(255 255 255 / .07), 0 1px 0 rgb(255 255 255 / .6);
+  color:#ff8a1f; font-family:'Pixelify Sans', ui-monospace, monospace; font-weight:600; line-height:1;
+}
+.office-lift-display b { font-size:30px; text-shadow:0 0 8px rgb(255 138 31 / .7); }
+.office-lift-arrow { width:16px; height:16px; opacity:.16; transition:opacity 160ms ease; }
+.office-lift-arrow[data-dir] { opacity:1; filter:drop-shadow(0 0 4px rgb(255 138 31 / .7)); }
+.office-lift-arrow[data-dir="down"] { transform:rotate(180deg); }
+.office-lift-rows { display:flex; flex-direction:column; gap:10px; }
+/* A row: the push button and its engraved name; the whole row is the click target. */
+.office-lift-row {
+  display:flex; align-items:center; gap:14px; width:100%; padding:2px 4px; border:0; border-radius:28px; background:transparent;
+  color:inherit; text-align:left; cursor:pointer;
+}
+/* Keyboard focus rings the button itself, like a lit rim, instead of boxing the whole row. */
+.office-lift-row:focus-visible { outline:none; }
+.office-lift-row:focus-visible .office-lift-button { box-shadow:0 2px 4px rgb(0 0 0 / .38), inset 0 -1px 2px rgb(0 0 0 / .25), 0 0 0 3px #2f7fb0; }
+.office-lift-row:disabled { cursor:default; }
+.office-lift-button {
+  position:relative; flex:none; width:46px; height:46px; border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #fdfdfd, #b6bcc3 55%, #737980);
+  box-shadow:0 2px 4px rgb(0 0 0 / .38), inset 0 -1px 2px rgb(0 0 0 / .25);
+  transition:transform 90ms ease;
+}
+.office-lift-button span {
+  position:absolute; inset:6px; display:grid; place-items:center; border-radius:50%;
+  background:radial-gradient(circle at 50% 38%, #e3e6ea, #b3b9c0); color:#40454c;
+  font-family:'Inter Variable', Inter, system-ui, sans-serif; font-size:16px; font-weight:650;
+  text-shadow:0 1px 0 rgb(255 255 255 / .65); box-shadow:inset 0 1px 2px rgb(0 0 0 / .25), 0 0 0 2px transparent;
+  transition:box-shadow 180ms ease, color 180ms ease, background 140ms ease;
+}
+.office-lift-row:enabled:hover .office-lift-button span { background:radial-gradient(circle at 50% 38%, #eef0f3, #c0c6cc); }
+.office-lift-row:enabled:active .office-lift-button { transform:scale(.95); }
+.office-lift-row[data-lit] .office-lift-button span { color:#1f6f96; box-shadow:inset 0 1px 2px rgb(0 0 0 / .2), 0 0 0 2px #8fd8ff, 0 0 12px rgb(143 216 255 / .95); }
+.office-lift-label { font-size:13px; font-weight:600; color:#30353b; text-shadow:0 1px 0 rgb(255 255 255 / .55); }
+.office-lift-row[data-here] .office-lift-label { color:#6b7179; }
+.office-lift-row:disabled:not([data-here]):not([data-lit]) { opacity:.55; }
+.office-lift-keys { margin:14px 0 0; text-align:center; font-size:10px; color:#5c626a; text-shadow:0 1px 0 rgb(255 255 255 / .45); }
+.office-lift[data-reduced], .office-lift[data-reduced] * { animation:none !important; transition:none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .office-lift, .office-lift * { animation:none !important; transition:none !important; }
+}

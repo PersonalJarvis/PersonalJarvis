@@ -218,3 +218,16 @@ def test_the_typescript_half_lists_the_same_types():
 def test_the_relay_is_wired_into_the_runtime(tmp_path: Path):
     runtime = SocietyRuntime(tmp_path, seed_starter_team=False)
     assert isinstance(runtime.world_feed, WorldFeed)
+
+
+async def test_a_result_reaches_the_app_bus_without_its_text(rt):
+    from jarvis.core.events import SocietyResultPosted
+
+    runtime, pushed = rt
+    await runtime.say(
+        from_agent="scout", to_agent="archivist", text="secret body", msg_type=MsgType.RESULT
+    )
+    results = [e for e in pushed if isinstance(e, SocietyResultPosted)]
+    assert len(results) == 1
+    assert results[0].agent_id == "scout"
+    assert "secret" not in repr(results[0])

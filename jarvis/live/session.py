@@ -18,10 +18,69 @@ from jarvis.core.runtime_refs import get_supervisor_tool_gateway
 from jarvis.core.turn_language import resolve_output_language
 from jarvis.live.config import LiveConfig
 from jarvis.live.state import LiveLedger, TranscriptFragment
+from jarvis.live.timing import StartupTimings
 from jarvis.live.tools import LiveTools, take_images
 from jarvis.realtime.audio import StreamingPcm16Resampler
 
 log = logging.getLogger(__name__)
+
+
+def _identity(config: Any) -> str:
+    """Who the assistant is (wake-word name + SOUL.md) and what it remembers.
+
+    ``""`` on an identity fault makes the session config fall back to the
+    nameless directive, so an identity fault never blocks a call.
+    """
+    try:
+        from jarvis.brain.identity import identity_block
+
+        # maintain: the live tool set holds update_soul, so the call itself
+        # keeps SOUL.md current (no separate review call for the character).
+        identity = identity_block(config, maintain=True)
+    except Exception:  # noqa: BLE001 — never block a call on the identity block
+        log.warning("live voice: identity block unavailable", exc_info=True)
+        return ""
+    return identity + _instructions(config) + _memory()
+
+
+#: Same cap as the realtime engines' preferences block: a pathological file
+#: must never bloat the session instructions.
+_INSTRUCTIONS_MAX_CHARS = 64_000
+
+
+def _instructions(config: Any) -> str:
+    """The user's standing instructions (``<Name>.md``); ``""`` on a fault.
+
+    The typed brain and the realtime engines already honour this file; a
+    GPT-Live call did not, so the model could neither follow it nor say what
+    was in it when asked (2026-10-02).
+    """
+    try:
+        from jarvis.brain.agent_instructions import render_for_prompt
+
+        block = render_for_prompt(config, max_chars=_INSTRUCTIONS_MAX_CHARS)
+    except Exception:  # noqa: BLE001 — never block a call on the instructions file
+        log.warning("live voice: standing instructions unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
+
+
+def _memory() -> str:
+    """The remember directive and Jarvis' notebooks; ``""`` on a fault.
+
+    A GPT-Live call sees what earlier calls and chats saved to MEMORY.md and
+    USER.md, and saves a new "remember this" while the call runs (through
+    the remember tool) instead of only after it ends.
+    """
+    try:
+        from jarvis.memory.learning.notebook import memory_block
+
+        block = memory_block()
+    except Exception:  # noqa: BLE001 — never block a call on the notebooks
+        log.warning("live voice: memory notebooks unavailable", exc_info=True)
+        return ""
+    return "\n\n" + block if block else ""
+
 
 #: Smallest gap between two live snapshots of one streaming reasoning summary.
 #: The summary arrives token by token; the bus sees a few snapshots a second.
@@ -37,25 +96,21 @@ _BACKCHANNEL = frozenset(
     | {"äh", "ähm"}  # i18n-allow: spoken backchannel vocabulary
 )  # fmt: skip
 
+#: How long a handed-over agent report may wait for the model to start
+#: answering it. Past that it counts as not delivered and stays owed.
+REPORT_START_TIMEOUT_S = 20.0
+
+
+def _speech_pipeline() -> Any:
+    from jarvis.core.runtime_refs import get_speech_pipeline
+
+    return get_speech_pipeline()
+
 
 def _says_something(fragment: str) -> bool:
     """True when a user transcript fragment holds a word, not just a backchannel."""
     words = re.findall(r"\w+", fragment.casefold())
     return any(word not in _BACKCHANNEL for word in words)
-
-
-def _pipeline_input_muted() -> bool:
-    """Jarvis's microphone mute. The speech pipeline is its only writer."""
-    from jarvis.core.runtime_refs import get_speech_pipeline
-
-    return bool(getattr(get_speech_pipeline(), "is_muted", False))
-
-
-def _pipeline_input_held() -> bool:
-    """Whether a dictation beside the call holds the user's audio back."""
-    from jarvis.core.runtime_refs import get_speech_pipeline
-
-    return bool(getattr(get_speech_pipeline(), "is_voice_input_held", False))
 
 
 def _pipeline_input_muted() -> bool:
@@ -159,11 +214,16 @@ class LiveVoiceSession:
         self._active_model = ""
         self._archive_turn_id = str(uuid4())
         self._parent_owned = False
+        self._startup_timing: StartupTimings | None = None
         self._recovering = False
         self._reconnect_attempts = 0
         self._resume_needs_input = False
         self._base_session_config: dict = {}
         self._using_webrtc = False
+        self._playback_epoch = 0
+        self._awaiting_output_clear = False
+        self._last_output_audio_end = 0.0
+        self._discard_audio_before = 0.0
         self._offer_request = ""
         self._offer_future: asyncio.Future | None = None
         self._past_voice_seconds = 0.0
@@ -172,11 +232,24 @@ class LiveVoiceSession:
         self._timeline_offset = 0
         self._had_unconfirmed_wire = False
         self._initial_seed: list[dict] = []
+        # An agent report handed to this call: "sent" until the model starts
+        # answering it, "started" while it does, then "done" or "failed". The
+        # speech pipeline reads the outcome at the next pause, so a report the
+        # model never voiced stays owed instead of silently counting as heard.
+        self._report_state = ""
+        self._report_response_id = ""
+        self._report_timeout: asyncio.TimerHandle | None = None
+        self._end_reported = False
         self._language = resolve_output_language(
             getattr(config.brain, "reply_language", "auto"),
             "auto",
             "",
         )
+
+    @property
+    def surface(self) -> str:
+        """Where the call's media lives: ``browser`` (WebView) or ``desktop``."""
+        return self._surface
 
     @property
     def active_provider(self) -> str:
@@ -201,6 +274,8 @@ class LiveVoiceSession:
     @property
     def phase(self) -> str:
         """The surface indicator state: speaking, thinking or listening."""
+        if self._recovering:
+            return "connecting"
         if self.playback_active or (self._speaking and not self._media_received):
             return "speaking"
         if self._input_active:
@@ -208,6 +283,118 @@ class LiveVoiceSession:
         if self._thinking or (self._media_received and self._speaking):
             return "thinking"
         return "listening"
+
+    @property
+    def ready_for_report(self) -> bool:
+        """True at a real conversational pause: nobody speaks, nothing runs.
+
+        An agent's report may start only then; it never talks over the user,
+        a running answer or a tool that is still working.
+        """
+        return bool(
+            self.is_active
+            and not self._recovering
+            and not self._resume_needs_input
+            and not self._input_active
+            and not self._thinking
+            and not self._speaking
+            and not self.playback_active
+            and not self._has_pending_work()
+            and self._report_state not in {"sent", "started"}
+        )
+
+    @property
+    def report_pending(self) -> bool:
+        """A handed-over report the model has not finished answering yet."""
+        return self._report_state in {"sent", "started"}
+
+    def take_report_outcome(self) -> str:
+        """``"completed"`` or ``"failed"`` once a handed-over report settled.
+
+        ``""`` while it is still on its way (or when none was handed over).
+        Reading a settled outcome clears it, so it is reported exactly once.
+        """
+        if self._report_state not in {"done", "failed"}:
+            return ""
+        outcome = "completed" if self._report_state == "done" else "failed"
+        self._report_state = ""
+        self._report_response_id = ""
+        return outcome
+
+    def _report_sent(self) -> None:
+        self._report_state = "sent"
+        self._report_response_id = ""
+        self._cancel_report_timeout()
+        self._report_timeout = asyncio.get_running_loop().call_later(
+            REPORT_START_TIMEOUT_S, self._report_start_timed_out
+        )
+
+    def _report_started(self, response_id: str = "") -> None:
+        if self._report_state != "sent":
+            return
+        self._cancel_report_timeout()
+        self._report_state = "started"
+        self._report_response_id = response_id
+
+    def _report_finished(self, *, delivered: bool) -> None:
+        if self._report_state != "started":
+            return
+        self._report_state = "done" if delivered else "failed"
+
+    def _cancel_report_timeout(self) -> None:
+        if self._report_timeout is not None:
+            self._report_timeout.cancel()
+            self._report_timeout = None
+
+    def _report_start_timed_out(self) -> None:
+        self._report_timeout = None
+        if self._report_state != "sent":
+            return
+        log.warning(
+            "Live call did not start answering an agent report within %.0f s; "
+            "it stays owed.",
+            REPORT_START_TIMEOUT_S,
+        )
+        self._report_state = "failed"
+        self._notify_pause()
+
+    def _notify_pause(self) -> None:
+        """Tell the speech pipeline that owed agent replies may be offered now.
+
+        The pipeline owns the queue of finished agent work; this session only
+        knows when the conversation pauses. Without this signal a browser call
+        never reaches a turn boundary the pipeline can see, and every result
+        waited until the call ended (live 2026-10-02: Scout's report).
+        """
+        if self._closing or not self.ready_for_report:
+            return
+        hook = getattr(_speech_pipeline(), "live_call_paused", None)
+        if not callable(hook):
+            return
+        try:
+            hook(self)
+        except Exception:  # noqa: BLE001 — a failed offer stays queued for the next pause
+            log.warning("Live call pause could not be signalled", exc_info=True)
+
+    def _notify_ended(self) -> None:
+        """Settle an owed reply that was still on its way when the call ended."""
+        if self._end_reported:
+            return
+        self._end_reported = True
+        self._cancel_report_timeout()
+        hook = getattr(_speech_pipeline(), "live_call_ended", None)
+        if not callable(hook):
+            return
+        try:
+            hook(self)
+        except Exception:  # noqa: BLE001 — the reply stays in the chat either way
+            log.warning("Live call end could not be signalled", exc_info=True)
+
+    def _track_job(self, task: asyncio.Task) -> None:
+        """Keep a tool task; a finished task may open the floor for a report."""
+        self._jobs.add(task)
+        task.add_done_callback(self._jobs.discard)
+        task.add_done_callback(lambda _task: self._notify_pause())
 
     async def _emit_indicator(self, message: dict) -> None:
         """Send a speaking/thinking indicator without breaking the session.
@@ -226,6 +413,9 @@ class LiveVoiceSession:
             await self._send_json(message)
         except Exception:  # noqa: BLE001 — indicators must not kill voice
             log.debug("Live indicator frame could not be sent", exc_info=True)
+        # Every speaking/thinking/listening change passes here: the one place
+        # that sees the conversation come to a pause.
+        self._notify_pause()
 
     async def _publish_phase(self, phase: str | None = None) -> None:
         """Mirror the media state to native and remote surfaces on the same bus."""
@@ -344,6 +534,8 @@ class LiveVoiceSession:
             return
         previous_phase = self.phase
         previous_playback = self.playback_active
+        first_media = not self._media_received
+        was_ready = self.ready_for_report
         # A frontend rebuild can reach an already-running process whose eager
         # audio module predates the lazily imported Live session. Optional
         # meters must degrade instead of terminating a paid voice connection.
@@ -369,6 +561,10 @@ class LiveVoiceSession:
             await self._emit_indicator({"type": self.phase})
         if self._closing:
             return
+        if first_media or not was_ready:
+            # The page's audio is live, or the user just stopped talking
+            # without a phase change ("listening" covers both).
+            self._notify_pause()
         if levels.playback_active:
             level_tap.publish(levels.output_level)
             level_tap.note_playing(0.3)
@@ -384,6 +580,10 @@ class LiveVoiceSession:
         if self._closing:
             return
         kind = message.get("type")
+        if kind == "startup_timing":
+            if self._startup_timing is not None:
+                self._startup_timing.browser(message.get("marks_ms"))
+            return
         if kind == "media_levels":
             try:
                 await self._receive_media_levels(message)
@@ -442,12 +642,23 @@ class LiveVoiceSession:
             self._speaking = False
             self._thinking = False
             self.playback_active = False
-            await self._send_json({"type": "audio_clear"})
-            await self._emit_indicator({"type": "tts_cancel"})
+            epoch = await self._clear_playback(wait_for_provider=True)
+            await self._emit_indicator({
+                "type": "tts_cancel",
+                **({"epoch": epoch} if self._output_transport() == "timed_pcm" else {}),
+            })
 
     async def _start(self, message: dict) -> None:
         self._adopt_desktop_session()
         started_at = time.monotonic()
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        anchor = (
+            getattr(get_speech_pipeline(), "_voice_start_monotonic", None)
+            if self._parent_owned else None
+        )
+        self._startup_timing = StartupTimings(self.session_id, anchor)
+        self._startup_timing.mark("audio_start_received")
         profile = getattr(self._config, "live", LiveConfig())
         self._active_model = profile.model
         # Validate before acquiring devices, a durable store or a billed connection.
@@ -478,10 +689,14 @@ class LiveVoiceSession:
             self.session_id,
             language=self._language,
             backend_model=profile.backend_model,
+            model_selection=getattr(self, "_tool_model_selection", None),
         )
+        self._tools.ask_hangup = self._ask_voice_hangup
         prompt_language = getattr(self._config.brain, "reply_language", "auto")
         config = profile.session_config(
-            language=prompt_language, tools=self._tools.declarations(defer_catalog=True)
+            language=prompt_language,
+            tools=self._tools.declarations(defer_catalog=True),
+            identity=_identity(self._config),
         )
         self._base_session_config = config
         offer = str(message.get("webrtc_offer_sdp", ""))
@@ -492,6 +707,12 @@ class LiveVoiceSession:
             from jarvis.live.runtime import claim
 
             claim(self.session_id)
+            self._watch_input_mute()
+            await self._send_json({"type": "input_mute", "muted": self._input_muted})
+            # The browser already captures. Finish the native handoff now,
+            # before a remote handshake can fill/overflow its 30-second buffer.
+            await self._take_startup_input(message)
+            self._startup_timing.mark("capture_handoff")
             await self._publish_phase("connecting")
             from jarvis.live.recovery import seed_messages
 
@@ -500,9 +721,22 @@ class LiveVoiceSession:
                 config["input"] = seed_messages(self._initial_seed, [])
 
             open_started_at = time.monotonic()
+            self._startup_timing.mark("provider_open")
             self._connection = await self._provider.open_session(
-                ContinuousVoiceStart(session=config, offer_sdp=offer)
+                ContinuousVoiceStart(
+                    session=config, offer_sdp=offer,
+                    on_transport_ready=self._transport_ready if offer else None,
+                    on_startup_phase=self._startup_timing.mark,
+                )
             )
+            if self._closing:
+                # A hangup may arrive through another surface during open.
+                try:
+                    await self._connection.send({"type": "session.close"})
+                finally:
+                    await self._connection.close()
+                return
+            self._startup_timing.mark("control_connected")
             open_ms = (time.monotonic() - open_started_at) * 1000.0
             log.info(
                 "Live session opening: setup %.0f ms, provider open %.0f ms.",
@@ -564,11 +798,13 @@ class LiveVoiceSession:
             await self._publish_phase()
             if self._closing:
                 return
-            await self._take_startup_input(message)
-            self._watch_input_mute()
+            self._startup_timing.mark("audio_ready")
             await self._send_json(
                 {
                     "type": "audio_ready",
+                    "sound_effects": bool(
+                        getattr(getattr(self._config, "ui", None), "sound_effects", True)
+                    ),
                     "provider": self.active_provider,
                     "model": profile.model,
                     "language": self._language,
@@ -577,14 +813,70 @@ class LiveVoiceSession:
                     "requires_webrtc_answer": bool(offer),
                     "webrtc_answer_sdp": self._connection.answer_sdp,
                     "continuous": True,
+                    "output_transport": self._output_transport(),
+                    "session_id": self.session_id,
                     "input_muted": self._input_muted,
                 }
             )
+            if not offer:
+                # Audio already flows over this socket: agent results that
+                # finished before the call may be offered at once. A WebRTC
+                # call waits for the page's first media report instead, so a
+                # result is never spoken into a connection nobody hears yet.
+                self._notify_pause()
         except BaseException as exc:
             if isinstance(exc, Exception):
                 await self._announce_start_failure(exc)
             await self.end(reason="error")
             raise
+
+    async def _transport_ready(self, answer_sdp: str) -> None:
+        """Negotiate media early; this message never releases microphone audio."""
+        if self._closing:
+            raise asyncio.CancelledError("Voice start cancelled")
+        if self._startup_timing is not None:
+            self._startup_timing.mark("transport_answer")
+        await self._send_json({
+            "type": "audio_transport", "webrtc_answer_sdp": answer_sdp,
+            "output_transport": self._output_transport(),
+            "session_id": self.session_id,
+        })
+
+    def _output_transport(self) -> str:
+        return "timed_pcm" if getattr(self._provider, "source_timed_audio", False) else "webrtc"
+
+    async def _clear_playback(self, *, wait_for_provider: bool = False) -> int:
+        self._playback_epoch += 1
+        epoch = self._playback_epoch
+        self._awaiting_output_clear = wait_for_provider
+        self._discard_audio_before = self._last_output_audio_end
+        await self._send_json({
+            "type": "audio_clear",
+            **({"epoch": epoch} if self._output_transport() == "timed_pcm" else {}),
+        })
+        return epoch
+
+    async def _speech_timing(self, caption: Any, delta: str, start: object, end: object) -> None:
+        from jarvis.live.playback import (
+            SpeechTimingFrame,
+            playback_frame,
+            source_interval,
+            utf16_length,
+        )
+
+        if (self._output_transport() != "timed_pcm" or self._awaiting_output_clear
+                or not delta or not source_interval(start, end)
+                or not caption.text.endswith(delta)):
+            return
+        frame = playback_frame(SpeechTimingFrame,
+            epoch=self._playback_epoch,
+            line_id=f"live:{self.session_id}:{caption.segment_id}", text=caption.text,
+            char_start=utf16_length(caption.text[:-len(delta)]),
+            char_end=utf16_length(caption.text),
+            start_ms=self._timeline_offset + start, end_ms=self._timeline_offset + end,
+        )
+        if frame is not None:
+            await self._send_json(frame)
 
     async def _announce_start_failure(self, exc: Exception) -> None:
         """Say why the call ends instead of hanging up in silence.
@@ -648,7 +940,7 @@ class LiveVoiceSession:
 
         if self._parent_owned:
             prefix = await take(self.session_id, message.get("capture_started_at_ms"))
-            if prefix is not None:
+            if prefix is not None and not self._input_muted:
                 await self._send_json(prefix)
 
     def _watch_input_mute(self) -> None:
@@ -718,6 +1010,9 @@ class LiveVoiceSession:
             await self._send_json({"type": "input_mute", "muted": self._input_muted})
         except Exception:  # noqa: BLE001 — the frames are dropped here regardless
             log.warning("Voice page missed the microphone mute", exc_info=True)
+        if not self._input_muted:
+            # Results parked while muted may be offered now.
+            self._notify_pause()
 
     async def handle_audio_frame(self, pcm: bytes) -> None:
         if (
@@ -737,6 +1032,8 @@ class LiveVoiceSession:
                         "audio": base64.b64encode(audio).decode("ascii"),
                     }
                 )
+                if self._startup_timing is not None:
+                    self._startup_timing.mark("first_input_sent")
             except Exception:
                 log.debug("Audio send failed; closing the affected transport", exc_info=True)
                 await self._connection.close()
@@ -746,13 +1043,14 @@ class LiveVoiceSession:
             while not self._closed.is_set():
                 try:
                     event = await self._connection.receive()
-                except Exception:
+                except Exception:  # Shutdown is quiet; active failures enter the reporting recovery loop.
                     if self._closing:
                         return
                     self._had_unconfirmed_wire = True
-                    if await self._recover():
+                    if await self._wait_for_connection():
                         continue
-                    raise
+                    return
+                self._note_startup_event(event)
                 await self._event(event)
         except asyncio.CancelledError:
             raise
@@ -765,11 +1063,24 @@ class LiveVoiceSession:
             from jarvis.live.runtime import unregister
 
             unregister(self.session_id)
+            self._notify_ended()
             self._closed.set()
+
+    def _note_startup_event(self, event: dict) -> None:
+        """Observe even adapters that consume transcript snapshots themselves."""
+        kind = event.get("type", "")
+        if self._startup_timing is not None:
+            if kind in {"session.input_transcript.delta", "session.input_transcript.done"}:
+                self._startup_timing.mark("first_input_transcript")
+            elif kind == "session.output_audio.delta":
+                self._startup_timing.mark("first_output_audio_received")
+            elif kind in {"session.output_transcript.delta", "session.output_transcript.done"}:
+                self._startup_timing.mark("first_output_transcript")
 
     async def _event(self, event: dict) -> None:
         assert self._ledger is not None and self._tools is not None
         kind = event.get("type", "")
+        self._note_startup_event(event)
         if kind in {"session.input_transcript.delta", "session.output_transcript.delta"}:
             role: Literal["user", "assistant"] = (
                 "user" if kind == "session.input_transcript.delta" else "assistant"
@@ -818,13 +1129,57 @@ class LiveVoiceSession:
                 }
             )
             if role == "assistant" and current:
+                await self._speech_timing(
+                    caption, delta, event.get("start_ms"), event.get("end_ms")
+                )
                 await self._note_thinking()
         elif kind == "session.output_audio.delta":
             # With WebRTC, only measured RTP playback owns the speaking
             # state. Sideband generation can lead playback or include silence.
-            if not self._connection.answer_sdp:
+            from jarvis.live.playback import AudioTimedFrame, playback_frame, source_interval
+
+            timed = source_interval(event.get("start_ms"), event.get("end_ms"))
+            if timed:
+                self._last_output_audio_end = max(
+                    self._last_output_audio_end, self._timeline_offset + event["end_ms"]
+                )
+            if self._awaiting_output_clear:
+                return
+            if self._output_transport() == "timed_pcm":
+                if timed:
+                    start = self._timeline_offset + event["start_ms"]
+                    end = self._timeline_offset + event["end_ms"]
+                    if end <= self._discard_audio_before:
+                        return
+                    audio = event["delta"]
+                    if start < self._discard_audio_before:
+                        # A reflected packet can straddle an interruption.
+                        # Drop only its cancelled prefix, using source samples.
+                        import math
+
+                        pcm = base64.b64decode(audio)
+                        skip = math.ceil(
+                            len(pcm) // 2 * (self._discard_audio_before - start) / (end - start)
+                        )
+                        if skip * 2 >= len(pcm):
+                            return
+                        start += (end - start) * skip / (len(pcm) // 2)
+                        audio = base64.b64encode(pcm[skip * 2:]).decode("ascii")
+                    frame = playback_frame(AudioTimedFrame,
+                        epoch=self._playback_epoch, audio=audio,
+                        start_ms=start, end_ms=end,
+                    )
+                    if frame is not None:
+                        await self._send_json(frame)
+                else:
+                    # Older wires can omit timing; audio must still be heard,
+                    # but reception must never be presented as a word position.
+                    await self._send_binary(base64.b64decode(event["delta"]))
+            elif not self._connection.answer_sdp:
                 await self._note_speaking()
                 await self._send_binary(base64.b64decode(event["delta"]))
+        elif kind == "output_audio_buffer.cleared":
+            await self._clear_playback()
         elif kind in {"session.usage.updated", "session.closed"}:
             self._wire_seconds = max(
                 self._wire_seconds, float(event.get("usage", {}).get("seconds", self._wire_seconds))
@@ -834,8 +1189,7 @@ class LiveVoiceSession:
             if (
                 kind == "session.closed"
                 and not self._closing
-                and event.get("reason") in {"expired", "connection_lost"}
-                and await self._recover()
+                and await self._wait_for_connection(session_expired=True)
             ):
                 await asyncio.to_thread(self._ledger.usage, self.session_id, seconds)
                 return
@@ -932,6 +1286,8 @@ class LiveVoiceSession:
             self._response_revisions[self._response_id] = self._tools.revision
             self._delegation_responses[delegation] = self._response_id
             self._responses.setdefault(self._response_id, [])
+            # The first response after a handed-over report is its answer.
+            self._report_started(self._response_id)
             if self._bus is not None:
                 from jarvis.core.events import BrainTurnStarted
 
@@ -977,6 +1333,10 @@ class LiveVoiceSession:
             if rid in self._completed:
                 return
             self._completed.add(rid)
+            if rid == self._report_response_id:
+                # "incomplete" is a barge-in: the user heard the start and
+                # chose to talk; the report itself is in the conversation.
+                self._report_finished(delivered=kind != "response.failed")
             calls = self._responses.pop(rid, [])
             revision = self._response_revisions.pop(rid, self._tools.revision)
             # A backend response completing is not a speech boundary. Its
@@ -1021,8 +1381,7 @@ class LiveVoiceSession:
             )
             if calls and kind == "response.completed" and not self._closing:
                 task = asyncio.create_task(self._run_calls(calls, revision), name="live-tools")
-                self._jobs.add(task)
-                task.add_done_callback(self._jobs.discard)
+                self._track_job(task)
 
     async def _run_calls(self, calls: list[dict], revision: int) -> None:
         assert self._tools is not None
@@ -1102,6 +1461,7 @@ class LiveVoiceSession:
             for task in tuple(self._control_tasks):
                 task.cancel()
             await asyncio.gather(*self._control_tasks, return_exceptions=True)
+            await self._clear_playback()
             await self._send_json({"type": "reconnecting", "attempt": self._reconnect_attempts})
             await self._connection.close()
             delay = random.uniform(0.1, min(4.0, 2**self._reconnect_attempts))  # noqa: S311
@@ -1113,14 +1473,96 @@ class LiveVoiceSession:
             self._past_voice_seconds = self._voice_seconds
             self._wire_seconds = 0.0
             self._wire_epoch += 1
+            self._last_output_audio_end = 0.0
+            self._discard_audio_before = 0.0
             self._captions = {"user": "", "assistant": ""}
             self._resampler.reset()
             await self._open_replacement(history)
             return True
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            if await self._stop_recovery_for_error(exc):
+                return False
             log.warning("Voice reconnection failed; no actions were replayed", exc_info=True)
+            return False
+        finally:
+            self._recovering = False
+
+    async def _ask_voice_hangup(self, question: str) -> None:
+        await self._send_json({
+            "type": "error_spoken", "text": question,
+            "language": self._language, "spoken_kind": "clarify",
+        })
+
+    async def _stop_recovery_for_error(self, _error: Exception) -> bool:
+        """Adapters may stop recovery for a terminal account/allowance failure."""
+        return False
+
+    async def _wait_for_connection(self, *, session_expired: bool = False) -> bool:
+        """An upstream outage suspends the call; only its owner may hang up.
+
+        Reattach the same sideband even while tools run. New sessions still
+        use the existing receipt/approval guards and bounded creation budget.
+        Never re-read a dead socket, replay microphone audio or execute a tool
+        again merely because a network connection was interrupted.
+        """
+        from jarvis.live.recovery import connection_permit
+
+        attempt = 0
+        self._resume_needs_input = True
+        if self._tools is not None:
+            self._tools.accepting = False
+            self._tools._hangup_confirmation.reset()
+        try:
+            while not self._closing:
+                self._recovering = True
+                attempt += 1
+                await self._publish_phase("connecting")
+                await self._clear_playback()
+                await self._send_json({"type": "reconnecting", "attempt": attempt})
+                delay = random.uniform(0.5, min(30.0, 2 ** min(attempt, 5)))  # noqa: S311
+                await asyncio.sleep(delay)
+                if self._closing:
+                    return False
+                reattach = getattr(self._provider, "reattach_session", None)
+                if callable(reattach) and not session_expired:
+                    await connection_permit()
+                    try:
+                        replacement = await reattach(self._connection)
+                    except Exception as exc:
+                        if await self._stop_recovery_for_error(exc):
+                            return False
+                        log.warning(
+                            "Live sideband unavailable; keeping the call open", exc_info=True,
+                        )
+                        continue
+                    if replacement is not None:
+                        previous, self._connection = self._connection, replacement
+                        if self._closing:
+                            await replacement.close()
+                            return False
+                        try:
+                            await asyncio.wait_for(previous.close(), 2)
+                        except Exception:
+                            log.warning("Old Live sideband could not close promptly", exc_info=True)
+                        await self._send_json({
+                            "type": "audio_ready", "provider": self.active_provider,
+                            "model": self._active_model, "language": self._language,
+                            "output_sample_rate": 24000, "input_sample_rate": 24000,
+                            "continuous": True, "reconnected": True, "reuse_webrtc": True,
+                            "output_transport": self._output_transport(),
+                            "session_id": self.session_id,
+                            "input_muted": self._input_muted,
+                        })
+                        return True
+                    session_expired = True
+                # The old remote generation cannot finish after its session
+                # expired. Discard unexecuted call proposals, never running jobs.
+                self._responses.clear()
+                if await self._recover():
+                    return True
+                log.info("Voice recovery is waiting for pending work or confirmed receipts")
             return False
         finally:
             self._recovering = False
@@ -1162,6 +1604,8 @@ class LiveVoiceSession:
                 "webrtc_answer_sdp": self._connection.answer_sdp,
                 "continuous": True,
                 "reconnected": True,
+                "output_transport": self._output_transport(),
+                "session_id": self.session_id,
             }
         )
 
@@ -1185,15 +1629,7 @@ class LiveVoiceSession:
         a turn is in flight — the caller parks it and retries at the next
         boundary — so it never talks over the user or a running answer.
         """
-        if (
-            self._recovering
-            or self._resume_needs_input
-            or self._input_active
-            or self._thinking
-            or self._speaking
-            or self.playback_active
-            or self._has_pending_work()
-        ):
+        if not self.ready_for_report:
             return False
         from jarvis.realtime.report_prompt import report_update_prompt
 
@@ -1204,22 +1640,30 @@ class LiveVoiceSession:
             language=language,
             kind=str(kwargs.get("spoken_kind") or "completion"),
         )
-        await self._connection.send(
-            {
-                "type": "response.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": "[Application event, not the user speaking]\n" + prompt,
-                        }
-                    ],
-                },
-            }
-        )
-        await self._connection.send({"type": "response.create"})
+        # Marked before the wire: the model's answer can arrive while the
+        # send is still being awaited, and must count as this report's.
+        self._report_sent()
+        try:
+            await self._connection.send(
+                {
+                    "type": "response.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "[Application event, not the user speaking]\n" + prompt,
+                            }
+                        ],
+                    },
+                }
+            )
+            await self._connection.send({"type": "response.create"})
+        except BaseException:
+            self._cancel_report_timeout()
+            self._report_state = ""
+            raise
         return True
 
     async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
@@ -1231,6 +1675,9 @@ class LiveVoiceSession:
         """
         if not self.is_active or self._recovering or self._resume_needs_input:
             return False
+        from jarvis.core.image_references import appshot_context
+
+        note += "\n\n" + appshot_context(self.session_id, image, mime, self._config)
         await self._connection.send(
             {
                 "type": "session.thinking.append",
@@ -1272,6 +1719,11 @@ class LiveVoiceSession:
 
         unregister(self.session_id)
         self._closing = True
+        self._notify_ended()
+        if self._recovering and self._pump_task is not None:
+            self._closed.set()
+            if self._pump_task is not asyncio.current_task():
+                self._pump_task.cancel()
         await self._publish_phase("idle")
         self._hangup_reason = reason
         if self._connection is not None:
@@ -1284,7 +1736,11 @@ class LiveVoiceSession:
         if self._connection is not None:
             try:
                 await self._connection.send({"type": "session.close"})
-                if self._pump_task is not None and not self._closed.is_set():
+                if (
+                    getattr(self._provider, "requires_close_ack", True)
+                    and self._pump_task is not None
+                    and not self._closed.is_set()
+                ):
                     await asyncio.wait_for(self._closed.wait(), 15)
             except Exception:
                 log.warning("Live session final usage is unconfirmed", exc_info=True)
@@ -1324,7 +1780,10 @@ class LiveVoiceSession:
                     BrainTurnCompleted(
                         provider=self.active_provider,
                         model=self._active_model,
-                        cost_usd=self._voice_seconds * 0.05 / 60,
+                        cost_usd=(
+                            self._voice_seconds * 0.05 / 60
+                            if getattr(self._provider, "usage_billed", True) else 0.0
+                        ),
                         finish_reason="realtime_usage",
                     )
                 )

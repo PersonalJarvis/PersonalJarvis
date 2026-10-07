@@ -3,7 +3,8 @@
  * frameless glass, walled rooms in the north and south, one rug-zoned
  * department per provider family in between — and everybody in it. Each
  * floor dresses the shared plan in its own look (AgentsFloorLook /
- * CodingFloorLook).
+ * CodingFloorLook). The arcade floor on top has a plan and a look of its own
+ * (ArcadeHall); the person, the elevator and the camera work the same there.
  */
 import { useLayoutEffect, useMemo } from "react";
 import { Stars } from "@react-three/drei";
@@ -30,11 +31,13 @@ import { TeamBoardFace } from "./TeamBoardFace";
 import { TeamRoomFittings } from "./TeamRoomDecor";
 import { BreakLoungeFittings } from "./BreakLounge";
 import { WardrobeFittings } from "./WardrobeRoom";
+import { LevelHallFittings } from "./LevelHall";
 import { LobbyFittings } from "./LobbyDecor";
 import { SpawnFittings } from "./SpawnPoint";
 import { RoomFloors, RoomSign, RoomWalls } from "./OfficeRooms";
 import { CHECKPOINT_ICON, CheckpointMarker } from "./CheckpointMarker";
 import { ElevatorCallButton } from "./ElevatorCallButton";
+import { ArcadeHall } from "../arcade/ArcadeHall";
 import { OFFICE_FIGURE_HEIGHT_M, OfficeAgents, type WalkerContext } from "./OfficeAgents";
 import { OfficePlayer } from "./OfficePlayer";
 import { OfficeDog } from "./OfficeDog";
@@ -45,6 +48,7 @@ import { isWalkable, nearestWalkable, type NavGrid } from "./officeNav";
 import { CODING_SCENE, OFFICE } from "./officePalette";
 import { officeSession, player as playerBody, useOfficeStore, type OfficeFloor, type Selection } from "./officeStore";
 import { arrivalPose } from "./officeFloors";
+import { ProgressionLayer } from "../progression/ProgressionLayer";
 
 /** The person's character as a mover for Gigi to follow (the body object itself, mutated every frame). */
 const PLAYER_OWNER = { current: playerBody };
@@ -69,7 +73,7 @@ function FloorArrival({ floor, layout, grid, ready }: { floor: OfficeFloor; layo
   return null;
 }
 
-/** On the coding floor Jarvis is nobody's desk mate: Gigi flies along with the person. */
+/** On the coding floor Jarvis is nobody's desk mate: the person's pet (Gigi by default) comes along. */
 function GigiCompanion({ grid, awake, reduced }: { grid: NavGrid; awake: boolean; reduced: boolean }) {
   const speaking = useEventStore((s) => s.voiceState === "speaking");
   const clear = useMemo(() => (x: number, z: number) => isWalkable(grid, { x, z }), [grid]);
@@ -95,15 +99,79 @@ export interface OfficeSceneProps {
   nearby: Selection | null;
   chats: ReadonlyMap<string, DeskChat>;
   onOpenScreen: (agentId: string, screen: Point & { y: number }, facing: number) => void;
-  /** The elevator's call button: lit after a press, how many work on the other floor, and the press itself. */
-  elevatorCall: { lit: boolean; count: number | null; onPress: () => void };
+  /** The elevator's call button: lit after a press, the floor picker open (its pill steps aside), and the press itself. */
+  elevatorCall: { lit: boolean; picking: boolean; onPress: () => void };
 }
 
-export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, agents, newcomers, awake, reduced, overview, player, selection, nearby, chats, onOpenScreen, elevatorCall }: OfficeSceneProps) {
+/** The checkpoints, the elevator's call button and the person: the same on every floor. */
+function SharedFloorParts({ floor, layout, grid, ready, awake, reduced, player, selection, nearby, elevatorCall }: Pick<OfficeSceneProps,
+  "floor" | "layout" | "grid" | "ready" | "awake" | "reduced" | "player" | "selection" | "nearby" | "elevatorCall">) {
   const t = useT();
-  const desks = useMemo(() => allDesks(layout), [layout]);
+  const select = useOfficeStore((s) => s.select);
   const shaft = layout.furniture.find((f) => f.kind === "elevator");
   const atLift = nearby?.kind === "checkpoint" && nearby.id === "elevator";
+  return (
+    <>
+      {/* At the elevator its call button takes over from the floating token, which would hide it. */}
+      {layout.checkpoints.filter((cp) => cp.id !== "elevator" || !atLift).map((cp) => (
+        <CheckpointMarker key={cp.id} checkpoint={cp} label={t(`society.office.cp_${cp.id}`)} icon={CHECKPOINT_ICON[cp.id]}
+          active={(nearby?.kind === "checkpoint" && nearby.id === cp.id) || (selection?.kind === "checkpoint" && selection.id === cp.id)}
+          animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
+      ))}
+      {shaft && (
+        <ElevatorCallButton shaft={shaft} floor={floor} lit={elevatorCall.lit} animate={awake && !reduced}
+          near={atLift} hint={atLift && !elevatorCall.picking} onPress={elevatorCall.onPress} />
+      )}
+      <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
+      <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
+      <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
+    </>
+  );
+}
+
+export function OfficeScene(props: OfficeSceneProps) {
+  const { floor, layout, grid, walkers, agents, newcomers, awake, reduced, selection, nearby, chats, overview } = props;
+  const arcade = floor === "arcade";
+  const select = useOfficeStore((s) => s.select);
+  const desks = useMemo(() => allDesks(layout), [layout]);
+  const dogBeds = useMemo(() => layout.furniture.filter((f) => f.kind === "dogBed"), [layout]);
+  const treatJar = layout.furniture.find((f) => f.kind === "treatJar") ?? null;
+  const onFloorClick = (event: ThreeEvent<MouseEvent>) => {
+    // A drag that ends on the floor rotated the camera; only a real click walks.
+    if (event.delta > 6) return;
+    event.stopPropagation();
+    useOfficeStore.getState().requestWalk({ x: event.point.x, z: event.point.z });
+  };
+  // One tree for every floor (the dressing swaps, the person and the camera stay mounted), in the order the frame loop needs:
+  // the floor, the person, then whoever walks around them, the camera last.
+  return (
+    <>
+      {arcade
+        // While a cabinet is being played its screen in the hall rests: the live preview would only draw behind the overlay.
+        ? <ArcadeHall layout={layout} onFloorClick={onFloorClick} awake={awake} reduced={reduced}
+          nearCabinet={nearby?.kind === "arcade" && selection?.kind !== "arcade" ? nearby.id : null} />
+        : <OfficeFloorDressing {...props} desks={desks} onFloorClick={onFloorClick} />}
+      <SharedFloorParts {...props} />
+      {dogBeds.length > 0 && <OfficeDog beds={dogBeds} rooms={layout.rooms} jar={treatJar} grid={grid} awake={awake} reduced={reduced} />}
+      {!arcade && (
+        <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
+          selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />
+      )}
+      {/* Upstairs the person's pet comes along: to the coding floor and to play in the arcade. */}
+      {floor !== "agents" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
+      {/* Levels: what everyone wears, level-up bursts and "+XP"; after the walkers, so it reads this frame's positions. */}
+      <ProgressionLayer awake={awake} reduced={reduced} />
+      <OfficeCameraRig layout={layout} overview={overview} />
+    </>
+  );
+}
+
+/** Everything that dresses the agents and coding floors: slab, rooms, departments, desks, monitors, furniture. */
+function OfficeFloorDressing({ floor, occupants, layout, agents, newcomers, awake, reduced, chats, onOpenScreen, desks, onFloorClick }: OfficeSceneProps & {
+  desks: ReturnType<typeof allDesks>;
+  onFloorClick: (event: ThreeEvent<MouseEvent>) => void;
+}) {
+  const t = useT();
   // Lead desks carry their own size and are built as executive desks, not bench instances.
   const benchDesks = useMemo(() => desks.filter((d) => !d.size), [desks]);
   // Each desk takes its department's zone colour for the felt screen and the seat fabric.
@@ -111,26 +179,19 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
   const leadRoom = layout.rooms.find((r) => r.kind === "lead");
   const teamRoom = layout.rooms.find((r) => r.kind === "team");
   const breakRoom = layout.rooms.find((r) => r.kind === "break");
-  const dogBeds = useMemo(() => layout.furniture.filter((f) => f.kind === "dogBed"), [layout]);
-  const treatJar = layout.furniture.find((f) => f.kind === "treatJar") ?? null;
   const coding = floor === "coding";
   // The coding floor floats in a violet night of its own, so a glance tells the floors apart.
   const space = coding ? CODING_SCENE.space : OFFICE.space;
   const background = useMemo(() => new Color(space), [space]);
   const { minX, maxX, minZ, maxZ } = layout.bounds;
   const span = Math.max(maxX - minX, maxZ - minZ);
-  const select = useOfficeStore((s) => s.select);
   const table = layout.furniture.find((f) => f.kind === "meetingTable");
   const board = layout.furniture.find((f) => f.kind === "teamBoard");
   const wardrobeRug = layout.furniture.find((f) => f.kind === "roundRug" && f.room === "wardrobe");
   const lobbyLamp = layout.furniture.find((f) => f.kind === "lobbyLamp");
   const spawnTerminal = layout.furniture.find((f) => f.kind === "spawnTerminal");
-  const onFloorClick = (event: ThreeEvent<MouseEvent>) => {
-    // A drag that ends on the floor rotated the camera; only a real click walks.
-    if (event.delta > 6) return;
-    event.stopPropagation();
-    useOfficeStore.getState().requestWalk({ x: event.point.x, z: event.point.z });
-  };
+  const levelStage = layout.furniture.find((f) => f.kind === "studioStage");
+  const levelGuide = layout.furniture.find((f) => f.kind === "levelGuide") ?? null;
   return (
     <>
       <primitive attach="background" object={background} />
@@ -168,26 +229,9 @@ export function OfficeScene({ floor, occupants, ready, layout, grid, walkers, ag
       {teamRoom && table && <TeamRoomFittings room={teamRoom} table={table} />}
       {breakRoom && <BreakLoungeFittings room={breakRoom} furniture={layout.furniture} />}
       {wardrobeRug && <WardrobeFittings rug={wardrobeRug} />}
+      {levelStage && <LevelHallFittings stage={levelStage} guide={levelGuide} />}
       {lobbyLamp && <LobbyFittings lamp={lobbyLamp} />}
       {spawnTerminal && <SpawnFittings terminal={spawnTerminal} arrival={layout.arrival} floor={floor} newcomers={newcomers} animate={awake && !reduced} />}
-      {/* At the elevator its call button takes over from the floating token, which would hide it. */}
-      {layout.checkpoints.filter((cp) => cp.id !== "elevator" || !atLift).map((cp) => (
-        <CheckpointMarker key={cp.id} checkpoint={cp} label={t(`society.office.cp_${cp.id}`)} icon={CHECKPOINT_ICON[cp.id]}
-          active={(nearby?.kind === "checkpoint" && nearby.id === cp.id) || (selection?.kind === "checkpoint" && selection.id === cp.id)}
-          animate={awake && !reduced} onActivate={() => select({ kind: "checkpoint", id: cp.id })} />
-      ))}
-      {shaft && (
-        <ElevatorCallButton shaft={shaft} floor={floor} lit={elevatorCall.lit} count={elevatorCall.count} animate={awake && !reduced}
-          near={atLift} onPress={elevatorCall.onPress} />
-      )}
-      <FloorArrival floor={floor} layout={layout} grid={grid} ready={ready} />
-      <OfficePlayer layout={layout} grid={grid} look={player.look} name={player.name} awake={awake} reduced={reduced} />
-      {dogBeds.length > 0 && <OfficeDog beds={dogBeds} rooms={layout.rooms} jar={treatJar} grid={grid} awake={awake} reduced={reduced} />}
-      <PlayerBubble height={OFFICE_FIGURE_HEIGHT_M + 0.49} />
-      <OfficeAgents desks={desks} agents={agents} ctx={walkers} newcomers={newcomers} awake={awake} reduced={reduced} chats={chats}
-        selectedId={selection?.kind === "agent" ? selection.id : null} onSelect={(id) => select({ kind: "agent", id })} />
-      {floor === "coding" && <GigiCompanion grid={grid} awake={awake} reduced={reduced} />}
-      <OfficeCameraRig layout={layout} overview={overview} />
     </>
   );
 }

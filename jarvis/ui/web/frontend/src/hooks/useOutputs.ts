@@ -90,6 +90,9 @@ export interface OutputSummary {
    *  redundant Continue/Restart button. */
   active_child_id?: string | null;
   active_child_slug?: string | null;
+  /** Parked for capacity (WAITING_CAPACITY): status stays "running"; the run
+   *  offers the wait / approve-paid / cancel decision. */
+  waiting_capacity?: boolean;
 }
 
 export function useOutputsList() {
@@ -357,6 +360,40 @@ export async function revealArtifact(slug: string, path: string): Promise<void> 
     { method: "POST" },
   );
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+/** Open a run's folder in the OS file manager (desktop only). */
+export async function revealOutput(slug: string): Promise<void> {
+  const r = await fetch(`/api/outputs/${encodeURIComponent(slug)}/open`, { method: "POST" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+}
+
+// --- Delete -----------------------------------------------------------------
+
+/** A delete the server refused; `status` 409 means the run is still working. */
+export class DeleteOutputError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+  }
+}
+
+/**
+ * What a delete removed. Deleting a run's last artifact takes the run with
+ * it (`"run"`), so the card does not come back as an empty output.
+ */
+export interface DeleteOutputResult {
+  deleted: "file" | "run";
+}
+
+/** Delete a whole run — `path` null — or one of its artifact files. */
+export async function deleteOutput(slug: string, path: string | null): Promise<DeleteOutputResult> {
+  const url =
+    path === null
+      ? `/api/outputs/${encodeURIComponent(slug)}`
+      : `/api/outputs/${encodeURIComponent(slug)}/files/${encodeArtifactPath(path)}`;
+  const r = await fetch(url, { method: "DELETE" });
+  if (!r.ok) throw new DeleteOutputError(r.status);
+  return (await r.json()) as DeleteOutputResult;
 }
 
 // --- "Open with" chooser --------------------------------------------------

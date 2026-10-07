@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.ui.web import diagnostics_routes
 from jarvis.ui.web.diagnostics_routes import router
 
 
@@ -120,3 +121,14 @@ def test_event_loop_lag_returns_measurements():
         body = client.get("/api/diagnostics/event-loop-lag").json()
     assert len(body["lags_ms"]) == 4
     assert body["max_ms"] >= 0.0
+
+
+def test_event_loop_lag_preserves_sub_millisecond_precision(monkeypatch):
+    # Independent of Windows' coarse loop.time(): four 0.125 ms yields must
+    # survive conversion without relying on actual OS scheduling in this test.
+    ticks = iter([0, 125_000, 1_000_000, 1_125_000, 2_000_000, 2_125_000, 3_000_000, 3_125_000])
+    monkeypatch.setattr(diagnostics_routes, "perf_counter_ns", lambda: next(ticks))
+    with TestClient(_app()) as client:
+        response = client.get("/api/diagnostics/event-loop-lag")
+    assert response.status_code == 200
+    assert response.json() == {"lags_ms": [0.125] * 4, "max_ms": 0.125}

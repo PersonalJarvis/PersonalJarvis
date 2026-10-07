@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-meta
 description: Publish Facebook Page and Instagram professional content; read comments
-when_to_use: Use for explicit operations on the connected Meta (Facebook & Instagram) account.
+when_to_use: Use when the user requests operations on the connected Meta (Facebook & Instagram) account.
 category: integrations
 plugin_id: meta
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

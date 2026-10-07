@@ -61,6 +61,7 @@ import mimetypes
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
@@ -84,10 +85,14 @@ from jarvis.agentic_ide import (
     change_authors,
     drop_analysis,
     drops,
+    editor_backups,
+    file_editing,
+    file_search,
     git_changes,
     layout_tree,
     native_picker,
     notifications,
+    pane_changes,
     prompt_attachments,
     prompt_history,
     recap_engine,
@@ -96,6 +101,7 @@ from jarvis.agentic_ide import (
     screen_feed,
     workspace_catalog,
 )
+from jarvis.agentic_ide import python_intel as python_intel_module
 from jarvis.agentic_ide.activity import has_work_behind_it
 from jarvis.agentic_ide.agent_sessions import has_conversation
 from jarvis.agentic_ide.device import device_name
@@ -115,9 +121,9 @@ from jarvis.agentic_ide.names import default_names
 from jarvis.agentic_ide.session import (
     AGENT_DISPLAY,
     INHERIT_PLACEMENT,
+    MAX_PANES_PER_REQUEST,
     MAX_PROMPT_CHARS,
     MAX_TERMINAL_NAME,
-    MAX_TERMINALS,
     MAX_WORKSPACES,
     PendingPromptAttachmentBatch,
     PlacementError,
@@ -371,8 +377,8 @@ class AddTerminalsRequest(BaseModel):
     count: int = Field(
         default=1,
         ge=1,
-        le=MAX_TERMINALS,
-        description="How many terminals to open, capped by the workspace maximum.",
+        le=MAX_PANES_PER_REQUEST,
+        description="How many terminals to open in this one request.",
     )
     agent: str | None = Field(
         default=None,
@@ -428,7 +434,6 @@ class RefoldRequest(BaseModel):
 
     depth: int = Field(
         ge=1,
-        le=MAX_TERMINALS,
         description=(
             "Panes stacked per column. 1 is the single row a workspace opens "
             "in; 2 folds it into two rows, which is what a row too narrow for "
@@ -454,7 +459,6 @@ class CloseTerminalsRequest(BaseModel):
 
     names: list[str] = Field(
         min_length=1,
-        max_length=MAX_TERMINALS,
         description="Call-signs of the terminals to close.",
     )
 
@@ -620,7 +624,7 @@ class SpawnGroupRequest(BaseModel):
 
     count: int = Field(
         ge=1,
-        le=MAX_TERMINALS,
+        le=MAX_PANES_PER_REQUEST,
         description="How many terminals to open in this group.",
     )
     agent: str | None = Field(
@@ -839,7 +843,9 @@ class AgentStatus(BaseModel):
 
 class AgentsResponse(BaseModel):
     terminal_available: bool
-    max_terminals: int
+    #: The most panes one launch or batch request opens. A guard on a single
+    #: request, never a limit on how many a workspace holds.
+    max_panes_per_request: int
     suggested_names: list[str]
     agents: list[AgentStatus]
 
@@ -941,6 +947,44 @@ class WorkspaceFileDiffResponse(BaseModel):
     truncated: bool = False
 
 
+class PaneFileDiffItem(BaseModel):
+    """One file's diff inside a pane's review listing."""
+
+    status: str
+    binary: bool = False
+    added: int = 0
+    removed: int = 0
+    hunks: list[DiffHunkItem] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class PaneChangedFileItem(ChangedFileItem):
+    """One file a pane's agent changed, compared with the code before its first write."""
+
+    committed: bool = Field(
+        default=False, description="True when nothing of it is left uncommitted."
+    )
+    diff: PaneFileDiffItem | None = Field(
+        default=None, description="Its diff against the base; null when it is read on demand."
+    )
+
+
+class PaneChangesResponse(BaseModel):
+    """What one pane's agent changed, committed or not."""
+
+    workspace_id: str
+    available: bool = Field(description="False when git or the repository is not usable.")
+    branch: str = ""
+    files: list[PaneChangedFileItem] = Field(default_factory=list)
+    truncated: bool = False
+    reason: str = ""
+    base: str = Field(default="", description="The commit the files are compared with.")
+    since_ms: int = Field(default=0, description="The agent's first change; 0 when unknown.")
+    generated: int = Field(
+        default=0, description="Generated files (build output) the agent changed, not listed."
+    )
+
+
 class WorkspaceFilePreviewResponse(BaseModel):
     """A bounded in-app preview without exposing an absolute host path."""
 
@@ -952,6 +996,112 @@ class WorkspaceFilePreviewResponse(BaseModel):
     text: str | None = None
     truncated: bool = False
     hex_preview: str | None = None
+
+
+class WorkspaceTextFileResponse(BaseModel):
+    """One workspace file loaded byte-exact for the code editor."""
+
+    workspace_id: str
+    path: str
+    text: str | None = Field(
+        default=None, description="Exact file text; null when binary or too large."
+    )
+    version: str = Field(description="Content hash; send it back on save to detect conflicts.")
+    size: int
+    encoding: str = Field(description="Python codec the file is saved back in, e.g. utf-8, cp1252.")
+    eol: Literal["\n", "\r\n"]
+    binary: bool = False
+    too_large: bool = False
+    mixed_eol: bool = Field(
+        default=False, description="The file mixes line endings; a save writes `eol` throughout."
+    )
+
+
+class SaveWorkspaceFileRequest(BaseModel):
+    """Editor text to write over one workspace file."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str
+    expected_version: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Version the editor loaded; null only when creating a new file.",
+    )
+    encoding: str = Field(default="utf-8", max_length=40)
+    create: bool = False
+
+
+class WorkspaceEntryRequest(BaseModel):
+    """Create one file or folder inside a workspace."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    kind: Literal["file", "directory"] = "file"
+
+
+class MoveWorkspaceEntryRequest(BaseModel):
+    """Rename or move one file or folder inside a workspace."""
+
+    source: str = Field(min_length=1, max_length=4096)
+    destination: str = Field(min_length=1, max_length=4096)
+
+
+class EditorTabState(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+    mode: Literal["edit", "diff"] = "edit"
+    preview: bool = False
+
+
+class EditorTabsRequest(BaseModel):
+    """The code editor's open tabs for one workspace, in order."""
+
+    tabs: list[EditorTabState] = Field(default_factory=list, max_length=200)
+    active: str | None = Field(default=None, max_length=4096)
+
+
+class EditorBackupRequest(BaseModel):
+    """Unsaved editor text, kept until it is saved or discarded."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str
+    base_version: str | None = Field(default=None, max_length=128)
+    encoding: str = Field(default="utf-8", max_length=40)
+
+
+class ReplaceInFilesRequest(BaseModel):
+    """Replace every match of a search in the given files."""
+
+    query: str = Field(min_length=1, max_length=1000)
+    replacement: str = Field(max_length=10_000)
+    regex: bool = False
+    case_sensitive: bool = False
+    whole_word: bool = False
+    paths: list[str] = Field(min_length=1, max_length=5000)
+
+
+class CopyWorkspaceEntryRequest(BaseModel):
+    """Copy one file or folder inside a workspace."""
+
+    source: str = Field(min_length=1, max_length=4096)
+    destination: str = Field(min_length=1, max_length=4096)
+    unique: bool = Field(
+        default=False, description="Pick a free 'copy' name when the destination is taken."
+    )
+
+
+class PythonIntelRequest(BaseModel):
+    """The editor's buffer and cursor, for Python completions and lookups."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    text: str = Field(max_length=5 * 1024 * 1024)
+    line: int = Field(ge=1, description="1-based line of the cursor.")
+    column: int = Field(ge=1, description="1-based column of the cursor.")
+
+
+class DeleteWorkspaceEntryRequest(BaseModel):
+    """Delete one file or folder; it goes to the system trash unless permanent."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    permanent: bool = False
 
 
 class SearchResponse(BaseModel):
@@ -1495,8 +1645,8 @@ async def get_agents(quick: bool = False) -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=pty_available(),
-        max_terminals=MAX_TERMINALS,
-        suggested_names=default_names(MAX_TERMINALS),
+        max_panes_per_request=MAX_PANES_PER_REQUEST,
+        suggested_names=default_names(MAX_PANES_PER_REQUEST),
         agents=agents,
     )
 
@@ -1524,8 +1674,8 @@ def _quick_agent_catalog() -> AgentsResponse:
     ]
     return AgentsResponse(
         terminal_available=workspace_agents.pty_available(),
-        max_terminals=MAX_TERMINALS,
-        suggested_names=default_names(MAX_TERMINALS),
+        max_panes_per_request=MAX_PANES_PER_REQUEST,
+        suggested_names=default_names(MAX_PANES_PER_REQUEST),
         agents=agents,
     )
 
@@ -1636,6 +1786,134 @@ async def get_workspace_changes(workspace_id: str) -> WorkspaceChangesResponse:
         truncated=changes.truncated,
         reason=changes.reason,
     )
+
+
+def _pane_record(session: Any, term: Any) -> change_authors.PaneRecord | None:
+    """What reading this pane's agent record needs; None when there is no readable record."""
+    if term.resume is None or not agent_transcript.can_read(term.agent):
+        return None
+    return change_authors.PaneRecord(
+        pane=term.name,
+        history_id=term.history_id,
+        agent=term.agent,
+        display_name=term.display_name,
+        session_id=term.resume.id,
+        home=account_home(term.agent, term.account),
+        folder=term.folder or session.folder,
+    )
+
+
+def _pane_of(workspace_id: str, name: str) -> tuple[Any, Any]:
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    term = next((t for t in session.terminals if t.name == name), None)
+    if term is None:
+        raise HTTPException(status_code=404, detail="Terminal not found.")
+    return session, term
+
+
+def _read_pane_changes(
+    folder: str, record: change_authors.PaneRecord | None
+) -> tuple[pane_changes.PaneWork, str | None, int, pane_changes.PaneListing]:
+    """(the agent's work, the base it is compared with, generated files left out, listing)."""
+    events: list[dict[str, Any]] = []
+    if record is not None:
+        try:
+            events = (
+                agent_transcript.read_events(record.agent, record.session_id, home=record.home)
+                or []
+            )
+        except Exception as exc:  # a record the CLI rewrote mid-read: an empty review this time
+            log.info("Pane changes: %s record unreadable: %s", record.pane, exc)
+    work = pane_changes.pane_work(folder, events, record.folder if record else None)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        generated_job = pool.submit(pane_changes.generated_paths, folder, set(work.files))
+        base_job = pool.submit(pane_changes.session_base, folder, work.since_ms)
+        generated, base = generated_job.result(), base_job.result()
+    wanted = set(work.files) - generated
+    if not wanted or not base:
+        return work, base if wanted else None, len(generated), pane_changes.PaneListing()
+    return work, base, len(generated), pane_changes.pane_changes(folder, wanted, base)
+
+
+def _diff_item(diff: git_changes.FileDiff | None) -> PaneFileDiffItem | None:
+    if diff is None:
+        return None
+    data = asdict(diff)
+    data.pop("path", None)
+    return PaneFileDiffItem(**data)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/terminals/{name}/changes",
+    response_model=PaneChangesResponse,
+    summary="Every file one pane's agent changed, committed or not",
+)
+async def get_pane_changes(workspace_id: str, name: str) -> PaneChangesResponse:
+    """The pane's "Review changes" list.
+
+    The files are the ones its agent's own record names as written; each is
+    compared with the code before the agent's first write (``base``), so work
+    it already committed shows as well as work still pending. A pane on its
+    own worktree is read in that worktree. A pane whose record cannot be read
+    answers an empty list.
+    """
+    session, term = _pane_of(workspace_id, name)
+    folder = term.folder or session.folder
+    # The repository check and the record's reading run side by side.
+    changes, (work, base, generated, listing) = await asyncio.gather(
+        asyncio.to_thread(git_changes.workspace_changes, folder, set()),
+        asyncio.to_thread(_read_pane_changes, folder, _pane_record(session, term)),
+    )
+    if not changes.available:
+        return PaneChangesResponse(
+            workspace_id=workspace_id, available=False, reason=changes.reason
+        )
+    return PaneChangesResponse(
+        workspace_id=workspace_id,
+        available=True,
+        branch=changes.branch,
+        files=[
+            PaneChangedFileItem(
+                **asdict(item),
+                authors=[
+                    ChangeAuthorItem(
+                        pane=term.name,
+                        history_id=term.history_id,
+                        agent=term.agent,
+                        display_name=term.display_name,
+                        last_edit_ms=work.files.get(item.path, 0),
+                    )
+                ],
+                committed=item.path not in listing.pending,
+                diff=_diff_item(listing.diffs.get(item.path)),
+            )
+            for item in listing.files
+        ],
+        truncated=listing.truncated,
+        base=base or "",
+        since_ms=work.since_ms,
+        generated=generated,
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/terminals/{name}/diff",
+    response_model=WorkspaceFileDiffResponse,
+    summary="How one file a pane's agent changed differs from the code before it",
+)
+async def get_pane_file_diff(
+    workspace_id: str, name: str, path: str, base: str
+) -> WorkspaceFileDiffResponse:
+    """One file of the pane's review, against the ``base`` its list answered."""
+    session, term = _pane_of(workspace_id, name)
+    folder = term.folder or session.folder
+    try:
+        diff = await asyncio.to_thread(pane_changes.pane_file_diff, folder, path, base)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return WorkspaceFileDiffResponse(workspace_id=workspace_id, **asdict(diff))
 
 
 @router.get(
@@ -1908,6 +2186,369 @@ async def get_workspace_file_preview(workspace_id: str, path: str) -> WorkspaceF
         path=path.replace("\\", "/"),
         **preview,
     )
+
+
+def _workspace_folder(workspace_id: str) -> str:
+    session = get_registry().get(workspace_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="That workspace is not open.")
+    return str(session.folder)
+
+
+def _text_file_response(workspace_id: str, loaded: file_editing.TextFile) -> dict[str, object]:
+    return {"workspace_id": workspace_id, **asdict(loaded)}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/text-file",
+    response_model=WorkspaceTextFileResponse,
+    summary="Load one workspace file for the code editor",
+)
+async def get_workspace_text_file(
+    workspace_id: str,
+    path: str,
+    encoding: Annotated[str | None, Query(max_length=40)] = None,
+) -> dict[str, object]:
+    """The file's exact text plus the version a later save must name.
+
+    Unlike ``/file-preview`` nothing is normalised: indentation, line endings
+    and a byte-order mark come back as they are on disk. ``encoding`` forces
+    how the bytes are read ("Reopen with encoding"); otherwise it is detected.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        loaded = await asyncio.to_thread(
+            file_editing.read_text_file, folder, path, encoding=encoding
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="That workspace file is unavailable.") from exc
+    return _text_file_response(workspace_id, loaded)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/text-file/version",
+    summary="The current version of one file open in the code editor",
+)
+async def get_workspace_text_file_version(workspace_id: str, path: str) -> dict[str, object]:
+    """What the editor polls to notice that an agent changed an open file.
+
+    ``version`` is null when the file no longer exists.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        version = await asyncio.to_thread(file_editing.file_version, folder, path)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        # A locked or unreadable file is not a deleted one: answer "try again"
+        # so the editor keeps the file as it is instead of marking it deleted.
+        log.debug("Agentic IDE editor: version check failed for %s: %s", path, exc)
+        raise HTTPException(
+            status_code=503, detail="The file could not be read right now."
+        ) from exc
+    return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "version": version}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/text-file",
+    response_model=WorkspaceTextFileResponse,
+    summary="Save editor text over one workspace file",
+)
+async def save_workspace_text_file(
+    workspace_id: str, req: SaveWorkspaceFileRequest
+) -> dict[str, object]:
+    """Write the editor's text atomically.
+
+    Answers 409 with ``current_version`` when the file changed on disk since
+    the editor loaded it, so an agent's edit is never silently overwritten.
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        saved = await asyncio.to_thread(
+            file_editing.write_text_file,
+            folder,
+            req.path,
+            req.text,
+            expected_version=req.expected_version,
+            encoding=req.encoding,
+            create=req.create,
+        )
+    except file_editing.EditConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "current_version": exc.current_version},
+        ) from exc
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: save failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="The file could not be saved.") from exc
+    return _text_file_response(workspace_id, saved)
+
+
+@router.get(
+    "/workspaces/{workspace_id}/head-text",
+    summary="A workspace file's text at the last commit",
+)
+async def get_workspace_head_text(
+    workspace_id: str, path: str, ref: str = ""
+) -> dict[str, object]:
+    """The committed text the editor's diff view compares against.
+
+    ``ref`` names another commit than HEAD — the base of a pane's review.
+    ``text`` is null for a file git does not know (new, or not a repository).
+    """
+    folder = _workspace_folder(workspace_id)
+    try:
+        text = await asyncio.to_thread(git_changes.head_text, folder, path, ref)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, "path": path.replace("\\", "/"), "text": text}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/file-list",
+    summary="Every file path in a workspace, for Quick Open",
+)
+async def get_workspace_file_list(workspace_id: str) -> dict[str, object]:
+    """Tracked and untracked (not ignored) files; a bounded walk outside git."""
+    folder = _workspace_folder(workspace_id)
+    try:
+        paths, truncated = await asyncio.to_thread(file_editing.list_files, folder)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Workspace folder not found.") from exc
+    return {"workspace_id": workspace_id, "paths": paths, "truncated": truncated}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries",
+    summary="Create a file or folder in a workspace",
+)
+async def create_workspace_entry(
+    workspace_id: str, req: WorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        created = await asyncio.to_thread(
+            file_editing.create_entry, folder, req.path, directory=req.kind == "directory"
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: create failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="It could not be created.") from exc
+    return {"workspace_id": workspace_id, "path": created, "kind": req.kind}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/move",
+    summary="Rename or move a file or folder in a workspace",
+)
+async def move_workspace_entry(
+    workspace_id: str, req: MoveWorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        moved = await asyncio.to_thread(
+            file_editing.rename_entry, folder, req.source, req.destination
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: rename failed for %s: %s", req.source, exc)
+        raise HTTPException(status_code=500, detail="It could not be renamed.") from exc
+    return {"workspace_id": workspace_id, "path": moved}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/search",
+    summary="Search the text of every file in a workspace",
+)
+async def search_workspace_files(
+    workspace_id: str,
+    q: Annotated[str, Query(min_length=1, max_length=1000)],
+    regex: bool = False,
+    case: bool = False,
+    word: bool = False,
+    include: Annotated[str, Query(max_length=1000)] = "",
+    exclude: Annotated[str, Query(max_length=1000)] = "",
+) -> dict[str, object]:
+    """Matching lines grouped by file; bounded in matches and time (``truncated``)."""
+    folder = _workspace_folder(workspace_id)
+    options = file_search.SearchOptions(
+        query=q,
+        regex=regex,
+        case_sensitive=case,
+        whole_word=word,
+        include=include,
+        exclude=exclude,
+    )
+    try:
+        answer = await asyncio.to_thread(file_search.search_workspace, folder, options)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, **answer}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/search/replace",
+    summary="Replace a search's matches in chosen files",
+)
+async def replace_in_workspace_files(
+    workspace_id: str, req: ReplaceInFilesRequest
+) -> dict[str, object]:
+    """Each file is rewritten atomically; files that changed meanwhile are skipped."""
+    folder = _workspace_folder(workspace_id)
+    options = file_search.SearchOptions(
+        query=req.query,
+        regex=req.regex,
+        case_sensitive=req.case_sensitive,
+        whole_word=req.whole_word,
+    )
+    try:
+        answer = await asyncio.to_thread(
+            file_search.replace_in_files, folder, options, req.replacement, req.paths
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, **answer}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/python/{action}",
+    summary="Python completions, hover text or definitions for the code editor",
+)
+async def python_intel(
+    workspace_id: str,
+    action: Literal["complete", "hover", "definition"],
+    req: PythonIntelRequest,
+) -> dict[str, object]:
+    """Static analysis of the live buffer with the workspace as import root."""
+    folder = _workspace_folder(workspace_id)
+    handler = {
+        "complete": python_intel_module.complete,
+        "hover": python_intel_module.hover,
+        "definition": python_intel_module.definitions,
+    }[action]
+    empty: object = None if action == "hover" else []
+    try:
+        result = await asyncio.wrap_future(
+            python_intel_module.submit(
+                handler, folder, req.path, req.text, req.line, req.column, empty=empty
+            )
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"workspace_id": workspace_id, "result": result}
+
+
+@router.get(
+    "/workspaces/{workspace_id}/editor-state",
+    summary="The code editor's open tabs and unsaved text to restore",
+)
+async def get_editor_state(workspace_id: str) -> dict[str, object]:
+    """What the editor had open, and every buffer that was not saved, last run."""
+    folder = _workspace_folder(workspace_id)
+    state = await asyncio.to_thread(editor_backups.load_state, folder)
+    return {"workspace_id": workspace_id, **state}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/editor-state/tabs",
+    summary="Remember the code editor's open tabs",
+)
+async def put_editor_tabs(workspace_id: str, req: EditorTabsRequest) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(
+            editor_backups.save_tabs,
+            folder,
+            [tab.model_dump() for tab in req.tabs],
+            req.active,
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.put(
+    "/workspaces/{workspace_id}/editor-state/backup",
+    summary="Keep unsaved editor text across a restart",
+)
+async def put_editor_backup(workspace_id: str, req: EditorBackupRequest) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(
+            editor_backups.save_backup,
+            folder,
+            req.path,
+            req.text,
+            base_version=req.base_version,
+            encoding=req.encoding,
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.delete(
+    "/workspaces/{workspace_id}/editor-state/backup",
+    summary="Forget the unsaved-text backup of one file",
+)
+async def delete_editor_backup(workspace_id: str, path: str) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        await asyncio.to_thread(editor_backups.drop_backup, folder, path)
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/copy",
+    summary="Copy a file or folder in a workspace",
+)
+async def copy_workspace_entry(
+    workspace_id: str, req: CopyWorkspaceEntryRequest
+) -> dict[str, object]:
+    folder = _workspace_folder(workspace_id)
+    try:
+        copied = await asyncio.to_thread(
+            file_editing.copy_entry, folder, req.source, req.destination, unique=req.unique
+        )
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: copy failed for %s: %s", req.source, exc)
+        raise HTTPException(status_code=500, detail="It could not be copied.") from exc
+    return {"workspace_id": workspace_id, "path": copied}
+
+
+@router.post(
+    "/workspaces/{workspace_id}/entries/delete",
+    summary="Delete a file or folder in a workspace",
+)
+async def delete_workspace_entry(
+    workspace_id: str, req: DeleteWorkspaceEntryRequest
+) -> dict[str, object]:
+    """Move to the system trash; 409 ``trash_unavailable`` asks for a permanent delete."""
+    folder = _workspace_folder(workspace_id)
+    try:
+        trashed = await asyncio.to_thread(
+            file_editing.delete_entry, folder, req.path, permanent=req.permanent
+        )
+    except file_editing.TrashUnavailable as exc:
+        raise HTTPException(
+            status_code=409, detail={"message": str(exc), "trash_unavailable": True}
+        ) from exc
+    except file_editing.EditError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OSError as exc:
+        log.warning("Agentic IDE editor: delete failed for %s: %s", req.path, exc)
+        raise HTTPException(status_code=500, detail="It could not be deleted.") from exc
+    return {"workspace_id": workspace_id, "path": req.path, "trashed": trashed}
 
 
 @router.post(
@@ -2974,7 +3615,6 @@ def get_workspace_layout(workspace_id: str) -> dict:
             }
             for t in session.terminals
         ],
-        "max_terminals": MAX_TERMINALS,
     }
 
 
@@ -3454,7 +4094,7 @@ def terminal_report(name: str, lines: int = 40) -> dict:
 
 
 @router.get("/screens", summary="Read-only screen snapshots of several panes")
-async def pane_screens(
+def pane_screens(
     pane: Annotated[
         list[str] | None,
         Query(description="`<workspace_id>:<key>`, repeatable; at most 8 are read."),
@@ -3462,12 +4102,16 @@ async def pane_screens(
 ) -> dict:
     """The visible rows of each requested pane — what the office's monitors draw.
 
-    Unknown panes are omitted rather than failing the whole poll. Async on
-    purpose: the screen buffers are written on the event loop, so reading them
-    there needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`).
+    Unknown panes are omitted rather than failing the whole poll. The screen
+    buffers are written on the event loop, so the read itself hops back onto
+    the loop and needs no lock (see :mod:`jarvis.agentic_ide.screen_feed`);
+    parsing and the response stay in the threadpool.
     """
+    import anyio.from_thread  # noqa: PLC0415 - only this route needs the loop portal
+
     refs = screen_feed.parse_pane_refs(pane or [])
-    return {"screens": screen_feed.collect_screens(get_registry(), refs)}
+    screens = anyio.from_thread.run_sync(screen_feed.collect_screens, get_registry(), refs)
+    return {"screens": screens}
 
 
 @router.get(
@@ -3655,6 +4299,21 @@ def _picks_now(term: Any, read_result: Any) -> dict[str, str]:
         picked_ms = term.picked_at.get(pick, 0.0) * 1000
         out[pick] = own if own and picked_ms > newest_ms else (recorded or own)
     return out
+
+
+@router.post("/terminals/{name}/start", summary="Start a terminal nobody has opened yet")
+async def terminal_start(name: str, workspace: str | None = None) -> dict:
+    """Start the pane's agent now instead of when a viewer first attaches.
+
+    For callers that open panes without showing them — the office's spawn
+    point hands each new pane a task and would otherwise wait on a pane that
+    never starts. A pane that is already running is not touched.
+    """
+    try:
+        term = get_registry().start_pending(name, workspace)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"terminal": term.name, "status": term.status}
 
 
 @router.post(

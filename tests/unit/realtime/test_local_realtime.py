@@ -724,6 +724,10 @@ def _fresh_launch_state(monkeypatch) -> list[dict[str, Any]]:
     monkeypatch.setattr(supervisor, "_port_open", lambda port, timeout=1.0: False)
     monkeypatch.setattr(supervisor, "probe_runtime", lambda *args, **kwargs: None)
     monkeypatch.setattr(supervisor, "_process_create_time", lambda pid: 1000.0)
+    # The child env injects the OpenAI key from the secret store; on macOS that
+    # read runs /usr/bin/security through Popen, which the fake below would
+    # count as a second spawn (and on a real Mac it may show a Keychain prompt).
+    monkeypatch.setattr(supervisor, "hardened_child_env", lambda **_: {})
     monkeypatch.setattr(LocalRealtimeProvider, "_last_launch_at", float("-inf"))
     spawned: list[dict[str, Any]] = []
 

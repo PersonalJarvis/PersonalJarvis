@@ -18,7 +18,7 @@ from fastapi import HTTPException
 
 from jarvis.agentic_ide import resume_store
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import MAX_TERMINALS, Registry, SessionError
+from jarvis.agentic_ide.session import Registry, SessionError
 from jarvis.ui.web import agentic_ide_routes as routes
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -242,18 +242,18 @@ async def test_moving_into_the_same_tab_changes_nothing(
     assert [(t.name, t.key) for t in source.terminals] == before
 
 
-async def test_a_full_or_closed_target_is_refused(registry: Registry, tmp_path: Path) -> None:
-    source, target = await _two_tabs(registry, tmp_path, second=MAX_TERMINALS)
+async def test_a_large_target_takes_the_pane_and_a_closed_one_refuses(
+    registry: Registry, tmp_path: Path
+) -> None:
+    source, target = await _two_tabs(registry, tmp_path, second=16)
 
-    with pytest.raises(SessionError, match="maximum"):
-        await registry.transfer_terminal(
-            "T1", workspace_id=source.id, target_workspace_id=target.id
-        )
+    await registry.transfer_terminal("T2", workspace_id=source.id, target_workspace_id=target.id)
+    assert len(target.terminals) == 17
     with pytest.raises(SessionError, match="not open"):
         await registry.transfer_terminal(
             "T1", workspace_id=source.id, target_workspace_id="ide_missing"
         )
-    assert len(source.terminals) == 2
+    assert len(source.terminals) == 1
 
 
 async def test_the_route_answers_with_the_new_name_and_both_tabs(
@@ -325,21 +325,22 @@ async def test_left_of_a_pane_puts_it_first_in_the_row(
     assert [t.name for t in target.terminals] == ["T2", "T1"]
 
 
-async def test_a_place_without_room_changes_nothing(registry: Registry, tmp_path: Path) -> None:
-    """Refused before the pane leaves its tab — never half-way between two."""
+async def test_a_fifth_column_is_a_place_like_any_other(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """No grid bound: beside a row four wide, the pane lands where it was put."""
     source = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Jarvis")
     target = await registry.start(str(tmp_path), [{"agent": "claude"}], name="Blog")
-    for _ in range(session_mod.MAX_GRID_COLUMNS - 1):
+    for _ in range(3):
         await registry.add_terminal(workspace_id=target.id, direction="right")
-    before = [t.name for t in target.terminals]
+    assert session_mod.layout_tree.grid_span(target.layout) == (4, 1)
 
-    with pytest.raises(SessionError, match="No room"):
-        await registry.transfer_terminal(
-            "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="right"
-        )
+    await registry.transfer_terminal(
+        "T1", workspace_id=source.id, target_workspace_id=target.id, anchor="T1", side="right"
+    )
 
-    assert [t.name for t in source.terminals] == ["T1"]
-    assert [t.name for t in target.terminals] == before
+    assert source.terminals == []
+    assert session_mod.layout_tree.grid_span(target.layout) == (5, 1)
 
 
 async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) -> None:

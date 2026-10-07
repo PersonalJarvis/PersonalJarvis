@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { MessageSquare, Mic, Plus, Trash2 } from "lucide-react";
 
 import { useT } from "@/i18n";
@@ -8,7 +8,8 @@ import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
 import { startNewVoiceRun } from "@/lib/chatsApi";
 import { transcriptFromMessages } from "@/lib/homeTranscript";
-import { CONVERSATIONS_REFRESH_MS, useConversations } from "@/hooks/useConversations";
+import { useConversations } from "@/hooks/useConversations";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 import { formatChatWhen } from "@/components/home/chatRows";
 import { setJarvisCardMode } from "./AgentChatPanel";
 
@@ -30,22 +31,13 @@ export function JarvisHistoryRail() {
   const sessions = useAgentChatStore((s) => s.sessions);
   const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
   const loadSessions = useAgentChatStore((s) => s.loadSessions);
-  const { conversations, openConversation, refresh } = useConversations();
+  const { conversations, openConversation, reopenLiveConversation, refresh } = useConversations({ poll: true });
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
 
-  // The dialog is transient, so it polls while open: a session that ends
-  // with a hang-up appears without reopening the card.
-  useEffect(() => {
-    void loadSessions();
-    void refresh();
-    const id = window.setInterval(() => {
-      void loadSessions();
-      void refresh();
-    }, CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [loadSessions, refresh]);
+  // Share the sidebar's owner instead of adding a second interval per dialog.
+  useHistoryPolling(loadSessions);
 
   const voiceRows = conversations.filter((c) => c.kind === "voice");
 
@@ -57,10 +49,15 @@ export function JarvisHistoryRail() {
   };
 
   const openVoice = async (voiceId: string) => {
+    if (reopenLiveConversation(voiceId)) {
+      setJarvisCardMode("voice");
+      return;
+    }
     useAgentChatStore.getState().newChat();
     useHomeStore.getState().seedTranscript([]);
     setJarvisCardMode("voice");
     const messages = await openConversation("voice", voiceId);
+    if (messages === null) return;
     const active = useEventStore.getState();
     if (active.activeKind !== "voice" || active.activeThreadId !== voiceId) return;
     useHomeStore.getState().seedTranscript(transcriptFromMessages(messages));

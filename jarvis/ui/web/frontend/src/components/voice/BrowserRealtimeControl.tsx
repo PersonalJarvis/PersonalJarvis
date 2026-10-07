@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Loader2, Mic, MicOff, RotateCcw } from "lucide-react";
 
 import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWaveform";
@@ -7,6 +7,10 @@ import { Card } from "@/components/ui/card";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
+import {
+  registerBrowserVoiceCallOwner,
+  setBrowserVoiceCallLive,
+} from "@/lib/browserVoiceCall";
 import { hasEmbeddedDesktopBridge, isEmbeddedMacWindow } from "@/lib/embeddedDesktop";
 import {
   browserRealtimeSupportIssue,
@@ -15,6 +19,7 @@ import {
   type BrowserRealtimeSupportIssue,
 } from "@/lib/realtimeAudio";
 import { useEventStore, type VoiceState } from "@/store/events";
+import { setReloadHold } from "@/lib/reloadHold";
 import { cn } from "@/lib/utils";
 import {
   clearVoiceInputLevel,
@@ -82,11 +87,17 @@ async function reportHostMicrophoneDenied(): Promise<void> {
  * SpeechPipeline, so this control is rendered only when the capability route
  * says native desktop actions are unavailable. That prevents two concurrent
  * capture streams while still making a headless VPS usable entirely in-app.
+ *
+ * Two ways a call starts here. The desktop hands a realtime call to this
+ * document (`BrowserVoiceRequested`). Or, on a host with no speech pipeline
+ * at all, the person presses Start and useVoiceCall asks this control to hold
+ * the call itself (lib/browserVoiceCall) — in either voice mode, because the
+ * server picks a realtime session or the classic STT -> brain -> TTS chain.
  */
 export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: boolean } = {}) {
   const t = useT();
   const capabilities = useCapabilities();
-  const { mode, realtimeAvailable, requiresWebRtcOffer, startBudgetMs, browserAudio } =
+  const { mode, realtimeAvailable, requiresWebRtcOffer, webRtcStartEventRequired, startBudgetMs, browserAudio } =
     useVoiceMode();
   const setVoice = useEventStore((store) => store.setVoice);
   const setTranscription = useEventStore((store) => store.setTranscription);
@@ -131,11 +142,18 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
   // listening — or the pill looks ready while the Tool Model is still
   // working.
   const resumeThinkingAfterSpeechRef = useRef(false);
+  // A call the person started here because the host has no speech pipeline.
+  // State for rendering, a ref for the callbacks that outlive a render.
+  const [localCall, setLocalCall] = useState(false);
+  const localCallRef = useRef(false);
   const browserSurface = Boolean(
     capabilities.data &&
       (browserAudio || capabilities.data.native_file_actions === false || !hasEmbeddedDesktopBridge()),
   );
   const visible = browserSurface && mode === "realtime";
+  // A locally started call is live in either voice mode; leaving realtime
+  // mode must not hang it up.
+  const callSurface = visible || localCall;
   const supportIssue = visible ? browserRealtimeSupportIssue() : null;
 
   const supportMessage = useCallback(
@@ -154,6 +172,11 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     connectionGenerationRef.current += 1;
     const client = clientRef.current;
     clientRef.current = null;
+    if (localCallRef.current) {
+      localCallRef.current = false;
+      setLocalCall(false);
+      setBrowserVoiceCallLive(false);
+    }
     setState("idle");
     setEffectiveProvider("");
     setError("");
@@ -168,16 +191,44 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     await client?.disconnect();
   }, [setVoice]);
 
-  const start = useCallback(async (options?: { fromGesture?: boolean }) => {
-    if (!realtimeAvailable || clientRef.current || state === "connecting") return;
+  const start = useCallback(async (options?: { fromGesture?: boolean; local?: boolean }) => {
+    // A local start does not wait for realtime: on a host with no speech
+    // pipeline the server answers with a realtime session or the classic
+    // chain, whichever it can build.
+    const local = options?.local === true;
+    if ((!local && !realtimeAvailable) || clientRef.current || state === "connecting") return;
     const generation = connectionGenerationRef.current + 1;
     connectionGenerationRef.current = generation;
+    if (local) {
+      localCallRef.current = true;
+      setLocalCall(true);
+      setBrowserVoiceCallLive(true);
+      // Every Start/Stop surface reads this; it also keeps a second press
+      // from starting a second call while the microphone opens.
+      setVoice("connecting");
+    }
     setState("connecting");
     setError("");
     setEffectiveProvider("");
     levelRef.current = 0;
     clearVoiceInputLevel("browser");
     clearVoiceOutputLevel("browser");
+    // A local call in pipeline mode has no realtime transport, so none of its
+    // media options apply: the classic bridge streams plain PCM both ways. A
+    // call the desktop hands over keeps exactly the options it always had.
+    const realtimeTransport = !local || mode === "realtime";
+    const callBrowserAudio = realtimeTransport && browserAudio;
+    // A classic call has no realtime provider to test, so its fallback line
+    // points at the three providers that chain runs on instead.
+    const startFailed = t(
+      realtimeTransport ? "sidebar.realtime_error" : "sidebar.browser_voice_error",
+    );
+    // A call the person started here reports a failure as a toast and frees
+    // the controls again; there is no card on the page to hold an error line.
+    const endLocalCall = (message: string) => {
+      pushToast("error", message);
+      void stop();
+    };
     let client: RealtimeAudioClient;
     const isCurrent = () =>
       connectionGenerationRef.current === generation && clientRef.current === client;
@@ -187,7 +238,7 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           if (!isCurrent()) return;
           // Live adapters project all speaker snapshots onto the shared bus.
           // Keeping a second local caption would overwrite the conversation.
-          if (browserAudio) return;
+          if (callBrowserAudio) return;
           if (role === "user") setTranscription(text, isFinal);
           if (role === "user" && isFinal) setVoice("thinking");
         },
@@ -298,10 +349,15 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
             status === "tts_browser_error"
           ) {
             setError(t("sidebar.realtime_browser_tts_unavailable"));
+            if (local) pushToast("warning", t("sidebar.realtime_browser_tts_unavailable"));
             setVoice("listening");
           } else if (status === "audio_closed") {
             void stop();
           } else if (status === "provider_error" || status === "disconnected") {
+            if (local) {
+              endLocalCall(backendDetail || startFailed);
+              return;
+            }
             clientRef.current = null;
             void client.disconnect();
             setState("error");
@@ -312,7 +368,12 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
           }
         },
       },
-      { requiresWebRtcOffer, startBudgetMs, browserAudio },
+      {
+        requiresWebRtcOffer: realtimeTransport && requiresWebRtcOffer,
+        webRtcStartEventRequired,
+        startBudgetMs,
+        browserAudio: callBrowserAudio,
+      },
     );
     clientRef.current = client;
     try {
@@ -324,7 +385,6 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       clientRef.current = null;
       void client.disconnect();
       clearVoiceInputLevel("browser");
-      setState("error");
       const micDenied = cause instanceof DOMException && cause.name === "NotAllowedError";
       // In the embedded Mac window a refused microphone is macOS's decision, not a
       // browser site setting: there is no site settings page to point at. The
@@ -332,21 +392,28 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
       // ("Open System Settings") takes over; a wake-started call never does.
       const hostDenied = micDenied && isEmbeddedMacWindow();
       if (hostDenied && options?.fromGesture) void reportHostMicrophoneDenied();
-      setError(
+      const message =
         cause instanceof RealtimeAudioSupportError
           ? supportMessage(cause.issue)
           : hostDenied
             ? t("sidebar.realtime_microphone_denied_desktop")
             : micDenied
               ? t("sidebar.realtime_microphone_denied")
-              : t("sidebar.realtime_error"),
-      );
+              : startFailed;
+      if (local) {
+        endLocalCall(message);
+        return;
+      }
+      setState("error");
+      setError(message);
       setVoice("error");
     }
   }, [
+    mode,
     pushToast,
     realtimeAvailable,
     requiresWebRtcOffer,
+    webRtcStartEventRequired,
     browserAudio,
     setTranscription,
     setVoice,
@@ -356,6 +423,22 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     supportMessage,
     t,
   ]);
+
+  // This document's browser-held call: on a host with no speech pipeline,
+  // every Start/Stop surface reaches it through useVoiceCall. Only the
+  // app-root instance (`controlOnly`) owns it, and the latest start/stop are
+  // read through refs so the registration does not churn on every render.
+  const startRef = useRef(start);
+  startRef.current = start;
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  useEffect(() => {
+    if (!controlOnly) return undefined;
+    return registerBrowserVoiceCallOwner({
+      start: () => void startRef.current({ fromGesture: true, local: true }),
+      stop: () => void stopRef.current(),
+    });
+  }, [controlOnly]);
 
   useEffect(() => {
     if (!browserAudio || !wakeOwner) return;
@@ -405,14 +488,22 @@ export function BrowserRealtimeControl({ controlOnly = false }: { controlOnly?: 
     // This surface owns BOTH directions while it is live: it holds the
     // microphone and it plays the reply, so the backend's own levels for
     // either one would be a second, unsynchronised opinion.
-    const owns = visible && (state === "connecting" || state === "connected");
+    const owns = callSurface && (state === "connecting" || state === "connected");
     setBrowserVoiceInputOwnership(owns);
     setBrowserVoiceOutputOwnership(owns);
-  }, [state, visible]);
+  }, [state, callSurface]);
 
   useEffect(() => {
-    if (!visible) void stop();
-  }, [stop, visible]);
+    if (!callSurface) void stop();
+  }, [stop, callSurface]);
+
+  // This document owns the call: an automatic reload (a rebuilt bundle) would
+  // unmount this control and hang up mid-sentence. Hold reloads while it lives.
+  const reloadOwner = useId();
+  useEffect(() => {
+    setReloadHold(reloadOwner, state === "connecting" || state === "connected");
+  }, [reloadOwner, state]);
+  useEffect(() => () => setReloadHold(reloadOwner, false), [reloadOwner]);
 
   useEffect(
     () => () => {

@@ -12,12 +12,15 @@ from types import SimpleNamespace
 from typing import Any, Literal
 from uuid import uuid4
 
+from jarvis.brain.identity import name_directive
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.paths import user_data_dir
 from jarvis.core.runtime_refs import get_supervisor_tool_gateway
 from jarvis.core.tool_budget import VOICE_TOOL_BUDGET_S
+from jarvis.cu.direct import COMPUTER_CONTROL_RULES
 from jarvis.live.product import PRODUCT_BRIEF
 from jarvis.live.runtime import claim, register, unregister
-from jarvis.live.session import LiveVoiceSession
+from jarvis.live.session import LiveVoiceSession, _identity
 from jarvis.live.state import LiveLedger, TranscriptFragment
 from jarvis.live.tools import LiveTools, take_images
 from jarvis.realtime.audio import StreamingPcm16Resampler
@@ -36,7 +39,9 @@ _DUPLEX_REFUSAL_FALLBACK = "The selected voice engine cannot take a call right n
 # attribute so tests can pin it low.
 _TOOL_DEADLINE_S = VOICE_TOOL_BUDGET_S
 # Session built-ins of ``LiveTools``: always declared, whatever the budget.
-_SESSION_TOOLS = frozenset({"end_call", "discover_tools", "call_tool", "confirm_action"})
+_SESSION_TOOLS = frozenset(
+    {"end_call", "discover_tools", "call_tool", "confirm_action", "computer", "take_appshot"}
+)
 # Under a declaration budget (a provider's ``tool_declaration_budget_tokens``
 # or ``[voice].realtime_tool_declaration_budget_tokens``, the smaller wins), at
 # most this many catalog tools are declared directly; every other tool stays
@@ -115,6 +120,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         self._tools = LiveTools(
             gateway, self._ledger, self.session_id, language=self._language, backend_model=""
         )
+        self._tools.ask_hangup = self._ask_voice_hangup
         try:
             claim(self.session_id)
             self._initial_seed = self._take_initial_context()
@@ -135,16 +141,16 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 language=self._language,
                 voice=getattr(settings, "voice", "") or "",
                 instructions=(
-                    "You are Personal Jarvis. "
+                    (_identity(self._config) or name_directive(""))
+                    + "\n\n"
                     + PRODUCT_BRIEF
                     + " "
                     + language_rule
                     + "Use your tools directly "
                     "for actions, private information and current facts. Use discover_tools and "
-                    "call_tool for any tool not declared directly. For computer control, capture "
-                    "screen_snapshot, inspect the image, call the desktop primitives, and verify "
-                    "the result with a new snapshot. Do not call a separate computer-use harness. "
-                    "When the user asks for an appshot, call take_appshot. "
+                    "call_tool for any tool not declared directly. "
+                    + COMPUTER_CONTROL_RULES
+                    + " When the user asks for an appshot, call take_appshot. "
                     "Request confirmation for pending approvals. Use confirm_action only after "
                     "explicit approval. A started job is not complete. Never invent tool results. "
                     "Use workspace-orchestrate for coding tasks: inspect and resolve project, "
@@ -153,7 +159,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "prompt) in the named or visible workspace; never spawn_worker. "
                     "Explicit references override the visible workspace; ask on ambiguity. "
                     "Do not switch the UI to address another workspace. Reuse request_id on "
-                    "retries and never replay uncertain delivery."
+                    "retries and never replay uncertain delivery. "
+                    + AGENT_BRIEF_RULE
                 ),
                 history=tuple(
                     {"role": item["role"], "text": item["delta"]} for item in self._initial_seed
@@ -205,6 +212,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             await self._send_json(
                 {
                     "type": "audio_ready",
+                    "sound_effects": bool(
+                        getattr(getattr(self._config, "ui", None), "sound_effects", True)
+                    ),
                     "provider": self.active_provider,
                     "model": model,
                     "input_sample_rate": rate,
@@ -214,6 +224,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                     "input_muted": self._input_muted,
                 }
             )
+            # Audio flows over this socket: results that finished before the
+            # call may be offered at the first pause, which is now.
+            self._notify_pause()
         except BaseException:
             await self.end(reason="error")
             raise
@@ -389,12 +402,12 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                         event = await anext(events)
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception:  # Shutdown is quiet; active failures enter the reporting recovery loop.
                         if self._closing:
                             return
-                        if await self._recover():
+                        if await self._wait_for_connection():
                             break
-                        raise
+                        return
                     await self._native_event(event)
         except asyncio.CancelledError:
             raise
@@ -409,11 +422,13 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             )
         finally:
             unregister(self.session_id)
+            self._notify_ended()
             self._closed.set()
 
     async def _native_event(self, event: Any) -> None:
         assert self._tools is not None and self._ledger is not None
         if event.type == "audio_delta" and event.audio is not None:
+            self._report_started()
             await self._note_speaking()
             await self._send_binary(event.audio.pcm)
         elif event.type in {"input_transcript", "output_transcript_delta"}:
@@ -448,6 +463,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                         task = asyncio.create_task(self._request_native_response(self._language))
                         self._control_tasks.add(task)
                         task.add_done_callback(self._control_tasks.discard)
+            if role == "assistant":
+                self._report_started()
             if role == "assistant" or event.is_final:
                 stamp = time.monotonic_ns() // 1_000_000
                 await asyncio.to_thread(
@@ -480,11 +497,15 @@ class NativeLiveVoiceSession(LiveVoiceSession):
             if role == "user" and event.is_final:
                 self._transcript.finish("user")
         elif event.type == "tool_call":
+            # The model is answering the report, starting with a tool.
+            self._report_started()
             await self._note_thinking()
             task = asyncio.create_task(self._call(event, self._tools.revision))
-            self._jobs.add(task)
-            task.add_done_callback(self._jobs.discard)
+            self._track_job(task)
         elif event.type in {"interrupted", "speech_started"}:
+            # A barge-in into a report: the user heard its start and chose to
+            # talk. The report is in the model's context for follow-ups.
+            self._report_finished(delivered=True)
             barge_in = event.type == "speech_started" and (self._speaking or self.playback_active)
             self._speaking = False
             self._thinking = False
@@ -492,6 +513,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 await self._interrupt_reply()
             await self._emit_indicator({"type": "tts_cancel"})
         elif event.type == "turn_complete":
+            self._report_finished(delivered=True)
             self._transcript.finish("assistant")
             await self._note_turn_end()
         elif event.type == "usage":
@@ -633,8 +655,8 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if str(report or "").strip():
             # The model reasons over the agent's full report before speaking
             # (``report_prompt``); refused mid-turn so the caller retries at
-            # the next boundary instead of talking over anyone.
-            if self._thinking or self._speaking or self.playback_active or self._input_active:
+            # the next pause instead of talking over anyone.
+            if not self.ready_for_report:
                 return False
             from jarvis.realtime.report_prompt import report_update_prompt
 
@@ -644,6 +666,14 @@ class NativeLiveVoiceSession(LiveVoiceSession):
                 language=str(kwargs.get("language") or self._language),
                 kind=str(kwargs.get("spoken_kind") or "completion"),
             )
+            self._report_sent()
+            try:
+                await self._connection.send_text(text)
+            except BaseException:
+                self._cancel_report_timeout()
+                self._report_state = ""
+                raise
+            return True
         await self._connection.send_text(text)
         return True
 
@@ -654,11 +684,15 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         what it looks at when the user asks. Servers without image input
         decline, and the caller parks the appshot for the next message.
         """
-        del note
         send_image = getattr(self._connection, "send_image", None)
         if not self.is_active or not callable(send_image):
             return False
         await send_image(image, mime)
+        # Native transports have no silent text-input contract. The workspace
+        # tool asks the model to select this scoped ID before it can hand off work.
+        from jarvis.core.image_references import appshot_context
+
+        appshot_context(self.session_id, image, mime, self._config)
         return True
 
     async def end(self, *, reason: str = "client_stop") -> None:
@@ -671,6 +705,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         await self._publish_phase("idle")
         self._hangup_reason = reason
         unregister(self.session_id)
+        self._notify_ended()
         if self._tools is not None:
             await self._tools.close()
         for task in list(self._control_tasks):

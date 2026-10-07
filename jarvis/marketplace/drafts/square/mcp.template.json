@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "square": {
+      "type": "streamable-http",
+      "url": "https://mcp.squareup.com/mcp"
+    }
+  }
+}

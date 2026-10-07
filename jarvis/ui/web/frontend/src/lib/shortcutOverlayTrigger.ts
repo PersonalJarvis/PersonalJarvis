@@ -12,6 +12,9 @@
  * rules are testable without mounting anything.
  */
 
+import { appZoomChordMatches } from "@/lib/appZoom";
+import { isBareChord } from "@/lib/appChords";
+
 /** Elements that are text entry by their tag alone. */
 const TEXT_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
 
@@ -59,6 +62,9 @@ export function isTextEntryTarget(target: EventTarget | null): boolean {
 
 export interface OverlayTriggerEvent {
   key: string;
+  /** Needed only for a chord the user recorded anew (letters match by position). */
+  code?: string;
+  shiftKey?: boolean;
   ctrlKey: boolean;
   metaKey: boolean;
   altKey: boolean;
@@ -67,15 +73,29 @@ export interface OverlayTriggerEvent {
 }
 
 /**
- * True when this keystroke is a bare `?` typed outside any text entry.
+ * True when this keystroke is the overview's chord — by default a bare `?`
+ * typed outside any text entry.
  *
  * Shift is allowed and expected: `?` is Shift plus `/` on a US layout, and Shift
  * plus the key right of `0` on a German one. Reading `event.key` rather than a
  * physical code is what makes both work without a per-layout table.
  * Ctrl/Cmd/Alt disqualify: those chords belong to whatever else claims them.
+ *
+ * `combo` is the chord chosen under Settings → Keyboard shortcuts ("" = off).
+ * A chord without Ctrl, Alt or ⌘ keeps the text-entry guard; one with them
+ * works inside a field too, like every other app chord.
  */
-export function shouldOpenShortcutOverlay(event: OverlayTriggerEvent): boolean {
+export function shouldOpenShortcutOverlay(event: OverlayTriggerEvent, combo = "question"): boolean {
   if (event.defaultPrevented) return false;
+  if (!combo) return false;
+  if (combo !== "question") {
+    const matches = appZoomChordMatches(
+      { ...event, code: event.code ?? "", shiftKey: event.shiftKey ?? false },
+      combo,
+    );
+    if (!matches) return false;
+    return !isBareChord(combo) || !isTextEntryTarget(event.target);
+  }
   if (event.key !== "?") return false;
   if (event.ctrlKey || event.metaKey || event.altKey) return false;
   return !isTextEntryTarget(event.target);

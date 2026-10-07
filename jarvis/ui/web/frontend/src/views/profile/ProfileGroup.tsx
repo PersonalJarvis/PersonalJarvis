@@ -18,6 +18,7 @@ export function ProfileGroup({
   children,
   testId,
   className,
+  bare = false,
 }: {
   title: string;
   description?: string;
@@ -26,10 +27,12 @@ export function ProfileGroup({
   children: ReactNode;
   testId?: string;
   className?: string;
+  /** Drop the visible heading when a surrounding panel already names the group. */
+  bare?: boolean;
 }) {
   return (
     <section data-testid={testId} aria-label={title} className={cn("flex flex-col gap-3", className)}>
-      <div className="flex items-end justify-between gap-4 px-1">
+      <div className={cn("flex items-end justify-between gap-4 px-1", bare && "hidden")}>
         <div className="min-w-0">
           <h2 className="text-lg font-semibold text-foreground-strong">{title}</h2>
           {description && <p className="mt-0.5 text-base text-muted-foreground">{description}</p>}

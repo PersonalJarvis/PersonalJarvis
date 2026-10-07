@@ -22,6 +22,24 @@ from jarvis.core.protocols import (
 )
 
 _VALID_RISK_TIERS = frozenset({"safe", "monitor", "ask", "block"})
+# Live sessions operate the screen with ``computer`` (ADR-0039). These would
+# start a second model's mission, or move/click/type in screen units the live
+# model never sees, so they are not part of the voice catalog.
+_VOICE_SUPERSEDED_TOOLS = frozenset(
+    {
+        "computer_use",
+        "computer-use",
+        "dispatch_to_harness",
+        "dispatch-to-harness",
+        "click",
+        "move_mouse",
+        "drag",
+        "scroll",
+        "type_text",
+        "hotkey",
+        "screenshot",
+    }
+)
 
 
 class BrainSupervisorToolGateway:
@@ -108,20 +126,46 @@ class BrainSupervisorToolGateway:
         from jarvis.plugins.tool.appshot import AppshotTool
         from jarvis.plugins.tool.live_screen import LiveScreenTool
         from jarvis.plugins.tool.product_help import ProductHelpTool
+        from jarvis.plugins.tool.remember import RememberTool
 
         tools = self._live_tools()
         context = peek_computer_use_context()
         computer_use = getattr(getattr(self._manager, "_config", None), "computer_use", None)
-        if context is not None and getattr(computer_use, "enabled", True):
-            tools.update(context.tools or {})
+        # ADR-0039: the live session's own reasoning model operates the screen
+        # through ``computer``. The mission vehicles (a second model running
+        # its own loop) and the raw coordinate primitives (screen units the
+        # model never sees) are not offered next to it.
+        for name in _VOICE_SUPERSEDED_TOOLS:
+            tools.pop(name, None)
+        if getattr(computer_use, "enabled", True):
+            if context is not None:
+                tools.update(
+                    {
+                        name: tool
+                        for name, tool in (context.tools or {}).items()
+                        if name not in _VOICE_SUPERSEDED_TOOLS
+                    }
+                )
+            from jarvis.plugins.tool.computer import ComputerTool
+
+            tools[ComputerTool.name] = ComputerTool()
         tools["screen_snapshot"] = LiveScreenTool()
         # "Take an appshot" said in a live call: the shortcut's capture, with
         # its effect and sound. Voice-only — a brain turn gets the same
         # picture from its own Screen Context step.
         tools["take_appshot"] = AppshotTool()
+        # The live model keeps its own character file (SOUL.md) current while
+        # the call runs, instead of a separate review call after it.
+        from jarvis.plugins.tool.update_soul import UpdateSoulTool
+
+        tools["update_soul"] = UpdateSoulTool()
         # The live prompt carries only a short product brief; exact how-to
         # answers come from the built-in guide on demand.
         tools["product_help"] = ProductHelpTool()
+        # A spoken "remember this" in a live call is saved while the call
+        # runs, into the MEMORY.md every later conversation reads. Voice-only
+        # like the tools above: the router stays a pure dispatcher (ADR-0011).
+        tools["remember"] = RememberTool()
         if self._workspace_tool is not None:
             # Live delegates coding to one addressed service. The old prompt
             # tools silently choose an ambient pane and cannot safely coexist.

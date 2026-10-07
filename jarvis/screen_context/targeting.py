@@ -279,4 +279,43 @@ def resolve_target(
     )
 
 
-__all__ = ["monitor_for_point", "resolve_target"]
+#: A hand-selected area smaller than this on either side is a slip, not a pick.
+_MIN_REGION_EXTENT_PX = 8
+
+
+def region_target(
+    region: Rect,
+    *,
+    monitors: list[dict],
+    window: WindowFacts | None,
+) -> CaptureTarget:
+    """The capture target for a rectangle the user selected by hand.
+
+    ``region`` is in the same capture coordinates as ``monitors``. It is
+    clipped to the screen it mostly sits on, so a drag that overshot an edge
+    never grabs the void between monitors. Raises :class:`CaptureUnavailable`
+    when there is no display or the clipped area is too small to show anything.
+    """
+    if not monitors:
+        raise CaptureUnavailable(
+            "No display is available on this machine, so there is nothing to capture."
+        )
+    left, top, width, height = (int(v) for v in region)
+    monitor = monitor_for_point(monitors, (left + width // 2, top + height // 2)) or {}
+    m_left, m_top, m_width, m_height = _rect_of(monitor)
+    x0, y0 = max(left, m_left), max(top, m_top)
+    x1 = min(left + width, m_left + m_width)
+    y1 = min(top + height, m_top + m_height)
+    if x1 - x0 < _MIN_REGION_EXTENT_PX or y1 - y0 < _MIN_REGION_EXTENT_PX:
+        raise CaptureUnavailable("The selected area is too small to capture.")
+    return CaptureTarget(
+        kind=TargetKind.REGION,
+        bbox=(x0, y0, x1 - x0, y1 - y0),
+        reason=TargetReason.USER_REGION,
+        monitor_name=_monitor_name(monitor, monitors),
+        window=window or WindowFacts(),
+        window_handle=None,
+    )
+
+
+__all__ = ["monitor_for_point", "region_target", "resolve_target"]

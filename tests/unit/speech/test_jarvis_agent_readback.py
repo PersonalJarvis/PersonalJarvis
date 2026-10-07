@@ -3,13 +3,14 @@
 Three behaviours, all on the out-of-band announcement path:
 
 * **Distinct attribution** — a spawned sub-agent / mission / worker readback is
-  tagged ``spoken_kind="subagent"`` (the attributed sibling of ``completion``),
-  yet keeps the exact same hangup punch-through + afterglow handling so an
-  offloaded result is never silently dropped (AD-OE6).
+  tagged ``spoken_kind="subagent"`` (the attributed sibling of ``completion``).
 * **Speaking indicator** — the readback drives the Supervisor ``SPEAKING`` state
   while it plays (so the mascot/orb animates), then restores the prior state.
-* **Keep listening** — the Jarvis-Agent-background direct path stamps the readback
+* **Keep listening** — the Jarvis-Agent-background readback stamps the readback
   grace timestamp so ``_active_session`` keeps the mic open afterward.
+* **No voice out of nowhere** (2026-10-05) — the classic TTS voice speaks a
+  readback only inside an open voice session; after a hang-up or while idle
+  it stays silent.
 
 Companion to ``test_announcement_bridge.py``; reuses its fake shapes.
 """
@@ -29,7 +30,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import SPOKEN_KIND_SUBAGENT
-from jarvis.speech.pipeline import SpeechPipeline, _announcement_spoken_kind
+from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState, _announcement_spoken_kind
 from jarvis.state.supervisor import Supervisor
 
 
@@ -67,7 +68,14 @@ def _make_pipeline(
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     if player is not None:
         pipeline._player = player  # type: ignore[assignment]
+    _open_classic_session(pipeline)
     return pipeline
+
+
+def _open_classic_session(pipeline: SpeechPipeline) -> None:
+    """Put the pipeline inside an open classic voice conversation."""
+    pipeline._current_voice_session_id = "session-1"  # type: ignore[attr-defined]
+    pipeline._turn_state = TurnTakingState.LISTENING  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------
@@ -80,9 +88,9 @@ def test_announcement_spoken_kind_maps_subagent_to_itself() -> None:
 
 
 @pytest.mark.asyncio
-async def test_subagent_announcement_punches_through_hangup() -> None:
-    """A kind="subagent" readback is the offloaded answer — it must be spoken
-    even after the user hung up, exactly like kind="completion" (AD-OE5/OE6)."""
+async def test_subagent_announcement_stays_silent_after_hangup() -> None:
+    """After the user hung up, a finished sub-agent is not voiced by the classic
+    TTS voice — Jarvis never speaks out of nowhere (2026-10-05)."""
     bus = EventBus()
     tts = FakeTTS()
     player = FakePlayer()
@@ -98,8 +106,34 @@ async def test_subagent_announcement_punches_through_hangup() -> None:
         )
     )
 
-    assert tts.calls == [("Deine Recherche ist fertig.", "de-DE")]  # i18n-allow
-    assert player.plays == 1
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_subagent_announcement_stays_silent_without_a_session() -> None:
+    """A result that lands while no voice session is open is not spoken."""
+    bus = EventBus()
+    tts = FakeTTS()
+    player = FakePlayer()
+    pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
+    pipeline._player = player  # type: ignore[assignment]
+
+    await bus.publish(
+        AnnouncementRequested(text="Erledigt.", language="de", kind="subagent")
+    )
+    await bus.publish(
+        JarvisAgentBackgroundCompleted(
+            success=True,
+            utterance="recherchier mir fuenf themen",
+            summary="Fuenf Recherche-Themen liegen bereit.",  # i18n-allow
+            error="",
+            duration_s=12.3,
+        )
+    )
+
+    assert tts.calls == []
+    assert player.plays == 0
 
 
 @pytest.mark.asyncio
@@ -170,9 +204,9 @@ async def test_readback_animates_speaking_then_restores_to_listening() -> None:
 
 
 @pytest.mark.asyncio
-async def test_readback_restores_to_idle_after_hangup() -> None:
-    """If the user already hung up, the readback still animates but restores to
-    IDLE — no surprising 'mic open' signal after a deliberate hangup."""
+async def test_readback_after_hangup_neither_speaks_nor_animates() -> None:
+    """If the user already hung up, the readback is not voiced, so the orb
+    never flips to SPEAKING and no 'mic open' signal appears."""
     bus = EventBus()
     tts = FakeTTS()
     supervisor = Supervisor(bus=bus)
@@ -186,8 +220,8 @@ async def test_readback_restores_to_idle_after_hangup() -> None:
         AnnouncementRequested(text="Erledigt.", language="de", kind="subagent")
     )
 
-    assert player.state_during_play == "SPEAKING"
-    assert supervisor.state == "IDLE"
+    assert player.plays == 0
+    assert supervisor.state != "SPEAKING"
 
 
 @pytest.mark.asyncio
@@ -222,8 +256,7 @@ async def test_preamble_does_not_animate_speaking() -> None:
 
 @pytest.mark.asyncio
 async def test_background_completed_arms_readback_grace() -> None:
-    """The Jarvis-Agent-background DIRECT path plays straight to the player (not via
-    _on_announcement), so it must stamp the readback-grace timestamp itself —
+    """The Jarvis-Agent-background readback stamps the readback-grace timestamp —
     otherwise _active_session idle-times-out seconds after the result."""
     bus = EventBus()
     tts = FakeTTS()

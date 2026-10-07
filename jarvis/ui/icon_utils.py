@@ -712,7 +712,7 @@ def maybe_reexec_through_branded_launcher(argv: list[str]) -> int | None:
         # until stdio was given valid handles). The app logs to its own file sink.
         detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
         no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-        subprocess.Popen(  # noqa: S603 — fixed argv, no shell, our own exe
+        child = subprocess.Popen(  # noqa: S603 — fixed argv, no shell, our own exe
             [str(branded), "-m", _LAUNCHER_MODULE, *argv],
             env=env,
             close_fds=True,
@@ -721,6 +721,12 @@ def maybe_reexec_through_branded_launcher(argv: list[str]) -> int | None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        # This process got the foreground right from the user's click; the
+        # child that does the real boot did not. Without it, the child cannot
+        # raise an instance that is already running (2026-10-06).
+        from jarvis.ui.foreground_grant import allow_foreground
+
+        allow_foreground(getattr(child, "pid", None))
         logger.debug("Re-exec'd launcher through branded exe: {}", branded)
         return 0
     except Exception as exc:  # noqa: BLE001

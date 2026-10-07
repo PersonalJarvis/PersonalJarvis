@@ -202,6 +202,22 @@ describe("ProviderCard — dictation polish activation", () => {
     expect(calls.some(call => call.url.includes("/realtime/options"))).toBe(false);
   });
 
+  it("hides API credentials and its paid test while subscription setup owns authentication", () => {
+    const calls = installFetchMock();
+    render(<ProviderCard
+      descriptor={dictationCard({ id: "openai-live", label: "GPT-Live", tier: "realtime", configuration_surface: "live" })}
+      onChanged={vi.fn()} onActivateOptimistic={vi.fn()} autoActivateOnSave={false}
+      hideCredentialControls billingOverride="subscription" billingPending configuration={<p>Subscription setup</p>}
+    />);
+    expect(screen.getByText("Subscription setup")).toBeTruthy();
+    expect(screen.getByText((text) => text.startsWith(enLocale.provider_billing.subscription))).toBeTruthy();
+    expect(screen.getByText((text) => text.includes(enLocale.live.billing_pending))).toBeTruthy();
+    expect(screen.queryByText(enLocale.provider_billing.api)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Test" })).toBeNull();
+    expect(screen.queryByTestId("provider-key-openai-live")).toBeNull();
+    expect(calls.some((call) => call.url.endsWith("/test"))).toBe(false);
+  });
+
   it("activates on a single click of the row; a double click switches once", async () => {
     const calls = installFetchMock();
 

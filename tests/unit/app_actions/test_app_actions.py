@@ -169,6 +169,24 @@ async def test_settings_routes_list_set_and_show_history(app: FastAPI) -> None:
         assert rows[0]["action"] == action_id
 
 
+async def test_history_names_a_voice_command_and_links_its_permission(app: FastAPI) -> None:
+    @app.get("/api/skills/brief", tags=["skills"])
+    async def skills_brief() -> dict[str, Any]:
+        """Brief skill list."""
+        return {"skills": []}
+
+    history.record("skills-list", "ran", "x", via="app-command")
+    history.record("no-such-command", "failed", "x")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        rows = (await client.get("/api/app-actions/history?limit=2")).json()["history"]
+    unknown, command = rows
+    assert command["title"] == "List installed skills"
+    assert command["area"] == "skills" and command["kind"] == "read"
+    assert command["catalog_id"] == _id(app, "/api/skills/brief", "GET")
+    assert unknown["title"] == "no-such-command" and unknown["catalog_id"] is None
+
+
 @pytest.mark.parametrize("area", ["IDE", "IDE panes and workspaces", "agentic-ide", "nonsense"])
 async def test_area_is_a_hint_not_an_exact_slug(app: FastAPI, area: str) -> None:
     # Live 2026-10-01: the model passed the human label from the description

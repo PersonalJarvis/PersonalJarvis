@@ -31,8 +31,11 @@
   position: relative;
   min-width: 0;
 }
+/* Since 2026-10-02 the rail draws no thread: traces read like the Codex app,
+   prose and quiet lines with nothing joining them. */
 .trace-rail > .trace-step::before,
 .trace-rail > .trace-step::after {
+  display: none;
   content: "";
   position: absolute;
   left: 7.5px;
@@ -64,6 +67,21 @@
 }
 .trace-node-live {
   color: hsl(var(--accent));
+}
+/* A Jarvis trace's live line: the user's pet (32 px) stands where the
+   spinner was, centred on the thread. It is wider than the 16 px node
+   column and exactly as tall as the 32 px status row, so it overhangs
+   sideways and nothing below moves when the turn ends and it turns back
+   into a check. */
+.trace-node-pet {
+  position: relative;
+  overflow: visible;
+}
+.trace-node-pet > * {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
 }
 .trace-dot {
   display: block;
@@ -128,4 +146,37 @@
   .trace-node-live .trace-dot {
     animation: none;
   }
+}
+
+/* ── The timeline of a turn (TraceTimeline.tsx) ───────────────────────
+   Lines hang on the same thread as the live rail. Edit sizes wear the diff
+   colours; a long thought folds with a fade at its foot. */
+.diff-count-add {
+  color: hsl(var(--diff-add));
+}
+.diff-count-del {
+  color: hsl(var(--diff-del));
+}
+.trace-thought-fade {
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+  mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+}
+/* Media the model put in its narration stays small inside a trace. */
+.trace-narration img,
+.trace-narration video {
+  max-height: 10rem;
+  width: auto;
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+/* Work lines and reasoning are set in the size of the surface's own text,
+   as in the Codex app: 15/25 on the front page, 13/21 in agent chats. */
+/* !important: the typography plugin's .prose sets its own size. */
+.trace-text {
+  font-size: var(--trace-text-size, 15px) !important;
+  line-height: var(--trace-text-leading, 25px) !important;
+}
+[data-testid="work-trace"][data-conversation] {
+  --trace-text-size: 13px;
+  --trace-text-leading: 21px;
 }

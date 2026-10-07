@@ -299,9 +299,11 @@ async def _weather_results(query: str, client: Any) -> list[dict[str, Any]] | No
 
 
 class SearchWebTool:
+    read_only = True
+
     name: str = "search_web"
     risk_tier: str = "safe"
-    # [Frische-Grenze, 2026-06-20] search_web is for FRESH, time-sensitive facts
+    # [Freshness boundary, 2026-06-20] search_web is for FRESH, time-sensitive facts
     # ONLY — evergreen / general knowledge is answered directly by the brain.
     # Forensic: "what do I need to consider when emigrating abroad?" fired
     # search_web 3x with an empty answer (sessions.db voice session e0898d6e,

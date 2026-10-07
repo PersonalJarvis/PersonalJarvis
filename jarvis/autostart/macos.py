@@ -20,7 +20,7 @@ import logging
 import plistlib
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from jarvis.core.branding import MACOS_APP_DIR_NAME as _APP_DIR_NAME
 from jarvis.core.branding import MACOS_AUTOSTART_LABEL as _LABEL
@@ -89,7 +89,7 @@ def _write_plist_atomically(path: Path, plist: dict) -> None:
         raise
 
 
-def retarget_launch_agent(bundle: Path) -> bool:
+def retarget_launch_agent(bundle: PurePath) -> bool:
     """Point an existing LaunchAgent at ``bundle`` after the app moved.
 
     The entry names the app by absolute path. Whoever moves the bundle has to

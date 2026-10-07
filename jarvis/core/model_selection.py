@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -13,6 +13,9 @@ class ModelSelection:
     provider: str
     model: str | None
     reasoning_effort: str = ""
+    # An operation-owned client preserves the selected account and billing path.
+    # It is intentionally process-local, never persisted or shown in repr/logs.
+    brain_override: Any = field(default=None, repr=False, compare=False)
 
 
 operation_model: ContextVar[ModelSelection | None] = ContextVar("operation_model", default=None)

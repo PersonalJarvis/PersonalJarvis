@@ -490,9 +490,12 @@ are rough planning estimates.
 Status 2026-10-01: P0 passed on Windows NVIDIA and the CPU container; the Mac
 run waits for hardware. P1: code complete; the real-time latency gate (p50
 ≤ 1.0 s) and the kill drill passed; the 500-turn soak and a boot with the
-network unplugged are still open (section 12.4). P2: the `native.py` fixes
-(4.4, items 1–6) are in; provider registration, config and the card are in
-progress.
+network unplugged are still open (section 12.4). P2: built — the `native.py`
+fixes (4.4, items 1–6), the `local-voice` provider with a `[voice_engine]`
+config, one-click setup (`jarvis/realtime/local_voice_setup.py`) and the Local
+voice card; one setup on Windows/NVIDIA ended ready with a passed self-test.
+Open P2 gate items: 20 real calls through the app, the GPT-Live ↔ local switch,
+a light-mode check of the card body, and item 7 (local classic fallback).
 
 | Phase | Content | Gate |
 | --- | --- | --- |

@@ -1,28 +1,36 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, Maximize2, Minimize2, MoveHorizontal, PanelRightClose, Plus, SquareTerminal, X } from "lucide-react";
-import { fill, useT } from "@/i18n";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Check, Maximize2, Minimize2, MoveHorizontal, Plus, SquareTerminal, X } from "lucide-react";
+import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { PaneResizer } from "@/components/layout/PaneResizer";
-import { MAX_TERMINAL_TABS, SIDE_PANEL_ID, useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { MAX_TERMINAL_TABS, useIdeSidePanelStore } from "@/store/ideSidePanel";
 import { useIdeChatStore } from "@/store/ideChat";
 import { WorkspaceTerminal } from "@/components/workspace/WorkspaceTerminal";
 import type { TerminalAppearance } from "../terminalThemes";
 import { useExplorerPathRouting } from "@/store/ideExplorer";
 import { usePaneReviewTracking } from "@/store/paneReviews";
-import { useIdeProjectsStore } from "@/store/ideProjects";
-import { useWorkspacePanes } from "@/store/workspacePanes";
-import { dotKindFor, workspaceAgents } from "./agentStatus";
 import { SIDE_PANEL_TABS, sidePanelTab } from "./sidePanelTabs";
+import { SurfaceKbd, SurfaceLauncher, surfaceActionForKey, type SurfaceAction } from "./SurfaceLauncher";
+import { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const WIDTH_KEY = "jarvis.agenticIde.sidePanelWidth.v1";
 const DEFAULT_PX = 340;
 const MIN_PX = 260;
-const MAX_PX = 720;
+/**
+ * Ceiling before the frame has been measured. The real limit is the frame
+ * minus `GRID_RESERVED_PX`: a fixed cap here stopped the drag halfway across a
+ * wide window, and it must stay high so the first, unmeasured render does not
+ * clip a wider stored width.
+ */
+const UNMEASURED_MAX_PX = 4096;
 /** The office map needs room to walk around in: its tab opens the panel at least this wide. */
 const OFFICE_MIN_PX = 520;
-/** Terminal canvas kept visible while the panel is open. */
-const GRID_RESERVED_PX = 320;
+/** Strip of terminal grid kept beside the panel, so its grip always stays reachable. */
+const GRID_RESERVED_PX = 120;
+
+// Preserve the existing public export without coupling caption chrome to the panel.
+export { SIDE_PANEL_ID } from "./sidePanelIds";
 
 const HEADER_BTN =
   "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors " +
@@ -66,7 +74,7 @@ export function IdeSidePanelFrame({ children, markInUse = false, appearance, onS
     return () => observer.disconnect();
   }, []);
 
-  const max = Math.max(MIN_PX, Math.min(MAX_PX, frameWidth ? frameWidth - GRID_RESERVED_PX : MAX_PX));
+  const max = Math.max(MIN_PX, frameWidth ? frameWidth - GRID_RESERVED_PX : UNMEASURED_MAX_PX);
   const pane = useResizablePane({
     storageKey: WIDTH_KEY,
     defaultSize: DEFAULT_PX,
@@ -151,61 +159,16 @@ export function IdeSidePanelFrame({ children, markInUse = false, appearance, onS
           </>
         )}
       </div>
-      {!open && <IdeSidePanelRail />}
     </div>
   );
 }
 
 /**
- * The closed panel's edge: one labelled button per tab, always in view.
- *
- * The caption toggle alone was easy to miss (maintainer, 2026-09-28), so a
- * closed panel leaves this narrow rail on the right edge — the way an editor's
- * activity bar does — and an agent waiting for the user shows up here as a
- * count even while the panel is shut.
+ * The panel itself: tab header ("+" and maximize) over the active tab's content,
+ * or the "Open a surface" launcher while no tab is open.
+ * It opens and closes from the window caption (`IdeSidePanelToggle`) only;
+ * a shut panel leaves no rail behind, so the grid or thread gets the full width.
  */
-function IdeSidePanelRail() {
-  const t = useT();
-  const openTab = useIdeSidePanelStore((state) => state.openTab);
-  const activeWorkspaceId = useIdeProjectsStore((state) => state.activeWorkspaceId);
-  const panes = useWorkspacePanes();
-  const waiting = workspaceAgents(panes, activeWorkspaceId).filter((pane) => dotKindFor(pane) === "waiting").length;
-  return (
-    <nav
-      data-testid="ide-side-panel-rail"
-      aria-label={t("ide_side_panel.rail_aria")}
-      className="flex h-full w-12 shrink-0 flex-col items-center gap-1.5 border-l border-border/60 bg-card/40 py-2"
-    >
-      {SIDE_PANEL_TABS.map((tab) => {
-        const label = t(tab.labelKey);
-        const badge = tab.id === "agents" && waiting > 0 ? waiting : 0;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            data-testid={`ide-side-panel-rail-${tab.id}`}
-            onClick={() => openTab(tab.id)}
-            title={label}
-            aria-label={badge ? `${label} (${fill(t("ide_side_panel.rail_waiting"), { n: badge })})` : label}
-            aria-controls={SIDE_PANEL_ID}
-            aria-expanded={false}
-            className="relative flex w-10 flex-col items-center gap-0.5 rounded-lg py-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <tab.icon className="h-[18px] w-[18px]" aria-hidden />
-            <span className="max-w-full truncate text-[9.5px] font-medium leading-none">{label}</span>
-            {badge > 0 && (
-              <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold tabular-nums text-background">
-                {badge}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
-/** The panel itself: tab header ("+" and collapse) over the active tab's content. */
 export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: TerminalAppearance; onScreen?: boolean }) {
   const t = useT();
   const allTabs = useIdeSidePanelStore((state) => state.tabs);
@@ -220,12 +183,37 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
   const select = useIdeSidePanelStore((state) => state.select);
   const openTab = useIdeSidePanelStore((state) => state.openTab);
   const closeTab = useIdeSidePanelStore((state) => state.closeTab);
-  const setOpen = useIdeSidePanelStore((state) => state.setOpen);
   const maximized = useIdeSidePanelStore((state) => state.maximized);
   const setMaximized = useIdeSidePanelStore((state) => state.setMaximized);
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   const current = sidePanelTab(active);
+  const canAddTerminal = !!workspace && terminalCount < MAX_TERMINAL_TABS;
+  const registryAction = (tab: (typeof SIDE_PANEL_TABS)[number]): SurfaceAction => ({
+    id: tab.id, label: t(tab.labelKey), icon: tab.icon, shortcut: tab.shortcut, available: true,
+    isOpen: tabs.includes(tab.id), run: () => openTab(tab.id),
+  });
+  // Launcher and "+" menu list the same surfaces: the browser, a plain
+  // terminal, then every other registry tab.
+  const [browserTab, ...otherTabs] = SIDE_PANEL_TABS;
+  const actions: SurfaceAction[] = [
+    registryAction(browserTab),
+    {
+      id: "terminal", label: t("ide_side_panel.terminal_label"), icon: SquareTerminal, shortcut: "T",
+      available: canAddTerminal,
+      reason: t(!workspace ? "ide_side_panel.terminal_workspace_required" : "ide_side_panel.terminal_limit"),
+      run: () => { if (workspace) addTerminalTab(workspace.id, workspace.name); },
+    },
+    ...otherTabs.map(registryAction),
+  ];
+  const onMenuKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!menuOpen) return;
+    const action = surfaceActionForKey(actions, event.nativeEvent);
+    if (!action) return;
+    event.preventDefault();
+    setMenuOpen(false);
+    action.run();
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -291,7 +279,7 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
             );
           })}
         </div>
-        <div ref={menu} className="relative">
+        <div ref={menu} className="relative" onKeyDown={onMenuKey}>
           <button
             type="button"
             data-testid="ide-side-panel-add"
@@ -304,36 +292,29 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
           >
             <Plus className="h-4 w-4" aria-hidden />
           </button>
-          {/* Every tab the panel can hold, always: an open one is ticked and
-              picking it brings it forward, a closed one is added. */}
+          {/* Every surface the panel can hold, always, with its letter: an open
+              tab is ticked and picking it brings it forward, a closed one is added. */}
           {menuOpen && (
-            <div role="menu" aria-label={t("ide_side_panel.add_tab")} className="absolute right-0 top-full z-30 mt-1 min-w-48 rounded-lg border border-border bg-popover p-1 shadow-float">
-              {SIDE_PANEL_TABS.map((tab) => {
-                const isOpen = tabs.includes(tab.id);
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="menuitemcheckbox"
-                    aria-checked={isOpen}
-                    data-testid={`ide-side-panel-add-${tab.id}`}
-                    onClick={() => { openTab(tab.id); setMenuOpen(false); }}
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary"
-                  >
-                    <tab.icon className="h-4 w-4 text-muted-foreground" aria-hidden />
-                    <span className="flex-1">{t(tab.labelKey)}</span>
-                    {isOpen && <Check className="h-3.5 w-3.5 text-accent" aria-hidden />}
-                  </button>
-                );
-              })}
-              <button type="button" role="menuitem" data-testid="ide-side-panel-add-terminal"
-                disabled={!workspace || terminalCount >= MAX_TERMINAL_TABS}
-                title={!workspace ? t("ide_side_panel.terminal_workspace_required") : undefined}
-                onClick={() => { if (workspace) addTerminalTab(workspace.id, workspace.name); setMenuOpen(false); }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary disabled:cursor-default disabled:opacity-40">
-                <SquareTerminal className="h-4 w-4 text-muted-foreground" aria-hidden />
-                <span>{t("ide_side_panel.add_terminal")}</span>
-              </button>
+            <div role="menu" aria-label={t("ide_side_panel.add_tab")} className="absolute right-0 top-full z-30 mt-1 min-w-52 rounded-lg border border-border bg-popover p-1 shadow-float">
+              {actions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  role={action.id === "terminal" ? "menuitem" : "menuitemcheckbox"}
+                  aria-checked={action.id === "terminal" ? undefined : !!action.isOpen}
+                  aria-keyshortcuts={action.shortcut}
+                  data-testid={`ide-side-panel-add-${action.id}`}
+                  disabled={!action.available}
+                  title={action.available ? undefined : action.reason}
+                  onClick={() => { action.run(); setMenuOpen(false); }}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-secondary disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent"
+                >
+                  <action.icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+                  <span className="flex-1">{action.label}</span>
+                  {action.isOpen && <Check className="h-3.5 w-3.5 text-accent" aria-hidden />}
+                  <SurfaceKbd>{action.shortcut}</SurfaceKbd>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -348,22 +329,14 @@ export function IdeSidePanel({ appearance, onScreen = true }: { appearance?: Ter
         >
           {maximized ? <Minimize2 className="h-4 w-4" aria-hidden /> : <Maximize2 className="h-4 w-4" aria-hidden />}
         </button>
-        <button
-          type="button"
-          data-testid="ide-side-panel-collapse"
-          aria-label={t("ide_side_panel.collapse")}
-          title={t("ide_side_panel.collapse")}
-          aria-controls={SIDE_PANEL_ID}
-          aria-expanded
-          onClick={() => setOpen(false)}
-          className={HEADER_BTN}
-        >
-          <PanelRightClose className="h-4 w-4" aria-hidden />
-        </button>
       </div>
       {/* Keyed by tab: Changes and Folder share one component and must not share its state. */}
       <div id={`${SIDE_PANEL_ID}-content`} role="tabpanel" className="relative min-h-0 flex-1">
-        {open && <div key={active} className="h-full min-h-0">{current?.render()}</div>}
+        {open && tabs.length === 0 && <SurfaceLauncher actions={actions} keysEnabled={onScreen} />}
+        {open && current && !current.keepAlive && <div key={active} className="h-full min-h-0">{current.render()}</div>}
+        {SIDE_PANEL_TABS.filter((tab) => tab.keepAlive && tabs.includes(tab.id)).map((tab) => (
+          <div key={tab.id} hidden={!open || tab.id !== active} className="absolute inset-0">{tab.render()}</div>
+        ))}
         {terminals.map((terminal) => <div key={terminal.id} hidden={!open || terminal.id !== active}
           className="absolute inset-0" data-testid={`ide-side-panel-terminal-${terminal.id}`}>
           <WorkspaceTerminal paneKey={terminal.id} agentName="shell" workspaceId={terminal.workspaceId}

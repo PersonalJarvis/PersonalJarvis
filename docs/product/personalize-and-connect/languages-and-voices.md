@@ -34,7 +34,9 @@ Enter credentials only in **API Keys & Providers**, never in chat or speech.
 | **Translation target** | **Voice → Language** | The fixed language in which translated dictation is delivered |
 | **Speaking voice** | **API Keys & Providers** | The sound of the audio, not its words |
 
-Interface and Reply Language support English, German, and Spanish equally.
+Interface Language supports English, German, Spanish, and Simplified Chinese.
+The first-run setup window offers the same four choices in its top corner.
+Reply Language supports English, German, and Spanish equally.
 Recognition and Dictation offer Automatic plus a much wider language list. A
 provider may support fewer languages than the app lists.
 

@@ -209,14 +209,30 @@ async def test_open_probe_reports_a_running_browser_without_launching_one(monkey
     async def runtime(_):
         return SimpleNamespace(
             roster=SimpleNamespace(resolve=resolve),
-            browser=SimpleNamespace(live=SimpleNamespace(sessions=sessions, ensure=ensure)),
+            browser=SimpleNamespace(
+                live=SimpleNamespace(sessions=sessions, ensure=ensure),
+                status_for=lambda agent: {"mode": "chrome", "profile_name": "Work"},
+            ),
         )
 
     monkeypatch.setattr(routes, "_runtime", runtime)
     request = SimpleNamespace()
-    assert await routes.agent_browser_open("busy", request) == {"open": True, "running": True}
-    assert await routes.agent_browser_open("done", request) == {"open": False, "running": False}
-    assert await routes.agent_browser_open("idle", request) == {"open": False, "running": False}
+    metadata = {"mode": "chrome", "profile_name": "Work"}
+    assert await routes.agent_browser_open("busy", request) == {
+        **metadata,
+        "open": True,
+        "running": True,
+    }
+    assert await routes.agent_browser_open("done", request) == {
+        **metadata,
+        "open": False,
+        "running": False,
+    }
+    assert await routes.agent_browser_open("idle", request) == {
+        **metadata,
+        "open": False,
+        "running": False,
+    }
     assert ensured == []
 
 
@@ -575,7 +591,7 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
 
     class Live:
         async def subscribe(self, agent):
-            return object(), asyncio.Queue()
+            return SimpleNamespace(state={}, generation="test-generation", control_owner=None), asyncio.Queue()
 
         async def control(self, *args):
             started.set()
@@ -634,6 +650,118 @@ async def test_viewer_disconnect_cancels_pending_takeover(monkeypatch, burst):
     else:
         assert cancelled.is_set()
     assert released.is_set()
+
+
+async def test_busy_shared_profile_names_its_holder_to_the_viewer(monkeypatch):
+    from jarvis.society.browser.live import BrowserProfileBusy
+    from jarvis.ui.web import society_browser_routes as routes
+
+    sent: list[dict] = []
+
+    class Live:
+        async def subscribe(self, agent):
+            raise BrowserProfileBusy("juno", "Juno", running=True)
+
+    class Socket:
+        scope = {}
+
+        async def accept(self):
+            pass  # Test socket has no transport to accept.
+
+        async def close(self, **kwargs):
+            pass  # Test socket has no transport to close.
+
+        async def send_json(self, value):
+            sent.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="wren")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live())
+        )
+
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
+    await routes.agent_browser_live(Socket(), "wren")
+    error = next(m for m in sent if m["kind"] == "error")
+    assert error["code"] == "profile_busy"
+    assert (error["holder_id"], error["holder_name"], error["running"]) == ("juno", "Juno", True)
+    assert "Juno is running a task" in error["error"]
+
+
+async def test_hover_motion_coalesces_and_never_delays_or_drops_clicks(monkeypatch):
+    import asyncio
+
+    from starlette.websockets import WebSocketDisconnect
+
+    from jarvis.ui.web import society_browser_routes as routes
+
+    clicked = asyncio.Event()
+    # Every message is read before the first motion's round trip ends, so the
+    # result does not depend on how fast the runner reads 401 messages.
+    all_read = asyncio.Event()
+    seen: list[tuple[str, int | None]] = []
+    sent: list[dict] = []
+
+    class Live:
+        async def subscribe(self, agent):
+            return SimpleNamespace(state={}, generation="g", control_owner=None), asyncio.Queue()
+
+        async def control(self, _session, _owner, op, args):
+            seen.append(("hover" if args.get("move_only") else op, args.get("x")))
+            await all_read.wait()
+            await asyncio.sleep(0.02)  # A slow worker round trip.
+            if op == "click" and not args.get("move_only"):
+                clicked.set()
+            return {}
+
+        async def unsubscribe(self, *args):
+            pass  # Nothing to release in this fake.
+
+    class Socket:
+        scope = {}
+        reads = 0
+
+        async def accept(self):
+            pass  # Test socket has no transport to accept.
+
+        async def close(self, **kwargs):
+            pass  # Test socket has no transport to close.
+
+        async def receive_json(self):
+            self.reads += 1
+            # 400 motions overflowed the old 256-entry queue and closed the view.
+            if self.reads <= 400:
+                return {"op": "click", "args": {"x": self.reads, "y": 1, "move_only": True}}
+            if self.reads == 401:
+                all_read.set()
+                return {"op": "click", "args": {"x": 9999, "y": 1}}
+            await clicked.wait()
+            raise WebSocketDisconnect()
+
+        async def send_json(self, value):
+            sent.append(value)
+
+    async def resolve(_):
+        return SimpleNamespace(agent_id="test")
+
+    async def runtime(_):
+        return SimpleNamespace(
+            roster=SimpleNamespace(resolve=resolve), browser=SimpleNamespace(live=Live())
+        )
+
+    monkeypatch.setattr(routes, "_runtime", runtime)
+    monkeypatch.setattr(routes, "credentials_valid", lambda _: True)
+    await asyncio.wait_for(routes.agent_browser_live(Socket(), "test"), 2)
+    assert ("click", 9999) in seen
+    # The click waits for at most the one motion already in flight.
+    assert seen.index(("click", 9999)) <= 2
+    assert sum(1 for kind, _ in seen if kind == "hover") <= 2
+    assert [m for m in sent if m.get("kind") == "control"] == [
+        {"kind": "control", "op": "click", "ok": True}
+    ]
 
 
 @pytest.mark.parametrize(

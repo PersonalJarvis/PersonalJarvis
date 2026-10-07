@@ -98,3 +98,43 @@ async def test_discover_handles_stripe_style_path_issuer():
     # authorize + token requests can carry the `resource` param (Stripe drops
     # you on the dashboard without it).
     assert h._discovered_resource == "https://mcp.stripe.com"
+
+
+@pytest.mark.asyncio
+async def test_discover_accepts_auth_server_metadata_as_discovery_url():
+    """Servers without a protected-resource document (Atlassian) are configured
+    with the RFC 8414 metadata URL itself; no resource indicator is sent."""
+    URL = "https://mcp.atlassian.com/.well-known/oauth-authorization-server"
+    META = {
+        "issuer": "https://mcp.atlassian.com",
+        "authorization_endpoint": "https://mcp.atlassian.com/v1/authorize",
+        "token_endpoint": "https://cf.mcp.atlassian.com/v1/token",
+        "registration_endpoint": "https://mcp.atlassian.com/v1/register",
+    }
+    requested: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        requested.append(str(req.url))
+        if str(req.url) == URL:
+            return httpx.Response(200, json=META)
+        return httpx.Response(404, text="unexpected: " + str(req.url))
+
+    h = HostedMcpDcrHandler(DcrConfig(plugin_id="atlassian", discovery_url=URL))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        meta = await h._discover(client)
+    assert meta["registration_endpoint"] == "https://mcp.atlassian.com/v1/register"
+    assert requested == [URL]
+    assert h._discovered_resource is None
+
+
+@pytest.mark.asyncio
+async def test_discover_still_rejects_a_document_with_no_auth_server():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"resource": "https://example.test/mcp"})
+
+    h = HostedMcpDcrHandler(
+        DcrConfig(plugin_id="x", discovery_url="https://example.test/.well-known/x")
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(RuntimeError, match="no authorization_servers"):
+            await h._discover(client)

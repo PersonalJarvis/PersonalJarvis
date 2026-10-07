@@ -25,6 +25,32 @@ def pytest_configure(config) -> None:  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _society_runtime_isolated():
+    """Put the process-wide society runtime back after every test.
+
+    ``SocietyRuntime.ensure_started`` registers itself as the current runtime and
+    only ``close`` unregisters it, so a test that never closes one leaks it into
+    later suites: the Jarvis chat kit then offers ``society_browser`` and
+    tool-set assertions fail depending on test order. The brain's registered
+    society factory is restored for the same reason.
+    """
+    runtime_module = sys.modules.get("jarvis.society.runtime")
+    runtime_before = runtime_module.current_runtime() if runtime_module is not None else None
+    # Some suites stub these modules in sys.modules; only a real list is tracked.
+    ref = getattr(sys.modules.get("jarvis.brain.factory"), "_SOCIETY_FACTORY_REF", None)
+    # Not imported yet means the import-time state: no factory registered.
+    factory_before = list(ref) if isinstance(ref, list) else []
+    yield
+    runtime_module = sys.modules.get("jarvis.society.runtime")
+    restore = getattr(runtime_module, "set_current_runtime", None)
+    if callable(restore) and runtime_module.current_runtime() is not runtime_before:
+        restore(runtime_before)
+    ref = getattr(sys.modules.get("jarvis.brain.factory"), "_SOCIETY_FACTORY_REF", None)
+    if isinstance(ref, list) and ref != factory_before:
+        ref[:] = factory_before
+
+
+@pytest.fixture(autouse=True)
 def _authenticated_test_clients(request, monkeypatch):  # noqa: ANN001
     """Give legacy TestClient suites a real authenticated browser session.
 
@@ -255,6 +281,20 @@ def _background_policy_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     background_policy.reset_for_tests()
     yield
     background_policy.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _mission_paid_ledger_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep the missions' rolling paid-use ledger off the developer's real data
+    directory: it records real spend and gates automatic paid API use."""
+    from jarvis.missions import capacity
+
+    root = tmp_path_factory.mktemp("mission-paid-ledger")
+    monkeypatch.setattr(
+        capacity, "_default_daily_ledger_path", lambda: root / "mission_paid_ledger.json"
+    )
+    monkeypatch.setattr(capacity, "_DEFAULT_DAILY", None)
+    yield
 
 
 @pytest.fixture(autouse=True)

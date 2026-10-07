@@ -82,6 +82,19 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
 #: Free-text caps: long enough to read, short enough for a row in a file.
 _TEXT_MAX = 240
 _ARG_MAX = 160
+#: Per-key caps for the text a person reads as the trace's prose: what a tool
+#: returned, why it failed or was refused, the sentence the model wrote next to
+#: a call. At 240 characters a JSON result was cut inside its first object and
+#: the trace could say nothing about it; these keep enough for the narrative
+#: to name the outcome while a stored turn still stays a few KB.
+_PROSE_MAX: dict[str, int] = {
+    "output_preview": 1200,
+    "error": 600,
+    "reason": 400,
+    "rationale": 600,
+    "utterance": 400,
+}
+_REASONING_TEXT_MAX = 4000
 _ARGS_MAX_KEYS = 8
 #: How many events the ring keeps. A turn rarely exceeds a few dozen; the
 #: ring spans the last several turns so a slow reply still finds its slice.
@@ -118,7 +131,12 @@ def trace_payload_for(name: str, event: Any) -> dict[str, Any]:
                     args[str(k)] = _scalar(v, max_chars=_ARG_MAX)
                 out[key] = args
             continue
-        maximum = 4000 if name == "ReasoningSummaryUpdated" and key == "text" else _TEXT_MAX
+        if name == "ReasoningSummaryUpdated" and key == "text":
+            maximum = _REASONING_TEXT_MAX
+        elif name == "AnnouncementRequested" and key == "text":
+            maximum = _PROSE_MAX["rationale"]
+        else:
+            maximum = _PROSE_MAX.get(key, _TEXT_MAX)
         out[key] = _scalar(value, max_chars=maximum)
     return out
 

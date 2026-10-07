@@ -1,58 +1,58 @@
 import { useMemo, useState } from "react";
-import {
-  AlertTriangle,
-  Keyboard,
-  Loader2,
-  Mic,
-  Search,
-  Square,
-  Trash2,
-} from "lucide-react";
+import { AlertTriangle, Mic, Search, Trash2 } from "lucide-react";
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { EmptyState } from "@/components/layout/EmptyState";
-import { PanelSkeleton, SkeletonBar } from "@/components/layout/PanelSkeleton";
+import { SkeletonBar } from "@/components/layout/PanelSkeleton";
 import { useDictation, type DictationEntry } from "@/hooks/useDictation";
-import { DictationStatsBar } from "@/views/voice/DictationStatsBar";
+import { useUserName } from "@/hooks/useUserName";
+import { DictationHero } from "@/views/voice/DictationHero";
+import { DictationStatsCard } from "@/views/voice/DictationStatsCard";
+import {
+  DictationEngineCard,
+  DictationVocabularyCard,
+} from "@/views/voice/DictationSideCards";
 import { DictationHistoryGroup } from "@/views/voice/DictationHistoryGroup";
 import { useEventStore } from "@/store/events";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 
 /**
- * "Dictation" section — hold a key, speak, and the text lands in whatever text
- * field currently has focus.
+ * "Dictation" — the first tab of the voice section: hold a key, speak, and the
+ * text lands in whatever field has focus, in any app.
  *
- * Four things this view deliberately makes visible rather than hiding:
+ * The screen is built like a home page for the feature rather than a settings
+ * panel:
+ *
+ *   Welcome back, Ruben
+ *   ┌───────────────────────────── hero ─┐ ┌ stats ──────┐
+ *   │ Hold [Ctrl + Alt] to dictate   📷  │ │ 241.2K words│
+ *   │ [Start dictating] [Change shortcut]│ │ 149 wpm     │
+ *   └────────────────────────────────────┘ │ ▁▃▅▂▇ 14 d  │
+ *   TODAY                          [🔍 ] │ ├─────────────┤
+ *   ┌ 4:12 PM  transcript …   ⧉ ↺ 🗑 ──┐ │ Recognition │
+ *   └────────────────────────────────────┘ │ Dictionary →│
+ *
+ * The one instruction a newcomer needs is the largest thing on the screen,
+ * the numbers sit beside it instead of above the history, and the history is
+ * a journal of days with a time column — something you read back, not a log.
+ * Below `xl` the side column folds in between the hero and the history.
+ *
+ * Four things this view deliberately keeps visible:
  *
  * 1. **Whether insertion can work at all.** On Wayland, on a headless host, or
  *    while an elevated window is in front, the OS blocks one program from
- *    typing into another — and does so silently. The notice says it up front so
- *    "nothing happened" is never a mystery.
- * 2. **What the filler cleanup changed.** Every entry keeps the raw transcript
- *    next to the inserted one, so a wrong rule is findable instead of merely
- *    suspected.
- * 3. **What actually became of each dictation.** The outcome badge is
- *    translated from a fixed vocabulary — "Could not insert" is a different
- *    story from "Nothing heard", and the row says which one happened.
+ *    typing into another — silently. The notice says so up front.
+ * 2. **What the cleanup changed.** Every row keeps the raw transcript one click
+ *    away, so a wrong rule is findable instead of merely suspected.
+ * 3. **What became of each dictation.** The outcome is translated from a fixed
+ *    vocabulary; only faults and partial deliveries get a coloured badge.
  * 4. **That deleting is recoverable.** The trash icon discards; the entry stays
- *    listed, restorable, until the second, explicit "Delete permanently" step.
+ *    listed, restorable, until the explicit "Delete permanently" step.
  *
- * What is deliberately NOT here any more: the "How dictation behaves" settings
- * block — the paste shortcut, the delivery method, the insertion target and the
- * three cleanup/history switches. Every one of them shipped a sensible default,
- * and a wall of six controls in front of the feature made a thing that "just
- * works" look like something to be configured first. The `[dictation]` config
- * keys and their REST route (`PUT /api/dictation/settings`, hence
- * `jarvis api dictation ...`) are untouched, so an install that genuinely needs
- * a different paste shortcut can still set one — it is simply no longer the
- * first thing this screen shows. The "Key behaviour (hold/toggle)" dropdown
- * left earlier for the same reason: the two dictation shortcuts in the voice
- * section's Shortcuts tab are the source of truth for hold-vs-hands-free.
- *
- * The screen is three groups — state, numbers, history — separated by 32px and
- * bounded at the reading measure, because everything on it is either a card or
- * a transcript and neither earns the full width of a desktop window.
+ * Deliberately NOT here: the "How dictation behaves" settings block. Every one
+ * of its controls shipped a sensible default, and a wall of switches in front
+ * of the feature made a thing that "just works" look like something to
+ * configure first. The `[dictation]` config keys and `PUT
+ * /api/dictation/settings` (hence `jarvis api dictation ...`) are untouched.
  *
  * Backed by /api/dictation (status/start/stop/history/stats) via useDictation.
  */
@@ -69,6 +69,7 @@ export interface DictationViewProps {
 
 export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
   const t = useT();
+  const userName = useUserName();
   const {
     status,
     entries,
@@ -84,6 +85,7 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
     clearHistory,
   } = useDictation();
   const pushToast = useEventStore((s) => s.pushToast);
+  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
@@ -155,22 +157,15 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
     const q = query.trim().toLowerCase();
     if (!q) return entries;
     return entries.filter(
-      (e) =>
-        e.text.toLowerCase().includes(q) || e.raw_text.toLowerCase().includes(q),
+      (e) => e.text.toLowerCase().includes(q) || e.raw_text.toLowerCase().includes(q),
     );
   }, [entries, query]);
 
   const groups = useMemo(() => groupByDay(filtered), [filtered]);
 
-  // Life / neutral / fault, and nothing in between. A recording session is the
-  // one thing on this screen that is actually running, so it is the one thing
-  // wearing --success; "ready" is a neutral idle, and a machine that cannot
-  // dictate at all is a fault rather than a dimmer shade of ready.
-  const dotFill = status?.active
-    ? "bg-success motion-safe:animate-pulse"
-    : status?.available
-      ? "bg-muted-foreground"
-      : "bg-destructive";
+  const greeting = fill(t("dictation.welcome"), {
+    name_part: userName ? `, ${userName}` : "",
+  });
 
   return (
     <div className="flex h-full flex-col">
@@ -181,229 +176,176 @@ export function DictationView({ hideHeader = false }: DictationViewProps = {}) {
           subtitle={t("dictation.description")}
         />
       )}
-      <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
-        <div className="mx-auto flex max-w-reading flex-col gap-group">
-          {error && <p className="text-meta text-destructive">{error}</p>}
+      <div className="flex-1 overflow-y-auto scrollbar-jarvis">
+        <div className="mx-auto w-full max-w-[1120px] px-6 pb-12 pt-8">
+          <h1
+            className="text-xl font-semibold text-foreground-strong"
+            data-testid="dictation-welcome"
+          >
+            {greeting}
+          </h1>
 
-          {/* --- Insertion notice: the silent-failure paths, made loud. ---
-              Degraded, not broken — the words still reach the clipboard — so
-              it is a --warning glyph on an ordinary card, never a washed
-              panel that claims the whole screen has failed. */}
-          {blocked && (
-            <Card
-              className="flex items-start gap-3 p-5"
-              data-testid="dictation-insert-warning"
-            >
-              <AlertTriangle
-                aria-hidden="true"
-                className="mt-0.5 h-4 w-4 shrink-0 text-warning"
-              />
-              <div className="min-w-0">
-                <h4 className="text-title font-semibold text-foreground-strong">
-                  {t("dictation.cannot_insert_title")}
-                </h4>
-                <p className="mt-1 text-meta text-muted-foreground">
-                  {status?.insertion.detail || t("dictation.cannot_insert_generic")}
-                </p>
-              </div>
-            </Card>
-          )}
+          <div className="mt-5 grid grid-cols-1 gap-6 [grid-template-areas:'hero'_'side'_'list'] xl:grid-cols-[minmax(0,1fr)_300px] xl:grid-rows-[auto_1fr] xl:[grid-template-areas:'hero_side'_'list_side']">
+            <div className="flex min-w-0 flex-col gap-4 [grid-area:hero]">
+              {error && <p className="text-meta text-destructive">{error}</p>}
 
-          {/* --- State, and the one primary action on the screen. --- */}
-          <Card className="p-5">
-            {loading ? (
-              // The real card at its real height with bars where the state
-              // line and the button will be — never a centred grey word, which
-              // is indistinguishable from a section that failed.
-              <div
-                role="status"
-                aria-busy="true"
-                aria-label={t("dictation.loading")}
-                className="flex items-center justify-between gap-4"
-              >
-                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                  <SkeletonBar className="h-4 w-32" />
-                  <SkeletonBar className="h-3 w-3/5" />
-                </div>
-                <SkeletonBar className="h-9 w-32 shrink-0" />
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${dotFill}`}
-                    />
-                    <span className="text-title font-semibold text-foreground-strong">
-                      {status?.active
-                        ? t("dictation.state_active")
-                        : status?.available
-                          ? t("dictation.state_ready")
-                          : t("dictation.state_unavailable")}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-meta text-muted-foreground">
-                    {status?.available
-                      ? status.hotkey
-                        ? t("dictation.shortcut_set").replace("{0}", status.hotkey)
-                        : t("dictation.shortcut_unset")
-                      : status?.reason || t("dictation.state_unavailable")}
-                  </p>
-                  {/* Which recognizer really answers the next press (P-41):
-                      the settings name one, the lane may hold another. */}
-                  {status?.available && status.engine?.provider && (
-                    <p className="mt-1 text-meta text-muted-foreground">
-                      {status.engine.local
-                        ? t("dictation.engine_local")
-                            .replace("{0}", status.engine.model || status.engine.provider)
-                            .replace("{1}", status.engine.fallback || "—")
-                        : t("dictation.engine_cloud").replace("{0}", status.engine.provider)}
-                      {!status.engine.local && status.engine.detail
-                        ? ` ${t("dictation.engine_local_off").replace("{0}", status.engine.detail)}`
-                        : ""}
-                    </p>
-                  )}
-                </div>
-                <Button
-                  className="gap-2"
-                  disabled={busy || !status?.available}
-                  data-testid="dictation-toggle"
-                  onClick={() => void onToggle()}
-                >
-                  {busy ? (
-                    <Loader2
-                      aria-hidden="true"
-                      className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                    />
-                  ) : status?.active ? (
-                    <Square aria-hidden="true" className="h-4 w-4" />
-                  ) : (
-                    <Mic aria-hidden="true" className="h-4 w-4" />
-                  )}
-                  {status?.active ? t("dictation.stop") : t("dictation.start")}
-                </Button>
-              </div>
-            )}
-            {!status?.hotkey && status?.available && (
-              <p className="mt-block flex items-center gap-2 text-meta text-muted-foreground">
-                <Keyboard aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                {t("dictation.assign_hint")}
-              </p>
-            )}
-          </Card>
-
-          {/* --- How much you dictate, honestly windowed. ---
-              While the request is in flight the three tiles stand at their
-              real size as empty bars. Rendering the card with zeros in it
-              would not read as loading; it would read as a person who has
-              never dictated anything. */}
-          {loading ? (
-            <Card className="p-5">
-              <SkeletonBar className="h-3 w-24" />
-              <div className="mt-stack grid gap-stack sm:grid-cols-3">
-                <SkeletonBar className="h-[84px]" />
-                <SkeletonBar className="h-[84px]" />
-                <SkeletonBar className="h-[84px]" />
-              </div>
-            </Card>
-          ) : (
-            stats && <DictationStatsBar stats={stats} />
-          )}
-
-          {/* --- History. ---
-              With nothing in it there is no list to frame, so the card, its
-              title, its hint and its search field all go and the designed
-              empty surface stands alone. */}
-          {loading ? (
-            <Card className="p-5">
-              <SkeletonBar className="h-4 w-40" />
-              <SkeletonBar className="mt-block h-9 w-full" />
-              <PanelSkeleton
-                className="mt-block"
-                rows={4}
-                rowHeight={56}
-                label={t("dictation.loading")}
-              />
-            </Card>
-          ) : entries.length === 0 ? (
-            <EmptyState icon={<Mic />} body={t("dictation.history_empty")} />
-          ) : (
-            <Card className="p-5">
-              <div className="flex items-center justify-between gap-3">
-                <h4 className="text-title font-semibold text-foreground-strong">
-                  {t("dictation.history_title")}
-                </h4>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="gap-2 text-muted-foreground"
-                  data-testid="dictation-clear-history"
-                  onClick={() => {
-                    void clearHistory().catch((e) =>
-                      pushToast("error", (e as Error).message),
-                    );
-                  }}
-                >
-                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
-                  {t("dictation.clear_history")}
-                </Button>
-              </div>
-              <p className="mt-1 text-meta text-muted-foreground">
-                {t("dictation.clear_history_hint")}
-              </p>
-              {/* A field is a lift surface, not a hairline outline: it now
-                  answers with a fill the way every other input in the app
-                  does, and the focus ring is a rim rather than a third fill. */}
-              <div className="relative mt-block">
-                <Search
-                  aria-hidden="true"
-                  className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-                />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t("dictation.search_placeholder")}
-                  aria-label={t("dictation.search_placeholder")}
-                  data-testid="dictation-search"
-                  className="h-9 w-full rounded-md bg-input pl-9 pr-3 text-body text-foreground placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
-                />
-              </div>
-              {filtered.length === 0 ? (
-                /* Shared "nothing matched your search" string — the Dictionary
-                   tab owns it and it is already localized everywhere. A lift
-                   panel at the height the list would have had, so clearing the
-                   query does not make the card jump. */
+              {/* The silent-failure paths, made loud. Degraded, not broken —
+                  the words still reach the clipboard — so a --warning glyph
+                  on an ordinary card, never a washed panel. */}
+              {blocked && (
                 <div
-                  className="mt-block rounded-md bg-secondary px-block py-10 text-center text-body text-muted-foreground"
-                  data-testid="dictation-no-matches"
+                  className="flex items-start gap-3 rounded-xl border border-border bg-card p-5 shadow-rim"
+                  data-testid="dictation-insert-warning"
                 >
-                  {t("dictionary.no_matches")}
-                </div>
-              ) : (
-                <div className="mt-block" data-testid="dictation-history">
-                  {groups.map((group) => (
-                    <DictationHistoryGroup
-                      key={group.key}
-                      label={dayLabel(t, group.key)}
-                      entries={group.entries}
-                      busyIds={busyIds}
-                      copiedId={copiedId}
-                      onCopy={(entry) => void onCopy(entry)}
-                      onRestore={(entry) => void onRestore(entry)}
-                      onDiscard={(entry) => {
-                        void withRowBusy(entry.id, () => discardEntry(entry.id));
-                      }}
-                      onDelete={(entry) => {
-                        void withRowBusy(entry.id, () => deleteEntry(entry.id));
-                      }}
-                    />
-                  ))}
+                  <AlertTriangle
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                  />
+                  <div className="min-w-0">
+                    <h4 className="text-title font-semibold text-foreground-strong">
+                      {t("dictation.cannot_insert_title")}
+                    </h4>
+                    <p className="mt-1 text-meta text-muted-foreground">
+                      {status?.insertion.detail || t("dictation.cannot_insert_generic")}
+                    </p>
+                  </div>
                 </div>
               )}
-            </Card>
-          )}
+
+              <DictationHero
+                status={status}
+                loading={loading}
+                busy={busy}
+                onToggle={() => void onToggle()}
+                onOpenShortcuts={() => setActiveSection("voice-shortcuts")}
+              />
+            </div>
+
+            {/* The side column. While loading it stands at its real size as
+                empty bars — a card with zeros in it would read as a person
+                who has never dictated anything. */}
+            <aside className="flex min-w-0 flex-col gap-4 [grid-area:side] xl:sticky xl:top-0 xl:self-start">
+              {loading ? (
+                <div className="rounded-xl border border-border bg-card p-5 shadow-rim">
+                  <SkeletonBar className="h-3 w-20" />
+                  <div className="mt-4 flex flex-col gap-3">
+                    <SkeletonBar className="h-8 w-40" />
+                    <SkeletonBar className="h-8 w-32" />
+                    <SkeletonBar className="h-8 w-36" />
+                  </div>
+                  <SkeletonBar className="mt-5 h-14 w-full" />
+                </div>
+              ) : (
+                stats && <DictationStatsCard stats={stats} />
+              )}
+              {!loading && status?.available && status.engine?.provider && (
+                <DictationEngineCard engine={status.engine} />
+              )}
+              <DictationVocabularyCard onOpen={() => setActiveSection("dictionary")} />
+            </aside>
+
+            <div className="min-w-0 [grid-area:list]">
+              {loading ? (
+                <div className="flex flex-col gap-2" aria-busy="true">
+                  <SkeletonBar className="h-3 w-24" />
+                  <SkeletonBar className="h-[220px] w-full rounded-xl" />
+                </div>
+              ) : entries.length === 0 ? (
+                <EmptyHistory />
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h2 className="text-base font-semibold text-foreground-strong">
+                      {t("dictation.history_title")}
+                    </h2>
+                    <div className="flex items-center gap-1">
+                      <div className="relative">
+                        <Search
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+                        />
+                        <input
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder={t("dictation.search_placeholder")}
+                          aria-label={t("dictation.search_placeholder")}
+                          data-testid="dictation-search"
+                          className="h-8 w-56 rounded-md bg-input pl-8 pr-3 text-sm text-foreground placeholder:text-faint-foreground focus:outline-none focus:ring-2 focus:ring-border-strong"
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-2 text-muted-foreground"
+                        title={t("dictation.clear_history_hint")}
+                        data-testid="dictation-clear-history"
+                        onClick={() => {
+                          void clearHistory().catch((e) =>
+                            pushToast("error", (e as Error).message),
+                          );
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                        {t("dictation.clear_history")}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {filtered.length === 0 ? (
+                    /* Shared "nothing matched your search" string — the
+                       Dictionary tab owns it and it is localized everywhere. */
+                    <div
+                      className="mt-4 rounded-xl border border-dashed border-border px-block py-12 text-center text-body text-muted-foreground"
+                      data-testid="dictation-no-matches"
+                    >
+                      {t("dictionary.no_matches")}
+                    </div>
+                  ) : (
+                    <div className="mt-4 flex flex-col gap-6" data-testid="dictation-history">
+                      {groups.map((group) => (
+                        <DictationHistoryGroup
+                          key={group.key}
+                          label={dayLabel(t, group.key)}
+                          entries={group.entries}
+                          busyIds={busyIds}
+                          copiedId={copiedId}
+                          onCopy={(entry) => void onCopy(entry)}
+                          onRestore={(entry) => void onRestore(entry)}
+                          onDiscard={(entry) => {
+                            void withRowBusy(entry.id, () => discardEntry(entry.id));
+                          }}
+                          onDelete={(entry) => {
+                            void withRowBusy(entry.id, () => deleteEntry(entry.id));
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** The designed first-run surface: what will appear here, and how. */
+function EmptyHistory() {
+  const t = useT();
+  return (
+    <div
+      className="flex flex-col items-center rounded-xl border border-dashed border-border px-6 py-12 text-center"
+      data-testid="dictation-empty"
+    >
+      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary text-foreground">
+        <Mic aria-hidden="true" className="h-4 w-4" />
+      </span>
+      <h3 className="mt-3 text-base font-semibold text-foreground-strong">
+        {t("dictation.empty_title")}
+      </h3>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">{t("dictation.empty_body")}</p>
     </div>
   );
 }
@@ -450,7 +392,7 @@ function localDateKey(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : dateKey(date);
 }
 
-/** "Today" / "Yesterday" / a locale-formatted date for everything older. */
+/** "Today" / "Yesterday" / a long locale date ("August 23, 2026") otherwise. */
 function dayLabel(t: (key: string) => string, key: string): string {
   const now = new Date();
   if (key === dateKey(now)) return t("dictation.group.today");
@@ -458,5 +400,7 @@ function dayLabel(t: (key: string) => string, key: string): string {
   yesterday.setDate(yesterday.getDate() - 1);
   if (key === dateKey(yesterday)) return t("dictation.group.yesterday");
   const parsed = new Date(`${key}T00:00:00`);
-  return Number.isNaN(parsed.getTime()) ? key : parsed.toLocaleDateString();
+  return Number.isNaN(parsed.getTime())
+    ? key
+    : parsed.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }

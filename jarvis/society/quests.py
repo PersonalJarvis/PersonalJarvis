@@ -41,7 +41,7 @@ from jarvis.missions.ids import uuid7_str
 from .capabilities import CapabilityRow
 from .events import USER_ACTOR, MsgType, QuestState, SocietyEnvelope, Tier, now_ms
 from .focus import derive_focus
-from .roster import AgentRecord, AgentState
+from .roster import AgentRecord, AgentState, conversation_session_id
 from .seeds import proposal_for_capability
 
 log = logging.getLogger(__name__)
@@ -336,14 +336,18 @@ class Quests:
 
     # ------------------------------------------------------------ waiting
 
-    def blocker_of(self, agent_id: str) -> str:
+    def blocker_of(self, agent_id: str, sender: str = USER_ACTOR) -> str:
         """Why the agent cannot take work right now: ``approval`` (its chat waits
-        for the person), ``busy`` (a turn runs), or an empty string."""
+        for the person), ``busy`` (a turn runs), or an empty string.
+
+        ``sender`` picks the chat the quest runs in: the person's quests use the
+        agent's canonical chat, Jarvis' its conversation chat with Jarvis.
+        """
         get_chat = getattr(self._runtime, "_get_chat", None)
         svc = get_chat() if callable(get_chat) else None
         if svc is None:
             return ""
-        session_id = f"society:{agent_id}"
+        session_id = conversation_session_id(agent_id, sender)
         try:
             pending = getattr(svc, "pending_approvals", None)
             if callable(pending) and pending(session_id):
@@ -590,7 +594,11 @@ class Quests:
                 result = {
                     "status": "waiting",
                     "reason": reason,
-                    "blocker": self.blocker_of(quest.agent_id) if quest.agent_id else "",
+                    "blocker": (
+                        self.blocker_of(quest.agent_id, quest.created_by or USER_ACTOR)
+                        if quest.agent_id
+                        else ""
+                    ),
                     "text": env.text,
                     "attempts": attempts,
                 }

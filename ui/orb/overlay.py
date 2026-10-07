@@ -2300,6 +2300,9 @@ class OrbOverlay:
         self._pet_bubble = bool(pet_bubble)
         #: ``[ui] pet_strip_always``: the strip stays up even at rest.
         self._pet_strip_always = bool(pet_strip_always)
+        #: A look change is already queued for the Tk thread: a slider drag
+        #: sends a burst, and only the newest values need one rescale.
+        self._pet_look_queued = False
         #: Mirrors ``VoiceMuteChanged`` for the strip's microphone control.
         self._mic_muted = False
         #: Hidden by the shortcut or the settings page — lasts until restart.
@@ -3931,6 +3934,11 @@ class OrbOverlay:
         if strip_always is not None:
             self._pet_strip_always = bool(strip_always)
         self._note_activity()
+        if self._root is None:
+            return  # no window yet: the first paint reads the values just stored
+        if self._pet_look_queued:
+            return  # the queued apply reads the values just stored
+        self._pet_look_queued = True
         self._enqueue_ui(self._apply_pet_look)
 
     def set_pet_outcome(self, kind: str) -> None:
@@ -4046,6 +4054,7 @@ class OrbOverlay:
         self._sync_controls_visibility()
 
     def _apply_pet_look(self) -> None:
+        self._pet_look_queued = False
         if self._style != "pet":
             return
         if not self._pet_bubble and self._thought is not None:
@@ -4210,13 +4219,21 @@ class OrbOverlay:
         """Starts a named animation (e.g. 'wave', 'salute', 'think').
 
         Thread-safe: queued via ``root.after(0, ...)`` onto the Tk mainloop.
-        Only works with the MascotRenderer.
+        The pet handles the activation wave as a short listening nod.
 
         Stacking behavior: several animations can run at the same time.
         Calling play_animation('wave') again while a 'wave' is still active
         adds a second instance — this is intentional (multiple waves).
         To "replace" it, call stop_animation('wave') first.
         """
+        if isinstance(self._renderer, PetRenderer):
+            if name == "wave":
+                def _greet() -> None:
+                    if isinstance(self._renderer, PetRenderer):
+                        self._renderer.greet()
+                        self._kick_frame()
+                self._enqueue_ui(_greet)
+            return
         if not isinstance(self._renderer, MascotRenderer):
             return
         if name not in ANIMATION_REGISTRY:

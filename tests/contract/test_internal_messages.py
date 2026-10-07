@@ -78,6 +78,9 @@ async def test_lead_message_is_an_internal_chat_receipt(world):
     await drain(rt)
     assert result.success and tool.risk_tier == "safe"
     target = await rt.roster.resolve("Gmail agent")
+    # Jarvis' message lands in the agent's one chat as a delegation receipt.
+    assert svc.store.get_session(target.session_id) is not None
+    assert svc.store.get_session(f"{target.session_id}:with:jarvis") is None
     events = svc.store.list_events(target.session_id)
     receipt = next(e["payload"] for e in events if e["kind"] == "agent_message")
     assert receipt["sender_name"] == "Jarvis" and receipt["sender_kind"] == "jarvis"
@@ -156,7 +159,8 @@ async def test_failure_updates_a_visible_queued_message(world):
     await rt.store.set_kill_switch(True)
     await drain(rt)
     assert await rt.store.delivery_status(env.event_id) == "failed"
-    assert svc.store.incoming_message("society:scout", env.event_id)["status"] == "failed"
+    receipt = svc.store.incoming_message("society:scout", env.event_id)
+    assert receipt["status"] == "failed"
 
 
 async def test_agent_reply_keeps_conversation_and_cannot_forge_sender(world):

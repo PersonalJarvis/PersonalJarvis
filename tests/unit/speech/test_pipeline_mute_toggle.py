@@ -29,6 +29,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -65,7 +66,7 @@ def _make_pipeline(bus: EventBus) -> tuple[SpeechPipeline, FakeTTS, FakePlayer]:
     player = FakePlayer()
     pipeline = SpeechPipeline(tts=tts, bus=bus, enable_whisper_wake=False)
     pipeline._player = player  # type: ignore[assignment]
-    return pipeline, tts, player
+    return open_classic_voice_session(pipeline), tts, player
 
 
 @pytest.mark.asyncio

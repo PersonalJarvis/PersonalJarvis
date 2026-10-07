@@ -1,10 +1,8 @@
 """Punctuation repair at the segment joins — ``cleanup.tidy_transcript``.
 
-The dictation lane transcribes in ~8 s segments and joins them with a bare
-space, while the recognizer punctuates and capitalises every segment as if it
-were the whole utterance. Everything tested here is damage that arrangement
-manufactures: a doubled "....", a lower-case sentence start, a stray ellipsis
-where a segment cut a sentence in half.
+The recognizer can emit an ellipsis for a pause inside a sentence. A text-only
+cleanup cannot distinguish that hesitation from a window boundary. Preserve
+ambiguous punctuation while repairing separately written duplicate marks.
 
 The negative tests carry the same weight as the positive ones. A repair that
 deletes an ellipsis the speaker actually dictated is worse than the artifact it
@@ -103,17 +101,10 @@ def test_blank_input_is_returned_as_is(text: str) -> None:
         # The German fixtures below are the vocabulary under test (§1 #4).
         # Terminator plus a free-standing ellipsis: the join artifact proper.
         ("gesprochen. ... ist das gut", "gesprochen. Ist das gut"),  # i18n-allow
-        # The already-glued form, in case an older transcript carries it.
-        ("gesprochen.... ist das gut", "gesprochen. Ist das gut"),  # i18n-allow
-        # A word-attached ellipsis: the recognizer's mid-sentence cut.
-        ("gesprochen... ist das gut", "gesprochen. Ist das gut"),  # i18n-allow
-        # The single-glyph spelling of the same thing.
-        ("gesprochen… ist das gut", "gesprochen. Ist das gut"),  # i18n-allow
-        # Free-standing, but the next segment starts on a capital.
-        ("gesprochen ... Ist das gut", "gesprochen. Ist das gut"),  # i18n-allow
+        ("Finished. … next item", "Finished. Next item"),
     ],
 )
-def test_a_segment_join_ellipsis_becomes_one_terminator(
+def test_an_ellipsis_after_a_separate_terminator_is_redundant(
     text: str, expected: str
 ) -> None:
     assert tidy_transcript(text) == expected
@@ -129,11 +120,28 @@ def test_a_segment_join_ellipsis_becomes_one_terminator(
         # Same, after a comma — the comma must not swallow the dots either.
         "wir gehen, ... aber nicht heute",  # i18n-allow
         "I waited ... and nothing happened",
+        "I think... we should wait.",
+        "I think… we should wait.",
+        "I think.... we should wait.",
+        "I asked ... Alice to wait.",
+        "I asked… Alice to wait.",
+        "Please do... not delete the file.",
+        "Use version... 3.5 for the release.",
+        "Waiting...",
+        "Waiting…",
+        "Waiting ...",
+        "Waiting …",
+        "was ich... hier eingesprochen habe.",  # i18n-allow: reported dictation
+        "gesprochen ... Ist das gut",  # i18n-allow: ambiguous boundary
+        "Das sind ... Namen und Zahlen.",  # i18n-allow: German nouns
+        "Bitte den... Pull Request nicht schließen.",  # i18n-allow: mixed speech
+        "Creo… que debemos esperar.",  # i18n-allow: Spanish pause
     ],
 )
 def test_an_intentional_mid_sentence_ellipsis_survives(text: str) -> None:
     """The failure direction that matters: never delete what was dictated."""
     assert tidy_transcript(text) == text
+    assert tidy_transcript(tidy_transcript(text)) == text
 
 
 # --------------------------------------------------------------------------

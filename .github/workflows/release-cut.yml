@@ -8,16 +8,29 @@
 #      section (scripts/ci/cut_release.py: [Unreleased] notes, or the
 #      Conventional Commits since the last tag),
 #   3. checks the version commit through a candidate PR, then merges it normally,
-#   4. pushes the annotated tag and dispatches the three publishing workflows
-#      on it (PyPI, desktop installers, signed installer). Each of them starts
-#      with release-gate.yml, which waits for CI on the release commit.
+#   4. pushes the annotated tag; the three publishing workflows (PyPI, desktop
+#      installers, signed installer) run on it. Each of them starts with
+#      release-gate.yml, which waits for CI on the release commit.
 #   5. publishes the GitHub Release with the notes and the resumable
 #      personal-jarvis-src.tar.gz asset the install scripts fall back to. The
 #      in-app updater follows releases/latest, so this is the step that reaches
 #      users.
+#   6. runs release-smoke.yml against the published release (read-only).
 #
-# Tags pushed with GITHUB_TOKEN fire no `push: tags` event, which is why step 4
-# dispatches explicitly; workflow_dispatch is the documented exception.
+# Release bot. The `cut` job runs in the `release-cut` environment, which only
+# main may deploy to. That environment holds the private key of the release
+# bot GitHub App (secret RELEASE_APP_PRIVATE_KEY, variable RELEASE_APP_ID). The
+# job mints short-lived installation tokens from it to push the candidate
+# branch, open and merge the candidate PR, and push the tag. The "release tags"
+# ruleset lets only that app and repository admins create `v*` tags, and the
+# `release-signing` and `pypi` environments admit only `v*` tags, so the
+# signing keys and PyPI are reachable only from a tag the bot cut on main.
+#
+# A bot token, unlike GITHUB_TOKEN, fires the normal events: the candidate PR
+# runs CI by itself and the new tag starts the publishers by itself. Without
+# the bot (RELEASE_APP_ID unset) the job falls back to GITHUB_TOKEN and
+# dispatches the publishers itself, because a GITHUB_TOKEN tag push fires no
+# `push: tags` event; workflow_dispatch is the documented exception.
 
 name: Release cut
 
@@ -43,37 +56,46 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  checks: read
+  contents: read
 
 jobs:
   cut:
     name: cut release
     if: github.ref == 'refs/heads/main'
+    # Holds the release bot key; its deployment policy admits main only.
+    environment: release-cut
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
     outputs:
       version: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
     env:
-      GH_TOKEN: ${{ secrets.INTEGRATION_TOKEN || github.token }}
-      TOKEN_IS_BOT: ${{ secrets.INTEGRATION_TOKEN == '' }}
+      # Reads and dispatches use GITHUB_TOKEN. Each write step overrides
+      # GH_TOKEN with a bot token minted right before it: an installation
+      # token expires after one hour, and the CI waits between writes can take
+      # longer than that.
+      GH_TOKEN: ${{ github.token }}
+      # true = no release bot: pushes and merges made with GITHUB_TOKEN start
+      # no workflows, so this job dispatches the publishers itself.
+      TOKEN_IS_BOT: ${{ vars.RELEASE_APP_ID == '' }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
-          token: ${{ secrets.INTEGRATION_TOKEN || github.token }}
+          # git pushes through gh (next step), which uses the step's GH_TOKEN.
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
+      - name: Let git push with the step's token
+        run: gh auth setup-git --hostname github.com
       - name: main must be green
         if: inputs.resume_sha == ''
-        run: |
-          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20gate" \
-            --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
-          echo "CI gate on $GITHUB_SHA: $state"
-          [ "$state" = "success" ] || { echo "::error::main is not green ($state) - no release."; exit 1; }
+        run: python scripts/ci/release_admit.py --ci-only --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --wait-minutes 0
       - name: Select an already merged version commit
         id: resume
         if: inputs.resume_sha != ''
@@ -99,10 +121,21 @@ jobs:
           new="$(python scripts/ci/cut_release.py "${arg[@]}" --notes-out "$RUNNER_TEMP/notes.md" | tail -1)"
           echo "version=$new" >> "$GITHUB_OUTPUT"
           git diff --stat
-      - name: Check the version commit before landing and tagging
+      - name: Mint a release bot token for the candidate
+        id: candidate-token
+        if: inputs.resume_sha == '' && vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Open the candidate PR
+        id: candidate
         if: inputs.resume_sha == ''
         env:
           V: ${{ steps.bump.outputs.version }}
+          GH_TOKEN: ${{ steps.candidate-token.outputs.token || github.token }}
         run: |
           git config user.name "jarvis-release[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -113,14 +146,23 @@ jobs:
           git push origin "HEAD:refs/heads/$candidate"
           # Only eligible events (here pull_request) satisfy branch protection.
           # A workflow_dispatch CI success is not accepted by GitHub for landing.
+          # GITHUB_TOKEN may not open pull requests here; the release bot may.
           if ! gh pr create --base main --head "$candidate" --title "chore(release): publish v$V" \
             --body-file "$RUNNER_TEMP/notes.md"; then
             echo "::notice::Repository policy may require a maintainer to open the candidate PR."
             echo "Open https://github.com/$GITHUB_REPOSITORY/compare/main...$candidate?expand=1" >> "$GITHUB_STEP_SUMMARY"
           fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "branch=$candidate" >> "$GITHUB_OUTPUT"
+      - name: Wait for the candidate CI gate
+        if: inputs.resume_sha == ''
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.branch }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+        run: |
           ci_run=""
           for attempt in {1..60}; do
-            ci_run="$(gh run list --workflow ci.yml --branch "$candidate" --commit "$sha" \
+            ci_run="$(gh run list --workflow ci.yml --branch "$CANDIDATE" --commit "$CANDIDATE_SHA" \
               --event pull_request --json databaseId --jq '.[0].databaseId // empty')"
             [ -n "$ci_run" ] && break
             sleep 5
@@ -130,40 +172,96 @@ jobs:
             gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$ci_run/approve"
           fi
           gh run watch "$ci_run" --exit-status --interval 30
-          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=CI%20gate" \
+          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?check_name=CI%20gate" \
             --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
           [ "$state" = "success" ] || { echo "::error::Candidate CI gate is $state."; exit 1; }
-          gh pr merge "$candidate" --merge --match-head-commit "$sha"
-          if [ "$TOKEN_IS_BOT" = "true" ]; then
-            gh workflow run ci.yml --ref main -f full=true -f include_macos=false
-          fi
-      - name: Tag the admitted release
+      - name: Mint a release bot token for landing
+        id: land-token
+        if: inputs.resume_sha == '' && vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Land the candidate
+        if: inputs.resume_sha == ''
+        env:
+          CANDIDATE: ${{ steps.candidate.outputs.branch }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          GH_TOKEN: ${{ steps.land-token.outputs.token || github.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr merge "$CANDIDATE" --merge --match-head-commit "$CANDIDATE_SHA"
+          merged="$(gh pr view "$CANDIDATE" --json mergeCommit --jq '.mergeCommit.oid')"
+          [[ "$merged" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing merge commit."; exit 1; }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git checkout --detach "$merged"
+          # Always dispatch: a GITHUB_TOKEN merge starts no CI, and a bot
+          # merge's push run shares the main-push group, where a newer push to
+          # main drops it while it still waits for a runner.
+          GH_TOKEN="$DISPATCH_TOKEN" gh workflow run ci.yml --ref main -f full=true -f include_macos=true
+      - name: Admit the release commit
         env:
           V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
         run: |
           sha="$(git rev-parse HEAD)"
-          python scripts/ci/release_admit.py --tag "v$V" --sha "$sha" --repo "$GITHUB_REPOSITORY"
+          git merge-base --is-ancestor "$sha" origin/main
+          actual="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
+          [ "$actual" = "$V" ] || { echo "::error::Merged package version changed."; exit 1; }
+          python scripts/ci/release_admit.py --ci-only --sha "$sha" --repo "$GITHUB_REPOSITORY"
+      - name: Mint a release bot token for the tag
+        id: tag-token
+        if: vars.RELEASE_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - name: Tag the admitted release
+        id: tag
+        env:
+          V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
+          # The "release tags" ruleset lets only the release bot and admins
+          # create v* tags.
+          GH_TOKEN: ${{ steps.tag-token.outputs.token || github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
           git config user.name "jarvis-release[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git show-ref --verify --quiet "refs/tags/v$V"; then
             [ "$(git rev-parse "v$V^{}")" = "$sha" ] || { echo "::error::The tag already names another commit."; exit 1; }
+            echo 'pushed=false' >> "$GITHUB_OUTPUT"
           else
             git tag -a "v$V" -m "v$V"
             git push origin "v$V"
+            echo 'pushed=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Dispatch the publishing workflows on the tag
         env:
           V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
+          TAG_PUSHED: ${{ steps.tag.outputs.pushed }}
         run: |
-          for wf in release.yml desktop-installers.yml sign-installer.yml; do
-            gh workflow run "$wf" --ref "v$V"
-          done
+          # ci.yml has no tag trigger; dispatch full CI on the immutable tag.
+          gh workflow run ci.yml --ref "v$V" -f full=true -f include_macos=true
+          python scripts/ci/release_assets.py prepare --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          # A new tag pushed by the release bot already started the publishers.
+          # Dispatching twice races an immutable PyPI upload against itself.
+          if [ "$TOKEN_IS_BOT" = "true" ] || [ "$TAG_PUSHED" != "true" ]; then
+            python scripts/ci/release_assets.py dispatch --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          fi
 
   publish:
     name: publish GitHub Release
     needs: cut
+    concurrency:
+      group: release-finalize-v${{ needs.cut.outputs.version }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       V: ${{ needs.cut.outputs.version }}
@@ -172,6 +270,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: v${{ needs.cut.outputs.version }}
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -179,13 +278,24 @@ jobs:
       # same admission the publishing workflows wait for.
       - name: Wait for CI on the release commit
         run: python scripts/ci/release_admit.py --tag "v$V" --sha "$(git rev-parse HEAD)" --repo "$GITHUB_REPOSITORY"
-      - name: Publish the Release + resumable source asset
-        run: |
-          python scripts/ci/cut_release.py --print-notes "$V" > "$RUNNER_TEMP/notes.md"
-          git archive --format=tar.gz --prefix=personal-jarvis/ -o personal-jarvis-src.tar.gz "v$V"
-          if gh release view "v$V" >/dev/null 2>&1; then
-            gh release edit "v$V" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
-            gh release upload "v$V" personal-jarvis-src.tar.gz --clobber
-          else
-            gh release create "v$V" --title "v$V" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag personal-jarvis-src.tar.gz
-          fi
+      - name: Wait for publishers and finalize the complete release
+        run: >-
+          python scripts/ci/release_assets.py finalize
+          --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          --sha "$(git rev-parse HEAD)" --wait-minutes 150
+
+  # Read-only proof that what users now download installs: assets, checksums,
+  # build provenance and the signed wrapper on Linux, Windows and macOS. Called
+  # from here because a release published with GITHUB_TOKEN fires no `release`
+  # event. A red smoke means the release is already public: follow the
+  # rollback runbook in docs/ci-pipeline.md.
+  smoke:
+    name: smoke published release
+    needs: [cut, publish]
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      tag: v${{ needs.cut.outputs.version }}
+      require_attestation: true

@@ -1,11 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { _resetProvidersCacheForTests } from "@/hooks/useProviders";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { loadLocaleChunk } from "@/i18n";
-import { requestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useEventStore } from "@/store/events";
-import { HOW_BEATS } from "./HowWalk";
 import { SetupTour } from "./SetupTour";
 
 type Onb = ReturnType<typeof useOnboarding>;
@@ -25,22 +23,11 @@ const openai = {
   active: false,
 };
 
-const plan = {
-  id: "openai-live",
-  label: "OpenAI GPT-Live",
-  summary: "",
-  mode: "realtime",
-  recommended: true,
-  assignments: { brain: "openai" },
-  key_slots: [{ family: "openai", slot: "openai_api_key", label: "OpenAI", present: false }],
-  keys_complete: false,
-  ready_sections: [],
-};
-
 let providers = [openai];
-let agentRows: Array<{ jarvis: string; label?: string; oauth_connected?: boolean }> = [];
-let wakeWord = { phrase: "", enabled: false };
-let calls: Array<{ url: string; method: string }> = [];
+let wakeWord = { phrase: "", enabled: false, engine: "auto" };
+let cliStatus: Record<string, object> = {};
+let loginReplies: Record<string, { status: number; body: unknown }> = {};
+let calls: Array<{ url: string; method: string; body?: string }> = [];
 
 function stubFetch() {
   calls = [];
@@ -48,13 +35,28 @@ function stubFetch() {
     "fetch",
     vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      calls.push({ url, method });
-      const reply = (body: unknown) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      calls.push({ url, method, body: typeof init?.body === "string" ? init.body : undefined });
+      const reply = (body: unknown, status = 200) =>
+        Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) });
+      if (url === "/api/permissions/status") return reply({ platform: "win32" });
       if (url === "/api/providers") return reply({ providers });
-      if (url === "/api/setup/starter-plans") return reply({ plans: [plan], selected: null, custom_id: "custom" });
+      if (url === "/api/setup/starter-plans") return reply({ plans: [], selected: null, custom_id: "custom" });
+      if (url === "/api/settings/wake-word" && method === "PUT") {
+        const sent = JSON.parse(String(init?.body)) as { phrase: string };
+        wakeWord = { ...wakeWord, phrase: sent.phrase };
+        return reply({ ok: true, phrase: sent.phrase, engine: "auto", resolved_engine: "auto", degraded: false });
+      }
       if (url === "/api/settings/wake-word") return reply(wakeWord);
-      if (url === "/api/jarvis-agent/status") return reply({ mapping: agentRows });
+      if (url === "/api/settings/keybinds" && method === "PUT") {
+        const sent = JSON.parse(String(init?.body)) as { hotkey: string };
+        return reply({ ok: true, action: "call", hotkey: sent.hotkey, persisted: true, restart_required: false });
+      }
+      if (url === "/api/settings/keybinds") return reply({ keybinds: { call: "ctrl+alt+j", dictate: "f8" }, defaults: {}, suggestions: [] });
+      if (url === "/api/settings/autostart" && method === "PUT") return reply({ ok: true, enabled: true, supported: true });
       if (url === "/api/settings/autostart") return reply({ enabled: false, supported: true });
+      if (url.endsWith("/status") && url in cliStatus) return reply(cliStatus[url]);
+      if (url.endsWith("/status")) return reply({ installed: true, connected: false, mode: "unknown" });
+      if (url.endsWith("/login") && url in loginReplies) return reply(loginReplies[url].body, loginReplies[url].status);
       return reply({ ok: true });
     }),
   );
@@ -84,7 +86,7 @@ function fakeOnb(over: Partial<NonNullable<Onb["state"]>> = {}): Onb {
   };
 }
 
-const accepted = { terms: { accepted: true, accepted_version: "1.0", current_version: "1.0" } };
+const step = () => screen.getByTestId("setup-card").dataset.step;
 
 beforeAll(async () => {
   await loadLocaleChunk("onboarding");
@@ -92,9 +94,11 @@ beforeAll(async () => {
 
 beforeEach(() => {
   providers = [{ ...openai, secrets_set: {} }];
-  agentRows = [];
-  wakeWord = { phrase: "", enabled: false };
+  wakeWord = { phrase: "", enabled: false, engine: "auto" };
+  cliStatus = {};
+  loginReplies = {};
   _resetProvidersCacheForTests();
+  window.sessionStorage.clear();
   useEventStore.getState().setActiveSection("chats");
   stubFetch();
 });
@@ -105,233 +109,170 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("starts with a welcome and no consent gate, then opens the API Keys page", async () => {
+it("opens the setup window on the name, with three step pills", async () => {
+  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-name-input");
+  expect(step()).toBe("name");
+  const pills = within(screen.getByTestId("setup-steps")).getAllByRole("button");
+  expect(pills).toHaveLength(3);
+  expect(screen.getByTestId("setup-pill-name").getAttribute("aria-current")).toBe("step");
+});
+
+it("asks for a name, saves it as the wake word and moves on to connecting", async () => {
   const onb = fakeOnb();
   render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  const start = (await screen.findByTestId("onboarding-primary")) as HTMLButtonElement;
-  expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome");
-  expect(start.disabled).toBe(false);
-  expect(screen.queryByTestId("onboarding-accept")).toBeNull();
-  expect(screen.queryByTestId("onboarding-decline")).toBeNull();
+  const input = (await screen.findByTestId("setup-name-input")) as HTMLInputElement;
+  const go = screen.getByTestId("onboarding-primary") as HTMLButtonElement;
+  expect(go.disabled).toBe(true);
+  fireEvent.change(input, { target: { value: "Nova" } });
   await act(async () => {
-    fireEvent.click(start);
+    fireEvent.click(go);
   });
-  expect(onb.acceptTerms).not.toHaveBeenCalled();
-  // First the explainer of what the assistant is, then the API Keys page.
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
-  expect(onb.saveStep).toHaveBeenCalledWith("how", []);
-  fireEvent.click(await screen.findByTestId("how-skip"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
-  expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
+  await waitFor(() => expect(step()).toBe("connect"));
+  const put = calls.find((c) => c.url === "/api/settings/wake-word" && c.method === "PUT");
+  expect(JSON.parse(put!.body!)).toMatchObject({ phrase: "Nova", persist: true });
+  expect(onb.saveStep).toHaveBeenCalledWith("connect", []);
 });
 
-it("waits for a key, and lets the user go on later", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "keys" });
-  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-keys-waiting");
-  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByTestId("setup-keys-later"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
-  expect(onb.saveStep).toHaveBeenLastCalledWith("subscriptions", ["keys"]);
-});
-
-it("opens the Agents tab and waits for a subscription", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "subscriptions" });
-  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  const status = await screen.findByTestId("setup-subscriptions-status");
-  expect(useEventStore.getState().activeSection).toBe("apikeys");
-  expect(requestedApiKeysTab()).toBe("subagents");
-  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
-  expect(status.textContent).not.toContain("Claude");
-  fireEvent.click(screen.getByTestId("setup-subscriptions-later"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("voice"));
-  expect(onb.saveStep).toHaveBeenLastCalledWith("voice", ["subscriptions"]);
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("settings"));
-  expect(requestedApiKeysTab()).toBeNull();
-});
-
-it("lets the user on once a subscription is signed in", async () => {
-  agentRows = [{ jarvis: "claude-api", label: "Claude (API-Key)", oauth_connected: true }];
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "subscriptions" })} preview={false} onFinished={vi.fn()} />);
-  await waitFor(() => expect(screen.getByTestId("setup-subscriptions-status").textContent).toContain("Claude"));
-  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
-});
-
-it("asks for a wake word before going on, with a way to leave it for later", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "voice" });
-  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-voice-later");
-  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.click(screen.getByTestId("setup-voice-later"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
-  expect(onb.saveStep).toHaveBeenLastCalledWith("ready", ["voice"]);
-});
-
-const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
-
-function inputMonitoringAsks() {
-  return calls.filter((c) => c.url.startsWith("/api/permissions/input_monitoring/request"));
-}
-
-it("choosing the Call shortcut asks for Input Monitoring once, from that click, in the Mac desktop window", async () => {
-  (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP = true;
-  vi.spyOn(window.navigator, "userAgent", "get").mockReturnValue(MAC_UA);
-  try {
-    const onb = fakeOnb({ ...accepted, current_step: "voice" });
-    render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-    await screen.findByTestId("setup-voice-later");
-    // Nothing is asked by arriving on the step.
-    expect(inputMonitoringAsks()).toEqual([]);
-
-    fireEvent.click(screen.getByTestId("setup-voice-later"));
-
-    await waitFor(() => expect(inputMonitoringAsks()).toHaveLength(1));
-    expect(inputMonitoringAsks()[0].method).toBe("POST");
-    await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
-  } finally {
-    delete (window as unknown as { __JARVIS_EMBEDDED_DESKTOP?: boolean }).__JARVIS_EMBEDDED_DESKTOP;
-  }
-});
-
-it("choosing the Call shortcut asks nothing on Windows, Linux or in a plain browser", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "voice" });
-  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-voice-later");
-
-  fireEvent.click(screen.getByTestId("setup-voice-later"));
-
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("ready"));
-  expect(inputMonitoringAsks()).toEqual([]);
-});
-
-it("goes on from the wake word once one is saved", async () => {
-  wakeWord = { phrase: "Hey George", enabled: true };
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
-  await waitFor(() => expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false));
-  expect(screen.queryByTestId("setup-voice-later")).toBeNull();
-});
-
-it("switches on the plan a key saved during the step completes", async () => {
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-keys-waiting");
-  providers = [{ ...openai, secrets_set: { openai_api_key: true } }];
-  act(() => {
-    window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: { key: "openai_api_key", action: "set" } }));
-  });
-  await screen.findByTestId("setup-keys-connected");
-  expect(calls.some((c) => c.url === "/api/brain/switch" && c.method === "POST")).toBe(true);
-  expect((screen.getByTestId("onboarding-primary") as HTMLButtonElement).disabled).toBe(false);
-});
-
-it("leaves a key that was already there exactly as it is", async () => {
-  providers = [{ ...openai, secrets_set: { openai_api_key: true } }];
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-keys-present");
-  expect(calls.some((c) => c.url.includes("/switch"))).toBe(false);
-});
-
-it("hands over to the tour from the last step without completing yet", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "ready" });
-  const onFinished = vi.fn();
-  render(<SetupTour onb={onb} preview={false} onFinished={onFinished} />);
-  const start = await screen.findByTestId("onboarding-start");
-  await act(async () => {
-    fireEvent.click(start);
-  });
-  // The gate completes onboarding (and restarts) only once the tour ends.
-  expect(onFinished).toHaveBeenCalled();
-  expect(onb.complete).not.toHaveBeenCalled();
-});
-
-it("keeps the app on the step's page when something else moves it", async () => {
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-keys-waiting");
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
-  act(() => useEventStore.getState().setActiveSection("profile"));
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("apikeys"));
-});
-
-it("walks a replay from the start and never writes, completes or restarts", async () => {
-  const onb = fakeOnb({ ...accepted, completed: true, current_step: "voice" });
-  const onFinished = vi.fn();
-  render(<SetupTour onb={onb} preview onFinished={onFinished} />);
-  // A replay from the URL shows every step, the welcome included.
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("welcome"));
+it("keeps a name that did not change without saving it again", async () => {
+  wakeWord = { phrase: "Atlas", enabled: true, engine: "auto" };
+  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} />);
+  await waitFor(() => expect((screen.getByTestId("setup-name-input") as HTMLInputElement).value).toBe("Atlas"));
   await act(async () => {
     fireEvent.click(screen.getByTestId("onboarding-primary"));
   });
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
-  fireEvent.click(await screen.findByTestId("how-skip"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
-  fireEvent.click(await screen.findByTestId("setup-keys-later"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("subscriptions"));
-  fireEvent.click(await screen.findByTestId("setup-subscriptions-later"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("voice"));
-  fireEvent.click(await screen.findByTestId("setup-voice-later"));
-  const start = await screen.findByTestId("onboarding-start");
-  await act(async () => {
-    fireEvent.click(start);
-  });
-  expect(onFinished).toHaveBeenCalled();
-  expect(onb.acceptTerms).not.toHaveBeenCalled();
-  expect(onb.saveStep).not.toHaveBeenCalled();
-  expect(onb.complete).not.toHaveBeenCalled();
+  await waitFor(() => expect(step()).toBe("connect"));
+  expect(calls.some((c) => c.url === "/api/settings/wake-word" && c.method === "PUT")).toBe(false);
 });
 
-it("dims the app and keeps its card above every dialog", async () => {
-  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} />);
-  await screen.findByTestId("setup-card");
-  const layer = screen.getByTestId("tour-layer");
-  expect(layer.hasAttribute("data-tour-layer")).toBe(true);
-  expect(screen.getByTestId("tour-dim").className).toContain("pointer-events-auto");
-});
-
-it("starts a replay from Settings at the API Keys page, with no way back to the consent", async () => {
-  const onb = fakeOnb({ ...accepted, completed: true });
-  render(<SetupTour onb={onb} preview startAt="keys" onFinished={vi.fn()} />);
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
-  expect(screen.queryByTestId("setup-back")).toBeNull();
-});
-
-it("explains the assistant with the pet walking the real app, then goes on to the keys", async () => {
-  const onb = fakeOnb({ ...accepted, current_step: "how" });
+it("lists one row per provider, marks a signed-in one as ready and records a skipped step", async () => {
+  cliStatus["/api/claude/status"] = { installed: true, connected: true, mode: "subscription", user_email: "a@b.c" };
+  const onb = fakeOnb({ current_step: "connect" });
   render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
-  const card = await screen.findByTestId("setup-card");
-  expect(card.dataset.step).toBe("how");
-  expect(card.dataset.beat).toBe("hello");
-  // The pet says each line in a bubble; the composer beat moves the app home.
-  fireEvent.click(screen.getByTestId("how-next"));
-  expect(screen.getByTestId("setup-card").dataset.beat).toBe("talk");
-  await waitFor(() => expect(useEventStore.getState().activeSection).toBe("chats"));
-  fireEvent.click(screen.getByTestId("how-prev"));
-  expect(screen.getByTestId("setup-card").dataset.beat).toBe("hello");
-  for (let i = 0; i < HOW_BEATS.length - 1; i++) fireEvent.click(screen.getByTestId("how-next"));
-  expect(screen.getByTestId("setup-card").dataset.beat).toBe("done");
-  // Nothing was written while the pet explained.
+  for (const id of ["claude", "openai", "google", "grok"]) await screen.findByTestId(`setup-sub-${id}`);
+  await waitFor(() => expect(screen.getByTestId("setup-sub-claude").dataset.state).toBe("ready"));
+  expect(screen.getByTestId("setup-sub-claude").textContent).toContain("a@b.c");
+  // Something is connected: Continue moves on without a skip.
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("onboarding-primary"));
+  });
+  await waitFor(() => expect(step()).toBe("voice"));
+  expect(onb.saveStep).toHaveBeenLastCalledWith("voice", []);
+});
+
+it("lets the user go on with nothing connected, recorded as skipped", async () => {
+  const onb = fakeOnb({ current_step: "connect" });
+  render(<SetupTour onb={onb} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-connect-nothing");
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("onboarding-primary"));
+  });
+  await waitFor(() => expect(step()).toBe("voice"));
+  expect(onb.saveStep).toHaveBeenLastCalledWith("voice", ["connect"]);
+});
+
+it("shows the install command when a subscription's app is missing", async () => {
+  cliStatus["/api/codex/status"] = { installed: false, connected: false, mode: "missing" };
+  loginReplies["/api/codex/login"] = {
+    status: 409,
+    body: { detail: { message: "Codex CLI is not installed", install_command: "npm i -g @openai/codex" } },
+  };
+  render(<SetupTour onb={fakeOnb({ current_step: "connect" })} preview={false} onFinished={vi.fn()} />);
+  const connect = await screen.findByTestId("setup-sub-openai-connect");
+  await act(async () => {
+    fireEvent.click(connect);
+  });
+  const install = await screen.findByTestId("setup-sub-openai-install");
+  expect(install.textContent).toContain("npm i -g @openai/codex");
+  expect(calls.some((c) => c.url === "/api/codex/login" && c.method === "POST")).toBe(true);
+});
+
+it("takes an API key right in the provider's row", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "connect" })} preview={false} onFinished={vi.fn()} />);
+  fireEvent.click(await screen.findByTestId("setup-sub-openai-key"));
+  await screen.findByTestId("setup-key-panel-openai");
+  // A row whose family has no key card offers only the sign-in.
+  expect(screen.queryByTestId("setup-sub-claude-key")).toBeNull();
+});
+
+it("ends the window on the voice step and walks the app, then finishes", async () => {
+  wakeWord = { phrase: "Nova", enabled: false, engine: "auto" };
+  const onb = fakeOnb({ current_step: "voice" });
+  const onFinished = vi.fn();
+  render(<SetupTour onb={onb} preview={false} onFinished={onFinished} />);
+  await waitFor(() => expect(screen.getByTestId("setup-voice-wake").textContent).toContain("Hey Nova"));
+  await screen.findByTestId("onboarding-autostart");
+  expect(screen.getByTestId("setup-voice-keys").textContent).toBe("CtrlAltJ");
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("onboarding-start"));
+  });
+  await waitFor(() => expect(step()).toBe("tour"));
+  expect(onb.saveStep).toHaveBeenLastCalledWith("tour", []);
+  // The walk: chat first, then on through every stop to the end.
+  expect(screen.getByTestId("setup-card").dataset.stop).toBe("chat");
+  const seen: string[] = [];
+  for (let i = 0; i < 12 && !onFinished.mock.calls.length; i++) {
+    seen.push(screen.getByTestId("setup-card").dataset.stop ?? "");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("walk-next"));
+    });
+  }
+  expect(seen).toEqual(["chat", "voice", "agents", "ide", "plugins", "wake", "done"]);
+  expect(onFinished).toHaveBeenCalledTimes(1);
+  expect(useEventStore.getState().activeSection).toBe("chats");
+});
+
+it("sets the Call shortcut by pressing it", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await waitFor(() => expect(screen.getByTestId("setup-voice-keys").textContent).toBe("CtrlAltJ"));
+  fireEvent.click(screen.getByTestId("setup-voice-call-field"));
+  expect(screen.getByTestId("setup-voice-call-field").dataset.keybindRecording).toBe("true");
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "Control", code: "ControlLeft", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "k", code: "KeyK", ctrlKey: true });
+    fireEvent.keyUp(window, { key: "k", code: "KeyK", ctrlKey: true });
+    fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" });
+  });
+  await waitFor(() => expect(calls.some((c) => c.url === "/api/settings/keybinds" && c.method === "PUT")).toBe(true));
+  const put = calls.find((c) => c.url === "/api/settings/keybinds" && c.method === "PUT");
+  expect(JSON.parse(put!.body!)).toMatchObject({ action: "call", hotkey: "ctrl+k" });
+});
+
+it("refuses a Call shortcut another shortcut already owns", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("setup-voice-keys");
+  fireEvent.click(screen.getByTestId("setup-voice-call-field"));
+  await act(async () => {
+    fireEvent.keyDown(window, { key: "F8", code: "F8" });
+    fireEvent.keyUp(window, { key: "F8", code: "F8" });
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(calls.some((c) => c.url === "/api/settings/keybinds" && c.method === "PUT")).toBe(false);
+});
+
+it("lets the walk be skipped", async () => {
+  const onFinished = vi.fn();
+  render(<SetupTour onb={fakeOnb({ current_step: "tour" })} preview={false} onFinished={onFinished} />);
+  fireEvent.click(await screen.findByTestId("walk-skip"));
+  expect(onFinished).toHaveBeenCalledTimes(1);
+});
+
+it("goes back to a finished step from its pill", async () => {
+  render(<SetupTour onb={fakeOnb({ current_step: "voice" })} preview={false} onFinished={vi.fn()} />);
+  await screen.findByTestId("onboarding-start");
+  fireEvent.click(screen.getByTestId("setup-pill-name"));
+  await waitFor(() => expect(step()).toBe("name"));
+});
+
+it("never writes the onboarding state in a replay", async () => {
+  wakeWord = { phrase: "Nova", enabled: true, engine: "auto" };
+  const onb = fakeOnb({ completed: true, current_step: "tour" });
+  render(<SetupTour onb={onb} preview onFinished={vi.fn()} />);
+  // A replay starts at the beginning, not at the saved step.
+  await waitFor(() => expect((screen.getByTestId("setup-name-input") as HTMLInputElement).value).toBe("Nova"));
+  await act(async () => {
+    fireEvent.click(screen.getByTestId("onboarding-primary"));
+  });
+  await waitFor(() => expect(step()).toBe("connect"));
   expect(onb.saveStep).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByTestId("how-next"));
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("keys"));
-  expect(onb.saveStep).toHaveBeenCalledWith("keys", []);
-});
-
-it("starts a replay from Settings at the explainer", async () => {
-  const onb = fakeOnb({ ...accepted, completed: true });
-  render(<SetupTour onb={onb} preview startAt="how" onFinished={vi.fn()} />);
-  await waitFor(() => expect(screen.getByTestId("setup-card").dataset.step).toBe("how"));
-  expect(screen.queryByTestId("setup-back")).toBeNull();
-});
-
-it("lets the welcome skip the whole setup", async () => {
-  const onSkipAll = vi.fn();
-  render(<SetupTour onb={fakeOnb()} preview={false} onFinished={vi.fn()} onSkipAll={onSkipAll} />);
-  fireEvent.click(await screen.findByTestId("setup-skip-all"));
-  expect(onSkipAll).toHaveBeenCalled();
-});
-
-it("says what a key is for: live voice needs OpenAI or Gemini", async () => {
-  providers = [{ ...openai, configured: true, secrets_set: { openai_api_key: true } }];
-  render(<SetupTour onb={fakeOnb({ ...accepted, current_step: "keys" })} preview={false} onFinished={vi.fn()} />);
-  const live = await screen.findByTestId("setup-keys-live");
-  await waitFor(() => expect(live.dataset.tone).toBe("ok"));
 });

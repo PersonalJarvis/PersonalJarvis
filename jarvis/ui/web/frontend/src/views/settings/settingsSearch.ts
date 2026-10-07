@@ -1,11 +1,14 @@
 import en from "@/i18n/locales/en.json";
 import de from "@/i18n/locales/de.json";
 import es from "@/i18n/locales/es.json";
-import type { UiLanguage } from "@/i18n";
+import { uiDictionary, type UiLanguage } from "@/i18n";
 
 type LocaleTree = Record<string, unknown>;
 
-const LOCALES: Record<UiLanguage, LocaleTree> = { en, de, es };
+// Chinese is not bundled here: its dictionary is large and only loads when
+// someone picks it, so search reads the resident copy the i18n store holds.
+const LOCALES: Partial<Record<UiLanguage, LocaleTree>> = { en, de, es };
+const localeTree = (language: UiLanguage): LocaleTree => LOCALES[language] ?? uiDictionary(language);
 
 /** Each Settings page group owns the copy used to search its controls. */
 const SEARCH_GROUPS = [
@@ -14,7 +17,6 @@ const SEARCH_GROUPS = [
   { id: "realtime-voice", keys: ["realtime_voice"] },
   { id: "system-prompt", keys: ["system_prompt"] },
   { id: "wake-word", keys: ["wake_word"] },
-  { id: "silence-window", keys: ["silence_window"] },
   { id: "volume", keys: ["volume"] },
   { id: "audio-devices", keys: ["audio_devices"] },
   { id: "music", keys: ["music", "music_group_title"] },
@@ -24,14 +26,12 @@ const SEARCH_GROUPS = [
 
 const SEARCH_PAGES = [
   { id: "profile", keys: ["profile_view"] },
-  { id: "agent-instructions", keys: ["agent_instructions"] },
-  { id: "contacts", keys: ["contacts"] },
+  { id: "agent-instructions", keys: ["assistant_view"] },
   { id: "socials", keys: ["socials"] },
   { id: "apikeys", keys: ["apikeys_view", "apikeys_voice", "apikeys_model", "apikeys_cu_model"] },
   { id: "appshots", keys: ["appshots"] },
   { id: "shortcuts", keys: ["shortcuts_view", "settings_view.keybinds", "settings_view.quick_switch"] },
   { id: "pets", keys: ["pets"] },
-  { id: "jarvis-actions", keys: ["jarvis_actions"] },
   { id: "costs", keys: ["costs_view"] },
   { id: "feedback", keys: ["feedback"] },
 ] as const;
@@ -76,7 +76,7 @@ export function searchSettingsOptions(
 ): SettingsOptionMatch[] {
   const needle = normalize(query.trim());
   if (!needle) return [];
-  const settings = atPath(LOCALES[language], "settings_view") as LocaleTree;
+  const settings = atPath(localeTree(language), "settings_view") as LocaleTree;
 
   return SEARCH_GROUPS.flatMap(({ id, keys }) => {
     const label = translate(`settings_view.nav.${id.replaceAll("-", "_")}`);
@@ -95,7 +95,7 @@ export function searchSettingsPages(
 ) {
   const needle = normalize(query.trim());
   if (!needle) return [];
-  const locale = LOCALES[language];
+  const locale = localeTree(language);
 
   return SEARCH_PAGES.flatMap(({ id, keys }) => {
     const label = translate(`nav.${id === "agent-instructions" ? "agent_instructions" : id}`);

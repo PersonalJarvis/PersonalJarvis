@@ -38,15 +38,24 @@ describe("LanguagesGroup (Languages folded into Settings)", () => {
     expect(screen.getByText("languages_view.reply_section")).toBeDefined();
   });
 
-  it("renders a row for each UI language and the reply 'auto' option", () => {
+  it("shows each saved language on its dropdown and lists every choice", async () => {
     render(<LanguagesGroup />);
-    // en/de/es appear in both the UI and reply lists → at least one each.
-    expect(screen.getAllByText("languages_view.options.en.label").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("languages_view.options.de.label").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("languages_view.options.es.label").length).toBeGreaterThan(0);
-    // Reply language offers "automatic" as a row; recognition offers it as the
-    // first entry of its dropdown (asserted separately below).
-    expect(screen.getAllByText("languages_view.options.auto.label")).toHaveLength(2);
+    expect(screen.getByTestId("ui-language").textContent).toContain(
+      "languages_view.options.en.label",
+    );
+    expect(screen.getByTestId("reply-language").textContent).toContain(
+      "languages_view.options.auto.label",
+    );
+    fireEvent.click(screen.getByTestId("ui-language"));
+    const ui = await waitFor(() => screen.getByTestId("ui-language-panel"));
+    for (const code of ["en", "de", "es", "zh"]) {
+      expect(ui.textContent).toContain(`languages_view.options.${code}.label`);
+    }
+    fireEvent.click(screen.getByTestId("reply-language"));
+    const reply = await waitFor(() => screen.getByTestId("reply-language-panel"));
+    for (const code of ["auto", "en", "de", "es"]) {
+      expect(reply.textContent).toContain(`languages_view.reply_options.${code}`);
+    }
   });
 
   it("offers recognition languages the interface is not translated into", async () => {

@@ -14,7 +14,7 @@ import { VoiceWaveform, type WaveformPhase } from "@/components/overlay/VoiceWav
 import { voiceInputLevelRef } from "@/lib/voiceInputLevel";
 import { DockRail } from "@/components/layout/DockRail";
 
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
 import { DeckOrb, type OrbReadouts } from "@/components/deck/DeckOrb";
 import type { ThinkingStep } from "@/lib/thinkingSteps";
 import { DeckStandby, ORB_TRAVEL } from "@/components/deck/DeckStandby";
@@ -248,7 +248,7 @@ export function MissionDeckView({
           className="flex h-8 w-8 shrink-0 items-center justify-center"
           data-testid="deck-header-gigi"
         >
-          <GigiMark size={32} />
+          <PetMark size={32} reactive />
         </span>
         <div className="flex items-center gap-3">
           <VoiceWaveform

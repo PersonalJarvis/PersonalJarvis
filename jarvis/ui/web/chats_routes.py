@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from jarvis.sessions import chat_titles
 from jarvis.sessions.chat_titles import TitleRequest
+from jarvis.sessions.continuation import CALL_SEGMENT_PREFIX
 from jarvis.sessions.formatter import _jarvis_outputs_for_turn
 from jarvis.state.chat_store import ChatStore
 from jarvis.state.conversation_constants import (
@@ -209,7 +210,21 @@ def _normalized_messages(
         events = _voice_events(session_store, cid)
         live_messages = _live_voice_messages(events)
         if live_messages:
-            return live_messages
+            # A reopened voice chat can hold an older turn-based call ahead of
+            # its live calls (jarvis/sessions/continuation.py). Those earlier
+            # turns carry no caption rows, so they would vanish behind the
+            # captions; keep them, in time order, in front.
+            first_live = min(m.ts_ms for m in live_messages)
+            captioned = {
+                getattr(e, "turn_id", None)
+                for e in events
+                if e.kind == "VoiceTranscriptUpdated"
+            }
+            earlier = [
+                turn for turn in turns
+                if int(turn.started_ms) < first_live and str(turn.id) not in captioned
+            ]
+            return _turn_messages(earlier, events) + live_messages
         # Older GPT-Live sessions retained every fragment even while the chat
         # rendered only the current caption. Recover them without a migration.
         from jarvis.core.paths import user_data_dir
@@ -222,34 +237,39 @@ def _normalized_messages(
                 role=caption.role, text=caption.text,
                 ts_ms=int(session.started_ms) + caption.start_ms - origin,
             ) for caption in legacy]
-        out: list[ChatTurn] = []
-        for turn in turns:
-            if getattr(turn, "user_text", ""):
-                out.append(
-                    ChatTurn(role="user", text=turn.user_text, ts_ms=int(turn.started_ms))
-                )
-            turn_id = str(getattr(turn, "id", "") or "")
-            turn_events = [
-                event for event in events
-                if turn_id and getattr(event, "turn_id", None) == turn_id
-            ]
-            # Use the export's audible-track projection: preambles and progress
-            # can be all the user heard before hanging up. They remain spoken
-            # history even when no final brain reply or tool call exists.
-            for output in _jarvis_outputs_for_turn(turn, turn_events):
-                out.append(
-                    ChatTurn(
-                        role="assistant",
-                        text=output.text,
-                        ts_ms=output.ts_ms,
-                        trace=(
-                            _voice_turn_trace(turn, events)
-                            if output.is_reply else None
-                        ),
-                    )
-                )
-        return out
+        return _turn_messages(turns, events)
     return None
+
+
+def _turn_messages(turns: list[Any], events: list[Any]) -> list[ChatTurn]:
+    """A turn-based call's messages: the heard words and the audible answers."""
+    out: list[ChatTurn] = []
+    for turn in turns:
+        if getattr(turn, "user_text", ""):
+            out.append(
+                ChatTurn(role="user", text=turn.user_text, ts_ms=int(turn.started_ms))
+            )
+        turn_id = str(getattr(turn, "id", "") or "")
+        turn_events = [
+            event for event in events
+            if turn_id and getattr(event, "turn_id", None) == turn_id
+        ]
+        # Use the export's audible-track projection: preambles and progress
+        # can be all the user heard before hanging up. They remain spoken
+        # history even when no final brain reply or tool call exists.
+        for output in _jarvis_outputs_for_turn(turn, turn_events):
+            out.append(
+                ChatTurn(
+                    role="assistant",
+                    text=output.text,
+                    ts_ms=output.ts_ms,
+                    trace=(
+                        _voice_turn_trace(turn, events)
+                        if output.is_reply else None
+                    ),
+                )
+            )
+    return out
 
 
 def _voice_events(session_store: Any, session_id: str) -> list[Any]:
@@ -284,7 +304,20 @@ def _live_voice_messages(events: list[Any]) -> list[ChatTurn]:
             "start": previous["start"] if previous else event.ts_ms,
             "end": event.ts_ms, "audio_start": int(payload.get("start_ms", 0)),
         }
-    ordered = sorted(segments.values(), key=lambda item: (item["audio_start"], item["start"]))
+    # Each call's audio clock starts at zero. A reopened voice chat holds
+    # several calls (their segment ids carry the call, see
+    # SessionRecorder._maybe_append_raw), so order calls by when they began
+    # and only then by the audio clock inside each call.
+    for segment_id, item in segments.items():
+        continued = segment_id.startswith(CALL_SEGMENT_PREFIX)
+        item["call"] = segment_id.split(":", 2)[1] if continued else ""
+    call_start: dict[str, int] = {}
+    for item in segments.values():
+        call_start[item["call"]] = min(call_start.get(item["call"], item["start"]), item["start"])
+    ordered = sorted(
+        segments.values(),
+        key=lambda item: (call_start[item["call"]], item["audio_start"], item["start"]),
+    )
     messages = []
     trace_start = min((item["start"] for item in ordered), default=0)
     for item in ordered:

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 /**
  * On-screen overlay style from GET /api/settings/overlay-style.
- * "jarvis_bar" = slim default bar, "mascot" = ghost mascot, "voice_orb" = the
+ * "jarvis_bar" = blue-orb control strip (default), "mascot" = ghost mascot, "voice_orb" = the
  * procedural voice orb, "pet" = an animated pixel-art pet with its control
  * strip (Settings → My Pets), "none" = hidden.
  *

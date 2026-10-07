@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 # --------------------------------------------------------------------------
 # Intent
@@ -76,6 +77,8 @@ class IntentVerdict:
 class TargetKind(StrEnum):
     MONITOR = "monitor"
     WINDOW = "window"
+    #: A rectangle the user dragged out themselves (appshot area selection).
+    REGION = "region"
 
 
 class TargetReason(StrEnum):
@@ -95,6 +98,8 @@ class TargetReason(StrEnum):
     FOCUSED_WINDOW = "focused_window"
     #: Window scope was asked for but the window rect was unusable.
     WINDOW_FALLBACK_MONITOR = "window_fallback_monitor"
+    #: The user selected this rectangle by hand.
+    USER_REGION = "user_region"
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +251,27 @@ class Degradation:
 
 
 @dataclass(frozen=True, slots=True)
+class MasterImage:
+    """The same capture at full fidelity, for the user's own copy — never a model's.
+
+    Asked for with ``capture(master=True)`` (appshots). Redacted exactly like
+    :attr:`ScreenContext.image`, at the raw frame's size, before any
+    downscale or JPEG. ``pixels`` is ``uint8 (h, w, 3)`` sRGB for an SDR
+    monitor, or ``float16 (h, w, 4)`` scRGB (linear, 1.0 = 80 nits) when the
+    monitor ran HDR or a wide gamut.
+    """
+
+    pixels: Any = field(repr=False, compare=False)
+    hdr: bool = False
+    #: Brightness of SDR white on the captured monitor (HDR captures).
+    sdr_white_nits: float = 80.0
+    #: The monitor's ICC profile (SDR captures), when the OS has one.
+    icc_profile: bytes | None = field(default=None, repr=False)
+    #: Peak luminance the monitor reports (HDR captures); 0 when unknown.
+    max_nits: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
 class ScreenContext:
     """One capture, redacted, ready to hand to a conversation turn.
 
@@ -267,6 +293,9 @@ class ScreenContext:
     redactions: RedactionReport = field(default_factory=RedactionReport)
     degradations: tuple[Degradation, ...] = ()
     captured_at_ns: int = 0
+    #: Full-fidelity copy for the user (appshots only); never stored behind a
+    #: handle and never sent to a model.
+    master: MasterImage | None = field(default=None, repr=False, compare=False)
 
     @property
     def byte_size(self) -> int:
@@ -280,6 +309,8 @@ class ScreenContext:
         """
         if self.target.kind is TargetKind.WINDOW:
             where = "active window"
+        elif self.target.kind is TargetKind.REGION:
+            where = "selected area"
         else:
             where = f"monitor {self.target.monitor_name or '?'}"
         bits = [f"captured {where}", f"{self.size[0]}x{self.size[1]}"]
@@ -295,6 +326,7 @@ __all__ = [
     "Degradation",
     "DegradationCode",
     "IntentVerdict",
+    "MasterImage",
     "RedactionHit",
     "RedactionReport",
     "RedactionRule",

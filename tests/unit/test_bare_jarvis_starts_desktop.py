@@ -10,6 +10,7 @@ OS, since nothing about the dispatch is platform-specific.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -134,9 +135,23 @@ def test_readme_still_documents_bare_jarvis_as_the_desktop_entry() -> None:
     if not readme.is_file():
         pytest.skip("README absent (slim checkout)")
     text = readme.read_text(encoding="utf-8")
-    assert "jarvis          # full desktop" in text, (
-        "README no longer advertises bare `jarvis` as the desktop entry — "
-        "if that changed on purpose, update this test and __main__.main()"
+    # Read the documented COMMAND, not the prose around it: a rewrite that
+    # changes the wording or the column of the comment must not fail the
+    # suite, only one that drops bare `jarvis` or sends it somewhere else.
+    blocks = re.findall(r"```(?:bash|sh|shell|console|powershell)?\n(.*?)```", text, re.S)
+    bare = [
+        line.partition("#")[2].strip().lower()
+        for block in blocks
+        for line in block.splitlines()
+        if line.partition("#")[0].strip() == "jarvis"
+    ]
+    assert bare, (
+        "README no longer documents bare `jarvis` as a command — if the desktop "
+        "entry changed on purpose, update this test and __main__.main()"
+    )
+    assert not any("headless" in comment for comment in bare), (
+        "README describes bare `jarvis` as headless, but __main__.main() starts "
+        "the desktop app"
     )
 
 
@@ -185,3 +200,93 @@ def test_windows_start_paths_agree_on_the_launcher_module() -> None:
     assert "from jarvis.ui.web import launcher" in inspect.getsource(
         main_mod._run_desktop
     )
+
+
+# --------------------------------------------------------------------------- #
+# `jarvis` typed into a terminal starts the app in the background
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(
+    ("platform_name", "environ", "stdin_tty", "stdout_tty", "expected"),
+    [
+        ("win32", {}, True, True, True),
+        ("darwin", {}, True, True, True),
+        ("linux", {"DISPLAY": ":0"}, True, True, True),
+        ("linux", {"WAYLAND_DISPLAY": "wayland-0"}, True, True, True),
+        # No screen: keep the foreground launch and its own visible handling.
+        ("linux", {}, True, True, False),
+        # Shortcuts, autostart entries, pipes and service managers keep the
+        # in-process launch they always had.
+        ("win32", {}, False, False, False),
+        ("darwin", {}, True, False, False),
+        ("linux", {"DISPLAY": ":0"}, False, True, False),
+    ],
+)
+def test_detach_only_for_an_interactive_terminal(
+    platform_name: str, environ: dict, stdin_tty: bool, stdout_tty: bool, expected: bool
+) -> None:
+    assert main_mod._should_detach_from_terminal(
+        platform_name=platform_name,
+        environ=environ,
+        stdin_tty=stdin_tty,
+        stdout_tty=stdout_tty,
+    ) is expected
+
+
+def _no_foreground_launch(argv: list[str]) -> int:
+    raise AssertionError("an interactive `jarvis` must not boot the app in-process")
+
+
+def test_terminal_launch_returns_the_prompt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import jarvis.ui.relauncher as relauncher_mod
+    import jarvis.ui.web.launcher as launcher_mod
+
+    spawned: list[object] = []
+    monkeypatch.setattr(main_mod, "_missing_desktop_dependency", lambda: None)
+    monkeypatch.setattr(main_mod, "_should_detach_from_terminal", lambda: True)
+    monkeypatch.setattr(launcher_mod, "main", _no_foreground_launch)
+    monkeypatch.setattr(relauncher_mod, "launch_desktop_detached", lambda: spawned.append(1))
+    monkeypatch.setenv("JARVIS_CLI_SESSION_FILE", "")  # no running instance
+
+    assert main_mod._run_desktop(debug=False) == 0
+    assert spawned == [1]
+    assert "Starting Personal Jarvis" in capsys.readouterr().out
+
+
+def test_foreground_flag_keeps_the_app_in_this_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    import jarvis.ui.web.launcher as launcher_mod
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(main_mod, "_missing_desktop_dependency", lambda: None)
+    monkeypatch.setattr(main_mod, "_should_detach_from_terminal", lambda: True)
+    monkeypatch.setattr(launcher_mod, "main", lambda argv: seen.append(argv) or 0)
+
+    assert main_mod._run_desktop(debug=False, foreground=True) == 0
+    assert seen == [[]]
+
+
+def test_detached_launch_keeps_the_terminal_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `JARVIS__*` override typed into that shell is what the user meant."""
+    import jarvis.ui.relauncher as relauncher_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_popen(argv: list[str], **kwargs: object) -> object:
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setenv("JARVIS__BRAIN__PROVIDER", "terminal-choice")
+    monkeypatch.setenv(relauncher_mod.WINDOWS_BRANDED_LAUNCH_ENV_VAR, "1")
+    relauncher_mod.launch_desktop_detached(_popen=fake_popen)
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["JARVIS__BRAIN__PROVIDER"] == "terminal-choice"
+    from jarvis.core.instance import current_instance
+
+    branded = current_instance().windows_branded_launcher_file_name.casefold()
+    if Path(captured["argv"][0]).name.casefold() != branded:  # type: ignore[index]
+        # Only a spawn of the branded exe itself carries the loop guard.
+        assert relauncher_mod.WINDOWS_BRANDED_LAUNCH_ENV_VAR not in env
+    assert captured["stdin"] is not None  # valid stdio for a detached child

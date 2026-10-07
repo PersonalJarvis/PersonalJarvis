@@ -247,15 +247,23 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     )
 
     out: dict[str, list[dict[str, Any]]] = {}
-    if _installed("claude-cli"):
+    readers = {
+        "agy-cli": read_agy_models,
+        "codex-cli": read_codex_models,
+        "grok-cli": read_grok_models,
+        "opencode-cli": read_opencode_models,
+    }
+    # One trip off the loop for every installed-check: each is a PATH walk.
+    found = await _off_loop(lambda: [r for r in ("claude-cli", *readers) if _installed(r)])
+    if "claude-cli" in found:
         # A plan login publishes no model list; the public discovery feed is
         # what brings a new Claude release into the picker (claude_code_models).
-        from jarvis.brain.model_catalog import shared_catalog
-
-        try:
-            await asyncio.wait_for(shared_catalog().refresh_discovery(), 3.0)
-        except Exception as exc:  # noqa: BLE001 — the cached/curated list stands in
-            _log.debug("launch picks: model discovery unavailable: %s", exc)
+        # Refreshed in the background: the picker answers from the copy on
+        # hand (memory, else disk) and the next read carries the fresh feed.
+        # Awaiting it here held every expired-cache catalog request for up
+        # to three seconds, on top of the CLI budget below — the composer
+        # showed "Provider" for most of that (2026-10-03).
+        _refresh_discovery_in_background()
     # Every reader runs at once, and the answer waits at most
     # ``_LIVE_MODELS_BUDGET_S``: a cold ``agy models`` has taken well over a
     # minute on a real box, and summing the readers one after another kept the
@@ -264,13 +272,7 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
     # so the next catalog request answers from it; this one leaves that
     # runner's curated fallback standing (its key stays absent, never an empty
     # list that would blank the picker).
-    readers = {
-        "agy-cli": read_agy_models,
-        "codex-cli": read_codex_models,
-        "grok-cli": read_grok_models,
-        "opencode-cli": read_opencode_models,
-    }
-    installed = await _off_loop(lambda: [r for r in readers if _installed(r)])
+    installed = [r for r in found if r in readers]
     reads = {runner: _shared_read(runner, readers[runner]) for runner in installed}
     tasks = {runner: task for runner, (task, _) in reads.items()}
     # A read an EARLIER request started (still running past its budget) is not
@@ -307,6 +309,28 @@ async def live_models() -> dict[str, list[dict[str, Any]]]:
 
 #: How long a catalog request waits for the CLIs' own model lists.
 _LIVE_MODELS_BUDGET_S: Final = 3.0
+
+#: The discovery-feed refresh in flight, so concurrent requests start one.
+_DISCOVERY_REFRESH: Any = None
+
+
+def _refresh_discovery_in_background() -> None:
+    """Start one refresh of the public model feed unless one is running."""
+    import asyncio
+
+    global _DISCOVERY_REFRESH
+    if _DISCOVERY_REFRESH is not None and not _DISCOVERY_REFRESH.done():
+        return
+    from jarvis.brain.model_catalog import shared_catalog
+
+    _DISCOVERY_REFRESH = asyncio.ensure_future(shared_catalog().refresh_discovery())
+    _DISCOVERY_REFRESH.add_done_callback(_finish_discovery_refresh)
+
+
+def _finish_discovery_refresh(task: Any) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        # The cached/curated list stands in; discovery only ever adds models.
+        _log.debug("launch picks: model discovery unavailable: %s", task.exception())
 
 #: Model-list reads that outlived their request, kept alive until they finish.
 _BACKGROUND_READS: set[Any] = set()
@@ -484,18 +508,23 @@ def offered(agent: str, live: Mapping[str, list[dict[str, Any]]] | None = None) 
     Deliberately the shape of an agent-chat catalog row (``AgentChatProvider``
     in the frontend): the IDE's chat composer is the front page's composer, so
     handing it rows it already knows how to draw is what keeps the two
-    surfaces from growing two different model pickers.
+    surfaces from growing two different model pickers. Models hidden on the
+    API Keys page are left out of the list; :func:`normalize_model` still
+    accepts them, so a pane already on one reopens on it.
     """
     picks = picks_for(agent)
     default_model = ""
+    models = offered_models(agent, live)
     if picks is not None and picks.provider:
+        from jarvis.agent_chat import agent_provider_prefs
         from jarvis.agent_chat.catalog import provider_row
 
         row = provider_row(picks.provider)
         if row is not None:
             default_model = row.default_model
+        models = agent_provider_prefs.offered_models(picks.provider, models)
     return {
-        "models": offered_models(agent, live),
+        "models": models,
         "default_model": default_model,
         "effort_levels": list(effort_levels(agent)),
         "default_effort": default_effort(agent),

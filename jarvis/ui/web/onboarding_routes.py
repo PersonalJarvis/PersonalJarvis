@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
 # Tests override this to redirect the state file; production leaves it None
 # (state.py resolves the default data/setup_state.json).
 _STATE_PATH_OVERRIDE: Path | None = None
+_COMPLETE_LOCK = threading.Lock()
 
 
 def _path() -> Path | None:
@@ -149,8 +150,13 @@ def post_complete(request: Request) -> dict:
     require_interactive_desktop_action(
         request, action="restart", require_origin=True
     )
-    st.mark_onboarding_complete(_path())
-    restarting = _schedule_fresh_restart(request)
+    # Sync routes run in a thread pool: serialize the check and transition so
+    # simultaneous clicks cannot each schedule a restart.
+    with _COMPLETE_LOCK:
+        if st.is_onboarding_complete(_path()):
+            return {"ok": True, "restarting": False}
+        st.mark_onboarding_complete(_path())
+        restarting = _schedule_fresh_restart(request)
     return {"ok": True, "restarting": restarting}
 
 

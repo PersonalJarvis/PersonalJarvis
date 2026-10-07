@@ -54,6 +54,8 @@ def _in_area(entries: list[Any], area: str) -> list[Any]:
 class FindAppActionTool:
     """Search every action of the Jarvis app by keywords."""
 
+    read_only = True
+
     name: str = "find-app-action"
     risk_tier: str = "safe"
     description: str = (
@@ -127,7 +129,7 @@ class RunAppActionTool:
         "Run one Jarvis app action found with find-app-action. Pass its action_id and "
         "params: path and query parameters by name, the request body under 'body'. "
         "Report the result the tool returns, never your assumption; a blocked action "
-        "stays blocked — tell the user it is off in Settings > Jarvis actions."
+        "stays blocked — tell the user it is switched off for Jarvis."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -154,7 +156,7 @@ class RunAppActionTool:
             return "safe"  # execute refuses an unknown id without side effects
         tier = effective_tier(entry)
         if tier == "block":
-            history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+            history.record(entry.id, "blocked", "Blocked by the action policy", via=self.name)
         return tier
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
@@ -172,7 +174,7 @@ class RunAppActionTool:
         if effective_tier(entry) == "block":
             # The executor already refuses a blocked tier; this keeps a direct
             # call honest too.
-            history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+            history.record(entry.id, "blocked", "Blocked by the action policy", via=self.name)
             return ToolResult(
                 success=False, output=None, error="The user blocked this action for Jarvis."
             )

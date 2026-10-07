@@ -1,44 +1,19 @@
-"""Shared hang-up intent detection — single source of truth for both voice surfaces.
+"""Shared voice hang-up requests and host-owned two-turn confirmation.
 
-Two surfaces end a voice session: the desktop microphone pipeline
-(``jarvis/speech/pipeline.py``) and Twilio telephony
-(``jarvis/telephony/session.py``). They used to carry two separate, drifting
-copies of the hang-up regex, and the microphone path additionally matched a
-fragile *exact* farewell string emitted by the brain.
-
-This module unifies both:
-
-1. ``HANGUP_RE`` — explicit, unambiguous closing **commands** in German and
-   English, matched against the transcript BEFORE the brain is called. Fast and
-   deterministic. Deliberately narrow: ambiguous-polite phrases (a bare "thank
-   you", "das war's") are NOT here — they are delegated to the brain, which has
-   conversational context and a conservative "stay on when unsure" mandate.
-
-2. ``END_CALL_SIGNAL`` — a control sentinel the brain appends to its reply when
-   it judges the user wants to end (see ``JARVIS_PERSONA.md``). The pipeline
-   detects it on the RAW brain response and strips it before TTS, so the brain
-   may phrase the farewell naturally instead of emitting a magic string.
-
-3. ``is_legacy_farewell`` — backward compatibility for the old exact phrases
-   ("auf wiedersehen, ruben" / "goodbye, ruben"), so a brain instance still
-   running the previous persona contract continues to hang up during rollout.
-
-Standard-library only (``re``). It must stay free of ``sounddevice`` and any
-heavy import so the telephony path can import it (``jarvis/speech/__init__.py``
-is intentionally empty, so importing ``jarvis.speech.hangup`` pulls in nothing
-else).
+Desktop speech, realtime voice and telephony all require an explicit answer
+following the host's question. Complete utterances are matched, never closing
+words inside a task or quotation. Model sentinels and legacy farewells remain
+recognizable for diagnostics and stripping, but cannot authorize termination.
+This module uses only the standard library so every voice surface can import it.
 """
 from __future__ import annotations
 
 import re
+import time
 from typing import Final
 
-# --- Explicit closing commands (pre-brain, instant) -----------------------
-# Bilingual. Whisper mis-transcribes "auflegen" in many ways, so the German
-# "auflegen" morphology is matched generously — it is the single most-used
-# command and a false negative there is the worst failure. Ambiguous-polite
-# phrases ("vielen dank", "danke jarvis", "das war's") are intentionally
-# absent: they are handled by the brain under the stay-on-when-unsure mandate.
+# Closing-command candidates. Mishearings only trigger a question; the final
+# matcher below requires the complete utterance, never a substring of a task.
 _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     # German — auflegen morphology + Whisper split/mis-hearing variants
     r"\bauflegen\b",
@@ -113,11 +88,20 @@ _HANGUP_PATTERNS: Final[tuple[str, ...]] = (
     # kills the session).
 )
 
-HANGUP_RE: Final[re.Pattern[str]] = re.compile("|".join(_HANGUP_PATTERNS), re.IGNORECASE)
+# A closing word inside a task, quotation or negation is never call control.
+HANGUP_RE: Final[re.Pattern[str]] = re.compile(
+    r"\A\s*(?:(?:please|bitte|okay|ok|jarvis|can you|could you|"  # i18n-allow
+    r"kannst du|könntest du|du kannst)[\s,]+)*"  # i18n-allow
+    r"(?:" + "|".join(_HANGUP_PATTERNS) + r")"
+    r"(?:[\s,]+(?:please|bitte|now|jetzt|jarvis))*[\s.!?]*\Z",  # i18n-allow
+    re.IGNORECASE,
+)
 
 
 def matched_hangup_pattern(text: str) -> str | None:
     """Identify the static matching branch for diagnostics without user text."""
+    if HANGUP_RE.fullmatch(text) is None:
+        return None
     return next(
         (pattern for pattern in _HANGUP_PATTERNS if re.search(pattern, text, re.IGNORECASE)),
         None,
@@ -161,18 +145,13 @@ _SEMANTIC_CLOSING_RE = re.compile(
 
 
 def supports_semantic_hangup(user_text: str | None) -> bool:
-    """Whether the user independently expressed conversation-closing intent.
-
-    This never hangs up by itself. A model sentinel or legacy farewell must
-    agree with it; ambiguous speech stays open and explicit commands continue
-    to use the immediate pre-brain matcher.
-    """
+    """Recognize a complete conversational closing that warrants a question."""
     text = (user_text or "").replace("’", "'")
     return _SEMANTIC_CLOSING_RE.fullmatch(text) is not None
 
 
 def user_asked_to_hang_up(user_text: str | None) -> bool:
-    """Gate for a model's ``end_call``: the user's own words must ask for it.
+    """Recognize a user request; this is never sufficient to end a call.
 
     A model tool call alone never ends a call. Live 2026-10-01: the user
     answered "Ja" to an approval and the model called end_call, dropping the
@@ -181,7 +160,78 @@ def user_asked_to_hang_up(user_text: str | None) -> bool:
     speech act counts.
     """
     text = user_text or ""
-    return bool(HANGUP_RE.search(text)) or supports_semantic_hangup(text)
+    return bool(HANGUP_RE.fullmatch(text)) or supports_semantic_hangup(text)
+
+
+_CONFIRM_HANGUP_RE = re.compile(
+    r"\A\s*(?:yes|yeah|yep|ja|sí|si)"  # i18n-allow
+    r"(?:[\s,]+(?:please|bitte|por favor|hang up|end the call|"  # i18n-allow
+    r"auflegen|leg auf|beende das gespräch|cuelga))*[\s.!]*\Z",  # i18n-allow
+    re.IGNORECASE,
+)
+
+
+def confirms_hangup(text: str) -> bool:
+    """Recognize a complete affirmative answer, never a prefix of a correction."""
+    return _CONFIRM_HANGUP_RE.fullmatch(text) is not None
+
+
+def hangup_confirmation_question(language: str) -> str:
+    """Use the caller's already resolved output language."""
+    return {
+        "de": "Möchtest du wirklich auflegen?",  # i18n-allow
+        "es": "¿De verdad quieres colgar?",
+    }.get(language.split("-")[0].lower(), "Do you really want to hang up?")
+
+
+def hangup_cancelled_reply(language: str) -> str:
+    return {
+        "de": "Okay, ich bleibe dran.",  # i18n-allow
+        "es": "Vale, seguimos hablando.",
+    }.get(language.split("-")[0].lower(), "Okay, I'll stay on the call.")
+
+
+class HangupConfirmation:
+    """A voice request needs a separate answer to our own recent question.
+
+    The surface arms this only after it has delivered the question. Model
+    output, repeated tool calls and same-turn transcript fragments cannot arm
+    or confirm it. An unrelated next utterance cancels it, as does expiry.
+    """
+
+    def __init__(self) -> None:
+        self.pending_turn: object | None = None
+        self.expires_at = 0.0
+
+    def reset(self) -> None:
+        self.pending_turn = None
+        self.expires_at = 0.0
+
+    def arm(self, turn: object) -> None:
+        self.pending_turn = turn
+        self.expires_at = time.monotonic() + 30.0
+
+    def observe(self, text: str, turn: object) -> str:
+        pending = self.pending_turn
+        if pending is not None and time.monotonic() >= self.expires_at:
+            self.reset()
+            pending = None
+        requested = user_asked_to_hang_up(text)
+        if pending == turn:
+            if requested:
+                return "waiting"
+            self.reset()
+            return ""
+        if pending is not None:
+            self.reset()
+            if confirms_hangup(text):
+                return "confirmed"
+            if re.fullmatch(
+                r"\A\s*(?:no|nope|nein|cancel|abbrechen)[\s.!]*\Z",  # i18n-allow
+                text, re.I,
+            ):
+                return "cancelled"
+        return "request" if requested else ""
 
 
 def strip_end_signal(text: str | None) -> str:
@@ -221,6 +271,9 @@ def is_legacy_farewell(normalized: str | None) -> bool:
 __all__ = [
     "END_CALL_SIGNAL",
     "HANGUP_RE",
+    "HangupConfirmation",
+    "hangup_confirmation_question",
+    "hangup_cancelled_reply",
     "LEGACY_FAREWELL_PHRASES",
     "contains_end_signal",
     "is_legacy_farewell",

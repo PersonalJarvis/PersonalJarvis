@@ -204,50 +204,50 @@
     {
       "plugin_id": "slack",
       "result": "BLOCKED",
-      "config_fingerprint": "b63622e53686a82209b37ee568201a59eab8feb3334371c770a17939d4e622ff",
+      "config_fingerprint": "ac279f615bdb7c81ca7e489b3a37eb7c39575779b28c1feda06a3f50353194a1",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
           "status": "PASS",
-          "detail": "Repeated live Plugins UI inspection showed the four channel enumeration scopes and two Canvas scopes in plugin.json; Connect still displays publisher setup pending.",
+          "detail": "A live Plugins UI attempt was observed before 2026-10-05: Connect displayed publisher setup pending. That observation predates the switch to the native Slack Web API tool and the new scope list; the connect dialog for the new configuration has not been re-observed.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "browser": {
           "status": "BLOCKED",
-          "detail": "Browser completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Browser completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "callback": {
           "status": "BLOCKED",
-          "detail": "Callback completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Callback completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "connected": {
           "status": "BLOCKED",
-          "detail": "Connected completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Connected completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "smoke": {
           "status": "BLOCKED",
-          "detail": "Smoke completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Smoke completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "reconnect": {
           "status": "BLOCKED",
-          "detail": "Reconnect completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Reconnect completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         },
         "restart": {
           "status": "BLOCKED",
-          "detail": "Restart completion was not verified in this audit. Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+          "detail": "Restart completion was not verified. The shared Slack app registration is pending, and the native Slack Web API configuration of 2026-10-05 has not been exercised live.",
           "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "reason": "The shared Slack app registration is pending, and the Slack plugin moved on 2026-10-05 from Slack's hosted MCP server to the native Slack Web API tool. The new configuration has contract tests only; no live sign-in, connected state, smoke action, reconnect or restart has been observed.",
         "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
-        "evidence": "Connect Slack\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
+        "next_action": "The shared Slack app (PKCE, token rotation, catalog user scopes) and its token broker are wired with an HTTPS redirect via token.personaljarvis.ai/oauth/slack/callback, but the broker's SLACK_CLIENT_SECRET is not set yet, so the exchange answers 503. Set the secret, register the broker callback in the Slack app and activate public distribution, then run the full clean browser journey with a real read-only slack action (search_messages or read_history), reconnect and restart.",
+        "evidence": "Earlier observation: Connect Slack showed 'Browser sign-in is pending publisher setup. No developer account or client registration is required from you.' The native tool is covered by tests/unit/plugins/tool/test_slack_rest.py only."
       }
     },
     {
@@ -600,7 +600,7 @@
       "blocker": {
         "reason": "Full clean-state authorization, disconnect/reconnect, restart persistence and fresh-install validation remain unverified. A real read-only action succeeded with the existing grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Drive\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -650,7 +650,7 @@
       "blocker": {
         "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Gmail\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -700,7 +700,7 @@
       "blocker": {
         "reason": "A genuine read-only action succeeded with the existing grant. Clean-state authorization, disconnect/reconnect, restart persistence and fresh-install acceptance remain unverified.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect Google Calendar\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -800,6 +800,50 @@
         "owner": "Provider account holder",
         "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
         "evidence": "Connect reached app.clickup.com/api provider page; see provider state."
+      }
+    },
+    {
+      "plugin_id": "atlassian",
+      "result": "PASS",
+      "config_fingerprint": "14541d4f308e6784af5bb1ccf9d5a2fd624d876de62e18a2b00f7e0eac4b335e",
+      "initial_state": "clean_unconnected",
+      "evidence": {
+        "ui": {
+          "status": "PASS",
+          "detail": "2026-10-05, Windows, dev instance of the desktop app (same checkout and bundle): the Atlassian card rendered in the Plugins dialog with its logo and Connect opened the browser-login dialog.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "browser": {
+          "status": "PASS",
+          "detail": "Connect performed discovery from the auth-server metadata, registered a client by DCR with a 127.0.0.1 loopback redirect and opened the official Atlassian sign-in and consent page; the account holder signed in and approved the site.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "callback": {
+          "status": "PASS",
+          "detail": "The loopback callback received the authorization code; the token exchange stored access and refresh tokens without any pasted credential.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "connected": {
+          "status": "PASS",
+          "detail": "The card and the detail view showed Connected - Live only after the connection check listed the Atlassian MCP tools.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "smoke": {
+          "status": "PASS",
+          "detail": "A typed Jarvis chat request ran atlassian getAccessibleAtlassianResources and getVisibleJiraProjects (both read-only, approved in the UI) and answered with the real Jira project of the connected site.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix",
+          "real_action": true
+        },
+        "reconnect": {
+          "status": "PASS",
+          "detail": "Disconnect removed the stored credentials (status Not connected); Connect ran the browser consent again and the plugin returned to Connected within 15 seconds.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        },
+        "restart": {
+          "status": "PASS",
+          "detail": "After a full restart of the app process the plugin still reported Connected, the stored grant carried a refresh token and the connection check listed the MCP tools again.",
+          "reference": "docs/marketplace/plugin-auth-audit.md#audit-matrix"
+        }
       }
     },
     {
@@ -1141,7 +1185,7 @@
       "blocker": {
         "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect YouTube Music\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -1631,7 +1675,7 @@
       "blocker": {
         "reason": "Provider account sign-in has not been completed.",
         "owner": "Provider account holder",
-        "next_action": "Complete official sign-in and consent, then verify all seven stages with a real read-only plugin action.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Configured Google client launched accounts.google.com account chooser; consent/resource access not completed."
       }
     },
@@ -1929,7 +1973,7 @@
       "blocker": {
         "reason": "Working credential retained; only Reconnect entry was inspected, without a clean disconnect or completed new grant.",
         "owner": "Provider account holder",
-        "next_action": "Complete an approved reconnect and separately verify a clean installation, real action and restart persistence.",
+        "next_action": "2026-10-05: the shipped Google Desktop client now connects with zero setup; code exchange and refresh go through the project token broker (token.personaljarvis.ai), which holds the client secret. Not yet verified end to end: complete a clean-state browser sign-in through the broker, a real read-only action, disconnect/reconnect and restart persistence.",
         "evidence": "Existing connection; Reconnect entry: Connect YouTube Studio\n\nYou'll sign in with your Google account in the browser.\n\nUse your own OAuth client (advanced)\nCancel\nContinue"
       }
     },
@@ -2181,7 +2225,7 @@
     {
       "plugin_id": "figma",
       "result": "BLOCKED",
-      "config_fingerprint": "b644ba3d27855621fda403804c65157d0a46496e5eaa232d8f241ad6110a96cb",
+      "config_fingerprint": "d8ff5ecdffad01389f6e9c216fa2d77082cc6d6233ecdd70fc3d02c69f7a078e",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
@@ -2221,9 +2265,9 @@
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is missing; the real UI displays publisher setup pending.",
+        "reason": "Publisher OAuth client is not provisioned. The draft Figma OAuth app \"Personal Jarvis\" (client id RkG83E4jPtFsiRQZBku3SD) has the loopback redirect URL and the four read scopes since 2026-10-07, but its client secret is not stored anywhere; Figma's token endpoint requires the secret (HTTP Basic), so a shipped public client also needs a token broker.",
         "owner": "Project publisher",
-        "next_action": "Provision the official shared OAuth registration and any required review, then repeat the full clean browser journey.",
+        "next_action": "Regenerate the client secret in the Figma developer console, add a figma route to the token broker and ship the client id, submit the app for public review, then repeat the full clean browser journey with a real read-only action.",
         "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
       }
     },

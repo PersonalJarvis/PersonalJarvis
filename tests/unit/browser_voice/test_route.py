@@ -133,10 +133,9 @@ async def _wait_for_json(
 
 
 def _state(session, cfg=None):
-    # Default cfg explicitly opts into the classic bridge (Task 7 inverted the
-    # gate to default-OFF; these tests exercise the classic dispatch/session
-    # behavior, not the gate itself — see test_route_closes_when_disabled for
-    # that).
+    # These tests exercise the classic dispatch/session behavior, not the gate
+    # itself — see test_route_closes_when_disabled and
+    # test_route_serves_the_classic_bridge_in_pipeline_mode_by_default for that.
     default_cfg = SimpleNamespace(browser_voice=SimpleNamespace(enabled=True))
     return SimpleNamespace(
         config=cfg if cfg is not None else default_cfg,
@@ -517,10 +516,46 @@ async def test_route_closes_when_disabled():
     assert rec.audio == []  # never reached the loop
 
 
+async def test_route_serves_the_classic_bridge_in_pipeline_mode_by_default():
+    # Issue #399: a real JarvisConfig in pipeline mode, no [browser_voice]
+    # table. The socket must reach the classic session instead of closing.
+    from jarvis.core.config import JarvisConfig
+
+    class _ReadySession(_RecSession):
+        def __init__(self) -> None:
+            super().__init__()
+            self.send_json = None
+
+        async def handle_control(self, msg: dict) -> None:
+            await super().handle_control(msg)
+            if msg.get("type") == "audio_start" and self.send_json is not None:
+                await self.send_json({"type": "audio_ready"})
+
+    session = _ReadySession()
+
+    def _factory(**kwargs):
+        session.send_json = kwargs["send_json"]
+        return session
+
+    state = _state(session, cfg=JarvisConfig.model_validate({"voice": {"mode": "pipeline"}}))
+    state.browser_voice_session_factory = _factory
+    ws = _FakeWS(
+        [
+            {"type": "websocket.receive", "text": '{"type":"audio_start","sample_rate":48000}'},
+            {"type": "websocket.disconnect", "code": 1000},
+        ],
+        state=state,
+    )
+
+    await browser_voice_ws(ws)
+
+    assert ws.closed is None
+    assert [message["type"] for message in ws.sent_json] == ["output_state", "audio_ready"]
+    assert session.ended is True
+
+
 async def test_route_closes_when_speech_stack_unavailable():
     state = SimpleNamespace(
-        # Explicit opt-in (Task 7 default-OFF gate) so the socket reaches the
-        # session build instead of closing early on the disabled gate.
         config=SimpleNamespace(browser_voice=SimpleNamespace(enabled=True)),
         bus=None,
         browser_voice_session_factory=lambda **kw: None,  # build failed (no key)
@@ -528,6 +563,10 @@ async def test_route_closes_when_speech_stack_unavailable():
     ws = _FakeWS([], state=state)
     await browser_voice_ws(ws)
     assert ws.closed is not None and ws.closed[0] == 1011
+    # The reason reaches the person as the browser's error line, so it names
+    # what to fix instead of an internal term.
+    assert "Check API Keys" in ws.closed[1]
+    assert len(ws.closed[1].encode()) <= 123
 
 
 async def test_route_breaks_on_runtimeerror():

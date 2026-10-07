@@ -5,6 +5,8 @@ revoked token is KEPT and flagged, so a connected plugin never silently
 disappears across an app close / PC restart.
 """
 
+import re
+
 import pytest
 
 from jarvis.marketplace.token_store import (
@@ -64,7 +66,7 @@ class _PartialOverflowDeleteBackend(_SizeLimitedFakeBackend):
     blocked_chunk_index = 1
 
     def delete(self, key: str) -> None:
-        if key.endswith(f"__{self.blocked_chunk_index}") and not self.allow_blocked_chunk_delete:
+        if re.search(rf"__(?:b[01]_)?{self.blocked_chunk_index}$", key) and not self.allow_blocked_chunk_delete:
             return
         super().delete(key)
 
@@ -191,8 +193,9 @@ def test_chunked_backend_set_success_leaves_no_orphan_chunks_when_shrinking():
     assert backend.get("plugin_gmail_tokens") == "b" * 30
     assert set(primitive.store) == {
         "plugin_gmail_tokens",
-        "plugin_gmail_tokens__0",
-        "plugin_gmail_tokens__1",
+        "plugin_gmail_tokens__b1_0",
+        "plugin_gmail_tokens__b1_1",
+        "plugin_gmail_tokens__b1_extent",
     }
 
 
@@ -265,15 +268,15 @@ def test_store_delete_keeps_manifest_until_every_indexed_chunk_is_removed():
         store.delete("gmail")
 
     assert backend.store[primary_key] == manifest
-    assert f"{primary_key}__0" not in backend.store
-    assert backend.store[f"{primary_key}__1"]
+    assert f"{primary_key}__b0_0" not in backend.store
+    assert backend.store[f"{primary_key}__b0_1"]
 
     # The retry must use the retained manifest, skip the already-missing zero
     # index, and still detect chunk one instead of falsely reporting success.
     with pytest.raises(RuntimeError):
         store.delete("gmail")
     assert backend.store[primary_key] == manifest
-    assert backend.store[f"{primary_key}__1"]
+    assert backend.store[f"{primary_key}__b0_1"]
 
     backend.allow_blocked_chunk_delete = True
     store.delete("gmail")
@@ -288,13 +291,13 @@ def test_shrink_persists_cleanup_extent_across_restart_until_delete_succeeds():
     chunked.set(key, "secret" * 20)
 
     # Shrinking replaces the active chunk header with a plain value. Chunk zero
-    # is removed, chunk one silently remains, and later chunks are still tried.
+    # is removed, chunk one silently remains, and its bank extent stays durable.
     chunked.set(key, "small")
 
     assert chunked.get(key) == "small"
-    assert f"{key}__0" not in backend.store
-    assert backend.store[f"{key}__1"]
-    extent = backend.store[f"{key}__extent"]
+    assert f"{key}__b0_0" not in backend.store
+    assert backend.store[f"{key}__b0_1"]
+    extent = backend.store[f"{key}__b0_extent"]
     assert int(extent) == 6
 
     # Rebuild both wrappers to model an application restart. Explicit deletion
@@ -306,8 +309,8 @@ def test_shrink_persists_cleanup_extent_across_restart_until_delete_succeeds():
         restarted.delete("gmail")
 
     assert backend.store[key] == "small"
-    assert backend.store[f"{key}__extent"] == extent
-    assert backend.store[f"{key}__1"]
+    assert backend.store[f"{key}__b0_extent"] == extent
+    assert backend.store[f"{key}__b0_1"]
 
     backend.allow_blocked_chunk_delete = True
     restarted.delete("gmail")

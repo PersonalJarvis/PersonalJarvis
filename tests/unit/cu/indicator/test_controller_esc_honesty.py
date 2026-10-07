@@ -31,7 +31,8 @@ def _controller(monkeypatch: pytest.MonkeyPatch) -> tuple[CUIndicatorController,
     ctl = CUIndicatorController(EventBus())
     hints: list[str] = []
 
-    async def record_show(*, hint: str, required: bool) -> bool:
+    async def record_show(*, hint: str, required: bool, pointer: bool) -> bool:
+        assert pointer is True
         hints.append(hint)
         return True
 

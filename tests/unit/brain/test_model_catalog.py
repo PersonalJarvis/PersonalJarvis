@@ -83,7 +83,7 @@ class TestProviderCatalog:
     def test_stt_providers_select_a_model(self) -> None:
         # Local "faster-whisper" was removed as a user-selectable STT provider
         # (v1.0.1); the cloud STT providers still each expose a model list.
-        for p in ("groq-api", "openai-api", "deepgram"):
+        for p in ("groq-api", "openai-api", "deepgram-api"):
             spec = catalog_spec(p)
             assert spec is not None, p
             assert spec.tier == "stt"
@@ -103,7 +103,7 @@ class TestProviderCatalog:
     @pytest.mark.asyncio
     async def test_list_models_for_stt_returns_models(self, tmp_path: Path) -> None:
         cat = ModelCatalog(cache_path=tmp_path / "c.json")
-        result = await cat.list_models("deepgram")
+        result = await cat.list_models("deepgram-api")
         assert result.selects == "model"
         assert any("nova" in m.id for m in result.models)
 
@@ -871,7 +871,12 @@ class TestRealtimeCatalog:
         from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
         from jarvis.ui.web.provider_spec import PROVIDERS
 
-        realtime_ids = {spec.id for spec in PROVIDERS if spec.tier == "realtime"}
+        # Live profiles use /api/live/options, whose account-specific catalog
+        # is covered by test_live_profile_catalog rather than this legacy picker.
+        realtime_ids = {
+            spec.id for spec in PROVIDERS
+            if spec.tier == "realtime" and spec.configuration_surface == "provider"
+        }
         assert realtime_ids <= set(REALTIME_VOICES)
         assert realtime_ids <= set(REALTIME_MODELS)
 

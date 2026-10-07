@@ -11,11 +11,14 @@ import {
   fetchProviderHealth,
   fetchProviderModels,
   isApiRunner,
+  invalidateAgentChatSessions,
   patchAgentChatSession,
   resolveAgentChatApproval,
   answerAgentChatQuestion,
   bindVoiceChat,
   skipAgentChatQuestion,
+  resolveAgentChatPlan,
+  type PlanDecision,
   type QuestionAnswerInput,
   sendAgentChatMessage,
   saveChatSelection,
@@ -33,6 +36,7 @@ import {
 } from "@/lib/agentChatApi";
 import { EMPTY_TIMELINE, reduceEvent, reduceEvents, type Timeline } from "@/components/agentchat/reduce";
 import { jitteredDelay, requestConnect } from "../lib/connectBudget";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 
 /**
  * The agent chat's store — one per SURFACE (`createAgentChatStore`).
@@ -116,6 +120,14 @@ export interface AgentChatStore {
   readonly surface: AgentChatSurface;
   catalog: AgentChatCatalog | null;
   connections: AgentConnectionRow[];
+  /**
+   * The catalog on hand is a copy from before (the last start, or the chat
+   * left behind), painted at once while a fresh read is on its way. The
+   * composer used to show "Provider" for seconds on every start and every new
+   * chat because the catalog route waits on CLI model lists; the picks now
+   * read from this copy and settle when the fresh one lands.
+   */
+  catalogStale: boolean;
   catalogError: string | null;
   /**
    * The catalog answered without the fields this bundle reads (no permission
@@ -155,7 +167,11 @@ export interface AgentChatStore {
   providerById: (id: string) => ProviderOption | null;
   setDraft: (patch: Partial<ComposerDraft>) => Promise<void>;
   setPlan: (on: boolean) => Promise<void>;
-  newChat: () => void;
+  /**
+   * A blank page. `voiceSessionId` = an archived voice chat goes on stage
+   * instead, and calls continue it rather than opening a new chat.
+   */
+  newChat: (opts?: { voiceSessionId?: string }) => void;
   openSession: (sessionId: string) => void;
   removeSession: (sessionId: string) => Promise<void>;
   /** Send the sentence, with whatever files the composer is holding for it. */
@@ -166,6 +182,8 @@ export interface AgentChatStore {
   answerQuestion: (questionId: string, index: number, answer: QuestionAnswerInput) => Promise<void>;
   /** Close an agent's card so its recommendations apply; throws so the card can say why. */
   skipQuestion: (questionId: string) => Promise<void>;
+  /** Answer a coding agent's plan card in the active session; throws so the card can say why. */
+  resolvePlan: (turnId: string, decision: PlanDecision) => Promise<void>;
   /** Tests and the socket: fold one event into the active timeline. */
   ingest: (event: AgentChatEvent) => void;
   disconnect: () => void;
@@ -195,6 +213,39 @@ function writeDraft(key: string, draft: ComposerDraft): void {
     window.localStorage.setItem(key, JSON.stringify(draft));
   } catch {
     /* storage blocked — the draft just does not survive a reload */
+  }
+}
+
+/** Where the last catalog a surface read is kept between starts. */
+function catalogCacheKey(surface: AgentChatSurface): string {
+  return `jarvis.agentChat.catalog.${surface}.v1`;
+}
+
+interface CatalogSnapshot {
+  catalog: AgentChatCatalog;
+  connections: AgentConnectionRow[];
+}
+
+function readCatalogSnapshot(surface: AgentChatSurface): CatalogSnapshot | null {
+  try {
+    const raw = window.localStorage.getItem(catalogCacheKey(surface));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CatalogSnapshot>;
+    if (!parsed.catalog || !Array.isArray(parsed.catalog.providers)) return null;
+    return {
+      catalog: parsed.catalog,
+      connections: Array.isArray(parsed.connections) ? parsed.connections : [],
+    };
+  } catch {
+    return null; // storage blocked or a damaged copy — wait for the route
+  }
+}
+
+function writeCatalogSnapshot(surface: AgentChatSurface, snapshot: CatalogSnapshot): void {
+  try {
+    window.localStorage.setItem(catalogCacheKey(surface), JSON.stringify(snapshot));
+  } catch {
+    /* storage blocked or full — the next start just waits for the route */
   }
 }
 
@@ -288,9 +339,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
    * `null` = a blank page: the next call opens a new chat. Only the front
    * page's chat has a voice; the other surfaces never bind.
    */
-  const bindVoice = (sessionId: string | null) => {
+  const bindVoice = (sessionId: string | null, voiceSessionId: string | null = null) => {
     if (surface !== "jarvis") return;
-    void bindVoiceChat(sessionId).catch((err: unknown) => {
+    void bindVoiceChat(sessionId, voiceSessionId).catch((err: unknown) => {
       // Not fatal: the composer's voice button binds again before a call.
       console.info("Voice chat binding failed.", err);
     });
@@ -414,10 +465,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
       };
     }
 
+    const snapshot = readCatalogSnapshot(surface);
     return {
       surface,
-      catalog: null,
-      connections: [],
+      catalog: snapshot?.catalog ?? null,
+      connections: snapshot?.connections ?? [],
+      catalogStale: snapshot !== null,
       catalogError: null,
       backendOutdated: false,
       liveModels: {},
@@ -462,7 +515,8 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
               default_model: p.default_model ?? "",
             })),
           };
-          set({ catalog, connections, catalogError: null, backendOutdated });
+          set({ catalog, connections, catalogStale: false, catalogError: null, backendOutdated });
+          if (!backendOutdated) writeCatalogSnapshot(surface, { catalog, connections });
           // Deliberately not awaited: the sweep reads CLI logins and can take
           // a moment. It never sends a request to a provider — the dots show
           // the outcome of each seat's last real call. The composer paints
@@ -529,7 +583,9 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           }
           if (draft.provider) void get().loadModels(draft.provider);
         } catch (err) {
-          if (requestId === catalogRequest && sessionId === get().activeSessionId) set({ catalogError: errorText(err) });
+          if (requestId === catalogRequest && sessionId === get().activeSessionId) {
+            set({ catalogError: errorText(err), catalogStale: false });
+          }
         }
       },
 
@@ -541,7 +597,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           // from a backend older than the split — those are kept, so an
           // update never makes a person's chats vanish until the restart.
           const sessions = rows.filter((row) => row.surface === undefined || row.surface === surface);
-          set({ sessions });
+          set((state) => {
+            const shared = reuseHistoryRows(state.sessions, sessions, (row) => row.session_id);
+            return shared === state.sessions ? state : { sessions: shared };
+          });
         } catch {
           /* offline / headless — keep the list as-is */
         }
@@ -674,7 +733,7 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         }
       },
 
-      newChat: () => {
+      newChat: (opts) => {
         closeSocket();
         ++catalogRequest;
         set({
@@ -684,9 +743,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           timeline: EMPTY_TIMELINE,
           socketState: "idle",
           lastError: null,
-          catalog: null,
+          // The chat left behind keeps the picks painted while this one's
+          // fresh read runs; blanking the catalog showed "Provider" for
+          // seconds on every new chat.
+          catalogStale: get().catalog !== null,
         });
-        bindVoice(null);
+        bindVoice(null, opts?.voiceSessionId ?? null);
         void get().loadCatalog();
       },
 
@@ -799,6 +861,12 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
         await skipAgentChatQuestion(sid, questionId);
       },
 
+      resolvePlan: async (turnId, decision) => {
+        const sid = get().activeSessionId;
+        if (!sid) throw new Error("no open chat");
+        await resolveAgentChatPlan(sid, turnId, decision);
+      },
+
       ingest: (event) => {
         const st = get();
         const tl = reduceEvent(st.timeline, event);
@@ -811,7 +879,10 @@ export function createAgentChatStore(surface: AgentChatSurface, draftNamespace =
           if (surface !== "jarvis") writeDraft(DRAFT_KEY, patch.draft);
         }
         set(patch);
-        if (event.kind === "turn_finished" || event.kind === "user_message") void st.loadSessions();
+        if (event.kind === "turn_finished" || event.kind === "user_message") {
+          invalidateAgentChatSessions();
+          void st.loadSessions();
+        }
       },
 
       disconnect: () => {

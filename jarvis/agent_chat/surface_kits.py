@@ -108,6 +108,10 @@ class SurfaceKit:
     session_always_allow: SessionAlwaysAllow | None = None
     turn_completed: Callable[[Any, ChatCompletion], Awaitable[None]] | None = None
     history_start: Callable[[Any], int] | None = None
+    #: End-of-turn cards for coding agents (``turn_prompts``): a ``jarvis-ask``
+    #: block becomes a question card and a finished plan-mode turn a plan card,
+    #: so every CLI can ask and have its plan approved, not only Claude Code.
+    turn_prompts: bool = False
 
 
 def _chat_workspace() -> Path:
@@ -194,10 +198,10 @@ async def _jarvis_completed(session: Any, completion: ChatCompletion) -> None:
 
 
 def _society_history_start(session: Any) -> int:
-    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_chat.service import session_runner
     from jarvis.society.runtime import current_runtime
 
-    if resolve_runner(session.provider, surface=session.surface) != "brain":
+    if session_runner(session) != "brain":
         return 0  # Subscription seats retain their vendor's history/compaction contract.
     runtime = current_runtime()
     return runtime.conversations.checkpoint(session.session_id)[0] if runtime is not None else 0
@@ -218,15 +222,13 @@ def _only_local_models(tools: dict[str, Tool]) -> dict[str, Tool]:
 # ── the table ─────────────────────────────────────────────────────────────
 
 _KITS: Final[dict[str, SurfaceKit]] = {
-    "agent": SurfaceKit(surface="agent"),
+    "agent": SurfaceKit(surface="agent", turn_prompts=True),
     "jarvis": SurfaceKit(
         surface="jarvis",
         brain_runner=True,
-        # No vendor CLI here (maintainer, 2026-08-26). What answers on the
-        # front page is Jarvis' own harness on a provider API behind a key —
-        # one pipeline, one place the model is picked, one usage ledger. A
-        # subscription CLI seat is a coding agent and belongs to the IDE's
-        # chat, where its own loop and its own tools are the point.
+        # Subscription seats may answer here too: the CLI then runs inside the
+        # Jarvis harness (``jarvis_harness``) with Jarvis' tools over MCP, so a
+        # plan bills the subscription instead of a key.
         cli_seats=True,
         ladder=_JARVIS_LADDER,
         uses_stance=True,

@@ -37,6 +37,43 @@ def test_dry_run_prints_the_numbered_journey(monkeypatch, capsys) -> None:
     assert "Finish & launch" in out
 
 
+@pytest.mark.parametrize(
+    ("args", "auto_headless", "expected_browser"),
+    [
+        (["--headless"], False, False),
+        ([], True, False),
+        (["--with-desktop"], False, True),
+        (["--headless", "--with-desktop"], False, False),
+    ],
+)
+def test_browser_provisioning_respects_headless_profile(
+    monkeypatch, capsys, tmp_path, args, auto_headless, expected_browser
+) -> None:
+    """Headless installs must not launch Chromium or request system packages."""
+    commands: list[list[str]] = []
+    monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(installer, "is_headless_linux", lambda: auto_headless)
+    monkeypatch.setattr(installer, "is_update_run", lambda: False)
+    monkeypatch.setattr(installer, "write_managed_marker", lambda **kwargs: None)
+    for step in (
+        "step_preflight", "step_pip_install", "step_models", "step_cli_links",
+        "step_worker_cli", "step_summary",
+    ):
+        monkeypatch.setattr(installer, step, lambda **kwargs: None)
+    monkeypatch.setattr(installer, "step_desktop_integration", lambda **kwargs: True)
+    monkeypatch.setattr(installer, "step_ui_bundle_check", lambda: True)
+    monkeypatch.setattr(
+        installer, "run_noted", lambda command, **kwargs: commands.append(command)
+    )
+
+    assert installer.main([*args, "--no-launch"]) == 0
+    browser_commands = [
+        command for command in commands if "jarvis.society.browser.install" in command
+    ]
+    assert bool(browser_commands) is expected_browser
+    assert ("Agent browser skipped" in capsys.readouterr().out) is not expected_browser
+
+
 def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     """Design amendment 2026-07-11: Stage 1 may ask only when Python or Git
     is missing. The normal path and all of Stage 2 remain prompt-free."""
@@ -128,6 +165,62 @@ def test_native_crypto_index_reaches_the_installer_profile(monkeypatch, desktop)
     assert command[command.index("--find-links") + 1] == native_crypto_index.wheel_links_url()
 
 
+@pytest.mark.parametrize("update", [False, True])
+@pytest.mark.parametrize(
+    ("args", "display", "with_desktop"),
+    [
+        (["--headless"], ":0", False),  # Explicit headless, including WSLg.
+        ([], "", False),  # Automatically detected headless Linux.
+        ([], ":0", True),
+        (["--with-desktop"], "", True),
+    ],
+)
+def test_browser_provisioning_follows_install_profile(
+    monkeypatch, tmp_path, capsys, update, args, display, with_desktop
+) -> None:
+    """A server install must never start optional Chromium or privileged setup."""
+    monkeypatch.setattr(installer.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", display)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setenv("JARVIS_INSTALL_PREREQS", "never")
+    monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(installer, "is_update_run", lambda: update)
+    monkeypatch.setattr(installer, "step_preflight", lambda: None)
+    monkeypatch.setattr(installer, "write_managed_marker", lambda **kw: None)
+    for step in ("step_pip_install", "step_models", "step_worker_cli"):
+        monkeypatch.setattr(installer, step, lambda **kw: None)
+    monkeypatch.setattr(installer, "step_desktop_integration", lambda **kw: True)
+    monkeypatch.setattr(installer, "step_ui_bundle_check", lambda: True)
+    monkeypatch.setattr(installer, "step_summary", lambda **kw: print("Core install ready"))
+    cli_links = []
+    monkeypatch.setattr(
+        installer, "step_cli_links", lambda **kw: cli_links.append(kw["dry_run"])
+    )
+    calls = []
+
+    def run_browser(cmd, **kw):
+        calls.append(cmd)
+        return 0
+
+    monkeypatch.setattr(installer, "run_noted", run_browser)
+    assert installer.main([*args, "--no-launch"]) == 0
+    out = capsys.readouterr().out
+    assert "Core install ready" in out
+    assert cli_links == [False]
+    if with_desktop:
+        assert calls == [[
+            str(installer.venv_python()), "-m", "jarvis.society.browser.install",
+            "--system-deps",
+        ]]
+    else:
+        assert calls == []
+        assert "browser skipped" in out
+        assert "jarvis.society.browser.install" in out
+        assert "--system-deps" in out
+        assert "administrator" in out
+        assert "Traceback" not in out
+
+
 def test_full_profile_prefetches_every_wake_language(capsys) -> None:
     installer.step_models(full_profile=True, dry_run=True)
     out = capsys.readouterr().out
@@ -145,7 +238,8 @@ def test_macos_fresh_install_ci_exercises_advertised_full_profile() -> None:
     workflow = (REPO / ".github" / "workflows" / "installer-smoke.yml").read_text(
         encoding="utf-8"
     )
-    assert 'if [ "${{ matrix.os }}" = "macos-latest" ]; then' in workflow
+    assert "MATRIX_OS: ${{ matrix.os }}" in workflow
+    assert 'if [ "$MATRIX_OS" = "macos-latest" ]; then' in workflow
     assert "installer.py --with-desktop --no-launch" in workflow
 
 

@@ -806,7 +806,7 @@ def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monke
             {
                 "cdhash": "cdhash-one",
                 "install_root": str((tmp_path / "install").resolve()),
-                "python": "3.11",
+                "python": f"{sys.version_info.major}.{sys.version_info.minor + 1}",
                 "machine": platform.machine(),
             },
             sort_keys=True,
@@ -833,9 +833,7 @@ def test_a_changed_interpreter_still_earns_a_fresh_rebuild(tmp_path: Path, monke
         )[1],
     )
 
-    # The recorded note carries Python 3.11; this interpreter is a different
-    # minor version, so a fresh build genuinely can produce a different app.
-    assert f"{sys.version_info.major}.{sys.version_info.minor}" != "3.11"
+    # The recorded note deliberately differs from this runner's interpreter.
     ensure_macos_app_bundle(
         install_dir=tmp_path / "install",
         applications_dir=tmp_path / "Applications",

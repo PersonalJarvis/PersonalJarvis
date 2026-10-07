@@ -3,6 +3,8 @@ import { Brain, Check, ChevronRight, CircleAlert, CircleDashed, FilePenLine, Fil
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useT } from "@/i18n";
+import { PetMark } from "@/components/pets/PetMark";
+import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
@@ -12,8 +14,9 @@ import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
 import { activityParts, traceToolIdentity, traceToolName } from "./traceActivity";
 import { ToolChoiceIcon } from "./ToolChoiceChips";
-import type { ToolChoice } from "./toolChoices";
 import { toolIdentityStyle } from "./toolIdentity";
+import { timelineItems, useTimeline, type TimelineRenderers } from "./TraceTimeline";
+import { traceDuration } from "./traceEntries";
 import "./WorkTrace.css";
 
 export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<void>;
@@ -32,14 +35,7 @@ export type TraceLook = "rail" | "classic";
 const TraceLookContext = createContext<TraceLook>("rail");
 const useRail = () => useContext(TraceLookContext) === "rail";
 
-export function traceDuration(ms: number): string {
-  // Keep short, measured calls visible instead of rounding 49 ms to "0.0s".
-  if (ms > 0 && ms < 100) return `${Math.ceil(ms)}ms`;
-  const seconds = Math.max(0, ms) / 1000;
-  if (seconds < 10) return `${seconds.toFixed(1)}s`;
-  if (seconds < 60) return `${Math.floor(seconds)}s`;
-  return `${Math.floor(seconds / 60)}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
-}
+export { traceDuration };
 
 function useClock(start: number, live: boolean) {
   const [now, setNow] = useState(Date.now);
@@ -201,6 +197,17 @@ function Node({ children, live = false }: { children: ReactNode; live?: boolean 
   return <span aria-hidden className={cn("trace-node", live && "trace-node-live")}>{children}</span>;
 }
 
+/**
+ * What the user's pet does on a live Jarvis trace: it plays its working row
+ * whenever Jarvis thinks or works — reasoning, a tool call, the wait before
+ * anything has arrived (the maintainer's choice, 2026-10-02) — and talks
+ * while the reply streams in.
+ */
+export function livePetState(blocks: TurnBlock[]): PetState {
+  const last = blocks[blocks.length - 1];
+  return last?.kind === "text" && last.text.trim() ? "talking" : "working";
+}
+
 /** The words of whatever is happening right now, with a slow light sweep. */
 function Live({ on, children }: { on: boolean; children: ReactNode }) {
   return on ? <span className="trace-shimmer">{children}</span> : <>{children}</>;
@@ -217,7 +224,7 @@ const FoldExpandContext = createContext(0);
 
 function Disclosure({ label, children, forced = false, initiallyOpen = false, icon, trailing, tone, summary, resetKey = "", live = false }: {
   label: ReactNode; children?: ReactNode; forced?: boolean; initiallyOpen?: boolean;
-  icon: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
+  icon?: ReactNode; trailing?: ReactNode; tone?: string; summary?: ReactNode; resetKey?: string;
   /** Rail look only: the node glows while this step is the one working. */
   live?: boolean;
 }) {
@@ -233,13 +240,13 @@ function Disclosure({ label, children, forced = false, initiallyOpen = false, ic
       <button type="button" className={railRowButton} aria-expanded={children ? open : undefined}
         aria-controls={children ? id : undefined} disabled={!children || forced}
         onClick={() => setChoice({ phase, open: !open })}>
-        <Node live={live}>{icon}</Node>
+        {icon ? <Node live={live}>{icon}</Node> : null}
         <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{label}</span>
         {trailing ? <span className="shrink-0 text-xs leading-6 tabular-nums text-muted-foreground">{trailing}</span> : null}
         {children && !forced ? <ChevronRight aria-hidden className={cn("mt-[5px] h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover/trace:opacity-90", open && "rotate-90")} /> : null}
       </button>
       {summary}
-      {children && open ? <div id={id} className="min-w-0 pb-1.5 pl-7">{children}</div> : null}
+      {children && open ? <div id={id} className={cn("min-w-0 pb-1.5", icon ? "pl-7" : "pl-0")}>{children}</div> : null}
     </div>
   );
   return (
@@ -294,10 +301,10 @@ export function ReasoningTrace({ block, turnLive, compact = false }: { block: Re
     : t(live ? "work_trace.thinking_for" : "work_trace.thought_for").replace("{duration}", traceDuration(duration));
   const gist = text.replace(/```[\s\S]*?```/g, " ").replace(/[`*_#>~]/g, "").replace(/\s+/g, " ").trim();
   const showGist = !compact && !turnLive && gist;
-  if (rail) return <Disclosure label={<Live on={live}>{label}</Live>} icon={<span className="trace-dot" />}
+  if (rail) return <Disclosure label={<Live on={live}>{label}</Live>}
     live={live} forced={live} initiallyOpen={compact ? live : turnLive}
     resetKey={compact ? String(turnLive) : ""}
-    summary={showGist ? <p className="mb-1.5 pl-7 line-clamp-2 text-sm leading-6 text-foreground-secondary">{gist.slice(0, 280)}</p> : undefined}>
+    summary={showGist ? <p className="mb-1.5 line-clamp-2 text-sm leading-6 text-muted-foreground">{gist.slice(0, 280)}</p> : undefined}>
     {text ? <ReasoningBody text={text} live={live} /> : undefined}
   </Disclosure>;
   return <Disclosure label={label} icon={<Brain aria-hidden className={cn(iconClass, live && "motion-safe:animate-pulse")} />}
@@ -497,33 +504,18 @@ function ActivityIcon({ blocks, live }: { blocks: TurnBlock[]; live: boolean }) 
   return <Icon aria-hidden className={rail ? nodeIcon : cn(iconClass, "mt-1", live && "motion-safe:animate-spin")} />;
 }
 
-/** Up to three brand marks of the services a stretch of work touched. */
-function traceLogos(blocks: TurnBlock[]): ToolChoice[] {
-  const rows: ToolChoice[] = [];
-  const seen = new Set<string>();
-  for (const block of blocks) {
-    if (block.kind !== "tool") continue;
-    const view = traceToolIdentity(block);
-    const key = view.identity.key || view.service || block.name;
-    if (!view.identity.logo || seen.has(key)) continue;
-    seen.add(key);
-    rows.push(view.row);
-    if (rows.length === 3) break;
-  }
-  return rows;
-}
-
 /** Small chevron that hides finished work so the reply can stand alone. */
-function ConversationWorkFold({ durationMs, attention, blocks, children }: {
-  durationMs: number | null; attention?: ReactNode; blocks: TurnBlock[]; children: ReactNode;
+function ConversationWorkFold({ durationMs, attention, children, expandInner = true, failureCount = 0 }: {
+  durationMs: number | null; attention?: ReactNode; children: ReactNode;
+  failureCount?: number;
+  /** Classic rows open every inner disclosure with the fold; the rail keeps its one-line stretches. */
+  expandInner?: boolean;
 }) {
   const t = useT();
-  const rail = useRail();
   const id = useId();
   const [open, setOpen] = useState(false);
   // Counts openings so inner disclosures expand all at once, every time.
   const [seq, setSeq] = useState(0);
-  const logos = useMemo(() => rail ? traceLogos(blocks) : [], [rail, blocks]);
   const label = durationMs !== null && durationMs > 0
     ? t("work_trace.thought_for").replace("{duration}", traceDuration(durationMs))
     : t("work_trace.thought");
@@ -533,20 +525,14 @@ function ConversationWorkFold({ durationMs, attention, blocks, children }: {
   };
   return (
     <div className="min-w-0" data-testid="conversation-work-fold" data-open={open ? "true" : "false"}>
-      {rail ? <button type="button" aria-expanded={open} aria-controls={id} onClick={toggle}
-        className="group/fold mb-1.5 inline-flex max-w-full items-center gap-2 rounded-full border border-border py-1 pl-2.5 pr-2 text-left text-xs leading-5 text-muted-foreground transition-colors hover:border-border-strong hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        {logos.length ? <span aria-hidden className="flex shrink-0 items-center">
-          {logos.map((row, i) => <span key={i} className={cn("tool-identity inline-flex rounded-full bg-background ring-2 ring-background", i > 0 && "-ml-1")} style={toolIdentityStyle(row)}><ToolChoiceIcon row={row} size={14} /></span>)}
-        </span> : <span aria-hidden className="trace-dot shrink-0" />}
-        <span className="truncate">{label}</span>
-        <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-60 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
-      </button> : <button type="button" aria-expanded={open} aria-controls={id}
+      <button type="button" aria-expanded={open} aria-controls={id}
         className="group/fold mb-1 inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-xs leading-5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={toggle}>
         <ChevronRight aria-hidden className={cn("h-3 w-3 shrink-0 opacity-70 transition-transform group-hover/fold:opacity-100", open && "rotate-90")} />
         <span className="truncate">{label}</span>
-      </button>}
-      {open ? <div id={id} className={rail ? "trace-fold-open pb-1" : undefined}><FoldExpandContext.Provider value={seq}>{children}</FoldExpandContext.Provider></div> : attention}
+        {failureCount > 0 && <span className="text-destructive">{t(`trace_report.failed_count_${failureCount === 1 ? "one" : "other"}`).replace("{count}", String(failureCount))}</span>}
+      </button>
+      {open ? <div id={id}><FoldExpandContext.Provider value={expandInner ? seq : 0}>{children}</FoldExpandContext.Provider></div> : attention}
     </div>
   );
 }
@@ -599,9 +585,15 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
       continue;
     }
     if (!first.text.trim()) continue;
-    items.push({ key: group.id, rail: false, node: <div className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>{renderText ? renderText(first.text, first.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={first.text} /></div>}</div> });
+    items.push({ key: group.id, rail: false, node: replyNode(first, conversation, renderText) });
   }
   return items;
+}
+
+function replyNode(block: TextBlock, conversation: boolean, renderText?: (text: string, id: string) => ReactNode): ReactNode {
+  return <div className={cn("min-w-0 py-2", conversation && "w-fit max-w-[min(85%,42rem)] rounded-2xl rounded-bl-md bg-secondary px-4 py-2.5")}>
+    {renderText ? renderText(block.text, block.id) : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={block.text} /></div>}
+  </div>;
 }
 
 /**
@@ -614,6 +606,8 @@ function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
   return kept.length === blocks.length ? blocks : kept;
 }
 
+const NO_BLOCKS: TurnBlock[] = [];
+
 export function WorkTrace({ look = "rail", ...props }: WorkTraceProps & { look?: TraceLook }) {
   return <TraceLookContext.Provider value={look}><WorkTraceBody {...props} /></TraceLookContext.Provider>;
 }
@@ -622,19 +616,35 @@ type WorkTraceProps = {
   blocks: TurnBlock[]; status: TurnStatus; startedMs: number; durationMs: number | null; error?: string | null;
   onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; className?: string;
   receipt?: ReactNode; completionLabel?: string; conversation?: boolean;
+  /**
+   * The trace is Jarvis's own (the front-page chat, a voice turn): the live
+   * line shows the user's pet at work instead of a spinning circle. Agent
+   * and coding-pane traces keep the plain node.
+   */
+  companion?: boolean;
+  /**
+   * Steps that belong to this turn's work but are not blocks of it (a
+   * memory receipt posted after the turn). They sit on the trace above the
+   * reply and never below it.
+   */
+  extras?: { key: string; node: ReactNode }[];
 };
 
-function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false }: WorkTraceProps) {
+function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error, onDecide, renderText, className, receipt, completionLabel, conversation = false, companion = false, extras }: WorkTraceProps) {
   const t = useT();
   const rail = useRail();
   const blocks = useMemo(() => withoutQuestionPolls(rawBlocks), [rawBlocks]);
   const live = status === "running";
   const elapsed = useClock(startedMs, live);
-  const split = useMemo(() => conversation && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, live]);
+  // A finished turn is split into its work and its answer. Both looks fold
+  // the work behind "Thought for …" once the turn has answered (maintainer,
+  // 2026-10-03): the chat then reads as message and reply, and one tap
+  // brings the whole trace back.
+  const split = useMemo(() => (conversation || rail) && !live ? splitConversationTurn(blocks) : null, [blocks, conversation, rail, live]);
   // Completed failures and pending approvals stay visible beside the fold.
   // Other work can collapse without hiding an action that needs attention.
   const fold = useMemo(() => {
-    if (!split) return null;
+    if (!split || rail) return null;
     const workAll = [...split.work, ...split.after];
     if (!hasFoldableWork(workAll)) return null;
     return {
@@ -642,9 +652,15 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       workAll,
       attention: workAll.filter(needsAttention),
     };
-  }, [split]);
+  }, [split, rail]);
   const groups = useMemo(() => conversation ? groupConversationTrace(fold ? fold.workAll : blocks) : groupActivityTrace(blocks), [blocks, conversation, fold]);
   const restGroups = useMemo(() => fold ? groupConversationTrace(fold.answer) : null, [fold]);
+  // While a turn runs, its replies and streaming pieces stay live rows; once
+  // it is done, text before the answer reads as the timeline's narration and
+  // anything after the answer sits above it too: the answer is always last.
+  const timeline = useTimeline(rail ? (split ? split.work : blocks) : NO_BLOCKS, status, live);
+  const afterAnswer = useTimeline(rail && split ? split.after : NO_BLOCKS, status, live);
+  const answerGroups = useMemo(() => rail && split ? groupConversationTrace(split.answer) : null, [rail, split]);
   const asking = blocks.some(isOpenQuestion);
   const pending = asking || blocks.some(block => block.kind === "tool" && block.approval?.decision === null);
   const toolFailed = blocks.some(block => block.kind === "tool" && block.isError);
@@ -666,11 +682,14 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     // The state line is the thread's last node while work is under way (or
     // whenever the trace has no reply between it and the work); a finished
     // conversation turn closes with a quiet line under its reply instead.
-    const statusOnRail = !conversation || live;
+    const statusOnRail = !fold && (!conversation || live);
+    const petState = companion && working ? livePetState(blocks) : null;
     const statusLine = <div role="status" aria-live="polite" data-trace-status={outcome}
       className={cn("flex min-w-0 flex-wrap items-start gap-x-3 text-xs leading-6 text-muted-foreground",
         statusOnRail ? "py-1" : "pb-2 pt-1", failed && "text-destructive", pending && "text-foreground")}>
-      <Node live={working}><Icon className={cn(nodeIcon, working && "motion-safe:animate-spin")} /></Node>
+      {petState
+        ? <span aria-hidden className="trace-node trace-node-pet" data-trace-pet={petState}><PetMark size={32} state={petState} /></span>
+        : null}
       <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-x-2">
         <span><Live on={working}>{outcomeLabel}</Live></span>
         {toolFailed && !live && !failed ? <span className="sr-only">{t("work_trace.tool_failed")}</span> : null}
@@ -681,15 +700,53 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
     </div>;
     const statusItem: RailItem = { key: "trace:status", node: statusLine, rail: statusOnRail };
     const errorItem = (text: string, key: string): RailItem => ({ key, rail: false,
-      node: <p role="alert" className="py-1.5 pl-7 text-sm text-destructive [overflow-wrap:anywhere]">{text}</p> });
-    const main = traceGroupItems({ groups, ...groupProps });
-    const rest = restGroups ? traceGroupItems({ groups: restGroups, ...groupProps }) : [];
-    const items: RailItem[] = fold
-      ? [{ key: "trace:fold", rail: false, node: <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll}
-          attention={<div className="trace-fold-open"><Rail items={fold.attention.map(block => ({ key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} /> }))} /></div>}>
-          <Rail items={[...main, ...(foldedError ? [errorItem(foldedError, "trace:folded-error")] : [])]} />
-        </ConversationWorkFold> }, ...rest]
-      : main;
+      node: <p role="alert" className="py-1.5 text-sm text-destructive [overflow-wrap:anywhere]">{text}</p> });
+    const renderers: TimelineRenderers = {
+      renderLive: (block) => block.kind === "tool" ? <TraceTool block={block} status={status} onDecide={onDecide} />
+        : block.kind === "reasoning" ? <ReasoningTrace block={block} turnLive={live} compact={conversation} />
+        : replyNode(block, conversation, renderText),
+      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !block.question),
+      renderNarration: (text, id) => renderText ? renderText(text, id)
+        : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={text} /></div>,
+      renderDetails: (block) => <ToolDetails block={block} />,
+    };
+    const work = timelineItems(timeline, renderers);
+    // A live turn's streaming reply is the timeline's tail; extra steps go
+    // above it, as they go above the finished answer.
+    let extraAt = work.length;
+    if (!split) while (extraAt > 0 && !work[extraAt - 1].rail) extraAt--;
+    const extraItems: RailItem[] = (extras ?? []).map((extra) => ({ key: `extra:${extra.key}`, node: extra.node, rail: true }));
+    const workItems: RailItem[] = [
+      ...work.slice(0, extraAt),
+      ...extraItems,
+      ...work.slice(extraAt),
+      // Work that came after the reply is still work: it goes above the
+      // reply, which is always the last thing the turn shows (maintainer,
+      // 2026-10-03 — nobody should scroll back up to find the answer).
+      ...timelineItems(afterAnswer, renderers),
+    ];
+    const answerItems = answerGroups ? traceGroupItems({ groups: answerGroups, ...groupProps }) : [];
+    // A finished, answered turn folds its work; a pending approval or open
+    // question stays outside the fold, because it waits for the person.
+    const railFold = split && answerItems.length > 0 && workItems.length > 0;
+    if (railFold) {
+      const waiting = [...split.work, ...split.after].filter(needsAttention);
+      const items: RailItem[] = [...answerItems];
+      if (visibleError) items.push(errorItem(visibleError, "trace:error"));
+      if (toolFailed && !failed) items.push({ key: "trace:tool-failed", rail: false,
+        node: <p data-testid="tool-failure-warning" className="py-1 text-xs text-destructive">{t("work_trace.tool_failed")}</p> });
+      items.push(statusItem);
+      return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
+        <ConversationWorkFold durationMs={durationMs} expandInner={false}
+          failureCount={waiting.filter((block) => block.isError).length} attention={waiting.length ? <Rail items={waiting.map((block) => ({
+          key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} />,
+        }))} /> : undefined}>
+          <Rail items={workItems} />
+        </ConversationWorkFold>
+        <Rail items={items} />
+      </div>;
+    }
+    const items: RailItem[] = [...workItems, ...answerItems];
     if (visibleError) items.push(errorItem(visibleError, "trace:error"));
     if (toolFailed && !live && !failed) items.push({ key: "trace:tool-failed", rail: false,
       node: <p data-testid="tool-failure-warning" className="flex items-center gap-1.5 py-1 pl-7 text-xs text-destructive"><CircleAlert aria-hidden className="h-3.5 w-3.5" />{t("work_trace.tool_failed")}</p> });
@@ -701,13 +758,14 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
 
   const classicGroups = (list: Group[]) => <>{traceGroupItems({ groups: list, ...groupProps }).map(item => <Fragment key={item.key}>{item.node}</Fragment>)}</>;
   return <div className={cn("min-w-0 space-y-0.5", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
-    {fold ? <ConversationWorkFold durationMs={durationMs} blocks={fold.workAll} attention={fold.attention.map(block =>
+    {fold ? <ConversationWorkFold durationMs={durationMs} attention={fold.attention.map(block =>
       <div key={block.callId} className="w-full py-1 text-xs [&_button]:text-xs">
         <TraceTool block={block} status={status} onDecide={onDecide} />
       </div>)}>
       {classicGroups(groups)}
       {foldedError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{foldedError}</p> : null}
     </ConversationWorkFold> : classicGroups(groups)}
+    {extras?.map((extra) => <Fragment key={`extra:${extra.key}`}>{extra.node}</Fragment>)}
     {restGroups ? classicGroups(restGroups) : null}
     {visibleError ? <p role="alert" className="py-2 text-sm text-destructive [overflow-wrap:anywhere]">{visibleError}</p> : null}
     {toolFailed && !live && !failed ? <p data-testid="tool-failure-warning" className="flex items-center gap-1.5 px-1 py-1 text-xs text-destructive">
@@ -723,7 +781,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
   </div>;
 }
 
-export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook }) {
+export function TurnTrace({ turn, ...props }: { turn: TurnItem; onDecide?: Decide; renderText?: (text: string, id: string) => ReactNode; conversation?: boolean; look?: TraceLook; companion?: boolean; extras?: WorkTraceProps["extras"] }) {
   const t = useT();
   const tokens = outputTokens(turn.usage ?? turn.liveUsage);
   const answered = turn.blocks.some(block => block.kind === "text" && block.text.trim());

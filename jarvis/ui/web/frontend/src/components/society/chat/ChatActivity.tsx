@@ -1,5 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
-import { ArrowDownLeft, ArrowUpRight, ChevronRight, Clock3 } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, Clock3, Inbox } from "lucide-react";
+import { CodingThreadActivity } from "@/components/agentic/threads/CodingThreadLink";
+import { codingThreadOf } from "@/components/agentic/threads/openCodingThread";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
 import { useOpenPairConversation } from "@/components/agentchat/PairConversation";
 import type { InternalMessageItem } from "@/components/agentchat/reduce";
@@ -10,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 export { routineTask } from "./routineExecution";
+export { CodingThreadActivity };
 
 /** A quiet event in the conversation; details remain keyboard accessible. */
 export function ChatActivity({ label, icon, children, failed = false }: {
@@ -27,6 +30,43 @@ export function ChatActivity({ label, icon, children, failed = false }: {
   </div>;
 }
 
+/** The framed assignment header the backend writes (``frame_assignment``). */
+const ASSIGNMENT_HEADER = /^\[assignment from ([^\]\r\n]+)\]\r?\n/;
+
+/**
+ * Work Jarvis or a teammate handed this agent, as its one chat records it:
+ * ``{sender, task}``, or null for an ordinary message from the person.
+ */
+export function assignmentOf(text: string): { sender: string; task: string } | null {
+  const match = ASSIGNMENT_HEADER.exec(text);
+  if (!match) return null;
+  const body = text.slice(match[0].length);
+  // The task ends where the handoff instructions the backend appends begin.
+  const end = body.search(/\r?\nWhen you are done, end with a handoff:/);
+  return { sender: match[1].trim(), task: (end >= 0 ? body.slice(0, end) : body).trim() };
+}
+
+/** A delegated task in the agent's one chat: folded, sender first, task inside. */
+export function DelegationActivity({ sender, task, roster }: {
+  sender: string; task: string; roster: SocietyAgent[];
+}) {
+  const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
+  const participant = roster.find((agent) => agent.agentId === sender);
+  const name = participant
+    ? societyDisplayName(participant, assistantName)
+    : sender === "jarvis" ? (assistantName || "Jarvis") : sender;
+  return <ChatActivity icon={<Inbox aria-hidden className="h-3.5 w-3.5 shrink-0" />}
+    label={<span className="inline-flex max-w-full items-center gap-2">
+      <span>{t("society.chat.assignment_from").replace("{0}", "")}</span>
+      {participant ? <AgentSwatch agent={participant} size={18} /> : null}
+      <span className="truncate">{name}</span>
+      <span className="truncate">· {task.split(/\r?\n/)[0]}</span>
+    </span>}>
+    <ChatMarkdown text={task} />
+  </ChatActivity>;
+}
+
 export function RoutineActivity({ task, original, onOpen }: { task: string; original: string; onOpen?: () => void }) {
   const t = useT();
   if (onOpen) return <button type="button" onClick={onOpen}
@@ -41,6 +81,7 @@ export function RoutineActivity({ task, original, onOpen }: { task: string; orig
 
 export function AgentMessageActivity({ item, roster }: { item: InternalMessageItem; roster: SocietyAgent[] }) {
   const t = useT();
+  const codingThread = codingThreadOf(item.message.sender_id);
   const openPair = useOpenPairConversation();
   const assistantName = useEventStore((s) => s.assistantName);
   const outgoing = Boolean(item.outgoing);
@@ -51,6 +92,7 @@ export function AgentMessageActivity({ item, roster }: { item: InternalMessageIt
   const failed = status === "failed";
   const canOpenPair = Boolean(openPair && id && id !== "user" && item.message.sender_kind !== "user");
   const label = t(failed ? "society.chat.message_failed" : outgoing ? "society.chat.message_to" : "society.chat.message_from");
+  if (codingThread) return <CodingThreadActivity label={item.message.text} threadId={codingThread} failed={failed} />;
   return <ChatActivity failed={failed} icon={outgoing ? <ArrowUpRight aria-hidden className="h-3.5 w-3.5 shrink-0" /> : <ArrowDownLeft aria-hidden className="h-3.5 w-3.5 shrink-0" />}
     label={<span className="inline-flex max-w-full items-center gap-2"><span>{label}</span>{participant ? <AgentSwatch agent={participant} size={18} /> : null}<span className="truncate">{name}</span>{status === "queued" ? <span>· {t("agent_chat.delivery_queued")}</span> : null}</span>}>
     <ChatMarkdown text={item.message.text} />

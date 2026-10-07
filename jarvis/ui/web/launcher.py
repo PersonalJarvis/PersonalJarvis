@@ -27,7 +27,10 @@ import time
 
 from jarvis.core.branding import CONFIG_FILE_NAME
 from jarvis.core.branding import PRODUCT_NAME as APP_DISPLAY_NAME
-from jarvis.core.process_utils import ensure_standard_streams
+from jarvis.core.process_utils import (
+    drop_inherited_electron_node_mode,
+    ensure_standard_streams,
+)
 from jarvis.core.win32_dpi import ensure_dpi_awareness as _ensure_dpi_awareness
 
 # Boot-profiling anchor (opt-in via JARVIS_BOOT_PROFILE=1). ``main()`` stamps the
@@ -42,6 +45,8 @@ _BOOT_PROFILE_T0: float | None = None
 # streams. Uvicorn probes stdout while configuring its formatter, so repair the
 # streams before any desktop/backend construction can begin.
 ensure_standard_streams()
+# Programs this app opens must start as themselves, not as bare Node.js.
+drop_inherited_electron_node_mode()
 
 # DPI awareness — claim PER_MONITOR_AWARE for the whole process BEFORE anything
 # imports pywebview. Windows honours only the FIRST process-awareness claim, and
@@ -845,6 +850,10 @@ async def _run_headless(args) -> int:
     from jarvis.agentic_ide.session import schedule_boot_restore
 
     schedule_boot_restore()
+    # Carry on the IDE thread turns the turn host kept running.
+    from jarvis.ui.web.agent_chat_routes import schedule_turn_reattach
+
+    schedule_turn_reattach(server.app.state)
 
     # The full app's init chain is done and the chat handler is subscribed — hand
     # the real ASGI app to the already-listening bootstrap server, which now
@@ -1641,7 +1650,12 @@ def _recover_from_already_running(
     pid = None
     with contextlib.suppress(Exception):
         pid = discover(error, meta)
-    if pid is not None and pid != os.getpid() and booting_grace > 0:
+    if (
+        pid is not None
+        and pid != os.getpid()
+        and booting_grace > 0
+        and _desktop_app._quitting_grace_remaining(meta, pid) <= 0
+    ):
         age = None
         with contextlib.suppress(Exception):
             age = process_age(pid)
@@ -1705,6 +1719,12 @@ def _recover_from_already_running(
                 pid,
                 replacement_pid,
             )
+            # Closing the desktop may spawn its background service before
+            # this launch can acquire the lock. That service has no window;
+            # use its existing local handover instead of waiting for one.
+            service_lock = _take_over_from_background_service(expected_pid=replacement_pid)
+            if service_lock is not None:
+                return True, service_lock
             # A relauncher can win the lock while this launch is waiting for
             # consent. Let its shell appear, even before backend health is up.
             # Consent for the old PID does not authorize killing this one.
@@ -1731,6 +1751,24 @@ def _recover_from_already_running(
     handled, lock = _recheck_lock()
     if handled:
         return lock
+
+    # A user can close and reopen before cleanup has released the old lock.
+    # Its missing window is intentional, not evidence of a stuck process.
+    # The sidecar survives HTTP teardown and ties the bounded wait to this PID.
+    quitting_grace = _desktop_app._quitting_grace_remaining(meta, pid)
+    if quitting_grace > 0:
+        deadline = now() + quitting_grace
+        logger.info(
+            "launcher: holder pid={} is quitting; waiting up to {:.1f}s for its lock",
+            pid,
+            quitting_grace,
+        )
+        while now() < deadline:
+            sleep(min(0.5, max(0.0, deadline - now())))
+            handled, lock = _recheck_lock()
+            if handled:
+                return lock
+        logger.warning("launcher: quitting holder pid={} exceeded its exit budget", pid)
 
     if frozen_window:
         stuck_detail = (
@@ -1814,17 +1852,22 @@ def _recover_from_already_running(
     return lock
 
 
-def _take_over_from_background_service():
+def _take_over_from_background_service(*, expected_pid: int | None = None):
     """The lock, handed back by a running background service — else ``None``."""
     try:
-        from jarvis.core.background_service import take_over_from_service
+        from jarvis.core.background_service import service_pid, take_over_from_service
         from jarvis.ui import desktop_app as _desktop_app
+
+        def find_service():
+            candidate = service_pid()
+            return candidate if expected_pid is None or candidate == expected_pid else None
 
         return take_over_from_service(
             lambda: _desktop_app.acquire_single_instance_lock(
                 timeout=0.5, terminate=lambda _pid: False
             ),
             busy_error=_desktop_app.SingleInstanceError,
+            find_pid=find_service,
         )
     except Exception:  # noqa: BLE001 — fall through to the normal lock handling
         import logging as _logging

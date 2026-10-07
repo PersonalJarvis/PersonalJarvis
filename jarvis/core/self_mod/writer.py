@@ -175,6 +175,38 @@ class AtomicConfigWriter:
             ) from exc
         return self._read_dotted(doc, path)
 
+    def prevalidate(self, request: MutationRequest) -> None:
+        """Run step 5 (pre-validate) alone, without backup or write.
+
+        For a mutation that is parked until the user confirms it: a value the
+        schema rejects must be refused when it is proposed, not after the user
+        said yes. Raises `PreValidateError` (audited like the real step 5).
+        A config that cannot be read or parsed right now is not the request's
+        fault; that case returns quietly and `mutate()` reports it on confirm.
+        """
+        try:
+            raw = self._config_path.read_text(encoding="utf-8")
+            if raw.startswith(self._BOM):
+                raw = raw[len(self._BOM):]
+            doc = tomlkit.parse(raw)
+        except Exception as exc:  # noqa: BLE001 — mutate() owns the read/parse failure
+            _LOG.debug("prevalidate skipped, config unreadable: %s", exc)
+            return
+        old_value = self._read_dotted(doc, request.path)
+        self._apply_dotted(doc, request.path, request.new_value)
+        try:
+            JarvisConfig.model_validate(doc.unwrap())
+        except (PydanticValidationError, ValueError, TypeError) as exc:
+            self._audit_failure(
+                request,
+                old_value=old_value,
+                error=f"validate_failed: {_summarize_error(exc)}",
+            )
+            raise PreValidateError(
+                f"Pre-validate for '{request.path}' = {request.new_value!r} "
+                f"failed: {_summarize_error(exc)}"
+            ) from exc
+
     def mutate(self, request: MutationRequest) -> MutationResult:
         """Plan-§7.2 pipeline.
 

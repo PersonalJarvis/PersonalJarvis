@@ -73,7 +73,8 @@ export interface AgentStatus {
 
 export interface AgentsResponse {
   terminal_available: boolean;
-  max_terminals: number;
+  /** The most panes one launch opens at once; a workspace itself has no limit. */
+  max_panes_per_request: number;
   suggested_names: string[];
   agents: AgentStatus[];
 }
@@ -278,6 +279,8 @@ export type PaneActivity =
   | "asking"
   | "failed"
   | "exited"
+  | "stopped"
+  | "unknown"
   | "";
 
 /**
@@ -425,7 +428,6 @@ export interface IdeProjectsResponse {
   projects: IdeProject[];
   active_project_id: string | null;
   active_workspace_id: string | null;
-  max_terminals: number;
 }
 
 export function fetchIdeProjects(): Promise<IdeProjectsResponse> {
@@ -501,7 +503,6 @@ export interface IdeAccountState {
 export interface IdeState {
   active: boolean;
   session: SessionState | null;
-  max_terminals: number;
   /** Every open workspace, in tab order. */
   workspaces: WorkspaceCard[];
   /** The one on screen, or null while the wizard is showing. */
@@ -853,6 +854,16 @@ export function fetchTerminalTimeline(
   return getJson<TerminalTimelineResponse>(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/timeline${query}`,
   );
+}
+
+/** Start a pane's agent now, without a viewer attaching. A running pane is left alone. */
+export async function startTerminal(name: string, workspaceId?: string): Promise<void> {
+  const query = workspaceId ? `?workspace=${encodeURIComponent(workspaceId)}` : "";
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/start${query}`,
+    { method: "POST" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
 }
 
 /**
@@ -1236,7 +1247,6 @@ export async function openIdeWorkspace(
 const EMPTY_IDE_STATE: IdeState = {
   active: false,
   session: null,
-  max_terminals: 16,
   workspaces: [],
   active_id: null,
   max_workspaces: 6,
@@ -1515,7 +1525,6 @@ export interface WorkspaceLayoutView {
     /** What the pane's header shows: its goal in a few words, or empty. */
     title?: string;
   })[];
-  max_terminals: number;
 }
 
 /** The split tree and panes of an open workspace that may not be on screen. */
@@ -1767,6 +1776,7 @@ export async function closeTerminals(names: string[]): Promise<CloseTerminalsRes
  * claim from "the work is right".
  */
 export type PaneNotificationKind =
+  | "stopped"
   | "completed"
   | "needs_input"
   | "exited"

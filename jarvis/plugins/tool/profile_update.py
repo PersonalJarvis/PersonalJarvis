@@ -51,7 +51,7 @@ log = logging.getLogger(__name__)
 _CANONICAL_FIELDS: dict[str, frozenset[str]] = {
     "identity": frozenset({
         "name", "preferred_address", "pronouns", "primary_language",
-        "languages", "timezone", "devices",
+        "languages", "timezone", "devices", "about",
     }),
     "communication": frozenset({
         "directness", "formality", "verbosity", "humor_types", "emoji_ok",
@@ -139,7 +139,8 @@ class UpdateProfileTool:
                 "description": (
                     "Canonical field within the cluster. "
                     "identity: name, preferred_address, pronouns, primary_language, "
-                    "languages, timezone, devices. "
+                    "languages, timezone, devices, about (a short self-description "
+                    "in the user's own words; only when they dictate one). "
                     "communication: directness, formality, verbosity, humor_types, "
                     "emoji_ok. "
                     "work_style: focus_mode, planning_horizon. "

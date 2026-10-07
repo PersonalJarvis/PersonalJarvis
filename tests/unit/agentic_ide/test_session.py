@@ -140,10 +140,10 @@ async def test_start_rejects_an_unknown_agent(registry: Registry, tmp_path: Path
         await _open(registry, tmp_path, [{"agent": "emacs"}])
 
 
-async def test_start_refuses_more_than_the_maximum(
+async def test_start_refuses_more_than_one_request_may_open(
     registry: Registry, tmp_path: Path
 ) -> None:
-    panes = [{"agent": "claude"}] * (session_mod.MAX_TERMINALS + 1)
+    panes = [{"agent": "claude"}] * (session_mod.MAX_PANES_PER_REQUEST + 1)
     with pytest.raises(SessionError, match="At most"):
         await _open(registry, tmp_path, panes)
 

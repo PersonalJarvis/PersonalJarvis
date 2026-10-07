@@ -14,11 +14,12 @@ from typing import Any
 
 import pytest
 
-from jarvis.agent_chat import runner_brain
+from jarvis.agent_chat import runner_api, runner_brain
 from jarvis.agent_chat.events import make_event
 from jarvis.agent_chat.service import AgentChatService
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.bus import EventBus
+from jarvis.core.protocols import BrainDelta
 from tests.fakes.fake_brain_manager import FakeBrainManager
 
 
@@ -305,6 +306,12 @@ async def test_the_agent_surface_still_runs_the_api_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_cli
 ):
     """A coding-agent session never reaches the brain runner."""
+    async def complete(request):
+        yield BrainDelta(content="API runner reply")
+
+    monkeypatch.setattr(
+        runner_api, "build_brain", lambda *args: SimpleNamespace(complete=complete),
+    )
     fake = FakeBrainManager()
     monkeypatch.setattr(runner_brain, "brain_manager", lambda: fake)
     svc = _service(None)

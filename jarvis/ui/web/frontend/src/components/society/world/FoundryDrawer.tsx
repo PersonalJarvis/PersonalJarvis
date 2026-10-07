@@ -1,23 +1,20 @@
 /**
  * What a click on the Agent Foundry opens: the island's own front door to
  * agent creation. The building is where new agents come from, so its drawer
- * is where you make one — the creator opens straight from here, and closing
- * it puts you back on the island in time to watch the figure walk out.
+ * is where you make one — one click creates the agent and opens its chat,
+ * where it introduces itself and proposes its own name and role.
  *
  * A drawer over the world, never a page navigation (one-viewer doctrine): the
  * island keeps living behind it. App chrome, so it wears the theme tokens;
  * only the portal swatch echoes the building's cyan.
  */
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Factory, Plus, X } from "lucide-react";
 
 import { fill, useT, useUiLanguage } from "@/i18n";
 import { AgentSwatch } from "../AgentSwatch";
-import { useSocietyRoster, type SocietyAgent } from "../data";
-
-const CreateAgentDialog = lazy(() =>
-  import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })),
-);
+import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
+import { isCreateCancelled } from "../create/createAgentStore";
 
 /** How many of the newest agents the drawer lists. */
 const RECENT_LIMIT = 6;
@@ -49,16 +46,17 @@ export function FoundryDrawer({
   const t = useT();
   const roster = useSocietyRoster();
   const relative = useRelativeTime();
+  const quickCreate = useQuickCreateAgent();
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Escape closes the creator first, then the drawer.
-      if (e.key === "Escape" && !creating) onClose();
+      if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, creating]);
+  }, [onClose]);
 
   const agents: SocietyAgent[] = useMemo(() => roster.data?.agents ?? [], [roster.data]);
   const recent = useMemo(
@@ -66,13 +64,22 @@ export function FoundryDrawer({
     [agents],
   );
 
-  const created = useCallback(() => {
-    setCreating(false);
-    // Get out of the way — the new figure is walking out of the portal now,
-    // and the island has already swung its camera to the works. Opening its
-    // card here would cover the one thing worth watching.
-    onClose();
-  }, [onClose]);
+  const create = useCallback(() => {
+    if (creating) return;
+    setCreating(true);
+    setError("");
+    void quickCreate()
+      .then((agent) => {
+        // Its chat is where the agent learns what it is for; without a host
+        // that opens cards, get out of the way of the walk-out instead.
+        if (onSelectAgent) onSelectAgent(agent.agentId);
+        else onClose();
+      })
+      .catch((err) => {
+        if (!isCreateCancelled(err)) setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => setCreating(false));
+  }, [creating, quickCreate, onSelectAgent, onClose]);
 
   return (
     <>
@@ -108,12 +115,14 @@ export function FoundryDrawer({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           <button
             type="button"
-            onClick={() => setCreating(true)}
-            className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            onClick={create}
+            disabled={creating}
+            className="flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-60"
           >
             <Plus size={15} />
             {t("society.world.foundry_create")}
           </button>
+          {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
           <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
             <Factory size={13} aria-hidden />
             {fill(t("society.world.foundry_population"), { count: agents.length })}
@@ -156,11 +165,6 @@ export function FoundryDrawer({
           <p className="text-xs text-muted-foreground">{t("society.world.foundry_walkout")}</p>
         </footer>
       </aside>
-      {creating && (
-        <Suspense fallback={null}>
-          <CreateAgentDialog open onClose={() => setCreating(false)} onCreated={created} />
-        </Suspense>
-      )}
     </>
   );
 }

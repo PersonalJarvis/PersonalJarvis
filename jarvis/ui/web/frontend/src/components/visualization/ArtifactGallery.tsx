@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState, type DragEvent, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   FileImage,
   FileText,
@@ -19,7 +29,17 @@ import { useT, useUiLanguage } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 import { endMissionDrag, startMissionDrag } from "@/lib/missionDnd";
-import type { OutputStatus } from "@/hooks/useOutputs";
+import { openExternalUrl } from "@/lib/openExternal";
+import { useEventStore } from "@/store/events";
+import {
+  DeleteOutputError,
+  artifactDownloadUrl,
+  deleteOutput,
+  revealArtifact,
+  revealOutput,
+  useOutputsCapabilities,
+  type OutputStatus,
+} from "@/hooks/useOutputs";
 import { artifactPageUrl, type VisualArtifact, type VisualKind } from "@/hooks/useVisualArtifacts";
 import {
   RAIL_FILTERS,
@@ -32,6 +52,12 @@ import {
   type RailFilter,
   type RailRow,
 } from "@/components/visualization/galleryModel";
+import {
+  ArtifactCardMenu,
+  ConfirmDeleteArtifact,
+  rowIsWorking,
+  type ArtifactMenuState,
+} from "@/components/visualization/ArtifactCardMenu";
 
 /**
  * The Artifacts library — every artifact as a card with the artifact itself
@@ -196,6 +222,7 @@ export function ArtifactGallery({
 }) {
   const t = useT();
   const empty = groups.every((group) => group.rows.length === 0);
+  const actions = useCardActions();
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -224,7 +251,13 @@ export function ArtifactGallery({
               </h2>
               <CardGrid>
                 {group.rows.map((row) => (
-                  <ArtifactCard key={row.key} row={row} onOpen={onOpen} />
+                  <ArtifactCard
+                    key={row.key}
+                    row={row}
+                    onOpen={onOpen}
+                    onMenu={actions.openMenu}
+                    onDeleteKey={actions.askDelete}
+                  />
                 ))}
               </CardGrid>
             </section>
@@ -232,8 +265,132 @@ export function ArtifactGallery({
         )}
         {footer}
       </div>
+      {actions.menu && (
+        <ArtifactCardMenu
+          row={actions.menu.row}
+          x={actions.menu.x}
+          y={actions.menu.y}
+          canReveal={actions.canReveal}
+          onDismiss={actions.closeMenu}
+          onOpen={() => actions.run(onOpen)}
+          onOpenExternal={() => actions.run(actions.openExternal)}
+          onDownload={() => actions.run(actions.download)}
+          onReveal={() => actions.run(actions.reveal)}
+          onDelete={() => actions.run(actions.askDelete)}
+        />
+      )}
+      {actions.pendingDelete && (
+        <ConfirmDeleteArtifact
+          row={actions.pendingDelete}
+          busy={actions.deleting}
+          onCancel={actions.cancelDelete}
+          onConfirm={() => void actions.confirmDelete()}
+        />
+      )}
     </ScrollArea>
   );
+}
+
+/**
+ * What a card's right-click menu does. One menu and one pending delete for
+ * the whole gallery — the card only reports where it was clicked.
+ */
+function useCardActions() {
+  const t = useT();
+  const theme = useThemeValue();
+  const queryClient = useQueryClient();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const capabilities = useOutputsCapabilities();
+  const [menu, setMenu] = useState<ArtifactMenuState | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<RailRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openMenu = useCallback((row: RailRow, x: number, y: number) => setMenu({ row, x, y }), []);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  /** Close the menu, then act on the row it was opened for. */
+  const run = useCallback(
+    (action: (row: RailRow) => void) => {
+      if (!menu) return;
+      setMenu(null);
+      action(menu.row);
+    },
+    [menu],
+  );
+
+  const openExternal = useCallback(
+    (row: RailRow) => {
+      if (row.kind !== "visual") return;
+      const { visual } = row;
+      const url =
+        visual.kind === "page" ? `${artifactPageUrl(visual.slug, visual.path)}?theme=${theme}` : visual.url;
+      void openExternalUrl(`${window.location.origin}${url}`);
+    },
+    [theme],
+  );
+
+  const download = useCallback((row: RailRow) => {
+    if (row.kind !== "visual") return;
+    const link = document.createElement("a");
+    link.href = artifactDownloadUrl(row.visual.slug, row.visual.path);
+    link.download = row.visual.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }, []);
+
+  const reveal = useCallback(
+    (row: RailRow) => {
+      const request =
+        row.kind === "visual"
+          ? revealArtifact(row.visual.slug, row.visual.path)
+          : revealOutput(row.run.slug);
+      request.catch(() => pushToast("error", t("visualization.reveal_failed")));
+    },
+    [pushToast, t],
+  );
+
+  const askDelete = useCallback((row: RailRow) => {
+    if (!rowIsWorking(row)) setPendingDelete(row);
+  }, []);
+  const cancelDelete = useCallback(() => {
+    if (!deleting) setPendingDelete(null);
+  }, [deleting]);
+
+  const confirmDelete = useCallback(async () => {
+    const row = pendingDelete;
+    if (!row || row.kind === "build") return;
+    const slug = row.kind === "visual" ? row.visual.slug : row.run.slug;
+    setDeleting(true);
+    try {
+      await deleteOutput(slug, row.kind === "visual" ? row.visual.path : null);
+      setPendingDelete(null);
+      pushToast("success", t("visualization.deleted"));
+    } catch (error) {
+      const running = error instanceof DeleteOutputError && error.status === 409;
+      pushToast("error", t(running ? "visualization.delete_running" : "visualization.delete_failed"));
+    } finally {
+      setDeleting(false);
+      void queryClient.invalidateQueries({ queryKey: ["outputs"] });
+      void queryClient.invalidateQueries({ queryKey: ["output-artifacts", slug] });
+    }
+  }, [pendingDelete, pushToast, queryClient, t]);
+
+  return {
+    menu,
+    openMenu,
+    closeMenu,
+    run,
+    canReveal: capabilities.data?.native_file_actions === true,
+    openExternal,
+    download,
+    reveal,
+    pendingDelete,
+    deleting,
+    askDelete,
+    cancelDelete,
+    confirmDelete,
+  };
 }
 
 function CardGrid({ children }: { children: ReactNode }) {
@@ -272,7 +429,17 @@ const ROW_TESTID: Record<RailRow["kind"], string> = {
   run: "visualization-run-row",
 };
 
-function ArtifactCard({ row, onOpen }: { row: RailRow; onOpen: (row: RailRow) => void }) {
+function ArtifactCard({
+  row,
+  onOpen,
+  onMenu,
+  onDeleteKey,
+}: {
+  row: RailRow;
+  onOpen: (row: RailRow) => void;
+  onMenu: (row: RailRow, x: number, y: number) => void;
+  onDeleteKey: (row: RailRow) => void;
+}) {
   const t = useT();
   const language = useUiLanguage();
   const title = rowTitle(row);
@@ -292,10 +459,31 @@ function ArtifactCard({ row, onOpen }: { row: RailRow; onOpen: (row: RailRow) =>
       }
     : {};
 
+  const onContextMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    // The app-wide Cut/Copy/Paste menu lives on document; a card offers its
+    // own actions instead. The menu key reports no pointer, so the menu then
+    // opens at the card's corner.
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.clientX === 0 && event.clientY === 0) {
+      const box = event.currentTarget.getBoundingClientRect();
+      onMenu(row, box.left + 16, box.top + 16);
+    } else {
+      onMenu(row, event.clientX, event.clientY);
+    }
+  };
+
   return (
     <button
       type="button"
       onClick={() => onOpen(row)}
+      onContextMenu={onContextMenu}
+      onKeyDown={(event) => {
+        if (event.key === "Delete" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+          event.preventDefault();
+          onDeleteKey(row);
+        }
+      }}
       data-testid={ROW_TESTID[row.kind]}
       data-kind={row.kind === "visual" ? row.visual.kind : undefined}
       data-status={row.kind === "run" ? status : undefined}

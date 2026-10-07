@@ -1,11 +1,14 @@
 /**
- * The lead agent (Jarvis) as it appears in the office: not a figure but Gigi,
- * the mascot, flying at chest/head height above the walker's ground position.
+ * The lead agent (Jarvis) as it appears in the office: not a figure but the
+ * person's pet from My Pets (Gigi when none is chosen), in 3D. Gigi and the
+ * dragon fly at chest/head height above the walker's ground position; a cat,
+ * snail, teapot, battery or jelly walks, crawls or hops on the floor
+ * (`petCompanions.ts`); a pet the person drew floats as a voxel figure.
  *
- * Motion comes from the pure `gigiFlight.ts`; this component only renders it
- * with a few cheap effects: an additive halo behind Gigi, a small glow under
- * its hover emitter, a recycled sparkle trail while travelling and a soft
- * shadow blob on the floor. Everything is one draw call each, no lights.
+ * Motion comes from the pure `gigiFlight.ts` (its `ground` mode for pets on
+ * the floor), the pet's own limbs from `petRig.ts`. Flyers get a few cheap
+ * effects: an additive halo, a small glow under the body, a recycled sparkle
+ * trail while travelling. Every companion casts a soft shadow blob.
  */
 import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
@@ -15,8 +18,13 @@ import {
 } from "three";
 import { CompanionModel } from "../companion/AgentFollower";
 import { defaultCompanion } from "../companion/appearance";
+import { useCompanionPet } from "../companion/companionPetStore";
+import { companionFlies, type CompanionPet } from "../companion/petCompanions";
+import { PetModel, VoxelPet, type PetDrive } from "../companion/PetModel";
+import type { PetMood } from "../companion/petRig";
 import { createGigiFlight, createGigiPose, followAnchor, stepGigiFlight, type GigiFlightMode } from "./gigiFlight";
 import { cameraView } from "./officeStore";
+import { petBody } from "./walkerRegistry";
 
 /** Gigi's on-screen height in the office. */
 export const GIGI_OFFICE_SIZE_M = 0.5;
@@ -84,11 +92,34 @@ function releaseTextures(): void {
   cache.shadow.dispose();
 }
 
-/** A missing or broken GLB hides Gigi's body; the glow still marks the lead. */
-class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+/** The pet's mood for its limbs: what Jarvis is doing right now. */
+function moodFor(mode: GigiFlightMode, speaking: boolean): PetMood {
+  if (speaking || mode === "talk" || mode === "wave") return "talk";
+  if (mode === "work") return "work";
+  if (mode === "sleep") return "sleep";
+  return "idle";
+}
+
+/** Lift from the flight point (body centre for flyers, the floor for walkers) to the model's origin. */
+function bodyOffset(pet: CompanionPet, ground: boolean): number {
+  if (ground) return 0;
+  return pet.kind === "gigi" ? MODEL_CENTRE_OFFSET : -pet.heightM / 2;
+}
+
+/** The pet's own body: its authored model, its voxel figure, or Gigi (passed in, so each host sizes it). */
+export function CompanionBody({ pet, drive, reduced, paused, gigi }: {
+  pet: CompanionPet; drive: { current: PetDrive }; reduced: boolean; paused: boolean; gigi: ReactNode;
+}) {
+  if (pet.kind === "model") return <PetModel pet={pet} drive={drive} reduced={reduced} paused={paused} />;
+  if (pet.kind === "voxel") return <VoxelPet pet={pet} reduced={reduced} paused={paused} />;
+  return <>{gigi}</>;
+}
+
+/** A missing or broken GLB hides the companion's body; the glow still marks the lead. */
+export class ModelBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
-  componentDidCatch(error: Error) { console.warn("Gigi model unavailable", error.name); }
+  componentDidCatch(error: Error) { console.warn("Companion model unavailable", error.name); }
   render() { return this.state.failed ? null : this.props.children; }
 }
 
@@ -98,7 +129,7 @@ function nextRandom(seed: { value: number }): number {
   return seed.value / 4294967296;
 }
 
-export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
+export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear, children }: {
   /** The walker's mover (or, in "follow" mode, the person's character): ground position and facing (0 = +z). */
   owner: { current: { x: number; z: number; heading: number } };
   mode: GigiFlightMode;
@@ -107,7 +138,15 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   reduced: boolean;
   /** Free airspace test; "follow" mode keeps Gigi out of walls with it. */
   clear?: (x: number, z: number) => boolean;
+  /** Floor markers and labels share the rendered position, without the body's lift, turn or scale. */
+  children?: ReactNode;
 }) {
+  const pet = useCompanionPet((s) => s.pet);
+  const ground = !companionFlies(pet);
+  const groundRoot = useRef<Group>(null);
+  // JSX must not reset the animated anchor to a newer target on a React render,
+  // especially while paused or while switching between following and errands.
+  const initialPosition = useRef<[number, number, number]>([owner.current.x, 0, owner.current.z]);
   const root = useRef<Group>(null);
   const body = useRef<Group>(null);
   const halo = useRef<Sprite>(null);
@@ -116,8 +155,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   const trail = useRef<Points>(null);
   const light = useRef<PointLight>(null);
   const orbit = useRef<Group>(null);
-  const flight = useRef(createGigiFlight(owner.current.x, owner.current.z, owner.current.heading));
-  const pose = useMemo(() => createGigiPose(), []);
+  const flight = useRef(createGigiFlight(owner.current.x, owner.current.z, owner.current.heading, ground));
+  const pose = useRef(createGigiPose(ground)).current;
   const clock = useRef(0);
   const last = useRef({ x: owner.current.x, z: owner.current.z });
   const emitDebt = useRef(0);
@@ -125,6 +164,9 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
   const side = useRef<1 | -1>(1);
   const tint = useMemo(() => new Color(), []);
   const appearance = useMemo(() => ({ ...defaultCompanion("jarvis"), sizeM: GIGI_OFFICE_SIZE_M }), []);
+  const groundRef = useRef(ground);
+  groundRef.current = ground;
+  const drive = useRef<PetDrive>({ speed: 0, mood: "idle" });
 
   const textures = useMemo(() => sharedTextures(), []);
   useEffect(() => { acquireTextures(); return releaseTextures; }, []);
@@ -139,6 +181,8 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
     return { geometry, shadowGeometry, positions, colours, age: new Float32Array(TRAIL_SIZE).fill(TRAIL_LIFE_S), rise: new Float32Array(TRAIL_SIZE), next: 0 };
   }, []);
   useEffect(() => () => { particles.geometry.dispose(); particles.shadowGeometry.dispose(); }, [particles]);
+  // The level system's cosmetics follow the pet; nobody draws them once it is gone.
+  useEffect(() => () => { petBody.active = false; }, []);
 
   useFrame((_, rawDt) => {
     if (paused) return;
@@ -150,20 +194,30 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
     last.current.x = m.x; last.current.z = m.z;
     let targetX = m.x, targetZ = m.z;
     if (mode === "follow") {
-      const anchor = followAnchor(m.x, m.z, m.heading, side.current, clear);
+      const anchor = followAnchor(m.x, m.z, m.heading, side.current, clear, groundRef.current);
       side.current = anchor.side;
       targetX = anchor.x; targetZ = anchor.z;
     }
+    const onFloor = groundRef.current;
     stepGigiFlight(flight.current, {
-      targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear,
+      targetX, targetZ, moving, mode, speaking, t: clock.current, dt, heading: m.heading, reduced, clear, ground: onFloor,
     }, pose);
+    drive.current.speed = pose.speed;
+    drive.current.mood = moodFor(mode, speaking);
 
     // Gigi hovers at head height beside the person: seated in first person that is right in
     // front of the eyes, so close by it steps out of the picture until the person stands up.
-    const hidden = cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
+    const hidden = !onFloor && cameraView.firstPerson && Math.hypot(pose.x - cameraView.x, pose.z - cameraView.z) < FIRST_PERSON_CLEARANCE_M;
     if (root.current) root.current.visible = !hidden;
     if (shadow.current) shadow.current.visible = !hidden;
-    if (root.current) root.current.position.set(pose.x, pose.y, pose.z);
+    // One horizontal transform for the model, shadow and floor annotations.
+    // The navigation target can lead this spring-smoothed position by a metre.
+    if (groundRoot.current) groundRoot.current.position.set(pose.x, 0, pose.z);
+    petBody.x = pose.x; petBody.z = pose.z; petBody.y = onFloor ? pet.heightM / 2 : pose.y;
+    petBody.top = onFloor ? pet.heightM : pose.y + GIGI_OFFICE_SIZE_M * 0.55;
+    petBody.sizeM = onFloor ? pet.heightM : GIGI_OFFICE_SIZE_M;
+    petBody.active = !hidden;
+    if (root.current) root.current.position.y = pose.y;
     if (body.current) {
       body.current.rotation.set(pose.pitch, pose.yaw, pose.roll, "YXZ");
       body.current.scale.setScalar(pose.scale);
@@ -198,15 +252,15 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
       });
     }
     if (shadow.current) {
-      const lift = Math.max(0, pose.y - 0.4);
+      const lift = onFloor ? 0 : Math.max(0, pose.y - 0.4);
       (shadow.current.material as MeshBasicMaterial).opacity = Math.max(0.08, 0.34 - lift * 0.22);
-      shadow.current.position.set(pose.x, 0.012, pose.z);
-      shadow.current.scale.setScalar(0.85 + lift * 0.35);
+      // A pet on the floor gets a contact shadow its own size; a flyer's spreads as it rises.
+      shadow.current.scale.setScalar(onFloor ? Math.max(0.5, pet.heightM * 1.7) : 0.85 + lift * 0.35);
     }
 
     // Sparkle trail: a fixed pool recycled round-robin, faded by age.
     const { positions, colours, age, rise } = particles;
-    if (moving && !reduced && pose.speed > 0.1) {
+    if (moving && !reduced && !onFloor && pose.speed > 0.1) {
       emitDebt.current += dt * TRAIL_RATE;
       while (emitDebt.current >= 1) {
         emitDebt.current -= 1;
@@ -238,32 +292,40 @@ export function GigiFlyer({ owner, mode, speaking, paused, reduced, clear }: {
 
   return (
     <>
-      <group ref={root} position={[owner.current.x, pose.y, owner.current.z]}>
-        <sprite ref={halo} scale={0.9} renderOrder={1}>
-          <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
-        </sprite>
-        <sprite ref={emitter} position={[0, EMITTER_OFFSET, 0]} scale={0.2} renderOrder={1}>
-          <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.5} blending={AdditiveBlending} depthWrite={false} />
-        </sprite>
-        <pointLight ref={light} color={GLOW_WARM} intensity={0.6} distance={3.2} decay={2} />
-        <group ref={orbit}>
-          {[0, 1, 2].map((i) => (
-            <sprite key={i} position={[Math.cos((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M, 0, Math.sin((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M]} scale={0.08} renderOrder={2}>
-              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} />
+      <group ref={groundRoot} position={initialPosition.current}>
+        {children}
+        <group ref={root} position={[0, pose.y, 0]}>
+          {!ground && <>
+            <sprite ref={halo} scale={0.9} renderOrder={1}>
+              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.35} blending={AdditiveBlending} depthWrite={false} />
             </sprite>
-          ))}
-        </group>
-        <group ref={body}>
-          <group position={[0, MODEL_CENTRE_OFFSET, 0]}>
-            <ModelBoundary>
-              <Suspense fallback={null}><CompanionModel appearance={appearance} lead /></Suspense>
-            </ModelBoundary>
+            <sprite ref={emitter} position={[0, EMITTER_OFFSET, 0]} scale={0.2} renderOrder={1}>
+              <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.5} blending={AdditiveBlending} depthWrite={false} />
+            </sprite>
+            <pointLight ref={light} color={GLOW_WARM} intensity={0.6} distance={3.2} decay={2} />
+            <group ref={orbit}>
+              {[0, 1, 2].map((i) => (
+                <sprite key={i} position={[Math.cos((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M, 0, Math.sin((i / 3) * Math.PI * 2) * ORBIT_RADIUS_M]} scale={0.08} renderOrder={2}>
+                  <spriteMaterial map={textures.glow} color={GLOW_WARM} transparent opacity={0.9} blending={AdditiveBlending} depthWrite={false} />
+                </sprite>
+              ))}
+            </group>
+          </>}
+          <group ref={body}>
+            <group position={[0, bodyOffset(pet, ground), 0]}>
+              <ModelBoundary key={pet.id}>
+                <Suspense fallback={null}>
+                  <CompanionBody pet={pet} drive={drive} reduced={reduced} paused={paused}
+                    gigi={<CompanionModel appearance={appearance} lead />} />
+                </Suspense>
+              </ModelBoundary>
+            </group>
           </group>
         </group>
+        <mesh ref={shadow} geometry={particles.shadowGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.012, 0]} renderOrder={1}>
+          <meshBasicMaterial map={textures.shadow} color="#000000" transparent opacity={0.3} depthWrite={false} />
+        </mesh>
       </group>
-      <mesh ref={shadow} geometry={particles.shadowGeometry} rotation={[-Math.PI / 2, 0, 0]} position={[owner.current.x, 0.012, owner.current.z]} renderOrder={1}>
-        <meshBasicMaterial map={textures.shadow} color="#000000" transparent opacity={0.3} depthWrite={false} />
-      </mesh>
       <points ref={trail} geometry={particles.geometry} frustumCulled={false} visible={false} renderOrder={2}>
         <pointsMaterial map={textures.glow} size={0.07} sizeAttenuation vertexColors transparent blending={AdditiveBlending} depthWrite={false} />
       </points>

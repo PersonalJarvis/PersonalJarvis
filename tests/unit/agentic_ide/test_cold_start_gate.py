@@ -88,12 +88,12 @@ async def test_a_full_workspace_starts_in_waves(
     pool.hold_s = 0.05
     registry = ide.Registry(pty_manager=pool)
     session = await registry.start(
-        str(tmp_path), [{"agent": "claude"} for _ in range(ide.MAX_TERMINALS)]
+        str(tmp_path), [{"agent": "claude"} for _ in range(16)]
     )
 
     await _attach_all(registry, session)
 
-    assert len(pool.spawns) == ide.MAX_TERMINALS, "every pane still gets its agent"
+    assert len(pool.spawns) == 16, "every pane still gets its agent"
     assert pool.peak <= 3, f"{pool.peak} agents were starting at once"
 
 
