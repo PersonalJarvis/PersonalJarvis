@@ -179,7 +179,11 @@ def test_a_hanging_doctor_is_stopped(home, monkeypatch):
     deadline = time.monotonic() + 5
     while psutil.pid_exists(pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    try:
+        survivor = psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:  # gone between checks: reaped
+        survivor = False
+    assert not survivor
 
 
 def test_jarvis_prefers_its_own_copy_of_openclaw(tmp_path, monkeypatch):

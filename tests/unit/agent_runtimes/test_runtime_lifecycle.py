@@ -123,9 +123,11 @@ def test_a_detached_grandchild_is_reaped_with_its_parent(tmp_path):
     finally:
         if parent.poll() is None:
             parent.kill()
-    assert not psutil.pid_exists(grandchild) or (
-        psutil.Process(grandchild).status() == psutil.STATUS_ZOMBIE
-    )
+    try:
+        survivor = psutil.Process(grandchild).status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:  # gone between checks: reaped
+        survivor = False
+    assert not survivor
 
 
 async def test_turns_and_setup_jobs_share_one_gate():
