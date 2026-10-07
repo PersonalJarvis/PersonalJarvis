@@ -12,7 +12,10 @@ app = typer.Typer(no_args_is_help=True, help="Self-healing missions: list, dispa
 def list_missions(
     state: str = typer.Option(
         None, "--state",
-        help="Comma-separated states: PENDING,RUNNING,APPROVED,FAILED,CANCELLED,TIMED_OUT.",
+        help=(
+            "Comma-separated states: PENDING,RUNNING,WAITING_CAPACITY,"
+            "APPROVED,FAILED,CANCELLED,TIMED_OUT."
+        ),
     ),
     limit: int = typer.Option(100, "--limit"),
 ) -> None:

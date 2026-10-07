@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(
-            {"schema_version": 2, "contenders": [asdict(report) for report in reports]},
+            {"schema_version": 3, "contenders": [asdict(report) for report in reports]},
             ensure_ascii=False,
             indent=2,
         ),
@@ -221,8 +221,12 @@ def main(argv: list[str] | None = None) -> int:
             else f"estimated_cost=${report.estimated_cost_usd:.4f}"
         )
         print(
-            f"{report.label}: WER={report.wer:.3f}, switch={switch}, "
+            f"{report.label}: macro_WER={report.wer:.3f}, "
+            f"speech_WER={report.quality.word_weighted_wer}, switch={switch}, "
             f"repeatability={repeatability}, latency={report.median_latency_ms:.0f} ms, "
+            f"p95={report.quality.p95_latency_ms:.0f} ms, "
+            f"silence_hallucinations={report.quality.silence_hallucination_rate}, "
+            f"failed_attempts={report.quality.failed_attempts}, "
             f"{cost}"
         )
     print(f"Report written to {out}")

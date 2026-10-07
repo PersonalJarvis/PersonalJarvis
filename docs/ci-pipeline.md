@@ -188,7 +188,11 @@ A release happens **only** when the maintainer asks for one.
   verifies required assets and GitHub's stored digests against both checksum
   manifests, checks the signed payload commit, uploads the source archive and
   its checksum, and verifies those uploads before publishing. The release-cut
-  publisher and `release-finalize.yml` share a per-tag lock. Finalization can
+  `publish` job is the normal finalizer. `release-finalize.yml` shares its
+  per-tag lock but only fires on its own (`workflow_run`) when a person or the
+  integration token started the publishers: publisher runs dispatched with
+  `GITHUB_TOKEN` raise no `workflow_run` event, so with the default token it
+  stays a manual retry path. Finalization can
   also be retried manually from main with an existing draft tag. Producers
   never edit release visibility or replace existing asset names. Before an
   upload, the complete staged set must match any files already present;
@@ -199,6 +203,70 @@ A release happens **only** when the maintainer asks for one.
   Re-run failed jobs with their original build artifacts to recover a partial
   upload; a full rebuild with different bytes requires an explicit decision.
   The in-app updater follows `releases/latest`; draft releases remain hidden.
+* **Build provenance.** On a tag, `desktop-installers.yml` attests every
+  native installer listed in `installers-SHA256SUMS.txt` (`.exe`, both
+  `.dmg`, `.AppImage`, `.deb`) with `actions/attest-build-provenance` before
+  the upload. Anyone can check a download:
+
+  ```bash
+  gh attestation verify PersonalJarvis-Setup-x64.exe -R PersonalJarvis/PersonalJarvis
+  ```
+
+  Releases up to and including v2.9.0 predate this and have no attestation.
+* **`release-smoke.yml`** (read-only) checks a published release the way a
+  user meets it: the complete asset set and all manifests against GitHub's
+  stored digests, each OS's installers downloaded and matched against
+  `installers-SHA256SUMS.txt` plus their attestation, a container check
+  (`dpkg-deb`, ELF header, `hdiutil verify`; Authenticode and Gatekeeper are
+  reported, not required), and the released `install-verify.sh` /
+  `install-verify.ps1` in dry-run, no-launch mode on Linux, Windows and
+  macOS (`release-wrapper-smoke.yml`, which `installer-smoke.yml` also runs on
+  Linux). Release cut calls it after publishing and requires attestations; a
+  release published with `GITHUB_TOKEN` fires no `release` event. Re-check any
+  tag with `gh workflow run release-smoke.yml -f tag=vX.Y.Z`.
+
+### When a release is bad: roll forward
+
+PyPI versions and published release assets are immutable, so there is no
+"undo". A rollback is a new, higher patch release. What the updater does
+decides the order of steps:
+
+* Every install path follows GitHub's **Latest** release
+  (`releases/latest`): the native installers' updater, the one-line
+  installer's managed checkout, and the website download buttons
+  (`releases/latest/download/<name>`). A running app caches the answer for
+  30 minutes.
+* An update is offered only when Latest is **strictly newer** than the running
+  version (`_is_newer` in `jarvis/ui/web/update_routes.py`). Nothing ever
+  downgrades. A user already on the bad version leaves it only when a newer
+  version is published.
+* A native update downloads the installer from that same release and refuses
+  it unless it matches that release's `installers-SHA256SUMS.txt`
+  (`jarvis/core/installer_update.py`).
+
+Steps:
+
+1. **Confirm.** Reproduce the problem and run
+   `gh workflow run release-smoke.yml -f tag=vX.Y.Z` to see whether the
+   artifacts themselves are broken.
+2. **Stop the spread (optional, minutes).**
+   `gh release edit vX.Y.Z -R PersonalJarvis/PersonalJarvis --prerelease`
+   takes the release out of Latest, so Latest falls back to the previous
+   release. New downloads and apps on older versions stop receiving the bad
+   one (running apps within their 30-minute cache). Users already on it are
+   not downgraded. Check the result with
+   `gh api repos/PersonalJarvis/PersonalJarvis/releases/latest --jq .tag_name`.
+3. **Fix forward.** Land the revert or fix on main through a normal PR, then
+   cut a patch: `gh workflow run release-cut.yml -f bump=patch`. The new
+   version is newer than both the bad and the previous release, becomes
+   Latest, reaches every install path, and is smoke-tested by the cut.
+4. **PyPI (optional).** A maintainer may *yank* the bad version on pypi.org.
+   pip then skips it unless someone pins that exact version. Never delete it:
+   the number can never be reused anyway.
+5. **Leave the evidence.** Do not delete the bad release, its assets or its
+   tag, and never re-tag. Installs pinned with `JARVIS_INSTALL_TAG`, the
+   signed manifests and the attestations all point at them. Add a short note
+   to the release body instead.
 
 **Release approval.** Two GitHub environments guard the irreversible steps:
 `pypi` (the PyPI upload in `release.yml`) and `release-signing` (the `sign`

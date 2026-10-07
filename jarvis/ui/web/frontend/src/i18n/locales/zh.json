@@ -1067,7 +1067,8 @@
       "interrupted": "运行过程中应用停止了",
       "mission_timed_out": "运行到达了截止时间",
       "ui_cancel": "被你停止",
-      "parent_cancelled": "随上级运行一起停止"
+      "parent_cancelled": "随上级运行一起停止",
+      "checkpoint_missing": "已保存的进度缺失，因此无法继续运行"
     },
     "kill": {
       "timeout": "时间上限",
@@ -4183,7 +4184,23 @@
     "timeline_label": "事件时间线",
     "no_events": "此行动还没有事件。",
     "no_critic_verdicts": "此行动还没有评审结论。",
-    "no_missions_yet": "还没有行动。主 Jarvis 很快会派发一个…"
+    "no_missions_yet": "还没有行动。主 Jarvis 很快会派发一个…",
+    "capacity_wait": {
+      "provider_quota": "{provider} 的额度暂时已用完。",
+      "provider_auth": "{provider} 的登录已过期。",
+      "provider_unavailable": "{provider} 目前无法使用。",
+      "provider_fallback": "AI 服务商",
+      "saved": "目前的进度已保存。",
+      "progress": "已完成 {done}/{total} 个步骤，还剩 {open} 个。",
+      "progress_single": "任务本身仍未完成。",
+      "files": "已保存的文件：{files}。",
+      "wait": "任务会等待，直到额度重新可用。",
+      "wait_auth": "任务会等待，直到你重新登录。",
+      "paid": "只有在“作品”中批准，或在 设置 → API 密钥 中允许后，才会使用付费 API。",
+      "paid_cap_reached": "已达到为 {provider} 批准的费用上限。",
+      "paid_daily_cap_reached": "{provider} 的自动付费使用已达到每日上限。",
+      "paid_consent_revoked": "{provider} 的自动付费使用已关闭。"
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "审批",
@@ -4274,7 +4291,8 @@
     "approved": "已完成",
     "failed": "出错",
     "cancelled": "已取消",
-    "timed_out": "超时"
+    "timed_out": "超时",
+    "waiting_capacity": "等待额度"
   },
   "mascot_gigi": {
     "aria_label": "{name} 吉祥物 Gigi",
@@ -7023,5 +7041,46 @@
       "create": "创建宠物",
       "creating": "创建中…"
     }
+  },
+  "capacity_decision": {
+    "title": "任务正在等待额度——请你决定",
+    "loading": "正在查找付费替代方案…",
+    "provider": "服务商",
+    "model": "模型",
+    "estimate": "预估费用",
+    "estimate_value": "约 {cost}，用于 {steps} 个未完成步骤",
+    "cap": "费用硬上限",
+    "spent": "已花费",
+    "reason": "原因",
+    "reasons": {
+      "provider_quota": "订阅额度已用完",
+      "provider_auth": "订阅登录已过期",
+      "provider_unavailable": "订阅目前无法使用",
+      "paid_cap_reached": "已达到批准的费用上限",
+      "paid_daily_cap_reached": "自动付费使用已达到每日上限",
+      "paid_consent_revoked": "自动付费使用已关闭"
+    },
+    "no_offer": "没有可用且价格已知的付费 API。任务将等待其订阅恢复。",
+    "over_cap": "预估费用高于费用上限。达到上限时任务会暂停，进度会保留。",
+    "scope": "批准只适用于此任务的这一次运行，不适用于之后的任务。",
+    "covers_review": "批准也涵盖对结果的审查。",
+    "settings_hint": "在 设置 → API 密钥 中始终允许",
+    "wait": "等待",
+    "approve": "为此任务批准付费 API",
+    "cancel": "取消任务",
+    "confirm_approve": "为此任务使用 {provider} / {model}，最多 {cap}？",
+    "confirm_cancel": "要取消任务吗？已保存的进度会保留。",
+    "confirm": "确认",
+    "back": "返回",
+    "error": "决定未生效：{detail}",
+    "waiting_ack": "任务会继续等待其订阅。",
+    "logged": {
+      "wait": "决定：等待。",
+      "approve_paid": "决定：已批准付费 API。",
+      "cancel": "决定：已取消。"
+    },
+    "logged_offer": "{provider} / {model}，预估 {cost}，上限 {cap}。",
+    "paid_usage": "在 {provider} / {model} 上的付费运行：实际 {cost}（预估 {estimate}，上限 {cap}）。",
+    "paid_usage_automatic": "在 {provider} / {model} 上的自动付费运行：实际 {cost}（预估 {estimate}，上限 {cap}）。"
   }
 }
