@@ -14,6 +14,8 @@ from loguru import logger
 
 from jarvis.core.delegation import result_announcement
 
+from . import agent_transcript
+
 
 @dataclass(frozen=True, slots=True)
 class PendingResult:
@@ -25,10 +27,10 @@ class PendingResult:
     generation: int
     reply_session_id: str = ""
     submitted_at: float | None = None
+    prepared_at: float = 0.0
 
 
-def _turns(term: Any) -> list:
-    from . import agent_transcript
+def _events(term: Any) -> list:
     from .session import account_home
 
     # A remote pane's local transcript belongs to its old process.
@@ -36,30 +38,80 @@ def _turns(term: Any) -> list:
         return []
     if not agent_transcript.can_read(term.agent):
         return []
-    return agent_transcript.read(
+    events = agent_transcript.read_events(
         term.agent, term.resume.id, home=account_home(term.agent, term.account),
+        live=True,
     ) or []
+    # Tool output is unnecessary for correlation and can be very large. Keep
+    # work boundaries, so a new turn still invalidates an earlier completion.
+    return [event for event in events if event["kind"] in {
+        "user_message", "assistant_text", "turn_started", "turn_finished",
+    }]
 
 
-def _fingerprint(turns: list) -> str:
-    return hashlib.sha256(repr([(t.role, t.text) for t in turns]).encode()).hexdigest()
+def _fingerprint(events: list) -> str:
+    return hashlib.sha256(repr(events).encode()).hexdigest()
 
 
 def _snapshot(term: Any) -> list:
     try:
-        return _turns(term)
+        return _events(term)
     except Exception:  # A missing transcript cannot prevent authorized delivery.
         logger.opt(exception=True).debug("Delegated pane transcript unavailable")
         return []
 
 
+def _completion_report(events: list, pending: PendingResult) -> str:
+    """Read the final answer to this submission, preserving message boundaries.
+
+    Display turns merge adjacent user messages (including repository instructions)
+    and assistant progress. They cannot identify a work order or its final report.
+    The live event reader retains those boundaries and requires a CLI end marker.
+    """
+    if not events or _fingerprint(events) == pending.baseline:
+        return ""
+    start = next(
+        (i for i in range(len(events) - 1, -1, -1) if events[i]["kind"] == "user_message"),
+        None,
+    )
+    if start is None:
+        return ""
+    user = events[start]
+    expected = agent_transcript._clip(agent_transcript._spoken(pending.prompt))
+    if (
+        int(user.get("ts_ms") or 0)
+        < int((pending.prepared_at or pending.submitted_at or 0) * 1000)
+        or " ".join(user["payload"].get("text", "").split()) != " ".join(expected.split())
+    ):
+        return ""
+    own = events[start + 1:]
+    if not own or own[-1]["kind"] != "turn_finished":
+        return ""
+    finish = own[-1]["payload"]
+    if finish.get("status") != "done" or not finish.get("turn_id"):
+        return ""
+    return next(
+        (
+            str(event["payload"].get("text") or "").strip()
+            for event in reversed(own)
+            if event["kind"] == "assistant_text"
+            and event["payload"].get("turn_id") == finish["turn_id"]
+        ),
+        "",
+    )
+
+
 async def prepare(term: Any, prompt: str, request: str, origin: dict[str, str]) -> PendingResult:
-    turns = await asyncio.to_thread(_snapshot, term)
+    # The CLI can record the prompt before its input receipt is confirmed and
+    # last_submit_at is stamped. Freshness starts before that write, not after.
+    prepared_at = time.time()
+    events = await asyncio.to_thread(_snapshot, term)
     return PendingResult(
         request_id=uuid4().hex, prompt=prompt, request=request or prompt,
-        language=origin.get("lang", ""), baseline=_fingerprint(turns),
+        language=origin.get("lang", ""), baseline=_fingerprint(events),
         generation=term.process_generation,
         reply_session_id=origin.get("reply_session_id", ""),
+        prepared_at=prepared_at,
     )
 
 
@@ -81,7 +133,7 @@ def current(term: Any, pending: PendingResult) -> bool:
 
 
 async def publish_result(
-    kind: str, term: Any, pending: PendingResult, publish: Any, *, require_report: bool = False,
+    kind: str, term: Any, pending: PendingResult, publish: Any,
 ) -> bool:
     """Return an observed stop/question, never convert silence into success."""
     if publish is None or not current(term, pending):
@@ -96,22 +148,28 @@ async def publish_result(
     if kind == "needs_input" and proof.state != "asking" and not shows_question(term):
         return False
     try:
-        turns = await asyncio.to_thread(_snapshot, term)
+        events = await asyncio.to_thread(_snapshot, term)
         if not current(term, pending):
             return False
         proof = await probe(term)
+        if not current(term, pending):
+            return False
         if kind in {"completed", "stopped"} and (proof is None or proof.state != expected[kind]):
             return False
         if kind == "needs_input" and proof.state != "asking" and not shows_question(term):
             return False
-        last_user = next((t.text for t in reversed(turns) if t.role == "user"), "")
-        matches = " ".join(last_user.split()) == " ".join(pending.prompt.split())
-        fresh = bool(turns and _fingerprint(turns) != pending.baseline and matches)
         report = ""
         evidence = "terminal_state_only; task success is unverified"
-        if kind == "completed" and fresh and turns[-1].role == "assistant":
-            report = str(turns[-1].text or "")
-            evidence = "fresh assistant message for this exact prompt; not independent verification"
+        if kind == "completed":
+            report = _completion_report(events, pending)
+            # Completion and transcript persistence can be observed separately.
+            # Keep the request pending for the next sweep instead of delivering
+            # an empty report that the conversation mistakes for missing work.
+            if not report:
+                return False
+            evidence = (
+                "recorded CLI completion and matching final report; not independent verification"
+            )
         elif kind == "needs_input":
             report = "\n".join(term.transcript.tail(20))[-3000:]
             evidence = "current terminal question; not a completed task"
@@ -120,8 +178,6 @@ async def publish_result(
             evidence = "explicit interruption in the current CLI session"
         elif kind in {"failed", "exited"}:
             report = f"Process state: {kind}; exit code: {getattr(term, 'exit_code', None)}"
-        if require_report and not report:
-            return False
         event = result_announcement(
             source="agentic_ide.readback", request_id=pending.request_id,
             name=str(term.name), request=pending.request, status=kind,
@@ -173,6 +229,4 @@ async def poll_ready(registry: Any, publish: Any, *, now: float | None = None) -
             }.get(term.reading().activity)
             if kind is not None:
                 term.delegation_probe_at = moment
-                await publish_result(
-                    kind, term, pending, publish, require_report=kind == "completed",
-                )
+                await publish_result(kind, term, pending, publish)

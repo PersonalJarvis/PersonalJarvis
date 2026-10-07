@@ -155,5 +155,25 @@
     "thinking_pick": "Answers and uses tools during a call",
     "voice_ready": "Ready",
     "voice_not_ready": "Not set up"
+  },
+  "mission_billing": {
+    "section": "Missions",
+    "title": "Continue on API keys when subscriptions run out",
+    "state_off": "Off · missions wait until a subscription has room again",
+    "state_on": "On · {provider} · at most {mission_cap} per mission, {daily_cap} a day",
+    "state_on_no_key": "On · no API key with a known price yet",
+    "state_key_only": "Missions already run on your API keys",
+    "state_no_key": "Needs an API key with a known price",
+    "spent": "{amount} spent in the last 24 hours",
+    "less_than_cent": "less than $0.01",
+    "load_error": "This setting could not be loaded: {detail}",
+    "save_error": "Not saved: {detail}",
+    "confirm_title": "Continue on your API key?",
+    "confirm_intro": "When every connected subscription is used up, missions keep running on your own API key instead of waiting.",
+    "confirm_billing": "{provider} bills that key for every request:",
+    "confirm_no_key": "No API key with a known price is set up yet, so nothing can be billed.",
+    "confirm_caps": "Each mission stops at {mission_cap}, and all automatic use stops at {daily_cap} per day.",
+    "confirm_off": "You can switch this off at any time. It applies from the next request on.",
+    "confirm_action": "Turn on"
   }
 }

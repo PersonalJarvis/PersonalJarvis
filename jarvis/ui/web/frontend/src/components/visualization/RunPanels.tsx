@@ -45,6 +45,7 @@ const STATUS_BADGE: Record<OutputStatus, string> = {
 };
 
 const NEEDS_REVIEW_BADGE = "border-foreground/40 bg-foreground/10 text-foreground";
+const WAITING_CAPACITY_BADGE = "border-warning/40 bg-warning/10 text-warning";
 
 /** Review ended without approval, but a genuine deliverable was retained. */
 export function runNeedsReview(run: OutputSummary): boolean {
@@ -71,8 +72,18 @@ export function RunStatusBadge({
   const t = useT();
   const statusKey = run.status ?? "unknown";
   const needsReview = runNeedsReview(run);
-  const badgeClass = needsReview ? NEEDS_REVIEW_BADGE : STATUS_BADGE[statusKey];
-  const label = needsReview ? t("outputs_view.needs_review") : statusKey;
+  // A parked run is not working: no pulse, and it says what it waits for.
+  const waiting = !!run.waiting_capacity;
+  const badgeClass = needsReview
+    ? NEEDS_REVIEW_BADGE
+    : waiting
+      ? WAITING_CAPACITY_BADGE
+      : STATUS_BADGE[statusKey];
+  const label = needsReview
+    ? t("outputs_view.needs_review")
+    : waiting
+      ? t("mission_state.waiting_capacity")
+      : statusKey;
   return (
     <span
       data-testid="run-status-badge"
@@ -82,7 +93,7 @@ export function RunStatusBadge({
         badgeClass,
       )}
     >
-      {statusKey === "running" && <PulseDot />}
+      {statusKey === "running" && !waiting && <PulseDot />}
       {label}
     </span>
   );
