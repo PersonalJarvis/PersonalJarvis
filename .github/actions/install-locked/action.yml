@@ -13,6 +13,14 @@ inputs:
     description: Space-separated test tools for a slim base install, pinned through the lock.
     required: false
     default: ""
+  tools-only:
+    description: >-
+      "true" skips the locked base set for light jobs: the project goes in
+      without dependencies and only the `with` tools are installed, still
+      pinned through the lock. No build cache is used (every light tool is a
+      pre-built wheel), so a light job never seeds the shared cache.
+    required: false
+    default: "false"
 runs:
   using: composite
   steps:
@@ -32,6 +40,7 @@ runs:
     # wheels download faster than a cache restore would unpack them.
     - name: Restore the uv build cache
       id: restore
+      if: inputs.tools-only != 'true'
       uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.cache/uv-locked
@@ -44,19 +53,21 @@ runs:
         UV_CACHE_DIR: ${{ steps.uv.outputs.cache_dir }}
         EXTRAS: ${{ inputs.extras }}
         TOOLS: ${{ inputs.with }}
+        TOOLS_ONLY: ${{ inputs.tools-only }}
       run: |
         args=()
+        [ "$TOOLS_ONLY" = "true" ] && args+=(--tools-only)
         for extra in $EXTRAS; do args+=(--extra "$extra"); done
         for tool in $TOOLS; do args+=(--with "$tool"); done
         python scripts/ci/install_locked.py "${args[@]}"
     - name: Prune the uv cache to source builds
-      if: steps.restore.outputs.cache-hit != 'true'
+      if: inputs.tools-only != 'true' && steps.restore.outputs.cache-hit != 'true'
       shell: bash
       env:
         UV_CACHE_DIR: ${{ steps.uv.outputs.cache_dir }}
       run: python -m uv cache prune --ci
     - name: Save the uv build cache
-      if: steps.restore.outputs.cache-hit != 'true'
+      if: inputs.tools-only != 'true' && steps.restore.outputs.cache-hit != 'true'
       continue-on-error: true
       uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
