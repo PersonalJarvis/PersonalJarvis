@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import random
 import re
 import threading
 import time
@@ -23,9 +24,11 @@ from jarvis.live.state import LiveLedger
 
 from .session import (
     MAX_PANES_PER_REQUEST,
+    AgentBusyError,
     Registry,
     SessionError,
     accepts_prompts,
+    steers_mid_turn,
     terminals_added_event,
 )
 from .workspace_catalog import project_graph
@@ -58,7 +61,14 @@ _WORKSPACE_ACTIONS = frozenset({"open_workspace", "restore", "show"})
 # How many times one request may be re-attempted after receipts proving that
 # nothing was typed (the pane was busy, closed, or not a coding pane).
 _REFUSED_ATTEMPTS = 20
-_PRE_WRITE_REFUSALS = frozenset({"not_accepted", "stale_target", "unavailable"})
+_PRE_WRITE_REFUSALS = frozenset({"not_accepted", "stale_target", "unavailable", "expired"})
+# What a send does with a pane that is in a turn. Only "refuse" is automatic;
+# the others carry the user's own correction to the running work.
+_WHILE_BUSY = ("refuse", "steer", "interrupt", "queue")
+# A queued message waits this long for the turn to end, re-checking the pane
+# every few seconds (jittered: several queues never poll in lockstep).
+_QUEUE_TTL_S = 30 * 60
+_QUEUE_POLL_S = 3.0
 # The keys a person presses in a pane besides typing: menus, dialogs, the
 # permission-mode cycle (Shift+Tab) and Stop (Escape). Nothing else is sendable.
 _KEY_SEQUENCES = {
@@ -247,6 +257,10 @@ class WorkspaceOrchestrator:
         # name or ID), never for a first-idle pick or a CLI-kind match.
         self._named: set[str] = set()
         self._issued_lock = threading.Lock()
+        # receipt_id -> the task holding a queued message until its pane is
+        # free. A "queued" receipt with no task here was left by an earlier
+        # run of the app and was never typed.
+        self._queued: dict[str, asyncio.Task] = {}
         # Announces new panes to the open UI; set by the runtime that owns a bus.
         self.publish: Callable[[Any], Awaitable[Any]] | None = None
 
@@ -1155,12 +1169,19 @@ class WorkspaceOrchestrator:
             return await self.workspace_action(args, trace_id=trace_id)
         if action not in {"send", "context"}:
             raise ValueError("Unknown workspace orchestration action.")
+        while_busy = str(args.get("while_busy") or "refuse").strip().casefold()
+        if while_busy not in _WHILE_BUSY:
+            raise ValueError(f"while_busy must be one of {', '.join(_WHILE_BUSY)}.")
+        if while_busy != "refuse" and action != "send":
+            raise ValueError("while_busy belongs to send only.")
         target, request_id = self._reconcile(args, action)
         project_id, workspace_id, terminal_id = (target[key] for key in _TARGET_KEYS)
         if not project_id or not workspace_id or not terminal_id.startswith("pane:"):
             raise ValueError(
                 "Resolve a target first; project_id, workspace_id and terminal_id are required."
             )
+        prompt = ""
+        receipt_id = request_id
         if action == "send":
             prompt = str(args.get("prompt") or "").strip()
             if not prompt:
@@ -1172,6 +1193,8 @@ class WorkspaceOrchestrator:
                 seed = f"{terminal_id}\n{prompt}\n{refs}\n{int(time.time() // _RETRY_WINDOW_S)}"
                 request_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:32]
             self._mark_sent(request_id, _assignment(args))
+            # The assignment, never the delivery mode: resending a refused
+            # request with while_busy is the same instruction, not a new one.
             claimed = {**target, "prompt": prompt, "image_refs": refs,
                        **({"image_scope": image_scope} if refs else {})}
             # A receipt proving nothing was typed (busy, closed, not a coding
@@ -1185,81 +1208,227 @@ class WorkspaceOrchestrator:
                     self.ledger.claim, "workspace-orchestration", receipt_id, "send",
                     claimed, 0, deduplicate_unconfirmed=True,
                 )
+                if (
+                    previous is not None
+                    and previous.get("status") == "queued"
+                    and receipt_id not in self._queued
+                ):
+                    # Queued by an earlier run of the app, which stopped before
+                    # the turn ended: nothing was typed, so the slot is free.
+                    previous = {
+                        **previous, "status": "expired", "success": False,
+                        "input_written": False,
+                        "reason": "The app stopped before the queued message was delivered; "
+                                  "nothing was typed.",
+                    }
+                    await asyncio.to_thread(
+                        self.ledger.finish, "workspace-orchestration", receipt_id, previous
+                    )
                 if previous is None or not _never_delivered(previous):
                     break
             if previous is not None:
                 return {"target": target, "request_id": request_id, **previous}
+        delivery = {
+            "action": action, "target": target, "prompt": prompt, "refs": refs,
+            "image_scope": image_scope, "trace_id": trace_id, "request_id": request_id,
+            "limit": args.get("limit", 30),
+        }
+        result = await self._deliver(
+            delivery, when_busy="refuse" if while_busy == "queue" else while_busy,
+        )
+        armed: asyncio.Event | None = None
+        if action == "send" and result.get("busy") and (
+            while_busy == "queue" or result.get("interrupted")
+        ):
+            # Stop was pressed, or the user asked to wait: the message is held
+            # until the turn ends, under this same receipt.
+            result, armed = self._queue(
+                receipt_id, delivery, interrupted=bool(result.get("interrupted")),
+            )
+        try:
+            if action == "send":
+                result["request_id"] = request_id
+                await asyncio.to_thread(
+                    self.ledger.finish, "workspace-orchestration", receipt_id, result
+                )
+        finally:
+            if armed is not None:
+                # Only now may the queue type it: its outcome must replace the
+                # "queued" receipt, never be overwritten by it.
+                armed.set()
+        return result
+
+    async def _deliver(self, delivery: dict[str, Any], *, when_busy: str) -> dict[str, Any]:
+        """One attempt at a send or context read on the resolved pane."""
+        action, target = delivery["action"], delivery["target"]
+        workspace_id, terminal_id = target["workspace_id"], target["terminal_id"]
         owner = self.registry.get(workspace_id)
         found = self.registry.find_terminal(terminal_id, workspace_id) if owner else None
-        result: dict[str, Any]
-        if owner is None or owner.project_id != project_id or found is None or found[1].archived:
-            result = {
+        if (
+            owner is None
+            or owner.project_id != target["project_id"]
+            or found is None
+            or found[1].archived
+        ):
+            return {
                 "status": "stale_target",
                 "target": target,
                 "reason": "The resolved coding session is no longer in that project/workspace.",
             }
-        elif not accepts_prompts(found[1].agent):
-            result = {
+        if not accepts_prompts(found[1].agent):
+            return {
                 "status": "unavailable",
                 "target": target,
                 "reason": "This session does not accept coding tasks.",
             }
-        else:
-            # The low-level gateway enforces idle/asking state and refuses exited
-            # agents. It never falls through to a shell or a different pane.
+        # The low-level gateway enforces idle/asking state and refuses exited
+        # agents. It never falls through to a shell or a different pane.
+        try:
+            reply = await self.sessions.run(
+                {
+                    "action": action,
+                    "workspace_id": workspace_id,
+                    "terminal_id": terminal_id,
+                    **(
+                        {"prompt": delivery["prompt"], "image_refs": delivery["refs"],
+                         "_image_scope": delivery["image_scope"], "when_busy": when_busy}
+                        if action == "send"
+                        else {"limit": delivery["limit"]}
+                    ),
+                }
+            )
+            return {
+                **reply,
+                "status": reply.get("delivery", reply.get("status", "observed")),
+                "target": target,
+                "trace_id": delivery["trace_id"],
+                "request_id": delivery["request_id"],
+            }
+        except AgentBusyError as exc:
+            # Pre-write, like every SessionError, and the one refusal the
+            # caller can answer with another delivery the USER chose.
+            can_steer = steers_mid_turn(found[1].agent)
+            return {
+                "status": "not_accepted",
+                "target": target,
+                "reason": str(exc),
+                "completed": False,
+                "input_written": False,
+                "busy": True,
+                **({"interrupted": True} if exc.interrupted else {}),
+                "while_busy_options": {"steer": can_steer, "interrupt": True, "queue": True},
+                "next": (
+                    "The agent is in a turn. Only when the USER is correcting or redirecting "
+                    "this running work, resend this request with "
+                    + ("while_busy='steer' (reaches the running turn; nothing stops) or "
+                       if can_steer else "")
+                    + "while_busy='interrupt' (stops the turn, keeps the session, then "
+                    "delivers). while_busy='queue' delivers it when the turn ends. A new or "
+                    "unrelated task waits, goes to another agent, or is the user's call."
+                ),
+            }
+        except SessionError as exc:
+            # The coding-session adapter documents SessionError as a
+            # pre-write refusal; post-write uncertainty is a receipt.
+            return {
+                "status": "not_accepted",
+                "target": target,
+                "reason": str(exc),
+                "completed": False,
+            }
+        except Exception as exc:
+            # Preserve uncertainty: an adapter can fail after the write.
+            # The durable claim remains, preventing an automatic replay.
+            from loguru import logger
+
+            logger.warning("Workspace action {} failed: {}", action, type(exc).__name__)
+            if action != "send":
+                raise
+            return {
+                "status": "uncertain",
+                "target": target,
+                "request_id": delivery["request_id"],
+                "reason": (
+                    "Delivery could not be confirmed. Inspect the session; "
+                    "do not resend automatically."
+                ),
+            }
+
+    def _queue(
+        self, receipt_id: str, delivery: dict[str, Any], *, interrupted: bool,
+    ) -> tuple[dict[str, Any], asyncio.Event]:
+        """Hold a message until its pane ends the turn, then type it there.
+
+        Registered before the caller files the "queued" receipt, so a retry in
+        between never takes it for one an earlier run of the app left behind.
+        The returned event releases the queue once that receipt is filed.
+        """
+        armed = asyncio.Event()
+        self._queued[receipt_id] = asyncio.create_task(
+            self._drain(receipt_id, delivery, time.monotonic() + _QUEUE_TTL_S, armed),
+            name=f"workspace-queue:{receipt_id}",
+        )
+        return {
+            "status": "queued",
+            "target": delivery["target"],
+            "input_written": False,
+            "completed": False,
+            **({"interrupted": True} if interrupted else {}),
+            "reason": (
+                ("Stop was pressed but the turn had not ended yet. " if interrupted else "")
+                + "The app holds the message and types it at the agent's prompt as soon as "
+                f"its turn ends (for up to {_QUEUE_TTL_S // 60} minutes). This request_id "
+                "then reads the delivery result. Do not resend; an app restart before "
+                "delivery drops it unsent (reported as expired)."
+            ),
+        }, armed
+
+    async def _drain(
+        self, receipt_id: str, delivery: dict[str, Any], deadline: float, armed: asyncio.Event,
+    ) -> None:
+        """Deliver one queued message once its pane is free, then file the receipt."""
+        target = delivery["target"]
+        result: dict[str, Any] | None = None
+        try:
+            await armed.wait()
+            while time.monotonic() < deadline:
+                await asyncio.sleep(_QUEUE_POLL_S + random.uniform(0.0, 1.0))  # noqa: S311
+                found = self.registry.find_terminal(target["terminal_id"], target["workspace_id"])
+                # A cheap fresh check first: an attempt resolves and copies
+                # images, which is wasted on a pane that is still working.
+                if found is not None and await self.registry.turn_in_progress(found[1]):
+                    continue
+                outcome = await self._deliver(delivery, when_busy="refuse")
+                if outcome.get("busy"):
+                    continue  # Someone else's prompt got there first.
+                result = outcome
+                break
+        except asyncio.CancelledError:
+            result = {
+                "status": "expired", "success": False, "target": target,
+                "input_written": False,
+                "reason": "The app stopped before the queued message was delivered; "
+                          "nothing was typed.",
+            }
+            raise
+        finally:
+            if result is None:
+                result = {
+                    "status": "expired", "success": False, "target": target,
+                    "input_written": False,
+                    "reason": f"The turn did not end within {_QUEUE_TTL_S // 60} minutes; "
+                              "the queued message was not typed.",
+                }
+            result = {**result, "request_id": delivery["request_id"], "queued": True}
             try:
-                delivery = await self.sessions.run(
-                    {
-                        "action": action,
-                        "workspace_id": workspace_id,
-                        "terminal_id": terminal_id,
-                        **(
-                            {"prompt": prompt, "image_refs": refs, "_image_scope": image_scope}
-                            if action == "send"
-                            else {"limit": args.get("limit", 30)}
-                        ),
-                    }
-                )
-                result = {
-                    **delivery,
-                    "status": delivery.get("delivery", delivery.get("status", "observed")),
-                    "target": target,
-                    "trace_id": trace_id,
-                    "request_id": request_id,
-                }
-            except SessionError as exc:
-                # The coding-session adapter documents SessionError as a
-                # pre-write refusal; post-write uncertainty is a receipt.
-                result = {
-                    "status": "not_accepted",
-                    "target": target,
-                    "reason": str(exc),
-                    "completed": False,
-                }
-            except Exception as exc:
-                # Preserve uncertainty: an adapter can fail after the write.
-                # The durable claim remains, preventing an automatic replay.
+                # Synchronous on purpose: this also runs while the loop is
+                # cancelling the task, where no thread hop can be awaited.
+                self.ledger.finish("workspace-orchestration", receipt_id, result)
+            except Exception as exc:  # noqa: BLE001 - a lost receipt is logged, never raised
                 from loguru import logger
 
-                logger.warning("Workspace action {} failed: {}", action, type(exc).__name__)
-                if action == "send":
-                    result = {
-                        "status": "uncertain",
-                        "target": target,
-                        "request_id": request_id,
-                        "reason": (
-                            "Delivery could not be confirmed. Inspect the session; "
-                            "do not resend automatically."
-                        ),
-                    }
-                else:
-                    raise
-        if action == "send":
-            result["request_id"] = request_id
-            await asyncio.to_thread(
-                self.ledger.finish, "workspace-orchestration", receipt_id, result
-            )
-        return result
+                logger.warning("Queued delivery receipt was not saved: {}", exc)
+            self._queued.pop(receipt_id, None)
 
 
 _orchestrators: dict[int, WorkspaceOrchestrator] = {}

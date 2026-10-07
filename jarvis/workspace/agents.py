@@ -301,6 +301,11 @@ class WorkspaceAgent:
     #: already covers the near-universal "esc to interrupt" wording; an entry
     #: names only its own peculiarity.
     busy_fragments: tuple[str, ...] = ()
+    #: True when a line submitted WHILE a turn runs reaches that running turn:
+    #: the CLI's own mid-turn steering. False means nothing is known about
+    #: typing into a busy pane of it, so a correction must stop the turn first
+    #: or wait for it to end (:meth:`jarvis.agentic_ide.session.Registry.send_prompt`).
+    steers_mid_turn: bool = False
     #: The per-project instructions file this CLI reads (CLAUDE.md, AGENTS.md).
     instruction_filename: str = ""
 
@@ -765,6 +770,10 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         # launch-and-prompt path, so waiting for its input line to appear would
         # only slow down behaviour that already works.
         needs_input_line_wait=False,
+        # Measured (2.1.x): a message submitted mid-turn is recorded as a
+        # human ``queued_command`` and handed to the model at its next step,
+        # inside the running turn.
+        steers_mid_turn=True,
         instruction_filename="CLAUDE.md",
         # Its footer row ("<folder> 🌿 <branch> <model> (1M context)") carries
         # plenty of letters, so without these the deterministic recap of a busy
@@ -815,6 +824,10 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         input_markers=("›", "»"),
         requires_visible_input_cursor=True,
         asks_colours_after_input_line=True,
+        # Checked on 0.160: Enter while a task runs sends into the active turn
+        # (Tab would queue it instead); review and compact turns refuse a
+        # steer and keep the text in the composer, which the send reports.
+        steers_mid_turn=True,
         # Two simultaneous resumes against Codex's shared SQLite/runtime store
         # were measured beyond 90 s while one resume initialized substantially
         # faster. Serialize only this shared-store boot phase. Claude and every
@@ -952,6 +965,7 @@ _AGENTS: dict[str, WorkspaceAgent] = {
         resume_adapter="claude",
         file_reference="at",
         needs_input_line_wait=False,
+        steers_mid_turn=True,
         instruction_filename="CLAUDE.md",
         # Resolved fresh on every spawn AND every resume — see the docstring.
         spawn_env_factory=glm_spawn_env,

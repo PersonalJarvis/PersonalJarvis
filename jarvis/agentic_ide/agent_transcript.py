@@ -747,6 +747,14 @@ class _EventLog:
         body = _clip(text)
         if not body:
             return
+        if (
+            self.events
+            and self.events[-1]["kind"] == "user_message"
+            and self.events[-1]["payload"].get("text") == body
+        ):
+            # The record of a message typed mid-turn, followed by the CLI
+            # submitting that same message as the next prompt: one message.
+            return
         self.close_turn(ts)
         self._emit("user_message", {"text": body}, ts)
 
@@ -962,6 +970,23 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             continue
         if kind == "system" and row.get("subtype") == "turn_duration":
             log.close_turn(_ts_ms(row.get("timestamp")) or log.last_ms)
+            continue
+        if kind == "attachment":
+            # A message the person typed while a turn ran: the CLI records it
+            # here and hands it to the model at its next step (mid-turn
+            # steering). Notices queued by the CLI itself carry another origin.
+            queued = row.get("attachment")
+            if (
+                isinstance(queued, dict)
+                and queued.get("type") == "queued_command"
+                and isinstance(queued.get("origin"), dict)
+                and queued["origin"].get("kind") == "human"
+                and queued.get("commandMode", "prompt") == "prompt"
+            ):
+                log.user(
+                    _spoken(str(queued.get("prompt") or "")),
+                    _ts_ms(row.get("timestamp") or queued.get("timestamp")) or log.last_ms,
+                )
             continue
         if kind not in ("user", "assistant"):
             continue

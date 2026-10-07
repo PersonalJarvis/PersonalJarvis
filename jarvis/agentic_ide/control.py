@@ -182,6 +182,7 @@ class CodingSessionControl:
                 expected_input=str(args.get("input_token") or "") if action == "respond" else "",
                 allow_question=action == "respond" and args.get("response_mode") == "dialog",
                 followup=current_delegation_origin.get(),
+                when_busy=str(args.get("when_busy") or "refuse") if action == "send" else "refuse",
             )
             return {
                 **self._state(owner, term),
@@ -191,6 +192,11 @@ class CodingSessionControl:
                 else "uncertain",
                 "input_written": True,
                 "completed": False,
+                **(
+                    {"mid_turn": True,
+                     "note": "Typed into the running turn; the agent takes it at its next step."}
+                    if term.last_send_mid_turn else {}
+                ),
                 "images": image_receipts,
                 "retry": "Do not resend automatically. Read context and inspect delivery first.",
             }
