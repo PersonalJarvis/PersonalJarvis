@@ -211,12 +211,48 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
     from jarvis.live.subscription_auth import SubscriptionAuthError
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
+    started = False
     try:
-        async for event in _client(grant.account_id).stream(**args):
-            yield _sse(event)
+        async with contextlib.aclosing(_client(grant.account_id).stream(**args)) as upstream:
+            async for event in upstream:
+                started = True
+                yield _sse(event)
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
         log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
+        if not started:
+            raise _subscription_failure(exc) from exc
         yield _sse(_failed_event(str(exc), getattr(exc, "code", "subscription_unavailable")))
+
+
+def _subscription_failure(exc: Exception) -> GatewayError:
+    status = getattr(exc, "status", 0)
+    return GatewayError(
+        str(exc),
+        status=status if status in (400, 401, 403, 404, 413, 422, 429) else 502,
+        code=getattr(exc, "code", "subscription_unavailable"),
+    )
+
+
+async def open_response_stream(grant: Grant, args: dict[str, Any]) -> AsyncIterator[bytes]:
+    """Check upstream acceptance before committing an HTTP 200 SSE response."""
+    events = stream_response(grant, args)
+    try:
+        first = await anext(events)
+    except StopAsyncIteration as exc:
+        raise GatewayError("ChatGPT ended without an answer.", status=502) from exc
+    except BaseException:
+        await events.aclose()
+        raise
+
+    async def accepted() -> AsyncIterator[bytes]:
+        try:
+            yield first
+            async for event in events:
+                yield event
+        finally:
+            await events.aclose()
+
+    return accepted()
 
 
 async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any]:
@@ -237,7 +273,7 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
                 # completed response with an empty ``output``.
                 return {**finished, "output": finished.get("output") or items}
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
-        raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
+        raise _subscription_failure(exc) from exc
     raise GatewayError("ChatGPT ended without an answer.", status=502, code="incomplete")
 
 

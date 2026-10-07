@@ -71,8 +71,9 @@ async def runtime_gateway_responses(request: Request) -> Any:
         body = await _body(request)
         args = gateway.request_args(body)
         if body.get("stream") is True:
+            events = await gateway.open_response_stream(grant, args)
             return StreamingResponse(
-                gateway.stream_response(grant, args),
+                events,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache"},
             )
