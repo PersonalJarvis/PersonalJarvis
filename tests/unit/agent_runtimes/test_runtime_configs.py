@@ -303,6 +303,35 @@ def test_claude_without_a_key_runs_on_the_claude_code_login(gateway_up, monkeypa
     assert model_map.login_token_for("openai") is None
 
 
+def test_an_agent_can_pin_claude_to_the_key_or_the_login(gateway_up, monkeypatch):
+    import jarvis.agent_runtimes.model_map as model_map
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+
+    live = "sk-ant-" + "oat01-" + "z" * 20
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: live)
+    with override_provider_secrets({"claude-api": _SECRET}):
+        # Both ways work: the dialog offers both, the key stays the default.
+        assert model_map.access_choices() == {"claude-api": ["api", "subscription"]}
+        assert model_map.login_token_for("claude-api") is None
+        assert model_map.login_token_for("claude-api", API_KEY_ACCOUNT) is None
+        assert model_map.login_token_for("claude-api", SUBSCRIPTION_ACCOUNT) == live
+        route = route_for(
+            _cfg(), "claude-api", "claude-sonnet-5", agent_id="a", account_id=SUBSCRIPTION_ACCOUNT
+        )
+        grant = gateway_up.verify(route.api_key or "")
+        assert grant == gateway_up.Grant("a", "claude-api", SUBSCRIPTION_ACCOUNT)
+    with override_provider_secrets({"claude-api": None}):
+        assert model_map.access_choices() == {"claude-api": ["subscription"]}
+        assert model_map.login_token_for("claude-api", API_KEY_ACCOUNT) is None
+        with pytest.raises(RouteUnavailable, match="API key"):
+            route_for(_cfg(), "claude-api", "claude-sonnet-5", account_id=API_KEY_ACCOUNT)
+    monkeypatch.setattr(model_map, "claude_login_token", lambda: None)
+    with override_provider_secrets({"claude-api": _SECRET}):
+        assert model_map.access_choices() == {"claude-api": ["api"]}
+        with pytest.raises(RouteUnavailable, match="Claude Code login"):
+            route_for(_cfg(), "claude-api", "claude-sonnet-5", account_id=SUBSCRIPTION_ACCOUNT)
+
+
 def test_the_claude_login_brain_sends_a_bearer_not_an_api_key():
     from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
 

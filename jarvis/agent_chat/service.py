@@ -139,7 +139,9 @@ EXTERNAL_RUNTIME_RUNNERS: Final[dict[str, str]] = {
 }
 
 
-def resolve_runner(provider: str, *, surface: str = "agent", runtime: str = "") -> str:
+def resolve_runner(
+    provider: str, *, surface: str = "agent", runtime: str = "", account_id: str = ""
+) -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
     ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
@@ -152,6 +154,10 @@ def resolve_runner(provider: str, *, surface: str = "agent", runtime: str = "") 
     (``SurfaceKit.cli_seats``, maintainer 2026-08-26), so a vendor CLI never
     answers there — not even the dual Claude row, which runs on the Anthropic
     API behind its key like every other seat.
+
+    ``account_id`` is the seat's login, or a reserved access value
+    (``catalog.ACCESS_ACCOUNTS``) that pins the dual Claude row to its API key
+    or to its subscription for one agent, over the API Keys page's setting.
     """
     if runtime in EXTERNAL_RUNTIME_RUNNERS and surface == "society":
         # A Hermes / OpenClaw agent: that runtime's loop answers every turn and
@@ -171,8 +177,11 @@ def resolve_runner(provider: str, *, surface: str = "agent", runtime: str = "") 
         # The API Keys page can set the agents' Claude to its key instead of
         # the subscription; that choice narrows the agents' surface only.
         from jarvis.agent_chat.agent_provider_prefs import forces_api
+        from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
 
-        if forces_api(row.id, surface):
+        if account_id == API_KEY_ACCOUNT:
+            return api_runner
+        if account_id != SUBSCRIPTION_ACCOUNT and forces_api(row.id, surface):
             return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
@@ -186,6 +195,7 @@ def session_runner(session: Any) -> str:
         session.provider,
         surface=session.surface,
         runtime=str(getattr(session, "runtime", "") or ""),
+        account_id=str(getattr(session, "account_id", "") or ""),
     )
 
 
@@ -689,7 +699,8 @@ class AgentChatService:
                 f"Provider {provider!r} is not offered on the {surface!r} chat. "
                 "That chat runs on a provider API behind a key, not on a vendor CLI."
             )
-        ladder = ladder_key(surface, resolve_runner(provider, surface=surface))
+        runner = resolve_runner(provider, surface=surface, account_id=account_id)
+        ladder = ladder_key(surface, runner)
         permission_mode = normalize_permission(ladder, permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:

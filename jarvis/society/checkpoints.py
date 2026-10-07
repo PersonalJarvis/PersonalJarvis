@@ -527,7 +527,10 @@ class CheckpointEngine:
             from jarvis.agent_chat.service import resolve_runner
 
             runtime = str(getattr(agent, "runtime", "") or "")
-            return resolve_runner(provider, surface="society", runtime=runtime).endswith("-cli")
+            account = str(getattr(agent, "account_id", "") or "")
+            return resolve_runner(
+                provider, surface="society", runtime=runtime, account_id=account
+            ).endswith("-cli")
         except Exception:  # noqa: BLE001 — a missing catalog row is not a seat
             log.debug("society checkpoints: runner lookup failed for %s", provider, exc_info=True)
             return False

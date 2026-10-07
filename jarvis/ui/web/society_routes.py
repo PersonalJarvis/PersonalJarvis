@@ -79,6 +79,7 @@ def _validated_chat_runner(
     *,
     approval_mode: str | None = None,
     permission_ceiling: str | None = None,
+    account_id: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
     from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
@@ -94,7 +95,12 @@ def _validated_chat_runner(
                 "Hermes and OpenClaw run on an API key or a local model. "
                 "Pick one of those for this agent.",
             )
-    runner = resolve_runner(provider, surface="society", runtime=chosen_runtime)
+    runner = resolve_runner(
+        provider,
+        surface="society",
+        runtime=chosen_runtime,
+        account_id=agent.account_id if account_id is None else account_id,
+    )
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
@@ -347,7 +353,10 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         from jarvis.agent_chat.service import resolve_runner
 
         runner = resolve_runner(
-            provider, surface="society", runtime=str(fields.get("runtime") or "")
+            provider,
+            surface="society",
+            runtime=str(fields.get("runtime") or ""),
+            account_id=str(fields.get("account_id") or ""),
         )
         if not society_mode_supported(runner, requested_mode):
             raise HTTPException(
@@ -426,6 +435,7 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
             body.provider or agent.provider,
             approval_mode=body.approval_mode,
             permission_ceiling=fields.get("permission_ceiling"),
+            account_id=body.account_id,
         )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
@@ -948,7 +958,9 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
-    target_runner = _validated_chat_runner(rt, agent, body.provider)
+    target_runner = _validated_chat_runner(
+        rt, agent, body.provider, account_id=body.account_id.strip()
+    )
     chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),

@@ -446,7 +446,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
             with override_provider_secrets(overrides), usage_context("agent-runtime"):
-                login = await asyncio.to_thread(login_token_for, grant.provider)
+                login = await asyncio.to_thread(login_token_for, grant.provider, grant.account_id)
                 if login:
                     # No API key: the person's Claude Code login answers,
                     # which Anthropic bills as extra usage.

@@ -110,11 +110,11 @@ def ensure_session(
         society_mode_supported,
         stance_of,
     )
-    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_chat.service import resolve_runner, session_runner
 
     provider, model, effort = pair_for(cfg, agent)
     runtime = _session_runtime(agent)
-    runner = resolve_runner(provider, surface=SURFACE, runtime=runtime)
+    runner = resolve_runner(provider, surface=SURFACE, runtime=runtime, account_id=agent.account_id)
     legacy_mode = ""
     if agent.approval_mode is None:
         legacy_mode = normalize_permission(
@@ -196,6 +196,11 @@ def ensure_session(
     updates: dict[str, str] = {}
     if getattr(existing, "account_id", "") != agent.account_id:
         updates["account_id"] = agent.account_id
+        if session_runner(existing) != runner:
+            # Another way of paying moved the chat to another runner (Claude:
+            # subscription CLI <-> API key), which cannot resume the old one's
+            # vendor conversation; the next turn opens a fresh one.
+            updates["vendor_session"] = ""
     if effort and existing.effort != effort:
         updates["effort"] = effort
     if existing.permission_mode != mode:

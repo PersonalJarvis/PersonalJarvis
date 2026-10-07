@@ -343,6 +343,14 @@ def _remember_models(runner: str, rows: list[dict[str, Any]] | None) -> None:
         prepared[runner] = rows
 
 
+def _login_id(account_id: str) -> str:
+    """The login an account id names; ``""`` (the active one) for a reserved
+    access value (``catalog.ACCESS_ACCOUNTS``), which names no login."""
+    from jarvis.agent_chat.catalog import ACCESS_ACCOUNTS
+
+    return "" if account_id in ACCESS_ACCOUNTS else account_id
+
+
 def _account_env(platform: str) -> dict[str, str]:
     """The child environment for the subscription seat of ``platform`` — the
     turn's pinned account when its session names one, else the active one."""
@@ -353,7 +361,7 @@ def _account_env(platform: str) -> dict[str, str]:
     try:
         from jarvis import agent_accounts
 
-        requested = ACCOUNT_OVERRIDE.get()
+        requested = _login_id(ACCOUNT_OVERRIDE.get())
         pinned = agent_accounts.resolve(requested or None)
         if requested and pinned is None:
             raise CliUnavailable(
@@ -368,7 +376,7 @@ def _account_env(platform: str) -> dict[str, str]:
     except CliUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 — unsupported platforms use native credentials
-        if ACCOUNT_OVERRIDE.get() and pinned_platform in (None, platform):
+        if _login_id(ACCOUNT_OVERRIDE.get()) and pinned_platform in (None, platform):
             raise CliUnavailable("The selected subscription account could not be loaded.") from exc
         log.debug("CLI account layer unavailable for %s (%s)", platform, type(exc).__name__)
         env = dict(os.environ)

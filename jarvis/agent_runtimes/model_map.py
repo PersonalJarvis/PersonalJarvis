@@ -115,18 +115,26 @@ def _api_key(provider: str, credential: str | None) -> str | None:
     return key
 
 
-def login_token_for(provider: str) -> str | None:
-    """The Claude login ``provider`` answers on, or ``None`` when it has an
-    API key (or cannot use a login at all). Blocking (keyring)."""
-    endpoint = _ENDPOINTS.get(provider)
-    if endpoint is None or not endpoint.claude_login:
-        return None
+def _saved_key(provider: str, endpoint: _Endpoint) -> str | None:
     from jarvis.core.config import resolve_provider_endpoint
 
     resolved = resolve_provider_endpoint(
         provider, vendor_default_base_url=endpoint.default_base_url
     )
-    if _api_key(provider, resolved.credential) is not None:
+    return _api_key(provider, resolved.credential)
+
+
+def login_token_for(provider: str, account_id: str = "") -> str | None:
+    """The Claude login ``provider`` answers on, or ``None`` when it runs on
+    an API key (or cannot use a login at all). ``account_id`` may pin the
+    agent to its key or to the login (``catalog.ACCESS_ACCOUNTS``); without a
+    pin the API key wins. Blocking (keyring)."""
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+
+    endpoint = _ENDPOINTS.get(provider)
+    if endpoint is None or not endpoint.claude_login or account_id == API_KEY_ACCOUNT:
+        return None
+    if account_id != SUBSCRIPTION_ACCOUNT and _saved_key(provider, endpoint) is not None:
         return None
     return claude_login_token()
 
@@ -135,6 +143,24 @@ def login_providers() -> list[str]:
     """Usable providers that answer on a Claude login, not an API key: the
     picker labels them as billed extra usage. Blocking (keyring)."""
     return [name for name in _ENDPOINTS if login_token_for(name)]
+
+
+def access_choices() -> dict[str, list[str]]:
+    """Per provider that can pay two ways (Claude: API key or Claude Code
+    login), the ways that work right now: ``"api"`` and/or ``"subscription"``.
+    The "New agent" dialog offers exactly these. Blocking (keyring)."""
+    choices: dict[str, list[str]] = {}
+    for name, endpoint in _ENDPOINTS.items():
+        if not endpoint.claude_login:
+            continue
+        found: list[str] = []
+        if _saved_key(name, endpoint) is not None:
+            found.append("api")
+        if claude_login_token() is not None:
+            found.append("subscription")
+        if found:
+            choices[name] = found
+    return choices
 
 
 def supports(provider: str) -> bool:
@@ -222,6 +248,19 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
         )
     # The Agents-tier key wins over the shared one, exactly as the gateway uses it.
     key = _api_key(provider, resolved.credential)
+    if endpoint.claude_login:
+        from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+
+        if account_id == API_KEY_ACCOUNT and key is None:
+            raise RouteUnavailable(
+                "This agent runs on an Anthropic API key, and none is saved. Connect "
+                "one in Settings → API keys, or switch the agent to the subscription."
+            )
+        if account_id == SUBSCRIPTION_ACCOUNT and not claude_login_token():
+            raise RouteUnavailable(
+                "This agent runs on the Claude Code login, and it is not live. Open "
+                "Claude Code once to renew it, or switch the agent to an API key."
+            )
     if key is None and endpoint.claude_login and not claude_login_token():
         raise RouteUnavailable(
             "Claude needs an Anthropic API key or a live Claude Code login. Connect "

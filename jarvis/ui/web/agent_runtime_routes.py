@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from jarvis.agent_runtimes import RUNTIME_NAMES, manager
 from jarvis.agent_runtimes.model_map import (
+    access_choices,
     login_providers,
     subscription_providers,
     supported_providers,
@@ -24,9 +25,9 @@ from jarvis.agent_runtimes.model_map import (
 
 router = APIRouter(prefix="/api/agent-runtimes", tags=["agent-runtimes"])
 
-#: ``[checked_at, providers, login_providers]``: the keyring is read at most every few seconds,
-#: since the UI polls this route while an install runs.
-_USABLE_CACHE: list[Any] = [float("-inf"), [], []]
+#: ``[checked_at, providers, login_providers, access_choices]``: the keyring is read at most
+#: every few seconds, since the UI polls this route while an install runs.
+_USABLE_CACHE: list[Any] = [float("-inf"), [], [], {}]
 _USABLE_TTL_S = 10.0
 
 
@@ -36,7 +37,9 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
     plus the Jarvis providers an agent on such a runtime can use right now
     (``supported_providers``: saved key or local server; ``all_providers``:
     every provider the runtimes can drive once connected; ``login_providers``:
-    usable ones that answer on a Claude login, billed as extra usage)."""
+    usable ones that answer on a Claude login, billed as extra usage;
+    ``access``: for a provider that can pay two ways, which ways work now —
+    ``"api"`` and/or ``"subscription"``)."""
     now = time.monotonic()
     if refresh or now - _USABLE_CACHE[0] > _USABLE_TTL_S:
         config = getattr(request.app.state, "config", None)
@@ -45,13 +48,19 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
 
             config = await asyncio.to_thread(load_config)
         usable = await asyncio.to_thread(usable_providers, config)
-        _USABLE_CACHE[:] = [now, usable, await asyncio.to_thread(login_providers)]
+        _USABLE_CACHE[:] = [
+            now,
+            usable,
+            await asyncio.to_thread(login_providers),
+            await asyncio.to_thread(access_choices),
+        ]
     return {
         "runtimes": await manager.statuses(refresh=refresh),
         "supported_providers": list(_USABLE_CACHE[1]),
         "all_providers": sorted(supported_providers()),
         "subscription_providers": sorted(subscription_providers()),
         "login_providers": list(_USABLE_CACHE[2]),
+        "access": dict(_USABLE_CACHE[3]),
     }
 
 
