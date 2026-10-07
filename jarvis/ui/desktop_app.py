@@ -5206,7 +5206,12 @@ class DesktopApp:
             # being destroyed and then exit as if it had succeeded (2026-09-30).
             return {"ok": False, "focused": False, "reason": "quitting"}
         if self._window is None:
-            if getattr(getattr(self, "_background", None), "keeper", None) is not None:
+            # A detached view also keeps the GUI loop alive after main closes.
+            # A second launch must reopen main just like the tray's Open action,
+            # instead of reporting this healthy process as a windowless hang.
+            if getattr(self, "_detached_windows", None) or getattr(
+                getattr(self, "_background", None), "keeper", None
+            ) is not None:
                 self._ensure_main_window()
             if self._window is None:
                 return {"ok": False, "reason": "no_window"}
