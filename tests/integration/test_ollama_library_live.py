@@ -6,18 +6,30 @@ the real search and tags pages and asserts the parsers still read them. The
 moment the markup drifts past what the anchors tolerate, this fails loudly at
 CI time instead of a user finding an inexplicably empty library panel.
 
-Network-dependent, so it is marked ``integration`` and self-skips when
-ollama.com cannot be reached. Run explicitly with ``pytest -m integration``.
+Opt-in: it runs only with ``JARVIS_LIVE_NETWORK_TESTS=1``. A third-party
+site redesign is not caused by the change under review, so it must not block
+every pull request at once (the 2026-10 redesign did exactly that). Run it
+when touching the parser, or from a scheduled job that sets the variable:
+``JARVIS_LIVE_NETWORK_TESTS=1 pytest -m integration tests/integration/test_ollama_library_live.py``.
+It also self-skips when ollama.com cannot be reached.
 """
 
 from __future__ import annotations
+
+import os
 
 import httpx
 import pytest
 
 from jarvis.brain.ollama_library import _tags_path, parse_search_html, parse_tags_html
 
-pytestmark = pytest.mark.integration
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        os.environ.get("JARVIS_LIVE_NETWORK_TESTS") != "1",
+        reason="live ollama.com check; opt in with JARVIS_LIVE_NETWORK_TESTS=1",
+    ),
+]
 
 _TIMEOUT = 15.0
 
