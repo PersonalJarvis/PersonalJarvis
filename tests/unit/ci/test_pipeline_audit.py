@@ -379,10 +379,53 @@ def test_workflow_security_policy_and_mutation_regressions():
         lambda w: w["stargazer-map.yml"]["jobs"]["verify"]["steps"][0].update(
             {"uses": "actions/checkout@v4"}
         ),
+        lambda w: w["release-cut.yml"]["jobs"]["cut"].pop("environment"),
+        lambda w: _release_cut_step(w, "Tag the admitted release")["env"].update(
+            {"GH_TOKEN": "${{ github.token }}"}
+        ),
+        lambda w: w["ci.yml"]["jobs"]["gate"]["steps"][0].update(
+            {"env": {"KEY": "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"}}
+        ),
     ):
         changed = copy.deepcopy(clean)
         mutate(changed)
         assert check_workflow_policy.audit(changed)
+
+
+def _release_cut_step(definitions: dict, name: str) -> dict:
+    steps = definitions["release-cut.yml"]["jobs"]["cut"]["steps"]
+    return next(step for step in steps if step.get("name") == name)
+
+
+def test_release_cut_writes_with_fresh_bot_tokens_and_reads_with_github_token():
+    definitions = workflows()
+    cut = definitions["release-cut.yml"]["jobs"]["cut"]
+    assert cut["environment"] == "release-cut"
+    assert cut["env"]["GH_TOKEN"] == "${{ github.token }}"  # noqa: S105 - expression
+    assert cut["env"]["TOKEN_IS_BOT"] == "${{ vars.RELEASE_APP_ID == '' }}"  # noqa: S105
+    checkout = cut["steps"][0]
+    assert checkout["uses"].startswith("actions/checkout@")
+    assert checkout["with"]["persist-credentials"] is False
+    # Every write step mints its own token right before it (one-hour lifetime).
+    for writer, minter in (
+        ("Open the candidate PR", "candidate-token"),
+        ("Land the candidate", "land-token"),
+        ("Tag the admitted release", "tag-token"),
+    ):
+        names = [step.get("name") for step in cut["steps"]]
+        assert cut["steps"][names.index(writer) - 1].get("id") == minter
+        token = _release_cut_step(definitions, writer)["env"]["GH_TOKEN"]
+        assert token == f"${{{{ steps.{minter}.outputs.token || github.token }}}}"
+    minters = [s for s in cut["steps"] if s.get("id", "").endswith("-token")]
+    assert len(minters) == 3
+    for step in minters:
+        assert step["uses"].startswith("actions/create-github-app-token@")
+        assert "vars.RELEASE_APP_ID != ''" in step["if"]
+        assert step["with"]["private-key"] == "${{ secrets.RELEASE_APP_PRIVATE_KEY }}"
+        assert "permission-workflows" not in step["with"]
+    # Long CI waits never hold a bot token.
+    for reader in ("Wait for the candidate CI gate", "Admit the release commit"):
+        assert "GH_TOKEN" not in _release_cut_step(definitions, reader).get("env", {})
 
 
 def test_all_shards_consume_the_same_detect_output_including_partial_reruns():
@@ -399,8 +442,8 @@ def test_all_shards_consume_the_same_detect_output_including_partial_reruns():
 
 
 def test_release_ci_targets_tag_with_all_platforms():
-    steps = workflows()["release-cut.yml"]["jobs"]["cut"]["steps"]
-    dispatch = next(s["run"] for s in steps if s.get("name") == "Dispatch the publishing workflows on the tag")
+    step = _release_cut_step(workflows(), "Dispatch the publishing workflows on the tag")
+    dispatch = step["run"]
     assert 'ci.yml --ref "v$V" -f full=true -f include_macos=true' in dispatch
 
 
@@ -414,7 +457,8 @@ def test_release_cut_lands_through_protection_and_tags_the_merge_commit():
     cut = workflows()["release-cut.yml"]["jobs"]["cut"]
     commands = "\n".join(step.get("run", "") for step in cut["steps"])
     assert "git push origin HEAD:main" not in commands
-    assert 'gh pr merge "$candidate" --merge --match-head-commit "$sha"' in commands
+    merge = 'gh pr merge "$CANDIDATE" --merge --match-head-commit "$CANDIDATE_SHA"'
+    assert merge in commands
     assert 'git checkout --detach "$merged"' in commands
     assert '[ "$TOKEN_IS_BOT" = "true" ] || [ "$TAG_PUSHED" != "true" ]' in commands
 

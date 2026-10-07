@@ -106,6 +106,9 @@ def _exercise(
             "RELEASE_REF": "refs/tags/v1.2.3",
             "TAG_EXISTS": "1",
             "TAG_SHA": _SHA,
+            "TAG_PUSHED": "true",
+            "CANDIDATE": "release-cut/v1.2.3-77-2",
+            "CANDIDATE_SHA": _SHA,
             **overrides,
         },
         capture_output=True,
@@ -148,6 +151,49 @@ def test_release_qualification_fails_on_a_failing_auth_contract(tmp_path):
     assert not (tmp_path / "summary.txt").exists()
 
 
+_CANDIDATE_TO_TAG = [
+    "Open the candidate PR",
+    "Wait for the candidate CI gate",
+    "Land the candidate",
+    "Admit the release commit",
+    "Tag the admitted release",
+]
+_MAIN_CI = "gh workflow run ci.yml --ref main -f full=true -f include_macos=true"
+_DISPATCH = "Dispatch the publishing workflows on the tag"
+_PUBLISHERS = "python scripts/ci/release_assets.py dispatch --repo example/project --tag v1.2.3"
+
+
+@pytest.mark.parametrize("token_is_bot", ["true", "false"])
+def test_landing_always_dispatches_ci_for_the_merge_commit(tmp_path, token_is_bot):
+    # A bot merge's push run can be dropped from the main-push group while it
+    # still queues; the dispatched run has its own group.
+    result, commands = _exercise(tmp_path, _CANDIDATE_TO_TAG, TOKEN_IS_BOT=token_is_bot)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert commands.count(_MAIN_CI) == 1
+    assert commands.index(_MAIN_CI) < commands.index("git tag -a v1.2.3 -m v1.2.3")
+
+
+@pytest.mark.parametrize(
+    "token_is_bot,tag_pushed,dispatched",
+    [
+        # GITHUB_TOKEN tag push fires no tag events: dispatch the publishers.
+        ("true", "true", True),
+        # The release bot's new tag already started them: never twice.
+        ("false", "true", False),
+        # The tag existed before this run (resume): nothing started them.
+        ("false", "false", True),
+        ("true", "false", True),
+    ],
+)
+def test_publishers_start_exactly_once(tmp_path, token_is_bot, tag_pushed, dispatched):
+    result, commands = _exercise(
+        tmp_path, [_DISPATCH], TOKEN_IS_BOT=token_is_bot, TAG_PUSHED=tag_pushed
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert commands[0] == "gh workflow run ci.yml --ref v1.2.3 -f full=true -f include_macos=true"
+    assert (_PUBLISHERS in commands) is dispatched
+
+
 @pytest.mark.parametrize(
     "overrides,success",
     [
@@ -161,10 +207,7 @@ def test_release_qualification_fails_on_a_failing_auth_contract(tmp_path):
 def test_only_a_green_candidate_can_land_and_publish(tmp_path, overrides, success):
     result, commands = _exercise(
         tmp_path,
-        [
-            "Check the version commit before landing and tagging",
-            "Tag the admitted release",
-        ],
+        _CANDIDATE_TO_TAG,
         **overrides,
     )
     assert (result.returncode == 0) is success, result.stdout + result.stderr
@@ -200,6 +243,7 @@ def test_resume_requires_merged_current_version_and_admission(tmp_path, override
         tmp_path,
         [
             "Select an already merged version commit",
+            "Admit the release commit",
             "Tag the admitted release",
         ],
         **overrides,

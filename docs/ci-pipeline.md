@@ -168,11 +168,19 @@ A release happens **only** when the maintainer asks for one.
   the Conventional Commits since the last tag) into a dated CHANGELOG section
   (`scripts/ci/cut_release.py`), lands the candidate through a CI-checked PR,
   tags the resulting merge commit, and dispatches full CI with macOS on that
-  immutable tag. It dispatches publishers when using `GITHUB_TOKEN`; a new
-  tag pushed with the optional integration token already starts them, so no
-  duplicate PyPI publication is dispatched. Resume support accepts an already
-  merged version commit. Repository PR policy may require the integration
-  token or a maintainer to open the candidate PR.
+  immutable tag. Its `cut` job runs in the `release-cut` environment, which
+  only `main` may deploy to and which holds the private key of the release
+  bot GitHub App (secret `RELEASE_APP_PRIVATE_KEY`, variable
+  `RELEASE_APP_ID`). Right before each write (candidate push and PR, merge,
+  tag push) the job mints a fresh installation token with
+  `actions/create-github-app-token`; CI waits use `GITHUB_TOKEN`, because an
+  installation token lasts one hour. Bot pushes fire the normal events: the
+  candidate PR runs CI by itself and the new tag starts the publishers, so no
+  duplicate PyPI publication is dispatched. Without the bot
+  (`RELEASE_APP_ID` unset) the job falls back to `GITHUB_TOKEN`, dispatches
+  the publishers itself, and a maintainer must open the candidate PR, since
+  `GITHUB_TOKEN` may not open pull requests here. Resume support accepts an
+  already merged version commit.
 * **`release-gate.yml`** is the first job of `release.yml` (PyPI),
   `desktop-installers.yml` and `sign-installer.yml`. It admits a tag only
   when tag, versions and CHANGELOG agree, the commit is on main, and
@@ -190,8 +198,8 @@ A release happens **only** when the maintainer asks for one.
   its checksum, and verifies those uploads before publishing. The release-cut
   `publish` job is the normal finalizer. `release-finalize.yml` shares its
   per-tag lock but only fires on its own (`workflow_run`) when a person or the
-  integration token started the publishers: publisher runs dispatched with
-  `GITHUB_TOKEN` raise no `workflow_run` event, so with the default token it
+  release bot started the publishers: publisher runs dispatched with
+  `GITHUB_TOKEN` raise no `workflow_run` event, so without the bot it
   stays a manual retry path. Finalization can
   also be retried manually from main with an existing draft tag. Producers
   never edit release visibility or replace existing asset names. Before an
