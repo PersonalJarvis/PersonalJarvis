@@ -13,6 +13,10 @@ rules:
       # `apply` job executes nothing from a pull request.
       - merge-train.yml
       - release-finalize.yml
+      # Reacts to completed CI runs on main only (repository, branch and event
+      # checked in `if:` and again by flaky_report.py vet-run), checks out
+      # `main`, and reads the downloaded shard reports as JSON data.
+      - flaky-tests.yml
   artipacked:
     ignore:
       # This job pushes commits and tags with git after checkout, so the
