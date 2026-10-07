@@ -77,6 +77,52 @@ def test_search_parser_answers_empty_on_garbage() -> None:
     assert library.parse_search_html("<html><body>maintenance</body></html>") == []
 
 
+# Trimmed from the live listing after the 2026-10 redesign: badges are text
+# after an icon ("Embedding"), the pull count sits under a "N downloads" title
+# and the update age is gone.
+_REDESIGNED_ENTRIES = """
+<ul>
+<li class="border-b"><a href="/library/embeddinggemma-2" class="group flex">
+  <h2 title="embeddinggemma-2"><span >embeddinggemma-2</span></h2>
+  <p class="mt-1" title="An embedding model.">An embedding model.</p>
+  <div><span class="group/tip"><span role="tooltip">Runs on your computer</span>
+    <svg aria-hidden="true"><path d="M9 17"/></svg><span  class="font-medium">270m</span>
+    <span aria-hidden="true">&middot;</span><span  class="font-medium">440m</span></span>
+  <div><span  class="inline-flex"><svg aria-hidden="true"><path d="M2"/></svg>Vision</span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M21"/></svg>Embedding</span></div>
+  </div>
+  <span class="inline-flex" title="5,435 downloads"><svg aria-hidden="true">
+    <path d="M3"/></svg><span >5,435</span></span>
+</a></li>
+<li class="border-b"><a href="/library/glm-5.3" class="group flex">
+  <h2 title="glm-5.3"><span >glm-5.3</span></h2>
+  <p class="mt-1" title="A flagship model.">A flagship model.</p>
+  <div><span class="group/tip"><span role="tooltip">Runs on Ollama&#39;s cloud</span>
+    <span class="font-medium">Cloud</span></span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M1"/></svg>Tools</span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M1"/></svg>Thinking</span></div>
+</a></li>
+</ul>
+"""
+
+
+def test_search_parser_reads_the_redesigned_listing() -> None:
+    embedding, cloud = library.parse_search_html(_REDESIGNED_ENTRIES)
+
+    assert embedding["name"] == "embeddinggemma-2"
+    assert embedding["description"] == "An embedding model."
+    assert embedding["capabilities"] == ["vision", "embedding"]
+    assert embedding["cloud"] is False
+    assert embedding["sizes"] == ["270m", "440m"]
+    assert embedding["pulls"] == "5,435"
+    assert embedding["updated"] == ""
+
+    assert cloud["name"] == "glm-5.3"
+    assert cloud["capabilities"] == ["tools", "thinking"]
+    assert cloud["cloud"] is True
+    assert cloud["pulls"] == ""
+
+
 # ── tags parser ──────────────────────────────────────────────────────────
 
 

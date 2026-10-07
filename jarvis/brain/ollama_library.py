@@ -226,12 +226,21 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
 
         spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", block)]
         spans = [s for s in spans if s]
-        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in spans]
+        # Badges are matched as whole text runs, case-insensitively: the
+        # 2026-10 redesign writes "Embedding" after an icon, no longer as the
+        # sole lower-case content of a <span>.
+        labels = {_text(m.group(1)).lower() for m in re.finditer(r">([^<]+)<", block)}
+        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in labels]
         sizes = [s for s in spans if re.fullmatch(r"\d+(?:\.\d+)?[bm]", s)]
 
         pulls_match = re.search(
             r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", block
+        ) or re.search(
+            r'title="[\d.,]+ downloads"[^>]*>.*?<span[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
+            block,
+            re.DOTALL,
         )
+        # The redesigned listing no longer shows an update age; "" then.
         updated = next((s for s in spans if s.endswith(" ago") or s == "yesterday"), "")
 
         entries.append(
@@ -239,7 +248,7 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 "name": name,
                 "description": description,
                 "capabilities": capabilities,
-                "cloud": "cloud" in spans,
+                "cloud": "cloud" in labels,
                 "sizes": sizes,
                 "pulls": pulls_match.group(1) if pulls_match else "",
                 "updated": updated,
