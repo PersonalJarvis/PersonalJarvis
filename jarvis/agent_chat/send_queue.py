@@ -6,7 +6,11 @@ turn is still running. Instead of a "turn already running" refusal, the
 message waits here and starts as the next turn once the agent's seat is free.
 
 The queue lives in memory and is bounded per chat, in size and in waiting
-time. Every queued message is a ``message_queued`` notice in the chat; when it
+time. While the chat's own turn runs, that turn bounds the wait (its setup,
+slot and run timeouts: a Hermes or OpenClaw agent's first turn may install
+its runtime for many minutes); :data:`MAX_WAIT_S` counts only the time the
+chat is idle yet still cannot take the message, and :data:`MAX_TOTAL_WAIT_S`
+caps the wait as a whole. Every queued message is a ``message_queued`` notice in the chat; when it
 starts (or cannot be sent) a ``message_dequeued`` notice with the same
 ``queue_id`` replaces it, so the timeline shows a waiting message exactly
 while it waits. A restart forgets the queue, so opening the chat afterwards
@@ -25,12 +29,26 @@ from typing import Any, Final
 
 log = logging.getLogger(__name__)
 
-__all__ = ["MAX_QUEUED", "MAX_WAIT_S", "QueueFull", "close_orphans", "send_or_queue"]
+__all__ = [
+    "MAX_QUEUED",
+    "MAX_TOTAL_WAIT_S",
+    "MAX_WAIT_S",
+    "QueueFull",
+    "close_orphans",
+    "send_or_queue",
+]
 
 #: Messages one chat may hold while its agent works.
 MAX_QUEUED: Final[int] = 5
-#: How long a message may wait for the agent before it is reported unsent.
+#: How long a message may wait while the chat is idle but the agent's seat is
+#: still taken elsewhere (another of its chats, a delegation), before it is
+#: reported unsent.
 MAX_WAIT_S: Final[float] = 600.0
+#: The longest any message waits, a running turn included. Above the longest
+#: turn the runner allows: a runtime setup (30 min, ``agent_runtimes.manager``),
+#: the runtime's turn slot (15 min, ``agent_runtimes.base``) and the run (60 min,
+#: ``runner_cli._TURN_TIMEOUT_S``).
+MAX_TOTAL_WAIT_S: Final[float] = 2.5 * 3600
 #: How often a waiting chat checks whether its agent is free (seconds).
 _POLL_S: Final[float] = 0.5
 #: How far back opening a chat looks for waiting notices a restart orphaned.
@@ -50,6 +68,8 @@ class _Queued:
     attachments: list[dict[str, Any]] | None
     tool_choices: list[str] | None
     queued_at: float = 0.0
+    #: Seconds the chat was idle yet could not take this message.
+    blocked_s: float = 0.0
 
 
 @dataclass(slots=True)
@@ -157,22 +177,27 @@ async def _drain_loop(svc: Any, session_id: str, pending: _ChatQueue) -> None:
     from jarvis.agent_chat.service import SessionBusy
 
     loop = asyncio.get_running_loop()
+    checked = loop.time()
     while pending.items:
         # Jitter only spreads polls of several waiting chats; it is not security.
         await asyncio.sleep(_POLL_S + random.uniform(0, _POLL_S / 2))  # noqa: S311
+        now = loop.time()
+        step, checked = now - checked, now
         head = pending.items[0]
-        if loop.time() - head.queued_at > MAX_WAIT_S:
+        if head.blocked_s > MAX_WAIT_S or now - head.queued_at > MAX_TOTAL_WAIT_S:
             # The agent stayed busy too long: report it instead of waiting forever.
             pending.items.popleft()
             await _fail(svc, session_id, head)
             continue
         if svc.is_running(session_id):
+            # The chat's own turn bounds this wait with its own timeouts.
             continue
         try:
             await svc.send(
                 session_id, head.text, head.attachments, tool_choices=head.tool_choices
             )
         except SessionBusy:  # the seat is still taken: this message simply waits longer
+            head.blocked_s += step
             continue
         except Exception:  # noqa: BLE001 — reported in the chat, then the next one runs
             # The detail stays in the log; a provider's text never reaches the chat.
