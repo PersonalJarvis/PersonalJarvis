@@ -549,3 +549,16 @@ def test_pausing_moves_the_figure_home(memory_client):
     assert c.get("/api/society/agents/scout").json()["agent"]["checkpoint"] == "gate"
     res = c.patch("/api/society/agents/scout", json={"state": "paused"})
     assert res.json()["agent"]["checkpoint"] == "idle"
+
+
+def test_a_runtime_agent_on_an_unsupported_provider_names_a_translatable_reason(client):
+    c, _ = client
+    res = c.post(
+        "/api/society/agents",
+        json={"name": "Rune", "runtime": "hermes", "provider": "no-such-vendor", "model": "x"},
+    )
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    # The UI shows its own sentence for the reason; the detail names every way that works.
+    assert detail["reason"] == "runtime_provider_unsupported"
+    assert "ChatGPT subscription" in detail["detail"]

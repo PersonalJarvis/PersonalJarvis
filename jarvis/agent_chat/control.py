@@ -262,6 +262,12 @@ class ChatControls:
             if state.goal and state.goal.status == "active":
                 return {"started": sid in self.jobs}
             if not state.last_request or state.last_status not in ("interrupted", "failed"):
+                if self._last_failure_was_not_yours(sid):
+                    raise ValueError(
+                        "The task that failed last came from Jarvis, a teammate or a "
+                        "routine, not from you, so /continue cannot resume it. Ask the "
+                        "agent yourself, or let the sender try again."
+                    )
                 raise ValueError("There is no interrupted task to continue")
             return {
                 "turn_id": await self._send(
@@ -527,6 +533,25 @@ class ChatControls:
         else:
             state.last_status = "failed"
         await self.publish(state)
+
+    def _last_failure_was_not_yours(self, sid: str) -> bool:
+        """Whether the chat's latest turn failed and the person did not start it.
+
+        The service emits a person's ``user_message`` right before its
+        ``turn_started``; work delivered by Jarvis, a teammate or a routine has
+        none, and ``/continue`` only resumes the person's own request
+        (``turn_completed``).
+        """
+        events = self.service.store.list_events(sid)
+        finished = [e for e in events if e["kind"] == "turn_finished"]
+        if not finished or finished[-1]["payload"].get("status") not in ("error", "cancelled"):
+            return False
+        turn_id = finished[-1]["payload"].get("turn_id")
+        for index, event in enumerate(events):
+            if event["kind"] == "turn_started" and event["payload"].get("turn_id") == turn_id:
+                before = [e for e in events[:index] if e["kind"] != "notice"]
+                return not before or before[-1]["kind"] != "user_message"
+        return False
 
     async def turn_completed(
         self, sid: str, turn_id: str, text: str, direct_user: bool, read_only: bool

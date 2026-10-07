@@ -142,7 +142,7 @@ def _read(key: tuple, now: float) -> Evidence:
             for raw in handle:
                 try:
                     row = json.loads(raw)
-                except (ValueError, UnicodeDecodeError):
+                except (ValueError, UnicodeDecodeError):  # a half-written last line
                     result, before = Evidence(checked_at=now), ""
                     continue  # The writer may not have completed its last JSON line.
                 if not isinstance(row, dict):

@@ -36,6 +36,7 @@ LANE_JOBS = {
     "browser": {"browser"},
     "installer": {"installer"},
     "updater": {"updater"},
+    "agent_runtimes": {"agent-runtimes-unit", "agent-runtimes-headless", "agent-runtimes-e2e"},
 }
 
 

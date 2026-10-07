@@ -889,6 +889,9 @@ jarvis = [
     "skills/safe_imports.txt",
     "core/review/verdict_schema.json",
     "society/mars/definition.json",
+    # The Hermes / OpenClaw releases setup installs and accepts
+    # (agent_runtimes/versions.py); without it setup falls back to latest.
+    "agent_runtimes/runtime-versions.json",
     # Seed catalogs (CLI tools / skills / marketplace plugins) — named
     # explicitly rather than a repo-wide "**/*.json" glob, which would also
     # sweep in jarvis/ui/web/frontend's SOURCE config (package.json,
