@@ -103,6 +103,14 @@ def test_hermes_self_learning_extras_stay_off(tmp_path):
     assert config["skills"]["creation_nudge_interval"] == 0
 
 
+def test_hermes_has_one_attempt_and_no_automatic_recovery_or_fallback(tmp_path):
+    config = HermesRuntime().config_for(_turn(tmp_path, denied_native=frozenset({"shell"})))
+    assert config["agent"]["api_max_retries"] == 1
+    assert config["agent"]["auto_recovery_cycles"] == 0
+    assert config["fallback_model"] is None
+    assert "terminal" in config["agent"]["disabled_toolsets"]
+
+
 def test_hermes_offers_jarvis_tools_directly(tmp_path):
     """Never deferred behind Hermes' tool search (a 9B model missed them live)."""
     assert HermesRuntime().config_for(_turn(tmp_path))["tools"]["tool_search"] is False
@@ -162,6 +170,9 @@ def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     assert "automations" in config["tools"]["deny"]
     assert config["tools"]["toolSearch"] is False
     assert config["gateway"]["bind"] == "loopback"
+    assert config["cron"]["enabled"] is False
+    assert config["plugins"]["slots"]["memory"] == "none"
+    assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
 
 
 def test_openclaw_exec_mode_follows_grants_not_the_stance(tmp_path):
@@ -266,6 +277,25 @@ def test_the_chatgpt_subscription_speaks_responses(gateway_up, monkeypatch):
     route = route_for(_cfg(), "openai-codex", "gpt-5.5", agent_id="agent-1", account_id="acct")
     assert route.transport == "responses" and route.base_url == _GATEWAY
     assert gateway.verify(route.api_key or "") == gateway.Grant("agent-1", "openai-codex", "acct")
+
+
+def test_chat_and_routine_routes_have_stable_separate_failure_scopes(gateway_up):
+    with override_provider_secrets({"openai": _SECRET}):
+        routes = [route_for(_cfg(), "openai", "m", agent_id="a", session_id=sid)
+                  for sid in ("society:a", "society:a:routine:r1", "society:a:routine:r2")]
+    assert routes[0].api_key != routes[1].api_key
+    assert routes[1].api_key == routes[2].api_key
+
+
+def test_a_rate_limited_route_refuses_before_starting_a_runtime(gateway_up):
+    gateway = gateway_up
+    grant = gateway.Grant("a", "openai")
+    gateway._report_failure(
+        grant, "m", gateway.GatewayError("limited", status=429, retry_after=60), None,
+    )
+    with override_provider_secrets({"openai": _SECRET}):
+        with pytest.raises(RouteUnavailable, match="HTTP 429"):
+            route_for(_cfg(), "openai", "m", agent_id="a", session_id="society:a")
 
 
 def test_a_missing_key_is_reported_in_plain_words(gateway_up):

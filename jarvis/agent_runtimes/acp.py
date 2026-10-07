@@ -542,6 +542,21 @@ def _tool_name(update: dict[str, Any]) -> str:
 def _error_text(error: dict[str, Any]) -> str:
     message = str(error.get("message") or "error")
     data = error.get("data")
+    if isinstance(data, dict):
+        # Hermes' ACP SDK nests this local configuration failure under
+        # details. Translate only the known numeric contract; never expose
+        # arbitrary upstream details (which may contain provider bodies).
+        detail = str(data.get("details") or "")
+        bounds = re.search(
+            r"context window of ([\d,]+) tokens, which is below the minimum "
+            r"([\d,]+) required by Hermes Agent\.", detail,
+        )
+        if bounds:
+            actual, minimum = bounds.groups()
+            return (
+                f"Hermes requires at least {minimum} context tokens; this model has {actual}. "
+                "Increase the model context in Settings or choose a model with a larger window."
+            )
     if isinstance(data, str) and data:
         return f"{message}: {data}"
     if isinstance(data, dict) and data.get("message"):

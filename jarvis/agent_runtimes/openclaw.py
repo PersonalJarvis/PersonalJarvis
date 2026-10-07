@@ -273,8 +273,9 @@ class OpenClawRuntime:
                     "id": route.model,
                     "name": route.model,
                     "input": ["text"],
-                    "contextWindow": 128_000,
-                    "maxTokens": 8_192,
+                    "contextWindow": route.context_window,
+                    **({"maxTokens": route.max_output_tokens}
+                       if route.max_output_tokens is not None else {}),
                 }
             ],
         }
@@ -306,6 +307,14 @@ class OpenClawRuntime:
                 }
             },
             "session": {"reset": {"mode": "none"}},
+            # Heartbeat is only one background caller. The memory plugin can
+            # create dreaming jobs at startup even with heartbeat disabled.
+            # Jarvis owns memory and scheduling; neither may call this key.
+            "cron": {"enabled": False},
+            "plugins": {
+                "slots": {"memory": "none"},
+                "entries": {"memory-core": {"enabled": False}},
+            },
             # Jarvis' tools offered directly, never behind OpenClaw's tool search
             # (on by default for local models; smaller models miss deferred tools).
             "tools": {"deny": denied, "exec": {"mode": exec_mode}, "toolSearch": False},

@@ -39,8 +39,9 @@ def test_canonical_session_is_a_pure_function():
     assert canonical_session_id("scout") == "society:scout"
 
 
-async def test_create_then_adopt_by_name(roster: Roster):
-    scout, created = await roster.create(name="Scout", title="Research scout")
+@pytest.mark.parametrize("runtime", ["jarvis", "hermes", "openclaw"])
+async def test_create_then_adopt_by_name(roster: Roster, runtime):
+    scout, created = await roster.create(name="Scout", title="Research scout", runtime=runtime)
     assert created is True
     assert scout.agent_id == "scout"
     assert scout.tier is Tier.SPECIALIST

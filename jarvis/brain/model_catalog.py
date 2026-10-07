@@ -172,12 +172,11 @@ class ModelInfo:
     # only source, and every new model generation shipped as "$0.00" until
     # someone noticed (2026-07-28 and 2026-08-18 audits).
     pricing: tuple[float, float] | None = None
-    # Local-server facts from Ollama's ``/api/show`` (``model_info.<arch>.
-    # context_length`` and ``details``). ``None`` for every gateway/cloud
-    # catalog — they carry no such manifest — so nothing downstream changes for
-    # them. Read by the Local models section and the per-model option sheet
-    # (native context caps the ``num_ctx`` chips).
+    # Declared token limits from provider catalogs or Ollama's /api/show.
+    # Unknown limits remain None; runtime adapters use conservative defaults.
+    # Native context also caps the local model option sheet's num_ctx chips.
     context_length: int | None = None
+    max_output_tokens: int | None = None
     quantization_level: str | None = None
     parameter_size: str | None = None
     # Release time (Unix seconds) where the catalog publishes one — OpenRouter
@@ -920,7 +919,11 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
             if not gemini_entry_serves_generate_content(m):
                 continue
             label = (m.get("displayName") or "").strip() or raw
-            out.append(ModelInfo(id=raw, label=label, output_modalities=_output_modalities(m)))
+            out.append(ModelInfo(
+                id=raw, label=label, output_modalities=_output_modalities(m),
+                context_length=_positive_limit(m.get("inputTokenLimit")),
+                max_output_tokens=_positive_limit(m.get("outputTokenLimit")),
+            ))
         return out
 
     # OpenAI-compatible shape (OpenAI / Anthropic / Grok / OpenRouter).
@@ -938,9 +941,19 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
                 supported_parameters=_supported_parameters(m),
                 pricing=_pricing(m),
                 created=_created(m),
+                context_length=_positive_limit(m.get("context_length") or m.get("context_window")),
+                max_output_tokens=_positive_limit(
+                    m.get("max_output_tokens")
+                    or (m["top_provider"].get("max_completion_tokens")
+                        if isinstance(m.get("top_provider"), dict) else None)
+                ),
             )
         )
     return out
+
+
+def _positive_limit(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
 
 
 def _created(entry: dict) -> float | None:
@@ -1744,6 +1757,8 @@ class ModelCatalog:
                             if isinstance(m.get("created"), int | float)
                             else None
                         ),
+                        context_length=_positive_limit(m.get("context_length")),
+                        max_output_tokens=_positive_limit(m.get("max_output_tokens")),
                     )
                     for m in entry.get("models", [])
                 ]
@@ -1778,6 +1793,10 @@ class ModelCatalog:
                         ),
                         **({"pricing": list(m.pricing)} if m.pricing is not None else {}),
                         **({"created": m.created} if m.created is not None else {}),
+                        **({"context_length": m.context_length}
+                           if m.context_length is not None else {}),
+                        **({"max_output_tokens": m.max_output_tokens}
+                           if m.max_output_tokens is not None else {}),
                     }
                     for m in models
                 ],
@@ -1802,6 +1821,14 @@ class ModelCatalog:
         return tuple(sort_models(provider, filter_brain_models(models)))
 
     # -- public API ----------------------------------------------------
+
+    def cached_model(self, provider: str, model: str) -> ModelInfo | None:
+        """Read existing model metadata without network or inference work."""
+        entry = self._cache.get(provider)
+        if entry is None:
+            return None
+        aliases = {model, f"{model}:latest"} if provider == "ollama" else {model}
+        return next((item for item in entry[1] if item.id in aliases), None)
 
     async def list_models(self, provider: str, *, force_refresh: bool = False) -> CatalogResult:
         """Return the catalog for ``provider`` with an honest ``source`` flag.

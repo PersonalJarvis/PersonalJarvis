@@ -29,9 +29,9 @@ from jarvis.agent_runtimes.acp import AcpTurn, frame_line  # noqa: E402
 from jarvis.agent_runtimes.base import RuntimeTurn  # noqa: E402
 from jarvis.agent_runtimes.model_map import ModelRoute  # noqa: E402
 from jarvis.core.control_key import get_control_key  # noqa: E402
+from jarvis.core.process_tree import make_process_tree  # noqa: E402
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: E402
 from tests.fakes.fake_openai_server import MODEL_ID, FakeOpenAIServer  # noqa: E402
-
-_STDERR = Path(tempfile.gettempdir()) / "jarvis-runtime-e2e-stderr.log"
 
 
 class _IO:
@@ -63,37 +63,55 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
         auto_allow=True,
         report_session=launch.vendor_session,
     )
-    proc = await asyncio.create_subprocess_exec(
-        *launch.argv,
-        cwd=str(launch.cwd),
-        env=launch.env,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=_STDERR.open("ab"),
-        limit=16 * 1024 * 1024,
-    )
-    io = _IO(proc)
-    assert proc.stdin is not None and proc.stdout is not None
-    proc.stdin.write(acp.opening_frame().encode("utf-8"))
-    await proc.stdin.drain()
+    tree = make_process_tree("runtime-e2e")
+    proc = None
+    try:
+        with (turn.workspace.parent / "runtime-stderr.log").open("ab") as stderr:
+            proc = await asyncio.create_subprocess_exec(
+                *launch.argv,
+                cwd=str(launch.cwd),
+                env=launch.env,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=stderr,
+                limit=16 * 1024 * 1024,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+                start_new_session=os.name != "nt",
+            )
+            tree.assign(proc.pid)
+            io = _IO(proc)
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(acp.opening_frame().encode("utf-8"))
+            await proc.stdin.drain()
 
-    async def pump() -> None:
-        assert proc.stdout is not None and proc.stdin is not None
-        while raw := await proc.stdout.readline():
-            try:
-                obj = json.loads(raw)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                await acp.on_message(obj, io)
-            if acp.saw_result and not proc.stdin.is_closing():
-                proc.stdin.close()
+            async def pump() -> None:
+                assert proc.stdout is not None and proc.stdin is not None
+                while raw := await proc.stdout.readline():
+                    try:
+                        obj = json.loads(raw)
+                    except ValueError:
+                        continue  # upstream diagnostic output is not an ACP frame
+                    if isinstance(obj, dict):
+                        await acp.on_message(obj, io)
+                    if acp.saw_result and not proc.stdin.is_closing():
+                        proc.stdin.close()
 
-    await asyncio.wait_for(pump(), timeout=180)
-    await asyncio.wait_for(proc.wait(), timeout=30)
-    if launch.release is not None:
-        launch.release()
-    return acp, io
+            await asyncio.wait_for(pump(), timeout=180)
+            await asyncio.wait_for(proc.wait(), timeout=30)
+            return acp, io
+    finally:
+        tree.close()
+        try:
+            if proc is not None:
+                if proc.returncode is None:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass  # the process tree already reaped it
+                await asyncio.wait_for(proc.wait(), timeout=10)
+        finally:
+            if launch.release is not None:
+                launch.release()
 
 
 async def main(name: str) -> int:

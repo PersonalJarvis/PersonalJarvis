@@ -17,8 +17,9 @@ Claude Code as extra usage (pay as you go), so the picker says so.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,8 @@ class ModelRoute:
     transport: Transport
     #: ``None`` for a keyless local server.
     api_key: str | None
+    context_window: int = 32_768
+    max_output_tokens: int | None = None
 
     def env(self) -> dict[str, str]:
         """The child environment that carries the key (empty when keyless)."""
@@ -291,7 +294,13 @@ def _check_login_billing(provider: str, model: str, account_id: str) -> None:
 
 
 def route_for(
-    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = ""
+    config: Any,
+    provider: str,
+    model: str,
+    *,
+    agent_id: str = "",
+    account_id: str = "",
+    session_id: str = "",
 ) -> ModelRoute:
     """The agent's route through Jarvis' gateway. Blocking (keyring): call it
     in a thread. The token speaks for ``agent_id`` on ``provider`` (and, for
@@ -299,14 +308,50 @@ def route_for(
     chosen = _checked_model(config, provider, model, account_id=account_id)
     _check_login_billing(provider, chosen, account_id)
     from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.base import home_key
+    from jarvis.agent_runtimes.model_limits import resolve_limits
+    from jarvis.brain.model_catalog import ModelCatalog
 
+    try:
+        gateway.check_cooldown(provider, chosen, account_id)
+    except gateway.GatewayError as exc:
+        raise RouteUnavailable(str(exc)) from exc
     base_url = gateway.base_url()
     if not base_url:
         raise RouteUnavailable("Jarvis' model gateway is not up yet. Try again in a moment.")
+    limits = resolve_limits(config, provider, chosen, ModelCatalog().cached_model(provider, chosen))
+    token = gateway.grant_token(
+        agent_id, provider, account_id,
+        scope=home_key(agent_id, session_id) if session_id else "",
+    )
+    gateway.register_model(token, chosen, limits)
     return ModelRoute(
         provider=provider,
         model=chosen,
         base_url=base_url,
         transport="responses" if _ENDPOINTS[provider].subscription else "chat_completions",
-        api_key=gateway.grant_token(agent_id, provider, account_id),
+        api_key=token,
+        context_window=limits.context_window,
+        max_output_tokens=limits.max_output_tokens,
+    )
+
+
+async def prepare_route(
+    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = "",
+    session_id: str = "",
+) -> ModelRoute:
+    """Refresh catalog metadata before writing either runtime's configuration."""
+    from jarvis.agent_runtimes import gateway
+
+    route = await asyncio.to_thread(
+        route_for, config, provider, model, agent_id=agent_id, account_id=account_id,
+        session_id=session_id,
+    )
+    assert route.api_key is not None
+    grant = gateway.verify(route.api_key)
+    assert grant is not None
+    limits = await gateway.refresh_model_limits(grant, route.model, config)
+    gateway.register_model(route.api_key, route.model, limits)
+    return replace(
+        route, context_window=limits.context_window, max_output_tokens=limits.max_output_tokens
     )

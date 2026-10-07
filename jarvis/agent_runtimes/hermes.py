@@ -172,6 +172,7 @@ class HermesRuntime:
             # Session restore rebuilds the agent from the stored endpoint and
             # reads the key next to a matching ``model.base_url``.
             "base_url": route.base_url,
+            "context_length": route.context_window,
         }
         if route.api_key:
             provider["key_env"] = KEY_ENV_VAR
@@ -182,6 +183,10 @@ class HermesRuntime:
             "model": model,
             "providers": {RUNTIME_PROVIDER_NAME: provider},
             "terminal": {"cwd": str(turn.workspace)},
+            # Jarvis ends failed turns and retains the user's request. Do not
+            # stack Hermes retries, recovery cycles or paid fallback routes.
+            "agent": {"api_max_retries": 1, "auto_recovery_cycles": 0},
+            "fallback_model": None,
             # Jarvis owns memory and skills on every runtime.
             "memory": {
                 "memory_enabled": False,
@@ -206,7 +211,7 @@ class HermesRuntime:
         }
         disabled = sorted(_disabled_toolsets(turn.denied_native))
         if disabled:
-            config["agent"] = {"disabled_toolsets": disabled}
+            config["agent"]["disabled_toolsets"] = disabled
         return config
 
     async def launch(self, turn: RuntimeTurn) -> RuntimeLaunch:
