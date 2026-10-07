@@ -565,8 +565,12 @@ class Worker:
             if len(candidates) == 1:
                 self.page = candidates[0]
             else:
+                # Chrome updates its native caption after the page title, so
+                # right after a navigation (a form submit, an upload) no tab
+                # matches it yet. Visibility then decides among ALL tabs
+                # instead of failing a single-tab run as "ambiguous".
                 visible = []
-                for page in candidates:
+                for page in candidates or list(self.tabs.values()):
                     if await page.evaluate("document.visibilityState === 'visible'"):
                         visible.append(page)
                 if len(visible) == 1:
