@@ -77,6 +77,27 @@ def test_search_parser_answers_empty_on_garbage() -> None:
     assert library.parse_search_html("<html><body>maintenance</body></html>") == []
 
 
+def test_search_parser_reads_icon_badges_and_download_counts() -> None:
+    page = """
+    <li><a href="/library/example">
+      <h2><span>example</span></h2>
+      <p>A model whose description mentions tools without claiming that badge.</p>
+      <span><svg><title>Tools</title><path d="M0 0"/></svg>Vision</span>
+      <span><svg><path d="M0 0"/></svg>Embedding</span>
+      <span><svg><path d="M0 0"/></svg>Cloud</span>
+      <span><span>270m</span><span>440m</span></span>
+      <span title="5,358 downloads"><svg></svg><span>5,358</span></span>
+    </a></li>
+    """
+    model, = library.parse_search_html(page)
+    assert model["capabilities"] == ["vision", "embedding"]
+    assert model["cloud"] is True
+    assert model["sizes"] == ["270m", "440m"]
+    assert model["pulls"] == "5,358"
+    # The redesigned page omits timestamps; unknown must remain unknown.
+    assert model["updated"] == ""
+
+
 # ── tags parser ──────────────────────────────────────────────────────────
 
 
