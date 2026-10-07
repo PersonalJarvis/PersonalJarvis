@@ -126,9 +126,15 @@ def _child_main(argv: list[str]) -> int:
 # Parent side: lean orchestration and plain-language output
 # --------------------------------------------------------------------------- #
 def _run_child(args: list[str], timeout: float | None, detached: bool) -> tuple[int, str]:
+    import jarvis
+
     cmd = [sys.executable, "-m", "jarvis.cli.app_update", *args]
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     kwargs: dict[str, Any] = {
+        # ``-m`` puts the working directory first on sys.path. Run from the
+        # tree this process came from, so a `jarvis/` folder in the user's
+        # current directory can never stand in for the installed one.
+        "cwd": str(Path(jarvis.__file__).resolve().parent.parent),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.DEVNULL,
@@ -158,7 +164,8 @@ def _run_child(args: list[str], timeout: float | None, detached: bool) -> tuple[
                 "so this keeps going - please wait.",
                 flush=True,
             )
-        except subprocess.TimeoutExpired:  # Kill and reap the timed-out probe, then return a failure result.
+        except subprocess.TimeoutExpired:
+            # Kill and reap the timed-out probe, then return a failure result.
             proc.kill()
             proc.communicate()
             return -1, ""
@@ -245,9 +252,19 @@ def _read_result(root: Path) -> dict[str, Any]:
 
     try:
         payload = json.loads((root / UPDATE_RESULT_FILENAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):  # An absent or incomplete update receipt represents no available result.
+    except (OSError, ValueError):
+        # An absent or incomplete update receipt represents no available result.
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _clear_result(root: Path) -> None:
+    from jarvis.ui.relauncher import UPDATE_RESULT_FILENAME
+
+    try:
+        (root / UPDATE_RESULT_FILENAME).unlink(missing_ok=True)
+    except OSError as exc:
+        print(f"  (could not clear the previous update result: {exc})", file=sys.stderr)
 
 
 def run_update(
@@ -304,9 +321,11 @@ def run_update(
         print("Run `jarvis update` to install it.")
         return 0
 
-    pid = running_app_pid()
+    # The service is found by its own marker, not through the session file: a
+    # live service with a missing or stale session.json would otherwise keep
+    # the venv's native modules open through the whole reinstall.
     service = status.get("service_pid")
-    if pid is not None and service and pid == service:
+    if service:
         print("Stopping the background service for the update...", flush=True)
         if not stop_service(int(service)):
             print(
@@ -315,8 +334,8 @@ def run_update(
                 file=sys.stderr,
             )
             return EXIT_APP_RUNNING
-        pid = None
-    if pid is not None:
+    pid = running_app_pid()
+    if pid is not None and pid != service:
         print(
             "Personal Jarvis is running, and it cannot be updated while it is open.\n"
             "Either click Update inside the app, or quit it (tray icon -> Quit)\n"
@@ -336,13 +355,15 @@ def run_update(
 
     root = Path(str(staged["root"]))
     version = staged.get("version") or latest
+    # A result left by an earlier run must not speak for this one.
+    _clear_result(root)
     with _Ticker(
         f"Installing version {version} - this takes a few minutes, keep this window open...",
         enabled=interactive,
     ):
         code, _ = run_child([FINALIZE_FLAG, str(root)], None, True)
     result = _read_result(root)
-    if code == 0 and result.get("ok", True):
+    if code == 0 and result.get("ok") is True:
         print(f"Done. Personal Jarvis {version} is installed.")
         print("Start it with: jarvis")
         return 0

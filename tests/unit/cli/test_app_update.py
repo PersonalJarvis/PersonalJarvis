@@ -209,3 +209,34 @@ def test_jarvis_main_routes_update(monkeypatch):
     )
     assert entry.main(["update", "--check"]) == 0
     assert seen == [True]
+
+
+def test_service_without_a_session_file_is_still_stopped(tmp_path):
+    """A live service with a missing session.json must not stay up through
+    the reinstall, where it would hold the venv's native modules open."""
+    stopped: list[int] = []
+    children = FakeChildren(
+        status=_status(service_pid=777),
+        stage={"ok": True, "root": str(tmp_path), "version": "2.9.0"},
+        on_finalize=lambda root: _write_result(root, ok=True, rolled_back=False),
+    )
+    rc = _run(
+        children,
+        running_app_pid=lambda: None,
+        stop_service=lambda pid: stopped.append(pid) or True,
+    )
+    assert rc == 0
+    assert stopped == [777]
+
+
+def test_stale_result_from_an_earlier_run_is_not_reported(tmp_path, capsys):
+    _write_result(tmp_path, ok=False, rolled_back=True)
+    children = FakeChildren(
+        status=_status(),
+        stage={"ok": True, "root": str(tmp_path), "version": "2.9.0"},
+        finalize_rc=1,  # the finalize child died without writing a result
+    )
+    assert _run(children) == EXIT_FAILED
+    err = capsys.readouterr().err
+    assert "went back to" not in err
+    assert "could not be restored automatically" in err

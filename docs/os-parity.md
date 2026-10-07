@@ -1,5 +1,30 @@
 # OS Feature Parity — macOS / Linux Gap Register
 
+## Terminal start and update commands (2026-10-03, T3)
+
+`jarvis` and `personal-jarvis` start the desktop app from a terminal and
+`jarvis update` updates a managed install, on every OS. The installer links the
+commands into `~/.local/bin` on macOS and Linux (adding one guarded PATH line to
+the login shell's profile: zsh, bash, fish or `~/.profile`) and copies the
+console-script launchers into `<install>\bin` on Windows, which goes onto the
+per-user `Path`; `.venv\Scripts` itself is never put on `Path` because it would
+shadow the user's own `python`. There is deliberately no `personaljarvis`
+alias: Windows paths ignore case and the venv already holds the branded
+`PersonalJarvis.exe` launcher. Typed into an interactive terminal, `jarvis`
+starts the app detached through the restart identity (LaunchServices bundle,
+branded exe, launcher module); a Linux session without `DISPLAY` or
+`WAYLAND_DISPLAY` keeps the foreground start. `jarvis update` stages and
+finalizes the update in child processes so the parent never holds a native
+module the reinstall replaces (Windows), and finalizes in its own process group
+or session so Ctrl+C cannot interrupt the installer. Covered by
+`tests/unit/setup/test_cli_path.py`, `tests/unit/install/test_cli_links.py`,
+`tests/unit/cli/test_app_update.py` and `tests/unit/test_bare_jarvis_starts_desktop.py`
+with fakes for the registry and child processes; verified for real on Windows
+(a copied launcher runs from another folder; `jarvis update --check` on a
+developer checkout). Not yet verified: a full `jarvis update` of a managed
+install on any OS, and the macOS/Linux symlink and profile paths on a physical
+host (CI runs them on Linux).
+
 ## Screenshots paste anywhere (2026-10-05, T2)
 
 Appshots taken by shortcut or button and Jarvis X screenshots go on the

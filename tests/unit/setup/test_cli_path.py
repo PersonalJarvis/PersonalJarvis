@@ -245,3 +245,13 @@ def test_no_command_collides_with_the_branded_windows_launcher():
 
     branded = Path(current_instance().windows_branded_launcher_file_name).stem.casefold()
     assert branded not in {command.casefold() for command in COMMAND_NAMES}
+
+
+def test_profile_removal_keeps_crlf_line_endings(tmp_path):
+    profile = tmp_path / ".profile"
+    profile.write_bytes(b"export A=1\r\nexport B=2\r\n")
+    add_profile_block(profile)
+    assert remove_profile_block(profile) is True
+    assert profile.read_bytes().startswith(b"export A=1\r\nexport B=2\r\n")
+    assert PROFILE_MARKER.encode() not in profile.read_bytes()
+    assert not list(tmp_path.glob("*.tmp"))

@@ -164,8 +164,11 @@ def add_profile_block(path: Path) -> bool:
 def remove_profile_block(path: Path) -> bool:
     """Delete the block :func:`add_profile_block` wrote. False when absent."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    except (FileNotFoundError, UnicodeDecodeError):  # An absent or unreadable profile cannot contain a removable managed block.
+        # newline="" keeps CRLF profiles CRLF: only our two lines change.
+        with path.open(encoding="utf-8", newline="") as handle:
+            lines = handle.read().splitlines(keepends=True)
+    except (FileNotFoundError, UnicodeDecodeError):
+        # An absent or unreadable profile cannot contain a removable managed block.
         return False
     kept: list[str] = []
     skip_next = False
@@ -183,7 +186,16 @@ def remove_profile_block(path: Path) -> bool:
             continue
         kept.append(line)
     if removed:
-        path.write_text("".join(kept), encoding="utf-8", newline="")
+        # Write beside, then swap: a crash mid-write must never leave the
+        # user's shell profile truncated.
+        temp = path.with_name(path.name + ".personal-jarvis.tmp")
+        with temp.open("w", encoding="utf-8", newline="") as handle:
+            handle.write("".join(kept))
+        try:
+            shutil.copymode(path, temp)
+        except OSError:  # noqa: S110 - mode copy is cosmetic; content is what matters
+            pass
+        os.replace(temp, path)
     return removed
 
 
@@ -203,7 +215,8 @@ class UserPathStore:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
             try:
                 value, kind = winreg.QueryValueEx(key, "Path")
-            except FileNotFoundError:  # A missing user PATH value is the empty starting configuration.
+            except FileNotFoundError:
+                # No per-user Path value yet: it is created with the bin folder.
                 return "", None
         return str(value), int(kind)
 
@@ -274,15 +287,21 @@ def _copy_launcher(source: Path, target: Path) -> bool:
     try:
         if target.read_bytes() == data:
             return False
-    except FileNotFoundError:  # No existing launcher means there is nothing to preserve before creation.
+    except FileNotFoundError:  # no launcher copy yet: it is written below
         pass
     try:
         target.write_bytes(data)
-    except PermissionError:  # A running Windows launcher is renamed before its replacement is written.
+    except PermissionError:
         stale = target.with_name(target.name + _STALE_SUFFIX)
         stale.unlink(missing_ok=True)
         target.rename(stale)
-        target.write_bytes(data)
+        try:
+            target.write_bytes(data)
+        except OSError:
+            # Put the working launcher back rather than leave no command.
+            target.unlink(missing_ok=True)
+            stale.rename(target)
+            raise
     return True
 
 
@@ -297,7 +316,7 @@ def _sweep_stale_launchers(directory: Path) -> None:
 def _link_points_into(link: Path, root: Path) -> bool:
     try:
         return link.is_symlink() and root.resolve() in link.resolve().parents
-    except OSError:  # Unverifiable links are treated as foreign and preserved.
+    except OSError:  # an unreadable link is treated as not ours, so it is kept
         return False
 
 
