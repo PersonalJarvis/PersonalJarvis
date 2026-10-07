@@ -1602,6 +1602,48 @@ describe("pane refit", () => {
     expect(frames.slice(shorter + 1)).toContainEqual({ t: "claim", cols: 80, rows: 24 });
   });
 
+  /*
+   * Reported 2026-10-06: back from the thread layout, a pane that had followed
+   * another geometry while hidden kept that grid, and the return nudge then
+   * put the agent on the tile's size — lines wrapped into word fragments down
+   * the pane's edge. Coming back on stage is a change made in this window, so
+   * it takes the size back whatever `document.hasFocus()` answers.
+   */
+  it("takes the size back when a displaced pane returns to the stage without window focus", () => {
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    displacedBy(30, 10);
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+
+    view.rerender(pane(false, {}, true));
+    act(() => {
+      vi.advanceTimersByTime(RETURN_REPAINT_NUDGE_MS + 10);
+    });
+
+    expect(terminalHarness.send).toHaveBeenCalledWith({ t: "claim", cols: 80, rows: 24 });
+    expect(terminalHarness.send).not.toHaveBeenCalledWith(expect.objectContaining({ t: "r" }));
+  });
+
+  it("never sizes the agent while the pane is off the stage", () => {
+    // The grid behind the maximized side panel is invisible but still laid
+    // out in a narrowed tile; fitting there squeezed every agent to a strip.
+    const view = render(pane(false, {}, true));
+    settle();
+    view.rerender(pane(false, {}, false));
+    settle();
+    terminalHarness.send.mockClear();
+
+    terminalHarness.size = { cols: 37, rows: 24 };
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(terminalHarness.send).not.toHaveBeenCalled();
+  });
+
   it("does not nudge a pane taking the stage for the first time", () => {
     const view = render(pane(false, {}, false));
     settle();

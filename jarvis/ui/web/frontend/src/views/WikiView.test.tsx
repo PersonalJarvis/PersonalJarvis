@@ -6,10 +6,11 @@
  * client-side projection of that contract.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { WikiView } from "@/views/WikiView";
+import { useWikiPanelStore } from "@/store/wikiPanel";
 import { PageRenderer, preprocessWikilinks } from "@/components/wiki/PageRenderer";
 import { PageHeader } from "@/components/wiki/PageHeader";
 import type {
@@ -213,20 +214,34 @@ describe("WikiView — populated tree", () => {
       expect(screen.getByTestId("wiki-tree-sidebar")).toBeDefined();
     });
 
-    // Three populated leaves are visible because entities and projects open
-    // by default (per mockup contract).
+    // People and projects open by default, listed by title, not file name.
     await waitFor(() => {
-      expect(screen.getByText("example-user.md")).toBeDefined();
-      expect(screen.getByText("example-parent.md")).toBeDefined();
-      expect(screen.getByText("pixel-art-editor.md")).toBeDefined();
+      const entities = screen.getByTestId("wiki-folder-entity");
+      expect(within(entities).getByText("Example User")).toBeDefined();
+      expect(within(entities).getByText("Example Parent")).toBeDefined();
+      const projects = screen.getByTestId("wiki-folder-project");
+      expect(within(projects).getByText("Pixel Art Editor")).toBeDefined();
     });
 
-    // Concepts folder shows count "0".
-    const conceptsButton = document.querySelector(
-      "[data-folder='concepts']",
-    );
-    expect(conceptsButton).not.toBeNull();
-    expect(conceptsButton!.textContent).toContain("0");
+    // The group heading carries the count; an empty folder is no group at all.
+    expect(document.querySelector("[data-folder='entity']")!.textContent).toContain("2");
+    expect(document.querySelector("[data-folder='concept']")).toBeNull();
+
+    // The most recently changed page leads the rail.
+    const recent = screen.getAllByTestId("wiki-library-recent-item");
+    expect(recent[0].getAttribute("data-slug")).toBe("pixel-art-editor");
+  });
+
+  it("narrows every group as the filter is typed", async () => {
+    renderWithClient(<WikiView />);
+    const filter = await screen.findByTestId("wiki-library-filter");
+    await screen.findByTestId("wiki-folder-entity");
+
+    fireEvent.change(filter, { target: { value: "pixel" } });
+
+    expect(screen.queryByTestId("wiki-folder-entity")).toBeNull();
+    expect(within(screen.getByTestId("wiki-folder-project")).getByText("Pixel Art Editor")).toBeDefined();
+    expect(screen.queryByTestId("wiki-library-recent")).toBeNull();
   });
 
   it("expands the Memory Map across the wiki workspace and restores the side panels", async () => {
@@ -263,14 +278,24 @@ describe("WikiView — populated tree", () => {
     expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
   });
 
+  it("hides the side panel when the caption toggle closes it", async () => {
+    useWikiPanelStore.setState({ open: false });
+    try {
+      renderWithClient(<WikiView />);
+      await screen.findByTestId("wiki-folder-entity");
+      expect(screen.queryByTestId("wiki-backlinks-placeholder")).toBeNull();
+      act(() => useWikiPanelStore.getState().setOpen(true));
+      expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
+    } finally {
+      useWikiPanelStore.setState({ open: true });
+    }
+  });
+
   it("clicking a leaf in the tree switches to the page tab and loads the page", async () => {
     renderWithClient(<WikiView />);
 
-    await waitFor(() => {
-      expect(screen.getByText("example-parent.md")).toBeDefined();
-    });
-
-    fireEvent.click(screen.getByText("example-parent.md"));
+    const entities = await screen.findByTestId("wiki-folder-entity");
+    fireEvent.click(within(entities).getByText("Example Parent"));
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
@@ -281,9 +306,10 @@ describe("WikiView — populated tree", () => {
   it("clicking the already-selected graph node returns to its page", async () => {
     renderWithClient(<WikiView />);
 
-    fireEvent.click(await screen.findByText("example-parent.md"));
+    const entities = await screen.findByTestId("wiki-folder-entity");
+    fireEvent.click(within(entities).getByText("Example Parent"));
     await screen.findByTestId("wiki-page-renderer");
-    fireEvent.click(screen.getByRole("button", { name: "Memory Map" }));
+    fireEvent.click(screen.getByTestId("wiki-tab-graph"));
     fireEvent.click(await screen.findByRole("button", {
       name: "Example Parent graph node",
     }));
@@ -394,7 +420,7 @@ describe("WikiView — health strip", () => {
       screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
     ).toBe("green");
     expect(screen.getByTestId("wiki-capture-funnel").textContent).toContain(
-      "Last 24h capture",
+      "last 24 h",
     );
     expect(screen.getByTestId("wiki-capture-reviewed").textContent).toContain("107");
     expect(screen.getByTestId("wiki-capture-candidate-reviews").textContent).toContain(

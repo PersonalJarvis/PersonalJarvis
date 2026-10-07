@@ -30,7 +30,9 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   // agent already runs, or after the person asks for it.
   const running = useAgentBrowserOpen(agent.agentId);
   const [wanted, setWanted] = useState(false);
-  useEffect(() => { setWanted(false); }, [agent.agentId]);
+  // All agents share one browser profile by default, and it opens in one place.
+  const [movedTo, setMovedTo] = useState("");
+  useEffect(() => { setWanted(false); setMovedTo(""); }, [agent.agentId]);
   useEffect(() => { if (running.data?.open) setWanted(true); }, [running.data?.open]);
   const profileUnavailable = running.data?.mode === "unavailable";
   const live = !profileUnavailable && (wanted || running.data?.open === true);
@@ -38,6 +40,17 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
   const managedRuntime = !isChrome && !profileUnavailable;
   const chromeDisconnected = isChrome && !running.data?.connected;
   const { canvas, state, control, approve } = useBrowserView(agent.agentId, live);
+  useEffect(() => {
+    if (!state.movedTo) return;
+    setMovedTo(state.movedTo);
+    setWanted(false);
+  }, [state.movedTo]);
+  const open = () => { setMovedTo(""); setWanted(true); };
+  const stopHolder = () => {
+    if (!state.busy?.holderId) return;
+    void fetch("/api/society/agents/" + encodeURIComponent(state.busy.holderId) + "/browser/cancel",
+      { method: "POST", headers: { "X-Jarvis-Stop-Chat": "1" } });
+  };
   const rejectedGoogle = managedRuntime && live && googleSignInRejected(state.url);
   const install = useBrowserInstallStatus();
   const [expanded, setExpanded] = useState(false);
@@ -65,8 +78,12 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
     ? t(state.loginReady ? "society.browser_profiles.inline_login_active" : "society.browser_profiles.inline_login_not_ready")
     : state.previewPaused
     ? t("society.browser_profiles.sign_in_chrome")
+    : !live && movedTo
+    ? t("society.browser_live.moved_status").replace("{0}", movedTo)
     : !live
     ? t("society.browser_live.off")
+    : state.busy
+    ? t("society.browser_live.waiting_for").replace("{0}", state.busy.holderName)
     : state.connected && state.ready
     ? t(state.manual ? "society.browser_live.manual" : "society.browser_live.live")
     : t(managedRuntime && install.data && !install.data.installed ? "society.card.browser_setting_up" : "society.card.browser_connecting");
@@ -165,14 +182,23 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
           <AgentCursor pointer={state.ready && state.connected && !state.manual ? state.pointer : undefined} />
         )}
         {!live && <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-3 text-center text-xs text-muted-foreground">
-          <p>{profileUnavailable ? t("society.browser_profiles.profile_unavailable") : chromeDisconnected ? t("society.browser_profiles.disconnected") : t("society.browser_live.off_hint").replace("{0}", displayName)}</p>
+          <p>{profileUnavailable ? t("society.browser_profiles.profile_unavailable") : chromeDisconnected ? t("society.browser_profiles.disconnected")
+            : movedTo ? t("society.browser_live.moved").replace("{0}", movedTo) : t("society.browser_live.off_hint").replace("{0}", displayName)}</p>
           {!profileUnavailable && <button type="button" data-testid="agent-browser-open"
             className="rounded-md border border-border bg-background px-3 py-1 text-xs font-medium text-foreground hover:bg-secondary"
-            disabled={chromeDisconnected} onClick={() => setWanted(true)}>
-            {t("society.browser_live.open")}
+            disabled={chromeDisconnected} onClick={open}>
+            {t(movedTo ? "society.browser_live.open_here" : "society.browser_live.open")}
           </button>}
         </div>}
-        {live && !state.ready && !state.previewPaused && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
+        {live && !state.ready && !state.previewPaused && state.busy && <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted p-3 text-center text-xs text-muted-foreground">
+          <p>{t("society.browser_live.busy_task").replace(/\{0\}/g, state.busy.holderName)}</p>
+          {state.busy.running && state.busy.holderId && <button type="button"
+            className="rounded-md border border-border bg-background px-3 py-1 text-xs font-medium text-foreground hover:bg-secondary"
+            onClick={stopHolder}>
+            {t("society.browser_live.stop_holder").replace("{0}", state.busy.holderName)}
+          </button>}
+        </div>}
+        {live && !state.ready && !state.previewPaused && !state.busy && <div className="absolute inset-0 grid place-items-center bg-muted p-3 text-center text-xs text-muted-foreground">
           {chromeDisconnected ? t("society.browser_profiles.disconnected") : (managedRuntime && install.data?.detail) || status}
           {managedRuntime && install.data?.running && <span>{install.data.percent}%</span>}
         </div>}
@@ -232,7 +258,8 @@ export function AgentBrowserPreview({ agent }: { agent: SocietyAgent }) {
       </div>}
       {(state.error || (managedRuntime && install.data?.error)) && <div className="mt-2 text-xs text-destructive" role="status">
         {profileUnavailable ? t("society.browser_profiles.profile_unavailable") : chromeDisconnected ? t("society.browser_profiles.disconnected") : state.error || install.data?.error}
-        {managedRuntime && <button className={buttonClass} onClick={() => void fetch("/api/society/browser/repair", { method: "POST" })}>{t("society.browser_live.repair")}</button>}
+        {/* Repair reinstalls the browser runtime; it cannot fix a session or profile error. */}
+        {managedRuntime && install.data?.error && <button className={buttonClass} onClick={() => void fetch("/api/society/browser/repair", { method: "POST" })}>{t("society.browser_live.repair")}</button>}
       </div>}
     </div>
   );

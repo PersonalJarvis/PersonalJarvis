@@ -28,9 +28,9 @@ _command_origin: ContextVar[CommandRequest | None] = ContextVar("chat_command_or
 
 
 def supports_restricted_turn(session: Any) -> bool:
-    from .service import resolve_runner
+    from .service import session_runner
 
-    return resolve_runner(session.provider, surface=session.surface) not in ("kimi-cli", "dsh-cli")
+    return session_runner(session) not in ("kimi-cli", "dsh-cli")
 
 
 class ChatControls:
@@ -349,10 +349,10 @@ class ChatControls:
 
         from .events import make_event
         from .permissions import ladder_key, normalize_permission, society_mode_supported
-        from .service import resolve_runner
+        from .service import session_runner
 
         session = self.service.store.get_session(sid)
-        runner = resolve_runner(session.provider, surface=session.surface)
+        runner = session_runner(session)
         ladder = ladder_key(session.surface, runner)
         # /plan is a chat control, not a ladder choice: the Society ladder
         # (bypass / ask / always ask) has no read-only rung, and folding

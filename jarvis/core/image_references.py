@@ -17,6 +17,11 @@ from uuid import uuid4
 MAX_IMAGES = 20
 MAX_BYTES = 25 * 1024 * 1024
 TTL_SECONDS = 120.0
+#: A picture handed to a live call stays in that call's model context until the
+#: call ends, so its reference must live as long or the model sees an image it
+#: cannot forward. The call's close clears the scope; this bound only expires a
+#: scope whose call never closed cleanly.
+LIVE_CALL_TTL_SECONDS = 3600.0
 active_scope: ContextVar[str] = ContextVar("visual_reference_scope", default="")
 _EXTENSIONS = {
     "image/png": ".png",
@@ -60,9 +65,15 @@ def scope_for(config: dict | None = None, trace_id: object = "") -> str:
     )
 
 
+def ttl_for(scope: str, config: object = None) -> float:
+    """Reference lifetime: the capture budget, or the whole call for a live scope."""
+    ttl = float(getattr(getattr(config, "screen_context", None), "ttl_s", TTL_SECONDS))
+    return max(ttl, LIVE_CALL_TTL_SECONDS) if scope.startswith("live:") else ttl
+
+
 def appshot_context(session_id: str, image: bytes, mime: str, config: object) -> str:
-    ttl = getattr(getattr(config, "screen_context", None), "ttl_s", TTL_SECONDS)
-    ref = get_store().add("live:" + session_id, image, mime, source="appshot", ttl_s=float(ttl))
+    scope = "live:" + session_id
+    ref = get_store().add(scope, image, mime, source="appshot", ttl_s=ttl_for(scope, config))
     return instruction([ref])
 
 

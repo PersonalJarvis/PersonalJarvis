@@ -16,11 +16,16 @@ creating a pane or sending a task. No global latest-appshot lookup is used.
 - A Jarvis chat upload registers the bytes of the images selected on that
   message. Paths must resolve inside that chat's working folder. Missing,
   oversized, unsupported or escaped files produce an unavailable notice.
-- Appshots attached directly to a live call belong to that call's scope.
+- Appshots attached directly to a live call belong to that call's scope, in
+  every live mode (backend thinking, native, and subscription). The ID rides
+  beside the pixels wherever the call keeps them in model context, including
+  a capture's retained snapshot after its tool output left the history.
   Chat, live-call and ordinary conversation scopes cannot resolve each other's
-  IDs. Closing a live call clears its capabilities. Captures retain their
-  configured TTL; other temporary references expire after 120 seconds.
-  One active timer removes expired bytes even when there are no later calls.
+  IDs. A live-call reference lives as long as the call keeps the picture in
+  context: closing the call clears it, and a one-hour bound expires a scope
+  whose call never closed. Other captures retain their configured TTL; other
+  temporary references expire after 120 seconds. One active timer removes
+  expired bytes even when there are no later calls.
 
 The existing ToolExecutor authorization, capture denylist/redaction, coding
 pane permissions and prompt readiness checks remain in force. Pixels are
@@ -62,8 +67,8 @@ retries cannot silently replace or duplicate an attachment.
 
 ## Verification
 
-`tests/contract/test_coding_image_handoff.py` exercises upload/appshot sources
-with new/existing sessions through the real workspace orchestrator, coding
+`tests/contract/test_coding_image_handoff.py` exercises upload, appshot-tool and
+live-call appshot sources with new/existing sessions through the real workspace orchestrator, coding
 gateway and registry into a fake PTY. It opens the delivered PNG, compares bytes,
 checks the typed file path, receipt and retry behavior, and covers multiple images,
 unrelated images, expiry, conversation isolation, invalid images, path traversal,
@@ -81,6 +86,6 @@ to a user's remote host, or prove that an actual vendor model used its image too
 | Scoped references and expiry | `jarvis/core/image_references.py` |
 | Upload intake | `jarvis/agent_chat/attachments.py`, `service.py` |
 | Conversation and tool routing | `jarvis/brain/manager.py`, `dispatcher.py`, `tool_use_loop.py`, `workspace_tool.py` |
-| Captures and live calls | `jarvis/plugins/tool/appshot.py`, `jarvis/live/tools.py`, `session.py`, `native.py` |
+| Captures and live calls | `jarvis/plugins/tool/appshot.py`, `jarvis/live/tools.py`, `session.py`, `native.py`, `subscription.py` |
 | Work order and CLI delivery | `jarvis/agentic_ide/orchestration.py`, `control.py`, `session.py`, `visual_handoff.py` |
-| Regression evidence | `tests/contract/test_coding_image_handoff.py`, `tests/fakes/fake_visual_sftp.py`, `tests/unit/appshot/test_appshot_surfaces.py` |
+| Regression evidence | `tests/contract/test_coding_image_handoff.py`, `tests/fakes/fake_visual_sftp.py`, `tests/unit/appshot/test_appshot_surfaces.py`, `tests/unit/live/test_subscription_session.py` |

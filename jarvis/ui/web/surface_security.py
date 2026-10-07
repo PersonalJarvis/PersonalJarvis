@@ -43,7 +43,7 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 CredentialValidator = Callable[[str], bool]
-AuthKind = Literal["control", "session", "open", "mcp"]
+AuthKind = Literal["control", "session", "open", "mcp", "gateway"]
 Origin = tuple[str, str, int | None]
 
 _BOOTSTRAP_TOKEN_LOCK = threading.Lock()
@@ -889,6 +889,22 @@ class SurfaceSecurity:
             log.debug("surface security: MCP token check failed", exc_info=True)
             return False
 
+    #: Where a runtime gateway token counts as a credential (and nowhere else):
+    #: the model endpoint Hermes / OpenClaw agents on a subscription call.
+    _RUNTIME_GATEWAY_PREFIX: ClassVar[str] = "/api/runtime-gateway/"
+
+    def _gateway_token_accepted(self, scope: Scope, bearer: str) -> bool:
+        """Whether ``bearer`` is a token Jarvis minted for an agent runtime AND
+        this is a gateway path. It grants one agent's model turns, never the
+        Control API or the UI routes."""
+        if not str(scope.get("path", "") or "").startswith(self._RUNTIME_GATEWAY_PREFIX):
+            return False
+        try:
+            from jarvis.agent_runtimes import gateway
+        except Exception:  # noqa: BLE001 — no gateway module → no such credential
+            return False
+        return gateway.verify(bearer) is not None
+
     def _authenticate(self, scope: Scope) -> AuthKind | None:
         bearer_present, bearer = _presented_bearer(scope)
         if bearer_present:
@@ -903,6 +919,8 @@ class SurfaceSecurity:
                 return None
             if self._mcp_token_accepted(scope, bearer):
                 return "mcp"
+            if self._gateway_token_accepted(scope, bearer):
+                return "gateway"
             try:
                 return "session" if self._session_validator(bearer) else None
             except Exception:

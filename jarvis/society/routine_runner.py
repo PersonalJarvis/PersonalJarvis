@@ -126,6 +126,28 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
     return provider, model, effort, account_id
 
 
+def _run_runtime(agent: Any, provider: str) -> str:
+    """Which runtime a routine run uses.
+
+    The run keeps its owner's Hermes / OpenClaw runtime on the owner's own
+    model — the seat the person chose for that agent. A run pinned to another
+    seat keeps the runtime only when that seat is an API key or local server:
+    a subscription seat (Claude Code's dual row included) runs on Jarvis' own
+    runtime, so a scheduled run never quietly moves onto an API key.
+    """
+    runtime = str(getattr(agent, "runtime", "") or "jarvis")
+    if runtime == "jarvis":
+        return ""
+    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_runtimes.model_map import supports
+
+    if not supports(provider):
+        return ""
+    if provider == str(getattr(agent, "provider", "") or ""):
+        return runtime
+    return "" if resolve_runner(provider, surface=SURFACE).endswith("-cli") else runtime
+
+
 async def run_owned_routine(
     runtime: Any,
     task_id: str,
@@ -153,6 +175,7 @@ async def run_owned_routine(
         cwd=_workspace(cfg, agent),
         permission_mode="bypass",
         title=f"{agent.name} · Routine {task_id}",
+        runtime=_run_runtime(agent, provider),
     )
     # Persist the link before starting work, including runs that fail or are cancelled.
     task_store, _ = runtime.task_services()

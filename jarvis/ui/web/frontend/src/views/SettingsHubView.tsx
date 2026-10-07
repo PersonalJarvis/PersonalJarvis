@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
  *
  *   General: General, Keyboard shortcuts, Appshots, My Pets, Profile,
  *            {name} (the assistant), Socials
- *   System: Computers, API Keys, Jarvis actions
+ *   System: Computers, API Keys
  *   Activity: Spend, Feedback
  *
  * Same merged-section pattern as VoiceHubView / ClisHubView: the active
@@ -69,9 +69,6 @@ const TelephonySetupTab = lazy(() =>
 const ComputersTab = lazy(() =>
   import("@/views/ComputersView").then((m) => ({ default: m.ComputersView })),
 );
-const JarvisActionsTab = lazy(() =>
-  import("@/views/JarvisActionsView").then((m) => ({ default: m.JarvisActionsView })),
-);
 const AppshotsTab = lazy(() =>
   import("@/views/AppshotsView").then((m) => ({ default: m.AppshotsView })),
 );
@@ -101,7 +98,6 @@ type HubNavId =
   | "socials"
   | "apikeys"
   | "computers"
-  | "jarvis-actions"
   | "costs"
   | "feedback";
 
@@ -120,7 +116,7 @@ const HUB_NAV_GROUPS: readonly { labelKey: string; ids: readonly HubNavId[] }[] 
   },
   {
     labelKey: "settings_hub.group_system",
-    ids: ["computers", "apikeys", "jarvis-actions"],
+    ids: ["computers", "apikeys"],
   },
   {
     labelKey: "settings_hub.group_activity",
@@ -139,7 +135,6 @@ const TAB_CONTENT: Record<HubNavId | "telephony-setup", LazyExoticComponent<Comp
   appshots: AppshotsTab,
   shortcuts: ShortcutsTab,
   pets: PetsTab,
-  "jarvis-actions": JarvisActionsTab,
   costs: CostsTab,
   feedback: FeedbackTab,
 };
@@ -170,8 +165,6 @@ function resolveHubTab(active: string): { content: HubNavId | "telephony-setup";
       return { content: "shortcuts", highlight: "shortcuts" };
     case "pets":
       return { content: "pets", highlight: "pets" };
-    case "jarvis-actions":
-      return { content: "jarvis-actions", highlight: "jarvis-actions" };
     case "costs":
       return { content: "costs", highlight: "costs" };
     case "feedback":

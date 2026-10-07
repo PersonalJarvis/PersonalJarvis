@@ -445,10 +445,10 @@ export function codingAssignmentHint(items: readonly MentionItem[], folder: stri
     folder.trim()
       ? `Project directory: ${JSON.stringify(folder.trim())}.`
       : "Use the project directory specified in the user's message. If it is unclear, ask for it.",
-    "Use coding-session to discover and open or explicitly target the correct IDE session, then use assign " +
-      "with a self-contained task and user-grounded done_when criteria to supervise it to completion. " +
-      "Answer ordinary follow-up questions yourself. These are coding CLIs, not society teammates. " +
-      "Follow approval rules; accepted is not completed.",
+    "Use coding-session open with that agent and folder and a complete brief you write from the user's " +
+      "request; you are woken here when the thread finishes, asks or waits. Answer its questions yourself " +
+      "when the request settles them, follow up until the task is done, then report the outcome. These are " +
+      "coding CLIs, not society teammates. Started is not finished.",
   ].map((line) => `[coding-agent] ${line}`).join("\n");
 }
 
