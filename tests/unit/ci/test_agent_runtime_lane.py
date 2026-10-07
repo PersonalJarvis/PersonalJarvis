@@ -201,3 +201,14 @@ def test_the_e2e_check_reads_every_turn_budget_line():
     output = "prepare: exit 0 in 41.0 s\nturn 1 took 12.5 s\n...\nturn 1 took 31.0 s\n"
     assert [float(v) for v in agent_runtime_e2e._TURN.findall(output)] == [12.5, 31.0]
     assert agent_runtime_e2e.TURN_BUDGET_S == {"hermes": 30.0, "openclaw": 90.0}
+
+
+def test_the_runtime_pins_ship_in_the_wheel_and_the_frozen_app():
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "agent_runtimes/runtime-versions.json" in (
+        pyproject["tool"]["setuptools"]["package-data"]["jarvis"]
+    )
+    spec = (ROOT / "jarvis.spec").read_text(encoding="utf-8")
+    assert '"jarvis/agent_runtimes/runtime-versions.json"), "jarvis/agent_runtimes")' in spec
