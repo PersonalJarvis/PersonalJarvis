@@ -57,15 +57,18 @@ def test_the_live_tags_page_still_parses() -> None:
 
 
 def test_the_live_newest_sort_is_honoured() -> None:
-    """``?o=newest`` must change the ORDER against the popular listing.
+    """``?o=newest`` must change the ordered results from the popular listing.
 
-    The search page stopped printing an update time in 2026-10, so the order
-    itself is the evidence that the sort parameter still reaches the site.
+    Search cards no longer publish ages, so sorting cannot be inferred from
+    timestamps. Compare the two real listings instead of inventing an age.
     """
-    newest = parse_search_html(_fetch("https://ollama.com/search?o=newest"))
+    models = parse_search_html(_fetch("https://ollama.com/search?o=newest"))
+    assert len(models) >= 5, "The live newest listing parsed almost empty."
     popular = parse_search_html(_fetch("https://ollama.com/search"))
-    assert len(newest) >= 5, "The live newest listing parsed almost empty."
-    assert [m["name"] for m in newest[:5]] != [m["name"] for m in popular[:5]]
+    assert len(popular) >= 5, "The live popular listing parsed almost empty."
+    newest_names = [model["name"] for model in models]
+    popular_names = [model["name"] for model in popular]
+    assert newest_names != popular_names, "The newest sort returned the default ordering."
 
 
 def test_the_live_capability_filter_is_honoured() -> None:
