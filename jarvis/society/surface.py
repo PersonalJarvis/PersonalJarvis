@@ -120,7 +120,8 @@ outside paths are refused). Destructive commands ask the user first.
 - Credentials: when a task needs a token, key or password, ask with society_request_credential; \
 the user pastes it into a secure field and it is set only as the environment variable you \
 named in society_shell commands. Never ask for a secret in the chat, and never print or write \
-its value.
+its value. Which credentials are stored is listed at the end of this briefing on every turn; \
+that list is current, so trust it over anything said earlier in the chat.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
 - Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
@@ -870,7 +871,12 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
 
 async def _credential_line(rt: Any, agent_id: str) -> str:
-    """The names of the agent's stored credentials, so it does not ask twice."""
+    """The names of the agent's stored credentials, so it does not ask twice.
+
+    Also said when there are none: a resumed CLI conversation still remembers
+    a token it once saved, and without this line the agent reports a deleted
+    credential as stored instead of asking for it.
+    """
     from .credentials import vault_for
 
     try:
@@ -879,7 +885,10 @@ async def _credential_line(rt: Any, agent_id: str) -> str:
         log.warning("society: credential index unavailable for %s", agent_id, exc_info=True)
         return ""
     if not rows:
-        return ""
+        return (
+            "\nStored credentials: none. Ask with society_request_credential when a task "
+            "needs one."
+        )
     names = ", ".join(f"{row.env} ({row.label})" if row.label else row.env for row in rows)
     return (
         "\nStored credentials, set as environment variables in society_shell (values are "

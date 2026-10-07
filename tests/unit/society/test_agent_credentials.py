@@ -372,3 +372,18 @@ async def test_society_shell_sets_the_variable_and_masks_its_output(
         assert result.output["output"] == "Bearer [credential GITHUB_TOKEN]"
     finally:
         await rt.close()
+
+
+async def test_the_briefing_names_stored_credentials_and_says_when_there_are_none(
+    tmp_path: Path, vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.society.surface import _credential_line
+
+    monkeypatch.setattr(credentials, "vault_for", lambda _data_dir: vault)
+    rt = SimpleNamespace(data_dir=tmp_path)
+    # A resumed CLI conversation remembers a token it once saved; the briefing
+    # must say it is gone, or the agent reports a deleted credential as stored.
+    assert "Stored credentials: none" in await _credential_line(rt, "ada")
+    vault.store("ada", "DISCORD_BOT_TOKEN", SECRET, label="Discord bot token")
+    line = await _credential_line(rt, "ada")
+    assert "DISCORD_BOT_TOKEN (Discord bot token)" in line and SECRET not in line
