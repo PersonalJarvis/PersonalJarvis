@@ -19,6 +19,7 @@ from jarvis.agent_runtimes import RUNTIME_NAMES, manager
 from jarvis.agent_runtimes.model_map import (
     access_blocked,
     access_choices,
+    cli_subscriptions,
     login_providers,
     subscription_providers,
     supported_providers,
@@ -70,6 +71,9 @@ async def list_agent_runtimes(request: Request, refresh: bool = False) -> dict[s
         "subscription_providers": sorted(subscription_providers()),
         "login_providers": list(_USABLE_CACHE[2]),
         "access": dict(_USABLE_CACHE[3]),
+        # Per runtime, providers whose subscription runs through the vendor's
+        # own CLI (Claude on OpenClaw via Claude Code): offered at own risk.
+        "cli_subscriptions": await asyncio.to_thread(cli_subscriptions),
         "access_blocked": dict(_USABLE_CACHE[4]),
     }
 

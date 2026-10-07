@@ -5808,6 +5808,7 @@
       "xai_declined": "The login was declined in the browser.",
       "xai_expired": "The code expired. Connect again.",
       "xai_failed": "The Grok login did not work. Try again in a moment.",
+      "access_cli_subscription": "Runs on your own Claude Code login, through OpenClaw. Anthropic decides how this is billed and whether it allows it; you use it at your own risk.",
       "account_label": "Account",
       "active_account": "Active account",
       "model_label": "Model",

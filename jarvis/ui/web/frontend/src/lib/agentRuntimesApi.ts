@@ -59,6 +59,10 @@ export interface AgentRuntimesResponse {
    *  is off: `{"claude-api": {"subscription": "extra_usage_off"}}`). Absent
    *  on an older backend. */
   access_blocked?: Record<string, Record<string, string>>;
+  /** Per runtime, providers whose subscription it runs through the vendor's
+   *  own CLI (Claude on OpenClaw via Claude Code); offered at the person's
+   *  own risk, the vendor decides how it bills. */
+  cli_subscriptions?: Record<string, string[]>;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {

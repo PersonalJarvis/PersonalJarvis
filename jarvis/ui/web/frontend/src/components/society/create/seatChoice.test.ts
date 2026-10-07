@@ -11,8 +11,10 @@ import {
   blockedReasonKey,
   defaultModel,
   pickableOption,
+  markCliSubscriptions,
   providerChoices,
   SUBSCRIPTION_ACCOUNT,
+  withCliSubscriptions,
 } from "./seatChoice";
 
 function models(...ids: string[]): CuratedModel[] {
@@ -178,5 +180,19 @@ describe("every switched-on provider is listed for Hermes / OpenClaw", () => {
     const [xai] = providerChoices(seats, {}, true, {});
     expect(pickableOption(xai)).toMatchObject({ kind: "subscription", accountId: "" });
     expect(accessModels(pickableOption(xai)).map((m) => m.id)).toEqual(["grok-4.7"]);
+  });
+});
+
+describe("OpenClaw runs a Claude subscription through Claude Code", () => {
+  it("offers the refused subscription as an own-risk choice", () => {
+    const claude = seat({ id: "claude-api", label: "Claude", family: "claude", runner: "claude-cli", curated_models: models("claude-opus-5-5") }, "subscription");
+    const refused = { "claude-api": { subscription: "extra_usage_off" } };
+    const { access, blocked } = withCliSubscriptions({}, refused, ["claude-api"]);
+    expect(blocked["claude-api"]).toEqual({});
+    const seats = runtimeSeats([claude], ["claude-api"], [], ["claude-api"], blocked);
+    const [choice] = markCliSubscriptions(providerChoices(seats, access, true, blocked), ["claude-api"]);
+    const option = pickableOption(choice);
+    expect(option).toMatchObject({ kind: "subscription", accountId: SUBSCRIPTION_ACCOUNT, viaCli: true, extraUsage: false });
+    expect(option?.blocked).toBeUndefined();
   });
 });

@@ -191,6 +191,17 @@ call with its own provider plugins (`gateway.py`,
   a refusal that still arrives is reported as 402 with the same reason. The
   gateway sends Anthropic the agent's own request; it never presents itself
   as Claude Code.
+- **Claude subscription on OpenClaw: through Claude Code itself.** An
+  OpenClaw agent on the Claude subscription does not call Anthropic's API at
+  all: `route_for(..., runtime="openclaw")` returns a `claude_cli` route and
+  the agent's config selects OpenClaw's bundled `claude-cli` backend
+  (`anthropic/<model>` with `agentRuntime: claude-cli`), which runs the
+  person's own `claude` binary on its own login (`CLAUDE_CONFIG_DIR` of the
+  active Claude account). Jarvis' tools reach it over OpenClaw's loopback MCP
+  bridge. Nothing is presented as Claude Code that is not Claude Code;
+  Anthropic decides how such use is billed, so the dialog offers it as the
+  person's own risk (`cli_subscriptions` from `/api/agent-runtimes`). Hermes
+  has no such backend: there the subscription stays Extra Usage only.
 - **Grok subscription (SuperGrok / X Premium+).** xAI serves its
   subscription to third-party agents through its OAuth device login
   (`auth.x.ai`). Jarvis holds ONE such login for all its agents

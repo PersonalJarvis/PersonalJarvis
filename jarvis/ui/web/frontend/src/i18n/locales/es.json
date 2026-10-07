@@ -5808,6 +5808,7 @@
       "xai_declined": "El inicio de sesión se rechazó en el navegador.",
       "xai_expired": "El código caducó. Conecta de nuevo.",
       "xai_failed": "El inicio de sesión de Grok no funcionó. Inténtalo de nuevo en un momento.",
+      "access_cli_subscription": "Funciona con tu propio inicio de sesión de Claude Code, a través de OpenClaw. Anthropic decide cómo se factura y si lo permite; lo usas bajo tu propio riesgo.",
       "account_label": "Cuenta",
       "active_account": "Cuenta activa",
       "model_label": "Modelo",

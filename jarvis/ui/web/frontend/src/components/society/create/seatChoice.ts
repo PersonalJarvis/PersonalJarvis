@@ -43,6 +43,44 @@ export interface AccessOption {
   /** Why the provider refuses this access right now (a refusal code such as
    *  `extra_usage_off`); a blocked access is shown but cannot be picked. */
   blocked?: string;
+  /** The subscription runs through the vendor's own CLI (Claude Code on
+   *  OpenClaw): the person's own risk, the vendor decides how it bills. */
+  viaCli?: boolean;
+}
+
+/**
+ * The choices once a runtime runs some subscriptions through the vendor's own
+ * CLI (`cli_subscriptions`): that subscription is offered, not refused, and
+ * says so. Pure.
+ */
+export function withCliSubscriptions(
+  access: Record<string, string[]>,
+  blocked: AccessBlocked,
+  viaCli: readonly string[],
+): { access: Record<string, string[]>; blocked: AccessBlocked } {
+  const nextAccess = { ...access };
+  const nextBlocked = { ...blocked };
+  for (const id of viaCli) {
+    nextAccess[id] = [...new Set([...(access[id] ?? []), "subscription"])];
+    if (nextBlocked[id]?.subscription) {
+      const rest = { ...nextBlocked[id] };
+      delete rest.subscription;
+      nextBlocked[id] = rest;
+    }
+  }
+  return { access: nextAccess, blocked: nextBlocked };
+}
+
+/** Mark the subscriptions a runtime runs through the vendor's own CLI. */
+export function markCliSubscriptions(choices: ProviderChoice[], viaCli: readonly string[]): ProviderChoice[] {
+  if (!viaCli.length) return choices;
+  const ids = new Set(viaCli);
+  return choices.map((choice) => ({
+    ...choice,
+    options: choice.options.map((option) => option.kind === "subscription" && ids.has(option.seat.provider.id)
+      ? { ...option, extraUsage: false, viaCli: true }
+      : option),
+  }));
 }
 
 /** Per provider id and access kind, the refusal code (`/api/agent-runtimes`). */

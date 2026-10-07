@@ -5814,6 +5814,7 @@
       "xai_declined": "登录在浏览器中被拒绝。",
       "xai_expired": "代码已过期。请重新连接。",
       "xai_failed": "Grok 登录失败。请稍后重试。",
+      "access_cli_subscription": "通过 OpenClaw 使用你自己的 Claude Code 登录运行。Anthropic 决定如何计费以及是否允许；使用风险由你自行承担。",
       "account_label": "账号",
       "active_account": "当前账号",
       "model_label": "模型",

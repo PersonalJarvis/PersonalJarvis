@@ -522,6 +522,14 @@ class OpenClawRuntime:
             # temp-folder log every OpenClaw on the machine appends to.
             "logging": {"file": str(home / "state" / "logs" / "openclaw.log")},
         }
+        if route.transport == "claude_cli":
+            # The person's own Claude Code answers (OpenClaw's bundled
+            # claude-cli backend, on Claude Code's login): no Jarvis provider,
+            # and Jarvis' tools reach it over OpenClaw's loopback MCP bridge.
+            ref = f"anthropic/{route.model}"
+            del config["models"]
+            config["agents"]["defaults"]["model"] = {"primary": ref}
+            config["agents"]["defaults"]["models"] = {ref: {"agentRuntime": {"id": "claude-cli"}}}
         thinking = "off" if turn.effort == "none" else turn.effort
         if thinking in _THINKING_LEVELS:
             config["agents"]["defaults"]["thinkingDefault"] = thinking
