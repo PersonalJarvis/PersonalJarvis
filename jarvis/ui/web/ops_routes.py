@@ -9,6 +9,11 @@ is listed as ``unavailable``.
 (``jarvis/ops/priority.py``) — the only thing these routes write, and only on
 an explicit request. ``GET /api/ops/agenda`` ranks the ledger with those marks
 (``jarvis/ops/ranking.py``): deterministic, no model call.
+
+``POST /api/ops/briefing/preview`` composes the daily briefing
+(``jarvis/ops/briefing.py``) and returns it — it sends nothing and schedules
+nothing. Phrasing by a model happens only when asked for, and only on a
+subscription or a local model; the deterministic text is always returned.
 """
 
 from __future__ import annotations
@@ -21,6 +26,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from jarvis.ops.briefing import (
+    BriefingComposer,
+    Phrasing,
+    ToolCalendarReader,
+    normalize_language,
+    phrase_briefing,
+)
 from jarvis.ops.ledger import WORK_SOURCES, WorkLedger
 from jarvis.ops.priority import NOTE_MAX, OpsPriorityStore, PriorityError, PriorityMark
 from jarvis.ops.ranking import build_agenda
@@ -145,3 +157,71 @@ async def clear_priority(source: str, item_id: str, request: Request) -> dict[st
     """Remove the person's mark from one work item. The item itself is untouched."""
     removed = await _priority_store(request).delete(source, item_id)
     return {"removed": removed, "source": source, "item_id": item_id}
+
+
+class BriefingPreviewBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str | None = Field(default=None, description="en, de, es or zh; default: UI language")
+    include_calendar: bool = True
+    phrase: bool = Field(
+        default=False,
+        description="Also ask a subscription or local model for prose (never an API key)",
+    )
+
+
+#: Work items the briefing reads per source; enough for a day's overview.
+BRIEFING_ITEM_LIMIT = 200
+
+
+def _briefing_composer(request: Request) -> BriefingComposer:
+    state = request.app.state
+    ledger = _ledger(request)
+
+    async def _snapshot() -> Any:
+        return await ledger.snapshot(include_finished=True, limit=BRIEFING_ITEM_LIMIT)
+
+    async def _marks() -> list[PriorityMark]:
+        try:
+            store = _priority_store(request)
+        except HTTPException:
+            return []  # no data dir: the briefing simply carries no marks
+        return await store.all()
+
+    def _brain() -> Any:
+        return getattr(state, "brain", None)
+
+    def _address() -> str | None:
+        profile = getattr(_brain(), "_user_profile", None)
+        value = getattr(profile, "preferred_address", None)
+        return str(value) if value else None
+
+    return BriefingComposer(
+        snapshot=_snapshot,
+        marks=_marks,
+        calendar=ToolCalendarReader(
+            tools=lambda: getattr(_brain(), "_tools", None),
+            executor=lambda: getattr(_brain(), "_tool_executor_ref", None),
+        ),
+        address=_address,
+    )
+
+
+@router.post("/briefing/preview")
+async def preview_briefing(request: Request, body: BriefingPreviewBody) -> dict[str, Any]:
+    """Compose today's briefing and return it. Sends and schedules nothing."""
+    config = getattr(request.app.state, "config", None)
+    language = normalize_language(
+        body.language or getattr(getattr(config, "ui", None), "language", None)
+    )
+    briefing = await _briefing_composer(request).compose(
+        now=datetime.now().astimezone(),
+        language=language,
+        include_calendar=body.include_calendar,
+    )
+    phrasing = Phrasing("not_requested")
+    if body.phrase:
+        phrasing = await phrase_briefing(
+            briefing, brain=getattr(request.app.state, "brain", None), config=config
+        )
+    return {**briefing.to_dict(), "phrasing": phrasing.to_dict()}

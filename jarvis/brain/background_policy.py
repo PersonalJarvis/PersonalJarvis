@@ -122,6 +122,11 @@ def _billing(provider: str) -> str:
     return "api"
 
 
+def billing_kind(provider: str) -> str:
+    """Public read of :func:`_billing` for callers that gate on it."""
+    return _billing(provider)
+
+
 def subscription_capable(provider: str) -> bool:
     return _billing(provider).startswith("subscription")
 
@@ -234,6 +239,7 @@ __all__ = [
     "BackgroundDeferred",
     "BackgroundProviders",
     "background_providers",
+    "billing_kind",
     "forget",
     "keyless_local",
     "login_state",

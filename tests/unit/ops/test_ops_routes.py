@@ -71,11 +71,14 @@ async def test_source_filter_and_unknown_source(app: FastAPI) -> None:
 
 
 async def test_only_the_priority_marks_are_writable() -> None:
-    """The ledger and agenda only read; the person's marks are the one write."""
+    """The ledger and agenda only read; the person's marks are the one write.
+    The briefing preview is a POST that writes nothing (proven below)."""
     for route in ops_routes.router.routes:
         methods = set(getattr(route, "methods", ()))
         path = getattr(route, "path", "")
-        if methods - {"GET", "HEAD"}:
+        if path == "/api/ops/briefing/preview":
+            assert methods == {"POST"}
+        elif methods - {"GET", "HEAD"}:
             assert path.startswith("/api/ops/priorities/"), path
         else:
             assert methods <= {"GET", "HEAD"}
@@ -167,3 +170,67 @@ async def test_the_marks_store_opens_lazily_under_the_data_dir(
     res = await _send(app, "PUT", "/api/ops/priorities/task/t1", json={"priority": "low"})
     assert res.status_code == 200
     assert (data_dir / "ops.sqlite").exists()
+
+
+# --- Briefing preview -------------------------------------------------------------
+
+
+async def test_briefing_preview_sends_nothing_and_writes_nothing(
+    marks_app: FastAPI, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    item = (await _get(marks_app, "/api/ops/work")).json()["items"][0]
+    await _send(
+        marks_app, "PUT", f"/api/ops/priorities/task/{item['id']}", json={"focus_today": True}
+    )
+    marks_app.state.config = SimpleNamespace(ui=SimpleNamespace(language="de"))
+    tasks_before = _task_rows(tmp_path / "tasks.db")
+    marks_before = (await _get(marks_app, "/api/ops/priorities")).json()
+
+    res = await _send(marks_app, "POST", "/api/ops/briefing/preview", json={})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["language"] == "de"  # the UI language by default
+    focus = next(s for s in body["sections"] if s["key"] == "focus")
+    assert [i["id"] for i in focus["items"]] == [item["id"]]
+    assert next(s for s in body["sections"] if s["key"] == "calendar")["status"] == (
+        "not_connected"
+    )
+    assert body["phrasing"] == {"status": "not_requested", "reason": "", "text": None}
+    assert "Morning digest" in body["text"]
+
+    assert _task_rows(tmp_path / "tasks.db") == tasks_before
+    assert (await _get(marks_app, "/api/ops/priorities")).json() == marks_before
+
+
+async def test_briefing_preview_phrasing_without_a_subscription_is_refused(
+    marks_app: FastAPI,
+) -> None:
+    from types import SimpleNamespace
+
+    calls: list[Any] = []
+
+    class _Brain:
+        async def run_task(self, **kw: Any) -> str:
+            calls.append(kw)
+            return "prose"
+
+    marks_app.state.brain = _Brain()
+    worker = SimpleNamespace(provider="", model="", reasoning_effort="")
+    marks_app.state.config = SimpleNamespace(
+        ui=SimpleNamespace(language="en"), brain=SimpleNamespace(worker=worker)
+    )
+    res = await _send(
+        marks_app, "POST", "/api/ops/briefing/preview", json={"phrase": True, "language": "es"}
+    )
+    body = res.json()
+    assert body["language"] == "es"
+    assert body["phrasing"]["status"] == "not_allowed"
+    assert body["text"]  # the deterministic briefing is always there
+    assert calls == []
+
+
+async def test_briefing_preview_rejects_unknown_fields(marks_app: FastAPI) -> None:
+    res = await _send(marks_app, "POST", "/api/ops/briefing/preview", json={"send": True})
+    assert res.status_code == 422
