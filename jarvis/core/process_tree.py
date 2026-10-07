@@ -358,7 +358,7 @@ class DescendantTracker:
                 try:
                     self.seen.setdefault(child.pid, child.create_time())
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+                    continue  # exited meanwhile or not ours to inspect: nothing to reap
         except Exception as exc:  # noqa: BLE001 - the parent is gone or psutil is unusable
             logger.debug("descendant snapshot of {} skipped: {}", self.pid, exc)
 
@@ -396,7 +396,7 @@ class DescendantTracker:
                 proc.kill()
                 killed.append(pid)
             except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+                continue  # already gone, or not ours to kill: the good outcome
         if killed:
             logger.info("Reaped {} detached descendant(s) of pid {}", len(killed), self.pid)
         return killed

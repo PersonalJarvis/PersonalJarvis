@@ -208,7 +208,7 @@ async def _run_job(current: RuntimeJob, argv: list[str], env: dict[str, str] | N
         try:
             async with _alone(target):
                 await _run_setup(current, argv, env)
-        except TimeoutError:
+        except TimeoutError:  # reported through the job's state and message below
             current.state = "failed"
             current.finished_ms = int(time.time() * 1000)
             current.message = (
