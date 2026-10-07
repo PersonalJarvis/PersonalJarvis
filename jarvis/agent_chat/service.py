@@ -845,6 +845,11 @@ class AgentChatService:
         self._publish_event(session_id, event)
 
     def _publish_event(self, session_id: str, event: dict[str, Any]) -> None:
+        if event.get("kind") == "turn_finished":
+            turn_id = str((event.get("payload") or {}).get("turn_id") or "")
+            if turn_id and self.store.turn_terminal(session_id, turn_id) is not None:
+                log.warning("agent chat: ignored duplicate completion for turn %s", turn_id)
+                return
         stored = self.store.append_event(session_id, event)
         if event.get("kind") == "turn_finished":
             self._announce_jarvis_turn(session_id, event)

@@ -1047,6 +1047,11 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
     }
 
     case "turn_finished": {
+      // Older event logs can contain a stale reader's timeout after the real
+      // process completed. Only a terminal event settles a turn, and it does
+      // so once; streamed text alone never suppresses a genuine timeout.
+      const existing = base.items[findTurn(base.items, turnId)];
+      if (existing?.type === "turn" && existing.durationMs !== null) return base;
       const status = str(p.status, "done") as TurnStatus;
       const finished = updateTurn(base, turnId, (turn) => ({
         ...turn,

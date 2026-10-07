@@ -3671,6 +3671,8 @@ async def _drive_cli(
         assert proc.stdout is not None
         while True:
             raw = await proc.stdout.readline()
+            if hosted and getattr(proc, "handed_over", False):
+                return
             if not raw:
                 return
             # A line this turn handled before an app restart: rebuild state only.
@@ -3915,12 +3917,21 @@ async def _drive_cli(
     feeder = asyncio.create_task(_feed_stdin())
     watcher = asyncio.create_task(_watch_cancel())
     try:
-        if getattr(handle, "goal_turn", False):
+        # EOF is not process exit: a CLI may close both pipes and keep
+        # running. The deadline must also cover waiting for the process.
+        deadline = None if getattr(handle, "goal_turn", False) else timeout_s
+        async with asyncio.timeout(deadline):
             await asyncio.gather(pump, drain, feeder)
-        else:
-            await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=timeout_s)
-        await proc.wait()
+            await proc.wait()
     except TimeoutError:
+        log.warning(
+            "agent chat %s: %s timed out (result=%s, returncode=%s, stdout_done=%s)",
+            handle.turn_id,
+            runner,
+            getattr(state, "saw_result", False),
+            proc.returncode,
+            pump.done(),
+        )
         _kill(proc)
         status = "error"
         error_text = f"{runner} did not finish within {int(_TURN_TIMEOUT_S)} s."
@@ -3983,6 +3994,9 @@ async def _drive_cli(
         elif plan.shape == "codex" and state.failed_tools:
             status = "error"
             error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
+        elif runner in {"claude-cli", "glm-cli"} and not state.saw_result:
+            status = "error"
+            error_text = f"{runner} exited without a terminal result; its output may be incomplete."
 
     usage = dict(state.usage)
     cost_usd = getattr(state, "cost_usd", None)
