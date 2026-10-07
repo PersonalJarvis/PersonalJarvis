@@ -1,6 +1,0 @@
-import{h as c,al as d}from"./index-jOXXQt19.js";/**
- * @license lucide-react v0.445.0 - ISC
- *
- * This source code is licensed under the ISC license.
- * See the LICENSE file in the root directory of this source tree.
- */const l=c("Gauge",[["path",{d:"m12 14 4-4",key:"9kzdfg"}],["path",{d:"M3.34 19a10 10 0 1 1 17.32 0",key:"19p75a"}]]),f={disabled:[],api_only:[],hidden_models:{}},u=["agent-provider-prefs"];async function p(){const t=await fetch("/api/society/provider-prefs",{cache:"no-store"});if(t.status===404)return f;if(!t.ok)throw new Error(`HTTP ${t.status}`);return await t.json()}async function g(t){const e=await fetch("/api/society/provider-prefs",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(t)});if(!e.ok){const n=await e.json().catch(()=>null);throw new Error(n&&typeof n.detail=="string"&&n.detail||`HTTP ${e.status}`)}return await e.json()}const P=d(()=>({hidden:null}));function w(t,e,n="",a=null){const s=a?a[t.id]:t.hidden_models;if(!(s!=null&&s.length))return e;const o=new Set(s);o.delete(n);const r=e.filter(i=>!o.has(i.id));return r.length===e.length?e:r}function y(t,e,n){const a=new Set(e),s=t.filter(o=>!a.has(o));return n?s:[...s,...e]}export{u as A,f as E,l as G,p as f,w as o,g as s,y as t,P as u};
