@@ -222,7 +222,10 @@ A release happens **only** when the maintainer asks for one.
   `install-verify.ps1` in dry-run, no-launch mode on Linux, Windows and
   macOS (`release-wrapper-smoke.yml`, which `installer-smoke.yml` also runs on
   Linux). Release cut calls it after publishing and requires attestations; a
-  release published with `GITHUB_TOKEN` fires no `release` event. Re-check any
+  release published with `GITHUB_TOKEN` fires no `release` event. An
+  attestation lookup that keeps getting a server error (HTTP 5xx, retried
+  twice) fails only when attestations are required; otherwise it is a
+  warning, like a missing attestation on an older release. Re-check any
   tag with `gh workflow run release-smoke.yml -f tag=vX.Y.Z`.
 
 ### When a release is bad: roll forward
