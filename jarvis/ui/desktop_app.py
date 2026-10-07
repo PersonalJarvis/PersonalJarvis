@@ -507,6 +507,44 @@ def _read_meta() -> dict[str, Any] | None:
     return data
 
 
+def _mark_instance_quitting() -> None:
+    """Publish a quit before its window and HTTP endpoint disappear."""
+    meta = _read_meta()
+    if not meta or meta.get("pid") != os.getpid() or "quitting_at" in meta:
+        return
+    meta["quitting_at"] = time.time()
+    path = META_FILE_PATH
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.quitting.tmp")
+    try:
+        tmp.write_text(json.dumps(meta), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        logging.getLogger(__name__).warning("Could not mark the instance as quitting: %s", exc)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError as exc:
+            logging.getLogger(__name__).debug("Could not remove quit marker tempfile: %s", exc)
+
+
+def _quitting_grace_remaining(meta: Any, pid: int) -> float:
+    """The owned quit's remaining exit budget; stale or invalid markers get none.
+
+    Share the desktop's force-exit bound, plus five seconds for OS handle
+    release. A missing window during this interval is expected. The timestamp
+    is written once, so repeated launches cannot extend the deadline.
+    """
+    if not isinstance(meta, dict) or meta.get("pid") != pid:
+        return 0.0
+    try:
+        age = time.time() - float(meta["quitting_at"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return 0.0
+    grace = _SHUTDOWN_FORCE_EXIT_MIN_S + 5.0
+    # The chained comparison also rejects NaN and either infinity.
+    return grace - age if 0.0 <= age < grace else 0.0
+
+
 def _fallback_admin_port() -> int:
     """The port a missing sidecar still has to probe.
 
@@ -1525,6 +1563,11 @@ def acquire_single_instance_lock(
                     f"Jarvis is already running (port={int(probe_port)} answering, pid unknown)."
                 )
     if pid is not None and _pid_alive(pid):
+        # Closing removes the window and port before the process releases its
+        # lock. Let the launcher await that deliberate handover, not evict a
+        # process still flushing its state because its health endpoint closed.
+        if _quitting_grace_remaining(meta, pid) > 0:
+            raise SingleInstanceError(f"Jarvis is already running (pid={pid}).")
         # Holder is alive. Is it actually FUNCTIONAL (serving its port)? A
         # healthy instance, the own pid, or a holder with no recorded port is
         # respected; only a live-but-non-serving lock-zombie is evicted.
@@ -6746,6 +6789,7 @@ class DesktopApp:
         if getattr(self, "_quit_requested_at", None) is not None:
             return
         self._quit_requested_at = time.monotonic()
+        _mark_instance_quitting()
         backstop = getattr(self, "_webview_running", False)
         logger.info(
             "Main window closed — quitting{}.",
@@ -6958,10 +7002,11 @@ class DesktopApp:
             finish()
 
     def shutdown(self) -> int:
-        """Idempotent. Stops the server + backend loop, cleans the meta file."""
+        """Idempotent. Stops the server and schedules the backend loop's drain."""
         if self._shutdown_done:
             return 0
         self._shutdown_done = True
+        _mark_instance_quitting()
         self._window_visible = False
         self._destroy_background_keeper()
 
@@ -7214,15 +7259,11 @@ class DesktopApp:
                     "Tray command bridge did not stop within two seconds",
                 )
 
-        try:
-            META_FILE_PATH.unlink(missing_ok=True)
-        except Exception as exc:  # noqa: BLE001
-            # A sidecar left behind makes the NEXT start believe an instance is
-            # already running, so it refuses to launch or tries to focus a dead
-            # window. Silence here costs the user the next start.
-            from loguru import logger as _logger
-
-            _logger.warning("Could not remove the instance sidecar: {}", exc)
+        # Keep the quit marker until the OS releases our lock. Cleanup may
+        # continue after this bounded GUI wait, and deleting the sidecar here
+        # makes a reopening launcher lose the only evidence of that handover.
+        # A dead PID never blocks acquisition; the next holder replaces the
+        # sidecar through _write_meta once its backend is ready.
 
         return 0
 
