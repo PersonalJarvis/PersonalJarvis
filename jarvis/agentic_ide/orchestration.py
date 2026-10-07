@@ -725,10 +725,34 @@ class WorkspaceOrchestrator:
                 "workspace": session.name,
                 "agents": [t.name for t in session.terminals],
             }
-        # open_workspace: a folder by path, or a known project by name.
+        scope = str(args.get("_dispatch_scope") or "")
+        if not scope:
+            return await self._open_workspace(args, graph, trace_id=trace_id, creation_id="")
+        # One request scope opens at most one workspace: a retry, or a second
+        # call in the same turn, reads the receipt instead of opening another.
+        arguments = {k: v for k, v in args.items() if not k.startswith("_") and k != "request_id"}
+        if args.get("image_refs"):
+            arguments["image_scope"] = args.get("_image_scope", "")
+        previous = await asyncio.to_thread(
+            self.ledger.claim, "workspace-create", scope, "open_workspace", arguments, 0,
+        )
+        if previous is not None:
+            return previous
+        result = await self._open_workspace(args, graph, trace_id=trace_id, creation_id=scope)
+        result["request_id"] = scope
+        await asyncio.to_thread(self.ledger.finish, "workspace-create", scope, result)
+        return result
+
+    async def _open_workspace(
+        self, args: dict[str, Any], graph: dict[str, Any], *, trace_id: str, creation_id: str,
+    ) -> dict[str, Any]:
+        """Open a folder by path, or a known project by name or ID, as a NEW workspace."""
+        from .session import workspace_changed_event
+
         folder = str(args.get("folder") or "").strip()
-        project_id: str | None = None
-        project_ref = str(args.get("project") or "").strip()
+        # An explicit project_id with a folder is checked by registry.start.
+        project_id: str | None = str(args.get("project_id") or "").strip() or None
+        project_ref = str(args.get("project_id") or args.get("project") or "").strip()
         if not folder and project_ref:
             owners = _best(
                 project_ref, graph["projects"], lambda p: ((p["id"], p["path"]), (p["name"],))
@@ -770,6 +794,15 @@ class WorkspaceOrchestrator:
                 session, "opened", source_layer="agentic_ide.orchestration"
             )
         )
+        targets = [
+            {
+                "project_id": session.project_id,
+                "workspace_id": session.id,
+                "terminal_id": "pane:" + t.history_id,
+            }
+            for t in session.terminals
+        ]
+        delivery_ids = [self._issue(target) for target in targets]
         result: dict[str, Any] = {
             "status": "opened",
             "project_id": session.project_id,
@@ -777,23 +810,29 @@ class WorkspaceOrchestrator:
             "workspace": session.name,
             "folder": session.folder,
             "agents": [
-                {"terminal_id": "pane:" + t.history_id, "name": t.name, "cli": t.agent}
-                for t in session.terminals
+                {"terminal_id": target["terminal_id"], "name": t.name, "cli": t.agent,
+                 "request_id": request_id}
+                for target, t, request_id in zip(
+                    targets, session.terminals, delivery_ids, strict=True
+                )
             ],
         }
+        if creation_id:
+            # Persist identity before the brief, as create does: a cancelled or
+            # late result must never become permission to open another workspace.
+            await asyncio.to_thread(
+                self.ledger.finish, "workspace-create", creation_id,
+                {**result, "status": "uncertain", "success": False, "request_id": creation_id,
+                 "reason": "The new workspace exists; startup/delivery is pending. Observe "
+                           "only these IDs. Do not reopen, reassign or send correction prompts."},
+            )
         prompt = str(args.get("prompt") or "").strip()
         if prompt:
             result["deliveries"] = await self._brief(
-                [
-                    {
-                        "project_id": session.project_id,
-                        "workspace_id": session.id,
-                        "terminal_id": "pane:" + t.history_id,
-                    }
-                    for t in session.terminals
-                ],
+                targets,
                 prompt,
                 trace_id,
+                request_ids=delivery_ids,
                 image_refs=args.get("image_refs", []),
                 image_scope=args.get("_image_scope", ""),
             )
@@ -835,7 +874,7 @@ class WorkspaceOrchestrator:
 
     async def _brief(
         self, targets: list[dict[str, str]], prompt: str, trace_id: str,
-        *, image_refs: list[str] | None = None, image_scope: str = "",
+        *, request_ids: list[str], image_refs: list[str] | None = None, image_scope: str = "",
     ) -> list[dict[str, Any]]:
         return list(
             await asyncio.gather(
@@ -844,14 +883,14 @@ class WorkspaceOrchestrator:
                         {
                             "action": "send",
                             **target,
-                            "request_id": self._issue(target),
+                            "request_id": request_id,
                             "prompt": prompt,
                             "image_refs": image_refs or [],
                             "_image_scope": image_scope,
                         },
                         trace_id=trace_id,
                     )
-                    for target in targets
+                    for target, request_id in zip(targets, request_ids, strict=True)
                 )
             )
         )
@@ -983,8 +1022,11 @@ class WorkspaceOrchestrator:
             await asyncio.to_thread(self.ledger.operation, "workspace-create", dispatch_scope)
             if dispatch_scope else None
         )
+        # open_workspace always starts a NEW workspace with NEW panes, so it is
+        # a creation like create (live 2026-10-07: a new-agent workspace request
+        # was refused as pane reuse and nothing opened).
         if (args.get("_requires_new") or creation) and action not in {
-            "inspect", "create", "context", "observe",
+            "inspect", "create", "open_workspace", "context", "observe",
         }:
             allowed = {
                 a["terminal_id"] for a in (creation or {}).get("agents", [])
@@ -994,8 +1036,9 @@ class WorkspaceOrchestrator:
             if action != "send" or str(args.get("terminal_id") or "") not in allowed:
                 return {
                     "status": "new_agent_required", "success": False,
-                    "reason": "This request requires NEW panes. Use create; do not resolve, "
-                              "reuse or send correction prompts to existing agents.",
+                    "reason": "This request requires NEW panes. Use create (or open_workspace "
+                              "for a new workspace); do not resolve, reuse or send "
+                              "correction prompts to existing agents.",
                     "creation": creation,
                 }
             # create(prompt=...) already owns delivery, including uncertainty.

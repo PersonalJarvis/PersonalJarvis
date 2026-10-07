@@ -354,3 +354,112 @@ async def test_live_retries_use_host_request_scope_and_old_revision_cannot_act(
         assert len(rig[2].calls) == 1
     finally:
         ledger.close()
+
+
+def project_of(rig, name="Personal Jarvis"):
+    return next(p for p in rig[0].graph()["projects"] if p["name"] == name)
+
+
+OPEN_TEXT = "Open a new workspace with a new Claude Code agent to audit the startup instructions."
+
+
+@pytest.mark.parametrize("briefed", [True, False], ids=["agents-and-prompt", "bare"])
+async def test_new_request_opens_one_new_workspace_and_never_touches_old_panes(
+    rig, runnable, briefed
+):
+    # Live 2026-10-07: open_workspace for a NEW agent was refused as pane reuse
+    # ("new_agent_required"), with and without agents/prompt; nothing opened.
+    orchestrator, registry, sessions = rig
+    project = project_of(rig)
+    before = {w.id for w in registry.sessions}
+    existing = {t.history_id for w in registry.sessions for t in w.terminals}
+    args = {"action": "open_workspace", "project_id": project["id"], "name": "Agents.md"}
+    if briefed:
+        args |= {"agents": [{"cli": "Claude Code", "count": 1}], "prompt": "Audit the stack"}
+    else:
+        args |= {"folder": project["path"]}
+    tool = WorkspaceOrchestrationTool(orchestrator)
+    first = await tool.execute(args, context(OPEN_TEXT))
+    assert first.success, first
+    assert first.output["status"] == "opened"
+    assert first.output["workspace"] == "Agents.md"
+    assert first.output["workspace_id"] not in before
+    new_ids = [a["terminal_id"] for a in first.output["agents"]]
+    assert len(new_ids) == 1
+    assert not {i.removeprefix("pane:") for i in new_ids} & existing
+    assert [c["terminal_id"] for c in sessions.calls] == (new_ids if briefed else [])
+    # A retry in the same request scope reads the receipt; no second workspace.
+    reopened = WorkspaceOrchestrationTool(
+        WorkspaceOrchestrator(registry, sessions, orchestrator.ledger)
+    )
+    repeated = await reopened.execute(args, context(OPEN_TEXT))
+    assert repeated.output == first.output
+    assert len(registry.sessions) == len(before) + 1
+    assert len(sessions.calls) == (1 if briefed else 0)
+    # The new-agent guard still keeps old panes out of this request.
+    refused = await tool.execute({"action": "resolve"}, context(OPEN_TEXT))
+    assert refused.output["status"] == "new_agent_required"
+    old = next(t for w in registry.sessions if w.id in before for t in w.terminals)
+    owner = next(w for w in registry.sessions if w.id in before)
+    stolen = await tool.execute(
+        {
+            "action": "send",
+            "project_id": owner.project_id,
+            "workspace_id": owner.id,
+            "terminal_id": "pane:" + old.history_id,
+            "prompt": "Correction",
+        },
+        context(OPEN_TEXT),
+    )
+    assert stolen.output["status"] == "new_agent_required"
+    assert len(sessions.calls) == (1 if briefed else 0)
+
+
+async def test_bare_new_workspace_pane_takes_one_assignment_only(rig, runnable):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    project = project_of(rig)
+    opened = await tool.execute(
+        {"action": "open_workspace", "folder": project["path"], "name": "Agents.md"},
+        context(OPEN_TEXT),
+    )
+    pane = opened.output["agents"][0]
+    args = {
+        "action": "send",
+        "project_id": opened.output["project_id"],
+        "workspace_id": opened.output["workspace_id"],
+        "terminal_id": pane["terminal_id"],
+        "request_id": pane["request_id"],
+        "prompt": "Task",
+    }
+    first = await tool.execute(args, context(OPEN_TEXT))
+    assert first.success, first
+    assert not (
+        await tool.execute({**args, "prompt": "Correction: another task"}, context(OPEN_TEXT))
+    ).success
+    assert len(rig[2].calls) == 1
+
+
+async def test_second_open_in_the_same_request_cannot_open_another_workspace(rig, runnable):
+    tool = WorkspaceOrchestrationTool(rig[0])
+    project = project_of(rig)
+    count = len(rig[1].sessions)
+    base = {"action": "open_workspace", "folder": project["path"]}
+    assert (await tool.execute({**base, "name": "Agents.md"}, context(OPEN_TEXT))).success
+    other = await tool.execute({**base, "name": "Another"}, context(OPEN_TEXT))
+    assert not other.success
+    assert len(rig[1].sessions) == count + 1
+
+
+async def test_open_workspace_by_project_id_alone_opens_that_project(rig, runnable):
+    project = project_of(rig, "Other project")
+    result = await rig[0].run({"action": "open_workspace", "project_id": project["id"]})
+    assert result["status"] == "opened", result
+    assert result["project_id"] == project["id"]
+
+
+@pytest.mark.parametrize("action", ["restore", "show"])
+async def test_new_request_still_cannot_reopen_or_show_existing_workspaces(rig, action):
+    result = await WorkspaceOrchestrationTool(rig[0]).execute(
+        {"action": action, "workspace": "Personal Jarvis"}, context(OPEN_TEXT)
+    )
+    assert result.output["status"] == "new_agent_required"
