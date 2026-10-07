@@ -14,7 +14,10 @@ export type MissionState =
   | "APPROVED"
   | "FAILED"
   | "CANCELLED"
-  | "TIMED_OUT";
+  | "TIMED_OUT"
+  // Parked: the worker's subscription has no capacity left, so the work is
+  // checkpointed and the mission waits (jarvis/missions/capacity.py).
+  | "WAITING_CAPACITY";
 
 export type SourceActor =
   | "hauptjarvis"
@@ -41,7 +44,10 @@ export type EventType =
   | "MissionTimedOut"
   | "MissionStateChanged"
   | "BusStats"
-  | "MissionBudgetWarning";
+  | "MissionBudgetWarning"
+  | "MissionWaitingCapacity"
+  | "MissionCapacityDecision"
+  | "MissionPaidUsage";
 
 export interface BasePayload {
   event_type: EventType;
@@ -192,6 +198,96 @@ export interface BusStats extends BasePayload {
   active_subs: number;
 }
 
+/** Mirror of CAPACITY_WAIT_REASONS in jarvis/missions/events.py. */
+export type CapacityWaitReason =
+  | "provider_quota"
+  | "provider_auth"
+  | "provider_unavailable"
+  | "paid_cap_reached"
+  // Automatic paid use (the setting in Settings → API Keys) hit its rolling
+  // 24 h limit, or was switched off while the mission ran on it.
+  | "paid_daily_cap_reached"
+  | "paid_consent_revoked";
+
+/** Mirror of jarvis.missions.capacity.CapacityDecision. */
+export type CapacityDecision = "wait" | "approve_paid" | "cancel";
+
+export interface MissionCapacityDecision extends BasePayload {
+  event_type: "MissionCapacityDecision";
+  decision: CapacityDecision;
+  provider: string | null;
+  model: string | null;
+  estimated_cost_usd: number | null;
+  cost_cap_usd: number | null;
+  reason: string;
+}
+
+export interface MissionPaidUsage extends BasePayload {
+  event_type: "MissionPaidUsage";
+  provider: string;
+  model: string;
+  cost_usd: number;
+  cost_cap_usd: number;
+  estimated_cost_usd: number;
+  /** true = paid through the setting, false = a one-off manual approval. */
+  automatic: boolean;
+}
+
+/** GET /api/missions/{id}/paid-offer — what an approval would cover. */
+export interface PaidOffer {
+  provider: string;
+  model: string;
+  estimated_cost_usd: number;
+  cost_cap_usd: number;
+  reason: string;
+  open_steps: number;
+  /** Already spent on paid calls by this mission. */
+  spent_usd: number;
+  /** The approval also pays for the review (critic) calls. */
+  covers_critic: boolean;
+}
+
+/**
+ * GET/PUT /api/mission-billing — whether missions may continue on a paid API
+ * key when every subscription is used up, and the hard limits that apply.
+ */
+export interface MissionBilling {
+  paid_api_fallback: boolean;
+  /** false on an install that never connected a subscription. */
+  subscription_mode: boolean;
+  per_mission_cap_usd: number;
+  daily_cap_usd: number;
+  spent_last_24h_usd: number;
+  /** The key that would be used first; null when no key has a known price. */
+  paid_provider: { provider: string; model: string; price_known: boolean } | null;
+}
+
+export interface PaidOfferResponse {
+  mission_id: string;
+  state: MissionState;
+  offer: PaidOffer | null;
+}
+
+export interface CapacityDecisionResponse {
+  ok: boolean;
+  mission_id: string;
+  decision: CapacityDecision;
+  state: MissionState;
+}
+
+export interface MissionWaitingCapacity extends BasePayload {
+  event_type: "MissionWaitingCapacity";
+  reason: CapacityWaitReason;
+  provider: string | null;
+  steps_done: number;
+  steps_total: number;
+  files_saved: number;
+  checkpoint_path: string;
+  error_detail: string | null;
+  resume_attempt: number;
+  repeat: boolean;
+}
+
 export interface MissionBudgetWarning extends BasePayload {
   event_type: "MissionBudgetWarning";
   mission_id: string;
@@ -213,6 +309,9 @@ export type AnyPayload =
   | MissionCancelled
   | MissionTimedOut
   | MissionStateChanged
+  | MissionWaitingCapacity
+  | MissionCapacityDecision
+  | MissionPaidUsage
   | BusStats
   | MissionBudgetWarning;
 
@@ -406,6 +505,11 @@ export const MISSION_STATE_BADGE: Record<MissionState, MissionStateBadgeMeta> = 
     labelKey: "mission_state.timed_out",
     className: "border-foreground/40 bg-foreground/10 text-foreground",
     iconName: "Skull",
+  },
+  WAITING_CAPACITY: {
+    labelKey: "mission_state.waiting_capacity",
+    className: "border-warning/40 bg-warning/10 text-warning",
+    iconName: "Clock",
   },
 };
 
