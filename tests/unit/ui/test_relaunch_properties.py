@@ -65,8 +65,10 @@ def test_relaunch_properties_stick_on_a_real_window() -> None:
     """Stamp a real Tk window and read the properties back from the shell."""
     tk = pytest.importorskip("tkinter")
     pywintypes = pytest.importorskip("pywintypes")
-    propsys_mod = pytest.importorskip("win32com.propsys")
-    propsys = propsys_mod.propsys
+    # Import the extension module itself: ``win32com.propsys`` is a package
+    # whose ``propsys`` attribute only exists once something else imported the
+    # submodule, which made this test pass or fail by collection order.
+    propsys = pytest.importorskip("win32com.propsys.propsys")
 
     try:
         root = tk.Tk()

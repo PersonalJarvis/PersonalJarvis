@@ -91,6 +91,21 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_verify_spawn_binary", lambda _path: None)
 
 
+@pytest.fixture
+def graphical_desktop_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the host to a desktop that can host the interactive login.
+
+    The login flow and the missing-profile status degrade on a headless Linux
+    host (no DISPLAY / WAYLAND_DISPLAY, e.g. a CI runner) and on a Linux
+    desktop without a terminal emulator. Tests about the desktop login flow
+    must not inherit that from the machine running them; the degraded paths
+    have their own dedicated tests.
+    """
+    monkeypatch.setattr(transport, "_headless_linux", lambda: False)
+    monkeypatch.setattr(transport, "_pure_wayland_linux", lambda: False)
+    monkeypatch.setattr(transport, "_linux_login_terminal_missing", lambda: False)
+
+
 class FakeStdin:
     def __init__(self, process: FakeProcess) -> None:
         self.process = process
@@ -1146,6 +1161,7 @@ def test_capability_revalidates_profile_after_login_status_probe(
     assert capability.reason == "profile changed during status"
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_missing_dedicated_profile_is_a_login_required_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1687,6 +1703,7 @@ async def test_disconnect_leaves_a_foreign_mutation_untouched(
     assert transport._subscription_profile_mutating is True
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_reaper_launch_failure_releases_guard_and_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3438,6 +3455,13 @@ def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    if os.name != "posix":
+        # Product code validates symlink aliases only on a POSIX host (Windows
+        # gets ``.cmd`` wrappers instead). A Windows host that may create
+        # symlinks returns ``os.readlink`` targets with the extended-length
+        # path prefix, so the simulated Linux layout never matches the trusted
+        # binary there.
+        pytest.skip("Unix runtime aliases are only validated on a POSIX host")
     import jarvis.core.paths as paths
 
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
@@ -3503,6 +3527,7 @@ def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
         )
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_subscription_login_guard_covers_process_and_reaper(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3597,6 +3622,7 @@ def test_subscription_login_guard_covers_process_and_reaper(
     assert transport._subscription_login_process is None
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_subscription_login_spawn_failure_releases_guard(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
