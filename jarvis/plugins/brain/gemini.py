@@ -28,6 +28,7 @@ from uuid import uuid4
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
+from . import _agent_profile
 from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 log = logging.getLogger(__name__)
@@ -1070,10 +1071,11 @@ class GeminiBrain:
         if req.system:
             system_parts.append(req.system)
 
-        config_dict: dict[str, Any] = {
-            "temperature": req.temperature,
-            "max_output_tokens": req.max_tokens,
-        }
+        config_dict: dict[str, Any] = {"max_output_tokens": req.max_tokens}
+        if _agent_profile.sends_temperature():
+            # An agent that chose no temperature gets the model's default
+            # (Gemini 3 is tuned for 1.0 and may loop below it).
+            config_dict["temperature"] = req.temperature
         system_text = "\n\n".join(system_parts) if system_parts else ""
         # One pass builds both the outbound declarations and the name map.
         tools_payload, _tool_name_map = _build_gemini_tool_declarations(req.tools)

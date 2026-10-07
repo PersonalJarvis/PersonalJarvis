@@ -354,10 +354,16 @@ class OllamaBrain:
             # the next synchronous resolver question.
             self.supports_vision = True
         run_model, req = await self._apply_model_options(model, req)
+        # A temperature the person set on the model card is sent even to an
+        # agent that chose none; otherwise the agent request profile decides.
+        options = self._model_options(model)
+        send_temperature = True if options is not None and options.temperature is not None else None
         # Invariant at this point: either the request carries no images, or the
         # model just negotiated declares ``vision`` — so the streamer may encode
         # them.
-        async for delta in stream_complete(client, run_model, req, supports_vision=True):
+        async for delta in stream_complete(
+            client, run_model, req, supports_vision=True, send_temperature=send_temperature
+        ):
             yield delta
 
     def _model_options(self, model: str) -> OllamaModelOptions | None:

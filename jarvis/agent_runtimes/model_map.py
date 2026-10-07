@@ -177,6 +177,12 @@ def supports(provider: str) -> bool:
     return provider in _ENDPOINTS
 
 
+def is_local(provider: str) -> bool:
+    """Whether ``provider`` is a model server the person runs themselves."""
+    endpoint = _ENDPOINTS.get(provider)
+    return endpoint is not None and endpoint.local_server
+
+
 def usable_providers(config: Any) -> list[str]:
     """Supported providers that can run right now: a saved key, a keyless
     local server with an address, or a signed-in subscription (listed

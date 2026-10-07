@@ -328,11 +328,17 @@ def _client(account_id: str) -> Any:
     with _LOCK:
         found = _CLIENTS.get(account_id)
         if found is None:
+            from jarvis.core.http_pool import HttpClientPool
             from jarvis.live.subscription_auth import SubscriptionAuth
             from jarvis.live.subscription_reasoning import SubscriptionReasoning
 
             auth = SubscriptionAuth(account_id)
-            found = SubscriptionReasoning(credentials=auth.credentials)
+            # Its own client with the agent-scale read timeout: a long
+            # thinking phase sends nothing for minutes.
+            found = SubscriptionReasoning(
+                credentials=auth.credentials,
+                http_pool=HttpClientPool(timeout_s=_HOSTED_READ_TIMEOUT_S),
+            )
             _CLIENTS[account_id] = found
         return found
 
@@ -635,6 +641,12 @@ def _signature(call_id: str) -> str:
         return _SIGNATURES.get(call_id, "")
 
 
+def temperature_given(body: Any) -> bool:
+    """Whether a Chat Completions body chose a sampling temperature."""
+    value = body.get("temperature") if isinstance(body, dict) else None
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def chat_request(body: Any) -> tuple[str, Any]:
     """``(model, BrainRequest)`` for one Chat Completions request body."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
@@ -740,19 +752,159 @@ def _failure(provider: str, exc: Exception, model: str = "") -> GatewayError:
 
 _DONE: Final = object()
 
+#: How long an agent call may stay silent. A reasoning model can think for
+#: minutes before its first token, and a local server on a CPU prefills a
+#: long agent prompt for longer still; Hermes itself waits 180 s for a hosted
+#: and 900 s for a local endpoint. The voice path keeps its own short limits.
+_HOSTED_READ_TIMEOUT_S: Final = 300.0
+_LOCAL_READ_TIMEOUT_S: Final = 900.0
+
+#: Provider brains kept between calls (one per session, model and credential).
+_BRAINS_MAX: Final = 32
+
+
+@dataclass(slots=True)
+class _BrainSlot:
+    """One cached provider brain, and how many calls are using it."""
+
+    brain: Any
+    users: int = 0
+    retired: bool = False
+
+
+_BRAINS: OrderedDict[tuple[str, ...], _BrainSlot] = OrderedDict()
+_CLOSING: set[asyncio.Task[None]] = set()
+
+
+def _profile(provider: str, *, temperature_given: bool) -> Any:
+    from jarvis.agent_runtimes.model_map import is_local
+    from jarvis.plugins.brain._agent_profile import AgentRequestProfile
+
+    return AgentRequestProfile(
+        read_timeout_s=_LOCAL_READ_TIMEOUT_S if is_local(provider) else _HOSTED_READ_TIMEOUT_S,
+        # A tool loop resends the same prefix every round; caching it is
+        # what makes a long agent turn affordable on Anthropic.
+        prompt_cache=True,
+        omit_temperature=not temperature_given,
+    )
+
+
+def _brain_key(grant: Grant, model: str, login: str | None) -> tuple[str, ...]:
+    """The cache key: the session, the model and the credential in use.
+
+    Blocking (keyring); run in a thread under the key override, so a changed
+    key or server address makes a new brain instead of reusing a stale client.
+    """
+    import hashlib
+
+    if login:
+        material = f"login:{login}"
+    else:
+        from jarvis.core.config import resolve_provider_endpoint
+
+        try:
+            endpoint = resolve_provider_endpoint(grant.provider)
+            material = f"{endpoint.base_url or ''}|{endpoint.credential or ''}"
+        except Exception as exc:  # noqa: BLE001 — no fingerprint just means no reuse
+            log.debug(
+                "runtime gateway: no credential fingerprint for %s (%s)",
+                grant.provider,
+                type(exc).__name__,
+            )
+            material = uuid.uuid4().hex
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    return (grant.agent_id, grant.scope, grant.provider, grant.account_id, model, digest)
+
+
+def _new_brain(provider: str, model: str, login: str | None) -> Any:
+    from jarvis.agent_chat.runner_api import build_brain
+    from jarvis.brain.usage_meter import meter_brain
+
+    if login:
+        # No API key: the person's Claude Code login answers, which
+        # Anthropic bills as extra usage.
+        from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
+
+        brain = ClaudeAPIBrain(model=model or None, auth_token=login)
+    else:
+        brain = build_brain(provider, model)
+    # Every call the agent makes lands in the cost ledger, under the caller
+    # tag of the call.
+    return meter_brain(brain, provider)
+
+
+def _acquire_brain(key: tuple[str, ...], factory: Any) -> _BrainSlot:
+    """The cached brain for ``key`` (built on first use), marked in use.
+
+    A brain keeps its HTTP client: every round of a tool loop reuses one
+    connection instead of a new TLS handshake and an unclosed client.
+    """
+    retired: list[_BrainSlot] = []
+    with _LOCK:
+        slot = _BRAINS.get(key)
+        if slot is None:
+            slot = _BrainSlot(factory())
+            _BRAINS[key] = slot
+            while len(_BRAINS) > _BRAINS_MAX:
+                _, old = _BRAINS.popitem(last=False)
+                old.retired = True
+                retired.append(old)
+        _BRAINS.move_to_end(key)
+        slot.users += 1
+    for old in retired:
+        if old.users == 0:
+            _close_later(old.brain)
+    return slot
+
+
+def _release_brain(slot: _BrainSlot) -> None:
+    with _LOCK:
+        slot.users -= 1
+        close = slot.retired and slot.users == 0
+    if close:
+        _close_later(slot.brain)
+
+
+def _close_later(brain: Any) -> None:
+    """Close a brain's HTTP client in the background (best effort)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no loop (tests, shutdown): the client goes with the object
+    task = loop.create_task(_close_brain(brain))
+    _CLOSING.add(task)
+    task.add_done_callback(_CLOSING.discard)
+
+
+async def _close_brain(brain: Any) -> None:
+    import inspect
+
+    client = getattr(getattr(brain, "unwrapped", brain), "_client", None)
+    for name in ("aclose", "close"):
+        close = getattr(client, name, None)
+        if not callable(close):
+            continue
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 — closing an idle client is best effort
+            log.debug("runtime gateway: closing a provider client failed (%s)", exc)
+        return
+
 
 async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     """The provider plugin's stream, with the Agents-tier key and cost caller.
 
     The plugin runs in a task of its own and hands its deltas over a queue:
-    the key override and the cost caller are context variables, and a
-    streamed response is read by a different task than the one that opened
-    it — a context variable set there could not be reset (``ValueError``).
+    the key override, the cost caller and the agent request profile are
+    context variables, and a streamed response is read by a different task
+    than the one that opened it — a context variable set there could not be
+    reset (``ValueError``). The task copies the caller's context, so the
+    profile the caller set (:func:`_with_profile`) reaches the plugin.
     """
-    from jarvis.agent_chat.runner_api import build_brain
     from jarvis.agent_runtimes.model_map import login_route
     from jarvis.agent_runtimes.provider_errors import login_expired
-    from jarvis.brain.usage_meter import meter_brain
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
     from jarvis.costs.model import RUNTIME_CALLER
@@ -772,23 +924,18 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     # Only the Claude CLI renews the login; without it the
                     # API-key path would only say "no key".
                     raise login_expired()
-                if login:
-                    # No API key: the person's Claude Code login answers,
-                    # which Anthropic bills as extra usage.
-                    from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
-
-                    brain = ClaudeAPIBrain(model=model or None, auth_token=login)
-                else:
-                    brain = build_brain(grant.provider, model)
-                # Every call the agent makes lands in the cost ledger, under
-                # the caller tag set above.
-                brain = meter_brain(brain, grant.provider)
-                configure_context = getattr(brain, "set_context_window", None)
-                if callable(configure_context):
-                    limits = await asyncio.to_thread(model_limits, grant, model)
-                    configure_context(limits.context_window)
-                async for delta in brain.complete(request):
-                    await queue.put(delta)
+                key = await asyncio.to_thread(_brain_key, grant, model, login)
+                slot = _acquire_brain(key, lambda: _new_brain(grant.provider, model, login))
+                try:
+                    brain = slot.brain
+                    configure_context = getattr(brain, "set_context_window", None)
+                    if callable(configure_context):
+                        limits = await asyncio.to_thread(model_limits, grant, model)
+                        configure_context(limits.context_window)
+                    async for delta in brain.complete(request):
+                        await queue.put(delta)
+                finally:
+                    _release_brain(slot)
             await queue.put(_DONE)
         except Exception as exc:  # noqa: BLE001 — handed to the reader, which reports it
             if login:
@@ -812,6 +959,18 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await task
+
+
+@contextlib.contextmanager
+def _with_profile(provider: str, temperature_given: bool) -> Any:
+    """Set the agent request profile while a call's plugin task is started."""
+    from jarvis.plugins.brain._agent_profile import PROFILE
+
+    token = PROFILE.set(_profile(provider, temperature_given=temperature_given))
+    try:
+        yield
+    finally:
+        PROFILE.reset(token)
 
 
 def _chunk(chat_id: str, model: str, delta: dict[str, Any], **extra: Any) -> bytes:
@@ -877,12 +1036,15 @@ def _tool_call(index: int, call: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncIterator[bytes]:
+async def open_chat_stream(
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+) -> AsyncIterator[bytes]:
     """The answer as Chat Completions chunks.
 
     The provider's first delta is awaited before this returns, so a failure
     up front (bad key, rate limit) becomes an HTTP status the runtime can act
     on; a failure after streaming began arrives as an ``error`` chunk.
+    ``temperature_given`` is whether the runtime chose a temperature.
     """
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
@@ -891,7 +1053,9 @@ async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncItera
     signal = _watch_for(grant)
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        first = await anext(stream, None)
+        # The plugin task starts on the first delta and keeps this profile.
+        with _with_profile(grant.provider, temperature_given):
+            first = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
         raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     return _chat_chunks(grant, model, stream, first, started, signal)
@@ -954,7 +1118,9 @@ async def _chat_chunks(
     )
 
 
-async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any]:
+async def complete_chat(
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+) -> dict[str, Any]:
     """The finished ``chat.completion`` for a runtime that did not ask to stream."""
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
@@ -966,7 +1132,10 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
     signal = _watch_for(grant)
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        async for delta in stream:
+        with _with_profile(grant.provider, temperature_given):
+            # The plugin task starts on the first delta and keeps this profile.
+            delta = await anext(stream, None)
+        while delta is not None:
             if delta.content:
                 text.append(delta.content)
             if delta.tool_call:
@@ -975,6 +1144,7 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
                 _merge_usage(usage, delta.usage)
             if delta.finish_reason:
                 finish = _finish(delta.finish_reason)
+            delta = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
         raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
@@ -1007,6 +1177,13 @@ def reset() -> None:
     """Forget every token, client and remembered signature (tests)."""
     global _CATALOG
     _CATALOG = None
+    with _LOCK:
+        brains = list(_BRAINS.values())
+        _BRAINS.clear()
+    for slot in brains:
+        slot.retired = True
+        if slot.users == 0:
+            _close_later(slot.brain)
     with _LOCK:
         _GRANTS.clear()
         _TOKENS.clear()
