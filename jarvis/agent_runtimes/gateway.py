@@ -307,9 +307,15 @@ def _retry_after(exc: Exception) -> float | None:
     return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
+def whole_seconds(seconds: float) -> int:
+    """Seconds to tell a person or a ``Retry-After`` header: rounded up, but
+    floating-point dust (30.000000001) never becomes an extra second."""
+    return max(0, math.ceil(round(seconds, 3)))
+
+
 def _limited(provider: str, seconds: float) -> GatewayError:
     return GatewayError(
-        f"{provider} returned HTTP 429 (rate limit). Try again in {math.ceil(seconds)} s, "
+        f"{provider} returned HTTP 429 (rate limit). Try again in {whole_seconds(seconds)} s, "
         "or choose another connected model in the agent's settings. "
         "No fallback provider was called.",
         status=429,

@@ -10,7 +10,6 @@ OpenAPI schema.
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -33,7 +32,7 @@ def _error(exc: gateway.GatewayError) -> JSONResponse:
     return JSONResponse(
         {"error": {"message": str(exc), "type": exc.code, "code": exc.code}},
         status_code=exc.status,
-        headers={"Retry-After": str(math.ceil(exc.retry_after))}
+        headers={"Retry-After": str(gateway.whole_seconds(exc.retry_after))}
         if exc.retry_after is not None
         else None,
     )

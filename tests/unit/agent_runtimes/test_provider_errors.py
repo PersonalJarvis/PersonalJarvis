@@ -347,3 +347,10 @@ def test_a_system_message_moves_into_the_instructions() -> None:
     )
     assert args["instructions"] == "You are Lumen."
     assert [item["role"] for item in args["input"]] == ["user"]
+
+
+def test_floating_point_dust_never_adds_a_second_to_the_wait() -> None:
+    """Windows CI said "Try again in 31 s" for a 30 s cooldown (30.000000001)."""
+    assert gateway.whole_seconds(30.000000001) == 30
+    assert gateway.whole_seconds(30.4) == 31
+    assert gateway.whole_seconds(-1.0) == 0
