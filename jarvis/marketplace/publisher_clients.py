@@ -69,7 +69,11 @@ ClientSource = Literal["publisher", "own", "catalog", "missing"]
 # Slack is the publicly distributed "Personal Jarvis" Slack app. Slack only
 # allows https redirect URLs for it, and web-redirect tokens need the secret,
 # so the family uses a token broker with an https redirect below.
+# Figma is the "Personal Jarvis" Figma OAuth app: loopback PKCE on
+# http://127.0.0.1:3127/oauth/callback. Its token and refresh endpoints take
+# the client secret in a Basic header, so the family uses a token broker.
 SHIPPED_PUBLIC_CLIENT_IDS: dict[str, str] = {
+    "figma": "QnSTQR5QK5hAOjxBmp6sIY",
     "github": "Ov23liaA2KfHbfVOelcx",
     "google": "940985062784-4t8h10q3ggt6b1317ajjb9u0eriop2m7.apps.googleusercontent.com",
     "microsoft": "1986efcb-f871-4ffa-8df7-64c04dd3ab56",
@@ -109,6 +113,7 @@ _BROKER_BASE = "https://token.personaljarvis.ai/oauth"
 # token endpoint directly with its own secret. Revocation never needs a secret
 # and always goes straight to the provider.
 SHIPPED_TOKEN_BROKERS: dict[str, TokenBroker] = {
+    "figma": TokenBroker(token_url=f"{_BROKER_BASE}/figma/token"),
     "google": TokenBroker(token_url=f"{_BROKER_BASE}/google/token"),
     "slack": TokenBroker(
         token_url=f"{_BROKER_BASE}/slack/token",

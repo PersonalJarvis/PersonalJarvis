@@ -2265,9 +2265,9 @@
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is not provisioned. The draft Figma OAuth app \"Personal Jarvis\" (client id RkG83E4jPtFsiRQZBku3SD) has the loopback redirect URL and the four read scopes since 2026-10-07, but its client secret is not stored anywhere; Figma's token endpoint requires the secret (HTTP Basic), so a shipped public client also needs a token broker.",
+        "reason": "The shared Figma app \"Personal Jarvis\" (client id QnSTQR5QK5hAOjxBmp6sIY, loopback redirect and four read scopes) ships in SHIPPED_PUBLIC_CLIENT_IDS with a token broker route, but the broker route is not deployed with its FIGMA_CLIENT_SECRET yet and the app is a draft that only its own team can authorize.",
         "owner": "Project publisher",
-        "next_action": "Regenerate the client secret in the Figma developer console, add a figma route to the token broker and ship the client id, submit the app for public review, then repeat the full clean browser journey with a real read-only action.",
+        "next_action": "Deploy the token broker's /oauth/figma/token route with FIGMA_CLIENT_SECRET, submit the Figma app for public review, then repeat the full clean browser journey with a real read-only action.",
         "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
       }
     },
