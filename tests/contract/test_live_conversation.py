@@ -80,7 +80,6 @@ def test_running_browser_call_blocks_a_competing_native_start(monkeypatch):
     pipeline = SpeechPipeline.__new__(SpeechPipeline)
     pipeline._state = PipelineState.IDLE
     pipeline._dictation_blocks_activation = lambda: False
-    pipeline._capture_permission_allowed = lambda: True
     monkeypatch.setattr(runtime, "_active", {"browser": object()})
     monkeypatch.setattr(runtime, "_opening", set())
     assert not pipeline._activation_allowed()

@@ -46,6 +46,7 @@ import { AgenticTerminal, type SplitDirection } from "./AgenticTerminal";
 import { AgentPickerMenu, offersAgentChoice, type SplitAgentChoice } from "./AgentPicker";
 import { TERMINAL_APPEARANCE_KEY, type TerminalAppearance } from "./terminalThemes";
 import { installZoomKeyBridge, type ZoomIntent } from "./terminalZoom";
+import { terminalZoomBindings } from "@/store/appChordSettings";
 import {
   FONT_DEFAULT,
   FONT_KEY,
@@ -654,6 +655,8 @@ export function AgenticGrid({
         // Hidden rather than unmounted when another section is open, so the
         // grid has to be asked whether anyone is looking at it.
         enabled: () => zoomStateRef.current.onScreen,
+        // Read per keystroke: a chord changed in Settings applies at once.
+        bindings: () => terminalZoomBindings(),
         apply: (intent) => {
           const current = zoomStateRef.current.fontSize;
           const next = zoomedFontSize(current, intent);
@@ -1271,6 +1274,26 @@ export function AgenticGrid({
     };
     seamRefs.current.set(id, callback);
     return callback;
+  }, []);
+
+  /*
+   * The seams lit as "this moves too" while the pointer rests on another one.
+   *
+   * Held near its top or bottom end, a vertical seam drags every aligned seam
+   * of the panes stacked above and below it (see `stackedSeams`); this shows
+   * that line BEFORE the press. Written straight onto the elements rather
+   * than through state, because a hover must not re-render a wall of
+   * terminals each time the pointer crosses into an end zone.
+   */
+  const linkedSeams = useRef<readonly string[]>([]);
+  const markLinkedSeams = useCallback((ids: readonly string[]) => {
+    const previous = linkedSeams.current;
+    if (previous.length === ids.length && previous.every((id, index) => id === ids[index])) {
+      return;
+    }
+    for (const id of previous) seamNodes.current.get(id)?.removeAttribute("data-linked");
+    for (const id of ids) seamNodes.current.get(id)?.setAttribute("data-linked", "true");
+    linkedSeams.current = ids;
   }, []);
 
   /**
@@ -2895,8 +2918,14 @@ export function AgenticGrid({
               testId={`pane-seam-${seam.id}`}
               orientation={seam.orientation}
               title={seam.label}
-              active={sizes.dragging === seam.id}
+              active={sizes.draggingSeams.includes(seam.id)}
               onPointerDown={(event) => sizes.startDrag(seam, event)}
+              // Only the OTHER seams of a stack are marked: the held one is
+              // already lit by its own hover.
+              onPointerMove={(event) =>
+                markLinkedSeams(sizes.seamsAt(seam, event).filter((id) => id !== seam.id))
+              }
+              onPointerLeave={() => markLinkedSeams([])}
               onDoubleClick={() => sizes.even(seam)}
               // An arrow key moves the seam the way it points, which for the
               // vertical axis is the opposite of `PaneResizer`'s own sign: its

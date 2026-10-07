@@ -117,11 +117,11 @@ describe("spriteFrameAt (the desktop's playback order)", () => {
 });
 
 describe("PetControlStripPreview", () => {
-  it("is a decorative picture with the glossy orb", () => {
+  it("is a decorative picture with the three-stroke indicator", () => {
     render(<PetControlStripPreview />);
     const strip = screen.getByTestId("pet-strip-preview");
     expect(strip.getAttribute("aria-hidden")).toBe("true");
     expect(strip.querySelector("button")).toBeNull();
-    expect(screen.getByTestId("pet-strip-orb").style.backgroundImage).toContain("radial-gradient");
+    expect(screen.getByTestId("pet-strip-indicator").children).toHaveLength(3);
   });
 });

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { browserPlaybackIsActive } from "@/lib/voiceOutputLevel";
 import type { MessageRole } from "@/types/messages";
 import { readCachedAssistantName } from "@/lib/assistantNameCache";
+import { reuseHistoryRows } from "@/lib/historyRequests";
 import {
   finalizeThinkingSteps,
   reduceThinkingSteps,
@@ -59,9 +60,7 @@ export type SectionId =
   | "plugins"
   | "docs"
   | "mcps"
-  | "tasks"
   | "sessions"
-  | "run_inspector"
   // Spend & Tokens — what every provider, model and role actually cost.
   | "costs"
   | "clis"
@@ -71,9 +70,6 @@ export type SectionId =
   | "profile"
   | "memory"
   | "apikeys"
-  // Local models: the Ollama server, its installed models and the catalogue,
-  // in one section instead of a card body inside API Keys.
-  | "local-models"
   // Computers: the user's own servers and local VMs, reached over SSH.
   | "computers"
   | "settings"
@@ -81,7 +77,6 @@ export type SectionId =
   | "telephony-setup"
   | "socials"
   | "taskbar"
-  | "contacts"
   | "feedback"
   | "agent-instructions"
   // Appshots: the shortcut, destination, sound and flash for showing the
@@ -94,9 +89,6 @@ export type SectionId =
   // My Pets: the desktop pet — which one, its size, its bubble, and custom
   // pets from a sprite sheet (docs/pets.md). A Settings-hub page.
   | "pets"
-  // Jarvis actions: every app action Jarvis can run and the person's
-  // allow / ask / block choice for each. A Settings-hub page.
-  | "jarvis-actions"
   | "dictionary"
   | "dictation"
   // The three tabs added by the merged voice section. "dictation" (default
@@ -129,9 +121,7 @@ export const SECTION_IDS = [
   "plugins",
   "docs",
   "mcps",
-  "tasks",
   "sessions",
-  "run_inspector",
   "costs",
   "clis",
   "cli-test-hub",
@@ -140,20 +130,17 @@ export const SECTION_IDS = [
   "profile",
   "memory",
   "apikeys",
-  "local-models",
   "computers",
   "settings",
   "telephony",
   "telephony-setup",
   "socials",
   "taskbar",
-  "contacts",
   "feedback",
   "agent-instructions",
   "appshots",
   "shortcuts",
   "pets",
-  "jarvis-actions",
   "dictionary",
   "dictation",
   // `satisfies` only catches array entries that are missing from the union,
@@ -183,10 +170,14 @@ export function isSectionId(value: unknown): value is SectionId {
  * - "wallpaper": the Wallpaper page was removed (2026-09-30); the app paints
  *   its flat theme colour only. A remembered link lands in Settings, where
  *   the page used to live.
+ * - "tasks": the Automations section was removed (2026-10-01); scheduled work
+ *   lives on agents now, as each agent's routines.
  */
 export const LEGACY_SECTION_ALIASES: Readonly<Record<string, SectionId>> = {
+  run_inspector: "sessions",
   outputs: "visualization",
   wallpaper: "settings",
+  tasks: "agents",
 };
 
 /** The section an id names today — itself, its successor, or null. */
@@ -226,9 +217,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   plugins: "Plugins",
   docs: "Docs",
   mcps: "MCPs",
-  tasks: "Tasks",
   sessions: "Transcription",
-  run_inspector: "Run Inspector",
   costs: "Spend",
   clis: "CLIs",
   "cli-test-hub": "CLI Test Hub",
@@ -237,20 +226,17 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   profile: "Profile",
   memory: "Notes",
   apikeys: "API Keys",
-  "local-models": "Local models",
   computers: "Computers",
   settings: "Settings",
   telephony: "Telephony",
   "telephony-setup": "Telephony setup",
   socials: "Socials",
   taskbar: "Taskbar",
-  contacts: "Contacts",
   feedback: "Feedback",
-  "agent-instructions": "Agent Instructions",
+  "agent-instructions": "Assistant",
   appshots: "Appshots",
   shortcuts: "Keyboard shortcuts",
   pets: "My Pets",
-  "jarvis-actions": "Jarvis actions",
   dictionary: "Dictionary",
   dictation: "Dictation",
   // Plain English, deliberately NOT the "{name} Voice" brand: these labels are
@@ -301,6 +287,30 @@ export interface Toast {
   filePath?: string;
   /** Display name of the saved file (shown next to the actions). */
   filename?: string;
+  /**
+   * One optional button under the message ("Open System Settings"). The layer
+   * runs `onAction` and then closes the toast, unless `keepOpen` is set (an
+   * action that can answer "try again", like a restart that needs a second
+   * press while missions run).
+   */
+  action?: ToastAction;
+}
+
+/** The one button a toast may carry. */
+export interface ToastAction {
+  label: string;
+  onAction: () => void | Promise<void>;
+  /** Leave the toast up after the press (default: it closes). */
+  keepOpen?: boolean;
+}
+
+/** Options of {@link EventStore.pushToast}. */
+export interface PushToastOptions {
+  filePath?: string;
+  filename?: string;
+  action?: ToastAction;
+  /** How long the toast stays, in ms. Default: 3.5 s, or 12 s for a saved file. */
+  ttlMs?: number;
 }
 
 export interface ChatMessage {
@@ -545,11 +555,7 @@ interface EventStore {
   requestWikiPage: (slug: string) => void;
   requestIdePane: (name: string) => void;
   setTranscription: (text: string, isFinal: boolean) => void;
-  pushToast: (
-    kind: Toast["kind"],
-    message: string,
-    opts?: { filePath?: string; filename?: string },
-  ) => void;
+  pushToast: (kind: Toast["kind"], message: string, opts?: PushToastOptions) => void;
   dismissToast: (id: string) => void;
   pushMessage: (m: ChatMessage) => void;
   setMessages: (m: ChatMessage[]) => void;
@@ -583,8 +589,9 @@ interface EventStore {
 const MAX_EVENTS = 500;
 const MAX_MESSAGES = 200;
 const TOAST_TTL_MS = 3500;
-// A file toast carries "Show in folder" / "Open" actions the user must have time
-// to aim at and click — keep it up noticeably longer than a plain notification.
+// A file toast carries "Show in folder" / "Open" actions, and any toast with a
+// button is one the user must have time to aim at and click — keep it up
+// noticeably longer than a plain notification.
 const TOAST_FILE_TTL_MS = 12000;
 // Finished reasoning traces are per-message UI sugar, not history — cap the
 // map so a long session cannot grow it unbounded (insertion order = age).
@@ -698,7 +705,8 @@ export const useEventStore = create<EventStore>((set, get) => ({
 
   pushToast: (kind, message, opts) => {
     const filePath = opts?.filePath;
-    const ttl = filePath ? TOAST_FILE_TTL_MS : TOAST_TTL_MS;
+    const action = opts?.action;
+    const ttl = opts?.ttlMs ?? (filePath || action ? TOAST_FILE_TTL_MS : TOAST_TTL_MS);
     const now = Date.now();
     const expiresAt = now + ttl;
 
@@ -707,18 +715,20 @@ export const useEventStore = create<EventStore>((set, get) => ({
     // otherwise emit it once per click — and a double click on a card emits it
     // twice more — until the stack buries the control the user needs to press.
     // File toasts are matched on their path too, so two different saved files
-    // stay two separate toasts with their own actions.
+    // stay two separate toasts with their own actions. A repeat that carries a
+    // button also swaps in the newest one (its closure may know more).
     const existing = get().toasts.find(
       (toast) =>
         toast.kind === kind &&
         toast.message === message &&
-        toast.filePath === filePath,
+        toast.filePath === filePath &&
+        toast.action?.label === action?.label,
     );
     if (existing) {
       set((state) => ({
         toasts: state.toasts.map((toast) =>
           toast.id === existing.id
-            ? { ...toast, count: toast.count + 1, ts: now, expiresAt }
+            ? { ...toast, count: toast.count + 1, ts: now, expiresAt, action: action ?? toast.action }
             : toast,
         ),
       }));
@@ -739,6 +749,7 @@ export const useEventStore = create<EventStore>((set, get) => ({
           expiresAt,
           filePath,
           filename: opts?.filename,
+          action,
         },
       ],
     }));
@@ -767,7 +778,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
   setMessages: (m) =>
     set({ messages: m.length > MAX_MESSAGES ? m.slice(m.length - MAX_MESSAGES) : m }),
 
-  setConversations: (c) => set({ conversations: c }),
+  setConversations: (c) => set((state) => {
+    const conversations = reuseHistoryRows(state.conversations, c, (row) => `${row.kind}:${row.id}`);
+    return conversations === state.conversations ? state : { conversations };
+  }),
 
   setActiveConversation: (kind, id) => set({ activeKind: kind, activeThreadId: id }),
 

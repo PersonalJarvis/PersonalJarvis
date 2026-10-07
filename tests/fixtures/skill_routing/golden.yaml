@@ -199,6 +199,22 @@ skills:
         min_band: narrow
         source: authored
 
+  plugin-atlassian:
+    positives:
+      - text: "welche jira tickets sind mir zugewiesen"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "search confluence for the onboarding page"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist jira eigentlich fuer ein dienst"
+        reason: definitional question about the product, not a request to act
+
   plugin-vercel:
     positives:
       - text: "ist das letzte deployment durchgelaufen"

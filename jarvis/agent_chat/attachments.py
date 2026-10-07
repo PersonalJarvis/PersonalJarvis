@@ -53,6 +53,47 @@ class AttachmentError(RuntimeError):
     """The attach carried nothing usable, or the copies could not be written."""
 
 
+def handoff_context(cwd: str, attachments: list[Any], *, session_id: str) -> str:
+    """Register only the images selected on THIS message, inside its own folder.
+
+    Client-provided paths are untrusted. No URL fetching, parent traversal or
+    symlink escape may turn an attachment into access to another private file.
+    """
+    import mimetypes
+
+    from jarvis.agentic_ide.drops import dereference
+    from jarvis.core.image_references import MAX_BYTES, ImageReferenceError, get_store, instruction
+
+    refs = []
+    missing = []
+    root = Path(cwd).expanduser().resolve()
+    for index, item in enumerate(attachments, 1):
+        if item.kind != "image":
+            continue
+        try:
+            raw = dereference(item.reference)
+            path = (root / raw).resolve()
+            if not raw or not path.is_relative_to(root) or not path.is_file():
+                raise ImageReferenceError("Image is outside the chat folder or missing.")
+            if path.stat().st_size > MAX_BYTES:
+                raise ImageReferenceError("Image is too large for a handoff.")
+            mime = mimetypes.guess_type(path.name)[0] or ""
+            refs.append(get_store().add(
+                "chat:" + session_id, path.read_bytes(), mime, source=f"upload #{index}",
+            ))
+        except (OSError, ValueError):
+            # No raw client paths in logs or error text; the ordinal identifies the chip.
+            missing.append(str(index))
+    note = instruction(refs)
+    if missing:
+        note += (
+            "\nVisual handoff unavailable for attachment(s) " + ", ".join(missing)
+            + ". Do not send a task requiring those images or claim they were attached; "
+            "ask the user to attach them again."
+        )
+    return note
+
+
 async def ingest(
     cwd: str | Path,
     *,

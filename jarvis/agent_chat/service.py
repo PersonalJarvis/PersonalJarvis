@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import shutil
+import sqlite3
 import time
 import uuid
 from collections.abc import Callable
@@ -32,11 +33,12 @@ from pathlib import Path
 from typing import Any, Final
 
 from jarvis.agent_chat import attachments as chat_attachments
+from jarvis.agent_chat import turn_prompts
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge
 from jarvis.agent_chat.catalog import PROVIDER_ROWS, api_seat, offers, provider_row
 from jarvis.agent_chat.effort import normalize_effort
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import ladder_key, normalize_permission
+from jarvis.agent_chat.permissions import default_permission, ladder_key, normalize_permission
 from jarvis.agent_chat.questions import (
     CANCELLED,
     MAX_ASKS_PER_TURN,
@@ -50,7 +52,7 @@ from jarvis.agent_chat.questions import (
     recommended_answer,
 )
 from jarvis.agent_chat.runner_api import TurnHandle, run_api_turn, supports_api_runner
-from jarvis.agent_chat.runner_brain import run_brain_turn
+from jarvis.agent_chat.runner_brain import brain_history_from_events, run_brain_turn
 from jarvis.agent_chat.runner_cli import run_cli_turn, supports_cli_runner
 from jarvis.agent_chat.store import (
     DEFAULT_SURFACE,
@@ -59,12 +61,83 @@ from jarvis.agent_chat.store import (
     AgentChatStore,
 )
 from jarvis.agent_chat.surface_kits import kit_for
+from jarvis.agent_chat.turn_host_client import TurnHandedOver
 from jarvis.core.protocols import ChatCompletion, ChatTurn, current_chat_turn
 from jarvis.society.delivery import IncomingMessage
 
 log = logging.getLogger(__name__)
 
+#: What a turn cut off by a restart says (``_seal_orphaned_turns``).
+_ORPHANED_TURN_ERROR: Final = (
+    "Jarvis restarted while this turn was running. "
+    "Everything after the last step shown here was not captured."
+)
+
 Subscriber = asyncio.Queue[dict[str, Any]]
+
+
+#: The app's loop, resolved by the route layer BEFORE it takes its build lock
+#: (``remember_app_loop``). Asking the loop from inside that lock deadlocked
+#: the whole app (2026-10-07): the worker waited for the loop while the loop
+#: waited for the lock in an ``async`` route.
+_KNOWN_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def remember_app_loop() -> None:
+    """Find and record the app's loop, so building the service never asks it.
+
+    Call it without holding any lock the loop could be waiting for: from a
+    worker thread, finding the loop waits until the loop answers.
+    """
+    global _KNOWN_LOOP  # one process-wide reference, set before the service is built
+    loop, _on_loop = _app_loop()
+    if loop is not None:
+        _KNOWN_LOOP = loop
+
+
+def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
+    """The app's event loop, and whether this code runs on it.
+
+    The service is built on first use, and the first use is often a plain
+    ``def`` route that the web framework runs in a worker thread, where no
+    loop is running. Finding no loop there sealed every thread turn the turn
+    host still held as "Jarvis restarted" (2026-10-06): the worker thread asks
+    the loop it was dispatched from instead.
+    """
+    try:
+        return asyncio.get_running_loop(), True
+    except RuntimeError:  # no loop on this thread: fall through to the dispatching loop
+        pass
+    known = _KNOWN_LOOP
+    if known is not None and known.is_running():
+        return known, False
+    try:
+        from anyio.from_thread import run_sync
+
+        return run_sync(asyncio.get_running_loop), False
+    except Exception:  # noqa: BLE001 - not a framework worker: no loop to reach
+        log.debug("agent chat: built outside any event loop")
+        return None, False
+
+
+def _orphan_event(turn_id: str, started_ms: int, last_ms: int) -> dict[str, Any]:
+    """The ``turn_finished`` that closes a turn a restart cut off."""
+    return {
+        **make_event(
+            "turn_finished",
+            {
+                "turn_id": turn_id,
+                "status": "error",
+                "duration_ms": max(0, last_ms - started_ms),
+                "usage": {},
+                "error": _ORPHANED_TURN_ERROR,
+                "cost_usd": None,
+            },
+        ),
+        "ts_ms": last_ms,
+    }
+
+
 DECISIONS: tuple[str, ...] = ("allow", "allow_always", "deny")
 
 
@@ -80,7 +153,17 @@ def _claude_cli_installed() -> bool:
     return bool(shutil.which("claude") or shutil.which("claude.cmd") or shutil.which("claude.exe"))
 
 
-def resolve_runner(provider: str, *, surface: str = "agent") -> str:
+#: Society agent runtimes that replace the provider's runner (``AgentRuntime``
+#: minus ``jarvis``), each answered by its ACP driver in ``runner_cli``.
+EXTERNAL_RUNTIME_RUNNERS: Final[dict[str, str]] = {
+    "hermes": "hermes-cli",
+    "openclaw": "openclaw-cli",
+}
+
+
+def resolve_runner(
+    provider: str, *, surface: str = "agent", runtime: str = "", account_id: str = ""
+) -> str:
     """Which runner answers for ``provider`` on this machine, right now.
 
     ``claude-api`` is dual: Claude Code (the CLI) when it is installed — that
@@ -93,7 +176,15 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
     (``SurfaceKit.cli_seats``, maintainer 2026-08-26), so a vendor CLI never
     answers there — not even the dual Claude row, which runs on the Anthropic
     API behind its key like every other seat.
+
+    ``account_id`` is the seat's login, or a reserved access value
+    (``catalog.ACCESS_ACCOUNTS``) that pins the dual Claude row to its API key
+    or to its subscription for one agent, over the API Keys page's setting.
     """
+    if runtime in EXTERNAL_RUNTIME_RUNNERS and surface == "society":
+        # A Hermes / OpenClaw agent: that runtime's loop answers every turn and
+        # the provider only names the model it is configured with.
+        return EXTERNAL_RUNTIME_RUNNERS[runtime]
     kit = kit_for(surface)
     api_runner = "brain" if kit.brain_runner else "api"
     row = provider_row(provider)
@@ -105,10 +196,29 @@ def resolve_runner(provider: str, *, surface: str = "agent") -> str:
         # is only reachable through a stale session or a hand-made request.
         return api_runner if supports_api_runner(row.id) else "unknown"
     if row.id == "claude-api":
+        # The API Keys page can set the agents' Claude to its key instead of
+        # the subscription; that choice narrows the agents' surface only.
+        from jarvis.agent_chat.agent_provider_prefs import forces_api
+        from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+
+        if account_id == API_KEY_ACCOUNT:
+            return api_runner
+        if account_id != SUBSCRIPTION_ACCOUNT and forces_api(row.id, surface):
+            return api_runner
         return "claude-cli" if _claude_cli_installed() else api_runner
     if row.runner == "api":
         return api_runner
     return row.runner
+
+
+def session_runner(session: Any) -> str:
+    """:func:`resolve_runner` for a stored chat session (its runtime included)."""
+    return resolve_runner(
+        session.provider,
+        surface=session.surface,
+        runtime=str(getattr(session, "runtime", "") or ""),
+        account_id=str(getattr(session, "account_id", "") or ""),
+    )
 
 
 #: ``AgentChatStore.data_version`` after the front page's chat gave up its
@@ -199,15 +309,27 @@ def _expires_ms(timeout_s: float) -> int:
     return int(time.time() * 1000 + timeout_s * 1000)
 
 
+def _current_task() -> asyncio.Task[Any] | None:
+    try:
+        return asyncio.current_task()
+    except RuntimeError:  # Synchronous routes may inspect status off the event loop.
+        return None
+
+
 class _Running:
-    __slots__ = ("asks", "task", "cancel", "turn_id")
+    __slots__ = ("asks", "task", "cancel", "turn_id", "setup_task", "ready", "detached")
 
     def __init__(self, turn_id: str, cancel: asyncio.Event) -> None:
         self.turn_id = turn_id
         self.cancel = cancel
         self.task: asyncio.Task[None] | None = None
+        self.setup_task: asyncio.Task[Any] | None = _current_task()
+        self.ready = asyncio.Event()
         #: Question cards this turn has shown (MAX_ASKS_PER_TURN).
         self.asks = 0
+        #: The app is shutting down and this turn's CLI keeps running in the
+        #: turn host: the task ends without closing the turn.
+        self.detached = False
 
 
 class AgentChatService:
@@ -236,7 +358,12 @@ class AgentChatService:
         # is NOT held by this lock.
         self._brain_lock = asyncio.Lock()
         self._running: dict[str, _Running] = {}
+        # Reserved before control state is marked running. The runner has not
+        # started yet, but a competing send and Stop must both see this owner.
+        self._preparing: dict[str, _Running] = {}
         self._subscribers: dict[str, set[Subscriber]] = {}
+        # Synchronous observers of every stored event (add_event_listener).
+        self._event_listeners: list[Callable[[str, dict[str, Any]], None]] = []
         self._approvals: dict[str, asyncio.Future[str]] = {}
         self._approval_session: dict[str, str] = {}
         # Questions an agent is waiting on (questions.py), by question id.
@@ -253,7 +380,254 @@ class AgentChatService:
         # reconnects, and a second copy in the chat would read as if the
         # person said everything twice. Bounded below in import_voice_turn.
         self._mirrored_voice_turns: set[str] = set()
+        # The Jarvis chat a voice call continues (bind_voice_chat): the chat
+        # the front page shows. ``_voice_chat_fresh`` = a blank page is open,
+        # so the next call starts a new chat instead of joining the newest.
+        # ``_voice_call_chats`` pins each running call to the chat its first
+        # turn landed in, so opening another chat mid-call never splits it.
+        self._voice_chat_id: str | None = None
+        self._voice_chat_fresh = False
+        self._voice_call_chats: dict[str, str] = {}
+        # The archived voice chat's history while one is continued (bind_voice_chat).
+        self._voice_archive_history: Callable[[], list[Any]] | None = None
         self._retire_cli_seats()
+        self._seal_orphaned_turns()
+
+    def _seal_orphaned_turns(self) -> None:
+        """Close every turn a previous process left open.
+
+        The runner's task lives in memory, so a turn that was running when the
+        app quit, crashed or was restarted can never send another event: its
+        CLI's pipe went with the old process. Left open, the thread showed
+        "Working" for ever and froze on the last line the old process wrote,
+        while the agent's real ending never arrived (2026-10-05). This service
+        is built once per process, before it runs a turn of its own, so every
+        open turn here is such an orphan. It ends as failed, stamped with the
+        last moment the session heard anything, so the thread list keeps its
+        order. A CLI that outlived its parent is not hunted down here: a stop
+        by folder would also hit the person's own terminals in that folder.
+
+        A thread turn (surface ``agent``) is the exception: its CLI runs in
+        the turn host (``turn_host_client``) and may still be working. While
+        such a host or its spool exists, those turns are held as running and
+        handed to :meth:`_reattach_hosted`, which carries on every one the
+        host still knows and seals the rest exactly like here.
+        """
+        try:
+            orphans = self.store.open_turns()
+        except sqlite3.Error:
+            log.warning("agent chat: could not look for turns a restart left open", exc_info=True)
+            return
+        loop, on_loop = _app_loop()
+        hosted_possible: bool | None = None
+        deferred: list[tuple[str, str, int, int]] = []
+        sealed = 0
+        for session_id, turn_id, started_ms, last_ms in orphans:
+            if not turn_id:
+                continue
+            if loop is not None and self._may_be_hosted(session_id):
+                if hosted_possible is None:
+                    from jarvis.agent_chat import turn_host_client
+
+                    hosted_possible = turn_host_client.may_hold_turns()
+                if hosted_possible:
+                    deferred.append((session_id, turn_id, started_ms, last_ms))
+                    continue
+            self.store.append_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+            sealed += 1
+        if sealed:
+            log.info("agent chat: closed %d turn(s) a restart left open", sealed)
+        if deferred and loop is not None:
+            for session_id, turn_id, _started, _last in deferred:
+                # Held as running until the host answers: a message sent now
+                # must not start a second CLI on the same conversation.
+                held = _Running(turn_id, asyncio.Event())
+                held.setup_task = None
+                self._running[session_id] = held
+            if on_loop:
+                self._reattach_task = loop.create_task(
+                    self._reattach_hosted(deferred), name="agent-chat-reattach"
+                )
+            else:
+                # Built in a worker thread (a sync route): hand the work to the
+                # app's loop, where every turn task of this service runs.
+                self._reattach_task = asyncio.run_coroutine_threadsafe(
+                    self._reattach_hosted(deferred), loop
+                )
+
+    async def wait_reattached(self) -> None:
+        """Until the restart's thread turns are reattached or sealed (tests, tools)."""
+        task = getattr(self, "_reattach_task", None)
+        if task is None:
+            return
+        if isinstance(task, asyncio.Future):
+            await task
+        else:
+            await asyncio.wrap_future(task)
+
+    def _may_be_hosted(self, session_id: str) -> bool:
+        session = self.store.get_session(session_id)
+        return session is not None and session.surface == "agent"
+
+    async def _reattach_hosted(self, orphans: list[tuple[str, str, int, int]]) -> None:
+        """Carry on every open thread turn whose CLI the turn host still holds."""
+        try:
+            await self._reattach_hosted_turns(orphans)
+        except Exception:  # noqa: BLE001 — a held thread must never stay on Working
+            log.exception("agent chat: reattaching thread turns failed")
+            for session_id, turn_id, started_ms, last_ms in orphans:
+                held = self._running.get(session_id)
+                if held is None or held.turn_id != turn_id or held.task is not None:
+                    continue
+                self._running.pop(session_id, None)
+                held.ready.set()
+                if self.store.turn_terminal(session_id, turn_id) is None:
+                    self._publish_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+
+    async def _reattach_hosted_turns(self, orphans: list[tuple[str, str, int, int]]) -> None:
+        from jarvis.agent_chat import turn_host_client
+
+        client = None
+        for delay in (0.0, 5.0, 15.0, 30.0):
+            if delay:
+                await asyncio.sleep(delay)
+            client = await turn_host_client.get_client(start=False)
+            # Patience only for a host that is alive but busy; a spool alone
+            # is read at once.
+            if client is not None or not await asyncio.to_thread(turn_host_client.host_running):
+                break
+        by_turn: dict[str, Any] = {}
+        if client is not None:
+            for host_id, info in list(client.turns.items()):
+                meta = info.get("meta") or {}
+                by_turn[str(meta.get("turn_id") or "")] = ("host", host_id)
+        for record in turn_host_client.read_spool():
+            meta = record.get("meta") or {}
+            by_turn.setdefault(str(meta.get("turn_id") or ""), ("spool", record))
+        open_ids = {turn_id for _sid, turn_id, _s, _l in orphans}
+        resumed = 0
+        for session_id, turn_id, started_ms, last_ms in orphans:
+            held = self._running.get(session_id)
+            source = by_turn.get(turn_id)
+            proc = None
+            try:
+                if source is not None and source[0] == "host" and client is not None:
+                    proc = await client.attach(source[1])
+                elif source is not None and source[0] == "spool":
+                    proc = turn_host_client.spooled_cli(source[1])
+            except (ConnectionError, OSError, ValueError, KeyError):
+                log.warning("agent chat: could not reattach turn %s", turn_id, exc_info=True)
+                proc = None
+            if proc is None or held is None or held.turn_id != turn_id:
+                if held is not None and held.turn_id == turn_id and held.task is None:
+                    self._running.pop(session_id, None)
+                    held.ready.set()
+                if self.store.turn_terminal(session_id, turn_id) is None:
+                    self._publish_event(session_id, _orphan_event(turn_id, started_ms, last_ms))
+                continue
+            self._resume_hosted_turn(session_id, held, proc)
+            resumed += 1
+        # A CLI the host holds for a turn nobody has open any more (closed by
+        # an older build, deleted thread) has no reader: end it.
+        for turn_id, source in by_turn.items():
+            if not turn_id or turn_id in open_ids:
+                continue
+            try:
+                if source[0] == "host" and client is not None:
+                    stray = await client.attach(source[1])
+                    if stray is not None:
+                        stray.kill()
+                        stray.release()
+                elif source[0] == "spool":
+                    turn_host_client.spooled_cli(source[1]).release()
+            except (ConnectionError, OSError, ValueError, KeyError):
+                log.warning("agent chat: stray hosted turn %s not ended", turn_id, exc_info=True)
+        if resumed:
+            log.info("agent chat: carried on %d thread turn(s) across a restart", resumed)
+
+    def _resume_hosted_turn(self, session_id: str, run: _Running, proc: Any) -> None:
+        """Run the rest of a reattached thread turn as this session's task."""
+        from jarvis.agent_chat.runner_cli import resume_hosted_cli_turn
+
+        session = self.store.get_session(session_id)
+        assert session is not None
+        turn_id = run.turn_id
+        runner = str((getattr(proc, "meta", {}) or {}).get("runner") or "")
+        kit = kit_for(session.surface)
+        handle = TurnHandle(
+            session=session,
+            turn_id=turn_id,
+            emit=lambda ev: self._emit(session_id, ev),
+            request_approval=lambda call_id, name, args, summary: self._ask(
+                session_id, turn_id, call_id, name, args, summary
+            ),
+            cancel=run.cancel,
+            history=self.store.list_events(session_id),
+            assistant_name=self._assistant_name(),
+            bus=self._bus(),
+            surface=session.surface,
+            stance=session.permission_mode if kit.uses_stance else "",
+            control_service=self,
+        )
+
+        async def _carry_on() -> None:
+            finished = False
+            try:
+                vendor = await resume_hosted_cli_turn(handle, proc)
+                finished = True
+                if vendor and vendor != session.vendor_session:
+                    self.store.update_session(session_id, vendor_session=vendor)
+            except asyncio.CancelledError:
+                if not run.detached:
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "turn_finished",
+                            {
+                                "turn_id": turn_id,
+                                "status": "cancelled",
+                                "duration_ms": 0,
+                                "usage": {},
+                                "error": None,
+                            },
+                        ),
+                    )
+                raise
+            except TurnHandedOver:
+                run.detached = True
+                log.info("agent chat turn %s handed over to another app process", turn_id)
+            except Exception as exc:  # noqa: BLE001 — a runner bug must not leave the UI spinning
+                log.exception("agent chat: reattached turn %s crashed", turn_id)
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "turn_finished",
+                        {
+                            "turn_id": turn_id,
+                            "status": "error",
+                            "duration_ms": 0,
+                            "usage": {},
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    ),
+                )
+            finally:
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
+                for aid in self.pending_approvals(session_id):
+                    fut = self._approvals.pop(aid, None)
+                    self._approval_session.pop(aid, None)
+                    if fut is not None and not fut.done():
+                        fut.set_result("cancel")
+                self._cancel_questions(session_id)
+                if finished and kit.turn_prompts:
+                    try:
+                        await self._open_turn_prompts(session_id, turn_id, runner)
+                    except Exception:  # noqa: BLE001 — a missing card leaves the reply readable
+                        log.exception("agent chat: end-of-turn card failed for %s", turn_id)
+
+        run.task = asyncio.create_task(_carry_on(), name=f"agent-chat-{turn_id[:8]}")
+        run.ready.set()
 
     def _retire_cli_seats(self) -> None:
         """Move chats off a CLI seat their surface no longer offers.
@@ -347,7 +721,8 @@ class AgentChatService:
                 f"Provider {provider!r} is not offered on the {surface!r} chat. "
                 "That chat runs on a provider API behind a key, not on a vendor CLI."
             )
-        ladder = ladder_key(surface, resolve_runner(provider, surface=surface))
+        runner = resolve_runner(provider, surface=surface, account_id=account_id)
+        ladder = ladder_key(surface, runner)
         permission_mode = normalize_permission(ladder, permission_mode)
         eff = normalize_effort(provider, effort) if effort is not None else ""
         if effort is None:
@@ -366,8 +741,18 @@ class AgentChatService:
         )
 
     def is_running(self, session_id: str) -> bool:
+        preparing = self._preparing.get(session_id)
+        if preparing is not None and preparing.setup_task is not _current_task():
+            return True
         run = self._running.get(session_id)
-        return bool(run and run.task and not run.task.done())
+        return bool(run and (run.task is None or not run.task.done()))
+
+    def running_session_ids(self) -> list[str]:
+        """Sessions occupying a chat seat, including pre-admission setup."""
+        return [
+            *[sid for sid in list(self._running) if self.is_running(sid)],
+            *list(self._preparing),
+        ]
 
     async def seal_stopped_turn(self, session_id: str) -> bool:
         """Close a turn the stop button can still see after its runner is gone.
@@ -433,6 +818,24 @@ class AgentChatService:
         if not subs:
             self._subscribers.pop(session_id, None)
 
+    def add_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
+        """Call ``listener(session_id, stored_event)`` after every stored event.
+
+        For coordinators that react to another chat's progress (an agent
+        steering a coding thread). The listener runs inline on the emitting
+        path, so it must only record and schedule — never await or do I/O.
+        """
+        listeners = getattr(self, "_event_listeners", None)
+        if listeners is None:  # a service built without __init__ (test doubles)
+            listeners = self._event_listeners = []
+        if listener not in listeners:
+            listeners.append(listener)
+
+    def remove_event_listener(self, listener: Callable[[str, dict[str, Any]], None]) -> None:
+        listeners = getattr(self, "_event_listeners", [])
+        if listener in listeners:
+            listeners.remove(listener)
+
     async def post_notice(self, session_id: str, payload: dict[str, Any]) -> None:
         """A system line in a session's timeline that is not a turn: the agent
         society posts learned skills, login requests and queued approvals here.
@@ -475,7 +878,19 @@ class AgentChatService:
         self._publish_event(session_id, event)
 
     def _publish_event(self, session_id: str, event: dict[str, Any]) -> None:
+        if event.get("kind") == "turn_finished":
+            turn_id = str((event.get("payload") or {}).get("turn_id") or "")
+            if turn_id and self.store.turn_terminal(session_id, turn_id) is not None:
+                log.warning("agent chat: ignored duplicate completion for turn %s", turn_id)
+                return
         stored = self.store.append_event(session_id, event)
+        if event.get("kind") == "turn_finished":
+            self._announce_jarvis_turn(session_id, event)
+        for listener in list(getattr(self, "_event_listeners", ())):
+            try:
+                listener(session_id, stored)
+            except Exception:  # noqa: BLE001 — an observer never breaks the chat it watches
+                log.warning("agent chat: event listener failed for %s", session_id, exc_info=True)
         for q in list(self._subscribers.get(session_id, ())):
             try:
                 q.put_nowait(stored)
@@ -484,6 +899,46 @@ class AgentChatService:
                 # re-syncs from the store when it reconnects.
                 log.debug("agent chat: subscriber queue full for %s — dropping it", session_id)
                 self.unsubscribe(session_id, q)
+
+    def _announce_jarvis_turn(self, session_id: str, event: dict[str, Any]) -> None:
+        """Publish ``JarvisChatTurnFinished`` for a finished turn of a Jarvis chat."""
+        bus = self._bus()
+        session = self.store.get_session(session_id)
+        if bus is None or session is None or session.surface != "jarvis":
+            return
+        payload = event.get("payload") or {}
+        status = str(payload.get("status") or "done")
+        if status == "cancelled":
+            return
+        turn_id = str(payload.get("turn_id") or "")
+        user_text = ""
+        replies: list[str] = []
+        for item in reversed(self.store.list_events(session_id, tail=80)):
+            kind = item["kind"]
+            data = item.get("payload") or {}
+            if kind == "assistant_text" and (not turn_id or data.get("turn_id") == turn_id):
+                replies.append(str(data.get("text") or ""))
+            elif kind == "user_message":
+                user_text = str(data.get("text") or "")
+                break
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop, no bus delivery: the chat itself already has the turn
+        from jarvis.core.events import JarvisChatTurnFinished
+
+        loop.create_task(
+            bus.publish(
+                JarvisChatTurnFinished(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    status="error" if status == "error" else "done",
+                    user_text=user_text,
+                    reply_text=" ".join(reversed(replies)).strip(),
+                    source_layer="agent_chat",
+                )
+            )
+        )
 
     # ---------------------------------------------------------------- turns
 
@@ -537,8 +992,13 @@ class AgentChatService:
         native_goal: bool = False,
         display_text: str | None = None,
         routine_run: bool = False,
+        author: dict[str, str] | None = None,
     ) -> str:
         """Persist the person's message and start the turn. Returns turn_id.
+
+        ``author`` marks a message another agent wrote on the person's behalf
+        (``{"agent_id", "name"}``, a Jarvis agent steering a coding thread):
+        it rides on the ``user_message`` so the thread shows who wrote it.
 
         ``attachments`` are what the composer already had read for this message
         (``jarvis.agent_chat.attachments``): a described screenshot, an
@@ -583,156 +1043,318 @@ class AgentChatService:
             command = re.match(r"^/([a-z]+)(?:\s|$)", text.strip())
             if command and command[1] in {row["name"] for row in COMMANDS}:
                 raise ValueError("Use the chat command endpoint for slash commands")
-            if hasattr(self, "_controls"):
-                await self._controls.user_message(session_id, text)
-        if read_only:
-            session = replace(session, permission_mode="plan")
-        if session.permission_mode in ("plan", "read-only") and session.surface in (
-            "jarvis",
-            "society",
-        ):
-            from .control import supports_restricted_turn
-
-            if not supports_restricted_turn(session):
-                raise ValueError("This runner cannot enforce read-only mode; choose an API model")
-        if incoming is not None:
-            receipt = await self.receive_message(session_id, incoming)
-            if receipt["status"] == "delivered":
-                return str(receipt.get("turn_id") or "")
-            if receipt["status"] == "failed":
-                raise ValueError("This internal message already failed")
-        if self.is_running(session_id):
+        if session_id in self._preparing:
             raise SessionBusy(session_id)
-        kit = kit_for(session.surface)
-        text = text.strip()
-        attached = chat_attachments.to_analysis(attachments)
-        if not text and not attached:
-            raise ValueError("empty message")
-        # What the turn receives; ``text`` stays what the person typed so the
-        # timeline shows their sentence rather than a page of extracted PDF.
-        prompt = chat_attachments.compose(text, attached)
-        # Agent cards serialize Add selections as capability pins. Translate the
-        # browser pin to the same validated receipt used by the root composer.
-        if session.surface == "jarvis" and any(
-            "core:browser" in {item.strip() for item in match.split(",")}
-            for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
-        ):
-            tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
-        selected = []
-        if tool_choices:
-            if session.surface != "jarvis":
-                raise ValueError("Tool selections are supported by the Jarvis chat")
-            from jarvis.agent_chat.runner_brain import brain_manager
-            from jarvis.agent_chat.tool_catalog import live_catalog, resolve_choices
-
-            inventory = await asyncio.to_thread(
-                live_catalog, brain_manager(), cwd=session.cwd, stance=session.permission_mode
+        if self.is_running(session_id):
+            # A person may steer an active Jarvis goal: user_message pauses
+            # its old turn before this preparation can become a new runner.
+            goal = (
+                self._controls.state(session_id).goal
+                if session.surface == "jarvis"
+                and direct_user
+                and incoming is None
+                and not control_owned
+                and hasattr(self, "_controls")
+                else None
             )
-            selected = resolve_choices(tool_choices, inventory)
-            # Discovery yields; another send may have acquired this session.
-            if self.is_running(session_id):
+            if goal is None or goal.status != "active":
                 raise SessionBusy(session_id)
+        if session.surface == "society":
+            from jarvis.society.chat_binding import direct_chat_owner
 
+            owner = direct_chat_owner(session_id)
+            if owner is not None and any(
+                direct_chat_owner(sid) == owner for sid in self.running_session_ids()
+            ):
+                raise SessionBusy(session_id)
         turn_id = uuid.uuid4().hex
         cancel = asyncio.Event()
         run = _Running(turn_id, cancel)
-        self._running[session_id] = run
-        if session.surface == "jarvis" and direct_user and incoming is None and not control_owned:
-            from .store import ChatSelection
+        self._preparing[session_id] = run
+        control_revision: int | None = None
+        control_text = text
+        if (
+            session.surface in ("jarvis", "society")
+            and direct_user
+            and incoming is None
+            and not control_owned
+        ):
+            if hasattr(self, "_controls"):
+                try:
+                    control_revision = await self._controls.user_message(session_id, text)
+                except (asyncio.CancelledError, Exception):
+                    if self._preparing.get(session_id) is run:
+                        self._preparing.pop(session_id, None)
+                    run.ready.set()
+                    raise
+        try:
+            if read_only:
+                session = replace(session, permission_mode="plan")
+            if session.permission_mode in ("plan", "read-only") and session.surface in (
+                "jarvis",
+                "society",
+            ):
+                from .control import supports_restricted_turn
 
-            self.store.save_chat_selection(
-                ChatSelection(session.provider, session.model, session.effort, session.account_id)
-            )
-        from jarvis.core.tool_read_only import set_chat_read_only
+                if not supports_restricted_turn(session):
+                    raise ValueError(
+                        "This runner cannot enforce read-only mode; choose an API model"
+                    )
+            if incoming is not None:
+                receipt = await self.receive_message(session_id, incoming)
+                if receipt["status"] == "delivered":
+                    if self._preparing.get(session_id) is run:
+                        self._preparing.pop(session_id, None)
+                    run.ready.set()
+                    return str(receipt.get("turn_id") or "")
+                if receipt["status"] == "failed":
+                    raise ValueError("This internal message already failed")
+            if self.is_running(session_id):
+                raise SessionBusy(session_id)
+            kit = kit_for(session.surface)
+            text = text.strip()
+            attached = chat_attachments.to_analysis(attachments)
+            if not text and not attached:
+                raise ValueError("empty message")
+            # What the turn receives; ``text`` stays what the person typed so the
+            # timeline shows their sentence rather than a page of extracted PDF.
+            prompt = chat_attachments.compose(text, attached)
+            if attached and session.surface == "jarvis":
+                image_context = await asyncio.to_thread(
+                    chat_attachments.handoff_context, session.cwd, attached, session_id=session_id,
+                )
+                if image_context:
+                    prompt += "\n\n" + image_context
+            # Agent cards serialize Add selections as capability pins. Translate the
+            # browser pin to the same validated receipt used by the root composer.
+            if session.surface == "jarvis" and any(
+                "core:browser" in {item.strip() for item in match.split(",")}
+                for match in re.findall(r"(?m)^\[tools:\s*([^\]\r\n]+)\]\s*$", text)
+            ):
+                tool_choices = list(dict.fromkeys([*(tool_choices or []), "tool:society_browser"]))
+            selected = []
+            if tool_choices:
+                if session.surface != "jarvis":
+                    raise ValueError("Tool selections are supported by the Jarvis chat")
+                from jarvis.agent_chat.runner_brain import brain_manager
+                from jarvis.agent_chat.tool_catalog import live_catalog, resolve_choices
 
-        set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))
+                inventory = await asyncio.to_thread(
+                    live_catalog, brain_manager(), cwd=session.cwd, stance=session.permission_mode
+                )
+                selected = resolve_choices(tool_choices, inventory)
+                # Discovery yields; another send may have acquired this session.
+                if self.is_running(session_id):
+                    raise SessionBusy(session_id)
 
-        history_start = kit.history_start(session) if kit.history_start is not None else 0
-        history = self.store.list_events(session_id, after_seq=history_start)
-        if incoming is not None:
-            await self.message_status(session_id, incoming.message_id, "delivered", turn_id=turn_id)
-        else:
+            # Roster state can change while a control message or an internal
+            # delivery is being recorded. Rebind after those awaits, then reserve
+            # the seat without yielding again. Keep the caller's read-only choice.
+            if session.surface == "society":
+                session = await self.bind_society_session(session_id, routine_run=routine_run)
+                if read_only:
+                    session = replace(session, permission_mode="plan")
+                if session.permission_mode in ("plan", "read-only"):
+                    from .control import supports_restricted_turn
+
+                    if not supports_restricted_turn(session):
+                        raise ValueError(
+                            "This runner cannot enforce read-only mode; choose an API model"
+                        )
+
+            # Revalidate after the last await, then transfer the reservation
+            # to the runner without yielding. Scheduled runs stay independent.
+            if cancel.is_set():
+                raise asyncio.CancelledError
+            if self._preparing.get(session_id) is not run or self.is_running(session_id):
+                raise SessionBusy(session_id)
+            if session.surface == "society":
+                from jarvis.society.chat_binding import direct_chat_owner
+
+                owner = direct_chat_owner(session_id)
+                if owner is not None and any(
+                    direct_chat_owner(sid) == owner and self.is_running(sid)
+                    for sid in self._running if sid != session_id
+                ):
+                    raise SessionBusy(session_id)
+
+            self._preparing.pop(session_id, None)
+            self._running[session_id] = run
+        except (asyncio.CancelledError, Exception):
+            if self._preparing.get(session_id) is run:
+                self._preparing.pop(session_id, None)
+            try:
+                if control_revision is not None:
+                    await self._controls.message_rejected(
+                        session_id, control_text, control_revision
+                    )
+            except Exception:
+                log.exception(
+                    "chat control status could not close rejected message in %s", session_id
+                )
+            finally:
+                run.ready.set()
+            raise
+        turn_started_emitted = False
+        try:
+            if (
+                session.surface == "jarvis"
+                and direct_user
+                and incoming is None
+                and not control_owned
+            ):
+                from .store import ChatSelection
+
+                self.store.save_chat_selection(
+                    ChatSelection(
+                        session.provider, session.model, session.effort, session.account_id
+                    )
+                )
+            from jarvis.core.tool_read_only import set_chat_read_only
+
+            set_chat_read_only(session_id, session.permission_mode in ("plan", "read-only"))
+
+            history_start = kit.history_start(session) if kit.history_start is not None else 0
+            history = self.store.list_events(session_id, after_seq=history_start)
+            if incoming is not None:
+                await self.message_status(
+                    session_id, incoming.message_id, "delivered", turn_id=turn_id
+                )
+            else:
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "user_message",
+                        {
+                            # The full prompt: this is what was actually sent, and the
+                            # API runner rebuilds the conversation from these events —
+                            # storing only the sentence would lose the picture on the
+                            # NEXT turn (runner_api.messages_from_events).
+                            "text": prompt,
+                            **({"origin": "control"} if control_owned and not direct_user else {}),
+                            **({"author": dict(author)} if author else {}),
+                            **(
+                                {"tool_choices": [row.model_dump(mode="json") for row in selected]}
+                                if selected
+                                else {}
+                            ),
+                            # What the person typed, when it differs from the prompt.
+                            # Absent on an ordinary message, so nothing changes there.
+                            **(
+                                {"typed": display_text if display_text is not None else text}
+                                if attached or display_text is not None
+                                else {}
+                            ),
+                            **(
+                                {
+                                    "attachments": [
+                                        {
+                                            "name": item.name,
+                                            "reference": item.reference,
+                                            "kind": item.kind,
+                                            "described_by": item.described_by,
+                                            "note": item.note,
+                                        }
+                                        for item in attached
+                                    ]
+                                }
+                                if attached
+                                else {}
+                            ),
+                        },
+                    ),
+                )
+            runner = selected_runner or session_runner(session)
+            turn_started_emitted = True
             await self._emit(
                 session_id,
                 make_event(
-                    "user_message",
+                    "turn_started",
                     {
-                        # The full prompt: this is what was actually sent, and the
-                        # API runner rebuilds the conversation from these events —
-                        # storing only the sentence would lose the picture on the
-                        # NEXT turn (runner_api.messages_from_events).
-                        "text": prompt,
-                        **({"origin": "control"} if control_owned and not direct_user else {}),
-                        **(
-                            {"tool_choices": [row.model_dump(mode="json") for row in selected]}
-                            if selected
-                            else {}
-                        ),
-                        # What the person typed, when it differs from the prompt.
-                        # Absent on an ordinary message, so nothing changes there.
-                        **(
-                            {"typed": display_text if display_text is not None else text}
-                            if attached or display_text is not None
-                            else {}
-                        ),
-                        **(
-                            {
-                                "attachments": [
-                                    {
-                                        "name": item.name,
-                                        "reference": item.reference,
-                                        "kind": item.kind,
-                                        "described_by": item.described_by,
-                                        "note": item.note,
-                                    }
-                                    for item in attached
-                                ]
-                            }
-                            if attached
-                            else {}
-                        ),
+                        "turn_id": turn_id,
+                        "provider": session.provider,
+                        "model": session.model,
+                        # The effort the turn RUNS with. It is the session's own
+                        # pick: no surface overrides it any more (the kit's
+                        # `effort` went with the setup helper), so reading one off
+                        # the kit would only be a way to raise an AttributeError
+                        # on every turn.
+                        "effort": normalize_effort(session.provider, session.effort),
+                        "runner": runner,
+                        "surface": session.surface,
                     },
                 ),
             )
-        runner = selected_runner or resolve_runner(session.provider, surface=session.surface)
-        await self._emit(
-            session_id,
-            make_event(
-                "turn_started",
-                {
-                    "turn_id": turn_id,
-                    "provider": session.provider,
-                    "model": session.model,
-                    # The effort the turn RUNS with. It is the session's own
-                    # pick: no surface overrides it any more (the kit's
-                    # `effort` went with the setup helper), so reading one off
-                    # the kit would only be a way to raise an AttributeError
-                    # on every turn.
-                    "effort": normalize_effort(session.provider, session.effort),
-                    "runner": runner,
-                    "surface": session.surface,
-                },
-            ),
-        )
 
-        bus = self._bus()
-        handle = TurnHandle(
-            session=session,
-            turn_id=turn_id,
-            emit=lambda ev: self._emit(session_id, ev),
-            request_approval=lambda call_id, name, args, summary: self._ask(
-                session_id, turn_id, call_id, name, args, summary
-            ),
-            cancel=cancel,
-            history=history,
-            assistant_name=self._assistant_name(),
-            bus=bus,
-            surface=session.surface,
-            stance=session.permission_mode if kit.uses_stance else "",
-            output_language=output_language,
-            goal_turn=native_goal,
-            control_service=self,
-        )
+            bus = self._bus()
+            handle = TurnHandle(
+                session=session,
+                turn_id=turn_id,
+                emit=lambda ev: self._emit(session_id, ev),
+                request_approval=lambda call_id, name, args, summary: self._ask(
+                    session_id, turn_id, call_id, name, args, summary
+                ),
+                cancel=cancel,
+                history=history,
+                assistant_name=self._assistant_name(),
+                bus=bus,
+                surface=session.surface,
+                stance=session.permission_mode if kit.uses_stance else "",
+                output_language=output_language,
+                goal_turn=native_goal,
+                control_service=self,
+            )
+        except BaseException as exc:
+            try:
+                if turn_started_emitted:
+                    await self._emit(
+                        session_id,
+                        make_event(
+                            "turn_finished",
+                            {
+                                "turn_id": turn_id,
+                                "status": (
+                                    "cancelled" if isinstance(exc, asyncio.CancelledError)
+                                    else "error"
+                                ),
+                                "duration_ms": 0,
+                                "usage": {},
+                                "error": (
+                                    None if isinstance(exc, asyncio.CancelledError) else str(exc)
+                                ),
+                            },
+                        ),
+                    )
+            except asyncio.CancelledError:
+                pass  # A second stop still releases the pending reservation.
+            except Exception:
+                log.exception("agent chat could not close the failed start for %s", turn_id)
+            finally:
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
+                run.ready.set()
+                from jarvis.core.tool_read_only import set_chat_read_only
+
+                stored_session = self.store.get_session(session_id)
+                set_chat_read_only(
+                    session_id,
+                    bool(
+                        stored_session
+                        and stored_session.permission_mode in ("plan", "read-only")
+                    ),
+                )
+            if hasattr(self, "_controls"):
+                try:
+                    await self._controls.turn_completed(
+                        session_id,
+                        turn_id,
+                        display_text if display_text is not None else text,
+                        direct_user and incoming is None,
+                        read_only,
+                    )
+                except Exception:
+                    log.exception("chat completion hook failed for aborted start %s", turn_id)
+            raise
 
         async def _body() -> None:
             started = time.monotonic()
@@ -760,15 +1382,15 @@ class AgentChatService:
                 if completion is not None else handle
             )
 
-            async def run_attempt(run_prompt: str) -> None:
+            async def run_attempt(active_handle: TurnHandle, run_prompt: str) -> None:
                 if control_runner is not None:
-                    vendor = await control_runner(run_handle, text)
+                    vendor = await control_runner(active_handle, text)
                     if vendor:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "brain":
                     async with self._brain_lock:
                         await run_brain_turn(
-                            run_handle,
+                            active_handle,
                             run_prompt,
                             bridge=self._bridge_for(bus),
                             always_allowed=self.always_allowed(session_id),
@@ -786,7 +1408,7 @@ class AgentChatService:
                     # a surface that combines the two keeps working.
                     as_jarvis = kit.brain_runner and kit.cli_seats
                     vendor = await run_cli_turn(
-                        run_handle,
+                        active_handle,
                         run_prompt + selection_briefing(selected),
                         runner,
                         identity=as_jarvis,
@@ -796,7 +1418,7 @@ class AgentChatService:
                     if vendor and vendor != session.vendor_session:
                         self.store.update_session(session_id, vendor_session=vendor)
                 elif runner == "api" and supports_api_runner(session.provider):
-                    await run_api_turn(run_handle, run_prompt)
+                    await run_api_turn(active_handle, run_prompt)
                 else:
                     await self._emit(
                         session_id,
@@ -818,7 +1440,15 @@ class AgentChatService:
             try:
                 run_prompt = prompt
                 for _ in range(MAX_ASKS_PER_TURN + 2):
-                    await run_attempt(run_prompt)
+                    if (
+                        origin.direct_user and session.surface in ("jarvis", "society")
+                        and control_runner is None and not native_goal
+                    ):
+                        from jarvis.agent_chat.delegation_wait import run_with_delegates
+
+                        await run_with_delegates(self, run_handle, run_prompt, run_attempt)
+                    else:
+                        await run_attempt(run_handle, run_prompt)
                     if completion is None:
                         break
                     continuation = await completion.next_prompt()
@@ -838,6 +1468,10 @@ class AgentChatService:
                 if completion is not None:
                     await completion.publish()
             except asyncio.CancelledError:
+                if run.detached:
+                    # The CLI keeps working in the turn host; the next app
+                    # start carries this turn on, so it stays open.
+                    raise
                 await self._emit(
                     session_id,
                     make_event(
@@ -856,6 +1490,11 @@ class AgentChatService:
                     ),
                 )
                 raise
+            except TurnHandedOver:
+                # Another app process attached to the turn host and carries
+                # this turn on; it stays open for that process to finish.
+                run.detached = True
+                log.info("agent chat turn %s handed over to another app process", turn_id)
             except Exception as exc:  # noqa: BLE001 — a runner bug must not leave the UI spinning
                 log.exception("agent chat turn %s crashed", turn_id)
                 await self._emit(
@@ -880,7 +1519,8 @@ class AgentChatService:
                     from jarvis.society.browser.tool import stop_chat_browser
 
                     await stop_chat_browser(session_id)
-                self._running.pop(session_id, None)
+                if self._running.get(session_id) is run:
+                    self._running.pop(session_id, None)
                 stored_session = self.store.get_session(session_id)
                 set_chat_read_only(
                     session_id,
@@ -889,7 +1529,7 @@ class AgentChatService:
                     ),
                 )
                 current_chat_turn.reset(origin_token)
-                if kit.turn_completed is not None:
+                if kit.turn_completed is not None and not run.detached:
                     try:
                         first_seq = max(
                             (int(e.get("seq") or 0) for e in history), default=history_start
@@ -906,13 +1546,119 @@ class AgentChatService:
                     if fut is not None and not fut.done():
                         fut.set_result("cancel")
                 self._cancel_questions(session_id)
+                if (
+                    kit.turn_prompts
+                    and origin.direct_user
+                    and control_runner is None
+                    and not native_goal
+                    and not run.detached
+                ):
+                    try:
+                        await self._open_turn_prompts(session_id, turn_id, runner)
+                    except Exception:  # noqa: BLE001 — a missing card leaves the reply readable
+                        log.exception("agent chat: end-of-turn card failed for %s", turn_id)
                 if hasattr(self, "_controls"):
                     await self._controls.turn_completed(
                         session_id, turn_id, origin.user_text, origin.direct_user, read_only
                     )
 
-        run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
+        try:
+            run.task = asyncio.create_task(_body(), name=f"agent-chat-{turn_id[:8]}")
+        except BaseException:
+            if self._running.get(session_id) is run:
+                self._running.pop(session_id, None)
+            run.ready.set()
+            raise
+        run.ready.set()
         return turn_id
+
+    # ------------------------------------------------------------ voice chat
+
+    @property
+    def voice_chat_id(self) -> str | None:
+        """The Jarvis chat the next voice call continues, if one is bound."""
+        return self._voice_chat_id
+
+    @property
+    def voice_chat_fresh(self) -> bool:
+        """True while a blank page is open: the next call opens a new chat."""
+        return self._voice_chat_fresh
+
+    @property
+    def voice_session_continued(self) -> str | None:
+        """The archived voice chat calls are recorded into, if one is on stage."""
+        from jarvis.sessions.continuation import continued_voice_session
+
+        return continued_voice_session()
+
+    def bind_voice_chat(
+        self,
+        session_id: str | None,
+        *,
+        voice_session: str | None = None,
+        voice_history: Callable[[], list[Any]] | None = None,
+    ) -> str | None:
+        """Make ``session_id`` the chat voice calls continue; ``None`` = a new one.
+
+        ``voice_session`` puts an ARCHIVED voice chat on stage instead (a
+        history row of ``sessions.db``): the recorder files the next calls
+        into that row rather than a new one (jarvis/sessions/continuation.py),
+        no typed chat receives the turns, and ``voice_history`` answers each
+        call's starting context. Any other binding ends that continuation.
+
+        The front page shows one Jarvis chat at a time. A call started there
+        — the composer's voice button or the wake word — belongs to THAT
+        chat: its turns are filed into it (voice_mirror) and it starts with
+        that chat's history as context (``BrainManager.take_voice_history_seed``
+        asks :meth:`voice_chat_history`). Binding a chat also drops an older
+        explicit seed nobody consumed, which would otherwise hand the call
+        another conversation's memory.
+        """
+        from jarvis.agent_chat import runner_brain
+        from jarvis.sessions.continuation import continue_voice_session
+
+        brain = runner_brain.brain_manager()
+        archived = (voice_session or "").strip() or None
+        continue_voice_session(archived if session_id is None else None)
+        self._voice_archive_history = voice_history if archived and session_id is None else None
+        if session_id is None:
+            self._voice_chat_id = None
+            self._voice_chat_fresh = True
+        else:
+            session = self.store.get_session(session_id)
+            if session is None or session.surface != "jarvis":
+                raise NoSuchSession(session_id)
+            self._voice_chat_id = session_id
+            self._voice_chat_fresh = False
+            drop = getattr(brain, "drop_voice_history_seed", None)
+            if callable(drop):
+                drop()
+        attach = getattr(brain, "set_voice_history_source", None)
+        if callable(attach):
+            attach(self.voice_chat_history)
+        return self._voice_chat_id
+
+    def voice_chat_history(self) -> list[Any]:
+        """The bound chat's turns as call context — empty when none is bound."""
+        archive = self._voice_archive_history
+        if archive is not None and self.voice_session_continued:
+            return archive()
+        session_id = self._voice_chat_id
+        if not session_id or self.store.get_session(session_id) is None:
+            return []
+        return brain_history_from_events(self.store.list_events(session_id))
+
+    def voice_call_chat(self, call_id: str) -> str | None:
+        """The chat a running call already files into, if its first turn landed."""
+        return self._voice_call_chats.get(call_id) if call_id else None
+
+    def pin_voice_call(self, call_id: str, session_id: str) -> None:
+        """Keep every later turn of ``call_id`` in ``session_id``."""
+        if not call_id:
+            return
+        if len(self._voice_call_chats) > 200:
+            self._voice_call_chats.clear()
+        self._voice_call_chats[call_id] = session_id
 
     async def import_voice_turn(
         self,
@@ -1002,13 +1748,19 @@ class AgentChatService:
 
     def signal_cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
         """Stop planning synchronously before releasing an in-flight tool reply."""
-        run = self._running.get(session_id)
-        if run is None or run.task is None or run.task.done():
+        run = self._running.get(session_id) or getattr(self, "_preparing", {}).get(session_id)
+        if run is None or (run.task is not None and run.task.done()):
+            return False
+        if run.task is None and run.setup_task is _current_task():
+            # A goal's user_message pauses its old work while preparing this
+            # very send. That pause must not cancel the new send itself.
             return False
         # A resumed station must never cancel a newer unrelated conversation turn.
         if expected_turn_id is not None and run.turn_id != expected_turn_id:
             return False
         run.cancel.set()
+        if run.task is None and run.setup_task is not None:
+            run.setup_task.cancel()
         for aid in self.pending_approvals(session_id):
             fut = self._approvals.get(aid)
             if fut is not None and not fut.done():
@@ -1017,10 +1769,20 @@ class AgentChatService:
         return True
 
     async def cancel(self, session_id: str, *, expected_turn_id: str | None = None) -> bool:
-        run = self._running.get(session_id)
+        run = self._running.get(session_id) or self._preparing.get(session_id)
         if not self.signal_cancel(session_id, expected_turn_id=expected_turn_id):
             return False
-        assert run is not None and run.task is not None
+        assert run is not None
+        if run.task is None:
+            try:
+                await asyncio.wait_for(run.ready.wait(), timeout=15.0)
+            except TimeoutError:
+                # Keep the seat reserved until the cancelled setup actually
+                # unwinds; releasing it here could admit a second runner.
+                log.warning("agent chat setup did not stop within 15 seconds: %s", session_id)
+                return True
+            if run.task is None:
+                return True
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout=15.0)
         except TimeoutError:  # Stop escalates to task cancellation after the bounded wait.
@@ -1035,9 +1797,27 @@ class AgentChatService:
         return True
 
     async def cancel_all(self) -> None:
+        """App shutdown: stop every turn — except thread turns the turn host keeps.
+
+        Those CLIs go on working in the host; their tasks end without closing
+        the turn, and the next app start carries them on (``_reattach_hosted``).
+        """
         if hasattr(self, "_controls"):
             await self._controls.close()
-        for sid in list(self._running):
+        from jarvis.agent_chat import turn_host_client
+
+        hosted = turn_host_client.live_turn_ids()
+        detached: list[asyncio.Task[None]] = []
+        for run in list(self._running.values()):
+            if run.turn_id in hosted and run.task is not None and not run.task.done():
+                run.detached = True
+                run.task.cancel()
+                detached.append(run.task)
+        if detached:
+            await asyncio.gather(*detached, return_exceptions=True)
+            log.info("agent chat: %d thread turn(s) keep running in the turn host", len(detached))
+        turn_host_client.detach_all()
+        for sid in list(dict.fromkeys([*self._running, *self._preparing])):
             await self.cancel(sid)
 
     @property
@@ -1049,7 +1829,9 @@ class AgentChatService:
         return self._controls
 
     async def wait_turn(self, session_id: str) -> None:
-        run = self._running.get(session_id)
+        run = self._running.get(session_id) or self._preparing.get(session_id)
+        if run is not None and run.task is None:
+            await run.ready.wait()
         if run is not None and run.task is not None:
             await asyncio.shield(run.task)
 
@@ -1359,6 +2141,183 @@ class AgentChatService:
                 open_q.wake.set()
             questions.pop(qid, None)
 
+    # ------------------------------------------------------------ end-of-turn cards
+
+    #: How far back a finished turn's reply is looked for. The question block
+    #: ends the reply, so the newest events always hold it.
+    _TURN_PROMPT_TAIL: Final[int] = 2000
+
+    def _turn_prompt_lock(self) -> asyncio.Lock:
+        # Lazily: a service built without __init__ (test doubles) still works.
+        lock: asyncio.Lock | None = getattr(self, "_prompt_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._prompt_lock = lock
+        return lock
+
+    async def _open_turn_prompts(self, session_id: str, turn_id: str, runner: str) -> None:
+        """After a coding agent's turn: its question card, else its plan card.
+
+        A reply ending in a ``jarvis-ask`` block opens a deferred question
+        card; a finished turn while the session is still in plan mode opens a
+        plan card. Nothing waits on either — the answer is the next message.
+        """
+        events = self.store.list_events(session_id, tail=self._TURN_PROMPT_TAIL)
+        status, text = turn_prompts.turn_reply(events, turn_id)
+        if status != "done":
+            return
+        specs = turn_prompts.parse_ask_block(text)
+        if specs:
+            await self._emit(
+                session_id,
+                make_event(
+                    "question_required",
+                    {
+                        "turn_id": turn_id,
+                        "question_id": uuid.uuid4().hex,
+                        "asker": "",
+                        "questions": [spec.to_payload() for spec in specs],
+                        "deferred": True,
+                    },
+                ),
+            )
+            return
+        session = self.store.get_session(session_id)
+        if session is None or session.permission_mode != "plan" or not text.strip():
+            return
+        build = default_permission(ladder_key(session.surface, runner))
+        if build == "plan":
+            return
+        await self._emit(
+            session_id,
+            make_event("plan_ready", {"turn_id": turn_id, "build_mode": build}),
+        )
+
+    async def answer_turn_question(
+        self,
+        session_id: str,
+        question_id: str,
+        *,
+        index: int = 0,
+        option_index: int | None = None,
+        text: str | None = None,
+        author: dict[str, str] | None = None,
+    ) -> bool:
+        """The person's answer to one question of an end-of-turn card.
+
+        False for an unknown, closed or already answered question; raises
+        ``ValueError`` for an answer that does not fit. The last answer closes
+        the card and sends the answers to the agent as the next message.
+        """
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            try:
+                answers = turn_prompts.answer(
+                    card, index, option_index=option_index, text=text
+                )
+            except IndexError:  # a stale option index is a no-op click; the caller reports False
+                return False
+            if any(a is None for a in answers):
+                await self._emit(
+                    session_id,
+                    make_event(
+                        "question_progress",
+                        {
+                            "turn_id": card.turn_id,
+                            "question_id": question_id,
+                            "answers": [a.to_payload() if a else None for a in answers],
+                        },
+                    ),
+                )
+                return True
+            final = [a for a in answers if a is not None]
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final, author=author)
+        return True
+
+    async def skip_turn_question(
+        self, session_id: str, question_id: str, *, author: dict[str, str] | None = None
+    ) -> bool:
+        """The person closed an end-of-turn card: the agent's recommendations stand."""
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_ask(self.store.list_events(session_id), question_id)
+            if card is None:
+                return False
+            final = turn_prompts.skipped(card)
+            await self._resolve_turn_question(session_id, card, final)
+        await self._send_turn_answer(session_id, card, final, author=author)
+        return True
+
+    async def _resolve_turn_question(
+        self, session_id: str, card: turn_prompts.OpenAsk, answers: list[QuestionAnswer]
+    ) -> None:
+        await self._emit(
+            session_id,
+            make_event(
+                "question_resolved",
+                {
+                    "turn_id": card.turn_id,
+                    "question_id": card.question_id,
+                    "answers": [a.to_payload() for a in answers],
+                },
+            ),
+        )
+
+    async def _send_turn_answer(
+        self,
+        session_id: str,
+        card: turn_prompts.OpenAsk,
+        answers: list[QuestionAnswer],
+        *,
+        author: dict[str, str] | None = None,
+    ) -> None:
+        await self.send(
+            session_id,
+            turn_prompts.answers_prompt(card.specs, answers),
+            display_text=turn_prompts.answers_display(card.specs, answers),
+            author=author,
+        )
+
+    async def resolve_turn_plan(
+        self,
+        session_id: str,
+        turn_id: str,
+        decision: str,
+        *,
+        author: dict[str, str] | None = None,
+    ) -> bool:
+        """The person's answer to a plan card: ``build`` or ``keep``.
+
+        ``build`` moves the session to the build mode the card offered and
+        sends the go-ahead as the next message; ``keep`` only closes the card,
+        so the person can tell the agent what to change. False when the card
+        is not open (any more).
+        """
+        if decision not in turn_prompts.PLAN_DECISIONS:
+            raise ValueError(f"decision must be one of {turn_prompts.PLAN_DECISIONS}")
+        async with self._turn_prompt_lock():
+            card = turn_prompts.open_plan(self.store.list_events(session_id), turn_id)
+            if card is None:
+                return False
+            await self._emit(
+                session_id,
+                make_event("plan_resolved", {"turn_id": turn_id, "decision": decision}),
+            )
+            if decision == turn_prompts.PLAN_KEEP:
+                return True
+            session = self.store.get_session(session_id)
+            build = card.build_mode
+            if session is not None and build and session.permission_mode != build:
+                self.store.update_session(session_id, permission_mode=build)
+                await self._emit(
+                    session_id,
+                    make_event("session_updated", {"permission_mode": build}),
+                )
+        await self.send(session_id, turn_prompts.PLAN_GO_AHEAD, author=author)
+        return True
+
 
 __all__ = [
     "AgentChatService",
@@ -1368,4 +2327,5 @@ __all__ = [
     "SessionBusy",
     "Subscriber",
     "resolve_runner",
+    "session_runner",
 ]

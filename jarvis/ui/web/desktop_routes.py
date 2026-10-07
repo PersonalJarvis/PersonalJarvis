@@ -193,6 +193,30 @@ async def window_command(body: WindowCommandBody, request: Request) -> dict[str,
         return {"ok": False, "reason": "command_failed"}
 
 
+class WindowZoomBody(BaseModel):
+    factor: float = Field(ge=0.25, le=5.0)
+    view: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/zoom", operation_id="zoom")
+async def window_zoom(body: WindowZoomBody, request: Request) -> dict[str, Any]:
+    """Zoom the page of the window the page is showing (1.0 = 100 %).
+
+    Real engine zoom, the way a browser's Ctrl + `+` works. A browser tab or a
+    headless server answers ``ok: false``; the page then leaves zoom to the
+    browser. ``view`` names a detached window. Omitted, the main window is used.
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "set_window_zoom", None)
+    if not callable(fn):
+        return {"ok": False, "reason": "no_desktop_shell"}
+    try:
+        return await asyncio.to_thread(fn, body.factor, body.view or None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("window zoom failed: %s", exc, exc_info=True)
+        return {"ok": False, "reason": "zoom_failed"}
+
+
 @router.post("/fullscreen", operation_id="fullscreen")
 async def window_fullscreen(body: FullscreenBody, request: Request) -> dict[str, Any]:
     """Enter or leave native desktop fullscreen."""

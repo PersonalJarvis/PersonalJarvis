@@ -48,6 +48,32 @@ COVERED: Final[dict[str, str]] = {
 
 #: REST route -> why an MCP client does not get it. Each line is a decision.
 WITHHELD: Final[dict[str, str]] = {
+    "GET /api/society/provider-prefs": (
+        "which providers the agents may use is a settings page for the owner; "
+        "a remote client already sees the effective seat on each agent"
+    ),
+    "PUT /api/society/provider-prefs": (
+        "turning providers off for every agent is the owner's billing decision "
+        "and is never handed to a remote client"
+    ),
+    "POST /api/society/agents/{agent_id}/browser/restart": (
+        "native browser recovery is initiated by the owner in the browser panel; "
+        "remote clients must not interrupt the person's manual browser session"
+    ),
+    "GET /api/society/agents/{agent_id}/template": (
+        "the share draft is read in the owner's Share sheet; a remote client has "
+        "ecosystem_export for the design of the whole team"
+    ),
+    "PUT /api/society/agents/{agent_id}/template": (
+        "editing the public version of an agent is the owner's decision at their keyboard"
+    ),
+    "POST /api/society/agents/{agent_id}/template/publish": (
+        "publishing goes out under the owner's GitHub name — never from a remote client"
+    ),
+    "POST /api/society/templates/install": (
+        "installing a stranger's template is a consent decision made in the app, "
+        "where the instructions are on screen first"
+    ),
     "PATCH /api/society/agents/{agent_id}": (
         "editing a roster row (model, ceiling, focus) is configuration the owner "
         "does at their own keyboard, not something a remote client should change"
@@ -161,6 +187,10 @@ WITHHELD: Final[dict[str, str]] = {
         "pausing, deleting or running a routine now changes recurring spend; "
         "the owner does it on the routine card, not via a remote client"
     ),
+    "GET /api/society/agents/{agent_id}/conversations": (
+        "lists the agent's chats with Jarvis and teammates for the owner's "
+        "history rail in the app; a remote client messages agents directly"
+    ),
     "GET /api/society/chat-groups": (
         "group chats are the owner's own chat layout in the app; a remote "
         "client addresses agents directly"
@@ -171,6 +201,17 @@ WITHHELD: Final[dict[str, str]] = {
     ),
     "DELETE /api/society/chat-groups/{group_id}": (
         "ungrouping the owner's chats is app-only UI state"
+    ),
+    "GET /api/society/chat-groups/{group_id}/meeting": (
+        "a group meeting's transcript belongs to the owner's group chat in the "
+        "app; a remote client reads each agent's own chat"
+    ),
+    "POST /api/society/chat-groups/{group_id}/meeting": (
+        "a meeting round bills a turn on every member's seat and starts only "
+        "from the owner's explicit message in the app"
+    ),
+    "POST /api/society/chat-groups/{group_id}/meeting/stop": (
+        "stops the owner's meeting round, which only the app can start"
     ),
 }
 

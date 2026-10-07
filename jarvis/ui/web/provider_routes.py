@@ -462,6 +462,36 @@ def _managed_server_payload(spec: ProviderSpec) -> dict[str, Any] | None:
         return None
 
 
+def _voice_engine_payload(spec: ProviderSpec) -> dict[str, Any] | None:
+    """Installed/ready of the Jarvis-owned local voice engine; None elsewhere.
+
+    Only the Local voice card carries it. File checks and the running engine's
+    state only: the full card status (models, latency, self-test) lives at
+    ``GET /api/providers/local-voice/status``.
+    """
+    if spec.id != "local-voice":
+        return None
+    try:
+        from jarvis.plugins.realtime.local_voice import (
+            EngineSettings,
+            LocalVoiceProvider,
+            engine_installed,
+        )
+
+        settings = EngineSettings.from_config(None)
+        engine = LocalVoiceProvider._engine
+        ready = bool(
+            engine is not None
+            and engine.settings == settings
+            and engine.phase == "ready"
+            and engine._client is not None
+        )
+        return {"installed": engine_installed(settings), "ready": ready}
+    except Exception as exc:  # noqa: BLE001 — the provider list must never 500
+        log.debug("Local voice probe failed (%s); reporting none.", exc)
+        return None
+
+
 def _derived_alias_free(provider_id: str, models: list[Any]) -> list[Any]:
     """Drop the runtime's OWN derived models from a user-facing picker.
 
@@ -562,6 +592,9 @@ def _spec_to_payload(
         active = spec.id == active_tts
     elif spec.tier == "realtime":
         active = spec.id == active_realtime
+        if spec.configuration_surface == "live" and active_realtime:
+            selected_spec = get_spec(active_realtime)
+            active = bool(selected_spec and selected_spec.configuration_surface == "live")
     elif spec.tier == "dictation":
         active = spec.id == active_dictation
     else:
@@ -695,6 +728,9 @@ def _spec_to_payload(
         # Self-hosted realtime card only: state of the one-click managed
         # server install (fail-closed, server sentence rendered verbatim).
         "managed_server": _managed_server_payload(spec),
+        # Local voice card only: whether the engine is set up and running.
+        # The card fetches its full status from /api/providers/local-voice.
+        "voice_engine": _voice_engine_payload(spec),
         # Gemini's AI-Studio-vs-Vertex split; None for single-path providers.
         "alt_credential": (
             {
@@ -1290,6 +1326,18 @@ async def list_providers(request: Request) -> dict[str, Any]:
         ]
 
     return {"providers": await asyncio.to_thread(_build)}
+
+
+@router.get("/providers/families")
+async def list_provider_families() -> dict[str, Any]:
+    """The catalog folded into one entry per company (see ``provider_families``).
+
+    Presence only — never a key value. Built off the event loop: every family
+    reads its key slots from the OS keyring.
+    """
+    from .provider_families import build_families
+
+    return {"families": await asyncio.to_thread(build_families)}
 
 
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
@@ -3290,7 +3338,10 @@ async def managed_server_setup(request: Request) -> dict[str, Any]:
         body = await request.json()
     except Exception as exc:  # noqa: BLE001 - malformed JSON is a client error
         raise HTTPException(status_code=400, detail="a JSON request body is required") from exc
-    brain_model = str((body or {}).get("brain_model", "") or "").strip()
+    if not isinstance(body, dict):
+        # A JSON array or scalar used to reach ``.get`` and answer 500.
+        raise HTTPException(status_code=400, detail="the request body must be a JSON object")
+    brain_model = str(body.get("brain_model", "") or "").strip()
     voice_model = str((body or {}).get("voice_model", "") or "").strip()
     if not brain_model or not voice_model:
         raise HTTPException(

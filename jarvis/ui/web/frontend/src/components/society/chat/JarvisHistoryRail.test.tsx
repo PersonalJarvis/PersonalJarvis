@@ -67,7 +67,7 @@ function json(body: unknown, status = 200) {
 describe("JarvisHistoryRail", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    useHomeStore.setState({ voiceSelectionPending: false, voiceSwitchStopping: false });
+    useHomeStore.setState({ voiceSelectionPending: false, voiceSwitchStopping: false, continuedVoiceId: null });
     useHomeStore.getState().resetTranscript();
     Element.prototype.scrollIntoView = vi.fn();
     vi.stubGlobal("WebSocket", FakeSocket);
@@ -141,6 +141,21 @@ describe("JarvisHistoryRail", () => {
     expect(setJarvisCardMode).toHaveBeenCalledWith("voice");
   });
 
+  test("returning to the running call preserves its captions and never resumes or ends it", async () => {
+    const transcript = [{ id: "live", who: "assistant" as const, text: "Current answer", ts: 3 }];
+    useEventStore.setState({ voiceState: "speaking" });
+    useHomeStore.setState({ liveSessionId: "voice-1", transcript, liveReply: "Still answering" });
+    render(<JarvisHistoryRail />);
+    fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
+    expect(useHomeStore.getState().transcript).toBe(transcript);
+    expect(useHomeStore.getState().liveReply).toBe("Still answering");
+    expect(useEventStore.getState().activeThreadId).toBe("voice-1");
+    expect(useEventStore.getState().voiceState).toBe("speaking");
+    expect(setJarvisCardMode).toHaveBeenCalledWith("voice");
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("/hangup") || String(url).endsWith("/resume"))).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith("/voice-chat") && init?.method === "PUT")).toBe(false);
+  });
+
   test("a late archive response cannot restore the previous call after hangup", async () => {
     let finish!: (response: Response) => void;
     render(<JarvisHistoryRail />);
@@ -159,6 +174,7 @@ describe("JarvisHistoryRail", () => {
 
   test("switching archives ends the active call before resuming and keeps the selected context", async () => {
     useEventStore.setState({ voiceState: "listening" });
+    useHomeStore.setState({ liveSessionId: "other-call", continuedVoiceId: "other-archive" });
     render(<JarvisHistoryRail />);
     fireEvent.click(await screen.findByTestId("jarvis-history-voice-row"));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/voice/hangup", { method: "POST", cache: "no-store" }));

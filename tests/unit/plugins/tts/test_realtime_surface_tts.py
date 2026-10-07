@@ -1,16 +1,8 @@
-"""STRICT mode separation for the realtime surface fallback voice (2026-07-17).
+"""Realtime emergency voice keeps its family and session voice.
 
-Realtime and Pipeline are independent modes (maintainer mandate 2026-07-17):
-each must work with only its own API keys, and neither may fall back onto the
-other's providers or credentials — not even as a last resort. Live incident
-2026-07-17 10:04: a gemini-live session (voice Fenrir) aborted a readback and
-the re-render spoke as "Charon @ openrouter" because the pipeline `[tts]`
-primary was openrouter-tts.
-
-Forward guard: the emergency re-render resolves ONLY a same-family TTS keyed
-through the realtime credential slots; no candidate → ``None`` (text-only).
-Reverse guard: pipeline TTS credential resolution must never see a
-realtime-scoped key slot.
+A realtime recovery uses the same family and the session's resolved credential.
+The independently selected pipeline voice may use a shared credential, with a
+legacy realtime slot only as the final fallback within that provider family.
 """
 
 from __future__ import annotations
@@ -38,7 +30,7 @@ from jarvis.ui.web.provider_spec import PROVIDERS
 # below instead of a member of the exempt set.
 _REALTIME_PROVIDER_IDS = tuple(
     spec.id for spec in PROVIDERS if spec.tier == "realtime"
-)
+) + ("openai-realtime",)  # Read-time credential compatibility; no picker card.
 
 
 def _cfg(voice: str = "Fenrir") -> SimpleNamespace:
@@ -251,20 +243,13 @@ def test_injected_api_key_wins_over_environment_lookup() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_tts_credential_map_lists_no_realtime_slots() -> None:
-    """Static guard: the pipeline TTS key-aware factory consults
-    ``_TTS_SECRET_CANDIDATES`` — a realtime-scoped slot appearing there would
-    silently let pipeline mode spend realtime credentials."""
+def test_pipeline_tts_uses_realtime_slots_only_as_trailing_family_fallbacks() -> None:
     for family, candidates in _TTS_SECRET_CANDIDATES.items():
-        for keyring_key, env_var in candidates:
-            assert not keyring_key.startswith("realtime_"), (
-                f"pipeline TTS family {family!r} lists realtime slot "
-                f"{keyring_key!r}"
-            )
-            assert "REALTIME" not in (env_var or ""), (
-                f"pipeline TTS family {family!r} lists realtime env var "
-                f"{env_var!r}"
-            )
+        for position, (keyring_key, _env) in enumerate(candidates):
+            if keyring_key.startswith("realtime_"):
+                assert family == "gemini-flash-tts"
+                assert keyring_key == "realtime_gemini_api_key"
+                assert position == len(candidates) - 1
 
 
 def test_realtime_slots_are_only_trailing_fallbacks_outside_realtime_ids() -> None:
@@ -288,16 +273,15 @@ def test_realtime_slots_are_only_trailing_fallbacks_outside_realtime_ids() -> No
                 )
 
 
-def test_pipeline_tts_cannot_see_a_realtime_only_key(
+def test_pipeline_tts_can_use_its_own_familys_realtime_key_as_a_last_resort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Behavioral guard: with ONLY the dedicated realtime Gemini key present,
-    the pipeline gemini-flash-tts family reads as keyless — pipeline mode
-    must not light up on a realtime-only install."""
+    """A single Gemini key supports the explicit pipeline choice, without a cross-family key."""
 
     def _secret(name: str, env_fallback: str | None = None, **_kw: object):
         return "rt-only-key" if name == "realtime_gemini_api_key" else None
 
     monkeypatch.setattr("jarvis.core.config.get_secret", _secret)
     tts_cfg = SimpleNamespace(use_vertex=False)
-    assert _tts_has_credential("gemini-flash-tts", tts_cfg) is False
+    assert _tts_has_credential("gemini-flash-tts", tts_cfg) is True
+    assert _tts_has_credential("grok-voice", tts_cfg) is False

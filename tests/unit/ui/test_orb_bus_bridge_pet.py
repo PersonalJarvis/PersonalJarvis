@@ -119,6 +119,12 @@ class _Surface:
     def set_pet_outcome(self, kind: str) -> None:
         self.calls.append(("outcome", kind))
 
+    def set_pet_action(self, kind: str | None) -> None:
+        self.calls.append(("action", kind))
+
+    def set_pet_busy(self, busy: bool) -> None:
+        self.calls.append(("busy", busy))
+
     def show_status(self, title: str, detail: str = "") -> None:
         self.calls.append(("status", title, detail))
 
@@ -664,3 +670,46 @@ def test_a_gesture_after_the_backend_loop_stopped_is_dropped() -> None:
         assert seen == []
     finally:
         stopped.close()
+
+
+# ---------------------------------------------------------------------------
+# action states: what Jarvis is doing inside a turn
+# ---------------------------------------------------------------------------
+
+
+async def test_a_lookup_searches_and_any_other_tool_works() -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(ActionProposed(tool_name="search_web"))
+    await bus.publish(ToolCallStarted(tool_name="run_shell"))
+    assert pet.of("action") == [("action", "searching"), ("action", "working")]
+
+
+async def test_a_tool_result_ends_the_action() -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    await bus.publish(ActionProposed(tool_name="run_shell"))
+    await bus.publish(ActionExecuted(tool_name="run_shell", success=True))
+    assert pet.of("action")[-1] == ("action", None)
+
+
+async def test_only_the_pet_hears_about_actions() -> None:
+    surface = _Surface()
+    _bridge_, bus = _bridge(surface)
+    await bus.publish(ActionProposed(tool_name="search_web"))
+    await bus.publish(JarvisAgentTaskStarted(utterance="Build a site"))
+    assert surface.of("action") == []
+    assert surface.of("busy") == []
+
+
+async def test_the_pet_works_while_an_agent_task_runs() -> None:
+    pet = _Pet()
+    _bridge_, bus = _bridge(pet)
+    started = JarvisAgentTaskStarted(utterance="Build a site")
+    await bus.publish(started)
+    await bus.publish(JarvisAgentTaskStarted(utterance="Write the docs"))
+    assert pet.of("busy") == [("busy", True)]  # sent once, on the flip
+    await bus.publish(JarvisAgentTaskCompleted(success=True, trace_id=started.trace_id))
+    assert pet.of("busy") == [("busy", True)]  # one task still runs
+    await bus.publish(JarvisAgentTaskCompleted(success=True))
+    assert pet.of("busy") == [("busy", True), ("busy", False)]

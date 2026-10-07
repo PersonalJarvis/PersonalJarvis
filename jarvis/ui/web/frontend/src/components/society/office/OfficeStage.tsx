@@ -4,10 +4,13 @@
  * real run state, and checkpoints turn rooms into actions: create, manage,
  * team up, dress up, talk to the lead, call a coffee break. One elevator ride
  * up is the coding floor: a figure per IDE coding session, its terminal live
- * on the monitor, and Gigi flying along with the person.
+ * on the monitor, and Gigi flying along with the person. The top floor is the
+ * arcade: a hall of retro cabinets, every one of them playable.
  */
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSyncCompanionPet } from "../companion/companionPetStore";
+import { useActivePet } from "@/hooks/usePets";
 import { advance, Canvas } from "@react-three/fiber";
 import { useReducedMotion } from "framer-motion";
 import { useCanvasAwake } from "@/hooks/useCanvasAwake";
@@ -15,7 +18,8 @@ import { useWebglSurface } from "@/hooks/useWebglSurface";
 import { useWebglSupported } from "@/lib/graphDimension";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
-import { useSocietyRoster, type SocietyAgent } from "../data";
+import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
+import { isCreateCancelled } from "../create/createAgentStore";
 import { OfficeScene } from "./OfficeScene";
 import { allDesks, buildOfficeLayout, countStates, MAX_SEATED } from "./officeLayout";
 import { buildNavGrid } from "./officeNav";
@@ -24,19 +28,23 @@ import { CAMERA_FOV } from "./officeCamera";
 import { ZOOM_SECONDS } from "./OfficeCameraRig";
 import { useDeskChats } from "./useDeskChats";
 import type { Point } from "./officeLayout";
-import { otherFloor, player, switchFloor, useOfficeStore, type OfficeFloor } from "./officeStore";
+import { player, switchFloor, useOfficeStore, type OfficeFloor } from "./officeStore";
 import { agentPositions, seatedAtDesk } from "./walkerRegistry";
 import { useCodingFloorOccupants, type PaneOccupant } from "./codingFloor";
 import { openPaneSession } from "./codingNavigate";
 import { useDprBudget } from "./useDprBudget";
 import { knownOnFloor, noteArrivals } from "./officeFloors";
-import { atElevator, CALL_PRESS_MS } from "./elevatorCall";
+import { atElevator } from "./elevatorCall";
 import { loadProfile, playerLook, saveProfile, type PlayerProfile } from "./playerProfile";
 import { AgentPanel, CheckpointPanel, type OfficeActions } from "./OfficePanels";
 import { PaneCommandPanel } from "./PaneCommandPanel";
 import type { WalkerContext } from "./OfficeAgents";
 import { ownsKeyboard } from "./OfficePlayer";
 import { ArcadeCabinet } from "./ArcadeCabinet";
+import { ElevatorPanel } from "./ElevatorPanel";
+import { ElevatorDoors, type DoorsPhase } from "./ElevatorDoors";
+import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
+import { ARCADE_GAMES, gameForCabinet, type RetroGameId } from "../arcade/arcadeGames";
 import { useOfficeSettings, useReceptionTab } from "./officeSettings";
 import "./office.css";
 import "./officeHud.css";
@@ -46,9 +54,16 @@ import { OfficeMinimap } from "./OfficeMinimap";
 import { OfficeCompass } from "./OfficeCompass";
 import { OfficeFullMap } from "./OfficeFullMap";
 import { OfficeFrameDriver } from "./OfficeFrameDriver";
+import { useProgressionSync } from "../progression/useProgressionSync";
+import { useProgression } from "../progression/progressionStore";
+import { LevelHud, LevelToasts } from "../progression/LevelHud";
+import { LevelUpBanner } from "../progression/LevelUpBanner";
+import { LevelHallScreen } from "../progression/hall/LevelHallScreen";
+import "../progression/progression.css";
 
 // Only loaded when a host without its own create dialog (the IDE's side panel) spawns an agent.
-const CreateAgentDialog = lazy(() => import("../create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialog })));
+// Only loaded when someone plays a retro cabinet on the arcade floor.
+const RetroArcadeOverlay = lazy(() => import("../arcade/RetroArcadeOverlay").then((m) => ({ default: m.RetroArcadeOverlay })));
 
 // Dev-only handles for runtime checks of walking and panels.
 if (import.meta.env.DEV && typeof window !== "undefined") Object.assign(window, { __officeStore: useOfficeStore, __officePlayer: player, __officeAgents: agentPositions, __officeSeated: seatedAtDesk,
@@ -61,9 +76,10 @@ const REFRESH_JITTER_MS = 1500;
 
 const EMPTY_OCCUPANTS: ReadonlyMap<string, PaneOccupant> = new Map();
 
-/** Elevator doors: closing, the ride (held until the new floor has loaded, capped), opening. */
-const DOORS_MS = 520;
-const RIDE_MAX_MS = 1400;
+/** The elevator doors: they slide in DOORS_MS and stay shut between DOORS_HOLD_MIN_MS and DOORS_HOLD_MAX_MS while the floor changes. */
+const DOORS_MS = 640;
+const DOORS_HOLD_MIN_MS = 450;
+const DOORS_HOLD_MAX_MS = 1600;
 
 class RenderBoundary extends Component<{ children: ReactNode; fallbackText: string }, { failed: boolean }> {
   state = { failed: false };
@@ -130,8 +146,15 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   useState(() => { if (initialFloor) switchFloor(initialFloor, false); return null; });
   const floor = useOfficeStore((s) => s.floor);
   const coding = floor === "coding";
+  // The arcade floor has no agents: no roster, desks or chats, just the cabinets.
+  const arcade = floor === "arcade";
   const roster = useSocietyRoster();
-  useRosterRefresh(awake && !coding);
+  useRosterRefresh(awake && floor === "agents");
+  // Jarvis keeps the person company as the pet chosen in My Pets.
+  useSyncCompanionPet();
+  const petName = useActivePet()?.name || "Gigi";
+  // Levels: the person, their pet and every agent earn XP for real work; the Verse shows and celebrates it.
+  useProgressionSync(awake, floor);
   const [overview, setOverview] = useState(0);
   const [mapOpen, setMapOpen] = useState(false);
   const [profile, setProfile] = useState<PlayerProfile>(loadProfile);
@@ -145,8 +168,8 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   const codingFloor = useCodingFloorOccupants(coding || atLift);
   const jarvisAgents = useMemo(() => (roster.data?.agents ?? []).filter((a) => a.lifecycle !== "archived"), [roster.data]);
   const codingAgents = useMemo(() => codingFloor.occupants.map((o) => o.agent), [codingFloor.occupants]);
-  const active = coding ? codingAgents : jarvisAgents;
-  const ready = coding ? codingFloor.loaded : !!roster.data;
+  const active = useMemo(() => (arcade ? [] : coding ? codingAgents : jarvisAgents), [arcade, coding, codingAgents, jarvisAgents]);
+  const ready = arcade ? true : coding ? codingFloor.loaded : !!roster.data;
   const occupants = useMemo(() => (coding ? codingFloor.byAgentId : EMPTY_OCCUPANTS), [coding, codingFloor.byAgentId]);
   const occupantsRef = useRef(occupants);
   occupantsRef.current = occupants;
@@ -155,7 +178,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
   // The floor plan depends on who works where, never on run state: a status
   // refresh changes monitors and behaviour without re-seating anyone.
   const seatingKey = floor + ":" + active.map((a) => `${a.agentId}|${a.tier}|${a.providerLabel}|${a.createdMs}`).join(",");
-  const layout = useMemo(() => buildOfficeLayout(active, { variant: floor }),
+  const layout = useMemo(() => (floor === "arcade" ? buildArcadeLayout() : buildOfficeLayout(active, { variant: floor })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [seatingKey]);
   const grid = useMemo(() => buildNavGrid(layout), [layout]);
@@ -176,7 +199,7 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   // Coding sessions have no desk chat; their monitors poll the terminal instead.
   const sessions = useMemo(() => new Map(active.filter((a) => a.chatSessionId).map((a) => [a.agentId, a.chatSessionId as string])), [active]);
-  const chats = useDeskChats(sessions, awake && !coding);
+  const chats = useDeskChats(sessions, awake && floor === "agents");
   // Opening someone: a coding agent opens its IDE pane; a Jarvis agent its chat
   // (a host without an agent view, like the IDE tab, goes to the Agents section).
   const openAgent = useCallback((agentId: string) => {
@@ -220,48 +243,52 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     openTimer.current = setTimeout(() => { go(); setDiving(false); }, ZOOM_SECONDS * 1000 + 260);
   }, [sectionDive, compact, onOpenLedger, reduced]);
 
-  // The elevator: doors close, the floor switches behind them, doors open once
-  // the new floor has loaded (capped). Reduced motion switches at once.
-  const [ride, setRide] = useState<{ to: OfficeFloor; phase: "closing" | "riding" | "opening" } | null>(null);
+  // The elevator: pressing its call button, standing at the doors, opens the
+  // button panel; pressing a floor there closes the elevator doors over the
+  // stage, the floor switches behind them, and they open once the new floor
+  // has loaded (capped). A press from afar (a click on the button, the floor
+  // token or E anywhere) walks the character over instead; it never rides
+  // from a distance. Reduced motion switches floors at once.
+  const [picking, setPicking] = useState(false);
+  const [ride, setRide] = useState<{ from: OfficeFloor; to: OfficeFloor; phase: DoorsPhase; closedMs: number } | null>(null);
   const rideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(rideTimer.current), []);
-  const takeElevator = useCallback((to: OfficeFloor) => {
-    if (ride || to === useOfficeStore.getState().floor) return;
-    if (reduced) { switchFloor(to, true); return; }
-    useOfficeStore.getState().select(null);
-    setRide({ to, phase: "closing" });
-    rideTimer.current = setTimeout(() => {
-      switchFloor(to, true);
-      setRide({ to, phase: "riding" });
-      rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "riding" ? { to, phase: "opening" } : r)), RIDE_MAX_MS);
-    }, DOORS_MS);
-  }, [reduced, ride]);
-  // Riding takes a press of the call button beside the doors, standing at the
-  // elevator. A press from afar (a click on the button, the floor token or E
-  // anywhere) walks the character over instead; it never rides from a distance.
-  const [callLit, setCallLit] = useState(false);
-  const callTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(callTimer.current), []);
   const pressCall = useCallback(() => {
-    if (ride || callLit) return;
+    if (ride || picking) return;
     const lift = layout.checkpoints.find((cp) => cp.id === "elevator");
     if (!atElevator(player, lift)) {
       if (lift) useOfficeStore.getState().requestWalk({ x: lift.x, z: lift.z });
       return;
     }
-    setCallLit(true);
-    callTimer.current = setTimeout(() => { setCallLit(false); takeElevator(otherFloor(useOfficeStore.getState().floor)); }, CALL_PRESS_MS);
-  }, [ride, callLit, layout, takeElevator]);
-  // E at the elevator, or a click on its floor token, presses the button instead of opening a panel.
+    useOfficeStore.getState().select(null);
+    setPicking(true);
+  }, [ride, picking, layout]);
+  const closePicker = useCallback(() => setPicking(false), []);
+  const pickFloor = useCallback((to: OfficeFloor) => {
+    setPicking(false);
+    const from = useOfficeStore.getState().floor;
+    if (ride || to === from) return;
+    if (reduced) { switchFloor(to, true); return; }
+    setRide({ from, to, phase: "closing", closedMs: 0 });
+    clearTimeout(rideTimer.current);
+    rideTimer.current = setTimeout(() => {
+      switchFloor(to, true);
+      setRide((r) => (r ? { ...r, phase: "closed", closedMs: performance.now() } : r));
+      rideTimer.current = setTimeout(() => setRide((r) => (r?.phase === "closed" ? { ...r, phase: "opening" } : r)), DOORS_HOLD_MAX_MS);
+    }, DOORS_MS);
+  }, [ride, reduced]);
+  // E at the elevator, or a click on its floor token, presses the call button instead of opening a panel.
   useEffect(() => {
     if (selection?.kind !== "checkpoint" || selection.id !== "elevator") return;
     select(null);
     pressCall();
   }, [selection, select, pressCall]);
   useEffect(() => {
-    if (ride?.phase === "riding" && floor === ride.to && ready) {
+    if (ride?.phase === "closed" && floor === ride.to && ready) {
+      // The doors stay shut a short beat at least, so the change reads as a ride and not a cut.
+      const left = DOORS_HOLD_MIN_MS - (performance.now() - ride.closedMs);
       clearTimeout(rideTimer.current);
-      rideTimer.current = setTimeout(() => setRide({ to: ride.to, phase: "opening" }), 160);
+      rideTimer.current = setTimeout(() => setRide((r) => (r ? { ...r, phase: "opening" } : r)), Math.max(0, left));
     }
     if (ride?.phase === "opening") {
       clearTimeout(rideTimer.current);
@@ -276,15 +303,24 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (coding && !compact) useEventStore.getState().setActiveSection("agentic-ide");
     else onOpenLedger?.();
   }, [coding, compact, onOpenLedger]);
-  // Spawning a Jarvis agent (the spawn point, reception): the host's create dialog, or the office's own
-  // where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
-  const [creating, setCreating] = useState(false);
+  // Spawning a Jarvis agent (the spawn point, reception): the host's one-click create, or the office's
+  // own where the host has none. The panel closes and the camera turns to the pad, where the agent appears.
+  const quickCreate = useQuickCreateAgent();
+  const creatingRef = useRef(false);
   const createAgent = useCallback(() => {
     const store = useOfficeStore.getState();
     store.select(null);
     if (Math.hypot(player.x - layout.arrival.x, player.z - layout.arrival.z) > 4) store.focusOn(layout.arrival);
-    if (onCreateAgent) onCreateAgent(); else setCreating(true);
-  }, [onCreateAgent, layout]);
+    if (onCreateAgent) { onCreateAgent(); return; }
+    // A double click must not create two agents.
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    void quickCreate()
+      .catch((error) => {
+        if (!isCreateCancelled(error)) console.warn("Agent creation failed", error);
+      })
+      .finally(() => { creatingRef.current = false; });
+  }, [onCreateAgent, layout, quickCreate]);
   const actions = useMemo<OfficeActions>(() => ({
     onOpenAgent: openAgent,
     onOpenLedger: openList, onCreateAgent: createAgent, onOpenGroup,
@@ -321,6 +357,29 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleGuide]);
 
+  // The Level Hall's two checkpoints open its screen: the stage on the studio, the guide on the overview.
+  useEffect(() => {
+    if (selection?.kind !== "checkpoint" || (selection.id !== "studio" && selection.id !== "levels")) return;
+    useProgression.getState().openPanel(selection.id === "studio" ? "studio" : "overview");
+    select(null);
+  }, [selection, select]);
+
+  // L (or the level card) opens the Level Hall screen, and closes it again.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "KeyL" || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+      const levels = useProgression.getState();
+      if (ownsKeyboard(event.target) && !levels.panel) return;
+      if (useOfficeStore.getState().selection?.kind === "arcade") return;
+      event.preventDefault();
+      levels.openPanel(levels.panel ? null : "overview");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // The Level Hall screen closes with the map.
+  useEffect(() => () => useProgression.getState().openPanel(null), []);
+
   // Leaving the map forgets panels and calls; the office opens fresh next time.
   useEffect(() => () => {
     const store = useOfficeStore.getState();
@@ -336,15 +395,24 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
 
   const selectedAgent = selection?.kind === "agent" ? agents.get(selection.id) ?? null : null;
   const selectedPane = selectedAgent ? occupants.get(selectedAgent.agentId) ?? null : null;
+  const nearbyGame = nearby?.kind === "arcade" ? gameForCabinet(nearby.id) : null;
   const nearbyLabel = nearby
     ? nearby.kind === "agent"
       ? t(coding ? "society.office.prompt_pane" : "society.office.prompt_agent").replace("{0}", agents.get(nearby.id)?.name ?? "")
       : nearby.kind === "arcade"
-        ? t("society.office.arcade_prompt")
+        ? nearbyGame ? t("society.arcade.play_prompt").replace("{0}", nearbyGame.title) : t("society.office.arcade_prompt")
         : t(`society.office.cp_${nearby.id}_hint`)
     : null;
-  const titleKey = coding ? "society.office.coding_title" : "society.office.title";
+  // Standing at a retro cabinet fetches its overlay, so pressing E opens it at once instead of after a chunk load.
+  const nearbyRetro = nearbyGame?.kind === "retro";
+  useEffect(() => { if (nearbyRetro) void import("../arcade/RetroArcadeOverlay"); }, [nearbyRetro]);
+  // The cabinet being played: the break room's (and the hall's Asteroid Run) open the 3D game, the others a retro game.
+  const playing = selection?.kind === "arcade" ? gameForCabinet(selection.id) : null;
+  const playsAsteroids = selection?.kind === "arcade" && (!playing || playing.kind === "asteroid3d");
+  const titleKey = arcade ? "society.office.arcade_floor_title" : coding ? "society.office.coding_title" : "society.office.title";
   const playerName = profile.name.trim() || t("society.office.you");
+  const playerToyLook = useMemo(() => playerLook(profile), [profile]);
+  const agentNames = useMemo(() => new Map(jarvisAgents.map((a) => [a.agentId, a.name])), [jarvisAgents]);
   const showHintBar = useOfficeSettings((s) => s.showHintBar);
   const receptionOpen = selection?.kind === "checkpoint" && selection.id === "create";
   // Mission Control and the spawn point carry forms: they get the wide slot, like reception.
@@ -366,10 +434,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
                 onPointerMissed={() => select(null)}>
                 <OfficeFrameDriver enabled={awake && compact} />
                 <OfficeScene floor={floor} occupants={occupants} ready={ready} layout={layout} grid={grid} walkers={walkers} agents={agents} newcomers={newcomers}
-                  awake={awake} reduced={reduced} overview={overview} player={{ look: playerLook(profile), name: playerName }}
+                  awake={awake} reduced={reduced} overview={overview} player={{ look: playerToyLook, name: playerName }}
                   selection={selection} nearby={nearby} chats={chats} onOpenScreen={openScreen}
-                  elevatorCall={{ lit: callLit, onPress: pressCall,
-                    count: coding ? jarvisAgents.length : codingFloor.loaded ? codingFloor.occupants.length : null }} />
+                  elevatorCall={{ lit: picking || !!ride, picking, onPress: pressCall }} />
               </Canvas>
             </Suspense>
           </RenderBoundary>
@@ -379,14 +446,18 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       <div className="office-hud office-hud-left" data-office-ui>
         <div className="office-card office-title">
           <strong>{t(titleKey)}</strong>
-          <span>{t(coding ? "society.office.coding_subtitle" : "society.office.subtitle").replace("{0}", String(active.length))}</span>
+          <span>{arcade
+            ? t("society.office.arcade_floor_subtitle").replace("{0}", String(ARCADE_GAMES.length))
+            : t(coding ? "society.office.coding_subtitle" : "society.office.subtitle").replace("{0}", String(active.length))}</span>
         </div>
-        <div className="office-card office-counts" role="status" aria-live="polite">
+        <LevelHud playerName={playerName} petName={petName} compact={compact} />
+        {arcade && <p className="office-card office-note">{t("society.office.arcade_floor_hint")}</p>}
+        {!arcade && <div className="office-card office-counts" role="status" aria-live="polite">
           <span data-tone="working"><i aria-hidden />{t("society.office.count_working").replace("{0}", String(counts.working))}</span>
           <span data-tone="waiting"><i aria-hidden />{t("society.office.count_waiting").replace("{0}", String(counts.waiting))}</span>
           <span data-tone="idle"><i aria-hidden />{t("society.office.count_idle").replace("{0}", String(counts.idle))}</span>
           {counts.paused > 0 && <span data-tone="paused"><i aria-hidden />{t("society.office.count_paused").replace("{0}", String(counts.paused))}</span>}
-        </div>
+        </div>}
         {!coding && roster.data?.sample && <p className="office-card office-note">{t("society.office.sample")}</p>}
         {coding && codingFloor.loaded && active.length === 0 && <p className="office-card office-note">{t("society.office.coding_empty")}</p>}
         {active.length > MAX_SEATED && <p className="office-card office-note">{t("society.office.overflow").replace("{0}", String(MAX_SEATED))}</p>}
@@ -396,18 +467,27 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
         <button type="button" className="office-button" aria-pressed={follow} onClick={() => useOfficeStore.getState().setFollow(true)}>{t("society.office.me")}</button>
         <button type="button" className="office-button" onClick={() => setOverview((v) => v + 1)}>{t("society.office.overview")}</button>
         <button type="button" className="office-button" onClick={() => select({ kind: "checkpoint", id: "wardrobe" })}>{t("society.office.cp_wardrobe")}</button>
+        <button type="button" className="office-button" aria-keyshortcuts="L" onClick={() => useProgression.getState().openPanel("overview")}>
+          {t("society.level.hud_button")}
+        </button>
         <button type="button" className="office-button" aria-pressed={receptionOpen} aria-keyshortcuts="H"
           onClick={toggleGuide}>
           {t("society.office.guide.hud_button")}
         </button>
-        {(!coding || !compact || onOpenLedger) && (
+        {!arcade && (!coding || !compact || onOpenLedger) && (
           <button type="button" className="office-button" onClick={openList}>
             {t(coding ? (compact ? "society.office.ledger_coding" : "society.office.open_ide") : "society.office.ledger")}
           </button>
         )}
       </div>
 
-      {selection?.kind === "arcade" && <ArcadeCabinet onClose={() => select(null)} />}
+      {playsAsteroids && <ArcadeCabinet onClose={() => select(null)} />}
+      {playing && playing.kind === "retro" && (
+        <Suspense fallback={null}>
+          <RetroArcadeOverlay gameId={playing.id as RetroGameId} onClose={() => select(null)} />
+        </Suspense>
+      )}
+
       {/* A coding session is a window of its own on the stage, not a panel in the corner slot. */}
       {selection?.kind === "agent" && selectedPane && (
         <PaneCommandPanel occupant={selectedPane} compact={compact} onOpen={() => openPaneSession(selectedPane.pane)} onClose={() => select(null)} />
@@ -415,37 +495,31 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
       {selection && selection.kind !== "arcade" && !(selection.kind === "agent" && selectedPane) && (
         <div className="office-panel-slot" data-wide={receptionOpen || widePanel || undefined}>
           {selection.kind === "agent" && selectedAgent && <AgentPanel agent={selectedAgent} actions={actions} onClose={() => select(null)} />}
-          {selection.kind === "checkpoint" && (
+          {/* The Level Hall's checkpoints open their own screen (the effect above), never a side panel. */}
+          {selection.kind === "checkpoint" && selection.id !== "studio" && selection.id !== "levels" && (
             <CheckpointPanel id={selection.id} floor={floor} agents={active} layout={layout} sample={!coding && (roster.data?.sample ?? false)}
               profile={profile} onProfile={updateProfile} actions={actions} onClose={() => select(null)} />
           )}
         </div>
       )}
 
-      {nearbyLabel && !selection && (
+      {nearbyLabel && !selection && !picking && !ride && (
         <button type="button" className="office-hud office-prompt" data-office-ui onClick={() => nearby && select(nearby)}>
           <kbd>E</kbd>{nearbyLabel}
         </button>
       )}
       {!compact && <OfficeCompass layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />}
       {diving && <div className="office-dive-fade" aria-hidden />}
-      {ride && (
-        <div className="office-elevator" data-phase={ride.phase} role="status" aria-live="polite">
-          <i className="office-elevator-door" data-side="left" aria-hidden />
-          <i className="office-elevator-door" data-side="right" aria-hidden />
-          <span className="office-elevator-sign">{t(ride.to === "coding" ? "society.office.riding_up" : "society.office.riding_down")}</span>
-        </div>
-      )}
+      {picking && !ride && <ElevatorPanel floor={floor} onPick={pickFloor} onClose={closePicker} />}
+      {ride && <ElevatorDoors from={ride.from} to={ride.to} phase={ride.phase} />}
       {!compact && <OfficeMinimap layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null}
         onOpenMap={() => setMapOpen(true)} />}
       <OfficeFullMap open={mapOpen} onOpen={() => setMapOpen(true)} onClose={() => setMapOpen(false)}
         layout={layout} agents={agents} selectedId={selection?.kind === "agent" ? selection.id : null} />
       {!compact && showHintBar && <p className="office-hud office-help" data-office-ui>{t("society.office.help")}</p>}
-      {creating && (
-        <Suspense fallback={null}>
-          <CreateAgentDialog open onClose={() => setCreating(false)} onCreated={() => setCreating(false)} />
-        </Suspense>
-      )}
+      <LevelToasts names={agentNames} agents={jarvisAgents} />
+      <LevelHallScreen agents={jarvisAgents} playerName={playerName} petName={petName} playerLook={playerToyLook} />
+      <LevelUpBanner playerName={playerName} petName={petName} />
     </section>
   );
 }

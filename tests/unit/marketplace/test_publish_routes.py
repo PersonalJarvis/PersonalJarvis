@@ -88,6 +88,7 @@ async def test_identity_reports_disabled_deployment(
     client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
+    monkeypatch.setattr(publish, "registry_repo", lambda: "")
     async with client:
         state = (await client.get("/api/marketplace/publish/identity")).json()
     assert state == {"enabled": False, "signed_in": False}

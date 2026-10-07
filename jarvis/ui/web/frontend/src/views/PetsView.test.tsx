@@ -35,6 +35,7 @@ function stubServer({ style = "pet" }: { style?: string } = {}) {
     active: "gigi",
     scale: 1,
     bubble: true,
+    strip_always: false,
     visible: true,
     style,
     pets: [pet("gigi", "Gigi", true), pet("miso", "Miso", true), pet("u0123456789abcdef", "Pixel", false)],
@@ -259,7 +260,21 @@ describe("PetsView", () => {
     );
   });
 
-  it("saves the size when the slider is released", async () => {
+  it("switches the always-on buttons on from the customize panel", async () => {
+    const { calls } = stubServer();
+    renderView();
+
+    const customize = await screen.findByTestId("pets-customize");
+    await waitFor(() => expect((customize as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(customize);
+    fireEvent.click(await screen.findByTestId("pets-strip-always"));
+
+    await waitFor(() =>
+      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { strip_always: true } }),
+    );
+  });
+
+  it("resizes the pet live while dragging and saves once on release", async () => {
     const { calls } = stubServer();
     renderView();
 
@@ -267,11 +282,23 @@ describe("PetsView", () => {
     await waitFor(() => expect((customize as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(customize);
     const slider = await screen.findByTestId("pets-size");
-    fireEvent.change(slider, { target: { value: "1.5" } });
-    fireEvent.mouseUp(slider);
+    fireEvent.pointerDown(slider);
+    fireEvent.change(slider, { target: { value: "1.37" } });
 
     await waitFor(() =>
-      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { scale: 1.5 } }),
+      expect(calls).toContainEqual({
+        method: "PUT",
+        url: "/api/pets/settings",
+        body: { scale: 1.37, preview: true },
+      }),
+    );
+    expect((slider as HTMLInputElement).disabled).toBe(false);
+    expect(calls.filter((c) => c.method === "PUT" && !(c.body as { preview?: boolean }).preview)).toEqual([]);
+
+    // Released away from the track: the window still sees it.
+    fireEvent.pointerUp(window);
+    await waitFor(() =>
+      expect(calls).toContainEqual({ method: "PUT", url: "/api/pets/settings", body: { scale: 1.37 } }),
     );
   });
 

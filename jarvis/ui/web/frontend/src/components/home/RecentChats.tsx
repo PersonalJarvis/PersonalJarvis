@@ -1,15 +1,14 @@
-import { useEffect, useState } from "react";
-import { Archive, ChevronDown, MessageSquare, Pin, PinOff, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Archive, Pin, PinOff, Trash2 } from "lucide-react";
 
 import { useAgentChatStore } from "@/store/agentChat";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { AllChatsDialog } from "@/components/home/AllChatsDialog";
-import { useChatRows, type ChatRow } from "@/components/home/chatRows";
-import { CONVERSATIONS_REFRESH_MS } from "@/hooks/useConversations";
+import { ChatKindMark } from "@/components/home/ChatKindMark";
+import { chatRowLabel, useChatRows, type ChatRow } from "@/components/home/chatRows";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 
-export const RECENT_CHATS_FOLDED = 15;
-export const RECENT_CHATS_UNFOLDED = 50;
 
 /** Flat sidebar history: pinned conversations first, then the latest chats. */
 const PINNED_KEY = "jarvis.sidebar.pinned-chats.v1";
@@ -37,30 +36,25 @@ export function RecentChats() {
   };
   const pinnedRows = rows.filter((row) => pins.includes(rowKey(row)));
   const recentRows = rows.filter((row) => !pins.includes(rowKey(row)));
-  const [open, setOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  useEffect(() => {
-    void loadSessions();
-    const id = window.setInterval(() => void loadSessions(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [loadSessions]);
+  useHistoryPolling(loadSessions);
 
-  const shown = recentRows.slice(0, open ? RECENT_CHATS_UNFOLDED : RECENT_CHATS_FOLDED);
-  const canExpand = recentRows.length > RECENT_CHATS_FOLDED;
-  // The archive earns its place only once the sidebar cannot show everything.
-  const hidden = recentRows.length - shown.length;
+  // Every chat is listed, the way the Claude app's column lists them: the
+  // sidebar scrolls instead of hiding the history behind "Show all"
+  // (maintainer, 2026-10-01). The archive dialog stays for searching it.
+  const shown = recentRows;
 
   return (
     <>
       <div data-testid="recent-chats" className="pb-1 pt-0.5">
         {pinnedRows.length > 0 && <section data-testid="pinned-chats" className="mb-6">
-          <h2 className="px-3 pb-2 text-sm font-medium text-muted-foreground">{t("sidebar.pinned")}</h2>
+          <h2 className="px-3 pb-1.5 text-sm text-muted-foreground">{t("sidebar.pinned")}</h2>
           <ul className="space-y-0.5">{pinnedRows.map((row) => <ChatRowItem key={rowKey(row)} row={row}
             active={isActive(row)} pinned onPin={() => togglePin(row)} onOpen={() => openRow(row)}
             onDelete={row.kind === "agent" ? () => remove(row) : undefined} />)}</ul>
         </section>}
-        <h2 className="px-3 pb-2 text-sm font-medium text-muted-foreground">{t("sidebar.recent")}</h2>
+        <h2 className="px-3 pb-1.5 text-sm text-muted-foreground">{t("sidebar.recent")}</h2>
         {shown.length === 0 ? (
           <p className="py-1 px-3 text-sm text-foreground-faint">
             {t("sidebar.no_chats")}
@@ -79,24 +73,6 @@ export function RecentChats() {
             ))}
           </ul>
         )}
-        {canExpand && (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            data-testid="recent-chats-more"
-            className={TAIL_ROW}
-          >
-            <ChevronDown
-              aria-hidden
-              className={cn("h-3.5 w-3.5 shrink-0 transition-transform", open && "rotate-180")}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm">
-              {open ? t("sidebar.show_less") : t("sidebar.show_all")}
-            </span>
-            {!open && hidden > 0 && <Count n={hidden} />}
-          </button>
-        )}
         {rows.length > 0 && (
           <button
             type="button"
@@ -106,7 +82,6 @@ export function RecentChats() {
           >
             <Archive aria-hidden className="h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0 flex-1 truncate text-sm">{t("sidebar.see_all_chats")}</span>
-            {open && hidden > 0 && <Count n={hidden} />}
           </button>
         )}
       </div>
@@ -115,20 +90,12 @@ export function RecentChats() {
   );
 }
 
-/** "Show all" and "See all chats": the two quiet rows that close the list. */
+/** "See all chats": the quiet row that closes the list. */
 const TAIL_ROW = cn(
-  "flex h-7 w-full items-center gap-2 rounded-md px-3 text-left transition-colors",
+  "flex h-8 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors",
   "text-muted-foreground hover:bg-secondary hover:text-foreground",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 );
-
-function Count({ n }: { n: number }) {
-  return (
-    <span className="shrink-0 text-sm tabular-nums text-foreground-faint">
-      +{n}
-    </span>
-  );
-}
 
 /** One line of the title. The row truncates it to the sidebar's real width. */
 export function compactChatTitle(title: string): string {
@@ -151,26 +118,38 @@ function ChatRowItem({
   onPin: () => void;
 }) {
   const t = useT();
-  const title = row.title || t("chats_view.new_chat");
+  const label = chatRowLabel(row, t);
+  const title = label.text;
   return (
     <li className="group relative">
       <button
         type="button"
         onClick={onOpen}
         title={title}
-        aria-label={title}
+        aria-label={row.kind === "voice" && !label.untitled ? `${t("all_chats.filter_voice")}: ${title}` : title}
         data-testid="recent-chat-row"
         data-kind={row.kind}
         className={cn(
-          "flex h-7 w-full items-center gap-2 rounded-md px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
+          "flex h-8 w-full items-center gap-2.5 rounded-lg px-3 text-left transition-colors group-hover:pr-16 group-focus-within:pr-16",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           // The open one wears the same accent edge as the active nav row, so
           // "where am I" is said in one voice all the way down the column.
-          active ? "jarvis-nav-active bg-secondary text-foreground" : "hover:bg-secondary",
+          active ? "jarvis-nav-active bg-secondary text-foreground-strong" : "text-foreground hover:bg-secondary",
         )}
       >
-        {pinned && <MessageSquare aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />}
-        <span className="min-w-0 flex-1 truncate text-[13px] leading-5 text-foreground">{compactChatTitle(title)}</span>
+        {/* One small mark says which kind of chat this is — a ring for typed,
+            sound bars for voice — in one box and one muted tone, the way the
+            Claude app tells its chat and code sessions apart. A chat with no
+            topic says what it was ("Voice chat · 09:42"), in a quieter tone. */}
+        <ChatKindMark kind={row.kind} active={active} />
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-base leading-5",
+            label.untitled && !active && "text-muted-foreground",
+          )}
+        >
+          {compactChatTitle(title)}
+        </span>
 
       </button>
       <button type="button" onClick={onPin} title={t(pinned ? "sidebar.unpin_chat" : "sidebar.pin_chat")}

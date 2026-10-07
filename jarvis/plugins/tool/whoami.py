@@ -19,6 +19,8 @@ from jarvis.memory.user_profile import UserProfile
 
 
 class WhoAmITool:
+    read_only = True
+
     name: str = "whoami"
     risk_tier: str = "safe"
     description: str = (
@@ -92,7 +94,7 @@ class WhoAmITool:
         return ToolResult(success=True, output=text)
 
     # ------------------------------------------------------------------
-    # Rendering — bewusst als reine Logik, damit unit-testbar
+    # Rendering stays pure so it can be unit tested.
     # ------------------------------------------------------------------
 
     def _render_summary(self, meta: dict[str, Any], detail_level: str) -> str:

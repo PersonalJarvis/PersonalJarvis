@@ -95,7 +95,8 @@ def test_resolved_dependency_set_contains_no_silero_or_torch() -> None:
     assert names.isdisjoint({"silero-vad", "torch", "torchaudio", "torchvision"})
 
 
-def test_pyinstaller_spec_collects_bundled_vad_asset(monkeypatch) -> None:
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_pyinstaller_spec_collects_bundled_vad_asset(monkeypatch, platform) -> None:
     """The frozen desktop build must preserve the package-relative VAD path."""
     hooks = ModuleType("PyInstaller.utils.hooks")
     hooks.collect_data_files = lambda _package: []
@@ -108,6 +109,14 @@ def test_pyinstaller_spec_collects_bundled_vad_asset(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "PyInstaller", pyinstaller)
     monkeypatch.setitem(sys.modules, "PyInstaller.utils", utils)
     monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks)
+    versioninfo = ModuleType("PyInstaller.utils.win32.versioninfo")
+    for name in (
+        "FixedFileInfo", "StringFileInfo", "StringStruct", "StringTable",
+        "VarFileInfo", "VarStruct", "VSVersionInfo",
+    ):
+        setattr(versioninfo, name, lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils.win32.versioninfo", versioninfo)
+    monkeypatch.setattr(sys, "platform", platform)
 
     class _Analysis:
         def __init__(self, *_args, **_kwargs) -> None:
@@ -126,6 +135,7 @@ def test_pyinstaller_spec_collects_bundled_vad_asset(monkeypatch) -> None:
             "PYZ": lambda *_args, **_kwargs: SimpleNamespace(),
             "EXE": lambda *_args, **_kwargs: SimpleNamespace(),
             "COLLECT": lambda *_args, **_kwargs: SimpleNamespace(),
+            "BUNDLE": lambda *_args, **_kwargs: SimpleNamespace(),
         },
     )
     bundled = bundled_silero_vad_model()

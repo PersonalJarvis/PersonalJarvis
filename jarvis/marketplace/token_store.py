@@ -24,7 +24,22 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import wraps
 from typing import Any, Protocol
+
+from jarvis.marketplace.credential_lock import storage_lock
+
+
+def _transaction(method):
+    """Keep a logical token operation indivisible, including legacy chunks."""
+
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with storage_lock(shared=self.shared_credentials):
+            return method(self, *args, **kwargs)
+
+    return wrapped
+
 
 # Stable reason codes for a connection the refresh path could not heal. These
 # four strings are the ONLY thing ever persisted about a failure: a provider's
@@ -36,6 +51,8 @@ REAUTH_CLIENT_REJECTED = "client_rejected"
 """The OAuth client the grant belongs to was refused or no longer exists."""
 REAUTH_CLIENT_MISSING = "client_missing"
 """Stored before we persisted the issuing client_id; unrefreshable by design."""
+REAUTH_REFRESH_MISSING = "refresh_missing"
+"""The access token expired and the provider issued no refresh token."""
 REAUTH_ROTATION_LOST = "rotation_lost"
 """A rotated refresh token could not be stored. NEVER retried — see below."""
 
@@ -134,6 +151,8 @@ class KeyringBackend:
     through environment variables (that would bypass the audit + lifecycle).
     """
 
+    shared_credentials = True
+
     def get(self, key: str) -> str | None:
         from jarvis.core.config import get_secret
 
@@ -163,6 +182,7 @@ class KeyringBackend:
 
 
 _CHUNK_SENTINEL = "\x00JCHUNKS\x00"  # primary-key header for a chunked value: sentinel + <count>
+_BANK_SENTINEL = "\x00JCH2\x00"
 _CLEANUP_EXTENT_SUFFIX = "__extent"  # non-secret exclusive chunk cleanup extent
 # Historical production values used 1000-character chunks. A one-mebibyte
 # logical token budget is orders of magnitude above every catalog OAuth token
@@ -183,11 +203,13 @@ class ChunkedBackend:
     Google/Linear OAuth tokens — the connect flow then failed at the final save
     and the plugin never connected.
 
-    Layout: the primary key holds either a bare value (small or pre-chunking
+    Legacy layout: the primary key holds either a bare value (small or pre-chunking
     legacy) or a sentinel header ``\\x00JCHUNKS\\x00<n>``; the n pieces live in
     ``<key>__0 .. <key>__{n-1}``. A token blob is JSON and always starts with
     ``{``, so a legacy plain value is never mistaken for a header — reads stay
     backward-compatible with already-stored short tokens (Discord/Telegram).
+    New writes alternate two banks and publish their manifest only after all
+    chunks exist. Transactions serialize readers with cleanup across processes.
     A non-secret ``<key>__extent`` sidecar retains the maximum cleanup extent
     only when interrupted or best-effort deletion may have left old chunks.
     """
@@ -201,6 +223,46 @@ class ChunkedBackend:
             raise ValueError("chunk_size must be positive")
         self._backend = backend
         self._chunk_size = chunk_size
+
+    @property
+    def shared_credentials(self) -> bool:
+        return bool(getattr(self._backend, "shared_credentials", False))
+
+    @staticmethod
+    def _bank_manifest(head: str) -> tuple[int, int]:
+        try:
+            bank, count = map(int, head[len(_BANK_SENTINEL) :].split(":"))
+        except ValueError:
+            raise RuntimeError("Invalid token storage manifest") from None
+        if bank not in (0, 1) or not 1 <= count <= _LEGACY_TOKEN_SCAN_BUDGET_CHARS:
+            raise RuntimeError("Invalid token storage manifest")
+        return bank, count
+
+    @staticmethod
+    def _bank_key(key: str, bank: int, index: int) -> str:
+        return f"{key}__b{bank}_{index}"
+
+    def _clear_bank(self, key: str, bank: int, *, strict: bool) -> bool:
+        extent_key = f"{key}__b{bank}_extent"
+        try:
+            count = int(self._backend.get(extent_key) or 0)
+            if not 0 <= count <= _LEGACY_TOKEN_SCAN_BUDGET_CHARS:
+                raise RuntimeError("Invalid token storage extent")
+            for index in range(count):
+                part = self._bank_key(key, bank, index)
+                self._delete_entry(part, strict=strict)
+                if self._backend.get(part) is not None:
+                    raise RuntimeError("Token storage cleanup incomplete")
+            if count:
+                self._delete_entry(extent_key, strict=strict)
+                if self._backend.get(extent_key) is not None:
+                    raise RuntimeError("Token storage cleanup incomplete")
+            return True
+        except Exception:
+            if strict:
+                raise
+            # The extent remains durable so a later write/disconnect retries.
+            return False
 
     def _delete_entry(self, key: str, *, strict: bool) -> None:
         if not strict:
@@ -362,8 +424,15 @@ class ChunkedBackend:
                 cleared = False
         return cleared
 
+    @_transaction
     def get(self, key: str) -> str | None:
         head = self._backend.get(key)
+        if head is not None and head.startswith(_BANK_SENTINEL):
+            bank, count = self._bank_manifest(head)
+            parts = [self._backend.get(self._bank_key(key, bank, i)) for i in range(count)]
+            if any(piece is None for piece in parts):
+                raise RuntimeError("Incomplete token storage generation")
+            return "".join(parts)
         if head is None or not head.startswith(_CHUNK_SENTINEL):
             return head  # missing, small, or legacy-plain value
         count = self._manifest_count(key, head)
@@ -375,17 +444,13 @@ class ChunkedBackend:
             parts.append(piece)
         return "".join(parts)
 
+    @_transaction
     def set(self, key: str, value: str) -> None:
-        """Write ``value``, chunking it when it exceeds the backend's per-entry cap.
+        """Write an inactive bank, then atomically publish its small manifest.
 
-        Write-then-swap: the new data (and, for a multi-chunk value, the new
-        header) is written FIRST; only once that has fully succeeded do we drop
-        chunks a previous, larger value left behind. The old header keeps
-        pointing at the old data until the very last step, so a failure
-        partway through the new write can roll back cleanly instead of
-        leaving a header that points at deleted/missing chunks (the previous
-        delete-then-write order did exactly that — a mid-write failure lost
-        the last good token).
+        The active bank is never overwritten. Even a process crash before the
+        manifest swap leaves the last complete token readable. Extents are
+        persisted before chunks, so interrupted writes remain removable.
         """
         old_head = self._backend.get(key)
         old_active_count = (
@@ -404,6 +469,8 @@ class ChunkedBackend:
             # Fits in one entry: no chunks of its own. Write it first, then
             # drop any old overflow pieces a previous larger value left.
             self._backend.set(key, value)
+            for bank in (0, 1):
+                self._clear_bank(key, bank, strict=False)
             if prior_extent:
                 cleanup_complete = self._clear_indexed_overflow(key, prior_extent)
             else:
@@ -413,41 +480,37 @@ class ChunkedBackend:
             return
 
         chunks = [value[i : i + self._chunk_size] for i in range(0, len(value), self._chunk_size)]
-        tracked_extent = max(prior_extent, len(chunks))
-        # Record the maximum extent before overwriting any chunk. This also
-        # makes rollback cleanup recoverable if a primitive delete silently
-        # fails after a partial write.
-        self._persist_cleanup_extent(key, tracked_extent)
-        # Snapshot whatever currently sits at each index we're about to
-        # overwrite (old chunk data, or None) so a partial failure can put it
-        # back exactly as it was rather than leaving a gap under the still-
-        # active OLD header.
-        prior = [self._backend.get(self._overflow_key(key, i)) for i in range(len(chunks))]
-
-        written = 0
+        old_bank = (
+            self._bank_manifest(old_head)[0]
+            if old_head is not None and old_head.startswith(_BANK_SENTINEL)
+            else None
+        )
+        bank = 1 - old_bank if old_bank is not None else 0
+        self._clear_bank(key, bank, strict=True)
+        if prior_extent:
+            self._persist_cleanup_extent(key, prior_extent)
+        extent_key = f"{key}__b{bank}_extent"
+        self._backend.set(extent_key, str(len(chunks)))
+        if self._backend.get(extent_key) != str(len(chunks)):
+            raise RuntimeError("Could not persist token storage extent")
+        head = f"{_BANK_SENTINEL}{bank}:{len(chunks)}"
         try:
             for i, piece in enumerate(chunks):
-                self._backend.set(self._overflow_key(key, i), piece)
-                written = i + 1
-            self._backend.set(key, f"{_CHUNK_SENTINEL}{len(chunks)}")
+                self._backend.set(self._bank_key(key, bank, i), piece)
+            self._backend.set(key, head)
         except Exception:
-            for i in range(written):
-                old_piece = prior[i]
-                if old_piece is None:
-                    self._delete_entry(self._overflow_key(key, i), strict=False)
-                else:
-                    self._backend.set(self._overflow_key(key, i), old_piece)
+            if self._backend.get(key) != head:
+                self._clear_bank(key, bank, strict=False)
             raise
-
-        # The new header is live now — safe to drop old chunks the new value
-        # no longer needs (old_count > new_count leftovers).
-        cleanup_complete = self._clear_indexed_overflow(
-            key, tracked_extent, start_index=len(chunks)
-        )
+        self._clear_bank(key, 1 - bank, strict=False)
+        cleanup_complete = self._clear_indexed_overflow(key, prior_extent)
         if cleanup_complete:
             self._clear_cleanup_extent_best_effort(key)
 
+    @_transaction
     def delete(self, key: str) -> None:
+        for bank in (0, 1):
+            self._clear_bank(key, bank, strict=True)
         # Snapshot the manifest before touching any pieces. A previous partial
         # delete may already have left gaps, so an active chunked value must use
         # its exact persisted count rather than stop at the first missing index.
@@ -511,6 +574,21 @@ class TokenStore:
 
     def save(self, plugin_id: str, tokens: Tokens) -> None:
         self._backend.set(_keyring_key(plugin_id), tokens.to_json())
+
+    @property
+    def shared_credentials(self) -> bool:
+        return bool(getattr(self._backend, "shared_credentials", False))
+
+    @_transaction
+    def compare_and_save(self, plugin_id: str, expected: Tokens, updated: Tokens) -> bool:
+        """Do not replace a reconnect/disconnect that won a concurrent race."""
+        current = self.load(plugin_id)
+        if current == updated:
+            return True  # A previous write committed before reporting failure.
+        if current != expected:
+            return False
+        self.save(plugin_id, updated)
+        return True
 
     def load(self, plugin_id: str) -> Tokens | None:
         raw = self._backend.get(_keyring_key(plugin_id))

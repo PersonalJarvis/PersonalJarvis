@@ -27,6 +27,7 @@ export function ComposerAddMenu({
   onFolder,
   onConnect,
   disabled,
+  compact = false,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   provider: string;
@@ -40,6 +41,8 @@ export function ComposerAddMenu({
   onFolder: () => void;
   onConnect: (row: ToolChoice) => void;
   disabled: boolean;
+  /** A round "+" with no word beside it — the front page's quiet composer. */
+  compact?: boolean;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -153,10 +156,14 @@ export function ComposerAddMenu({
         aria-haspopup="dialog"
         aria-label={t("chat_tools.add")}
         onClick={() => setOpen(!open)}
-        className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        title={compact ? t("chat_tools.add") : undefined}
+        className={cn(
+          "inline-flex h-8 items-center text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50",
+          compact ? "w-8 justify-center rounded-full" : "gap-1.5 rounded-lg px-2 text-xs font-medium",
+        )}
       >
-        <Plus className="h-4 w-4" />
-        {t("chat_tools.add")}
+        <Plus className={compact ? "h-[18px] w-[18px]" : "h-4 w-4"} />
+        {!compact && t("chat_tools.add")}
       </button>
       {open &&
         createPortal(

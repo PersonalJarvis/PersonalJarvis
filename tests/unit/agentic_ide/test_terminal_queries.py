@@ -66,6 +66,38 @@ async def test_the_reply_describes_the_pane_the_viewer_is_looking_at(
     assert fake_pty.typed == [LIGHT_BACKGROUND_REPLY]
 
 
+async def test_a_background_viewer_does_not_repaint_the_agents_screen_colours(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """A passive viewer on another ground must not flip a running pane.
+
+    Claude Code on theme "auto" chooses its palette from this answer. A light
+    office monitor or stray browser tab joining a dark pane turned every user
+    message in it into a white bar.
+    """
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit, appearance="dark")
+    await registry.attach(
+        "T1", 80, 24, _noop_output, _noop_exit, appearance="light", claim_owner=False
+    )
+
+    await fake_pty.emit(term.pty_id, "\x1b]11;?\x07")
+
+    assert fake_pty.typed == [DARK_BACKGROUND_REPLY]
+
+
+async def test_the_viewer_taking_over_the_pane_sets_its_screen_colours(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    await registry.start(str(tmp_path), [{"agent": "claude"}])
+    term = await registry.attach("T1", 80, 24, _noop_output, _noop_exit, appearance="dark")
+    await registry.attach("T1", 80, 24, _noop_output, _noop_exit, appearance="light")
+
+    await fake_pty.emit(term.pty_id, "\x1b]11;?\x07")
+
+    assert fake_pty.typed == [LIGHT_BACKGROUND_REPLY]
+
+
 async def test_a_replayed_screen_does_not_answer_its_own_old_queries(
     registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
 ) -> None:

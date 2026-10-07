@@ -115,16 +115,24 @@ async def test_run_task_deep_tier_requests_deep_model(monkeypatch) -> None:
     asked: dict[str, Any] = {}
 
     def _spy_get_brain(name: str, model: str | None = None) -> Any:
+        asked["provider"] = name
         asked["model"] = model
         return object()
+
+    def task_chain(intent):
+        asked["intent"] = intent
+        return [("fixture-provider", "fixture-deep-model")]
 
     class _FakeDispatcher:
         async def dispatch(self, text: str, **kw: Any) -> Any:
             return SimpleNamespace(text="x")
 
     monkeypatch.setattr(mgr, "_get_brain", _spy_get_brain)
+    monkeypatch.setattr(mgr, "_task_provider_chain", task_chain)
     monkeypatch.setattr(mgr, "_build_dispatcher", lambda *a, **k: _FakeDispatcher())
 
     await mgr.run_task(prompt="p", allowed_tools=(), model_tier="deep")
     # deep tier must resolve to the deep model of the active provider
-    assert asked["model"] == mgr._deep_model(mgr._active_name)
+    assert asked == {
+        "intent": "deep", "provider": "fixture-provider", "model": "fixture-deep-model",
+    }

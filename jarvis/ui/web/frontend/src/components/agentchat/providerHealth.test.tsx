@@ -179,11 +179,12 @@ describe("the health dot in the provider picker", () => {
     const onPill = screen.getByTestId("provider-health-claude-api");
     expect(onPill.getAttribute("data-health")).toBe("error");
 
-    fireEvent.click(screen.getByTestId("composer-provider"));
+    fireEvent.click(screen.getByTestId("composer-model"));
     await waitFor(() => expect(screen.getByTestId("provider-health-grok")).toBeTruthy());
 
+    // The front page's brain pick: the pill plus every row of that provider.
     const broken = screen.getAllByTestId("provider-health-claude-api");
-    expect(broken).toHaveLength(2); // the pill and the row
+    expect(broken.length).toBeGreaterThanOrEqual(2);
     for (const dot of broken) {
       expect(dot.getAttribute("data-health")).toBe("error");
       expect(dot.className).toContain("bg-destructive");
@@ -223,7 +224,7 @@ describe("the health dot in the provider picker", () => {
         <AgentComposer />
       </AgentChatStoreProvider>,
     );
-    fireEvent.click(screen.getByTestId("composer-provider"));
+    fireEvent.click(screen.getByTestId("composer-model"));
     await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
     expect(screen.queryByTestId("provider-health-claude-api")).toBeNull();
     expect(screen.queryByTestId("provider-health-grok")).toBeNull();
@@ -243,8 +244,8 @@ describe("the health dot in the provider picker", () => {
         <AgentComposer />
       </AgentChatStoreProvider>,
     );
-    fireEvent.click(screen.getByTestId("composer-provider"));
-    const option = await screen.findByRole("option", { name: /Anthropic Claude/ });
+    fireEvent.click(screen.getByTestId("composer-model"));
+    const [option] = await screen.findAllByRole("option", { name: /Anthropic Claude/ });
     expect(option.getAttribute("aria-disabled")).not.toBe("true");
   });
 
@@ -307,7 +308,7 @@ describe("the health dot in the provider picker", () => {
     );
     expect(screen.queryByTestId("provider-health-claude-api")).toBeNull();
     expect(screen.queryByText("Key rejected")).toBeNull();
-    fireEvent.click(screen.getByTestId("composer-provider"));
+    fireEvent.click(screen.getByTestId("composer-model"));
     await waitFor(() => expect(screen.getByRole("listbox")).toBeTruthy());
     expect(screen.queryByText("Key rejected")).toBeNull();
     expect(screen.queryByTestId("provider-health-claude-api")).toBeNull();

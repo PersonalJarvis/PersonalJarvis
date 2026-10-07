@@ -18,6 +18,7 @@ that has git at all, and every call is bounded:
 
 from __future__ import annotations
 
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -83,12 +84,19 @@ class FileDiff:
     truncated: bool = False
 
 
-def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str] | None:
-    """Run git; None when git is missing or does not answer in time."""
+def _git(
+    args: list[str], cwd: Path, stdin: str | None = None
+) -> subprocess.CompletedProcess[str] | None:
+    """Run git; None when git is missing or does not answer in time.
+
+    ``stdin`` is fed to git when given; otherwise git reads nothing, so a
+    command that would wait for input can never hang the caller.
+    """
     try:
         return subprocess.run(
             ["git", "-c", "core.quotePath=false", *args],
             cwd=str(cwd),
+            input=stdin if stdin is not None else "",
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -154,8 +162,15 @@ def _count_lines(path: Path) -> int | None:
     return data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
 
 
-def workspace_changes(folder: str | Path) -> WorkspaceChanges:
-    """Every changed path under ``folder``, with line counts where cheap."""
+def workspace_changes(folder: str | Path, only: set[str] | None = None) -> WorkspaceChanges:
+    """Every changed path under ``folder``, with line counts where cheap.
+
+    ``only`` narrows the answer to those workspace-relative POSIX paths — one
+    pane's own files. It is applied BEFORE the :data:`MAX_CHANGED_FILES` cap,
+    so a folder full of unrelated untracked files (build output) cannot push
+    the pane's files off the list, and untracked files are then listed one by
+    one, since a pane writes files, not folders.
+    """
     root = Path(folder).expanduser()
     if not root.is_dir():
         return WorkspaceChanges(available=False, reason="The workspace folder is missing.")
@@ -166,8 +181,11 @@ def workspace_changes(folder: str | Path) -> WorkspaceChanges:
     branch_result = _git(["rev-parse", "--abbrev-ref", "HEAD"], root)
     branch = branch_result.stdout.strip() if branch_result and branch_result.returncode == 0 else ""
 
+    if only is not None and not only:
+        return WorkspaceChanges(available=True, branch=branch)
+    untracked = "--untracked-files=normal" if only is None else "--untracked-files=all"
     status = _git(
-        ["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=normal", "--", "."],
+        ["status", "--porcelain=v1", "-z", "--no-renames", untracked, "--", "."],
         root,
     )
     if status is None or status.returncode != 0:
@@ -199,6 +217,8 @@ def workspace_changes(folder: str | Path) -> WorkspaceChanges:
         xy, repo_path = record[:2], record[3:]
         rel = _strip_prefix(repo_path, prefix)
         if rel is None or not rel:
+            continue
+        if only is not None and rel not in only:
             continue
         if len(files) >= MAX_CHANGED_FILES:
             truncated = True
@@ -300,6 +320,55 @@ def _parse_unified(text: str) -> tuple[list[DiffHunk], int, int, bool, bool]:
     return hunks, added, removed, False, truncated
 
 
+#: A commit id a caller may name instead of HEAD.
+_COMMIT_ID = re.compile(r"^[0-9a-f]{7,64}$")
+
+
+def head_text(folder: str | Path, path: str, ref: str = "") -> str | None:
+    """One file's text as of the last commit, or of commit ``ref``; None when git has no copy.
+
+    ``ref`` is a commit id (a pane review compares against the code before an
+    agent's first change); anything else is refused.
+    """
+    rel = normalize_workspace_path(folder, path)
+    root = Path(folder).expanduser()
+    if ref and not _COMMIT_ID.match(ref):
+        raise ValueError("That is not a commit id.")
+    if not _has_head(root):
+        return None
+    # "./" makes git read the path relative to the workspace folder, which may
+    # sit below the repository root.
+    result = _git(["show", f"{ref or 'HEAD'}:./{rel}"], root)
+    if result is None or result.returncode != 0:
+        return None
+    # The editor shows a BOM file's text without its BOM; so must the diff.
+    return result.stdout.removeprefix("﻿")
+
+
+def untracked_diff(root: Path, rel: str) -> FileDiff:
+    """A file git does not track yet, as an all-new diff read from disk."""
+    target = root / rel
+    count = _count_lines(target)
+    if count is None:
+        return FileDiff(path=rel, status="untracked", binary=target.is_file())
+    text = target.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
+    shown = lines[:MAX_DIFF_LINES]
+    hunk = DiffHunk(
+        header=f"@@ -0,0 +1,{len(lines)} @@",
+        lines=[
+            DiffLine(kind="add", text=line, new_no=index + 1) for index, line in enumerate(shown)
+        ],
+    )
+    return FileDiff(
+        path=rel,
+        status="untracked",
+        hunks=[hunk],
+        added=len(lines),
+        truncated=len(lines) > len(shown),
+    )
+
+
 def file_diff(folder: str | Path, path: str) -> FileDiff:
     """How one file differs from the last commit; an untracked file is all new."""
     rel = normalize_workspace_path(folder, path)
@@ -317,27 +386,7 @@ def file_diff(folder: str | Path, path: str) -> FileDiff:
     word = _status_word(record[:2]) if record else "unchanged"
 
     if word == "untracked":
-        target = root / rel
-        count = _count_lines(target)
-        if count is None:
-            return FileDiff(path=rel, status=word, binary=target.is_file())
-        text = target.read_text(encoding="utf-8", errors="replace")
-        lines = text.splitlines()
-        shown = lines[:MAX_DIFF_LINES]
-        hunk = DiffHunk(
-            header=f"@@ -0,0 +1,{len(lines)} @@",
-            lines=[
-                DiffLine(kind="add", text=line, new_no=index + 1)
-                for index, line in enumerate(shown)
-            ],
-        )
-        return FileDiff(
-            path=rel,
-            status=word,
-            hunks=[hunk],
-            added=len(lines),
-            truncated=len(lines) > len(shown),
-        )
+        return untracked_diff(root, rel)
 
     args = ["diff", "--no-color", "--no-ext-diff", "--no-renames", "-U3"]
     if _has_head(root):
@@ -367,5 +416,6 @@ __all__ = [
     "WorkspaceChanges",
     "file_diff",
     "normalize_workspace_path",
+    "untracked_diff",
     "workspace_changes",
 ]

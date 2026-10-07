@@ -297,16 +297,23 @@ async def test_compound_screenshot_goal_uses_the_loop_not_the_fast_path(
         "jarvis.harness.screenshot_only_loop_stable",
     ),
 )
-def test_legacy_save_screenshot_fails_closed_when_recording_is_denied(
+def test_legacy_save_screenshot_degrades_without_asking_when_recording_is_not_granted(
     monkeypatch: pytest.MonkeyPatch,
     module_name: str,
 ) -> None:
+    """The frozen loops only READ the Screen Recording state: the fast path returns
+    None (the loop falls through, honestly) and never makes macOS ask. The REAL
+    permission service runs on ``FakeTCC``, a model of macOS privacy (nothing here ran
+    on a real Mac); its call log proves nothing was requested."""
     import importlib
 
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
     module = importlib.import_module(module_name)
-    monkeypatch.setattr(
-        "jarvis.vision.screenshot.warn_if_screen_recording_denied",
-        lambda: True,
-    )
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port("darwin"))
 
     assert module._save_user_screenshot() is None
+    assert module._save_user_screenshot() is None
+
+    tcc.assert_no_prompts()

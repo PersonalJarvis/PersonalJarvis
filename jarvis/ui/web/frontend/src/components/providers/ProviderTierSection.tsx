@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Bot, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, Waypoints, XCircle } from "lucide-react";
+import { AlertCircle, Brain, Check, ChevronDown, Copy, Cpu, Download, HardDrive, KeyRound, Loader2, LogIn, LogOut, Mic, Play, PlugZap, Radio, Search, Sparkles, Square, Terminal, Volume2, Wand2, XCircle } from "lucide-react";
 import { AltCredentialNote } from "@/components/AltCredentialNote";
 import { ApiKeyForm } from "@/components/ApiKeyForm";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { OpenRouterTtsControls } from "@/components/OpenRouterTtsVoicePicker";
 import { RealtimeOptionsControl } from "@/components/RealtimeOptionsControl";
 import { putVoiceMode } from "@/lib/voiceEngineMode";
+import { LocalVoicePanel } from "@/components/providers/LocalVoicePanel";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useRowGestures } from "@/components/providers/rowGestures";
 import { Button } from "@/components/ui/button";
@@ -69,24 +70,20 @@ import { useEventStore } from "@/store/events";
 import { useProviderTestStore, verificationOf, type Verification } from "@/store/providerTests";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { robustCopy } from "@/lib/clipboard";
-import { filterForLocalMode } from "@/lib/localMode";
 import {
-  realtimeTransportIssueKey,
-  requestRealtimeTransportOffer,
-  type RealtimeTransportIssue,
-} from "@/lib/realtimeTransportIssue";
+  hasExperimentalConsent,
+  rememberExperimentalConsent,
+} from "@/lib/experimentalConsent";
+import { filterForLocalMode } from "@/lib/localMode";
+import { requestRealtimeTransportOffer } from "@/lib/realtimeTransportIssue";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
 /**
  * The provider-tier building blocks shared by every screen that lets a user
- * configure a provider: the API-Keys view (all tiers) and the voice section's
- * "API Keys" tab (the `stt` tier only).
- *
- * This module is a VERBATIM extraction out of `views/ApiKeysView.tsx` — the
- * pieces below were module-private there and are unchanged apart from being
- * exported. `ApiKeysView` imports them back, so its pinned test suites keep
- * describing the exact same rendered output.
+ * configure a provider: the API Keys page's realtime tab (connection, test
+ * and state pieces) and the voice section's "API Keys" tab (the `stt` and
+ * `dictation` tiers as whole card lists).
  */
 
 export type { ProviderTier } from "@/hooks/useProviders";
@@ -102,48 +99,6 @@ export interface CategoryMeta {
   description: string;
   icon: LucideIcon;
 }
-
-// The top-level engine mode. Feature A supersedes design D1 ("view-only"):
-// the switch now decides which tab set is shown AND persists `[voice].mode`
-// via `useVoiceMode().setMode` — Pipeline always (it's always reachable),
-// Realtime only when a realtime provider actually has a key
-// (`realtimeAvailable`), so the switch can never pin the boot default to an
-// unreachable engine. See `EngineModeSwitch` below for the exact rule.
-/** Remembered acknowledgement of an experimental provider route.
- *
- * The notice is worth showing once — it explains whose plan pays and that the
- * route can change without notice. Showing it on EVERY switch is the
- * confirmation fatigue this project rejects, and it taught the user to click
- * it away unread, which defeats the point of having it. */
-function experimentalConsentKey(providerId: string): string {
-  return `jarvis.experimentalConsent.${providerId}`;
-}
-
-function hasExperimentalConsent(providerId: string): boolean {
-  try {
-    return window.localStorage.getItem(experimentalConsentKey(providerId)) === "1";
-  } catch {
-    // A WebView with storage disabled simply asks again next time: annoying,
-    // never broken, and never silently skipping the notice.
-    return false;
-  }
-}
-
-function rememberExperimentalConsent(providerId: string): void {
-  try {
-    window.localStorage.setItem(experimentalConsentKey(providerId), "1");
-  } catch {
-    // Same trade-off as above — the dialog reappears, nothing else breaks.
-  }
-}
-
-export type VoiceEngineMode = "pipeline" | "realtime";
-
-// The three provider slots the maintainer's setup recommendation speaks about
-// (RecommendedSetupPanel). All three are ordinary CategoryKeys; "realtime"
-// additionally requires the Realtime tab set, so opening it switches the VIEW
-// mode (never the persisted `[voice].mode`).
-export type RecommendationTab = "realtime" | "computer-use" | "subagents";
 
 // Meta for the three provider tiers (brain/tts/stt). Subagents and Advanced are
 // composed separately because they own their own data sources / sub-sections.
@@ -239,200 +194,6 @@ export function useTierHealth(
 }
 
 /**
- * The Pipeline|Realtime segmented switch. Feature A (supersedes D1): clicking
- * a segment still switches the local view (`onSelect`), and ALSO persists
- * `[voice].mode` — Pipeline unconditionally (always reachable), Realtime only
- * when `realtimeAvailable` (subscription login or API access is ready);
- * otherwise the click just switches the view so the user can add a key from
- * the Realtime tab without silently pinning the boot default to a dead
- * engine.
- *
- * Visual system (one system, two legible states):
- * - A sliding gold thumb sits under the segment currently selected in this
- *   view. The header and the provider content therefore always describe the
- *   same mode; runtime truth remains in the dedicated status row below.
- * - Realtime remains selectable when no provider is available, so its setup
- *   cards stay reachable; the context below explains that live activation is
- *   still unavailable.
- * - The explanatory copy lives in `VoiceEngineContext` inside the provider
- *   scroller, keeping this always-visible header control one compact row.
- */
-export function EngineModeSwitch({
-  mode,
-  liveMode,
-  realtimeAvailable,
-  onSelect,
-  onSetVoiceMode,
-}: {
-  mode: VoiceEngineMode;
-  /** Server/runtime mode, used only for honest live-status metadata. */
-  liveMode: string;
-  /** Whether some realtime provider has usable subscription or API access. */
-  realtimeAvailable: boolean;
-  onSelect: (mode: VoiceEngineMode) => void;
-  /** Persists `[voice].mode` — gated per the rule above. */
-  onSetVoiceMode: (mode: string) => void;
-}) {
-  const t = useT();
-  // Realtime leads as the recommended default. Pipeline follows with an
-  // explicit Not recommended badge so the product guidance is unambiguous.
-  const segments: { key: VoiceEngineMode; label: string; icon: LucideIcon }[] = [
-    { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
-    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
-  ];
-  const selectedIndex = mode === "realtime" ? 0 : 1;
-
-  function handleSelect(seg: VoiceEngineMode) {
-    onSelect(seg);
-    if (seg === "pipeline" || realtimeAvailable) {
-      onSetVoiceMode(seg);
-    }
-  }
-
-  // The guidance ("Recommended" / "Not recommended" / "you only set up one
-  // engine") stays — as the tooltip and for assistive tech. What went was the
-  // 8 px badge inside each segment and the caption under the control: a
-  // header control carries its state, not its manual.
-  const pickOneHint = t("apikeys_view.mode_pick_one_hint");
-
-  return (
-    <div
-      data-testid="voice-engine-header-control"
-      role="group"
-      aria-label={t("apikeys_view.voice_engine_label")}
-      title={pickOneHint}
-      className="shrink-0"
-    >
-      <span data-testid="voice-engine-pick-one-hint" className="sr-only">
-        {pickOneHint}
-      </span>
-      <div className="relative grid min-w-48 grid-cols-2 rounded-surface border border-border bg-card p-0.5">
-        <span
-          data-testid="voice-engine-selection-thumb"
-          aria-hidden="true"
-          className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-control bg-secondary transition-transform duration-200 ease-out motion-reduce:transition-none"
-          style={{ transform: `translateX(${selectedIndex * 100}%)` }}
-        />
-        {segments.map((seg) => {
-          const isSelected = mode === seg.key;
-          const isLive =
-            liveMode === seg.key && (seg.key !== "realtime" || realtimeAvailable);
-          const needsKey = seg.key === "realtime" && !realtimeAvailable;
-          const isRecommended = seg.key === "realtime";
-          const Icon = seg.icon;
-          const guidance = t(
-            isRecommended
-              ? "apikeys_view.mode_recommended"
-              : "apikeys_view.not_recommended",
-          );
-          return (
-            <button
-              key={seg.key}
-              type="button"
-              onClick={() => handleSelect(seg.key)}
-              aria-pressed={isSelected}
-              data-live={isLive ? "true" : "false"}
-              title={guidance}
-              className={cn(
-                "relative z-10 inline-flex h-7 items-center justify-center gap-1.5 rounded-control px-3 text-xs font-medium transition-colors",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                isSelected
-                  ? "text-foreground"
-                  : needsKey
-                    ? "text-muted-foreground hover:text-muted-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              <Icon aria-hidden="true" className="h-3.5 w-3.5" />
-              <span className="whitespace-nowrap">{seg.label}</span>
-              {/* The recommendation as a 5 px dot, not a capsule: enough to
-                  say "this one", quiet enough to live inside a button. */}
-              {isRecommended && (
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    isSelected ? "bg-foreground/80" : "bg-foreground/70",
-                  )}
-                />
-              )}
-              <span className="sr-only">{` (${guidance})`}</span>
-              {isLive && (
-                <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * The Local Mode toggle that sits next to the engine switch in the header.
- *
- * One button, two legible states, and an explicit on/off word rather than a
- * lit-versus-unlit icon: the whole complaint this answers is that the previous
- * local path felt like something that happened TO the user and could not be
- * clearly turned back off. A control you can read the state of, and click once
- * to reverse, is the fix.
- *
- * Presentation only — see `lib/localMode.ts`. It never switches a provider and
- * never writes config, so leaving it on can't break an install.
- */
-export function LocalModeSwitch({
-  enabled,
-  onToggle,
-}: {
-  enabled: boolean;
-  onToggle: (next: boolean) => void;
-}) {
-  const t = useT();
-  // A real switch: the knob's position IS the state, so no "ON"/"OFF" capsule
-  // has to spell it out. The one-line explanation lives in the tooltip and
-  // for assistive tech — not as a caption under the header.
-  const hint = t("apikeys_view.local_mode_hint");
-  return (
-    <div className="flex shrink-0 items-center">
-      <button
-        type="button"
-        data-testid="local-mode-switch"
-        aria-pressed={enabled}
-        onClick={() => onToggle(!enabled)}
-        title={`${t(
-          enabled ? "apikeys_view.local_mode_title_on" : "apikeys_view.local_mode_title_off",
-        )} — ${hint}`}
-        className={cn(
-          "group inline-flex h-8 items-center gap-2 rounded-control px-1.5 text-xs font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          enabled ? "text-foreground" : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <span
-          aria-hidden="true"
-          className={cn(
-            "relative inline-block h-[18px] w-[30px] shrink-0 rounded-full transition-colors",
-            enabled ? "bg-foreground/70" : "bg-border group-hover:bg-muted-foreground/40",
-          )}
-        >
-          <span
-            className={cn(
-              "absolute left-0.5 top-0.5 h-3.5 w-3.5 rounded-full bg-background transition-transform motion-reduce:transition-none",
-              enabled && "translate-x-3",
-            )}
-          />
-        </span>
-        <HardDrive aria-hidden="true" className="h-3.5 w-3.5 opacity-80" />
-        <span className="whitespace-nowrap">{t("apikeys_view.local_mode_label")}</span>
-        <span className="sr-only">
-          {` — ${t(enabled ? "apikeys_view.local_mode_on" : "apikeys_view.local_mode_off")}. ${hint}`}
-        </span>
-      </button>
-    </div>
-  );
-}
-
-/**
  * The one line that explains a shorter card list. Without it, a user who
  * forgot the switch is on reads the missing hosted cards as a broken install —
  * so the notice states the count, and carries the switch-off action itself.
@@ -471,286 +232,6 @@ export function LocalModeNotice({
           {t("apikeys_view.local_mode_show_all")}
         </button>
       </p>
-    </div>
-  );
-}
-
-/**
- * Compact, scrollable context for the header-level engine control. Keeping
- * explanatory copy and recommendations inside the provider scroller gives the
- * fixed viewport back to provider cards on laptop-height windows, while the
- * switch itself remains immediately reachable in the main header.
- */
-export function VoiceEngineContext({
-  mode,
-  realtimeAvailable,
-  statusKnown,
-  connecting = false,
-  requiresWebRtcOffer = false,
-  transportOfferReady = null,
-  transportOfferDetail = "",
-  transportIssue = null,
-  sessionActive,
-  activeSessionMode,
-  activeSessionProvider,
-  activeSessionModel,
-  transitioning,
-  lastStartError = null,
-  liveMode,
-  onOpenRecommendedTab,
-}: {
-  mode: VoiceEngineMode;
-  realtimeAvailable: boolean;
-  statusKnown: boolean;
-  /** A realtime call is negotiating right now — neither idle nor running. */
-  connecting?: boolean;
-  /** The resolved realtime transport needs a browser WebRTC offer. */
-  requiresWebRtcOffer?: boolean;
-  /** Whether an offer is registered; null on a backend that does not report it. */
-  transportOfferReady?: boolean | null;
-  /** Backend one-liner naming WHY no offer is available. Rendered verbatim. */
-  transportOfferDetail?: string;
-  /** Client-side broker blocker; outranks the backend line when set. */
-  transportIssue?: RealtimeTransportIssue | null;
-  sessionActive: boolean;
-  activeSessionMode: "pipeline" | "realtime" | null;
-  activeSessionProvider: string;
-  activeSessionModel: string;
-  transitioning: boolean;
-  /** Why the LAST realtime start attempt failed; null while connecting/live. */
-  lastStartError?: { provider: string; message: string; at: number } | null;
-  liveMode: string;
-  onOpenRecommendedTab: (tab: RecommendationTab) => void;
-}) {
-  const t = useT();
-  const runtimeDetail = [activeSessionProvider, activeSessionModel]
-    .filter(Boolean)
-    .join(" · ");
-  // "Connecting" comes FIRST. A subscription transport spends 15-45 s spawning
-  // its app-server, verifying the account and negotiating WebRTC; reporting
-  // that window as "no voice session is active" is what made a working call
-  // look frozen.
-  const runtimeText = connecting
-    ? t("apikeys_view.runtime_connecting")
-    : transitioning
-      ? t("apikeys_view.runtime_switching")
-      : sessionActive && activeSessionMode === "realtime"
-        ? `${t("apikeys_view.runtime_realtime")}${runtimeDetail ? ` · ${runtimeDetail}` : ""}`
-        : sessionActive && activeSessionMode === "pipeline" && liveMode === "realtime"
-          ? t("apikeys_view.runtime_fallback_pipeline")
-          : sessionActive && activeSessionMode === "pipeline"
-            ? t("apikeys_view.runtime_pipeline")
-            : t("apikeys_view.runtime_idle");
-  const runtimeMatchesSelection =
-    !sessionActive || activeSessionMode === null || activeSessionMode === liveMode;
-  // The one honest explanation for a call that never starts on an
-  // offer-requiring transport (only the subscription route requires one).
-  // Rendered verbatim: the backend one-liner names the actual blocker.
-  const offerBlocked =
-    liveMode === "realtime" &&
-    requiresWebRtcOffer &&
-    transportOfferReady === false;
-  const offerDetail = !offerBlocked
-    ? ""
-    : transportIssue
-      ? t(realtimeTransportIssueKey(transportIssue))
-      : transportOfferDetail;
-  const modeDescription =
-    mode === "realtime" && !realtimeAvailable
-      ? t(
-          statusKnown
-            ? "apikeys_view.mode_needs_credentials"
-            : "apikeys_view.mode_status_unknown",
-        )
-      : mode === "realtime"
-        ? t("apikeys_view.mode_desc_realtime")
-        : t("apikeys_view.mode_desc_pipeline");
-
-  const attention = transitioning || connecting || !runtimeMatchesSelection;
-
-  // One line, not a box: what is running right now (dot + words), what the
-  // selected engine means, and an "i" that opens the longer explanation on
-  // demand. The previous band restated the section three times before the
-  // first card; everything it said is still here, one click deeper.
-  return (
-    <section
-      data-testid="voice-engine-context"
-      className="mx-auto mb-2 w-full max-w-4xl"
-      aria-label={t("apikeys_view.voice_engine_label")}
-    >
-      <div className="flex min-w-0 items-center gap-2.5 py-1.5 text-xs">
-        <div
-          className="flex min-w-0 shrink-0 items-center gap-2"
-          aria-live="polite"
-          data-testid="voice-engine-runtime-status"
-        >
-          <span
-            aria-hidden="true"
-            className={cn(
-              "h-[7px] w-[7px] shrink-0 rounded-full",
-              transitioning || connecting
-                ? "animate-pulse bg-foreground motion-reduce:animate-none"
-                : runtimeMatchesSelection
-                  ? "bg-muted-foreground"
-                  : "bg-foreground",
-            )}
-          />
-          <span
-            className={cn(
-              "font-medium",
-              attention ? "text-foreground" : "text-foreground",
-            )}
-          >
-            {runtimeText}
-          </span>
-        </div>
-        <span aria-hidden="true" className="text-border">·</span>
-        <span
-          className="min-w-0 flex-1 truncate text-muted-foreground"
-          title={`${t("apikeys_view.voice_engine_desc")} ${modeDescription}`}
-        >
-          {modeDescription}
-        </span>
-        {/* The research-preview caveat as a tag; the full sentence is its
-            tooltip and is read out in full — a one-line status has no room
-            for a second sentence, and truncating a warning is worse than
-            shortening it. */}
-        {mode === "realtime" && (
-          <Tag tone="warn" title={t("apikeys_view.mode_realtime_preview")}>
-            {t("apikeys_view.mode_realtime_preview_short")}
-            <span className="sr-only">{` — ${t("apikeys_view.mode_realtime_preview")}`}</span>
-          </Tag>
-        )}
-        <details className="group relative shrink-0">
-          <summary
-            className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden"
-            title={t("apikeys_view.voice_engine_desc")}
-          >
-            <span
-              aria-hidden="true"
-              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-border text-xs font-semibold leading-none"
-            >
-              i
-            </span>
-            <span className="hidden sm:inline">{t("apikeys_view.voice_engine_label")}</span>
-          </summary>
-          <div className="absolute right-0 top-full z-20 mt-2 w-80 rounded-lg bg-popover p-3 shadow-float text-xs leading-relaxed text-muted-foreground">
-            <p className="font-medium text-foreground">
-              {t("apikeys_view.voice_engine_desc")}
-            </p>
-            <p data-testid="voice-engine-keys-hint" className="mt-1.5">
-              {t("apikeys_view.mode_keys_hint")}
-            </p>
-            <p className="mt-1.5">{t("apikeys_view.mode_pick_one_hint")}</p>
-          </div>
-        </details>
-      </div>
-
-      {offerDetail && (
-        <p
-          data-testid="voice-engine-transport-offer-detail"
-          className="pb-1 text-xs leading-snug text-foreground"
-          aria-live="polite"
-        >
-          {offerDetail}
-        </p>
-      )}
-
-      {liveMode === "realtime" && lastStartError && (
-        <p
-          data-testid="voice-engine-last-start-error"
-          className="pb-1 text-xs leading-snug text-foreground"
-          aria-live="polite"
-        >
-          {t("voice_state.connect_failed")
-            .replace("{0}", lastStartError.provider || "?")
-            .replace("{1}", lastStartError.message)}
-        </p>
-      )}
-
-      {mode === "realtime" && (
-        <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
-      )}
-    </section>
-  );
-}
-
-/**
- * The maintainer's personal pick for the three provider slots of the REALTIME
- * tab set, shown in the scrollable engine context only while that tab set is
- * being viewed — the picks name Realtime-mode tabs, so surfacing them next to
- * the Pipeline tabs would point at tabs that are not even on screen
- * (maintainer feedback 2026-07-17). Same contract as the per-card
- * "Recommended" badges fed by provider_spec.py: a presentation hint only — it
- * never gates behavior and never branches a code path on a provider name
- * (AP-21). Each row is a button that jumps straight to the tab it names, so
- * the guidance sits one click from the place it applies. The rows carry an
- * explicit aria-label starting with the panel title so their accessible names
- * never collide with the Pipeline|Realtime segment buttons (tests match those
- * via /^realtime/i).
- */
-function RecommendedSetupPanel({
-  onOpenTab,
-}: {
-  onOpenTab: (tab: RecommendationTab) => void;
-}) {
-  const t = useT();
-  const rows: {
-    tab: RecommendationTab;
-    icon: LucideIcon;
-    label: string;
-    pick: string;
-    why: string;
-  }[] = [
-    {
-      tab: "realtime",
-      icon: Radio,
-      label: t("apikeys_view.tab_realtime"),
-      pick: t("apikeys_view.reco_realtime_pick"),
-      why: t("apikeys_view.reco_realtime_why"),
-    },
-    {
-      tab: "subagents",
-      icon: Bot,
-      label: t("apikeys_view.tab_subagents"),
-      pick: t("apikeys_view.reco_subagents_pick"),
-      why: t("apikeys_view.reco_subagents_why"),
-    },
-  ];
-  return (
-    <div
-      data-testid="recommended-setup-panel"
-      className="flex min-w-0 items-center gap-3 border-t border-border py-1.5 text-xs"
-    >
-      <p className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        {t("apikeys_view.reco_title")}
-      </p>
-      {/* Text links, not capsules: three picks in a row already read as a
-          set; a frame around each of them adds nothing but frames. */}
-      <ul className="flex min-w-0 flex-1 items-center gap-x-4 overflow-x-auto scrollbar-jarvis">
-        {rows.map((row) => {
-          const Icon = row.icon;
-          return (
-            <li key={row.tab} className="shrink-0">
-              <button
-                type="button"
-                onClick={() => onOpenTab(row.tab)}
-                data-testid={`reco-row-${row.tab}`}
-                aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}. ${row.why}`}
-                title={row.why}
-                className="group inline-flex items-center gap-1.5 whitespace-nowrap rounded-control leading-none transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <Icon aria-hidden="true" className="h-3 w-3 shrink-0 text-muted-foreground" />
-                <span className="text-muted-foreground">{row.label}</span>
-                <span className="font-medium text-foreground underline-offset-4 group-hover:underline">
-                  {row.pick}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }
@@ -1006,6 +487,9 @@ export function ProviderCard({
   expanded = true,
   onToggleExpanded,
   configuration,
+  hideCredentialControls = false,
+  billingOverride,
+  billingPending = false,
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
@@ -1023,6 +507,11 @@ export function ProviderCard({
   onToggleExpanded?: () => void;
   /** Provider-owned setup shares the existing credential and verification controls. */
   configuration?: ReactNode;
+  /** A provider-owned subscription editor supplies its own sign-in controls. */
+  hideCredentialControls?: boolean;
+  /** Display-only draft billing choice; never changes activation or auth. */
+  billingOverride?: ProviderDescriptor["billing"];
+  billingPending?: boolean;
 }) {
   const t = useT();
   const [activating, setActivating] = useState(false);
@@ -1034,7 +523,6 @@ export function ProviderCard({
   const [consentPending, setConsentPending] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const recordVerdict = useProviderTestStore((s) => s.record);
   // The card only escalates to red for a real "set up but failing" error — the
   // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
@@ -1334,7 +822,7 @@ export function ProviderCard({
   // words. It used to be "gemini-live · API key auth" — the catalog id and
   // developer vocabulary; the id still travels on the row's testid and for
   // assistive tech, and the billing line already says how you sign in.
-  const summary = t(`provider_billing.${descriptor.billing}`);
+  const summary = t(`provider_billing.${billingOverride ?? descriptor.billing}`);
   const collapsible = Boolean(onToggleExpanded);
   const rowTitle = descriptor.active
     ? t("apikeys_view.active_tooltip")
@@ -1439,28 +927,11 @@ export function ProviderCard({
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {summary}
+            {billingPending ? ` · ${t("live.billing_pending")}` : null}
             <span className="sr-only">{` · ${descriptor.id}`}</span>
           </p>
         </div>
 
-        {/* Pull-capable servers have a section of their own; the row still
-            opens/activates the provider as before (rowGestures ignores anything
-            marked data-agent-card-control). */}
-        {descriptor.supports_model_pull && (
-          <button
-            type="button"
-            data-agent-card-control
-            data-testid={`provider-open-local-models-${descriptor.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveSection("local-models");
-            }}
-            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          >
-            <Cpu aria-hidden="true" className="h-3.5 w-3.5" />
-            {t("apikeys_view.local_models_open")}
-          </button>
-        )}
         {descriptor.configuration_surface !== "live" && (
         <ActiveControl
           descriptor={
@@ -1522,12 +993,17 @@ export function ProviderCard({
             </div>
           )}
 
-          {configuration && descriptor.configured ? (
-            <details className="rounded-lg border border-border px-3 py-2.5">
-              <summary className="cursor-pointer text-sm font-medium">{t("live.shared_key_ready")}</summary>
-              <div className="pt-3"><AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} /></div>
-            </details>
-          ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />}
+          {/* The key row stays visible: a collapsed disclosure hid the only
+              place to enter or replace the key behind a tiny triangle. */}
+          {!hideCredentialControls && (configuration && descriptor.configured ? (
+            <div data-testid={`provider-key-${descriptor.id}`} className="space-y-2 rounded-lg border border-border px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                <KeyRound aria-hidden="true" className="h-3.5 w-3.5 text-muted-foreground" />
+                {t("live.shared_key_ready")}
+              </p>
+              <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />
+            </div>
+          ) : <AuthWidget descriptor={descriptor} onChanged={onChanged} onSavedActivate={handleSavedActivate} />)}
 
           {configuration}
 
@@ -1610,14 +1086,14 @@ export function ProviderCard({
 
           {/* Footer: the live connectivity test, visually separated from the
               configuration body so "set up" and "verify" read as two steps. */}
-          <div className="border-t border-border pt-2.5">
+          {!hideCredentialControls && <div className="border-t border-border pt-2.5">
             <ProviderTestControl
               providerId={descriptor.id}
               providerLabel={descriptor.label}
               section={descriptor.tier}
               active={descriptor.active}
             />
-          </div>
+          </div>}
         </div>
       )}
     </div>
@@ -3703,6 +3179,7 @@ export function AuthWidget({
       )}
       <LocalRuntimePanel descriptor={descriptor} onChanged={onChanged} />
       <ManagedServerPanel descriptor={descriptor} onChanged={onChanged} />
+      {descriptor.voice_engine && <LocalVoicePanel onChanged={onChanged} />}
       {descriptor.supports_base_url && descriptor.managed_server && (
         <details className="group text-xs">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
@@ -4355,6 +3832,10 @@ export function providerStateChip(
   // Managed self-hosted server: installed and smoke-booted, or not there.
   if (descriptor.managed_server) {
     return descriptor.managed_server.ready ? "ready" : "not_installed";
+  }
+  // Jarvis-owned local voice engine: set up on this machine, or not.
+  if (descriptor.voice_engine) {
+    return descriptor.voice_engine.installed ? "ready" : "not_installed";
   }
   // A keyless provider (Ollama, a local OpenAI-compatible server you point
   // at) has nothing to store and, without a probe in its payload, nothing

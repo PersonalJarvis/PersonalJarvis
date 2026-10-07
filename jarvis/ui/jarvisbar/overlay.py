@@ -1,4 +1,4 @@
-"""JarvisBarOverlay — the slim Tk on-screen bar.
+"""Native Tk host for the canonical Pet control-strip Jarvis Bar.
 
 Implements the same duck-typed surface API ``OrbBusBridge`` already drives, so
 the bridge is reused unchanged. ``show(mode)`` selects the renderer state;
@@ -36,7 +36,6 @@ from collections.abc import Callable
 from typing import Any
 
 from jarvis.ui.jarvisbar import interaction, renderer
-from jarvis.ui.jarvisbar.modes import DICTATION_MODES
 
 log = logging.getLogger("jarvis.ui.jarvisbar")
 
@@ -57,7 +56,7 @@ DROP_CLICK_QUIET_S = 0.6
 TASKBAR_GAP_PX = 8
 # Window opacity (the pill goes semi-transparent; magenta stays fully keyed
 # out). Lower = more see-through. Tune this one number for the glass look.
-BAR_ALPHA = 0.6
+BAR_ALPHA = 1.0
 
 # A topmost *flag* is not enough on Windows.  A mapped Tk window can retain
 # WS_EX_TOPMOST while falling below ordinary windows in the real Z-order band
@@ -547,6 +546,10 @@ class JarvisBarOverlay:
         # authoritative VoiceMuteChanged via set_muted(). A bool write is atomic
         # under the GIL, like _ext_level — read on the frame loop without a lock.
         self._muted = False
+        self._speaker_muted = False
+        self._call_ring_started_t = 0.0
+        self._on_compose: Callable[[], None] | None = None
+        self._on_speaker_toggle: Callable[[], None] | None = None
 
     # ------------------------------------------------------------------ #
     # Surface API consumed by OrbBusBridge                               #
@@ -677,6 +680,40 @@ class JarvisBarOverlay:
         makes the next poll place it on the monitor under the mouse. Atomic bool
         write — no Tk marshal needed, like ``set_muted``."""
         self._follow_cursor = bool(enabled)
+
+    def _call_ring_phase(self) -> int:
+        from ui.orb.controls import PET_CALL_RING_PASSES, PET_RING_PHASES, PET_RING_STEP_S
+
+        started = getattr(self, "_call_ring_started_t", 0.0)
+        if not started:
+            return 0
+        phase = int((time.perf_counter() - started) / PET_RING_STEP_S) + 1
+        return phase if 0 < phase <= PET_RING_PHASES * PET_CALL_RING_PASSES else 0
+
+    def _hover_action(self) -> str | None:
+        if not self._hovered:
+            return None
+        try:
+            if self._root is None:
+                return None
+            px, py = self._root.winfo_pointerxy()
+            x, y = px - self._root.winfo_rootx(), py - self._root.winfo_rooty()
+            from ui.orb.controls import pet_hit_test
+
+            action = pet_hit_test(x, y, renderer.strip_scale())
+            return "compose" if action == "bell" else action
+        except Exception:  # no window yet, or teardown in progress
+            log.debug("bar hover unavailable", exc_info=True)
+            return None
+
+    def set_on_compose(self, callback: Callable[[], None] | None) -> None:
+        self._on_compose = callback
+
+    def set_on_speaker_toggle(self, callback: Callable[[], None] | None) -> None:
+        self._on_speaker_toggle = callback
+
+    def set_speaker_muted(self, muted: bool) -> None:
+        self._speaker_muted = bool(muted)
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
@@ -1082,19 +1119,7 @@ class JarvisBarOverlay:
             return
         try:
             old_win_w, old_win_h = renderer.WIN_W, renderer.WIN_H
-            old_ref = renderer.OPEN_W or 1  # any pill dim scales by the same factor
             renderer.apply_display_scale(self._screen_scale, user_size=user_scale)
-            # Snap the eased pill so it matches the new window immediately: no
-            # transient where a still-large pill is clipped by a shrunk window,
-            # and no lag where a small pill floats in a grown window. The
-            # renderer then eases toward the (already-matching) target, so the
-            # pill stays put — the visible change is a clean, instant rescale
-            # that tracks the slider live.
-            r = self._renderer
-            if r is not None and old_ref:
-                ratio = renderer.OPEN_W / old_ref
-                r._st.pw *= ratio  # noqa: SLF001 — same-object render state
-                r._st.ph *= ratio  # noqa: SLF001
             self._reanchor_after_resize(old_win_w, old_win_h)
             self._invalidate_static_frame()
         except Exception:  # noqa: BLE001 — a resize hiccup must never crash the bar
@@ -1394,6 +1419,9 @@ class JarvisBarOverlay:
                 effective_mode,
                 self._hovered,
                 self._muted,
+                getattr(self, "_speaker_muted", False),
+                self._hover_action(),
+                self._call_ring_phase(),
                 drop_visual,
                 silent,
                 getattr(self, "_prompt_mode", False),
@@ -1422,6 +1450,10 @@ class JarvisBarOverlay:
                     level,
                     hovered=self._hovered,
                     muted=self._muted,
+                    speaker_muted=getattr(self, "_speaker_muted", False),
+                    hovered_action=self._hover_action(),
+                    call_ring=self._call_ring_phase(),
+                    surface_mode=self._mode,
                     prompt_mode=getattr(self, "_prompt_mode", False),
                     prompt_mode_paused=getattr(self, "_prompt_mode_paused", False),
                     drop_state=drop_visual,
@@ -1723,6 +1755,7 @@ class JarvisBarOverlay:
             "sy": event.y_root,
             "ox": event.x_root - self._x,
             "oy": event.y_root - self._y,
+            "cy": getattr(event, "y", renderer.WIN_H / 2),
             "cx": event.x,  # canvas-relative x → which control zone was clicked
             "hovered": True,  # press-time hover (the pointer IS on the bar now)
             "moved": False,
@@ -1841,7 +1874,9 @@ class JarvisBarOverlay:
             # Use the PRESS-time hover (consistent with the press-time cx): a
             # deliberate click that started on the bar registers even if a stray
             # <Leave> flickered _hovered before release.
-            self._on_click(d.get("cx", renderer.WIN_W / 2), hovered=bool(d.get("hovered")))
+            self._on_click(
+                d.get("cx", renderer.WIN_W / 2), click_y=d.get("cy"), hovered=bool(d.get("hovered"))
+            )
             return
         try:
             # Pin the drop to the monitor it LANDED on (measured at the bar's
@@ -1924,33 +1959,46 @@ class JarvisBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar show-window callback failed", exc_info=True)
 
-    def _on_click(self, click_x: float | None = None, *, hovered: bool = False) -> None:
-        # Zone-routed: LEFT X → hang up (active only), RIGHT mic → toggle voice
-        # mute (mic muted FOR JARVIS only), MIDDLE (idle) → start a normal
-        # session. All entries are thread-safe from the Tk thread.
+    def _on_click(
+        self, click_x: float | None = None, *, click_y: float | None = None, hovered: bool = False
+    ) -> None:
+        # Shared-strip hit testing routes the pen, microphone, orb, speaker
+        # and phone. All entries execute on the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
-        # The first accepted X click optimistically removes the active look.
-        # Ignore follow-up clicks during that short transition so they cannot be
-        # reclassified as idle-body clicks and accidentally reopen the session.
-        if time.monotonic() < self._hangup_click_block_until:
-            return
         try:
-            # The dictation modes render on the active pill too (dictate →
-            # "speak", dictate_transcribing → "think"), so their close-X sits
-            # where the active pill puts it.
-            active = self._mode in ("listen", "think", "speak") or (self._mode in DICTATION_MODES)
-            # The idle pill is OPEN while its controls are up, and the
-            # sparkle's hit-box has to track that pill, not the window.
-            pill_w = renderer.ACTIVE_W if active else renderer.OPEN_W
             action = interaction.resolve_click(
                 click_x,
                 renderer.WIN_W,
                 self._mode,
                 hovered=hovered,
-                pill_w=pill_w,
                 prompt_mode=getattr(self, "_prompt_mode", False),
+                y=click_y,
             )
+            # Match the Pet strip: repeated voice clicks cannot reopen a call,
+            # while writing and audio controls remain available immediately.
+            if action in ("talk", "hangup", "dictation_stop") and (
+                time.monotonic() < self._hangup_click_block_until
+            ):
+                return
+            if action == "talk":
+                self._call_ring_started_t = time.perf_counter()
+            if action == "compose":
+                callback = self._on_compose or self._on_show_window
+                if callback is not None:
+                    callback()
+                return
+            if action == "speaker":
+                callback = self._on_speaker_toggle
+                if callback is not None:
+                    callback()
+                else:
+                    from ui.orb.controls import toggle_speaker_mute
+
+                    result = toggle_speaker_mute(source="jarvis_bar")
+                    if result is not None:
+                        self.set_speaker_muted(result)
+                return
             if action == "dictation_stop":
                 # The X while dictating ends the recording and delivers
                 # nothing — the same "make it go away" the X means for a

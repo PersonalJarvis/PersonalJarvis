@@ -97,8 +97,8 @@ describe("ObsidianStatus", () => {
     expect(pill.getAttribute("title")).toContain("1.7.4");
     // OK pill is non-interactive.
     expect((pill as HTMLButtonElement).disabled).toBe(true);
-    // Green colour class present (#5bd4a4).
-    expect(pill.className).toContain("#5bd4a4");
+    // Connected reads quiet: the success hue sits on the icon only.
+    expect(pill.className).toContain("text-success");
   });
 
   it("renders 'not installed' when installed=false", async () => {
@@ -114,7 +114,7 @@ describe("ObsidianStatus", () => {
     });
     const pill = screen.getByTestId("obsidian-status-pill");
     expect(pill.textContent).toContain("not installed");
-    expect(pill.className).toContain("#facc15");
+    expect(pill.className).toContain("text-warning");
     expect((pill as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -131,7 +131,7 @@ describe("ObsidianStatus", () => {
     });
     const pill = screen.getByTestId("obsidian-status-pill");
     expect(pill.textContent).toContain("not registered");
-    expect(pill.className).toContain("#ffb84d");
+    expect(pill.className).toContain("text-warning");
   });
 
   it("renders 'status unclear' on fetch failure", async () => {
@@ -147,7 +147,7 @@ describe("ObsidianStatus", () => {
     });
     const pill = screen.getByTestId("obsidian-status-pill");
     expect(pill.textContent).toContain("status unclear");
-    expect(pill.className).toContain("#8d94a8");
+    expect(pill.className).toContain("text-muted-foreground");
   });
 
   it("renders 'status unclear' when note is set", async () => {

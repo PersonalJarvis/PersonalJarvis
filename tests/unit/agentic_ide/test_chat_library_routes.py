@@ -308,10 +308,38 @@ def test_launchers_list_only_what_is_available(
     body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
     assert body == {
         "file_manager": True,
-        "editors": [{"id": "cursor", "label": "Cursor"}],
+        "editors": [
+            {"id": "code", "label": "VS Code", "installed": False},
+            {"id": "cursor", "label": "Cursor", "installed": True},
+        ],
         "remote_url": "https://github.com/me/app",
         "remote_label": "GitHub",
     }
+
+
+def test_launchers_offer_another_editor_only_without_vs_code_and_cursor(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.agentic_ide import project_links
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(
+        outputs_routes,
+        "_available_openers",
+        lambda: [
+            {"id": "default", "label": "System default app"},
+            {"id": "zed", "label": "Zed"},
+        ],
+    )
+    monkeypatch.setattr(project_links, "remote_web_url", lambda folder: None)
+    client.app.state.native_file_actions = True
+    project = library.ensure_project(tmp_path)
+    body = client.get(f"/api/chat-library/projects/{project.id}/launchers").json()
+    assert body["editors"] == [
+        {"id": "code", "label": "VS Code", "installed": False},
+        {"id": "cursor", "label": "Cursor", "installed": False},
+        {"id": "zed", "label": "Zed", "installed": True},
+    ]
 
 
 def test_launchers_are_empty_on_a_headless_host(client: TestClient, tmp_path: Path) -> None:
@@ -336,3 +364,34 @@ def test_open_in_remote_needs_a_remote(client: TestClient, tmp_path: Path) -> No
         f"/api/chat-library/projects/{project.id}/open-in", json={"target": "remote"}
     )
     assert response.status_code == 404
+
+
+def test_editors_resolve_from_their_standard_install_folder_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(outputs_routes, "detect_platform", lambda: "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.delenv("ProgramFiles", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    exe = tmp_path / "Programs" / "cursor" / "Cursor.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+    assert outputs_routes._resolve_installed("cursor") == ("executable", str(exe))
+
+
+def test_cursor_appimage_counts_as_installed_on_linux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(outputs_routes, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(outputs_routes.Path, "home", lambda: tmp_path)
+    image = tmp_path / "Applications" / "Cursor-1.7.0-x86_64.AppImage"
+    image.parent.mkdir()
+    image.write_bytes(b"")
+    image.chmod(0o755)
+    assert str(image) in [str(p) for p in outputs_routes._editor_install_candidates("cursor")]
+    assert outputs_routes._editor_install_candidates("zed") == []

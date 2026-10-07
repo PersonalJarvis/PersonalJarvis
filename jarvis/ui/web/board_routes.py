@@ -7,6 +7,7 @@ Endpoints:
 - ``GET  /api/board/personal/tools``         → tool-usage histogram
 - ``GET  /api/board/personal/records``       → personal records
 - ``POST /api/board/personal/refresh``       → manual aggregator run
+- ``GET  /api/board/insights``               → the Board page: every usage source
 - ``GET  /api/board/achievements``           → all specs with unlock status
 - ``GET  /api/board/bio``                    → current AI bio + age
 - ``POST /api/board/bio/regenerate``         → manually generate a new bio
@@ -256,6 +257,130 @@ async def personal_refresh(request: Request) -> RefreshResponse:
     except Exception as exc:  # noqa: BLE001
         log.exception("manual board refresh failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ----------------------------------------------------------------------
+# Insights — the Board page
+# ----------------------------------------------------------------------
+
+class InsightsReference(BaseModel):
+    typing_wpm: int
+    novel_words: int
+
+
+class InsightsDictation(BaseModel):
+    available: bool
+    words: int
+    dictations: int
+    seconds: float
+
+
+class InsightsVoice(BaseModel):
+    available: bool
+    sessions: int
+    turns: int
+    user_words: int
+    jarvis_words: int
+    seconds: float
+
+
+class InsightsChatProvider(BaseModel):
+    provider: str
+    sessions: int
+    messages: int
+    jarvis_sessions: int
+
+
+class InsightsChats(BaseModel):
+    available: bool
+    sessions: int
+    messages: int
+    providers: list[InsightsChatProvider]
+
+
+class InsightsAgent(BaseModel):
+    agent: str
+    sessions: int
+    sessions_30d: int
+    turns: int
+    turns_30d: int
+    tokens: int
+    last_ms: int
+
+
+class InsightsAgents(BaseModel):
+    available: bool
+    sessions: int
+    turns: int
+    tokens: int
+    items: list[InsightsAgent]
+
+
+class InsightsDay(BaseModel):
+    date: str
+    dictations: int
+    dictation_words: int
+    voice_sessions: int
+    voice_words: int
+    chat_messages: int
+    agent_sessions: int
+    agent_turns: int
+
+
+class InsightsTrend(BaseModel):
+    words_30d: int
+    words_prev_30d: int
+
+
+class InsightsStreak(BaseModel):
+    current_days: int
+    longest_days: int
+    active_days: int
+    first_day: str | None
+
+
+class InsightsRecord(BaseModel):
+    date: str
+    value: int
+
+
+class InsightsRecords(BaseModel):
+    best_words_day: InsightsRecord | None
+    best_agent_day: InsightsRecord | None
+
+
+class InsightsResponse(BaseModel):
+    generated_at: str
+    reference: InsightsReference
+    dictation: InsightsDictation
+    voice: InsightsVoice
+    chats: InsightsChats
+    agents: InsightsAgents
+    days: list[InsightsDay]
+    #: 7 rows (Monday first) x 24 local hours of activity counts.
+    punch_card: list[list[int]]
+    trend: InsightsTrend
+    streak: InsightsStreak
+    records: InsightsRecords
+    categories: CategoriesResponse
+
+
+@board_router.get("/insights", response_model=InsightsResponse)
+async def board_insights(request: Request) -> InsightsResponse:
+    """Everything the Board page draws, from the stores the app already keeps.
+
+    Counts and timestamps only — no text is read into the answer. Each source
+    is optional: a missing store reads as ``available: false`` with zeros, so
+    the page can say "nothing yet" instead of failing.
+    """
+    insights = getattr(request.app.state, "board_insights", None)
+    if insights is None:
+        raise HTTPException(status_code=503, detail="Board insights not available")
+    store = _require_store(request)
+    await _freshen(request)
+    picture = await asyncio.to_thread(insights.get)
+    categories = await asyncio.to_thread(store.categories, window_days=None)
+    return InsightsResponse.model_validate({**picture, "categories": categories})
 
 
 # ----------------------------------------------------------------------

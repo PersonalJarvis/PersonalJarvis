@@ -26,6 +26,11 @@ import {
 } from "react";
 import { dragCarriesFiles } from "./paneDrop";
 import { useDragSessionEnd } from "./dragSessionEnd";
+import {
+  dragCarriesSkill,
+  readSkillDrag,
+  type SkillDragPayload,
+} from "./skillDrag";
 
 export interface PaneFileDragHandlers {
   onDragEnter: (e: ReactDragEvent) => void;
@@ -37,6 +42,8 @@ export interface PaneFileDragHandlers {
 export interface PaneFileDrag {
   /** True while a file drag is over this pane — drives the drop overlay. */
   dragging: boolean;
+  /** What is being carried over the pane while `dragging`: a file or a skill. */
+  carrying: "files" | "skill" | null;
   /** Spread onto the pane's root element. */
   handlers: PaneFileDragHandlers;
 }
@@ -46,11 +53,19 @@ export interface PaneFileDrag {
  *
  * `onFiles` runs on a drop that actually carried files; it is handed the live
  * `DataTransfer` and must read it SYNCHRONOUSLY (see ./paneDrop).
+ *
+ * `onSkill`, when given, makes the pane a target for a skill carried out of
+ * the side panel's Skills tab too (see ./skillDrag); without it a skill drag
+ * passes over the pane as unnoticed as selected text.
  */
 export function usePaneFileDrag(
   onFiles: (dt: DataTransfer) => void,
+  onSkill?: (skill: SkillDragPayload) => void,
 ): PaneFileDrag {
   const [dragging, setDragging] = useState(false);
+  const [carrying, setCarrying] = useState<"files" | "skill" | null>(null);
+  const takesSkill = (dt: DataTransfer | null) =>
+    Boolean(onSkill) && dragCarriesSkill(dt);
   // Counted, not a boolean: a drag moving across the pane fires enter/leave for
   // every child element it crosses, and a boolean flickers.
   const depth = useRef(0);
@@ -58,6 +73,7 @@ export function usePaneFileDrag(
   const disarm = useCallback(() => {
     depth.current = 0;
     setDragging(false);
+    setCarrying(null);
   }, []);
 
   // The backstop, and the only thing this pane can actually rely on: a drag
@@ -72,7 +88,8 @@ export function usePaneFileDrag(
       // for a dropped link or text is to NAVIGATE, which would replace the
       // whole IDE — every agent in the grid with it.
       e.preventDefault();
-      if (!dragCarriesFiles(e.dataTransfer)) return;
+      const skill = takesSkill(e.dataTransfer);
+      if (!skill && !dragCarriesFiles(e.dataTransfer)) return;
       // No reset needed here, and deliberately not attempted: `dragging` has
       // not flipped yet inside the batch that crossed into a child, so a reset
       // read off it would zero the count mid-drag. What keeps the counter from
@@ -81,25 +98,36 @@ export function usePaneFileDrag(
       // permanent rather than momentary.
       depth.current += 1;
       setDragging(true);
+      setCarrying(skill ? "skill" : "files");
     },
     onDragOver: (e) => {
       e.preventDefault();
       // An honest cursor: "copy" only where a drop will actually do something.
-      e.dataTransfer.dropEffect = dragCarriesFiles(e.dataTransfer)
-        ? "copy"
-        : "none";
+      e.dataTransfer.dropEffect =
+        dragCarriesFiles(e.dataTransfer) || takesSkill(e.dataTransfer)
+          ? "copy"
+          : "none";
     },
     onDragLeave: () => {
       depth.current = Math.max(0, depth.current - 1);
-      if (depth.current === 0) setDragging(false);
+      if (depth.current === 0) {
+        setDragging(false);
+        setCarrying(null);
+      }
     },
     onDrop: (e) => {
       e.preventDefault();
       disarm();
+      // A skill first: its drag also carries `text/plain`, never a file.
+      if (onSkill && takesSkill(e.dataTransfer)) {
+        const skill = readSkillDrag(e.dataTransfer);
+        if (skill) onSkill(skill);
+        return;
+      }
       if (!dragCarriesFiles(e.dataTransfer)) return;
       onFiles(e.dataTransfer);
     },
   };
 
-  return { dragging, handlers };
+  return { dragging, carrying, handlers };
 }

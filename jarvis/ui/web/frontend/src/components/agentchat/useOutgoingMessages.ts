@@ -5,14 +5,22 @@ import type { InternalMessageItem, TimelineItem } from "./reduce";
 const MESSAGE_TYPES = new Set(["SAY", "QUERY", "ANSWER", "PROPOSE"]);
 const EMPTY_EVENTS: SocietyEnvelope[] = [];
 
-/** Retain outgoing messages and their delivery vetoes, never unrelated board activity. */
+/**
+ * Retain outgoing messages and their delivery vetoes, never unrelated board activity.
+ *
+ * With `sessionId`, keep only what that chat sent: a reply the agent wrote in
+ * its conversation with Jarvis or a teammate stays in that conversation.
+ * Messages from before the board recorded their chat count as this chat's.
+ */
 export function collectOutgoing(
-  previous: SocietyEnvelope[], rows: SocietyEnvelope[], agentId: string,
+  previous: SocietyEnvelope[], rows: SocietyEnvelope[], agentId: string, sessionId?: string | null,
 ): SocietyEnvelope[] {
   const messages = new Map(previous.map((row) => [row.event_id, row]));
   for (const row of rows) {
+    const origin = row.payload.from_session;
     if (row.from_agent === agentId && row.to_agent && row.to_agent !== agentId
       && row.to_agent !== "user" && MESSAGE_TYPES.has(row.msg_type)
+      && (!sessionId || typeof origin !== "string" || origin === sessionId)
       && typeof row.payload.text === "string" && row.payload.text.trim()) {
       messages.set(row.event_id, row);
     } else if (row.msg_type === "VETO" && row.parent_event_id && messages.has(row.parent_event_id)) {
@@ -46,7 +54,7 @@ export function mergeOutgoingMessages(
   return [...items, ...outgoing].sort((a, b) => time(a) - time(b));
 }
 
-export function useOutgoingMessages(agentId: string | null): SocietyEnvelope[] {
+export function useOutgoingMessages(agentId: string | null, sessionId?: string | null): SocietyEnvelope[] {
   const [state, setState] = useState({ agentId, events: EMPTY_EVENTS });
   useEffect(() => {
     if (!agentId) return;
@@ -65,7 +73,7 @@ export function useOutgoingMessages(agentId: string | null): SocietyEnvelope[] {
           const data: { events: SocietyEnvelope[] } = await response.json();
           if (controller.signal.aborted) return;
           setState((previous) => {
-            const events = collectOutgoing(previous.agentId === agentId ? previous.events : EMPTY_EVENTS, data.events, agentId);
+            const events = collectOutgoing(previous.agentId === agentId ? previous.events : EMPTY_EVENTS, data.events, agentId, sessionId);
             return previous.agentId === agentId && previous.events === events ? previous : { agentId, events };
           });
           const next = data.events.at(-1)?.seq ?? cursor;
@@ -80,6 +88,6 @@ export function useOutgoingMessages(agentId: string | null): SocietyEnvelope[] {
     };
     void read();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [agentId]);
+  }, [agentId, sessionId]);
   return useMemo(() => state.agentId === agentId ? state.events : EMPTY_EVENTS, [agentId, state]);
 }

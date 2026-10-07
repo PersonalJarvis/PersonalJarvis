@@ -387,10 +387,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "AI Studio and Vertex are SEPARATE accounts."
         ),
         alt_credential=_GEMINI_VERTEX,
-        # Maintainer-recommended brain (2026-06-22): best real-world experience.
-        # Badge on the brain card; the model picker highlights gemini-3.5-flash.
-        recommended=True,
-        recommended_model="gemini-3.5-flash",
     ),
     # ── Brain: the SAME Gemini models on Google Cloud Vertex AI ──
     # Its own card, not a checkbox on the Gemini one, for a reason the 2026-06-22
@@ -530,6 +526,11 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "OpenAI API key (starts with sk-). Billed per token. Shared by the "
             "GPT brain, Whisper STT and OpenAI TTS."
         ),
+        # Maintainer-recommended brain (2026-10-03, was Gemini): the same pick
+        # as the recommended starter plan (OpenAI GPT-Live), so the API Keys
+        # page and the first-run guide recommend one provider. Badge only — no
+        # recommended model, the live catalog decides which GPT is current.
+        recommended=True,
     ),
     ProviderSpec(
         id="codex",
@@ -913,6 +914,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
+        id="openai-live-subscription",
+        label="OpenAI GPT-Live (ChatGPT subscription)",
+        tier="realtime",
+        configuration_surface="live",
+        auth_mode="codex",
+        secret_keys=(),
+        dashboard_url=None,
+        experimental=True,
+        hidden=True,
+        credential_help=(
+            "Uses the selected ChatGPT account for voice and reasoning without API-key fallback."
+        ),
+    ),
+    ProviderSpec(
         id="gemini-live",
         label="Gemini Live",
         tier="realtime",
@@ -945,6 +960,29 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "the next realtime provider instead of failing the call."
         ),
         alt_credential=_VERTEX_PROJECT_PATH,
+    ),
+    # The Jarvis-owned local voice engine (ADR-0037): one child process per
+    # app, speech on the CPU, answers from the local Ollama server. Keyless and
+    # on-device; the card carries its own setup, self-test and status
+    # (``voice_engine`` in the provider payload). Experimental until the P2
+    # gate in docs/local-live-voice-rebuild.md passes.
+    ProviderSpec(
+        id="local-voice",
+        label="Local voice (on this machine)",
+        tier="realtime",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        signup_url=None,
+        credential_help=(
+            "Voice calls that run entirely on this machine: no API key, no "
+            "cloud account, no audio leaving the device. Setup downloads a "
+            "speech engine and its models (about 1.5 GB) plus a language model "
+            "for the local Ollama server, then proves the whole chain with a "
+            "short self-test. A graphics card makes answers faster; without "
+            "one it still works, just slower."
+        ),
+        experimental=True,
     ),
     # The local option this tier lacked entirely: every other realtime card
     # bills a hosted account, so an install running brain, recognizer and voice

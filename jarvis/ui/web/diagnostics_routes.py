@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from time import perf_counter_ns
 from typing import Any
 
 from fastapi import APIRouter
@@ -236,12 +237,13 @@ async def event_loop_lag() -> dict[str, Any]:
     spammed by a rescheduling callback (the busy-loop signature) shows
     consistently elevated lag.
     """
-    loop = asyncio.get_running_loop()
     lags_ms: list[float] = []
     for _ in range(4):
-        t0 = loop.time()
+        # On Python 3.12/Windows loop.time() can have 15.625 ms resolution,
+        # rounding every healthy sub-millisecond yield down to zero.
+        t0 = perf_counter_ns()
         await asyncio.sleep(0)
-        lags_ms.append((loop.time() - t0) * 1000.0)
+        lags_ms.append((perf_counter_ns() - t0) / 1_000_000.0)
     return {"lags_ms": lags_ms, "max_ms": max(lags_ms)}
 
 

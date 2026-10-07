@@ -7,6 +7,36 @@ from typing import Any
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
 
+def _take_checked_screenshot() -> str:
+    """Save the primary monitor to a PNG and return its path (blocking: a worker thread).
+
+    The screenshot is an optional extra of this check, not a gesture of its own: the
+    state is read silently (never asks) and a missing grant degrades with the honest,
+    prohibitive permission text. The grabbed pixels are checked too, because macOS
+    hands back the wallpaper, not an error, for a capture it does not allow.
+    """
+    import mss  # type: ignore[import-not-found]  # noqa: PLC0415
+    import mss.tools  # noqa: PLC0415
+
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    blocked_state = screen_access.screen_recording_state()
+    if not screen_access.state_allows_capture(blocked_state):
+        raise screen_access.refusal_for_state(blocked_state)
+
+    with mss.mss() as sct:
+        raw = sct.grab(sct.monitors[1])
+    screen_access.verify_frame_is_real(
+        (int(raw.size[0]), int(raw.size[1])),
+        raw.rgb,
+        feature="screen_context",
+        interactive=False,
+    )
+    path = "monitor-1.png"  # what ``mss.shot()`` writes for the primary monitor
+    mss.tools.to_png(raw.rgb, raw.size, output=path)
+    return path
+
+
 class VerifyLocalhostTool:
     name = "verify_localhost"
     description = (
@@ -73,23 +103,10 @@ class VerifyLocalhostTool:
 
         if take_screenshot:
             try:
-                import mss  # type: ignore[import-not-found]
-                import mss.tools
-
-                from jarvis.vision.screenshot import (  # noqa: PLC0415
-                    warn_if_screen_recording_denied,
-                )
-
-                if warn_if_screen_recording_denied():
-                    raise PermissionError(
-                        "macOS Screen Recording permission is not granted. "
-                        "Grant it in Personal Jarvis > Settings > Permissions "
-                        "and retry."
-                    )
-
-                with mss.mss() as sct:
-                    sct_img = sct.shot()
-                    artifacts.append({"screenshot_path": sct_img})
+                # One worker-thread hop for the state read (it may enumerate
+                # windows), the grab and the pixel check: none of it on the loop.
+                path = await asyncio.to_thread(_take_checked_screenshot)
+                artifacts.append({"screenshot_path": path})
             except Exception as exc:  # noqa: BLE001
                 artifacts.append({"screenshot_error": str(exc)})
 

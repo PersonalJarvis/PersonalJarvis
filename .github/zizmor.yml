@@ -1,0 +1,29 @@
+# zizmor configuration. Every ignore names the exact location and the reason
+# it is safe; a new finding anywhere else still surfaces.
+rules:
+  dangerous-triggers:
+    ignore:
+      # Runs on a merged PR but checks out `main` only and executes nothing
+      # from the pull request; the push token reaches the commit step alone.
+      - contributors.yml
+      # Both react to completed runs of this repository's own workflows and
+      # act on main / release tags; neither checks out or runs PR head code.
+      - merge-train.yml
+      - release-finalize.yml
+      # Reacts to completed CI runs on main only (repository, branch and event
+      # checked in `if:` and again by flaky_report.py vet-run), checks out
+      # `main`, and reads the downloaded shard reports as JSON data.
+      - flaky-tests.yml
+  artipacked:
+    ignore:
+      # These jobs push commits or tags with git after checkout, so the
+      # checkout must keep its credential. Neither uploads the workspace.
+      - merge-train.yml
+      - release-cut.yml
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+        # The SLSA generator rejects SHA refs by design; its builder identity
+        # is verified independently (scripts/ci/check_workflow_policy.py).
+        "slsa-framework/slsa-github-generator/*": ref-pin

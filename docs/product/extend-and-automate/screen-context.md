@@ -8,7 +8,7 @@ order: 9
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-30
+last_reviewed: 2026-10-02
 phase: "-"
 audience: end-user
 tags: [screen-context, vision, privacy, accessibility, ocr, desktop]
@@ -22,8 +22,10 @@ name; this guide says “your assistant” so it fits every chosen name.
 ## Before You Start
 
 - Connect a provider that can inspect images.
-- Open **Settings > Permissions** and grant the operating-system permissions
-  listed for your platform.
+- On macOS, nothing needs setting up first: the first time you ask your
+  assistant to look at the screen, macOS asks for **Screen Recording**.
+  If you say no, Jarvis shows one short message with a button that opens the
+  right System Settings pane.
 - Move private information away or add a privacy rule before testing. Redaction
   cannot recognize every secret in arbitrary pixels.
 
@@ -103,18 +105,22 @@ changing settings also clears captures made under old rules.
 | Windows desktop | Supported without a separate screen-recording grant | Supported through Windows UI Automation |
 | macOS desktop | Requires **Screen Recording** permission | Requires **Accessibility** permission; the image can still work without it |
 | Linux with X11 | Supported when the desktop capture dependency is available | Uses an active AT-SPI session |
-| Linux with Wayland | Unavailable until a supported desktop-portal capture backend is installed | Does not make global capture available |
+| Linux with Wayland | Unavailable; sign in with an X11 session (for example GNOME on Xorg) | Does not make global capture available |
 | Headless server | Unavailable because there is no addressable display | Not applicable |
 
-Missing support produces a refusal, not a blank screenshot. Reopen the macOS
-app if the system requests it after a permission change.
+Missing support produces a refusal, not a blank screenshot. On macOS, the
+capture you start is the moment macOS asks for Screen Recording; if you decline,
+the capture is refused with a message and one click opens the right System
+Settings pane. Reopen the app only if the message says macOS needs it after a
+permission change. Reading on-screen text never opens a dialog: without
+Accessibility the image still works and the text is simply left out.
 
 ## How It Fits Together
 
 | Related feature | Relationship to Screen Context |
 |---|---|
 | [Computer Use](computer-use) | Screen Context reads once without action tools. Computer Use performs desktop actions separately. |
-| [Permissions](permissions) | Shows and requests macOS Screen Recording and Accessibility access; Screen Context checks the current state on every capture. |
+| [Permissions](permissions) | Explains when macOS asks for Screen Recording and Accessibility access and how to start over; Screen Context checks the current state on every capture and asks only for a capture you started. |
 | [Providers and API Keys](providers-and-api-keys) | A vision-capable provider interprets the filtered image. |
 | [CLI Reference](cli-reference) | The same authenticated local API is available through the `screen-context` group: check readiness, classify wording without capture, request one capture, consume or discard it, and manage settings. |
 
@@ -136,7 +142,7 @@ rules, the announcement, single use, and expiry.
 |---|---|---|
 | Your assistant asks whether it should look | The wording was ambiguous | Confirm on the same conversation, or repeat with “screen” or “this window” |
 | The wrong monitor was captured | The pointer was on another monitor when the request triggered | Place the pointer on the intended monitor and ask again, or name the focused window |
-| Capture is unavailable on macOS | Screen Recording permission is missing or was revoked | Grant it under **Privacy & Security**, then reopen the app if macOS requires it |
+| Capture is unavailable on macOS | Screen Recording was declined or revoked | Use **Open System Settings** on the message Jarvis shows, or open **Privacy & Security** in System Settings yourself, then reopen the app if asked |
 | The image works but visible text is missing | Accessibility permission, AT-SPI, or usable accessibility nodes are absent | Fix that platform support; optionally install and enable OCR |
 | A privacy rule blocks a safe window | A denylist fragment or custom pattern is too broad | Narrow the entry, save, and retry only after checking what it matches |
 | A capture disappears before API consumption | It was already consumed, discarded, or its retention time expired | Make a fresh explicit request; single-use captures cannot be recovered |

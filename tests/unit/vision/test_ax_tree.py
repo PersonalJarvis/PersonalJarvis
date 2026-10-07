@@ -145,34 +145,70 @@ def test_real_pyobjc_axvalue_round_trip_without_tcc() -> None:
     assert _ax_size(size) == (800, 600)
 
 
-def test_ax_permission_uses_unified_runtime_identity_gate(monkeypatch) -> None:
-    from jarvis.platform.permissions import PermissionId
+def _macos_accessibility(monkeypatch, *, granted: bool):
+    """A darwin FakeTCC behind the REAL port; the process-wide service reads it.
 
-    seen = []
-    port = types.SimpleNamespace(
-        runtime_access_granted=lambda permission: seen.append(permission) or False,
+    The Accessibility dialog (if anything asks) stays on screen unanswered, so an
+    unexpected prompt shows up as a ``request`` in the call log. Nothing here ran
+    on a real Mac; FakeTCC models the OS.
+    """
+    from tests.fakes.fake_tcc import DialogPolicy, FakeTCC, install_port
+
+    tcc = FakeTCC(
+        granted=("accessibility",) if granted else (),
+        default_policy=DialogPolicy.NEVER_ANSWERED,
     )
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: port,
-    )
+    install_port(monkeypatch, tcc.port("darwin"))
+    return tcc
+
+
+def test_ax_read_is_a_silent_check_of_the_live_accessibility_grant(monkeypatch) -> None:
+    tcc = _macos_accessibility(monkeypatch, granted=False)
 
     assert AXTreeSource._ax_is_process_trusted() is False
-    assert seen == [PermissionId.ACCESSIBILITY]
+
+    # A background read degrades; it never asks macOS and never opens a card.
+    assert tcc.requests() == []
+    assert tcc.implicit_prompts() == []
 
 
-def test_ax_permission_reprobes_live_revocation(monkeypatch) -> None:
-    outcomes = iter((True, False))
-    port = types.SimpleNamespace(
-        runtime_access_granted=lambda _permission: next(outcomes),
-    )
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: port,
-    )
+def test_ax_read_reprobes_live_revocation(monkeypatch) -> None:
+    from jarvis.platform.permission_service import get_permission_service
+
+    tcc = _macos_accessibility(monkeypatch, granted=True)
+    assert AXTreeSource._ax_is_process_trusted() is True
+
+    tcc.deny("accessibility")
+    get_permission_service().invalidate()  # a grant is cached for about a second
+
+    assert AXTreeSource._ax_is_process_trusted() is False
+    assert tcc.requests() == []
+
+
+def test_ax_read_off_macos_is_not_gated(monkeypatch) -> None:
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port("linux"))
 
     assert AXTreeSource._ax_is_process_trusted() is True
-    assert AXTreeSource._ax_is_process_trusted() is False
+    tcc.assert_silent()
+
+
+@pytest.mark.asyncio
+async def test_observe_without_the_grant_degrades_and_never_prompts(monkeypatch) -> None:
+    tcc = _macos_accessibility(monkeypatch, granted=False)
+    consulted = {"called": False}
+
+    def _traverser(_depth, _filter):
+        consulted["called"] = True
+        return ("should-not-appear", 0, [])
+
+    obs = await AXTreeSource(traverser=_traverser).observe()
+
+    assert obs.nodes == () and obs.source == "screenshot_only"
+    assert consulted["called"] is False
+    assert tcc.requests() == []
 
 
 def test_secure_ax_field_redacts_value_and_preserves_focus() -> None:

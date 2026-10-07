@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -32,8 +33,28 @@ def _catalog() -> dict[str, Any]:
     return live_catalog()
 
 
+def _area_words(text: str) -> set[str]:
+    return {w for w in re.split(r"[\W_]+", text.casefold()) if w and w not in {"and", "the"}}
+
+
+def _in_area(entries: list[Any], area: str) -> list[Any]:
+    """Entries whose area slug shares a word with the ``area`` hint.
+
+    The area is a hint, never a gate: models pass the human label ("IDE panes
+    and workspaces") instead of the slug ("agentic-ide"), and an exact match
+    then hid every action (live 2026-10-01). No overlap means no filter.
+    """
+    wanted = _area_words(area)
+    if not wanted:
+        return entries
+    matched = [e for e in entries if wanted & _area_words(e.area)]
+    return matched or entries
+
+
 class FindAppActionTool:
     """Search every action of the Jarvis app by keywords."""
+
+    read_only = True
 
     name: str = "find-app-action"
     risk_tier: str = "safe"
@@ -64,8 +85,7 @@ class FindAppActionTool:
             return ToolResult(
                 success=False, output=None, error="The app's actions are not available here."
             )
-        area = str(args.get("area") or "").strip().lower()
-        entries = [e for e in catalog.values() if not area or e.area.lower() == area]
+        entries = _in_area(list(catalog.values()), str(args.get("area") or ""))
         policy = load_policy()
         descriptors = [
             SupervisorToolDescriptor(
@@ -109,7 +129,7 @@ class RunAppActionTool:
         "Run one Jarvis app action found with find-app-action. Pass its action_id and "
         "params: path and query parameters by name, the request body under 'body'. "
         "Report the result the tool returns, never your assumption; a blocked action "
-        "stays blocked — tell the user it is off in Settings > Jarvis actions."
+        "stays blocked — tell the user it is switched off for Jarvis."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -136,7 +156,7 @@ class RunAppActionTool:
             return "safe"  # execute refuses an unknown id without side effects
         tier = effective_tier(entry)
         if tier == "block":
-            history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+            history.record(entry.id, "blocked", "Blocked by the action policy", via=self.name)
         return tier
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
@@ -154,7 +174,7 @@ class RunAppActionTool:
         if effective_tier(entry) == "block":
             # The executor already refuses a blocked tier; this keeps a direct
             # call honest too.
-            history.record(entry.id, "blocked", "Blocked in Jarvis actions", via=self.name)
+            history.record(entry.id, "blocked", "Blocked by the action policy", via=self.name)
             return ToolResult(
                 success=False, output=None, error="The user blocked this action for Jarvis."
             )
@@ -169,7 +189,26 @@ class RunAppActionTool:
         query = {k: params.pop(k) for k in list(params) if k in entry.query_params}
         body = params.pop("body", None)
         if body is None and entry.has_body and params:
-            body = params  # a model that flattened the body still gets it through
+            body, params = params, {}  # a model that flattened the body still gets it through
+        # A misspelled name used to be dropped and the action ran on defaults.
+        body_fields = (entry.parameters.get("properties", {}).get("body") or {}).get("properties")
+        unknown = sorted(params) + (
+            [f"body.{k}" for k in body if k not in body_fields]
+            if isinstance(body, dict) and body_fields
+            else []
+        )
+        if unknown:
+            valid = [*entry.path_params, *entry.query_params]
+            body_names = [f"body.{k}" for k in body_fields or ()]
+            valid += body_names or (["body"] if entry.has_body else [])
+            return ToolResult(
+                success=False,
+                output={"action_id": entry.id, "executed": False},
+                error=(
+                    f"Unknown parameter(s) {', '.join(unknown)} for {entry.title}; nothing ran. "
+                    f"Valid: {', '.join(valid) or 'none'}."
+                ),
+            )
         status, data = await self._request(entry.method, path, query, body)
         if status is None:
             history.record(entry.id, "failed", str(data), via=self.name)
@@ -221,6 +260,10 @@ class RunAppActionTool:
         except httpx.HTTPError as exc:
             # The transport error is returned to the model as the tool result.
             return None, f"transport error: {exc}"
+        kind = resp.headers.get("content-type", "")
+        if resp.content and not kind.startswith(("application/json", "text/")):
+            # An image or download read as text is noise; say what came back.
+            return resp.status_code, {"content_type": kind, "bytes": len(resp.content)}
         try:
             data = resp.json() if resp.content else None
         except ValueError:
@@ -233,7 +276,33 @@ def _trim(data: Any) -> Any:
     from jarvis.plugins.tool.app_command import _without_snapshots
 
     data = _without_snapshots(data)
-    text = json.dumps(data, ensure_ascii=False, default=str)
-    if len(text) <= _MAX_RESPONSE_CHARS:
+    if _size(data) <= _MAX_RESPONSE_CHARS:
         return data
-    return {"truncated": True, "preview": text[:_MAX_RESPONSE_CHARS]}
+    # Shorten structurally so the model still gets valid JSON: long lists keep
+    # their first items plus a count, long strings their start. Cutting the
+    # serialized text mid-item handed over broken data.
+    for keep in (20, 8, 3, 1):
+        shortened = _shorten(data, keep)
+        if _size(shortened) <= _MAX_RESPONSE_CHARS:
+            return {"truncated": True, "data": shortened}
+    return {
+        "truncated": True,
+        "note": "The response is too large; narrow the request with its parameters.",
+    }
+
+
+def _size(data: Any) -> int:
+    return len(json.dumps(data, ensure_ascii=False, default=str))
+
+
+def _shorten(data: Any, keep: int, depth: int = 0) -> Any:
+    if depth > 6:
+        return "..."
+    if isinstance(data, list):
+        items = [_shorten(item, keep, depth + 1) for item in data[:keep]]
+        return items + ([f"... {len(data) - keep} more"] if len(data) > keep else [])
+    if isinstance(data, dict):
+        return {k: _shorten(v, keep, depth + 1) for k, v in data.items()}
+    if isinstance(data, str) and len(data) > 200 * keep:
+        return data[: 200 * keep] + "..."
+    return data

@@ -1,4 +1,7 @@
-/** The selected execution occupies the agent's chat lane and loads only on navigation. */
+/**
+ * The selected routine run or agent conversation occupies the agent's chat
+ * lane and loads only on navigation.
+ */
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Send, Square } from "lucide-react";
 import { AgentTimeline } from "@/components/agentchat/AgentTimeline";
@@ -23,9 +26,9 @@ export default function RoutineChat({ target, onClose }: { target: RoutineChatTa
       <div className="min-w-0 flex-1"><h3 className="truncate text-sm font-medium">{target.title}</h3>
         <time className="text-[11px] text-muted-foreground" dateTime={new Date(target.timestamp).toISOString()}>{new Date(target.timestamp).toLocaleString()}</time>
       </div>
-      <span className="text-[11px] text-muted-foreground">{t("society.routine_detail.background_chat")}</span>
+      <span className="text-[11px] text-muted-foreground">{t(target.kind === "conversation" ? "society.conversations.badge" : "society.routine_detail.background_chat")}</span>
     </header>
-    {target.legacy ? <HistoricalExecution target={target} /> : <LiveExecution sessionId={target.sessionId} />}
+    {target.legacy ? <HistoricalExecution target={target} /> : <LiveExecution sessionId={target.sessionId} conversation={target.kind === "conversation"} />}
   </section>;
 }
 
@@ -62,9 +65,10 @@ function HistoricalExecution({ target }: { target: RoutineChatTarget }) {
   </>;
 }
 
-function LiveExecution({ sessionId }: { sessionId: string }) {
+function LiveExecution({ sessionId, conversation = false }: { sessionId: string; conversation?: boolean }) {
   const t = useT();
   const label = (key: string) => t(`society.routine_detail.${key}`);
+  const followUp = conversation ? t("society.conversations.follow_up") : label("follow_up");
   const [store] = useState(() => createAgentChatStore("society", "routine"));
   const timeline = store((state) => state.timeline);
   const visibleItems = useMemo(() => displayItems(timeline.items), [timeline.items]);
@@ -91,7 +95,7 @@ function LiveExecution({ sessionId }: { sessionId: string }) {
       if (!message.trim() || !ready || running) return;
       void store.getState().send(message).then(() => { if (!store.getState().lastError) setMessage(""); });
     }}>
-      <textarea className="min-w-0 flex-1 rounded-lg border border-border bg-background p-2 text-sm" rows={2} aria-label={label("follow_up")} placeholder={label("follow_up")} value={message} onChange={(event) => setMessage(event.target.value)} />
+      <textarea className="min-w-0 flex-1 rounded-lg border border-border bg-background p-2 text-sm" rows={2} aria-label={followUp} placeholder={followUp} value={message} onChange={(event) => setMessage(event.target.value)} />
       {running ? <button type="button" className="rounded p-2 hover:bg-secondary" aria-label={label("stop_run")} onClick={() => void store.getState().cancel()}><Square size={16} /></button>
         : <button type="submit" className="rounded p-2 hover:bg-secondary disabled:opacity-50" disabled={!ready || !message.trim()} aria-label={label("send")}><Send size={16} /></button>}
     </form>

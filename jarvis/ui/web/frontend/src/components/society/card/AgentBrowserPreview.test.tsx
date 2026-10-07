@@ -13,14 +13,35 @@ vi.mock("@/i18n", () => ({
     "society.browser_live.live": "Live",
     "society.browser_live.off_hint": "Starts when {0} needs it",
     "society.browser_live.open": "Open browser",
+    "society.browser_live.open_here": "Open here",
+    "society.browser_live.moved": "The shared browser is open for {0} now.",
+    "society.browser_live.busy_task": "{0} is using the shared browser for a task until {0} is done.",
+    "society.browser_live.stop_holder": "Stop {0}'s task",
+    "society.browser_profiles.chrome_offline": "Chrome disconnected",
+    "society.browser_profiles.profile_unavailable": "Profile disconnected — choose a profile",
+    "society.browser_profiles.title": "Browser profiles",
+    "society.browser_profiles.sign_in_chrome": "Sign in directly in Chrome",
+    "society.browser_profiles.preview_paused": "Sign in directly in Chrome. The preview is paused.",
+    "society.browser_live.return_control": "Return control",
+    "society.browser_live.repair": "Repair browser",
+    "society.browser_profiles.google_signin_rejected": "Google declined this sign-in",
+    "society.browser_profiles.google_signin_recovery": "Sign in yourself in regular Chrome, then connect its profile.",
+    "society.browser_profiles.connect_supported_chrome": "Connect regular Chrome",
+    "society.browser_profiles.google_signin_help": "Google sign-in help",
+    "society.browser_profiles.inline_login": "Sign in",
+    "society.browser_profiles.inline_login_finish": "Hand back to agent",
+    "society.browser_profiles.inline_login_hint": "Sign in here in Chrome.",
+    "society.browser_profiles.inline_login_active": "Regular Chrome — manual browsing",
+    "society.browser_profiles.inline_login_not_ready": "Regular Chrome is not ready",
   } as Record<string, string>)[key] ?? key,
 }));
 const { control, state, view, browser } = vi.hoisted(() => ({
   control: vi.fn(),
   view: vi.fn(),
-  browser: { open: true },
-  state: { connected: true, ready: true, fullWindow: false, manual: false, running: false,
-    url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "" },
+  browser: { open: true, mode: "own", connected: true, profileName: "" },
+  state: { connected: true, ready: true, fullWindow: false, extendedInput: false, previewPaused: false, loginMode: false, loginReady: false, loginAvailable: false, manual: false, running: false,
+    url: "https://example.com", target: "one", tabs: [{ id: "one", url: "https://example.com" }], error: "",
+    busy: undefined as undefined | { holderId: string; holderName: string; running: boolean }, movedTo: "" },
 }));
 vi.mock("./useBrowserView", () => ({
   useBrowserView: (agentId: string, enabled: boolean) => {
@@ -30,7 +51,11 @@ vi.mock("./useBrowserView", () => ({
 }));
 vi.mock("../cardData", () => ({
   useBrowserInstallStatus: () => ({ data: { installed: true, running: false } }),
-  useAgentBrowserOpen: () => ({ data: browser.open }),
+  useAgentBrowserOpen: () => ({ data: browser }),
+}));
+vi.mock("../browser/BrowserProfilesDialog", () => ({
+  default: ({ agentId, connectChrome }: { agentId?: string; connectChrome?: boolean }) =>
+    <div data-testid="chrome-recovery-dialog">{agentId}:{String(connectChrome)}</div>,
 }));
 const agent = { agentId: "scout", name: "Scout" } as SocietyAgent;
 function mount() {
@@ -40,9 +65,101 @@ function mount() {
 }
 afterEach(() => {
   cleanup(); control.mockClear(); view.mockClear();
-  state.manual = false; state.fullWindow = false; browser.open = true;
+  state.manual = false; state.fullWindow = false; state.extendedInput = false; state.previewPaused = false; state.ready = true; state.error = ""; browser.open = true;
+  browser.mode = "own"; browser.connected = true; browser.profileName = "";
+  state.url = "https://example.com";
+  state.loginMode = false; state.loginReady = false; state.loginAvailable = false;
+  state.busy = undefined; state.movedTo = "";
+  vi.unstubAllGlobals();
 });
 describe("live agent browser", () => {
+  test("reload and restart remain visible in the compact full-window login view", () => {
+    state.manual = true; state.fullWindow = true;
+    state.loginMode = true; state.loginReady = true; state.loginAvailable = true;
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "society.browser_live.reload" }));
+    expect(control).toHaveBeenCalledWith("reload");
+    expect((screen.getByRole("button", { name: "society.browser_live.restart" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  test("restart stays enabled when the stream is disconnected and no frame is ready", () => {
+    state.connected = false; state.ready = false;
+    try {
+      mount();
+      expect((screen.getByRole("button", { name: "society.browser_live.restart" }) as HTMLButtonElement).disabled).toBe(false);
+      expect((screen.getByRole("button", { name: "society.browser_live.reload" }) as HTMLButtonElement).disabled).toBe(true);
+    } finally {
+      state.connected = true;
+    }
+  });
+  test("a rejected Google login recovers once inside the browser already controlled by its viewer", async () => {
+    state.url = "https://accounts.google.com/v3/signin/rejected?flowName=fixture";
+    state.manual = true;
+    state.loginAvailable = true;
+    const view = mount();
+    expect(screen.getByRole("alert").textContent).toContain("Google declined this sign-in");
+    expect(screen.getByRole("link", { name: "Google sign-in help" }).getAttribute("href")).toBe("https://support.google.com/accounts/answer/7675428");
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: true, login: true });
+    expect(control).toHaveBeenCalledTimes(1);
+    view.rerender(<QueryClientProvider client={new QueryClient()}><AgentBrowserPreview agent={agent} /></QueryClientProvider>);
+    expect(control).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("chrome-recovery-dialog")).toBeNull();
+  });
+  test("watching a rejected agent page never automatically replaces its browser", () => {
+    state.url = "https://accounts.google.com/signin/rejected";
+    state.loginAvailable = true;
+    mount();
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: true, login: true });
+  });
+  test("older workers cannot receive an unsupported sign-in transition", () => {
+    state.url = "https://accounts.google.com/signin/rejected";
+    mount();
+    const button = screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(control).not.toHaveBeenCalled();
+  });
+  test("inline sign-in keeps the canvas and explicitly returns the profile to the agent", () => {
+    state.manual = true; state.loginMode = true; state.loginReady = true; state.loginAvailable = true;
+    mount();
+    expect(screen.getByText("Sign in here in Chrome.")).toBeTruthy();
+    expect(screen.getByLabelText("Live browser of Scout")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Hand back to agent" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: false, login: false });
+  });
+  test("an unavailable profile blocks live access and offers profile selection without open or repair", () => {
+    browser.mode = "unavailable";
+    state.error = "Previous browser error";
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", false);
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Profile disconnected — choose a profile");
+    expect(screen.queryByRole("button", { name: "Open browser" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+    expect((screen.getByRole("button", { name: "Browser profiles" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Take control" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("Live browser of Scout"));
+    fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
+    expect(control).not.toHaveBeenCalled();
+  });
+  test("Chrome metadata shows the assigned profile and disables opening while disconnected", () => {
+    browser.mode = "chrome"; browser.connected = false; browser.open = false; browser.profileName = "Work Chrome";
+    mount();
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Work Chrome · Chrome disconnected");
+    expect((screen.getByRole("button", { name: "Open browser" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+  });
+  test("Chrome manual login pauses mirrored input while return control stays available", () => {
+    browser.mode = "chrome"; state.previewPaused = true; state.ready = false; state.manual = true;
+    mount();
+    expect(screen.getByText("Sign in directly in Chrome. The preview is paused.")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Return control" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
+    expect(control).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Return control" }));
+    expect(control).toHaveBeenCalledWith("takeover", { enabled: false });
+  });
   test("opening the card never launches a browser the agent is not using", () => {
     browser.open = false;
     mount();
@@ -50,6 +167,33 @@ describe("live agent browser", () => {
     expect(screen.getByTestId("agent-browser-preview").textContent).toContain("Starts when Scout needs it");
     fireEvent.click(screen.getByTestId("agent-browser-open"));
     expect(view).toHaveBeenLastCalledWith("scout", true);
+  });
+  test("a shared browser held by another agent's task names it and can stop that task", () => {
+    const fetch = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    state.ready = false; state.error = "";
+    state.busy = { holderId: "juno", holderName: "Juno", running: true };
+    mount();
+    expect(screen.getByRole("status").textContent).toContain("Juno is using the shared browser for a task until Juno is done.");
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop Juno's task" }));
+    expect(fetch).toHaveBeenCalledWith("/api/society/agents/juno/browser/cancel", expect.objectContaining({ method: "POST" }));
+  });
+  test("a shared browser moved to another agent stops this view until opened here again", () => {
+    browser.open = false;
+    state.movedTo = "Wren";
+    mount();
+    expect(view).toHaveBeenLastCalledWith("scout", false);
+    expect(screen.getByTestId("agent-browser-preview").textContent).toContain("The shared browser is open for Wren now.");
+    state.movedTo = "";
+    fireEvent.click(screen.getByRole("button", { name: "Open here" }));
+    expect(view).toHaveBeenLastCalledWith("scout", true);
+  });
+  test("a session error never offers a runtime repair that cannot fix it", () => {
+    state.error = "Browser stream: TimeoutError";
+    mount();
+    expect(screen.getByText("Browser stream: TimeoutError")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Repair browser" })).toBeNull();
   });
   test("a browser the agent already runs is shown straight away", () => {
     mount();
@@ -98,5 +242,36 @@ describe("live agent browser", () => {
     mount();
     fireEvent.keyDown(screen.getByLabelText("Live browser of Scout"), { key: "x" });
     expect(control).toHaveBeenCalledWith("text", { text: "x" });
+  });
+  test("a failed transition never labels the automated browser as regular Chrome", () => {
+    state.manual = true; state.loginMode = true; state.loginAvailable = true; state.ready = false;
+    mount();
+    expect(screen.getAllByText(/Regular Chrome is not ready/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Sign in here in Chrome.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+  });
+  test("native menus receive right click, double click and scroll at the shown frame position", () => {
+    state.manual = true; state.fullWindow = true; state.extendedInput = true;
+    mount();
+    const canvas = screen.getByLabelText("Live browser of Scout") as HTMLCanvasElement;
+    canvas.width = 1600; canvas.height = 1000;
+    canvas.dataset.browserGeometryId = "profile-popup";
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1600, height: 1000 } as DOMRect);
+    fireEvent.contextMenu(canvas, { clientX: 1500, clientY: 70 });
+    expect(control).toHaveBeenLastCalledWith("click", { x: 1500, y: 70, geometry_id: "profile-popup", button: "right" });
+    fireEvent.click(canvas, { clientX: 1500, clientY: 70, detail: 2 });
+    expect(control).toHaveBeenLastCalledWith("click", { x: 1500, y: 70, geometry_id: "profile-popup", count: 2 });
+    fireEvent.wheel(canvas, { clientX: 1500, clientY: 180, deltaY: 80 });
+    expect(control).toHaveBeenLastCalledWith("scroll", { x: 1500, y: 180, geometry_id: "profile-popup", dx: 0, dy: 80 });
+  });
+  test("an older running worker never receives hover disguised as a click or unsupported mouse buttons", () => {
+    state.manual = true; state.fullWindow = true;
+    mount();
+    const canvas = screen.getByLabelText("Live browser of Scout") as HTMLCanvasElement;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1280, height: 800 } as DOMRect);
+    fireEvent.mouseMove(canvas, { clientX: 100, clientY: 70 });
+    fireEvent.contextMenu(canvas, { clientX: 100, clientY: 70 });
+    fireEvent.click(canvas, { clientX: 100, clientY: 70, detail: 2 });
+    expect(control.mock.calls).toEqual([["click", { x: 100, y: 70 }]]);
   });
 });

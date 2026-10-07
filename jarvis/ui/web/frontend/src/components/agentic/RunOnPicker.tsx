@@ -91,7 +91,7 @@ export function RunOnPicker({
                   {option.id && (
                     <span
                       aria-hidden="true"
-                      className={cn("h-1.5 w-1.5 shrink-0 rounded-full", option.online ? "bg-success" : "bg-foreground-faint")}
+                      className={cn("h-1.5 w-1.5 shrink-0 rounded-full", option.online ? "bg-accent" : "bg-foreground-faint")}
                     />
                   )}
                 </span>

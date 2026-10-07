@@ -39,7 +39,7 @@ describe("what the badge shows", () => {
     expect(badge.getAttribute("data-icon")).toBe("check");
     // Life, not ink. A status painted in --foreground is the same colour as
     // every label around it and so reads as one.
-    expect(badge.className).toContain("text-success");
+    expect(badge.className).toContain("text-accent");
   });
 
   it("hollows the dot — rather than recolouring it — for an unused pane", () => {
@@ -50,7 +50,7 @@ describe("what the badge shows", () => {
     const badge = pill({ status: "live", activity: "waiting", worked: false });
     expect(badge.textContent).toBe("");
     expect(badge.getAttribute("data-icon")).toBe("ring");
-    expect(badge.className).toContain("text-success");
+    expect(badge.className).toContain("text-accent");
   });
 
   it("keeps a colour of its own for the one state that wants something from you now", () => {
@@ -139,7 +139,7 @@ describe("what a screen reader hears", () => {
   it("carries the word and the sentence behind it", () => {
     const badge = pill({ status: "live", activity: "working" });
     expect(badge.getAttribute("aria-label")).toContain("working");
-    expect(badge.getAttribute("aria-label")).toContain("screen is still");
+    expect(badge.getAttribute("aria-label")).toContain("task is still in progress");
   });
 });
 
@@ -155,5 +155,15 @@ describe("the state behind the word", () => {
     expect(paneActivityState("exited", "exited")).toBe("exited");
     expect(paneActivityState("error", "")).toBe("error");
     expect(paneActivityState("pending", "")).toBe("starting");
+  });
+});
+
+
+describe("verified task outcome", () => {
+  it.each(["stopped", "unknown"] as const)("does not turn %s into a completed task", (activity) => {
+    const badge = pill({ status: "live", activity, worked: true });
+    expect(badge.getAttribute("data-icon")).toBe("ring");
+    expect(paneActivityState("live", activity, true)).toBe(activity);
+    expect(badge.className).toContain("text-muted-foreground");
   });
 });

@@ -22,6 +22,16 @@ from .notebook import Entry, change, parse, render
 
 FILES = {"memory": "MEMORY.md", "user": "USER.md"}
 PROMPT_BUDGETS = {"memory": 8_000, "user": 4_000}
+#: A notebook's hard size. Past it, an agent or its unattended review must
+#: consolidate (replace or remove) before it may add. Only a write proven to
+#: carry the person's own explicit request (``allow_over_limit``, decided by
+#: the caller from trusted turn provenance, never from model arguments) may
+#: pass it, so nothing they asked for is lost.
+HARD_LIMITS = {target: budget * 2 for target, budget in PROMPT_BUDGETS.items()}
+
+
+class NotebookFull(ValueError):
+    """An add would push a notebook past :data:`HARD_LIMITS`."""
 _PROFILE = re.compile(
     r"^(?:the user(?:'s| is | prefers | wants | manages | develops | works | lives )|"
     r"user(?:'s| prefers | wants )|i (?:am |prefer |want )|my (?:name|email|timezone|pronouns)|"
@@ -101,7 +111,13 @@ def _recover(folder: Path, journal: Path) -> None:
     for item in plan["legacy"]:
         legacy = folder / item["name"]
         canonical = folder / ("USER.md" if item["name"].lower() == "user.md" else "MEMORY.md")
-        if legacy.is_file() and not legacy.samefile(canonical):
+        if legacy.is_file() and legacy.samefile(canonical):
+            # Replacing content can retain the old directory-entry spelling
+            # on case-insensitive filesystems. Rename that same file explicitly;
+            # its original content is already preserved in the migration backup.
+            if legacy.name != canonical.name:
+                os.replace(legacy, canonical)
+        elif legacy.is_file():
             if _hash(_read(legacy)) != item["hash"]:
                 raise ValueError("Legacy memory changed during migration; originals were preserved")
             os.replace(legacy, folder / f".legacy-{item['name']}-{item['hash']}.bak")
@@ -207,7 +223,20 @@ def edit_book(
                 raise ValueError("Identify an existing entry in exactly one memory target")
             target = matches[0]
         target = target or classify(text)
+        allow_over_limit = bool(options.pop("allow_over_limit", False))
         updated = change(entries[target], text, **options)
+        if (
+            options.get("operation", "add") == "add"
+            and not allow_over_limit
+            and updated != entries[target]
+        ):
+            size = sum(len(entry.text) + 3 for entry in updated)
+            if size > HARD_LIMITS[target]:
+                raise NotebookFull(
+                    f"{FILES[target]} is full ({size - len(text) - 3}/{HARD_LIMITS[target]} "
+                    "characters). Consolidate first: replace overlapping entries with one "
+                    "merged entry or remove obsolete ones, then add this."
+                )
         before = documents[target]
         changed = updated != entries[target]
         after = _document(agent, target, updated, before) if changed else before

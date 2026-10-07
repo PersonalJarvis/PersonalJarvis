@@ -678,6 +678,8 @@ class _EventLog:
         #: A finished thought waits for the NEXT record's timestamp, which is
         #: the only place its duration can be read from.
         self._thought: tuple[str, str, int] | None = None
+        # The event a message typed mid-turn became, until anything follows it.
+        self._queued_event: dict[str, Any] | None = None
 
     # ----------------------------------------------------------------- core
     def _emit(self, kind: str, payload: dict[str, Any], ts: int) -> None:
@@ -743,12 +745,22 @@ class _EventLog:
         self.turn_id = None
 
     # -------------------------------------------------------------- records
-    def user(self, text: str, ts: int) -> None:
+    def user(self, text: str, ts: int, *, queued: bool = False) -> None:
         body = _clip(text)
         if not body:
             return
+        if (
+            not queued
+            and self.events
+            and self.events[-1] is self._queued_event
+            and self.events[-1]["payload"].get("text") == body
+        ):
+            # The record of a message typed mid-turn, followed by the CLI
+            # submitting that same message as the next prompt: one message.
+            return
         self.close_turn(ts)
         self._emit("user_message", {"text": body}, ts)
+        self._queued_event = self.events[-1] if queued else None
 
     def thinking(self, text: str, message_id: str, ts: int) -> None:
         self._ensure_turn(ts)
@@ -960,6 +972,27 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if mode == "plan":
                 log.permission_mode = "plan"
             continue
+        if kind == "system" and row.get("subtype") == "turn_duration":
+            log.close_turn(_ts_ms(row.get("timestamp")) or log.last_ms)
+            continue
+        if kind == "attachment":
+            # A message the person typed while a turn ran: the CLI records it
+            # here and hands it to the model at its next step (mid-turn
+            # steering). Notices queued by the CLI itself carry another origin.
+            queued = row.get("attachment")
+            if (
+                isinstance(queued, dict)
+                and queued.get("type") == "queued_command"
+                and isinstance(queued.get("origin"), dict)
+                and queued["origin"].get("kind") == "human"
+                and queued.get("commandMode", "prompt") == "prompt"
+            ):
+                log.user(
+                    _spoken(str(queued.get("prompt") or "")),
+                    _ts_ms(row.get("timestamp") or queued.get("timestamp")) or log.last_ms,
+                    queued=True,
+                )
+            continue
         if kind not in ("user", "assistant"):
             continue
         message = row.get("message")
@@ -973,6 +1006,11 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
             if row.get("isMeta"):
                 continue
             if isinstance(content, str):
+                if content in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                }:
+                    log.close_turn(ts, "cancelled")
+                    continue
                 log.user(_spoken(content), ts)
                 continue
             if not isinstance(content, list):
@@ -992,7 +1030,12 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                 elif btype == "text":
                     spoken.append(str(block.get("text") or ""))
             if spoken:
-                log.user(_spoken("\n\n".join(spoken)), ts)
+                if any(text in {
+                    "[Request interrupted by user]", "[Request interrupted by user for tool use]",
+                } for text in spoken):
+                    log.close_turn(ts, "cancelled")
+                else:
+                    log.user(_spoken("\n\n".join(spoken)), ts)
             continue
 
         # assistant
@@ -1007,6 +1050,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
         if isinstance(content, str):
             log.text(content, row_id, ts)
             log.usage(mid, message.get("usage"), ts)
+            if message.get("stop_reason") == "end_turn":
+                log.close_turn(ts)
             continue
         if not isinstance(content, list):
             continue
@@ -1026,6 +1071,8 @@ def _claude_events(session_id: str, home: Path | None, live: bool) -> list[dict[
                     ts,
                 )
         log.usage(mid, message.get("usage"), ts)
+        if message.get("stop_reason") == "end_turn":
+            log.close_turn(ts)
     log.finish()
     return log
 
@@ -1076,7 +1123,9 @@ def _codex_events(session_id: str, home: Path | None, live: bool) -> list[dict[s
         if kind != "response_item":
             continue
         ptype = str(payload.get("type") or "")
-        item_id = str(payload.get("id") or payload.get("call_id") or f"row-{len(log.events)}")
+        # Tool items have different item IDs for the call and its output. Their
+        # shared call_id is the join key (also for custom/code-mode tools).
+        item_id = str(payload.get("call_id") or payload.get("id") or f"row-{len(log.events)}")
         if ptype == "message":
             role = str(payload.get("role") or "")
             content = payload.get("content")

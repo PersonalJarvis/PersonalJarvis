@@ -270,6 +270,7 @@ jarvis/voice/tool_confirmation.py
 #     de/en/es, same speech-input-vocabulary rationale as the wake words ---
 jarvis/safety/explicit_intent.py
 tests/unit/safety/test_explicit_intent.py
+tests/unit/safety/test_workspace_send_intent.py
 
 # --- manager.py + config.py: forensic comments quote the same German runtime
 #     phrase, and config.py carries the evidence-domain voice-intent keyword
@@ -453,10 +454,6 @@ docs/commands-reference.md
 jarvis/brain/artifact_gate.py
 tests/unit/brain/test_artifact_tool_hide.py
 
-# --- Automation templates (2026-08-24): localized card copy (en/de/es) lives
-#     next to each template so ten authors never edit one shared i18n file ---
-jarvis/tasks/templates/*
-
 # --- Dictation Prompt Mode (2026-08-27): the worked de/en example pair in the
 #     system prompt and the closed thanks pool are product output, plus the
 #     fixtures that pin them ---
@@ -471,3 +468,19 @@ tests/unit/memory/test_profile_capture.py
 # --- Agent society (2026-09-01): the focus alias table maps the words people
 #     write in agent descriptions (de/en) onto capability ids ---
 jarvis/society/focus.py
+
+# --- macOS permission-dialog localisation (2026-10): the German and Spanish
+#     Info.plist usage strings live in the single usage-string table next to
+#     the English ones; macOS shows them in its own permission dialogs on a
+#     German or Spanish system (closed product surface: InfoPlist
+#     localisations). The InfoPlist.strings files are generated from it. ---
+jarvis/core/macos_privacy_strings.py
+# --- Local voice engine bench (2026-10-01): the German speech-input corpus the
+#     P0 bench renders, transcribes and sends to the local LLM (ADR-0037) ---
+jarvis/voice_engine/bench/corpus/de.json
+
+# --- Chat history titles (2026-10-02): the closed de/en/es greeting, small-talk
+#     and polite lead-in vocabulary the rules strip from spoken openings, and the
+#     real transcripts that pin it ---
+jarvis/sessions/chat_titles.py
+tests/unit/sessions/test_chat_titles.py

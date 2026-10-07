@@ -3,6 +3,8 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { useT } from "@/i18n";
 import { createSocietyChatGroup, updateSocietyChatGroup, type SocietyChatGroup } from "@/lib/societyChatGroups";
+import { societyDisplayName } from "@/lib/societyDisplayName";
+import { useEventStore } from "@/store/events";
 import type { SocietyAgent } from "../data";
 import { AgentSwatch } from "../AgentSwatch";
 
@@ -16,12 +18,13 @@ interface Props {
 export function ChatGroupDialog({ group, agents, onClose, onSaved }: Props) {
   const t = useT();
   const client = useQueryClient();
+  const assistantName = useEventStore((s) => s.assistantName);
   const [name, setName] = useState(group?.name ?? "");
   const [members, setMembers] = useState<string[]>(group?.members.filter((id) =>
     agents.some((agent) => agent.agentId === id && agent.lifecycle !== "archived")) ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const choices = agents.filter((agent) => agent.tier !== "lead" && agent.lifecycle !== "archived");
+  const choices = agents.filter((agent) => agent.lifecycle !== "archived");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -58,7 +61,7 @@ export function ChatGroupDialog({ group, agents, onClose, onSaved }: Props) {
             {choices.map((agent) => <label key={agent.agentId} className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 hover:bg-secondary">
               <input type="checkbox" checked={members.includes(agent.agentId)} onChange={() => setMembers((current) => current.includes(agent.agentId) ? current.filter((id) => id !== agent.agentId) : [...current, agent.agentId])} />
               <AgentSwatch agent={agent} size={28} />
-              <span className="min-w-0 truncate text-sm">{agent.name}</span>
+              <span className="min-w-0 truncate text-sm">{societyDisplayName(agent, assistantName)}</span>
             </label>)}
           </div>
           {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

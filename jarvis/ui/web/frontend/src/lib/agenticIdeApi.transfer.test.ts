@@ -44,7 +44,7 @@ it("names the chosen place in the target grid", async () => {
 });
 
 it("reads another workspace's shape from its own route", async () => {
-  answer(200, { id: "w2", name: "Blog", layout: null, terminals: [], max_terminals: 16 });
+  answer(200, { id: "w2", name: "Blog", layout: null, terminals: [] });
 
   const view = await fetchWorkspaceLayout("w2");
 

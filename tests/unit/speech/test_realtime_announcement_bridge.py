@@ -128,9 +128,11 @@ async def test_muted_subagent_readback_is_remembered_without_audio() -> None:
 
 @pytest.mark.asyncio
 async def test_dead_session_rejection_preserves_classic_tts_fallback() -> None:
-    """Classic TTS resumes only after the realtime handle is fully removed."""
+    """Classic TTS resumes only after the realtime handle is fully removed,
+    and only while the user's voice session is still open."""
     pipeline, tts, player, realtime = _pipeline(accepted=False)
     pipeline._active_realtime_handle = None
+    pipeline._current_voice_session_id = "fallback-session"
 
     await pipeline._on_announcement(
         AnnouncementRequested(
@@ -224,8 +226,9 @@ async def test_hangup_during_delivery_drops_the_stale_preamble() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hangup_during_delivery_keeps_the_owed_readback() -> None:
-    """An owed completion still punches through, like at the entry gate."""
+async def test_hangup_during_delivery_silences_the_classic_voice() -> None:
+    """A hang-up during delivery leaves no open session, so the classic voice
+    stays silent instead of speaking out of nowhere (2026-10-05)."""
     pipeline, tts, player, _realtime = _pipeline(accepted=False)
     hangup = asyncio.Event()
     pipeline._hangup_event = hangup
@@ -240,8 +243,8 @@ async def test_hangup_during_delivery_keeps_the_owed_readback() -> None:
         )
     )
 
-    assert tts.calls == [("The research report is ready.", "en-US")]
-    assert player.plays == 1
+    assert tts.calls == []
+    assert player.plays == 0
 
 
 @pytest.mark.asyncio

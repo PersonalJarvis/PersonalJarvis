@@ -32,6 +32,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 # Every "still on it" heartbeat phrase across de/en/es — the watchdog now picks
 # a varied, language-resolved reassurance instead of the old fixed
@@ -84,7 +85,7 @@ def _pipeline(bus: EventBus, *, watchdog_delay_s: float) -> SpeechPipeline:
     pipe._player = FakePlayer()  # type: ignore[assignment]
     pipe._spawn_watchdog_delay_s = watchdog_delay_s
     pipe._heartbeat_max_count = 1
-    return pipe
+    return open_classic_voice_session(pipe)
 
 
 @pytest.mark.asyncio
@@ -492,3 +493,47 @@ async def test_heartbeat_still_spoken_while_listening_in_active_session() -> Non
         "in-session (LISTENING) heartbeat must still be spoken"
     )
     assert pipe._deferred_announcements == []
+
+
+# --------------------------------------------------------------------------- #
+# Session scope (live bug 2026-10-02): a beat stays in the call it belongs to  #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_skipped_in_a_voice_session_that_did_not_start_it() -> None:
+    """A mission started outside a call (typed chat) must not reassure a NEW
+    call. Live 2026-10-02 17:58: such a beat entered a fresh live call as
+    commentary and the greeting "Hallo, was geht ab?" went unanswered."""
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.05)
+
+    announcements: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
+
+    pipe._current_voice_session_id = None  # spawned from a typed chat
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.01)
+    pipe._current_voice_session_id = "fresh-call"  # the user then opens a call
+    await asyncio.sleep(0.3)
+
+    assert _heartbeats(announcements) == [], (
+        "a heartbeat from another context was published into a new call"
+    )
+    assert pipe._live_spawn_watchdogs() == [], "the skipped watchdog must still end"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_kept_in_the_voice_session_that_started_it() -> None:
+    """Boundary: the call that started the mission still hears its beat."""
+    bus = EventBus()
+    pipe = _pipeline(bus, watchdog_delay_s=0.05)
+
+    announcements: list[AnnouncementRequested] = []
+    bus.subscribe(AnnouncementRequested, lambda ev: announcements.append(ev))
+
+    pipe._current_voice_session_id = "same-call"
+    await bus.publish(JarvisAgentAnnouncement(action="bauen", target="x"))
+    await asyncio.sleep(0.3)
+
+    assert len(_heartbeats(announcements)) == 1

@@ -25,10 +25,11 @@ What the composed prompt contains, and why each part earns its place:
   file into context", which removes the agent's entire opening round of blind
   searching. Paths come from the workspace file index — never invented, and
   every one is verified to exist before it ships.
-* **A slim outline of the top files**, so the writer can name a real symbol
-  in the Key files list (``_fuse_ranked()`` instead of "the ranking logic")
-  without pasting the module. House rules stay out: the receiving agent
-  already has them.
+* **A look inside the top files** (``file_peek``): their outline plus the
+  lines that mention the task, so the writer picks the file that really holds
+  the behaviour and names a real symbol (``_fuse_ranked()`` instead of "the
+  ranking logic") without pasting the module. How deep it looks follows the
+  task kind. House rules stay out: the receiving agent already has them.
 
 Two-layer construction, because the product must work for a downloader with no
 API key at all (§3):
@@ -62,11 +63,16 @@ the same CLI. File *bodies* were never the wait, but sending AST outlines
 plus a CLI rescue made the wait look like "reading the repo".
 
 The spoken budget is therefore ``FAST_BUDGET_S`` (about a second). Thinking
-is off. The writer sees candidate *paths* from the tree, not file contents —
-the receiving agent opens those files. A coding CLI is not a rescue on this
-path: if Flash is not done when the budget expires, the deterministic brief
-ships. What must still never happen is a silent demotion to a weaker
-*quality tier* while the user waits.
+is off. A coding CLI is not a rescue on this path: if Flash is not done when
+the budget expires, the deterministic brief ships. What must still never
+happen is a silent demotion to a weaker *quality tier* while the user waits.
+
+**On context (maintainer decision 2026-10-01).** Paths alone made briefs that
+pointed at the right folder but not at the right file or symbol. The writer
+now also gets short excerpts of the most relevant files — read from disk in
+well under a second, sized by task kind — and the budget grows by
+``PEEK_EXTRA_S`` for that kind only when excerpts were actually read. A
+brief with nothing to look into keeps the one-second path.
 
 **On the silence.** The beats below (``start`` → ``thinking``/``drafting`` →
 ``ready``, and ``sent`` once the pane took it) are printed as they happen,
@@ -126,6 +132,21 @@ COMPOSE_TIMEOUT_S = 90.0
 # or we ship the deterministic brief. Measured live 2026-08-19 18:10: the
 # 90 s ceiling plus an 8 s API hedge plus a CLI rescue was 22 s of silence.
 FAST_BUDGET_S = 1.2
+
+# Extra seconds the writer gets when Jarvis looked inside the files first
+# (``file_peek``). The excerpts are input the writer must read, and a budget
+# sized for a bare rewrite would send every looked-at brief to the fallback.
+# Deeper looks buy more time: an investigation, review or question is ABOUT
+# the code, an implementation needs its entry points, an unclear request gets
+# a glance. Maintainer decision 2026-10-01: briefs carry context from the
+# important files, sized to the task.
+PEEK_EXTRA_S: dict[str, float] = {
+    KIND_INVESTIGATE: 2.8,
+    KIND_REVIEW: 2.8,
+    KIND_QUESTION: 2.8,
+    KIND_IMPLEMENT: 1.8,
+    KIND_NEUTRAL: 0.8,
+}
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
@@ -434,7 +455,7 @@ def _start_message(kind: str, instruction: str, terminal_name: str) -> str:
 
 
 def _thinking_message(
-    instruction: str, terminal_name: str, *, files: int, writer_label: str
+    instruction: str, terminal_name: str, *, files: int, writer_label: str, read: int = 0
 ) -> str:
     """The line that stands while the model works — with what it was handed."""
     if files == 1:
@@ -443,6 +464,8 @@ def _thinking_message(
         context = f"{files} starting files from the tree"
     else:
         context = "your words alone"
+    if read:
+        context = f"{context}, {read} looked into"
     if writer_label:
         context = f"{context}, via {writer_label}"
     return _variant(_THINKING_PHRASES, instruction).format(name=terminal_name, context=context)
@@ -594,6 +617,26 @@ def _file_candidates(session, instruction: str, limit: int) -> list[str]:  # noq
     return _existing(session.folder, index.suggest(instruction, limit=limit))
 
 
+def _gather_files(
+    session,  # noqa: ANN001 - Session, avoid an import cycle
+    instruction: str,
+    kind: str,
+    limit: int,
+) -> tuple[list[str], dict[str, str]]:
+    """Name candidates, re-ranked by a look inside, plus excerpts of the top ones.
+
+    Blocking; runs in a worker thread. Without an index there is nothing to
+    look into and the brief ships without references, exactly as before.
+    """
+    from .file_peek import peek, plan_for
+
+    pool = _file_candidates(session, instruction, max(limit, plan_for(kind).pool))
+    if not pool:
+        return [], {}
+    looked = peek(session.folder, instruction, pool, kind)
+    return (looked.ranked or pool)[:limit], looked.excerpts
+
+
 def _extract_referenced(text: str) -> list[str]:
     """``@path`` tokens in a composed prompt, in order of appearance."""
     seen: list[str] = []
@@ -637,13 +680,6 @@ def _rescue_writer(tried: Sequence[str]):  # noqa: ANN202 - (Brain | None, str)
         allow_subscription=False,
     )
 
-
-# No file bodies. The tree index already named the candidates; the receiving
-# agent opens those @files. Sending AST outlines made the writer prompt
-# thousands of characters and looked like "reading the repo" while the wait
-# was the model. Paths stay in the candidate list.
-_OUTLINE_FILES = 0
-_OUTLINE_CHARS = 0
 
 # Spoken compositions currently in ``compose()``. Recap jobs read this so
 # they do not spawn a coding CLI on the same machine the user is waiting on.
@@ -702,11 +738,12 @@ async def _read_context(
     session,  # noqa: ANN001 - Session, avoid an import cycle
     instruction: str,
 ) -> tuple[str, dict[str, str]]:
-    """The workspace tree, from the cached walk. No file bodies.
+    """The workspace tree, from the cached walk.
 
     Kept as an awaitable so cancellation still reaps a sibling task, and so
     tests can patch this hook. The index was built when the folder opened;
-    rendering the map is in-memory.
+    rendering the map is in-memory. File excerpts come from ``_gather_files``,
+    which already ran before the writer's budget was fixed.
     """
     from .file_index import cached_index
 
@@ -730,6 +767,7 @@ async def _compose_once(
     notify: Callable[[str, str], None],
     attachments: list,
     conversation: Sequence[tuple[str, str]],
+    excerpts: dict[str, str] | None = None,
 ) -> str:
     """Wait for the file material, then make the one writing call.
 
@@ -744,6 +782,8 @@ async def _compose_once(
     tree, outlines = packed if isinstance(packed[0], str) else ("", packed[0])
     if not isinstance(outlines, dict):
         outlines = {}
+    if excerpts:
+        outlines = {**outlines, **excerpts}
 
     notify(
         STAGE_THINKING,
@@ -752,6 +792,7 @@ async def _compose_once(
             terminal_name,
             files=len(candidates),
             writer_label=_writer_label(brain),
+            read=len(excerpts or {}),
         ),
     )
 
@@ -891,7 +932,9 @@ async def compose(
         )
 
     if not use_llm:
-        found = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
+        found, _excerpts = await asyncio.to_thread(
+            _gather_files, session, subject, kind, max_files * 2
+        )
         return _deterministic("raw", candidates=found)
 
     started = time.monotonic()
@@ -948,7 +991,9 @@ async def _compose_after_start(
     )
 
     try:
-        candidates = await asyncio.to_thread(_file_candidates, session, subject, max_files * 2)
+        candidates, excerpts = await asyncio.to_thread(
+            _gather_files, session, subject, kind, max_files * 2
+        )
     except BaseException:
         # Cancelled — or broken — before the writer probe was consumed. The
         # probe task is OURS: abandoned here it would run on unobserved and
@@ -1000,7 +1045,8 @@ async def _compose_after_start(
     # All attempts share ONE budget. The user is waiting through the whole
     # sequence, and three full timeouts in a row is not a rescue — it is the
     # same fallback three times slower.
-    budget_s = min(COMPOSE_TIMEOUT_S, FAST_BUDGET_S)
+    peek_extra_s = PEEK_EXTRA_S.get(kind, 0.0) if excerpts else 0.0
+    budget_s = min(COMPOSE_TIMEOUT_S, FAST_BUDGET_S + peek_extra_s)
     deadline = started + budget_s
     tried: list[str] = [writer_source] if writer_source else []
     attempts: dict[asyncio.Task[str], str] = {}
@@ -1039,6 +1085,7 @@ async def _compose_after_start(
                     notify=notify,
                     attachments=attached,
                     conversation=spoken_before,
+                    excerpts=excerpts,
                 ),
                 timeout=remaining,
             )
@@ -1208,6 +1255,7 @@ __all__ = [
     "HEDGE_AFTER_API_S",
     "HEDGE_AFTER_S",
     "MAX_FILE_REFERENCES",
+    "PEEK_EXTRA_S",
     "STAGE_DRAFTING",
     "STAGE_FALLBACK",
     "STAGE_HEDGE",

@@ -9,6 +9,7 @@ from jarvis.agentic_ide.terminal_input import (
     DEVICE_ATTRIBUTES,
     THEME_COLOURS,
     TerminalQueryResponder,
+    TerminalQueryWatch,
     classify_terminal_input,
     is_newline_chord_only,
     is_terminal_report_only,
@@ -67,6 +68,50 @@ def test_an_answered_query_is_never_answered_twice() -> None:
     responder.feed(BG_QUERY)
 
     assert responder.feed("Welcome to Codex\r\n") == ""
+
+
+def test_the_colour_question_is_noticed_once_even_when_split() -> None:
+    watch = TerminalQueryWatch()
+
+    watch.feed("banner \x1b]11", 1.0)
+    assert watch.colour_asked_at is None
+    watch.feed(";?\x07 composer", 2.0)
+    assert watch.colour_asked_at == watch.asked_at == 2.0
+
+    # The retained tail must not report the same question again later.
+    watch.feed("more output", 3.0)
+    assert watch.asked_at == 2.0
+
+    watch.feed("\x1b]10;rgb:ffff/ffff/ffff\x07", 4.0)
+    assert watch.asked_at == 2.0, "SETTING a colour is not a question"
+
+    watch.feed(DA_QUERY, 5.0)
+    assert watch.asked_at == 5.0
+    assert watch.colour_asked_at == 2.0, "device attributes are not the colour question"
+
+    watch.note_input_line(6.0)
+    watch.note_input_line(7.0)
+    assert watch.input_line_at == 6.0, "the FIRST sighting counts"
+
+    watch.reset()
+    assert (watch.asked_at, watch.colour_asked_at, watch.input_line_at) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "\x1b[>0q",  # version (Claude Code, OpenCode)
+        "\x1b[?u",  # keyboard protocol (Claude Code, Kimi, Antigravity)
+        "\x1b[?2026$p",  # mode report (OpenCode, Antigravity)
+        "\x1bP+q4d73\x1b\\",  # capability (OpenCode)
+        "\x1b]4;1;?\x07",  # palette entry
+    ],
+)
+def test_every_measured_startup_question_is_noticed(question: str) -> None:
+    watch = TerminalQueryWatch()
+    watch.feed(f"draw{question}draw", 1.0)
+    assert watch.asked_at == 1.0
+    assert watch.colour_asked_at is None
 
 
 def test_ordinary_output_is_not_mistaken_for_a_query() -> None:
@@ -150,14 +195,18 @@ def test_the_answered_colours_match_the_theme_the_pane_is_drawn_with(
     )
     assert block is not None, f"no {appearance} theme found in terminalThemes.ts"
     declared = dict(re.findall(r"(\w+): \"(#[0-9a-fA-F]{6})\"", block.group(1)))
-    # The theme's background stays transparent on screen but carries the pane
-    # shell's RGB at alpha 0, so xterm's minimum-contrast floor measures
-    # against the real ground. That RGB is the one the CLI must be told.
-    ground = re.search(
-        r"background: \"rgba\((\d+), (\d+), (\d+), 0\)\"", block.group(1)
-    )
-    assert ground is not None, f"no ground RGB in the {appearance} theme"
-    background = "#" + "".join(f"{int(c):02x}" for c in ground.groups())
+    # A light pane is opaque, so its background is the paper itself. The dark
+    # theme stays transparent on screen but carries the pane shell's RGB at
+    # alpha 0, so xterm's minimum-contrast floor measures against the real
+    # ground. Either way that RGB is the one the CLI must be told.
+    if "background" in declared:
+        background = declared["background"].lower()
+    else:
+        ground = re.search(
+            r"background: \"rgba\((\d+), (\d+), (\d+), 0\)\"", block.group(1)
+        )
+        assert ground is not None, f"no ground RGB in the {appearance} theme"
+        background = "#" + "".join(f"{int(c):02x}" for c in ground.groups())
 
     assert THEME_COLOURS[appearance] == (
         declared["foreground"].lower(),

@@ -16,7 +16,10 @@ import { useCallback, useEffect } from "react";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { MentionPlugin } from "./chat/mentionItems";
 
-import type { AgentApprovalMode, Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import type { AgentApprovalMode, AgentRuntime, Checkpoint, SocietyAgentRow } from "@/lib/societyApi";
+import type { CompanionAppearance } from "./companion/appearance";
+import { useCreateAgentDialog } from "./create/createAgentStore";
+
 import { NEUTRAL_ASSISTANT_NAME } from "@/lib/assistantNameCache";
 import { useEventStore } from "@/store/events";
 
@@ -24,6 +27,14 @@ import { PALETTE_PRESETS, resolvePalette, type FigureRecipe } from "./figures/fi
 import { SAMPLE_ROSTER } from "./mockRoster";
 import { beginRetirement, retirementRunning, retirementStageMounted } from "./world/retireStore";
 import { announceSpawn } from "./world/spawnStore";
+
+/** The create dialog named an agent that already exists. */
+export class AgentNameTaken extends Error {
+  constructor() {
+    super("An agent with this name already exists");
+    this.name = "AgentNameTaken";
+  }
+}
 
 /** MASTERPLAN §2.5 — exactly one lead (Jarvis), orchestrators may ASSIGN. */
 export type AgentTier = "lead" | "orchestrator" | "specialist";
@@ -105,6 +116,8 @@ export interface SocietyAgent {
   accountId?: string;
   /** Where the agent runs: null/absent = this computer, else a connected computer id. */
   computerId?: string | null;
+  /** The agent loop that runs its turns (docs/agent-runtimes.md); absent = Jarvis. */
+  runtime?: AgentRuntime;
   /** The character: archetype, base, parts, palette. null = the palette tile. */
   figure: FigureRecipe | null;
   palette: AgentPalette;
@@ -136,38 +149,11 @@ export interface SocietyAgent {
   stats: AgentStats;
 }
 
-/** What the creator hands over; everything else is derived or defaulted. */
-export interface NewAgentInput {
-  name: string;
-  title: string;
-  description: string;
-  figure: FigureRecipe;
-  palette: AgentPalette;
-  provider: string;
-  providerLabel: string;
-  model: string;
-  /** "" = the provider's default effort. */
-  effort: string;
-  /** The stored subscription login of a CLI seat; "" = that platform's active account. */
-  accountId: string;
-  /** "" = this computer; otherwise the connected computer the agent runs on. */
-  computerId: string;
-  grantMode: GrantMode;
-  toolGrants: string[];
-  focus: string[];
-  permissionCeiling: PermissionCeiling;
-  approvalMode: AgentApprovalMode;
-  dailyBudgetUsd: number;
-}
-
 export interface RosterData {
   agents: SocietyAgent[];
   /** True while rows come from the sample roster rather than society.db. */
   sample: boolean;
 }
-
-/** Agents created in THIS window while the backend is unreachable — sample data, not persisted. */
-const LOCAL_ROSTER: SocietyAgent[] = [];
 
 /**
  * Sample rows retired in this window. The sample roster is a frozen module
@@ -212,11 +198,23 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: "DeepSeek",
   ollama: "Ollama (local)",
   "local-openai": "Local server",
+  "claude-api": "Anthropic Claude",
+  "openai-codex": "OpenAI Codex",
+  grok: "xAI Grok",
+  openrouter: "OpenRouter",
+  nvidia: "NVIDIA NIM",
 };
 
 export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
   const tier = row.tier as AgentTier;
-  const figure = recipeFromAvatar(row.avatar) ?? defaultFigureFor(row.agent_id, tier);
+  // A new agent's avatar may hold only its companion (the backend's random
+  // one, or the create dialog's pick): it rides on the default figure.
+  const stored = recipeFromAvatar(row.avatar);
+  const companion = row.avatar && typeof row.avatar === "object" ? row.avatar.companion : undefined;
+  const figure = stored
+    ?? (companion
+      ? ({ ...defaultFigureFor(row.agent_id, tier), companion } as FigureRecipe)
+      : defaultFigureFor(row.agent_id, tier));
   const runState: AgentRunState =
     row.state === "paused" ? "paused" : ((row.run_state as AgentRunState | undefined) ?? "idle");
   return {
@@ -230,6 +228,7 @@ export function rowToAgent(row: SocietyAgentRow): SocietyAgent {
     model: row.model,
     accountId: row.account_id,
     computerId: row.computer_id ?? null,
+    runtime: row.runtime ?? "jarvis",
     effort: row.effort,
     figure,
     palette: paletteFor(figure),
@@ -282,7 +281,7 @@ async function fetchSocietyRoster(): Promise<RosterData> {
   } catch {
     // Unreachable backend: the sample roster below says so on the rail.
   }
-  const rows = [...SAMPLE_ROSTER, ...LOCAL_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
+  const rows = [...SAMPLE_ROSTER].filter((a) => !RETIRED_SAMPLE.has(a.agentId));
   return { agents: rows, sample: true };
 }
 
@@ -382,113 +381,73 @@ export function useSocietyCapabilities(enabled = true, mentionOpen = false) {
     retryInventory: () => { void refetch(); void plugins.refetch(); } };
 }
 
-/** A URL-safe id from a display name, unique against the rows already known. */
-export function slugifyAgentName(name: string, taken: ReadonlySet<string>): string {
-  const base =
-    name
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[̀-ͯ]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "agent";
-  let candidate = base;
-  let n = 2;
-  while (taken.has(candidate)) candidate = `${base}-${n++}`;
-  return candidate;
+/**
+ * Every plus in the society: opens the "new agent" dialog (name, runtime,
+ * companion) and settles with the created agent. Closing the dialog rejects
+ * with `CreateAgentCancelled` (`isCreateCancelled`), which is not an error.
+ */
+export function useQuickCreateAgent() {
+  return useCallback(() => useCreateAgentDialog.getState().request(), []);
+}
+
+/** What the create dialog sends; every field may be left out. */
+export interface NewAgentChoice {
+  /** Empty = a placeholder name; the agent proposes its own in its first chat. */
+  name?: string;
+  /** Fixed for the agent's life (docs/agent-runtimes.md). */
+  runtime?: AgentRuntime;
+  /** Required for Hermes / OpenClaw; empty on Jarvis = the last chat seat. */
+  provider?: string;
+  model?: string;
+  /** The subscription login, or a reserved access value on a dual row
+   *  (`create/seatChoice.ts`: API key or subscription). */
+  accountId?: string;
+  /** The small companion bot that follows the agent. */
+  companion?: CompanionAppearance;
 }
 
 /**
- * Create an agent through `POST /api/society/agents`. When the backend is not
- * there, a sample row is appended for this window so the flow still works.
+ * `POST /api/society/agents`: the backend fills in what is left out (a
+ * placeholder name, a random companion, the lead chat's current seat). A
+ * name that already exists is refused rather than adopting that agent. A
+ * failure throws with the server's own reason — there is no stand-in row.
  */
-export function useCreateAgent() {
+export function useCreateSocietyAgent() {
   const client = useQueryClient();
-  const { data } = useSocietyRoster();
-  return useCallback(
-    async (input: NewAgentInput): Promise<SocietyAgent> => {
-      const body = {
-        name: input.name.trim(),
-        title: input.title.trim(),
-        description: input.description.trim(),
-        tier: "specialist",
-        provider: input.provider || undefined,
-        model: input.model || undefined,
-        effort: input.effort || undefined,
-        account_id: input.accountId || undefined,
-        computer_id: input.computerId || undefined,
-        avatar: input.figure,
-        grant_mode: input.grantMode,
-        grants: input.grantMode === "allowlist" ? input.toolGrants : undefined,
-        focus: input.focus.length ? input.focus : undefined,
-        permission_ceiling: input.permissionCeiling,
-        approval_mode: input.approvalMode,
-        daily_budget_usd: input.dailyBudgetUsd,
-      };
-      try {
-        const res = await fetch("/api/society/agents", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (res.ok) {
-          const created = (await res.json()) as { agent: SocietyAgentRow };
-          // The island owes this row an entrance: it walks out of the foundry.
-          announceSpawn(created.agent.agent_id);
-          const agent = rowToAgent(created.agent);
-          patchRoster(client, (agents) => [
-            ...agents.filter((a) => a.agentId !== agent.agentId),
-            agent,
-          ]);
-          return agent;
-        }
-        if (res.status !== 404 && res.status !== 503) {
-          const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
-          throw new Error(typeof detail?.detail === "string" ? detail.detail : `create ${res.status}`);
-        }
-      } catch (err) {
-        if (err instanceof Error && !/fetch/i.test(err.message)) throw err;
-        // Network failure: fall through to the sample row.
-      }
-      const taken = new Set((data?.agents ?? []).map((a) => a.agentId));
-      const newId = slugifyAgentName(input.name, taken);
-      const agent: SocietyAgent = {
-        agentId: newId,
-        name: input.name.trim(),
-        title: input.title.trim(),
-        description: input.description.trim(),
-        tier: "specialist",
-        provider: input.provider,
-        providerLabel: input.providerLabel,
-        model: input.model,
-        effort: input.effort,
-        figure: input.figure,
-        palette: input.palette,
-        grantMode: input.grantMode,
-        toolGrants: input.toolGrants,
-        focus: input.focus,
-        denies: [],
-        approvalRules: { requireApproval: [], alwaysAllow: [] },
-        permissionCeiling: input.permissionCeiling,
-        approvalMode: input.approvalMode,
-        dailyBudgetUsd: input.dailyBudgetUsd,
-        checkpoint: "idle",
-        state: "idle",
-        lifecycle: "active",
-        createdMs: Date.now(),
-        maxConcurrentRuns: 1,
-        workspaceDir: `society/${newId}/workspace`,
-        wikiNamespace: `society/${newId}/`,
-        chatSessionId: null,
-        routines: [],
-        stats: { runs: 0, totalCostUsd: 0, spentTodayUsd: 0, lastActiveMs: null },
-      };
-      LOCAL_ROSTER.push(agent);
-      announceSpawn(agent.agentId);
-      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
-      return agent;
-    },
-    [client, data],
-  );
+  return useCallback(async (choice: NewAgentChoice = {}): Promise<SocietyAgent> => {
+    const body: Record<string, unknown> = { tier: "specialist" };
+    if (choice.name?.trim()) body.name = choice.name.trim();
+    if (choice.runtime && choice.runtime !== "jarvis") body.runtime = choice.runtime;
+    if (choice.provider) {
+      body.provider = choice.provider;
+      if (choice.model) body.model = choice.model;
+      if (choice.accountId) body.account_id = choice.accountId;
+    }
+    if (choice.companion) body.avatar = { companion: choice.companion };
+    const res = await fetch("/api/society/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const detail = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+      const reason = detail?.detail;
+      throw new Error(
+        typeof reason === "string"
+          ? reason
+          : reason && typeof reason === "object" && "detail" in reason
+            ? String((reason as { detail: unknown }).detail)
+            : `create ${res.status}`,
+      );
+    }
+    const created = (await res.json()) as { agent: SocietyAgentRow; created?: boolean };
+    if (created.created === false) throw new AgentNameTaken();
+    // The island owes this row an entrance: it walks out of the foundry.
+    announceSpawn(created.agent.agent_id);
+    const agent = rowToAgent(created.agent);
+    patchRoster(client, (agents) => [...agents.filter((a) => a.agentId !== agent.agentId), agent]);
+    return agent;
+  }, [client]);
 }
 
 /**
@@ -521,7 +480,7 @@ export function useUpdateAgentDescription() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, description: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -538,18 +497,55 @@ export function useUpdateAgentDescription() {
   );
 }
 
+/** The identity an `identity` proposal replaced, as its outcome card carries it. */
+export interface PreviousIdentity {
+  name: string;
+  title: string;
+  description: string;
+  focus: string[];
+  /** Present when the identity also wrote derived approval rules. */
+  approval_rules?: { require_approval: string[]; always_allow: string[] };
+}
+
+/**
+ * Undo an applied `identity` proposal: write the previous name, title,
+ * description, focus and approval rules back. The explicit focus keeps the route from
+ * re-deriving one from the restored text.
+ */
+export function useRestoreIdentity() {
+  const client = useQueryClient();
+  return useCallback(
+    async (agentId: string, previous: PreviousIdentity): Promise<void> => {
+      const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(previous),
+      });
+      if (!res.ok) throw new Error(`identity ${res.status}`);
+      await client.invalidateQueries({ queryKey: ROSTER_QUERY_KEY });
+    },
+    [client],
+  );
+}
+
 /** Persist the roster choice and re-seat its canonical chat without losing history. */
 export function useUpdateAgentModel() {
   const client = useQueryClient();
   return useCallback(async (agentId: string, choice: {
     provider: string; model: string; effort: string; account_id: string;
+    /** Switch the agent loop with the model; omitted keeps the current one. */
+    runtime?: AgentRuntime;
   }) => {
     const res = await fetch(`/api/society/agents/${encodeURIComponent(agentId)}/model`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(choice),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // A 422 explains itself ("Hermes and OpenClaw run on an API key…").
+      const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+      throw new Error(typeof body?.detail === "string" ? body.detail : `HTTP ${res.status}`);
+    }
     const body = await res.json() as { agent: SocietyAgentRow };
     const updated = rowToAgent(body.agent);
     client.setQueryData<RosterData>(ROSTER_QUERY_KEY, (previous) => previous ? {
@@ -586,7 +582,7 @@ export function useUpdateAgentLimits() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, limits: AgentLimits): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       const body = {
         daily_budget_usd: Math.max(0, limits.dailyBudgetUsd),
         permission_ceiling: limits.permissionCeiling,
@@ -617,7 +613,7 @@ export function useSetAgentComputer() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, computerId: string): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         agent.computerId = computerId || null;
       } else {
@@ -644,7 +640,7 @@ export function useSetAgentPaused() {
   const client = useQueryClient();
   return useCallback(
     async (agent: SocietyAgent, paused: boolean): Promise<void> => {
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (!sample) {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "PATCH",
@@ -678,11 +674,9 @@ export function useRetireAgent() {
   return useCallback(
     async (agent: SocietyAgent, executioner: SocietyAgent | null): Promise<void> => {
       if (agent.tier === "lead") throw new Error("the lead cannot be retired");
-      const sample = SAMPLE_ROSTER.includes(agent) || LOCAL_ROSTER.includes(agent);
+      const sample = SAMPLE_ROSTER.includes(agent);
       if (sample) {
         RETIRED_SAMPLE.add(agent.agentId);
-        const local = LOCAL_ROSTER.indexOf(agent);
-        if (local >= 0) LOCAL_ROSTER.splice(local, 1);
       } else {
         const res = await fetch(`/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
           method: "DELETE",

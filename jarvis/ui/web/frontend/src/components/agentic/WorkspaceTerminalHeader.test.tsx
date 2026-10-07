@@ -21,6 +21,39 @@ describe("compact workspace terminal header", () => {
     expect(fork).toHaveBeenCalledTimes(2);
   });
 
+  it("offers the change review as a button and a menu entry, only when the pane can review", () => {
+    const review = vi.fn();
+    const { unmount } = render(<WorkspaceTerminalHeader {...BASE} onReviewChanges={review} />);
+    fireEvent.click(screen.getByRole("button", { name: "Review changes by Dana" }));
+    expect(review).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "More actions for Dana" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Review changes" }));
+    expect(review).toHaveBeenCalledTimes(2);
+    unmount();
+    render(<WorkspaceTerminalHeader {...BASE} />);
+    expect(screen.queryByRole("button", { name: "Review changes by Dana" })).toBeNull();
+  });
+
+  it("reads the review ahead when the pointer reaches its button, and after a dwell on the bar", () => {
+    vi.useFakeTimers();
+    try {
+      const prefetch = vi.fn();
+      render(<WorkspaceTerminalHeader {...BASE} onReviewChanges={() => {}} onReviewChangesPrefetch={prefetch} />);
+      const header = screen.getByTestId("workspace-terminal-header-Dana");
+      fireEvent.pointerEnter(header);
+      fireEvent.pointerLeave(header);
+      act(() => { vi.advanceTimersByTime(1000); });
+      expect(prefetch).not.toHaveBeenCalled();
+      fireEvent.pointerEnter(header);
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(prefetch).toHaveBeenCalledTimes(1);
+      fireEvent.pointerEnter(screen.getByRole("button", { name: "Review changes by Dana" }));
+      expect(prefetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("uses the name and accurate status without a verbose toolbar", () => {
     render(<WorkspaceTerminalHeader {...BASE} onOpenConversation={() => {}} />);
     const header = screen.getByTestId("workspace-terminal-header-Dana");

@@ -12,7 +12,8 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from jarvis.marketplace.auth import AuthHandler
+    from jarvis.marketplace.auth import AuthHandler, PkceLoopbackConfig
+    from jarvis.marketplace.catalog import OAuthPkceLoopbackAuth
     from jarvis.marketplace.token_store import TokenStore
 
 log = logging.getLogger(__name__)
@@ -58,19 +59,27 @@ _OAUTH_CLIENT_FAMILY: dict[str, str] = {
 def oauth_client_family(plugin_id: str) -> str | None:
     """Return the BYO-OAuth-client secret family for a plugin, or ``None``.
 
-    Catalog field first, legacy table second. One resolver so the connect
-    route, the refresh scheduler and the frontend cannot drift apart.
+    Shared secrets belong only to package-owned identities and exact OAuth
+    endpoints. Community metadata and custom endpoints cannot claim a family.
+    The connect, refresh and grant-sharing paths use this same boundary.
     """
     try:
-        from jarvis.marketplace.catalog_data import load_catalog
+        from jarvis.marketplace.catalog_data import load_catalog, load_seed_catalog
 
         spec = load_catalog().by_id(plugin_id)
+        trusted = load_seed_catalog().by_id(plugin_id)
     except Exception:  # noqa: BLE001 - a broken catalog must not break refresh
-        spec = None
-    declared = getattr(spec, "oauth_client_family", None) if spec else None
-    if declared:
-        return str(declared)
-    return _OAUTH_CLIENT_FAMILY.get(plugin_id)
+        log.warning("OAuth family resolution unavailable for %s", plugin_id)
+        return None
+    if spec is None or trusted is None or getattr(spec, "source", None) != "seed":
+        return None
+    for field in ("mode", "authorization_url", "token_url", "device_url", "verify_url"):
+        if getattr(spec.auth, field, None) != getattr(trusted.auth, field, None):
+            return None
+    family = trusted.oauth_client_family or _OAUTH_CLIENT_FAMILY.get(plugin_id)
+    if spec.oauth_client_family not in (None, family):
+        return None
+    return family
 
 
 def is_placeholder_client_id(value: str | None) -> bool:
@@ -109,6 +118,44 @@ def resolve_pkce_client(
     return client_id, client_secret
 
 
+def build_pkce_config(plugin_id: str, auth: OAuthPkceLoopbackAuth) -> PkceLoopbackConfig:
+    """The one PKCE handler config used by connect AND refresh.
+
+    Resolves the effective client and, for a shipped client whose provider
+    demands a secret, its token broker — so a connect and the refresh
+    scheduler can never disagree about where tokens are exchanged.
+    """
+    from jarvis.marketplace.auth import PkceLoopbackConfig
+    from jarvis.marketplace.publisher_clients import broker_family_for_client
+
+    client_id, client_secret = resolve_pkce_client(plugin_id, auth.client_id, auth.client_secret)
+    # Only the shipped client WITHOUT a secret goes through a broker — exactly
+    # the pair ``resolve_client`` yields at its shipped-client step. A client
+    # that carries its own secret (expert override, publisher secret) always
+    # talks to the provider directly.
+    broker = None if client_secret else broker_family_for_client(client_id)
+    return PkceLoopbackConfig(
+        plugin_id=plugin_id,
+        authorization_url=auth.authorization_url,
+        token_url=auth.token_url,
+        refresh_url=auth.refresh_url,
+        client_id=client_id,
+        client_secret=client_secret,
+        callback_port=auth.callback_port or 0,
+        scopes=list(auth.scopes),
+        scope_separator=auth.scope_separator,
+        # Slack-specific: PKCE-enabled apps must use user_scope= per
+        # docs.slack.dev/authentication/using-pkce. When the catalog marks a
+        # plugin user-scopes-only, route the param.
+        scope_param_name="user_scope" if auth.user_scopes_only else "scope",
+        callback_path=auth.callback_path,
+        resource=auth.resource,
+        offline_access=auth.offline_access,
+        client_auth_method=auth.client_auth_method,
+        token_broker=broker,
+    )
+
+
 def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
     """Return the AuthHandler for a catalog plugin, or ``None`` if the plugin
     is unknown or uses a non-refreshable auth mode (e.g. ``pat_paste``)."""
@@ -117,7 +164,6 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
         DeviceFlowConfig,
         DeviceFlowHandler,
         HostedMcpDcrHandler,
-        PkceLoopbackConfig,
         PkceLoopbackHandler,
     )
     from jarvis.marketplace.catalog import (
@@ -151,26 +197,7 @@ def build_handler_from_catalog(plugin_id: str) -> AuthHandler | None:
             )
         )
     if isinstance(auth, OAuthPkceLoopbackAuth):
-        client_id, client_secret = resolve_pkce_client(
-            plugin_id, auth.client_id, auth.client_secret
-        )
-        return PkceLoopbackHandler(
-            PkceLoopbackConfig(
-                plugin_id=plugin_id,
-                authorization_url=auth.authorization_url,
-                token_url=auth.token_url,
-                client_id=client_id,
-                client_secret=client_secret,
-                callback_port=auth.callback_port or 0,
-                scopes=list(auth.scopes),
-                scope_separator=auth.scope_separator,
-                scope_param_name="user_scope" if auth.user_scopes_only else "scope",
-                callback_path=auth.callback_path,
-                resource=auth.resource,
-                offline_access=auth.offline_access,
-                client_auth_method=auth.client_auth_method,
-            )
-        )
+        return PkceLoopbackHandler(build_pkce_config(plugin_id, auth))
     return None  # pat_paste / allowlist — no refreshable OAuth handler
 
 

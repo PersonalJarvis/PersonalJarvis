@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS society_agents (
     -- Where the agent's work executes: NULL = this computer, else the id of a
     -- connected machine in jarvis/computers (a VPS or a local VM, over SSH).
     computer_id         TEXT DEFAULT NULL,
+    runtime             TEXT NOT NULL DEFAULT 'jarvis'
+                        CHECK (runtime IN ('jarvis', 'hermes', 'openclaw')),
     created_ms          INTEGER NOT NULL,
     updated_ms          INTEGER NOT NULL
 );

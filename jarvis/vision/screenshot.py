@@ -47,34 +47,34 @@ _DEFAULT_BLOB_DIR = Path("data") / "flight_recorder" / "blobs"
 # H1 (DEEP-DIVE-AUDIT-2026-06-19): on macOS, screen capture is gated behind a
 # TCC "Screen Recording" grant. Without it mss returns ONLY the desktop
 # wallpaper with no error, so Computer-Use would click blind. Surface a clear
-# onboarding message at the capture site instead of failing silently.
+# message at the capture site instead of failing silently. These helpers only
+# READ the state: they never ask macOS (the gesture entry points do, through
+# ``jarvis.platform.screen_access``).
 _SCREEN_RECORDING_MSG = (
-    "macOS Screen Recording permission not granted — grant it in Personal "
-    "Jarvis > Settings > Permissions or System Settings > Privacy & Security "
-    "> Screen Recording; without it screenshots can contain only the desktop "
-    "wallpaper and Computer-Use would click blind."
+    "macOS Screen Recording permission not granted — allow Personal Jarvis in "
+    "System Settings > Privacy & Security > Screen & System Audio Recording; "
+    "without it screenshots can contain only the desktop wallpaper and "
+    "Computer-Use would click blind."
 )
 _screen_recording_warned = False
 
 
 def warn_if_screen_recording_denied() -> bool:
-    """Probe Screen Recording now and log once per blocked-state episode.
+    """Read the Screen Recording state now; log once per blocked-state episode.
 
-    The native result is deliberately uncached: macOS can revoke a TCC grant
-    while Jarvis is running. The boolean flag suppresses repeated log lines
-    only; it never suppresses a permission probe. Unknown/unavailable native
-    state fails closed on macOS and non-macOS reports ``NOT_REQUIRED``.
+    Silent: it never asks macOS and never raises a permission toast, so a helper, a
+    status probe or a per-frame fast path may call it freely. The native result is
+    deliberately not held beyond the permission service's sub-second cache: macOS
+    can revoke a TCC grant while Jarvis is running. The boolean flag suppresses
+    repeated log lines only; it never suppresses a read. Unknown/unavailable
+    native state fails closed on macOS and non-macOS reports ``NOT_REQUIRED``.
     """
     global _screen_recording_warned
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        get_system_permission_port,
-    )
+    from jarvis.platform import screen_access  # noqa: PLC0415
 
-    port = get_system_permission_port()
-    blocked = not port.runtime_access_granted(PermissionId.SCREEN_RECORDING)
+    state = screen_access.screen_recording_state()
+    blocked = not screen_access.state_allows_capture(state)
     if blocked:
-        state = port.state(PermissionId.SCREEN_RECORDING)
         if not _screen_recording_warned:
             logger.warning("%s Native state: %s.", _SCREEN_RECORDING_MSG, state.value)
         _screen_recording_warned = True
@@ -83,6 +83,18 @@ def warn_if_screen_recording_denied() -> bool:
         logger.info("macOS Screen Recording permission is available again.")
     _screen_recording_warned = False
     return False
+
+
+def _refuse_blocked_capture() -> None:
+    """Raise the honest refusal for a helper capture that is not allowed.
+
+    ``ScreenCaptureRefused`` is a ``RuntimeError`` whose text names the
+    permission; the helper's callers (the harness region grab, the AI pointer
+    crop) catch it and degrade. Nothing is asked here.
+    """
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    raise screen_access.refusal_for_state(screen_access.screen_recording_state())
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +305,7 @@ def capture_region(
     from PIL import Image  # noqa: PLC0415
 
     if warn_if_screen_recording_denied():
-        raise RuntimeError(_SCREEN_RECORDING_MSG)
+        _refuse_blocked_capture()
     grabber = grab or _mss_grab
     size, rgb = grabber(bbox)
     img = Image.frombytes("RGB", size, rgb)
@@ -468,9 +480,11 @@ class ScreenshotSource:
             ScreenShotError = Exception  # type: ignore[assignment,misc]
 
         # H1: macOS can return only wallpaper without an error when Screen
-        # Recording is missing. Probe on every capture and fail closed.
+        # Recording is missing. Read the state on every capture (silently) and
+        # refuse honestly instead of handing the wallpaper on; a blank frame
+        # while the state claims granted is checked after the grab.
         if warn_if_screen_recording_denied():
-            raise RuntimeError(_SCREEN_RECORDING_MSG)
+            _refuse_blocked_capture()
 
         monitor_id: str = "unknown"
         try:
@@ -507,6 +521,18 @@ class ScreenshotSource:
             logger.info(
                 "ScreenshotSource: BitBlt recovered for monitor [%s].", monitor_id
             )
+
+        # The vision source is a background observer, never a gesture: a blank
+        # frame the state cannot explain refuses honestly and records a
+        # background-origin episode (status snapshot only, no toast, no native request).
+        from jarvis.platform import screen_access  # noqa: PLC0415
+
+        screen_access.verify_frame_is_real(
+            tuple(raw.size),
+            raw.rgb,
+            feature="computer_use",
+            interactive=False,
+        )
 
         img = Image.frombytes("RGB", raw.size, raw.rgb)
         buf = io.BytesIO()

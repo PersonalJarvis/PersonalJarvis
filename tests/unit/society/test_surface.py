@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from jarvis.agent_chat.approval_bridge import ChatApprovalBridge, ChatGrant, approval_ref
+from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
 from jarvis.core.protocols import ToolResult
@@ -30,8 +32,10 @@ from jarvis.society.runtime import SocietyRuntime
 from jarvis.society.shell import ShellResult
 from jarvis.society.surface import (
     agent_id_of,
+    browser_tool_for_session,
     build_briefing,
     capability_epoch,
+    coding_tool_for_session,
     society_system_extra,
     society_tool_filter,
     society_tools,
@@ -64,6 +68,23 @@ async def rt(tmp_path: Path):
         await runtime.close()
 
 
+def _live_chat(rt: SocietyRuntime, session: SimpleNamespace):
+    session.surface = "society"
+
+    class Store:
+        live = session
+
+        def get_session(self, session_id: str):
+            return self.live if self.live.session_id == session_id else None
+
+        def permission_override(self, _session_id: str) -> str:
+            return ""
+
+    store = Store()
+    rt._get_chat = lambda: SimpleNamespace(store=store)  # noqa: SLF001 — live store seam
+    return store
+
+
 async def test_task_execution_contract_survives_long_memory_and_compact_transport(rt):
     from jarvis.agent_chat.jarvis_harness import SYSTEM_PREAMBLE, compact_identity
 
@@ -91,6 +112,40 @@ def test_without_runtime_everything_is_empty():
     assert society_tool_filter(session) is None
 
 
+async def test_scoped_hands_require_a_live_chat_record(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailer", approval_mode="bypass")
+    for session_id in ("society:mailer", "jarvis-chat"):
+        assert await coding_tool_for_session(session_id) is None
+        assert await browser_tool_for_session(session_id) is None
+
+    rt._get_chat = lambda: SimpleNamespace(  # noqa: SLF001 — missing-record seam
+        store=SimpleNamespace(get_session=lambda _session_id: None)
+    )
+    for session_id in ("society:mailer", "jarvis-chat"):
+        assert await coding_tool_for_session(session_id) is None
+        assert await browser_tool_for_session(session_id) is None
+
+
+async def test_granted_hand_fails_closed_without_chat_provenance(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailer", approval_mode="bypass")
+    session = SimpleNamespace(session_id="society:mailer", surface="society")
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    result = await gated.execute({"action": "list"}, SimpleNamespace(approved_by="auto"))
+    assert not result.success and result.output["reason"] == "blocked_by_policy"
+    assert calls == []
+
+
 async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_path: Path):
     await rt.roster.create(
         name="Mailbox",
@@ -113,6 +168,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_share_template",
         *FOLDER,
     }
     assert "RunCommand" not in own
@@ -134,6 +190,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_share_template",
         *FOLDER,
     }
     assert set(picked[: len(own_names)]) == own_names
@@ -233,12 +290,12 @@ async def test_a_granted_tool_is_gated_by_the_agents_rules(rt: SocietyRuntime, t
     careful = society_tool_filter(session)({**TOOLS, **society_tools(cfg, None, session)})  # type: ignore[misc]
     assert careful["gmail"].risk_tier_for_args({"action": "list"}) == "ask"
     assert careful[SHELL_TOOL_NAME].risk_tier_for_args({}) == "ask"
-    # A pre-migration row (approval_mode NULL) keeps its own hands unwrapped:
-    # the society tools gate themselves, as before the migration.
+    # A pre-migration row keeps its ceiling policy, but its own hands still
+    # need a live wrapper so later roster changes cannot bypass the gate.
     await rt.store.update_agent("mailbox", {"approval_mode": None})
     await society_system_extra(cfg, None, session)
     legacy = society_tool_filter(session)({**TOOLS, **society_tools(cfg, None, session)})  # type: ignore[misc]
-    assert not hasattr(legacy[SHELL_TOOL_NAME], "_capability_id")
+    assert hasattr(legacy[SHELL_TOOL_NAME], "_capability_id")
     assert legacy["gmail"].risk_tier_for_args({"action": "send"}) == "ask"  # require_approval
     await rt.roster.update("mailbox", {"approval_mode": "bypass"})
     # An always-allow rule is the person's standing yes: an ask-tier call runs.
@@ -260,6 +317,7 @@ async def test_bound_chat_always_ask_cards_a_safe_read(rt: SocietyRuntime, tmp_p
     session = SimpleNamespace(
         session_id="society:reader", permission_mode="always_ask", cwd=str(workspace)
     )
+    _live_chat(rt, session)
     cfg = SimpleNamespace(wiki=SimpleNamespace(vault_root=str(tmp_path / "vault")))
     await society_system_extra(cfg, None, session)
     filt = society_tool_filter(session)
@@ -332,6 +390,7 @@ async def test_bound_chat_ask_gates_monitor_without_widening_roster(rt: SocietyR
 async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime):
     await rt.roster.create(name="Mailer", approval_mode="bypass")
     session = SimpleNamespace(session_id="society:mailer", permission_mode="bypass")
+    _live_chat(rt, session)
     await society_system_extra(None, None, session)
     calls: list[dict] = []
 
@@ -356,12 +415,244 @@ async def test_in_flight_tool_stops_after_kill_or_agent_pause(rt: SocietyRuntime
     assert calls == [{"action": "list"}]
 
 
+async def test_in_flight_grant_revocation_blocks_after_chat_approval(rt: SocietyRuntime):
+    await rt.roster.create(
+        name="Mailer", grant_mode="allowlist", grants=["plugin:gmail"],
+        approval_mode="always_ask",
+    )
+    session = SimpleNamespace(session_id="society:mailer", permission_mode="always_ask")
+    _live_chat(rt, session)
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "sent", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    bus = EventBus()
+    executor = ToolExecutor(bus, RiskTierEvaluator(SafetyConfig()), ApprovalWorkflow(bus))
+    bridge = ChatApprovalBridge(bus)
+    asked = asyncio.Event()
+    release = asyncio.Event()
+    cards: list[str] = []
+
+    async def card(_call_id: str, name: str, _args: dict, _summary: str) -> str:
+        cards.append(name)
+        asked.set()
+        await release.wait()
+        return "allow"
+
+    ref = approval_ref(session.session_id)
+    bridge.arm(
+        ref,
+        ChatGrant(
+            session_id=session.session_id,
+            turn_id="turn-1",
+            stance="always_ask",
+            always_allowed=set(),
+            ask=card,
+        ),
+    )
+    running = asyncio.create_task(
+        executor.execute(
+            gated,
+            {"action": "send"},
+            config_snapshot={
+                "approval_surface": "interactive", "approval_ref": ref,
+                "approval_timeout_s": 5,
+            },
+        )
+    )
+    try:
+        await asyncio.wait_for(asked.wait(), timeout=5)
+        await rt.roster.update("mailer", {"grants": []})
+    finally:
+        release.set()
+    result = await asyncio.wait_for(running, timeout=5)
+    assert not result.success and result.output["reason"] == "blocked_by_policy"
+    assert cards == ["gmail"] and calls == []
+
+
+async def test_in_flight_policy_changes_block_stale_auto_grant(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailer", approval_mode="bypass")
+    session = SimpleNamespace(session_id="society:mailer", permission_mode="bypass")
+    _live_chat(rt, session)
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    ctx = SimpleNamespace(approved_by="auto")
+
+    def offered():
+        filt = society_tool_filter(session)
+        assert filt is not None
+        return filt({"gmail": tool})["gmail"]
+
+    gated = offered()
+    assert gated.risk_tier_for_args({"action": "list"}) == "monitor"
+    await rt.roster.update("mailer", {"approval_mode": "ask"})
+    changed_mode = await gated.execute({"action": "list"}, ctx)
+    assert not changed_mode.success and changed_mode.output["reason"] == "blocked_by_policy"
+
+    await society_system_extra(None, None, session)
+    gated = offered()
+    await rt.roster.update(
+        "mailer", {"approval_rules": {"require_approval": ["plugin:gmail"], "always_allow": []}}
+    )
+    changed_rule = await gated.execute({"action": "list"}, ctx)
+    assert not changed_rule.success and changed_rule.output["reason"] == "blocked_by_policy"
+
+    await society_system_extra(None, None, session)
+    gated = offered()
+    session.permission_mode = "always_ask"
+    changed_session = await gated.execute({"action": "list"}, ctx)
+    assert not changed_session.success and changed_session.output["reason"] == "blocked_by_policy"
+
+    session.permission_mode = "bypass"
+    await rt.roster.update(
+        "mailer",
+        {"approval_mode": "bypass", "approval_rules": {"require_approval": [], "always_allow": []}},
+    )
+    await society_system_extra(None, None, session)
+    gated = offered()
+    await rt.roster.update("mailer", {"permission_ceiling": "safe"})
+    changed_ceiling = await gated.execute({"action": "list"}, ctx)
+    assert not changed_ceiling.success and changed_ceiling.output["reason"] == "blocked_by_policy"
+    assert calls == []
+
+
+async def test_live_session_record_can_revoke_an_offered_tool(rt: SocietyRuntime):
+    await rt.roster.create(name="Mailer", approval_mode="bypass")
+    session = SimpleNamespace(
+        session_id="society:mailer", permission_mode="bypass", surface="society"
+    )
+    await society_system_extra(None, None, session)
+    calls: list[dict] = []
+
+    async def execute(args: dict, _ctx: object) -> ToolResult:
+        calls.append(args)
+        return ToolResult(True, "ok", None)
+
+    tool = _tool("gmail")
+    tool.execute = execute
+    class Store:
+        live = SimpleNamespace(
+            session_id="society:mailer", permission_mode="bypass", surface="society"
+        )
+
+        def get_session(self, _session_id: str):
+            return self.live
+
+        def permission_override(self, _session_id: str) -> str:
+            return ""
+
+    store = Store()
+    rt._get_chat = lambda: SimpleNamespace(store=store)  # noqa: SLF001 — live store seam
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({"gmail": tool})["gmail"]
+    ctx = SimpleNamespace(approved_by="auto")
+    assert (await gated.execute({"action": "list"}, ctx)).success
+    store.live = SimpleNamespace(
+        session_id="society:mailer", permission_mode="ask", surface="society"
+    )
+    changed = await gated.execute({"action": "list"}, ctx)
+    assert not changed.success and changed.output["reason"] == "blocked_by_policy"
+    store.live = None
+    removed = await gated.execute({"action": "list"}, ctx)
+    assert not removed.success and removed.output["reason"] == "blocked_by_policy"
+    assert calls == [{"action": "list"}]
+
+
+async def test_ephemeral_read_only_turn_checks_saved_mode_without_blocking_reads(
+    rt: SocietyRuntime, tmp_path: Path
+):
+    await rt.roster.create(name="Reader", approval_mode="bypass")
+    store = AgentChatStore(tmp_path / "chat.sqlite")
+    try:
+        saved = store.create_session(
+            session_id="society:reader", surface="society", provider="test",
+            model="test", effort="", cwd=str(tmp_path), permission_mode="ask",
+        )
+        turn = replace(saved, permission_mode="plan")
+        rt._get_chat = lambda: SimpleNamespace(store=store)  # noqa: SLF001 — persisted chat seam
+        await society_system_extra(None, None, turn)
+        calls: list[str] = []
+
+        def offered(name: str, read_only: bool, risk_tier: str):
+            async def execute(_args: dict, _ctx: object) -> ToolResult:
+                calls.append(name)
+                return ToolResult(True, "ok", None)
+
+            return SimpleNamespace(
+                name=name, description="x.", schema={}, risk_tier=risk_tier,
+                read_only=read_only, execute=execute,
+            )
+
+        filt = society_tool_filter(turn)
+        assert filt is not None
+        picked = filt({
+            "society_memory_recall": offered("society_memory_recall", True, "safe"),
+            "society_wiki_note": offered("society_wiki_note", False, "monitor"),
+        })
+        ctx = SimpleNamespace(approved_by="auto")
+        read = picked["society_memory_recall"]
+        assert (await read.execute({}, ctx)).success
+        write = await picked["society_wiki_note"].execute({}, ctx)
+        assert not write.success and write.output["reason"] == "blocked_by_policy"
+        assert calls == ["society_memory_recall"]
+
+        store.update_session(saved.session_id, permission_mode="bypass")
+        changed = await read.execute({}, ctx)
+        assert not changed.success and changed.output["reason"] == "blocked_by_policy"
+        assert calls == ["society_memory_recall"]
+    finally:
+        store.close()
+
+
+async def test_legacy_own_hand_stops_when_roster_tightens_mid_turn(rt: SocietyRuntime):
+    await rt.roster.create(name="Courier", approval_mode="bypass")
+    await rt.store.update_agent("courier", {"approval_mode": None})
+    session = SimpleNamespace(session_id="society:courier", permission_mode="bypass")
+    _live_chat(rt, session)
+    await society_system_extra(None, None, session)
+    calls: list[str] = []
+
+    async def execute(_args: dict, _ctx: object) -> ToolResult:
+        calls.append("sent")
+        return ToolResult(True, "ok", None)
+
+    own = SimpleNamespace(
+        name=MESSAGE_TOOL_NAME, description="x.", schema={}, risk_tier="safe",
+        execute=execute,
+    )
+    filt = society_tool_filter(session)
+    assert filt is not None
+    gated = filt({MESSAGE_TOOL_NAME: own})[MESSAGE_TOOL_NAME]
+    assert hasattr(gated, "_capability_id")
+    await rt.roster.update("courier", {"approval_mode": "always_ask"})
+    blocked = await gated.execute({}, SimpleNamespace(approved_by="auto"))
+    assert not blocked.success and blocked.output["reason"] == "blocked_by_policy"
+    assert calls == []
+
+
 async def test_shell_uses_one_chat_approval_for_one_command(rt: SocietyRuntime, tmp_path: Path):
     await rt.roster.create(name="Runner", approval_mode="ask")
     workspace = tmp_path / "workspace"
     session = SimpleNamespace(
         session_id="society:runner", permission_mode="ask", cwd=str(workspace)
     )
+    _live_chat(rt, session)
     await society_system_extra(None, None, session)
     from jarvis.society.agent_tools import ShellTool
 

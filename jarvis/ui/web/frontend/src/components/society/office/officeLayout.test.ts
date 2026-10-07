@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   allDesks, archPosts, buildOfficeLayout, countStates, departmentKey, FURNITURE_SIZE, footprint, groupDepartments,
-  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, SPAWN, type OfficeAgentInput,
+  MAX_DEPARTMENTS, MIN_DEPARTMENTS, COMMAND_DESK, COMMAND_REACH, LEVEL_HALL, SPAWN, type OfficeAgentInput,
 } from "./officeLayout";
-import { buildNavGrid, isWalkable } from "./officeNav";
+import { buildNavGrid, findPath, isWalkable } from "./officeNav";
+import { REWARD_IDS } from "../progression/levelCatalog";
 import { cameraHome, fitDistance, focusBounds } from "./officeCamera";
 
 const agent = (id: string, provider: string, extra: Partial<OfficeAgentInput> = {}): OfficeAgentInput => ({
@@ -113,8 +114,50 @@ describe("office layout", () => {
     const plain = buildOfficeLayout(roster);
     expect(plain).toEqual(buildOfficeLayout(roster, { variant: "agents" }));
     expect(plain.variant).toBe("agents");
-    expect(plain.rooms.map((r) => r.kind)).toEqual(["lead", "team", "wardrobe", "reception", "break"]);
-    expect(plain.checkpoints.map((c) => c.id)).toEqual(["spawn", "create", "manage", "team", "wardrobe", "lead", "break", "elevator"]);
+    expect(plain.rooms.map((r) => r.kind)).toEqual(["lead", "team", "wardrobe", "reception", "break", "levels"]);
+    expect(plain.checkpoints.map((c) => c.id)).toEqual(["spawn", "create", "manage", "team", "wardrobe", "lead", "studio", "levels", "break", "elevator"]);
+  });
+
+  it.each([0, 12, 40])("builds the Level Hall as the agents floor's east wing (%i agents)", (count) => {
+    const roster = Array.from({ length: count }, (_, i) => agent(`a${i}`, `P${i % 6}`));
+    const layout = buildOfficeLayout(roster);
+    const hall = layout.rooms.find((r) => r.kind === "levels")!;
+    const office = Math.max(...layout.rooms.filter((r) => r.kind !== "levels").map((r) => r.maxX));
+    // One aisle east of the office, across the floor's whole depth, walled with its doors facing the office.
+    expect(hall.walled).toBe(true);
+    expect(hall.minX - office).toBeCloseTo(LEVEL_HALL.aisle, 9);
+    expect(hall.maxX - hall.minX).toBeCloseTo(LEVEL_HALL.width, 9);
+    expect(hall.minZ).toBe(Math.min(...layout.rooms.map((r) => r.minZ)));
+    expect(hall.maxZ).toBe(Math.max(...layout.rooms.map((r) => r.maxZ)));
+    expect(hall.doors.every((d) => d.side === "west")).toBe(true);
+    const spawn = layout.checkpoints.find((c) => c.id === "spawn")!;
+    expect(hall.doors[0].at).toBe(spawn.z);
+    // A pedestal per reward on either side of the road, inside the hall, rising towards the stage.
+    const pedestals = layout.furniture.filter((f) => f.kind === "rewardPedestal");
+    expect(pedestals.map((p) => p.id)).toEqual(REWARD_IDS.map((_, n) => `level-pedestal-${n}`));
+    const cx = (hall.minX + hall.maxX) / 2;
+    pedestals.forEach((p, n) => {
+      const box = footprint(p);
+      expect(box.minX > hall.minX && box.maxX < hall.maxX && box.minZ > hall.minZ && box.maxZ < hall.maxZ, p.id).toBe(true);
+      expect(Math.sign(p.x - cx)).toBe(n % 2 === 0 ? -1 : 1);
+      if (n >= 2) expect(p.z).toBeLessThan(pedestals[n - 2].z);
+    });
+    const stage = layout.furniture.find((f) => f.kind === "studioStage")!;
+    const studio = layout.checkpoints.find((c) => c.id === "studio")!;
+    expect([studio.x, studio.z]).toEqual([stage.x, stage.z]);
+    expect(stage.z).toBeLessThan(Math.min(...pedestals.map((p) => p.z)));
+    // Both checkpoints are reachable on foot from the spawn point, through each of the hall's doors.
+    const grid = buildNavGrid(layout);
+    const levels = layout.checkpoints.find((c) => c.id === "levels")!;
+    for (const target of [studio.approach!, { x: levels.x, z: levels.z }]) {
+      expect(isWalkable(grid, target)).toBe(true);
+      expect(findPath(grid, layout.arrival, target)).not.toBeNull();
+    }
+    for (const door of hall.doors) {
+      // The aisle in front of every door stays open: no olive tree closes it.
+      expect(isWalkable(grid, { x: office + LEVEL_HALL.aisle / 2, z: door.at }), `door at ${door.at}`).toBe(true);
+      expect(isWalkable(grid, { x: hall.minX + 0.6, z: door.at }), `inside door at ${door.at}`).toBe(true);
+    }
   });
 
   it("builds the coding floor: workspaces as departments, Mission Control and server room, no lead desks", () => {
@@ -128,9 +171,12 @@ describe("office layout", () => {
     expect(layout.furniture.some((f) => f.room === "lead" || f.room === "wardrobe")).toBe(false);
     expect(layout.spots.some((s) => s.room === "command")).toBe(true);
     expect(layout.spots.some((s) => s.room === "server")).toBe(true);
-    // Both floors share one footprint, and the elevator stands at the same spot on each.
+    // Both floors share the office's footprint (the agents floor adds the Level Hall as an east wing),
+    // and the elevator stands at the same spot on each.
     const below = buildOfficeLayout(roster);
-    expect(layout.bounds).toEqual(below.bounds);
+    expect(layout.rooms.some((r) => r.kind === "levels")).toBe(false);
+    expect({ ...layout.bounds, maxX: 0 }).toEqual({ ...below.bounds, maxX: 0 });
+    expect(below.bounds.maxX - layout.bounds.maxX).toBeCloseTo(LEVEL_HALL.aisle + LEVEL_HALL.width, 9);
     const lift = (l: typeof layout) => l.checkpoints.find((c) => c.id === "elevator")!;
     expect(lift(layout).z).toBe(lift(below).z);
     expect(lift(layout).x - layout.bounds.minX).toBeCloseTo(lift(below).x - below.bounds.minX);
@@ -191,7 +237,8 @@ describe("office layout", () => {
         expect([terminal.x, terminal.z]).toEqual([stop.x, stop.z]);
         expect([pad.x, pad.z]).toEqual([stop.x, stop.z]);
         // On the centre line between the two department columns, in a cross aisle nearest the floor's middle.
-        expect(stop.x).toBeCloseTo((layout.bounds.minX + layout.bounds.maxX) / 2, 9);
+        const columns = { minX: Math.min(...layout.departments.map((d) => d.minX)), maxX: Math.max(...layout.departments.map((d) => d.maxX)) };
+        expect(stop.x).toBeCloseTo((columns.minX + columns.maxX) / 2, 9);
         const rowStarts = [...new Set(layout.departments.map((d) => d.minZ))].sort((p, q) => p - q);
         const crossings = rowStarts.slice(1).map((start, i) => {
           const above = Math.max(...layout.departments.filter((d) => d.minZ === rowStarts[i]).map((d) => d.maxZ));

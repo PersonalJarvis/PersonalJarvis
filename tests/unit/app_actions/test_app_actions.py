@@ -6,7 +6,8 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile
+from pydantic import BaseModel
 
 from jarvis.app_actions import catalog as catalog_mod
 from jarvis.app_actions import history
@@ -166,3 +167,113 @@ async def test_settings_routes_list_set_and_show_history(app: FastAPI) -> None:
         history.record(action_id, "ran", "x")
         rows = (await client.get("/api/app-actions/history")).json()["history"]
         assert rows[0]["action"] == action_id
+
+
+async def test_history_names_a_voice_command_and_links_its_permission(app: FastAPI) -> None:
+    @app.get("/api/skills/brief", tags=["skills"])
+    async def skills_brief() -> dict[str, Any]:
+        """Brief skill list."""
+        return {"skills": []}
+
+    history.record("skills-list", "ran", "x", via="app-command")
+    history.record("no-such-command", "failed", "x")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+        rows = (await client.get("/api/app-actions/history?limit=2")).json()["history"]
+    unknown, command = rows
+    assert command["title"] == "List installed skills"
+    assert command["area"] == "skills" and command["kind"] == "read"
+    assert command["catalog_id"] == _id(app, "/api/skills/brief", "GET")
+    assert unknown["title"] == "no-such-command" and unknown["catalog_id"] is None
+
+
+@pytest.mark.parametrize("area", ["IDE", "IDE panes and workspaces", "agentic-ide", "nonsense"])
+async def test_area_is_a_hint_not_an_exact_slug(app: FastAPI, area: str) -> None:
+    # Live 2026-10-01: the model passed the human label from the description
+    # and an exact slug match hid every action.
+    found = await FindAppActionTool().execute({"query": "rename pane", "area": area}, None)
+    assert found.success
+    assert found.output["actions"][0]["title"] == "Rename Pane"
+
+
+class _Hook(BaseModel):
+    url: str
+    webhook_token: str
+
+
+class _NewComputer(BaseModel):
+    host: str
+    password: str
+
+
+class _Usage(BaseModel):
+    tokens_in: int
+    max_tokens: int
+
+
+class _Session(BaseModel):
+    permission_mode: str
+
+
+def test_actions_carrying_a_credential_are_never_offered() -> None:
+    # AP-2: the URL alone hid neither a webhook route returning its token nor
+    # a computer route taking a password.
+    application = FastAPI()
+
+    @application.get("/api/tasks/{task_id}/webhook-connection", response_model=_Hook)
+    async def hook(task_id: str) -> _Hook:
+        return _Hook(url="", webhook_token="")
+
+    @application.post("/api/computers")
+    async def add_computer(body: _NewComputer) -> dict[str, Any]:
+        return {}
+
+    @application.get("/api/usage", response_model=_Usage)
+    async def usage() -> _Usage:
+        return _Usage(tokens_in=0, max_tokens=0)
+
+    @application.patch("/api/agent-chat/sessions/{sid}")
+    async def patch_session(sid: str, body: _Session) -> dict[str, Any]:
+        return {}
+
+    catalog = build_catalog(application.openapi())
+    routes = {(e.method, e.path): e for e in catalog.values()}
+    assert ("GET", "/api/tasks/{task_id}/webhook-connection") not in routes
+    assert ("POST", "/api/computers") not in routes
+    assert ("GET", "/api/usage") in routes
+    assert default_tier(routes[("PATCH", "/api/agent-chat/sessions/{sid}")]) == "ask"
+
+
+async def test_a_misspelled_parameter_is_refused_before_anything_runs(app: FastAPI) -> None:
+    action_id = _id(app, "/api/skills", "GET")
+    tool = RunAppActionTool(runtime=_Runtime(app))
+    result = await tool.execute({"action_id": action_id, "params": {"limt": 3}}, None)
+    assert not result.success and result.output["executed"] is False
+    assert "limt" in (result.error or "") and "limit" in (result.error or "")
+    ran = await tool.execute({"action_id": action_id, "params": {"limit": 3}}, None)
+    assert ran.success and ran.output["response"]["limit"] == 3
+
+
+def test_a_long_response_is_shortened_into_valid_json() -> None:
+    import json
+
+    from jarvis.plugins.tool.app_action import _MAX_RESPONSE_CHARS, _trim
+
+    big = {"items": [{"name": f"skill-{i}", "notes": "x" * 300} for i in range(500)]}
+    trimmed = _trim(big)
+    assert trimmed["truncated"] is True
+    assert len(json.dumps(trimmed)) <= _MAX_RESPONSE_CHARS + 100
+    assert trimmed["data"]["items"][0]["name"] == "skill-0"
+    assert trimmed["data"]["items"][-1].endswith("more")
+
+
+def test_a_file_upload_is_not_offered_as_an_action() -> None:
+
+    application = FastAPI()
+
+    @application.post("/api/skills/upload")
+    async def upload(file: UploadFile) -> dict[str, Any]:
+        return {}
+
+    paths = {e.path for e in build_catalog(application.openapi()).values()}
+    assert "/api/skills/upload" not in paths

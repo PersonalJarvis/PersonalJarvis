@@ -99,7 +99,9 @@ def test_command_writer_passes_text_only_through_stdin(
 
     assert clipboard._run_command(["pbcopy"], clipboard_text) is True
     assert captured["command"] == ["pbcopy"]
-    assert captured["input"] == clipboard_text
+    assert captured["input"] == clipboard_text.encode("utf-8")
+    # A forked clipboard owner must not hold a pipe open (xclip, wl-copy).
+    assert captured["stdout"] is subprocess.DEVNULL
     assert clipboard_text not in captured["command"]
 
 
@@ -198,3 +200,55 @@ def test_empty_clipboard_reads_as_empty_string_not_unavailable(
 
     monkeypatch.setattr(clipboard.subprocess, "run", _run)
     assert clipboard._read_command(["pbpaste"]) == ""
+
+
+@pytest.mark.parametrize(
+    ("wayland", "expected_write", "expected_read"),
+    [
+        ("wayland-0", "wl-copy", "wl-paste"),
+        # An X11 desktop with wl-clipboard installed must not try Wayland first.
+        ("", "xclip", "xclip"),
+    ],
+)
+def test_linux_picks_the_tool_for_the_session(
+    monkeypatch: pytest.MonkeyPatch, wayland: str, expected_write: str, expected_read: str
+) -> None:
+    monkeypatch.setenv("WAYLAND_DISPLAY", wayland)
+    monkeypatch.setattr(clipboard.shutil, "which", lambda name: f"/usr/bin/{name}")
+    written: list[str] = []
+    read: list[str] = []
+    monkeypatch.setattr(
+        clipboard, "_run_command", lambda command, _text: written.append(command[0]) or True
+    )
+    monkeypatch.setattr(clipboard, "_read_command", lambda command: read.append(command[0]) or "")
+
+    clipboard._write_linux("hello")
+    clipboard._read_linux()
+
+    assert written == [f"/usr/bin/{expected_write}"]
+    assert read == [f"/usr/bin/{expected_read}"]
+
+
+@pytest.mark.parametrize(("platform", "utf8"), [("darwin", True), ("linux", False)])
+def test_macos_clipboard_commands_always_speak_utf8(
+    monkeypatch: pytest.MonkeyPatch, platform: str, utf8: bool
+) -> None:
+    """An app started from Finder has no locale; pbcopy would fall back to MacRoman."""
+    monkeypatch.delenv("LANG", raising=False)
+    monkeypatch.delenv("LC_ALL", raising=False)
+    monkeypatch.setattr(clipboard, "detect_platform", lambda: platform)
+    seen: list[object] = []
+
+    def _run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        seen.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(clipboard.subprocess, "run", _run)
+    clipboard._run_command(["/usr/bin/pbcopy"], "Größe ✓")  # i18n-allow: non-ASCII round trip
+    clipboard._read_command(["/usr/bin/pbpaste"])
+
+    for env in seen:
+        if utf8:
+            assert isinstance(env, dict) and env["LC_ALL"] == "en_US.UTF-8"
+        else:
+            assert env is None

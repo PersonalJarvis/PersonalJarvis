@@ -32,6 +32,7 @@ import asyncio
 import logging
 import random
 import re
+import sys
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ from jarvis.core.events import (
     ActionProposed,
     AudioOutFirst,
     ComposeRequested,
+    DelegationResultReady,
     DictationCompleted,
     DictationPromptModeChanged,
     DictationPromptModePauseToggleRequested,
@@ -51,6 +53,7 @@ from jarvis.core.events import (
     JarvisAgentBackgroundCompleted,
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
+    JarvisChatTurnFinished,
     ListeningStarted,
     OrbResetRequested,
     PetVisibilityToggleRequested,
@@ -81,6 +84,8 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
 )
+from jarvis.ui.pets import notices as pet_notices
+from jarvis.ui.pets.actions import action_for_tool
 from jarvis.ui.pets.status_line import StatusFeed, condense, parse_reasoning_summary
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
@@ -128,6 +133,99 @@ DICTATION_REFUSAL_DWELL_S = 3.0
 # a key and still deserves to see that the key was heard and declined, so the
 # surface says the one thing that is true without the detail.
 DICTATION_REFUSAL_FALLBACK_TEXT = "Dictation could not start."
+
+# A refused dictation whose reason is ``microphone_unavailable`` is, on macOS,
+# nearly always the microphone permission. The pipeline's English sentence says
+# "check the microphone permission"; the three tables below say what to do NEXT in
+# the interface language (answer the dialog, flip the switch, open the window),
+# because on this surface the sentence is all the user gets (the permission toast
+# lives in the web window). macOS only: the sentences name System Settings, and the
+# same reason on another OS can also mean "the desktop window is not visible".
+# Keys are the supported UI languages. This first table is for a microphone that
+# macOS has not been asked about yet.
+MICROPHONE_REFUSAL_TEXT: dict[str, str] = {
+    "en": (
+        "Microphone access is needed: allow it in the macOS dialog, then press the "
+        "key again."
+    ),
+    "de": (  # i18n-allow
+        "Mikrofonzugriff nötig: im macOS-Dialog erlauben und die Taste dann noch "  # i18n-allow
+        "einmal drücken."  # i18n-allow
+    ),
+    "es": (  # i18n-allow
+        "Se necesita acceso al micrófono: permítelo en el diálogo de macOS y vuelve "  # i18n-allow
+        "a pulsar la tecla."  # i18n-allow
+    ),
+    "zh": "需要麦克风权限：请在 macOS 对话框中允许，然后再按一次快捷键。",  # i18n-allow
+}
+
+# The microphone is DENIED (or macOS applies the switch only in Settings): there is no
+# dialog any more, so the sentence names the switch and the place instead.
+MICROPHONE_DENIED_REFUSAL_TEXT: dict[str, str] = {
+    "en": (
+        "Microphone is off for Personal Jarvis: switch it on in System Settings > "
+        "Privacy & Security > Microphone, then press the key again."
+    ),
+    "de": (  # i18n-allow
+        "Mikrofon ist für Personal Jarvis aus: schalte es in Systemeinstellungen > "  # i18n-allow
+        "Datenschutz & Sicherheit > Mikrofon ein und drücke die Taste dann noch "  # i18n-allow
+        "einmal."  # i18n-allow
+    ),
+    "es": (  # i18n-allow
+        "El micrófono está desactivado para Personal Jarvis: actívalo en Ajustes del "  # i18n-allow
+        "Sistema > Privacidad y seguridad > Micrófono y vuelve a pulsar la tecla."  # i18n-allow
+    ),
+    "zh": (  # i18n-allow
+        "Personal Jarvis 的麦克风已关闭："  # i18n-allow
+        "请在“系统设置 > 隐私与安全性 > 麦克风”中开启，"  # i18n-allow
+        "然后再按一次快捷键。"  # i18n-allow
+    ),
+}
+
+# Running outside the installed app: the confirmation lives in the web window, and
+# the permission layer's own sentence talks about "the user" in the third person.
+MICROPHONE_OUTSIDE_REFUSAL_TEXT: dict[str, str] = {
+    "en": "Open the Personal Jarvis window to continue.",
+    "de": "Öffne das Personal-Jarvis-Fenster, um fortzufahren.",  # i18n-allow
+    "es": "Abre la ventana de Personal Jarvis para continuar.",  # i18n-allow
+    "zh": "打开 Personal Jarvis 窗口以继续。",  # i18n-allow
+}
+
+# A microphone-permission notice is a sentence with a place name in it: 3 s is too
+# short to read it, so it stays up longer than an ordinary refusal.
+MICROPHONE_REFUSAL_DWELL_S = 8.0
+
+
+def _microphone_refusal_kind(detail: str) -> str:
+    """Which notice a macOS ``microphone_unavailable`` refusal gets.
+
+    ``"keep"``: restricted (a profile or parental control), or a session where macOS
+    cannot be asked: the permission service's fixed sentence stays, because "switch it
+    on in System Settings" would be wrong. ``"outside"``: running outside the installed
+    app (the grantee is another app and only the window can confirm). ``"denied"``: the
+    switch is off, no dialog exists any more. ``"undecided"``: anything else (the
+    pipeline's generic sentence, the not-determined templates). The kind is read from
+    the service's FIXED sentences, never parsed from free text. Never raises: an
+    unreadable service means "undecided" (the table is the safe default for the bar).
+    """
+    try:
+        from jarvis.platform.permission_service import user_detail_for
+        from jarvis.platform.permissions import PermissionId
+
+        mic = PermissionId.MICROPHONE
+        if detail in {user_detail_for(mic, "restricted"), user_detail_for(mic, "unavailable")}:
+            return "keep"
+        if detail in {
+            user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=True),
+            user_detail_for(mic, "not_determined", outside_app=True, launched_as_bundle=False),
+        }:
+            return "outside"
+        if detail in {user_detail_for(mic, "denied"), user_detail_for(mic, "needs_settings")}:
+            return "denied"
+    except Exception:  # noqa: BLE001 - the table is the safe default for the bar
+        log.debug("Microphone refusal templates unavailable; using the table.", exc_info=True)
+    return "undecided"
+
 
 # How long the bar stays up after a dictation that came back with NOTHING —
 # silence, or a provider that refused. Short, and deliberately not zero: the
@@ -246,39 +344,46 @@ PET_CARD_LABELS: dict[str, dict[str, str]] = {
         "en": "Thinking …",
         "de": "Denkt nach …",  # i18n-allow
         "es": "Pensando …",  # i18n-allow
+        "zh": "正在思考…",  # i18n-allow
     },
     "working": {
         "en": "Working",
         "de": "Arbeitet",  # i18n-allow
         "es": "Trabajando",  # i18n-allow
+        "zh": "正在处理",  # i18n-allow
     },
     "working_detail": {
         "en": "Working …",
         "de": "Arbeitet …",  # i18n-allow
         "es": "Trabajando …",  # i18n-allow
+        "zh": "正在处理…",  # i18n-allow
     },
     "step_done": {
         "en": "Step done",
         "de": "Befehl ausgeführt",  # i18n-allow
         "es": "Paso completado",  # i18n-allow
+        "zh": "步骤已完成",  # i18n-allow
     },
     "step_failed": {
         "en": "Step failed",
         "de": "Befehl fehlgeschlagen",  # i18n-allow
         "es": "Paso fallido",  # i18n-allow
+        "zh": "步骤失败",  # i18n-allow
     },
     "done": {
         "en": "Done",
         "de": "Erledigt",  # i18n-allow
         "es": "Hecho",  # i18n-allow
+        "zh": "已完成",  # i18n-allow
     },
     "failed": {
         "en": "Failed",
         "de": "Fehlgeschlagen",  # i18n-allow
         "es": "Falló",  # i18n-allow
+        "zh": "失败",  # i18n-allow
     },
 }
-PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es")
+PET_STATUS_LANGUAGES: tuple[str, ...] = ("en", "de", "es", "zh")
 
 # Minimum spacing of two card updates. A streamed reasoning summary produces a
 # few snapshots per second; repainting the card for each one is flicker.
@@ -369,6 +474,8 @@ class OrbBusBridge:
         self._card_visible = False
         self._reasoning_title = ""
         self._agent_tasks: dict[str, tuple[str, float]] = {}
+        #: Last background-work flag sent to the pet (``set_pet_busy``).
+        self._pet_busy = False
         self._card_fallback_task: asyncio.Task | None = None
         self._card_clear_task: asyncio.Task | None = None
         # Clock for the pet's outcome throttle (replaceable in tests) and the
@@ -594,6 +701,10 @@ class OrbBusBridge:
             self._bus.subscribe(ToolCallStarted, self._on_tool_call_started)
             self._bus.subscribe(JarvisAgentTaskStarted, self._on_agent_task_started)
             self._bus.subscribe(JarvisAgentTaskCompleted, self._on_agent_task_completed)
+            # The pet's done cards (jarvis.ui.pets.notices): Jarvis answered a
+            # typed chat, or a job Jarvis started came back. Nothing else.
+            self._bus.subscribe(JarvisChatTurnFinished, self._on_chat_turn_finished)
+            self._bus.subscribe(DelegationResultReady, self._on_delegation_result)
             # Wire the orb's double-double-click gesture to a bus publish.
             # The orb requires two ``<Double-Button-1>`` events inside
             # ``MUTE_GESTURE_WINDOW_MS`` (four clicks in <600 ms) before
@@ -784,6 +895,9 @@ class OrbBusBridge:
         if pipeline is None:
             return
         self._call_surface("set_muted", bool(getattr(pipeline, "is_muted", False)))
+        if hasattr(pipeline, "is_speaker_muted"):
+            self._call_surface("set_speaker_muted", bool(pipeline.is_speaker_muted))
+            return
         getter = getattr(pipeline, "get_tts_volume", None)
         if not callable(getter):
             return
@@ -849,6 +963,14 @@ class OrbBusBridge:
         ]
         for key in stale:
             self._agent_tasks.pop(key, None)
+
+    def _sync_pet_busy(self) -> None:
+        """The pet works while an agent task runs; tell it when that flips."""
+        self._expire_agent_tasks()
+        busy = bool(self._agent_tasks)
+        if busy != self._pet_busy:
+            self._pet_busy = busy
+            self._call_surface("set_pet_busy", busy)
 
     def _agent_title(self) -> str:
         """Title of the newest running agent task ("" when none runs)."""
@@ -1027,7 +1149,7 @@ class OrbBusBridge:
         return self._last_state not in ("IDLE", "ERROR", "PAUSED")
 
     async def _on_speaker_mute_changed(self, event: VoiceSpeakerMuteChanged) -> None:
-        """Mirror the pipeline's speaker mute (TTS volume 0) on the surface."""
+        """Mirror the pipeline's authoritative output mute on the surface."""
         self._remember_loop()
         self._call_surface("set_speaker_muted", bool(event.muted))
 
@@ -1064,6 +1186,7 @@ class OrbBusBridge:
         """A tool is about to run: its reason (else its name) is the detail."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = (event.rationale or "").strip() or _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1072,6 +1195,7 @@ class OrbBusBridge:
         """A tool call some path reports without an ``ActionProposed``."""
         if not self._wants_card():
             return
+        self._call_surface("set_pet_action", action_for_tool(event.tool_name))
         detail = _humanize_tool_name(event.tool_name)
         if detail:
             self._show_card(self._card_title(), detail)
@@ -1083,6 +1207,8 @@ class OrbBusBridge:
         background or between turns). Inside a turn it is a step; a failed step
         the turn recovers from is not the user's failure.
         """
+        if self._wants_card():
+            self._call_surface("set_pet_action", None)  # the step is over
         if self._card_visible:
             self._show_card(
                 self._card_title(), self._label("step_done" if event.success else "step_failed")
@@ -1105,6 +1231,20 @@ class OrbBusBridge:
             return
         self._pet_outcome("error")
 
+    # -- the pet's bell ---------------------------------------------------
+
+    def _push_notice(self, notice: pet_notices.Notice | None) -> None:
+        """Hand one card to the surface (the pet; every other surface skips it)."""
+        if notice is None or not self._wants_card():
+            return
+        self._call_surface("push_notice", *notice)
+
+    async def _on_chat_turn_finished(self, event: JarvisChatTurnFinished) -> None:
+        self._push_notice(pet_notices.for_chat_turn(event, self._status_language()))
+
+    async def _on_delegation_result(self, event: DelegationResultReady) -> None:
+        self._push_notice(pet_notices.for_delegation_result(event, self._status_language()))
+
     async def _on_agent_task_started(self, event: JarvisAgentTaskStarted) -> None:
         """An agent took on a task: its card stays until the task is done."""
         if not self._wants_card():
@@ -1112,6 +1252,7 @@ class OrbBusBridge:
         title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
         title = title or self._label("working")
         self._agent_tasks[str(event.trace_id)] = (title, self._clock())
+        self._sync_pet_busy()
         self._show_card(title, self._label("working_detail"), force=True)
 
     async def _on_agent_task_completed(self, event: JarvisAgentTaskCompleted) -> None:
@@ -1124,6 +1265,7 @@ class OrbBusBridge:
             # oldest running task is the best match, and it must not keep the
             # card up forever.
             entry = self._agent_tasks.pop(next(iter(self._agent_tasks)))
+        self._sync_pet_busy()
         title = entry[0] if entry is not None else self._card_title()
         self._show_card(
             title,
@@ -1921,6 +2063,17 @@ class OrbBusBridge:
         reason = (event.reason or "").strip() or "unspecified"
         detail = (event.detail or "").strip() or DICTATION_REFUSAL_FALLBACK_TEXT
         log.info("OrbBridge._on_dictation_refused: reason=%s — %s", reason, detail)
+        dwell_s = DICTATION_REFUSAL_DWELL_S
+        if reason == "microphone_unavailable" and sys.platform == "darwin":
+            kind = _microphone_refusal_kind(detail)
+            table = {
+                "undecided": MICROPHONE_REFUSAL_TEXT,
+                "denied": MICROPHONE_DENIED_REFUSAL_TEXT,
+                "outside": MICROPHONE_OUTSIDE_REFUSAL_TEXT,
+            }.get(kind)
+            if table is not None:
+                detail = table.get(self._status_language(), table["en"])
+            dwell_s = MICROPHONE_REFUSAL_DWELL_S
         if reason in DICTATION_INERT_REFUSALS:
             # "A dictation is already recording" is not a failure — it is the
             # statement that the turn the user is watching is alive and will
@@ -1945,7 +2098,7 @@ class OrbBusBridge:
         self._cancel_dictation_standdown()
         self._show_notice_mode()
         self._show_listening_transcript(detail)
-        self._schedule_notice_standdown(DICTATION_REFUSAL_DWELL_S)
+        self._schedule_notice_standdown(dwell_s)
 
     def _rest_surface(self) -> None:
         """Drop the working look NOW, without closing the surface yet.
@@ -2219,14 +2372,9 @@ class OrbBusBridge:
         """
         if event.success:
             self._pet_outcome("success")
-        if self._wants_card() and (self._card_visible or self._agent_tasks):
-            title = condense(event.utterance or "", max_chars=PET_CARD_TITLE_CHARS)
-            self._show_card(
-                title or self._card_title(),
-                self._label("done" if event.success else "failed"),
-                force=True,
-                quiet_clear_s=PET_CARD_TASK_DONE_S,
-            )
+        self._sync_pet_busy()
+        self._push_notice(pet_notices.for_background_task(event, self._status_language()))
+        self._clear_card()
         if self._last_state not in ("IDLE", "ERROR", "PAUSED"):
             return
         self._orb.show(mode="speak")

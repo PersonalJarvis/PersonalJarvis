@@ -32,6 +32,30 @@ def canonical_json(payload: Any) -> bytes:
                       ensure_ascii=False).encode("utf-8")
 
 
+#: Payload field that binds a signature to ONE endpoint: ``"<METHOD> <path>"``.
+#: The signature covers only the body, so without it a signed body is valid
+#: on every route whose schema accepts it — and the owner's reactions are
+#: forwarded to friends verbatim, so a friend could replay one at the owner's
+#: own backend (``GET /api/v1/activities``) and read the private feed.
+AUDIENCE_FIELD = "aud"
+
+# A reaction is signed once by the owner's client, sent to the owner's
+# backend, and delivered unchanged to the friend's inbound route. Its audience
+# names that final hop, so both backends accept it and nothing else does.
+_AUDIENCE_ALIASES = {
+    "POST /api/v1/reactions": "POST /api/v1/federation/reactions/inbound",
+}
+
+
+def signed_audience(method: str, path: str) -> str:
+    """The ``aud`` value a signed request to ``method path`` must carry.
+
+    ``path`` is the route path without query string or deployment prefix.
+    """
+    key = f"{method.upper()} {path}"
+    return _AUDIENCE_ALIASES.get(key, key)
+
+
 def generate_keypair() -> tuple[str, str]:
     """Generates a new Ed25519 keypair.
 

@@ -148,6 +148,13 @@ class SocietyStore:
                 "ALTER TABLE society_agents ADD COLUMN computer_id TEXT DEFAULT NULL"
             )
             log.info("society store: migration applied — added computer_id")
+        if "runtime" not in existing:
+            # Every existing agent keeps running on Jarvis' own runtime.
+            await self.conn.execute(
+                "ALTER TABLE society_agents ADD COLUMN runtime TEXT NOT NULL DEFAULT 'jarvis' "
+                "CHECK (runtime IN ('jarvis', 'hermes', 'openclaw'))"
+            )
+            log.info("society store: migration applied — added runtime")
         await self._migrate_checkpoint_vocabulary()
 
     async def _migrate_checkpoint_vocabulary(self) -> None:
@@ -575,9 +582,16 @@ class SocietyStore:
         await cur.close()
         return dict(row) if row else None
 
-    async def list_room_rows(self, *, state: str | None = None) -> list[dict[str, Any]]:
+    async def list_room_rows(self, *, state: str | None = None,
+                             prefix: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         self.conn.row_factory = aiosqlite.Row
-        if state is None:
+        if prefix is not None:
+            cur = await self.conn.execute(
+                "SELECT * FROM society_rooms WHERE substr(room_id, 1, ?) = ? "
+                "ORDER BY created_ms DESC, rowid DESC LIMIT ?",
+                (len(prefix), prefix, max(1, min(limit, 100))),
+            )
+        elif state is None:
             cur = await self.conn.execute("SELECT * FROM society_rooms ORDER BY created_ms DESC")
         else:
             cur = await self.conn.execute(

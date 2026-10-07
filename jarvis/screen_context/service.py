@@ -32,10 +32,11 @@ import math
 import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from jarvis.platform import screen_access
 from jarvis.screen_context import intent as intent_module
 from jarvis.screen_context import redaction, uitext
 from jarvis.screen_context.last_frame import LastFrameMirror, get_last_frame_mirror
@@ -44,6 +45,7 @@ from jarvis.screen_context.models import (
     Degradation,
     DegradationCode,
     IntentVerdict,
+    MasterImage,
     ScreenContext,
     TargetKind,
     TargetReason,
@@ -61,7 +63,7 @@ from jarvis.screen_context.ports import (
     make_ui_text_reader,
     make_window_probe,
 )
-from jarvis.screen_context.targeting import resolve_target
+from jarvis.screen_context.targeting import region_target, resolve_target
 
 log = logging.getLogger(__name__)
 
@@ -161,6 +163,80 @@ class _Handle:
     expires_at_ns: int
 
 
+@dataclass(frozen=True, slots=True)
+class _FrozenMonitor:
+    #: The monitor in capture coordinates.
+    bbox: tuple[int, int, int, int]
+    #: The frame's pixel size (backing pixels on macOS, so it can exceed ``bbox``).
+    size: tuple[int, int]
+    #: 8-bit RGB; ``None`` when ``master`` holds a full-depth frame to derive it from.
+    rgb: bytes | None = field(repr=False)
+    master: MasterImage = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenScreens:
+    """Every monitor as it looked at one instant, for an area chosen afterwards.
+
+    The area picker shows the screens frozen while the user selects. Grabbing
+    the area only once the selection was finished photographed the LIVE
+    screen, so a video had played on for as long as the selection took.
+    :meth:`ScreenContextService.freeze_screens` grabs at the shortcut press
+    and :meth:`ScreenContextService.capture` cuts the area out of that frame.
+    Memory only, never stored. ``visible`` is the window list of the same
+    instant for the denylist check (``None`` = unverifiable or no denylist).
+    """
+
+    frames: tuple[_FrozenMonitor, ...]
+    visible: tuple[Any, ...] | None = None
+
+    def cut(
+        self, bbox: tuple[int, int, int, int]
+    ) -> tuple[tuple[int, int], bytes, MasterImage] | None:
+        """``bbox`` out of the frozen monitor holding it; ``None`` when none does."""
+        left, top, width, height = (int(v) for v in bbox)
+        for frame in self.frames:
+            m_left, m_top, m_width, m_height = frame.bbox
+            if (
+                left >= m_left
+                and top >= m_top
+                and left + width <= m_left + m_width
+                and top + height <= m_top + m_height
+            ):
+                return _cut_frame(frame, (left - m_left, top - m_top, width, height))
+        return None
+
+
+def _cut_frame(
+    frame: _FrozenMonitor, local: tuple[int, int, int, int]
+) -> tuple[tuple[int, int], bytes, MasterImage]:
+    """A monitor-local rectangle out of one frozen frame, in the frame's own pixels."""
+    x, y, width, height = local
+    frame_w, frame_h = frame.size
+    scale_x = frame_w / max(1, frame.bbox[2])
+    scale_y = frame_h / max(1, frame.bbox[3])
+    x0 = min(frame_w - 1, max(0, round(x * scale_x)))
+    y0 = min(frame_h - 1, max(0, round(y * scale_y)))
+    x1 = min(frame_w, max(x0 + 1, round((x + width) * scale_x)))
+    y1 = min(frame_h, max(y0 + 1, round((y + height) * scale_y)))
+    master = frame.master
+    if master.pixels is not None:
+        master = replace(master, pixels=master.pixels[y0:y1, x0:x1].copy())
+    if frame.rgb is None:
+        from jarvis.platform.hdr_image import scrgb_to_srgb8  # noqa: PLC0415
+
+        rgb8 = scrgb_to_srgb8(master.pixels, master.sdr_white_nits)
+        return (x1 - x0, y1 - y0), rgb8.tobytes(), master
+    from PIL import Image  # noqa: PLC0415
+
+    image = Image.frombytes("RGB", frame.size, frame.rgb).crop((x0, y0, x1, y1))
+    return image.size, image.tobytes(), master
+
+
+#: ``_monitor_privacy_error`` reads the visible windows itself.
+_LIVE: Any = object()
+
+
 class ScreenContextService:
     """One-shot screen context for the on-screen bar and the voice session."""
 
@@ -176,6 +252,7 @@ class ScreenContextService:
         capturer: Any | None = None,
         ui_text_reader: Any | None = None,
         permission_probe: Any | None = None,
+        permission_gate: Any | None = None,
         clock: Any | None = None,
         last_frame_mirror: LastFrameMirror | None = None,
     ) -> None:
@@ -197,7 +274,11 @@ class ScreenContextService:
         self._window_probe = window_probe
         self._capturer = capturer
         self._ui_text_reader = ui_text_reader
+        # The probe is SILENT (it only describes why a capture would not be
+        # allowed); the gate is what asks, and only from ``capture`` below. ``None``
+        # resolves the process permission service per call.
         self._permission_probe = permission_probe or capture_permission_error
+        self._permission_gate = permission_gate
         self._clock = clock or time.monotonic_ns
         self._wall_clock = time.time_ns
         self._handles: dict[str, _Handle] = {}
@@ -341,13 +422,104 @@ class ScreenContextService:
 
         return await self.capture(verdict=verdict, trace_id=trace_id)
 
+    async def capture_permission_issue(self) -> tuple[str, str] | None:
+        """``(reason_code, message)`` when the OS would refuse a capture now.
+
+        Silent (it never asks the OS for a grant). The area picker asks this
+        before it freezes the screen: without Screen Recording on macOS the
+        frozen frame is wallpaper only, and the refusal would come only after
+        the user had selected and marked up a fake screen.
+        """
+        issue = await asyncio.to_thread(self._permission_probe)
+        if not issue:
+            return None
+        if isinstance(issue, CapturePermissionIssue):
+            return issue.code, issue.message
+        # Compatibility for injected third-party/test probes that still
+        # implement the original ``str | None`` port contract.
+        return "capture_permission", str(issue)
+
+    async def freeze_screens(self) -> FrozenScreens | None:
+        """Grab every monitor once, now, for an area the user selects afterwards.
+
+        Each monitor is read the way :meth:`capture` reads a ``master``
+        capture (full depth on an HDR monitor). ``None`` when no monitor could
+        be grabbed; :meth:`capture` then grabs the area live, as before.
+        """
+        if self._closed:
+            return None
+        started = time.perf_counter()
+        monitors = await asyncio.to_thread(self.displays.monitors)
+        physical = [
+            m for m in (monitors[1:] if len(monitors) > 1 else monitors) if isinstance(m, dict)
+        ]
+        # One duplication per monitor, each on its own thread: the press must
+        # not wait for the monitors one after another.
+        grabbed = await asyncio.gather(
+            *(self._freeze_monitor(monitor, monitors) for monitor in physical)
+        )
+        frames = tuple(frame for frame in grabbed if frame is not None)
+        if not frames:
+            return None
+        visible = None
+        getter = getattr(self.window_probe, "visible_windows", None)
+        if self._settings.denylist and callable(getter):
+            found = await asyncio.to_thread(getter)
+            visible = tuple(found) if found is not None else None
+        log.info(
+            "screen_context: froze %d of %d monitor(s) in %.0f ms",
+            len(frames),
+            len(physical),
+            (time.perf_counter() - started) * 1000,
+        )
+        return FrozenScreens(frames=frames, visible=visible)
+
+    async def _freeze_monitor(self, monitor: dict, monitors: list[dict]) -> _FrozenMonitor | None:
+        from jarvis.screen_context.targeting import _monitor_name  # noqa: PLC0415
+
+        bbox = (
+            int(monitor.get("left", 0)),
+            int(monitor.get("top", 0)),
+            int(monitor.get("width", 0)),
+            int(monitor.get("height", 0)),
+        )
+        if bbox[2] <= 0 or bbox[3] <= 0:
+            return None
+        target = CaptureTarget(
+            kind=TargetKind.MONITOR,
+            bbox=bbox,
+            reason=TargetReason.USER_REGION,
+            monitor_name=_monitor_name(monitor, monitors),
+        )
+        try:
+            # A full-depth frame is kept as it is: only the finished area is
+            # turned into 8-bit, so the press does not wait for a 4K conversion.
+            size, rgb, master = await self._grab_with_master(target, derive_rgb=False)
+        except Exception:  # noqa: BLE001 - this monitor's area is then grabbed live
+            log.info("screen_context: could not freeze monitor %s", bbox, exc_info=True)
+            return None
+        return _FrozenMonitor(bbox=bbox, size=size, rgb=rgb, master=master)
+
     async def capture(
         self,
         *,
         verdict: IntentVerdict | None = None,
         trace_id: UUID | None = None,
+        region: tuple[int, int, int, int] | None = None,
+        master: bool = False,
+        frozen: FrozenScreens | None = None,
     ) -> CaptureOutcome:
-        """Take exactly one capture. Assumes intent is already established."""
+        """Take exactly one capture. Assumes intent is already established.
+
+        ``region`` is a rectangle the user selected by hand, in capture
+        coordinates (``displays.monitors()``). It replaces cursor/window
+        targeting; permissions, the denylist and redaction apply unchanged.
+        ``master`` also returns :attr:`ScreenContext.master`, the user's
+        full-fidelity copy (HDR at full depth on an HDR monitor), redacted the
+        same way. It rides on the outcome only, never behind the handle.
+        ``frozen`` (from :meth:`freeze_screens`) makes a ``region`` capture cut
+        the area out of that earlier frame instead of grabbing the screen now.
+        """
         verdict = verdict or IntentVerdict(intent=VisualIntent.SCREEN)
         if self._closed:
             return CaptureOutcome(
@@ -358,24 +530,28 @@ class ScreenContextService:
                 message="Screen Context settings changed before capture could start.",
             )
 
-        permission_issue = await asyncio.to_thread(self._permission_probe)
-        if permission_issue:
-            if isinstance(permission_issue, CapturePermissionIssue):
-                reason_code = permission_issue.code
-                permission_message = permission_issue.message
-            else:
-                # Compatibility for injected third-party/test probes that still
-                # implement the original ``str | None`` port contract.
-                reason_code = "capture_permission"
-                permission_message = str(permission_issue)
-            log.info("screen_context: capture refused — %s", permission_message)
-            return CaptureOutcome(
-                status="refused",
-                verdict=verdict,
-                reason_kind="technical",
-                reason_code=reason_code,
-                message=permission_message,
-            )
+        permission_issue = await self.capture_permission_issue()
+        if permission_issue is not None:
+            reason_code, permission_message = permission_issue
+            if reason_code == "capture_permission":
+                # A person started this capture (a spoken request, the bar
+                # button, an appshot gesture), so this is the moment macOS is
+                # asked. The probe above never asks and never decides: only a
+                # live GRANTED from the permission service lets the capture go on.
+                refused = await self._ask_for_capture_permission(verdict, trace_id)
+                if refused is None:
+                    permission_issue = None
+                else:
+                    permission_message = refused.user_detail or permission_message
+            if permission_issue is not None:
+                log.info("screen_context: capture refused — %s", permission_message)
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code=reason_code,
+                    message=permission_message,
+                )
 
         # The cursor is sampled ONCE, here, and threaded through. See
         # targeting.resolve_target for why re-reading it later is a race.
@@ -443,15 +619,19 @@ class ScreenContextService:
 
         monitors = await asyncio.to_thread(self.displays.monitors)
         try:
-            target, target_degradations = resolve_target(
-                verdict.intent,
-                monitors=monitors,
-                cursor_point=cursor_point,
-                bar_point=bar_point,
-                window=window_facts,
-                window_handle=window_handle,
-                main_monitor_override=self._settings.main_monitor,
-            )
+            if region is not None:
+                target = region_target(region, monitors=monitors, window=window_facts)
+                target_degradations: tuple[Degradation, ...] = ()
+            else:
+                target, target_degradations = resolve_target(
+                    verdict.intent,
+                    monitors=monitors,
+                    cursor_point=cursor_point,
+                    bar_point=bar_point,
+                    window=window_facts,
+                    window_handle=window_handle,
+                    main_monitor_override=self._settings.main_monitor,
+                )
         except CaptureUnavailable as exc:
             log.info("screen_context: no capture target — %s", exc)
             return CaptureOutcome(
@@ -469,6 +649,10 @@ class ScreenContextService:
         # as intersecting (fail closed), and an unavailable enumeration blocks
         # monitor scope rather than silently weakening the privacy rule.
         monitor_privacy_error = await asyncio.to_thread(self._monitor_privacy_error, target)
+        if not monitor_privacy_error and frozen is not None and target.kind is TargetKind.REGION:
+            # The frozen pixels show the windows of the freeze instant: a
+            # denylisted window that has closed since is still in them.
+            monitor_privacy_error = self._monitor_privacy_error(target, visible=frozen.visible)
         if monitor_privacy_error:
             return CaptureOutcome(
                 status="refused",
@@ -476,6 +660,12 @@ class ScreenContextService:
                 reason_kind="policy",
                 message=monitor_privacy_error,
             )
+
+        # A hand-selected area is about pixels, not about the window in front:
+        # the user just clicked on the selection overlay, so focus may still be
+        # settling. Its privacy guard is the visible-window denylist check on
+        # the rectangle itself (``_monitor_privacy_error``), run three times.
+        identity_bound = target.kind is not TargetKind.REGION
 
         # Announce BEFORE the shutter so the indicator is up while there is
         # still something to indicate.
@@ -504,7 +694,7 @@ class ScreenContextService:
             # focus or open on the selected monitor while the indicator is
             # appearing; the earlier policy decision must not authorize that
             # newly visible surface.
-            if target.window.is_known and not await asyncio.to_thread(
+            if identity_bound and target.window.is_known and not await asyncio.to_thread(
                 self._foreground_still_matches,
                 target.window,
                 expected_window_handle=window_handle,
@@ -528,7 +718,30 @@ class ScreenContextService:
                     message=monitor_privacy_error,
                 )
             try:
-                size, rgb = await self._grab(target)
+                master_image = None
+                cut = None
+                if frozen is not None and target.kind is TargetKind.REGION:
+                    cut = await asyncio.to_thread(frozen.cut, target.bbox)
+                    if cut is None:
+                        log.info("screen_context: area outside the frozen screens; grabbing live")
+                if cut is not None:
+                    size, rgb, master_image = cut
+                    if not master:
+                        master_image = None
+                elif master:
+                    size, rgb, master_image = await self._grab_with_master(target)
+                else:
+                    size, rgb = await self._grab(target)
+                # macOS hands back the wallpaper, not an error, for a capture it
+                # does not allow: a blank frame while the state claims granted
+                # is never a success (and opens the permission episode).
+                await asyncio.to_thread(
+                    screen_access.verify_frame_is_real,
+                    size,
+                    rgb,
+                    feature=self._permission_feature(verdict),
+                    gate=self._permission_gate,
+                )
             except CaptureUnavailable as exc:
                 log.info("screen_context: capture failed — %s", exc)
                 return CaptureOutcome(
@@ -537,6 +750,15 @@ class ScreenContextService:
                     reason_kind="technical",
                     reason_code="capture_backend_unavailable",
                     message=str(exc),
+                )
+            except screen_access.ScreenCaptureRefused as exc:
+                log.info("screen_context: capture refused — %s", exc.reason or "permission")
+                return CaptureOutcome(
+                    status="refused",
+                    verdict=verdict,
+                    reason_kind="technical",
+                    reason_code="capture_permission",
+                    message=exc.user_detail,
                 )
             except Exception:  # noqa: BLE001 - port bugs stay turn-local
                 log.error("screen_context: unexpected capture failure", exc_info=True)
@@ -558,7 +780,7 @@ class ScreenContextService:
             # Treat a post-shutter identity change as untrusted: discard the
             # raw bytes before redaction/storage rather than attaching pixels
             # from a surface different from the one that passed policy.
-            if target.window.is_known and not await asyncio.to_thread(
+            if identity_bound and target.window.is_known and not await asyncio.to_thread(
                 self._foreground_still_matches,
                 target.window,
                 expected_window_handle=window_handle,
@@ -588,6 +810,7 @@ class ScreenContextService:
                 rgb=rgb,
                 degradations=degradations,
                 expected_window_handle=window_handle,
+                master=master_image,
             )
 
             if self._closed:
@@ -602,7 +825,9 @@ class ScreenContextService:
                     ),
                 )
             try:
-                handle_id = self.store(context)
+                # The handle keeps the model's copy only; the master is large
+                # and belongs to this one caller.
+                handle_id = self.store(replace(context, master=None))
             except RuntimeError:
                 return CaptureOutcome(
                     status="refused",
@@ -632,6 +857,28 @@ class ScreenContextService:
             if border:
                 await self._dismiss_indicator(trace_id=event_trace_id)
 
+    @staticmethod
+    def _permission_feature(verdict: IntentVerdict) -> str:
+        """The permission-episode feature of one capture: an appshot says so in its evidence."""
+        appshot_evidence = {"appshot", "appshot-region", "appshot-screen"}
+        return "appshot" if appshot_evidence.intersection(verdict.evidence) else "screen_context"
+
+    async def _ask_for_capture_permission(
+        self, verdict: IntentVerdict, trace_id: UUID | None
+    ) -> screen_access.ScreenCaptureRefused | None:
+        """Ask for Screen Recording (the capture is a gesture). ``None`` = allowed."""
+        try:
+            await screen_access.require_screen_recording_async(
+                self._permission_feature(verdict),
+                gate=self._permission_gate,
+                trace_id=trace_id,
+            )
+        except screen_access.ScreenCaptureRefused as refused:
+            # The caller turns this into the refused outcome the person sees.
+            log.debug("screen_context: permission refused (%s)", refused.reason or "permission")
+            return refused
+        return None
+
     async def _grab(self, target: CaptureTarget) -> tuple[tuple[int, int], bytes]:
         """Grab the target the way the user sees it.
 
@@ -659,6 +906,51 @@ class ScreenContextService:
             )
         return size, rgb
 
+    async def _grab_with_master(
+        self, target: CaptureTarget, *, derive_rgb: bool = True
+    ) -> tuple[tuple[int, int], bytes | None, MasterImage]:
+        """One shutter for both copies: the model's 8-bit frame and the user's master.
+
+        On an HDR or wide-gamut monitor the rectangle is read once at full
+        depth and the 8-bit frame is DERIVED from it (SDR white = sRGB white),
+        so both show the same instant and redaction boxes line up exactly.
+        The privacy path (a denylisted window in the rectangle) and every
+        other monitor keep the normal grab; the master is then that frame
+        plus the monitor's ICC profile. ``derive_rgb=False`` leaves the 8-bit
+        frame of a full-depth read as ``None`` for the caller to derive later.
+        """
+        from jarvis.platform.display_color import display_color  # noqa: PLC0415
+        from jarvis.platform.hdr_grab import grab_extended  # noqa: PLC0415
+        from jarvis.platform.hdr_image import scrgb_to_srgb8  # noqa: PLC0415
+
+        rect_grab = target.window_handle is None or not await asyncio.to_thread(
+            self._rect_privacy_error, target.bbox
+        )
+        if rect_grab:
+            frame = await asyncio.to_thread(grab_extended, target.bbox)
+            if frame is not None:
+                height, width = frame.pixels.shape[:2]
+                rgb = None
+                if derive_rgb:
+                    rgb8 = await asyncio.to_thread(
+                        scrgb_to_srgb8, frame.pixels, frame.sdr_white_nits
+                    )
+                    rgb = rgb8.tobytes()
+                return (width, height), rgb, MasterImage(
+                    pixels=frame.pixels,
+                    hdr=True,
+                    sdr_white_nits=frame.sdr_white_nits,
+                    max_nits=frame.max_nits,
+                )
+        size, rgb = await self._grab(target)
+        left, top, width, height = target.bbox
+        colour = await asyncio.to_thread(
+            display_color,
+            target.monitor_name or None,
+            point=(left + width // 2, top + height // 2),
+        )
+        return size, rgb, MasterImage(pixels=None, icc_profile=colour.icc_profile)
+
     def _rect_privacy_error(self, bbox: tuple[int, int, int, int]) -> str | None:
         """Refuse a desktop-rectangle grab a denylisted window could appear in."""
         if not self._settings.denylist:
@@ -684,29 +976,37 @@ class ScreenContextService:
 
     # ---- assembly --------------------------------------------------------
 
-    def _monitor_privacy_error(self, target: CaptureTarget) -> str | None:
-        """Return a refusal when monitor-wide denylist safety is unverifiable."""
-        if target.kind is not TargetKind.MONITOR or not self._settings.denylist:
+    def _monitor_privacy_error(self, target: CaptureTarget, *, visible: Any = _LIVE) -> str | None:
+        """Return a refusal when monitor-wide denylist safety is unverifiable.
+
+        ``visible`` checks an earlier window list (a frozen frame's) instead
+        of the windows on screen now.
+        """
+        if target.kind is TargetKind.WINDOW or not self._settings.denylist:
             return None
-        visible_getter = getattr(self.window_probe, "visible_windows", None)
-        visible = visible_getter() if callable(visible_getter) else None
+        region = target.kind is TargetKind.REGION
+        what = "the selected area" if region else "the monitor"
+        if visible is _LIVE:
+            visible_getter = getattr(self.window_probe, "visible_windows", None)
+            visible = visible_getter() if callable(visible_getter) else None
         if visible is None:
             return (
-                "I did not capture the monitor because its visible windows "
+                f"I did not capture {what} because its visible windows "
                 "could not be verified against your privacy denylist. Ask for "
                 "the active window instead."
             )
         for candidate in visible:
-            if not candidate.app_name:
+            inside = _rects_intersect_or_unknown(candidate.frame_rect, target.bbox)
+            if not candidate.app_name and (inside or not region):
                 return (
-                    "I did not capture the monitor because a visible "
+                    f"I did not capture {what} because a visible "
                     "application could not be identified for your privacy "
                     "denylist. Ask for the active window instead."
                 )
             blocked_by = redaction.blocked_by_denylist(candidate, self._settings.denylist)
-            if blocked_by and _rects_intersect_or_unknown(candidate.frame_rect, target.bbox):
+            if blocked_by and inside:
                 return (
-                    "I did not capture the monitor because a visible window "
+                    f"I did not capture {what} because a visible window "
                     f"matches your privacy rule '{blocked_by}'."
                 )
         return None
@@ -719,6 +1019,7 @@ class ScreenContextService:
         rgb: bytes,
         degradations: list[Degradation],
         expected_window_handle: int | None,
+        master: MasterImage | None = None,
     ) -> ScreenContext:
         """Read text, redact pixels and text, encode. In that order.
 
@@ -835,6 +1136,10 @@ class ScreenContextService:
                     text_hits = text_hits + ocr_hits
                     text_source = "ocr" if text_source == "none" else "accessibility+ocr"
 
+        if master is not None:
+            master = await asyncio.to_thread(
+                _redacted_master, master, image, (*region_hits, *ocr_region_hits)
+            )
         image_bytes, encoded_size = _encode(image)
 
         return ScreenContext(
@@ -851,6 +1156,7 @@ class ScreenContextService:
             ),
             degradations=tuple(degradations),
             captured_at_ns=self._wall_clock(),
+            master=master,
         )
 
     def _foreground_still_matches(
@@ -1185,7 +1491,35 @@ def _safe_target_label(target: CaptureTarget) -> str:
     """Metadata-only target label; never expose an app or document title."""
     if target.kind is TargetKind.WINDOW:
         return "active window"
+    if target.kind is TargetKind.REGION:
+        return "selected area"
     return f"monitor {target.monitor_name}" if target.monitor_name else "selected monitor"
+
+
+def _redacted_master(master: MasterImage, redacted: Any, hits: Any) -> MasterImage:
+    """The master with the same black boxes as the model's frame, at the same pixels.
+
+    An SDR master IS the redacted raw frame. An HDR master gets every hit's
+    region filled with black (scRGB 0) — the boxes were found on the frame
+    derived from it, so they cover the same content. Like PIL's
+    ``rectangle([x, y, x + w, y + h])`` in :mod:`redaction`, the box includes
+    its end row and column.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    if not master.hdr:
+        return replace(master, pixels=np.asarray(redacted.convert("RGB")).copy())
+    pixels = np.array(master.pixels, copy=True)
+    height, width = pixels.shape[:2]
+    for hit in hits:
+        if hit.region is None:
+            continue
+        left, top, w, h = hit.region
+        x0, y0 = max(0, int(left)), max(0, int(top))
+        x1, y1 = min(width, int(left + w) + 1), min(height, int(top + h) + 1)
+        if x1 > x0 and y1 > y0:
+            pixels[y0:y1, x0:x1, :3] = 0
+    return replace(master, pixels=pixels)
 
 
 def _encode(image: Any) -> tuple[bytes, tuple[int, int]]:
@@ -1271,6 +1605,7 @@ def settings_from_config(cfg: Any) -> ScreenContextSettings:
 __all__ = [
     "CaptureOutcome",
     "CaptureStatus",
+    "FrozenScreens",
     "ScreenContextService",
     "ScreenContextSettings",
     "settings_from_config",

@@ -69,6 +69,7 @@ import os
 import shutil
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -307,12 +308,16 @@ def _write_state(config_dir: Path, digests: dict[str, str]) -> None:
     _atomic_write(_state_path(config_dir), payload)
 
 
-def _atomic_write(path: Path, text: str) -> bool:
-    """Replace ``path`` in one step — a half-written config must never be read."""
+def _atomic_write(path: Path, text: str, *, exact: bool = False) -> bool:
+    """Replace ``path`` in one step — a half-written config must never be read.
+
+    ``exact`` keeps the line endings as given, for content whose digest is
+    recorded (text mode would turn them into CRLF on Windows).
+    """
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-        tmp.write_text(text, encoding="utf-8")
+        tmp.write_text(text, encoding="utf-8", newline="" if exact else None)
         os.replace(tmp, path)
     except OSError as exc:
         logger.warning("Agent setup: {} could not be written: {}", path, exc)
@@ -514,6 +519,54 @@ def _children(source: Path) -> list[Path]:
 # ---------------------------------------------------------------- file layer
 
 
+#: Adds the product's own keys to a JSON document; returns whether it changed.
+Overlay = Callable[[dict[str, Any]], bool]
+
+
+#: Characters a ``claudeMdExcludes`` glob would read as pattern syntax. A path
+#: carrying one is not excluded at all rather than excluded by a wrong pattern.
+_GLOB_SYNTAX = frozenset("*?[]{}()!")
+
+
+def _exclude_native_memory(native: Path) -> Overlay | None:
+    """Keep the user's memory file from loading twice in a redirected pane.
+
+    Mirrored into the account, ``CLAUDE.md`` is that pane's user memory. Claude
+    Code ALSO walks up from the working folder and reads every ``.claude/
+    CLAUDE.md`` it passes — so in any folder under the home directory the
+    user's own ``~/.claude/CLAUDE.md`` arrives a second time, as project
+    instructions (measured 2026-10-07: the same 7.5k characters twice in every
+    pane). Excluding that one path leaves exactly what an ordinary terminal
+    loads. ``claudeMdExcludes`` takes absolute-path globs and merges across
+    settings layers, so this adds one entry and keeps the user's own.
+    """
+    memory = native / "CLAUDE.md"
+    pattern = memory.as_posix()
+    if not memory.is_file() or _GLOB_SYNTAX & set(pattern):
+        return None
+
+    def overlay(doc: dict[str, Any]) -> bool:
+        excludes = doc.get("claudeMdExcludes")
+        if excludes is None:
+            doc["claudeMdExcludes"] = [pattern]
+            return True
+        if not isinstance(excludes, list) or pattern in excludes:
+            return False  # a malformed value stays the user's to fix
+        excludes.append(pattern)
+        return True
+
+    return overlay
+
+
+def _overlaid(source: Path, overlay: Overlay) -> bytes | None:
+    """``source`` as the account should mirror it, or ``None`` if unreadable."""
+    doc = _read_document(source, "json")
+    if doc is None:
+        return None
+    overlay(doc)
+    return json.dumps(doc, indent=2, ensure_ascii=False).encode("utf-8")
+
+
 def _share_file(
     source: Path,
     target: Path,
@@ -521,6 +574,7 @@ def _share_file(
     key: str,
     fmt: str,
     state: dict[str, str],
+    overlay: Overlay | None = None,
 ) -> tuple[str | None, str]:
     """Give the account ``source``'s content without overwriting its own choices.
 
@@ -541,8 +595,14 @@ def _share_file(
     A merged file is deliberately NOT recorded in ``state``: it is nobody's copy
     any more, so the next run fills what is missing again rather than replacing
     the hybrid with the user's file wholesale.
+
+    ``overlay`` (JSON only) adds the product's own keys: the mirror is then the
+    user's document plus those keys, and a merged document gets them too.
     """
-    source_digest = _digest(source)
+    content = _overlaid(source, overlay) if overlay is not None else None
+    if overlay is not None and content is None:
+        overlay = None  # an unreadable document is shared exactly as before
+    source_digest = sha256(content).hexdigest() if content is not None else _digest(source)
     if source_digest is None:
         return None, "the user's own file could not be read"
     target_digest = _digest(target) if target.exists() else None
@@ -550,13 +610,16 @@ def _share_file(
         state[key] = source_digest
         return "current", ""
     if target_digest is None or target_digest == state.get(key):
-        if _copy(source, target) is None:
+        if content is not None:
+            if not _atomic_write(target, content.decode("utf-8"), exact=True):
+                return None, "the copy could not be written"
+        elif _copy(source, target) is None:
             return None, "the copy could not be written"
         state[key] = source_digest
         return "mirrored", ""
     if fmt == "text":
         return None, "this account has its own version of that file"
-    filled, why = _fill_missing(source, target, fmt)
+    filled, why = _fill_missing(source, target, fmt, overlay=overlay)
     if filled is None:
         return None, why
     state.pop(key, None)
@@ -599,7 +662,9 @@ def _fill(source: Any, target: Any) -> bool:
     return changed
 
 
-def _fill_missing(source: Path, target: Path, fmt: str) -> tuple[str | None, str]:
+def _fill_missing(
+    source: Path, target: Path, fmt: str, *, overlay: Overlay | None = None
+) -> tuple[str | None, str]:
     """Fill the keys the account's own file is missing from the user's."""
     native = _read_document(source, fmt)
     if native is None:
@@ -618,7 +683,8 @@ def _fill_missing(source: Path, target: Path, fmt: str) -> tuple[str | None, str
         own = _read_document(target, fmt)
         if own is None:
             return None, "this account's own file could not be read"
-        if not _fill(native, own):
+        filled = _fill(native, own)
+        if not (overlay is not None and overlay(own)) and not filled:
             return "current", ""
         rendered = json.dumps(own, indent=2, ensure_ascii=False)
     if not _atomic_write(target, rendered):
@@ -712,6 +778,7 @@ def _provision(
     before = dict(state)
     shared: dict[str, str] = {}
     skipped: list[tuple[str, str]] = []
+    overlays: dict[str, Overlay] = {}
 
     for entry in USER_SETUP.get(platform, ()):
         source = native / entry.name
@@ -729,13 +796,26 @@ def _provision(
             else:
                 if not source.is_file():
                     continue
-                how, why = _share_file(source, target, key=entry.name, fmt=entry.fmt, state=state)
+                how, why = _share_file(
+                    source,
+                    target,
+                    key=entry.name,
+                    fmt=entry.fmt,
+                    state=state,
+                    overlay=overlays.get(entry.name),
+                )
         except OSError as exc:  # pragma: no cover - defensive: a pane must open
             how, why = None, str(exc)
         if how is not None:
             shared[entry.name] = how
         elif why:
             skipped.append((entry.name, why))
+        if platform == "claude" and entry.name == "CLAUDE.md" and how in {"mirrored", "current"}:
+            # Only a pane whose user memory IS the user's file may drop the
+            # second copy; an account with its own memory keeps reading both.
+            overlay = _exclude_native_memory(native)
+            if overlay is not None:
+                overlays["settings.json"] = overlay
 
     for merged in MERGED_KEYS.get(platform, ()):
         source = native / merged.name

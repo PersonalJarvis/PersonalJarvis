@@ -195,7 +195,9 @@ def test_ad6_table_is_complete() -> None:
     in-process ApiAgentWorker (not the Jarvis-Agent CLI worker harness); its row
     exists so it is a selectable Jarvis-Agent in the API-Keys view.
 
-    ``ollama`` and ``local-openai`` are the self-hosted rows. They carry a key
+    ``vertex`` is the Google Cloud API row and runs through the in-process
+    ApiAgentWorker, like ``nvidia``. ``ollama`` and ``local-openai`` are the
+    self-hosted rows. They carry a key
     slot name for shape only: no Agent key slot exists, so the worker proceeds
     keyless and the brain plugin supplies its own dummy SDK key. Their rows
     exist for the same reason as ``nvidia`` — without one, a user running a
@@ -207,6 +209,7 @@ def test_ad6_table_is_complete() -> None:
         "openrouter",
         "grok",
         "nvidia",
+        "vertex",
         "ollama",
         "local-openai",
     }

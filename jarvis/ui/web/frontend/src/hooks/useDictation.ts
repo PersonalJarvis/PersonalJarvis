@@ -619,9 +619,22 @@ export function useDictation() {
           body: JSON.stringify({ ...patch, persist: true }),
         }),
       );
-      setSettings(data.settings);
-      announceDictationSettings(data.settings as unknown as Record<string, unknown>);
-      await refetchStatus();
+        setSettings(data.settings);
+        announceDictationSettings(data.settings as unknown as Record<string, unknown>);
+        if ("polish_provider" in patch) {
+          // Provider resolution depends on credentials and the privacy floor;
+          // the old label must not survive a successful provider change.
+          setWordingProvider(null);
+          try {
+            const resolved = await unwrap<{ wording_provider?: DictationWordingProvider }>(
+              await fetch("/api/dictation/settings"),
+            );
+            setWordingProvider(resolved.wording_provider ?? null);
+          } catch (e) {
+            setError((e as Error).message);
+          }
+        }
+        await refetchStatus();
     },
     [refetchStatus],
   );

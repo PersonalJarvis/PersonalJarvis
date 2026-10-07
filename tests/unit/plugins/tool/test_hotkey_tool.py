@@ -152,3 +152,22 @@ async def test_screenshot_bound_hotkey_refuses_changed_foreground(monkeypatch):
     assert result.success is False
     assert "foreground window changed" in (result.error or "")
     assert sent == []
+
+
+async def test_macos_permission_refusal_reaches_the_agent_with_the_stable_prefix(monkeypatch):
+    """The flat tool body is unchanged: the new exception rides the old error mapping."""
+    from jarvis.cu.actuate.base import PermissionNeededError
+    from jarvis.platform.permissions import PermissionId
+    from tests.fakes.fake_permission_service import make_result
+
+    def _refused():
+        raise PermissionNeededError(make_result(PermissionId.ACCESSIBILITY, "needs_settings"))
+
+    monkeypatch.setattr(hk.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", _refused)
+
+    result = await HotkeyTool().execute({"keys": ["cmd", "a"]}, _Ctx())
+
+    assert result.success is False
+    assert result.error.startswith("[permission_needed:accessibility] ")
+    assert "must not retry" in result.error  # prohibitive: the model must not loop on it

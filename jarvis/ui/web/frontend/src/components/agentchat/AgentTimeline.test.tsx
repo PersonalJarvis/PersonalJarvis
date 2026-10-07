@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentTimeline } from "./AgentTimeline";
-import { EMPTY_TIMELINE, reduceEvents } from "./reduce";
+import { AgentTimeline, timeStamps } from "./AgentTimeline";
+import { EMPTY_TIMELINE, reduceEvents, type TimelineItem } from "./reduce";
 import type { AgentChatEvent } from "@/lib/agentChatApi";
 let seq = 0;
 function ev(kind: string, payload: Record<string, unknown>, tsMs = 1000): AgentChatEvent {
@@ -14,7 +14,8 @@ afterEach(() => { cleanup(); seq = 0; });
 it("replays persisted events through the new shared trace", () => {
  draw([ev("turn_started", { turn_id: "t1" }), ev("tool_call", { turn_id: "t1", call_id: "c1", name: "list_dir", input: { path: "src" } }), ev("tool_result", { turn_id: "t1", call_id: "c1", output: "index.ts", duration_ms: 800 }), ev("turn_finished", { turn_id: "t1", status: "done" })]);
  expect(screen.getByTestId("work-trace")).toBeTruthy();
- expect(screen.getByRole("button", { name: /List files/ })).toBeTruthy();
+ // The work stays in view, one quiet line per call.
+ expect(screen.getByRole("button", { name: /^Listed src/ })).toBeTruthy();
 });
 describe("the person's turn with files", () => {
   const SHOT = {
@@ -53,5 +54,22 @@ describe("the person's turn with files", () => {
     expect(turn.textContent).toContain("front-page.png");
     // Fill bubble, not inverted cream (`bg-foreground/70` on near-black).
     expect(turn.querySelector(".jarvis-user-bubble")).not.toBeNull();
+  });
+});
+
+describe("timeStamps", () => {
+  const MIN = 60_000;
+  const user = (id: string, tsMs: number) =>
+    ({ type: "user", id, text: id, attachments: [], tsMs }) as TimelineItem;
+
+  it("stamps the first message and every one after a 20-minute pause", () => {
+    const t0 = new Date(2026, 9, 1, 9, 0).getTime();
+    const items = [user("a", t0), user("b", t0 + MIN), user("c", t0 + 5 * MIN), user("d", t0 + 40 * MIN)];
+    expect([...timeStamps(items, new Date(2026, 9, 1, 12, 0)).keys()]).toEqual(["a", "d"]);
+  });
+
+  it("leads with the date when the message is not from today", () => {
+    const t0 = new Date(2026, 8, 24, 8, 13).getTime();
+    expect(timeStamps([user("a", t0)], new Date(2026, 9, 1)).get("a")).toContain(",");
   });
 });

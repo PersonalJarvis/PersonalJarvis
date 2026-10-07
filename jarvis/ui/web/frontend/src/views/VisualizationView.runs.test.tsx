@@ -125,6 +125,19 @@ function renderView() {
   );
 }
 
+/** The section opens on the library; a click on the first card opens its stage. */
+async function renderStaged() {
+  const view = renderView();
+  // A run's card turns into its artifact's card when the listing lands; a
+  // click on the card being replaced is retried on the one that replaced it.
+  await waitFor(() => {
+    const first = screen.queryAllByTestId(/^visualization-(artifact|run|building)-row$/)[0];
+    if (first) fireEvent.click(first);
+    expect(screen.getByTestId("visualization-stage")).toBeTruthy();
+  });
+  return view;
+}
+
 function run(over: Partial<OutputSummary>): OutputSummary {
   return {
     slug: "20260615T120000__task__abcdef123456",
@@ -173,6 +186,8 @@ describe("VisualizationView — runs without an artifact", () => {
     expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0);
     // No empty state: the run IS the content.
     expect(screen.queryByTestId("visualization-empty")).toBeNull();
+    // The library shows the run's own answer as its cover; a click opens it.
+    fireEvent.click(rows[0]);
     // The stage opens on Preview — the same four tabs every run gets …
     const previewTab = await screen.findByTestId("visualization-tab-preview");
     expect(previewTab.getAttribute("aria-selected")).toBe("true");
@@ -194,7 +209,7 @@ describe("VisualizationView — runs without an artifact", () => {
     expect(screen.getByTestId("run-status-badge").textContent).toContain("success");
   });
 
-  it("narrows the rail to artifacts or outputs and remembers the pick", async () => {
+  it("narrows the library by category, searches it, and remembers the category", async () => {
     window.localStorage.removeItem("jarvis.artifacts.rail-filter");
     installFetchMock(
       [
@@ -218,22 +233,35 @@ describe("VisualizationView — runs without an artifact", () => {
     const filter = screen.getByTestId("visualization-filter");
     expect(within(filter).getByTestId("visualization-filter-all").textContent).toContain("2");
 
-    fireEvent.click(within(filter).getByTestId("visualization-filter-artifacts"));
+    expect(within(filter).getByTestId("visualization-filter-pages").textContent).toContain("1");
+    expect(within(filter).getByTestId("visualization-filter-images").textContent).toContain("0");
+
+    fireEvent.click(within(filter).getByTestId("visualization-filter-pages"));
     await waitFor(() => expect(screen.queryAllByTestId("visualization-run-row")).toHaveLength(0));
     expect(screen.getAllByTestId("visualization-artifact-row")).toHaveLength(1);
-    expect(window.localStorage.getItem("jarvis.artifacts.rail-filter")).toBe("artifacts");
+    expect(window.localStorage.getItem("jarvis.artifacts.rail-filter")).toBe("pages");
 
     fireEvent.click(within(filter).getByTestId("visualization-filter-outputs"));
     await waitFor(() =>
       expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0),
     );
     expect(screen.getAllByTestId("visualization-run-row")).toHaveLength(1);
-    // The stage followed the filter: the output is on stage, not the page.
-    await screen.findByTestId("output-preview");
+    // A category with nothing in it says so instead of showing a blank grid.
+    fireEvent.click(within(filter).getByTestId("visualization-filter-images"));
+    await screen.findByTestId("visualization-no-matches");
 
     fireEvent.click(within(filter).getByTestId("visualization-filter-all"));
     await waitFor(() => expect(screen.getAllByTestId("visualization-run-row")).toHaveLength(1));
     expect(screen.getAllByTestId("visualization-artifact-row")).toHaveLength(1);
+
+    // Search narrows across titles and requests.
+    fireEvent.change(screen.getByTestId("visualization-search"), { target: { value: "notes" } });
+    await waitFor(() =>
+      expect(screen.queryAllByTestId("visualization-artifact-row")).toHaveLength(0),
+    );
+    expect(screen.getAllByTestId("visualization-run-row")).toHaveLength(1);
+    fireEvent.change(screen.getByTestId("visualization-search"), { target: { value: "zebra" } });
+    await screen.findByTestId("visualization-no-matches");
     window.localStorage.removeItem("jarvis.artifacts.rail-filter");
   });
 
@@ -246,7 +274,7 @@ describe("VisualizationView — runs without an artifact", () => {
 
   it("shows Continue (and no Restart) for a cancelled run", async () => {
     installFetchMock([run({ slug: "cancelled-slug", status: "cancelled", mission_id: "m-c" })]);
-    renderView();
+    await renderStaged();
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Continue" }).length).toBeGreaterThan(0),
     );
@@ -255,7 +283,7 @@ describe("VisualizationView — runs without an artifact", () => {
 
   it("shows Restart (and no Continue) for a failed run", async () => {
     installFetchMock([run({ slug: "error-slug", status: "error", mission_id: "m-e" })]);
-    renderView();
+    await renderStaged();
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Restart" }).length).toBeGreaterThan(0),
     );
@@ -276,7 +304,7 @@ describe("VisualizationView — runs without an artifact", () => {
       }),
     ]);
 
-    renderView();
+    await renderStaged();
 
     // The output page leads with why the run ended …
     const outcome = await screen.findByTestId("output-preview-outcome");
@@ -304,7 +332,7 @@ describe("VisualizationView — runs without an artifact", () => {
       }),
     ]);
 
-    renderView();
+    await renderStaged();
 
     const outcome = await screen.findByTestId("output-preview-outcome");
     expect(within(outcome).getByText("task_error")).toBeDefined();
@@ -360,7 +388,7 @@ describe("VisualizationView — runs without an artifact", () => {
       run({ slug: "run-slug", status: "running", mission_id: "m-r" }),
       run({ slug: "ok-slug", status: "success", mission_id: "m-ok" }),
     ]);
-    renderView();
+    await renderStaged();
     await waitFor(() =>
       expect(screen.getAllByRole("button", { name: "Hold to abort" }).length).toBeGreaterThan(0),
     );
@@ -403,7 +431,7 @@ describe("VisualizationView — the Files tab", () => {
       },
     );
 
-    renderView();
+    await renderStaged();
     await openFiles();
 
     await waitFor(() => expect(screen.getAllByTestId("artifact-path")).toHaveLength(3));
@@ -419,7 +447,7 @@ describe("VisualizationView — the Files tab", () => {
       "artifact-slug": [REPORT],
     });
 
-    renderView();
+    await renderStaged();
     await openFiles();
 
     await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
@@ -448,7 +476,7 @@ describe("VisualizationView — the Files tab", () => {
     );
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    renderView();
+    await renderStaged();
     await openFiles();
 
     await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
@@ -484,7 +512,7 @@ describe("VisualizationView — the Files tab", () => {
     );
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    renderView();
+    await renderStaged();
     await openFiles();
 
     await waitFor(() => expect(screen.getByTestId("artifact-path").textContent).toBe("report.md"));
@@ -523,7 +551,7 @@ describe("VisualizationView — the Files tab", () => {
       { rawBySlug: { "html-slug": HTML_SOURCE } },
     );
 
-    renderView();
+    await renderStaged();
 
     // The page is an artifact: it opens on Preview, the stage's own frame.
     await screen.findByTestId("visualization-frame");
@@ -561,5 +589,94 @@ describe("the retired outputs section id", () => {
     expect(resolveSectionId("visualization")).toBe("visualization");
     expect(resolveSectionId("weather")).toBeNull();
     expect(initialSectionFromSearch("?view=outputs")).toBe("visualization");
+  });
+});
+
+describe("VisualizationView — a run waiting for capacity", () => {
+  const OFFER = {
+    provider: "claude-api",
+    model: "claude-sonnet-4-6",
+    estimated_cost_usd: 1.65,
+    cost_cap_usd: 2,
+    reason: "provider_quota",
+    open_steps: 1,
+    spent_usd: 0,
+    covers_critic: true,
+  };
+
+  /** Outputs as usual, plus the paid-offer and decision endpoints. */
+  function installCapacityServer(runs: OutputSummary[]) {
+    const base = installFetchMock(runs);
+    const decisions: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/paid-offer")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ mission_id: "mission-1", state: "WAITING_CAPACITY", offer: OFFER }),
+          };
+        }
+        if (url.includes("/capacity-decision")) {
+          const body = JSON.parse(String(init?.body));
+          decisions.push({ url, body });
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, mission_id: "mission-1", decision: body.decision, state: "RUNNING" }),
+          };
+        }
+        return base(input);
+      }),
+    );
+    return decisions;
+  }
+
+  it("asks in the run's stage and approves only after an explicit confirmation", async () => {
+    const decisions = installCapacityServer([
+      run({ slug: "parked-run", status: "running", waiting_capacity: true }),
+    ]);
+    await renderStaged();
+
+    expect(await screen.findByText("claude-api")).toBeTruthy();
+    expect(screen.getByText("claude-sonnet-4-6")).toBeTruthy();
+    expect(screen.getByText("about $1.65 for 1 open steps")).toBeTruthy();
+    expect(screen.getByText("Subscription capacity used up")).toBeTruthy();
+    // The badge says what the run waits for instead of pretending to work.
+    expect(screen.getAllByTestId("run-status-badge")[0].textContent).toBe("waiting for capacity");
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve paid API for this mission" }));
+    expect(decisions).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+
+    await waitFor(() => expect(decisions).toHaveLength(1));
+    expect(decisions[0].url).toBe("/api/missions/mission-1/capacity-decision");
+    expect(decisions[0].body).toEqual({
+      decision: "approve_paid",
+      provider: "claude-api",
+      model: "claude-sonnet-4-6",
+    });
+  });
+
+  it("waits with one click and bills nothing", async () => {
+    const decisions = installCapacityServer([
+      run({ slug: "parked-run", status: "running", waiting_capacity: true }),
+    ]);
+    await renderStaged();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Wait" }));
+    await waitFor(() =>
+      expect(decisions.map((d) => d.body)).toEqual([{ decision: "wait", provider: null, model: null }]),
+    );
+  });
+
+  it("asks nothing for a run that is simply running", async () => {
+    installCapacityServer([run({ slug: "busy-run", status: "running" })]);
+    await renderStaged();
+
+    expect(screen.queryByRole("button", { name: "Approve paid API for this mission" })).toBeNull();
+    expect(screen.getAllByTestId("run-status-badge")[0].textContent).toBe("running");
   });
 });

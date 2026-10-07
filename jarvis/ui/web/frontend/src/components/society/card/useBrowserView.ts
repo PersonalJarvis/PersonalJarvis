@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { mintWsTicket } from "@/lib/ws";
 import { jitteredDelay, requestConnect } from "@/lib/connectBudget";
+import { BROWSER_PROFILE_CHANGED_EVENT } from "@/lib/browserProfiles";
 import type { BrowserPointerState } from "./browserPointerState";
 
 export interface BrowserViewState {
   connected: boolean;
   ready: boolean;
   fullWindow: boolean;
+  extendedInput: boolean;
+  previewPaused: boolean;
+  loginAvailable: boolean;
+  loginMode: boolean;
+  loginReady: boolean;
   manual: boolean;
   running: boolean;
   controlPending: boolean;
@@ -17,9 +23,13 @@ export interface BrowserViewState {
   pointer?: BrowserPointerState;
   approval?: { id: string; action: string };
   dialog?: { type: string; message: string };
+  /** Another agent holds this shared browser profile; the view retries until it is free. */
+  busy?: { holderId: string; holderName: string; running: boolean };
+  /** The shared profile was opened for another agent; this view stops reconnecting. */
+  movedTo?: string;
 }
 const empty: BrowserViewState = {
-  connected: false, ready: false, fullWindow: false, manual: false, running: false, controlPending: false,
+  connected: false, ready: false, fullWindow: false, extendedInput: false, previewPaused: false, loginAvailable: false, loginMode: false, loginReady: false, manual: false, running: false, controlPending: false,
   url: "", tabs: [], target: "", error: "",
 };
 
@@ -31,9 +41,25 @@ export function useBrowserView(agentId: string, enabled = true) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const socket = useRef<WebSocket | null>(null);
   const [state, setState] = useState<BrowserViewState>(empty);
+  const [profileRevision, setProfileRevision] = useState(0);
   const manual = useRef(false);
+  const previewPaused = useRef(false);
   const claiming = useRef(false);
+  const transitioning = useRef(false);
+  const inputGeneration = useRef("");
+  const loginCapability = useRef(false);
+  const loginMode = useRef(false);
+  const loginReady = useRef(false);
   const inputs = useRef<Array<{ op: string; args: Record<string, unknown> }>>([]);
+  useEffect(() => {
+    const onProfileChanged = (event: Event) => {
+      if ((event as CustomEvent<{ agentIds: string[] }>).detail?.agentIds.includes(agentId)) {
+        setProfileRevision((revision) => revision + 1);
+      }
+    };
+    window.addEventListener(BROWSER_PROFILE_CHANGED_EVENT, onProfileChanged);
+    return () => window.removeEventListener(BROWSER_PROFILE_CHANGED_EVENT, onProfileChanged);
+  }, [agentId]);
   useEffect(() => {
     let disposed = false;
     let attempt = 0;
@@ -46,14 +72,23 @@ export function useBrowserView(agentId: string, enabled = true) {
     let decodeBusy = false;
     let lastLiveEvent = Date.now();
     let renderedFrames = 0;
-    let latestFrame: { data: string; sequence: number; timestamp: number } | null = null;
+    let moved = false;
+    let latestFrame: { data: string; sequence: number; timestamp: number; generation: string; geometry_id?: string; extended_input?: boolean } | null = null;
     manual.current = false;
+    previewPaused.current = false;
     claiming.current = false;
+    transitioning.current = false;
+    inputGeneration.current = "";
+    loginCapability.current = false;
+    loginMode.current = false;
+    loginReady.current = false;
     inputs.current = [];
     setState(empty);
     const clearCanvas = () => {
+      inputGeneration.current = "";
       const el = canvas.current;
       if (el) el.width = 1280;
+      if (el) delete el.dataset.browserGeometryId;
     };
     clearCanvas();
     if (!enabled) return;
@@ -70,10 +105,13 @@ export function useBrowserView(agentId: string, enabled = true) {
           if (el.width !== image.width) el.width = image.width;
           if (el.height !== image.height) el.height = image.height;
           el.getContext("2d")?.drawImage(image, 0, 0);
+          inputGeneration.current = frame.generation;
+          el.dataset.browserGeometryId = frame.geometry_id ?? "";
           // Read-only diagnostics for end-to-end stream acceptance and support.
           el.dataset.browserFrameAgeMs = String(Math.max(0, Date.now() - frame.timestamp * 1000));
           el.dataset.browserRenderedFrames = String(++renderedFrames);
-          setState((s) => s.ready ? s : { ...s, ready: true, error: "" });
+          setState((s) => s.ready && s.extendedInput === (frame.extended_input === true) ? s
+            : { ...s, ready: true, error: "", extendedInput: frame.extended_input === true });
         }
         decodeBusy = false;
         decodeFrame();
@@ -101,13 +139,15 @@ export function useBrowserView(agentId: string, enabled = true) {
           opened = true;
           lastLiveEvent = Date.now();
           waitingForFrameSince = 0;
-          setState((s) => ({ ...s, connected: true, ready: false }));
+          setState((s) => ({ ...s, connected: true, ready: false, extendedInput: false }));
         };
         ws.onmessage = (message) => {
           if (disposed || socket.current !== ws) return;
           try {
             const event = JSON.parse(message.data);
             if (event.kind === "frame") {
+              setState((s) => s.busy ? { ...s, busy: undefined } : s);
+              if (previewPaused.current || (loginMode.current && !loginReady.current)) return;
               if (typeof event.data !== "string" || typeof event.sequence !== "number") return;
               if (!Number.isFinite(event.timestamp)) return;
               lastLiveEvent = Date.now();
@@ -118,7 +158,9 @@ export function useBrowserView(agentId: string, enabled = true) {
               }
               if (event.generation !== generation) {
                 generation = event.generation;
-                setState((s) => ({ ...s, pointer: undefined }));
+                setState((s) => ({ ...s, ready: false, extendedInput: false, pointer: undefined }));
+                renderedFrames = 0;
+                waitingForFrameSince = Date.now();
                 lastSequence = -1;
                 epoch++;
               }
@@ -136,23 +178,76 @@ export function useBrowserView(agentId: string, enabled = true) {
                 && event.width > 0 && event.height > 0) {
                 setState((s) => ({ ...s, pointer: event }));
               }
+            } else if (event.kind === "error" && event.code === "profile_busy") {
+              lastLiveEvent = Date.now();
+              setState((s) => ({ ...s, ready: false, error: "", busy: {
+                holderId: String(event.holder_id ?? ""), holderName: String(event.holder_name ?? ""),
+                running: event.running === true } }));
+            } else if (event.kind === "disconnected" && event.reason === "moved") {
+              // Reconnecting would take the profile straight back from the other agent.
+              moved = true;
+              setState((s) => ({ ...s, movedTo: String(event.agent_name || event.agent_id || "") }));
             } else if (event.kind === "error") {
               setState((s) => ({ ...s, ready: false, error: event.error }));
             } else if (event.kind === "state") {
               lastLiveEvent = Date.now();
-              if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
+              setState((s) => s.busy ? { ...s, busy: undefined } : s);
+              loginCapability.current = event.login_available === true;
+              loginMode.current = event.login_mode === true;
+              loginReady.current = event.login_ready === true;
+              const changedGeneration = typeof event.generation === "string" && event.generation !== generation;
+              if (changedGeneration) {
+                generation = event.generation;
+                epoch++;
+                latestFrame = null;
+                lastSequence = -1;
+                renderedFrames = 0;
+                inputs.current = [];
+                clearCanvas();
+              }
+              const awaitingChrome = loginMode.current && !loginReady.current;
+              const paused = Boolean(event.preview_paused);
+              if (paused && !previewPaused.current) {
+                epoch++;
+                latestFrame = null;
+                renderedFrames = 0;
+                clearCanvas();
+              }
+              previewPaused.current = paused;
+              if (awaitingChrome) {
+                epoch++;
+                latestFrame = null;
+                renderedFrames = 0;
+                clearCanvas();
+              }
+              if (paused || awaitingChrome) waitingForFrameSince = 0;
+              else if (!renderedFrames && !waitingForFrameSince) waitingForFrameSince = Date.now();
               setState((s) => ({ ...s, manual: event.manual, running: event.running,
-                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window) }));
+                url: event.url, target: event.target, tabs: event.tabs ?? [], fullWindow: Boolean(event.full_window),
+                extendedInput: event.extended_input === true,
+                loginAvailable: event.login_available === true, loginMode: event.login_mode === true,
+                loginReady: event.login_ready === true,
+                previewPaused: paused, ready: paused || awaitingChrome || changedGeneration ? false : s.ready,
+                pointer: paused || awaitingChrome || changedGeneration ? undefined : s.pointer }));
             } else if (event.kind === "control") {
+              if (event.op === "takeover" || typeof event.manual === "boolean") transitioning.current = false;
               if (typeof event.manual === "boolean") manual.current = event.manual;
+              if (typeof event.login_mode === "boolean") loginMode.current = event.login_mode;
+              if (typeof event.login_ready === "boolean") loginReady.current = event.login_ready;
               if (claiming.current && (event.manual === true || !event.ok)) {
                 claiming.current = false;
                 const queued = inputs.current.splice(0);
                 if (event.ok && event.manual === true && ws.readyState === WebSocket.OPEN) {
-                  for (const input of queued) ws.send(JSON.stringify(input));
+                  for (const input of queued) {
+                    if (typeof event.generation === "string" && typeof input.args.generation === "string"
+                      && input.args.generation !== event.generation) continue;
+                    ws.send(JSON.stringify(input));
+                  }
                 }
               }
               setState((s) => ({ ...s, controlPending: false, error: event.ok ? "" : event.error,
+                loginMode: typeof event.login_mode === "boolean" ? event.login_mode : s.loginMode,
+                loginReady: typeof event.login_ready === "boolean" ? event.login_ready : s.loginReady,
                 manual: typeof event.manual === "boolean" ? event.manual : s.manual }));
             } else if (event.kind === "control_pending") {
               setState((s) => ({ ...s, controlPending: true }));
@@ -176,11 +271,19 @@ export function useBrowserView(agentId: string, enabled = true) {
           // Rejection before accept is exposed as 1006 by browsers, not 4401.
           if (event.code === 4401 || !opened) needsTicket = true;
           epoch++;
+          latestFrame = null;
           renderedFrames = 0;
+          waitingForFrameSince = 0;
+          clearCanvas();
           manual.current = false;
           claiming.current = false;
+          transitioning.current = false;
+          loginCapability.current = false;
+          loginMode.current = false;
+          loginReady.current = false;
           inputs.current = [];
-          setState((s) => ({ ...s, connected: false, manual: false, controlPending: false, pointer: undefined }));
+          setState((s) => ({ ...s, connected: false, ready: false, manual: false, extendedInput: false, loginAvailable: false, loginReady: false, controlPending: false, pointer: undefined }));
+          if (moved) return;
           cancelConnect = requestConnect(() => void connect(), jitteredDelay(attempt++));
         };
         ws.onerror = () => ws.close();
@@ -217,9 +320,10 @@ export function useBrowserView(agentId: string, enabled = true) {
       ws?.close();
       clearCanvas();
     };
-  }, [agentId, enabled]);
+  }, [agentId, enabled, profileRevision]);
 
   const control = useCallback((op: string, args: Record<string, unknown> = {}) => {
+    if (previewPaused.current && op !== "takeover" && op !== "cancel") return;
     if (op === "cancel") {
       void fetch("/api/society/agents/" + encodeURIComponent(agentId) + "/browser/cancel",
         { method: "POST", headers: { "X-Jarvis-Stop-Chat": "1" } }).then((res) => {
@@ -228,7 +332,22 @@ export function useBrowserView(agentId: string, enabled = true) {
       return;
     }
     if (socket.current?.readyState !== WebSocket.OPEN) return;
-    if (["click", "scroll", "text", "key"].includes(op) && !manual.current) {
+    if (transitioning.current && op !== "cancel") return;
+    if (loginMode.current && !loginReady.current && op !== "takeover" && op !== "cancel") return;
+    if (op === "takeover" && args.enabled === true && loginCapability.current && args.login === undefined) {
+      args = { ...args, login: true };
+    }
+    if (op !== "takeover" && op !== "cancel" && loginCapability.current) {
+      if (!inputGeneration.current) return;
+      args = { ...args, generation: inputGeneration.current };
+    }
+    if (op === "takeover" && (args.login === true || args.enabled === false)) {
+      transitioning.current = true;
+      inputs.current = [];
+      setState((s) => ({ ...s, controlPending: true }));
+    }
+    if (["click", "scroll", "text", "key"].includes(op)
+      && (!manual.current || (loginCapability.current && !loginMode.current))) {
       if (inputs.current.length >= 128) {
         setState((s) => ({ ...s, error: "Waiting for browser control; input queue is full" }));
         return;
@@ -236,8 +355,11 @@ export function useBrowserView(agentId: string, enabled = true) {
       inputs.current.push({ op, args });
       if (!claiming.current) {
         claiming.current = true;
+        transitioning.current = loginCapability.current;
         setState((s) => ({ ...s, controlPending: true }));
-        socket.current.send(JSON.stringify({ op: "takeover", args: { enabled: true } }));
+        socket.current.send(JSON.stringify({ op: "takeover", args: {
+          enabled: true, ...(loginCapability.current ? { login: true } : {}),
+        } }));
       }
       return;
     }

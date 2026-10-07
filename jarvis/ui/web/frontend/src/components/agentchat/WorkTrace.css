@@ -3,7 +3,7 @@
    tool jumped to the middle until it joined the completed fold. */
 [data-testid="work-trace"][data-conversation] {
   width: 100%;
-  max-width: 36rem;
+  max-width: 44rem;
   margin-left: 0 !important;
   margin-right: auto;
   align-self: flex-start;
@@ -13,4 +13,170 @@
   margin-left: 0 !important;
   margin-right: 0;
   width: 100%;
+}
+
+/* ── The rail look (2026-10-01) ─────────────────────────────────────────
+   Every step of a turn hangs on one hairline thread. A step's node sits in
+   a 16 px column centred on its first line: rows are 4 px + a 24 px line, so
+   the node's centre is 16 px down. The thread runs in two segments per step
+   — above the node and from below the node to the step's end — so it leaves
+   a small gap around every node and passes behind opened details without a
+   frame of its own. Only colour tokens; both themes read the same ladder. */
+.trace-rail {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.trace-rail > .trace-step {
+  position: relative;
+  min-width: 0;
+}
+/* Since 2026-10-02 the rail draws no thread: traces read like the Codex app,
+   prose and quiet lines with nothing joining them. */
+.trace-rail > .trace-step::before,
+.trace-rail > .trace-step::after {
+  display: none;
+  content: "";
+  position: absolute;
+  left: 7.5px;
+  width: 1px;
+  background: hsl(var(--border-strong));
+  pointer-events: none;
+}
+.trace-rail > .trace-step::before {
+  top: 0;
+  height: 7px;
+}
+.trace-rail > .trace-step::after {
+  top: 25px;
+  bottom: 0;
+}
+.trace-rail > .trace-step:first-child::before,
+.trace-rail > .trace-step:last-child::after {
+  display: none;
+}
+
+.trace-node {
+  display: flex;
+  height: 1.5rem;
+  width: 1rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+}
+.trace-node-live {
+  color: hsl(var(--accent));
+}
+/* A Jarvis trace's live line: the user's pet (32 px) stands where the
+   spinner was, centred on the thread. It is wider than the 16 px node
+   column and exactly as tall as the 32 px status row, so it overhangs
+   sideways and nothing below moves when the turn ends and it turns back
+   into a check. */
+.trace-node-pet {
+  position: relative;
+  overflow: visible;
+}
+.trace-node-pet > * {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.trace-dot {
+  display: block;
+  height: 5px;
+  width: 5px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.6;
+}
+.trace-node-live .trace-dot {
+  opacity: 1;
+  box-shadow: 0 0 0 3px rgb(var(--accent-rgb) / 0.18);
+  animation: trace-node-pulse 1.6s ease-in-out infinite;
+}
+
+/* The words of the step that is working: a slow light sweep over muted ink,
+   the way the Claude app marks "Thinking". */
+.trace-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    hsl(var(--muted-foreground)) 0%,
+    hsl(var(--muted-foreground)) 38%,
+    hsl(var(--foreground-strong)) 50%,
+    hsl(var(--muted-foreground)) 62%,
+    hsl(var(--muted-foreground)) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: trace-shimmer 2.4s linear infinite;
+}
+
+/* A live scratchpad that has outgrown its box fades in from the top: the
+   newest line stays pinned at the bottom, older lines dissolve upward. */
+.trace-scratch-live {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+  mask-image: linear-gradient(to bottom, transparent 0, black 2.5rem);
+}
+
+/* The opened conversation fold, and the approvals shown beside it while it
+   is closed, line their thread up under the pill's mark. */
+.trace-fold-open {
+  padding-left: 5px;
+}
+
+@keyframes trace-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+@keyframes trace-node-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.12); }
+  50% { box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.24); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace-shimmer {
+    animation: none;
+    background-image: none;
+    color: hsl(var(--foreground));
+  }
+  .trace-node-live .trace-dot {
+    animation: none;
+  }
+}
+
+/* ── The timeline of a turn (TraceTimeline.tsx) ───────────────────────
+   Lines hang on the same thread as the live rail. Edit sizes wear the diff
+   colours; a long thought folds with a fade at its foot. */
+.diff-count-add {
+  color: hsl(var(--diff-add));
+}
+.diff-count-del {
+  color: hsl(var(--diff-del));
+}
+.trace-thought-fade {
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+  mask-image: linear-gradient(to bottom, black calc(100% - 2.5rem), transparent 100%);
+}
+/* Media the model put in its narration stays small inside a trace. */
+.trace-narration img,
+.trace-narration video {
+  max-height: 10rem;
+  width: auto;
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+/* Work lines and reasoning are set in the size of the surface's own text,
+   as in the Codex app: 15/25 on the front page, 13/21 in agent chats. */
+/* !important: the typography plugin's .prose sets its own size. */
+.trace-text {
+  font-size: var(--trace-text-size, 15px) !important;
+  line-height: var(--trace-text-leading, 25px) !important;
+}
+[data-testid="work-trace"][data-conversation] {
+  --trace-text-size: 13px;
+  --trace-text-leading: 21px;
 }

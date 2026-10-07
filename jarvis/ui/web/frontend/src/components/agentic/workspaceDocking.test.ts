@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_GRID_COLUMNS, MAX_GRID_ROWS, MAX_WORKSPACE_PANES, balancedColumns, balancedLayout, canSplitFit, dockPosition, fitsWorkspace, layoutSpan, previewDock, workspaceLayout } from "./workspaceDocking";
+import { BALANCED_GRID_COLUMNS, balancedColumns, balancedLayout, dockPosition, layoutSpan, previewDock, workspaceLayout } from "./workspaceDocking";
 import { treeLayout, treeLeaves } from "./treeLayout";
 
 describe("workspace docking geometry", () => {
@@ -8,7 +8,6 @@ describe("workspace docking geometry", () => {
       const tree = balancedLayout(Array.from({ length: count }, (_, i) => String(i)));
       expect(layoutSpan(tree, "row")).toBe(count <= 2 ? count : Math.ceil(count / 2));
       expect(layoutSpan(tree, "column")).toBe(count <= 2 ? 1 : 2);
-      expect(fitsWorkspace(tree)).toBe(true);
     }
   });
 
@@ -22,35 +21,31 @@ describe("workspace docking geometry", () => {
     expect(treeLeaves(row)).toEqual(["a", "b"]);
   });
 
-  it("grows past eight panes a row at a time, never wider than four columns", () => {
-    // Same table as `test_an_even_grid_never_grows_wider_than_four_columns`.
-    const expected: [number, number, number][] = [[1, 1, 1], [2, 2, 1], [6, 3, 2], [8, 4, 2], [9, 3, 3], [12, 4, 3], [16, 4, 4]];
+  it("grows a row at a time up to sixteen panes, then about square", () => {
+    // Same table as `test_an_even_grid_grows_square_past_sixteen`.
+    const expected: [number, number, number][] = [
+      [1, 1, 1], [2, 2, 1], [6, 3, 2], [8, 4, 2], [9, 3, 3], [12, 4, 3], [16, 4, 4],
+      [17, 5, 4], [20, 5, 4], [25, 5, 5], [30, 6, 5], [100, 10, 10],
+    ];
     for (const [count, columns, rows] of expected) {
       expect(balancedColumns(count)).toBe(columns);
       const tree = balancedLayout(Array.from({ length: count }, (_, i) => String(i)));
       expect(layoutSpan(tree, "row")).toBe(columns);
       expect(layoutSpan(tree, "column")).toBe(rows);
-      expect(fitsWorkspace(tree)).toBe(true);
     }
-    expect(MAX_WORKSPACE_PANES).toBe(MAX_GRID_COLUMNS * MAX_GRID_ROWS);
+    expect(BALANCED_GRID_COLUMNS).toBe(4);
   });
 
-  it("allows a third row where eight panes used to be the end", () => {
-    const eight = balancedLayout(["a", "b", "c", "d", "e", "f", "g", "h"])!;
-    expect(fitsWorkspace(previewDock(eight, "e", "b", "above"))).toBe(true);
-    const terminals = ["a", "b", "c", "d", "e", "f", "g", "h"].map((key) => ({ key }));
-    expect(canSplitFit(eight, terminals, "a", "down")).toBe(true);
-  });
-
-  it("rejects a fifth row or fifth column while allowing swaps in a full workspace", () => {
+  it("docks a pane on any side, however wide or tall the workspace already is", () => {
     const keys = Array.from({ length: 16 }, (_, i) => `p${i}`);
     const full = balancedLayout(keys)!;
-    expect(fitsWorkspace(previewDock(full, "p4", "p1", "above"))).toBe(false);
-    expect(fitsWorkspace(previewDock(full, "p4", "p1", "left"))).toBe(false);
-    expect(fitsWorkspace(previewDock(full, "p0", "p15", "swap"))).toBe(true);
-    const terminals = keys.map((key) => ({ key }));
-    expect(canSplitFit(full, terminals.slice(0, 15), "p0", "right", 16)).toBe(false);
-    expect(canSplitFit(full, terminals, "p0", "down", 16)).toBe(false);
+    const fifthRow = previewDock(full, "p4", "p1", "above");
+    const fifthColumn = previewDock(full, "p4", "p1", "left");
+    expect(layoutSpan(fifthRow, "column")).toBe(5);
+    expect(layoutSpan(fifthColumn, "row")).toBe(5);
+    expect(treeLeaves(fifthColumn).sort()).toEqual([...keys].sort());
+    // What the grid draws is the docked tree itself, never a re-dealt grid.
+    expect(workspaceLayout(fifthColumn, keys.map((key) => ({ key })))).toBe(fifthColumn);
   });
 
   it("distinguishes the four edges from the center regardless of card aspect ratio", () => {
@@ -62,12 +57,18 @@ describe("workspace docking geometry", () => {
     expect(dockPosition(410, 220, rect)).toBe("swap");
   });
 
-  it("fits legacy single-row snapshots into the workspace bounds before drawing", () => {
+  it("draws a wide saved row as it was saved", () => {
     const terminals = Array.from({ length: 6 }, (_, i) => ({ key: `t${i}` }));
     const saved = { direction: "row" as const, children: terminals.map(({ key }) => ({ pane: key })), weights: terminals.map(() => 1) };
     const rendered = workspaceLayout(saved, terminals);
-    expect(layoutSpan(rendered, "row")).toBe(3);
-    expect(layoutSpan(rendered, "column")).toBe(2);
+    expect(layoutSpan(rendered, "row")).toBe(6);
+    expect(layoutSpan(rendered, "column")).toBe(1);
     expect(treeLeaves(rendered)).toEqual(terminals.map((terminal) => terminal.key));
+  });
+
+  it("falls back to the even grid only when the saved tree does not match the panes", () => {
+    const terminals = Array.from({ length: 3 }, (_, i) => ({ key: `t${i}` }));
+    const stale = { direction: "row" as const, children: [{ pane: "t0" }, { pane: "gone" }], weights: [1, 1] };
+    expect(treeLeaves(workspaceLayout(stale, terminals))).toEqual(["t0", "t1", "t2"]);
   });
 });

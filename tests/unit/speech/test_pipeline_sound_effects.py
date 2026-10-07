@@ -8,6 +8,7 @@ must never silence tones.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
@@ -86,3 +87,26 @@ async def test_wake_chime_muted_but_spoken_ack_still_plays(monkeypatch):
     monkeypatch.setattr("jarvis.speech.pipeline.asyncio.sleep", _fast_sleep)
     await pipe._play_ack(ptt=False)
     assert pipe._player.plays == [pipe._ack_pcm]  # type: ignore[attr-defined]
+
+
+async def test_listening_cue_is_once_per_session_and_preserves_input():
+    pipe = _make_pipeline(True)
+    pipe._input_suppressed_until_ns = 0
+    pipe._start_listening_cue()
+    task = pipe._listening_cue_task
+    pipe._start_listening_cue()
+    assert pipe._listening_cue_task is task
+    await task
+    assert pipe._player.plays == [CHIME_PCM]
+    assert pipe._input_suppressed_until_ns == 0
+
+
+async def test_listening_cue_obeys_mutes_and_hangup():
+    for condition in ("effects", "speaker", "hangup"):
+        pipe = _make_pipeline(condition != "effects")
+        pipe._speaker_muted = condition == "speaker"
+        if condition == "hangup":
+            pipe._hangup_event.set()
+        pipe._start_listening_cue()
+        await asyncio.sleep(0)
+        assert pipe._player.plays == []

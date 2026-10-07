@@ -23,11 +23,12 @@ state), avoiding the press-only limitation of ``GlobalHotKeys``.
 
 macOS permission hint (AD-8 / AD-13)
 ------------------------------------
-On macOS a global listener silently fires nothing until the user grants
-Input-Monitoring / Accessibility permission. ``received_any_event()`` reports
-whether any bound chord has actually fired, so the wizard can detect the
-"registered but zero events" state and surface the grant message instead of
-leaving the user with a dead hotkey and no explanation.
+On macOS a global listener silently fires nothing until the user grants Input
+Monitoring (a listen-only event tap needs that and nothing else). The darwin
+branch of ``start`` therefore stays closed until the grant is visible; the
+macOS app itself uses ``QuartzHotkeyBackend`` (BUG-077), which carries the
+liveness counter. ``received_any_event()`` only reports whether a BOUND chord
+has fired.
 
 Import-cleanliness (HN-7): ``pynput`` is imported lazily inside ``start`` so
 ``import jarvis.trigger.backends.pynput`` succeeds on a box without the package.
@@ -47,12 +48,24 @@ log = logging.getLogger(__name__)
 
 
 def _macos_hotkey_permissions_granted() -> bool:
-    """Probe both native grants required by a macOS keyboard event tap."""
+    """Is Input Monitoring granted, the one grant a listen-only tap needs?
+
+    Silent, lock-free and never prompting: it is ``PermissionService.check``,
+    safe from the loop, from the tap callback and at boot. It does not ask the
+    OS for anything (the request belongs to a user gesture) and does not look at
+    the app's bundle identity: we act on whatever grant exists. ``NOT_REQUIRED``
+    (a host without TCC) counts as permitted, like ``EnsureResult.granted``.
+    """
+    from jarvis.platform.permission_service import (  # noqa: PLC0415
+        get_permission_service,
+    )
     from jarvis.platform.permissions import (  # noqa: PLC0415
-        get_system_permission_port,
+        PermissionId,
+        PermissionState,
     )
 
-    return get_system_permission_port().runtime_feature_ready("global_hotkeys")
+    state = get_permission_service().check(PermissionId.INPUT_MONITORING)
+    return state in (PermissionState.GRANTED, PermissionState.NOT_REQUIRED)
 
 
 def _macos_layout_guard_ready() -> bool:
@@ -176,6 +189,9 @@ class PynputBackend:
         # The live set of canonical tokens currently held down.
         self._held: set[str] = set()
         self._permission_check = lambda: True
+        # X11 display for unshifting symbol keys; opened on first need, from
+        # the listener thread only. ``False`` = tried and unavailable.
+        self._x_display: object | None | bool = None
 
     def register(self, bindings, on_event=None) -> None:
         """Stash binding rows as token-set combos. Never raises (AD-6).
@@ -229,10 +245,55 @@ class PynputBackend:
         # (modifiers, F-keys) expose ``.name``.
         char = getattr(key, "char", None)
         if char:
+            if not char.isalnum():
+                # X11 reports the SHIFTED symbol: Shift+9 arrives as "(" (US)
+                # or ")" (German), so "ctrl+shift+9" never matched. Bindings
+                # name the key, so a symbol is mapped back to its base key.
+                base = self._unshifted_char(key)
+                if base:
+                    return base
             return char.lower()
         name = getattr(key, "name", None)
         if name:
             return name.lower()
+        return None
+
+    def _unshifted_char(self, key) -> str | None:
+        """The base (level 0) character of an X11 key, or ``None``.
+
+        pynput's X11 ``KeyCode.vk`` is the keysym. The key that carries this
+        keysym on its SHIFT level, read back one level lower, is the key
+        without Shift — layout-correct, because the X server's own keymap does
+        the mapping. A keysym can sit on several keys ("(" is also a keypad
+        key, on its base level); only a shift-level entry counts. Off X11,
+        without Xlib, or for a symbol that is not shifted, ``None`` keeps the
+        character as reported.
+        """
+        vk = getattr(key, "vk", None)
+        if not isinstance(vk, int) or not sys.platform.startswith("linux"):
+            return None
+        display = self._x_display
+        if display is None:
+            try:
+                from Xlib import display as xdisplay  # noqa: PLC0415
+
+                display = xdisplay.Display()
+            except Exception:  # noqa: BLE001 - no X server or no Xlib: keep the char
+                log.debug("pynput: no X display to unshift symbol keys", exc_info=True)
+                display = False
+            self._x_display = display
+        if display is False:
+            return None
+        try:
+            for keycode, index in display.keysym_to_keycodes(vk):  # type: ignore[union-attr]
+                if index % 2 == 0:  # an unshifted level: this IS a base key
+                    continue
+                base = display.keycode_to_keysym(keycode, index - 1)  # type: ignore[union-attr]
+                # Latin-1 keysyms equal their code point; only printable ASCII maps.
+                if 0x20 < base < 0x7F:
+                    return chr(base).lower()
+        except Exception:  # noqa: BLE001 - an odd keysym keeps its reported char
+            log.debug("pynput: could not unshift keysym %#x", vk, exc_info=True)
         return None
 
     def _on_press_key(self, key) -> None:
@@ -361,10 +422,10 @@ class PynputBackend:
 
         if sys.platform == "darwin":
             # pynput's darwin backend creates a Quartz event tap on its own
-            # internal thread; without Accessibility and Input Monitoring that native
-            # init is useless at best and a process-level abort at worst
-            # (uncatchable, BUG-058 class). Preflight the non-prompting
-            # native preflights and fail CLOSED instead of touching pynput.
+            # internal thread; without Input Monitoring that native init is
+            # useless at best and a process-level abort at worst (uncatchable,
+            # BUG-058 class). Preflight the non-prompting grant and fail CLOSED
+            # instead of touching pynput.
             granted = False
             try:
                 granted = _macos_hotkey_permissions_granted()
@@ -372,11 +433,9 @@ class PynputBackend:
                 granted = False
             if granted is not True:
                 log.warning(
-                    "Global hotkeys disabled on macOS: the Accessibility "
-                    "and Input Monitoring permissions are not both granted. "
-                    "Use Personal Jarvis > Settings > Permissions, then "
-                    "re-arm the shortcut or restart Jarvis — voice still "
-                    "works via the wake word.",
+                    "Global hotkeys are off on macOS until Input Monitoring "
+                    "is allowed for Personal Jarvis; voice still works via "
+                    "the wake word.",
                 )
                 self._listener = None
                 return

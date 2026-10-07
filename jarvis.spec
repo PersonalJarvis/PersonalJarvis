@@ -66,12 +66,41 @@ def _package_version() -> str:
 VERSION = _package_version()
 
 
+def _macos_privacy_strings():
+    """Load ``jarvis/core/macos_privacy_strings.py`` by path.
+
+    The spec runs before ``jarvis`` is importable, and the managed app's
+    ``Info.plist`` loads the very same file the very same way, so the two
+    bundles cannot drift apart (tests/unit/packaging/test_macos_privacy_strings.py).
+    """
+    import importlib.util
+
+    path = PROJECT_ROOT / "jarvis" / "core" / "macos_privacy_strings.py"
+    loader_spec = importlib.util.spec_from_file_location("_jarvis_macos_privacy_strings", path)
+    if loader_spec is None or loader_spec.loader is None:
+        raise SystemExit(f"cannot load the macOS usage strings from {path}")
+    module = importlib.util.module_from_spec(loader_spec)
+    loader_spec.loader.exec_module(module)
+    return module
+
+
 # --- Data files -------------------------------------------------------------
 
 datas = []
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/live_runner.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/manual_chrome.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/window_actions.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/pointer.py"), "jarvis/society/browser"))
+
+# The local voice engine runs in its OWN Python environment, so a frozen build
+# must ship its sources as plain files: setup copies them into the engine home
+# (jarvis/realtime/local_voice_setup.py). Caches never ride along.
+_VOICE_ENGINE = PROJECT_ROOT / "jarvis" / "voice_engine"
+for entry in _VOICE_ENGINE.rglob("*"):
+    if entry.is_file() and "__pycache__" not in entry.parts and entry.suffix != ".pyc":
+        rel = entry.relative_to(_VOICE_ENGINE).parent
+        datas.append((str(entry), str(Path("jarvis/voice_engine") / rel)))
 
 # Include the frontend build when present. Preserve its package-relative layout
 # so the FastAPI static-files mount can serve it from a frozen application.
@@ -130,6 +159,12 @@ for entry in _package_root.rglob("*"):
         continue
     rel = entry.relative_to(PROJECT_ROOT).parent
     datas.append((str(entry), str(rel)))
+
+# The Conductor jobs engine reads its SQL schema and seed jobs beside its own
+# modules; analysis finds the modules, not these files.
+for entry in (PROJECT_ROOT / "conductor").rglob("*"):
+    if entry.is_file() and entry.suffix.lower() in {".sql", ".yaml"}:
+        datas.append((str(entry), str(entry.relative_to(PROJECT_ROOT).parent)))
 
 # Configuration profiles live beside the checkout root, and jarvis.core.config
 # resolves them relative to it.
@@ -214,6 +249,20 @@ for pkg in _optional_hidden:
     except Exception:
         continue
     hiddenimports.append(pkg)
+
+# macOS: the permission port loads pyobjc frameworks BY NAME
+# (``SystemPermissionPort._load("AVFoundation")``), which no static import
+# analysis can see. Without AVFoundation the frozen app read the microphone
+# permission as "unavailable" for good, so the voice gate never opened - the
+# v2.5.0 image shipped exactly like that (BUG-222). It needs the
+# ``[desktop-macos]`` extra on the build machine; a build without it is refused
+# by scripts/ci/check_frozen_macos_app.py instead of being shipped quietly.
+if sys.platform == "darwin":
+    for pkg in ("AVFoundation",):
+        try:
+            hiddenimports += collect_submodules(pkg)
+        except Exception as exc:
+            print(f"[jarvis.spec] WARNING: cannot collect {pkg}: {exc}")
 
 
 # --- Bundle-size exclusions -------------------------------------------------
@@ -418,46 +467,27 @@ if sys.platform == "darwin":
             "CFBundleShortVersionString": VERSION,
             "CFBundleVersion": VERSION,
             "CFBundlePackageType": "APPL",
+            # PyInstaller sets LSBackgroundOnly=True whenever the LAST executable
+            # of the COLLECT is a console one - and the `jarvis` CLI is. A
+            # background-only app gets no Dock icon, no menu bar and no windows
+            # from LaunchServices; the v2.5.0 image shipped that way. This is a
+            # windowed app (the CLI entry runs from a terminal, not through
+            # LaunchServices), so say so explicitly.
+            "LSBackgroundOnly": False,
             "LSMinimumSystemVersion": MACOS_MIN_SYSTEM_VERSION,
             "LSApplicationCategoryType": "public.app-category.productivity",
             "NSHighResolutionCapable": True,
-            # Personal Jarvis is voice-first: without a usage string macOS kills
-            # the process the moment it touches the matching API.
-            "NSMicrophoneUsageDescription": (
-                "Personal Jarvis listens for your wake word and your spoken "
-                "requests. Audio stays on this Mac unless you configure a cloud "
-                "speech provider yourself."
-            ),
-            "NSSpeechRecognitionUsageDescription": (
-                "Personal Jarvis turns what you say into text so it can act on "
-                "your request."
-            ),
-            "NSCameraUsageDescription": (
-                "Personal Jarvis uses the camera only for features you start "
-                "yourself, such as showing it what is in front of you."
-            ),
-            "NSAppleEventsUsageDescription": (
-                "Personal Jarvis controls other applications on your behalf "
-                "when you ask it to, for example to open a file or a window."
-            ),
-            "NSSystemAdministrationUsageDescription": (
-                "Personal Jarvis needs Accessibility and Input Monitoring "
-                "access to type, click and read the screen for the automation "
-                "tasks you ask it to run."
-            ),
-            "NSDesktopFolderUsageDescription": (
-                "Personal Jarvis saves the files it produces for you to your "
-                "Desktop."
-            ),
-            "NSDocumentsFolderUsageDescription": (
-                "Personal Jarvis reads and writes the documents you point it at."
-            ),
-            "NSDownloadsFolderUsageDescription": (
-                "Personal Jarvis opens the downloads you ask it to work with."
-            ),
-            "NSLocalNetworkUsageDescription": (
-                "Personal Jarvis serves its own interface to your browser on "
-                "this machine."
-            ),
+            # Every NS...UsageDescription string comes from the single table in
+            # jarvis/core/macos_privacy_strings.py, which the managed app's
+            # Info.plist loads too. Without the microphone string macOS ends the
+            # process the moment it touches the microphone, so the table is
+            # asserted on the built app (scripts/ci/check_frozen_macos_app.py).
+            # Add or reword a string THERE, never here.
+            **_macos_privacy_strings().usage_descriptions(),
+            # German and Spanish usage strings: the languages are declared here,
+            # the <lang>.lproj/InfoPlist.strings files themselves are written
+            # into the finished .app by packaging/macos/build.sh (before signing,
+            # because they are part of the seal) from the same table.
+            **_macos_privacy_strings().localization_plist_keys(),
         },
     )

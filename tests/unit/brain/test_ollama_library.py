@@ -77,6 +77,107 @@ def test_search_parser_answers_empty_on_garbage() -> None:
     assert library.parse_search_html("<html><body>maintenance</body></html>") == []
 
 
+# A trimmed entry in the 2026-10 layout: icon-led, capitalised badges, a
+# download count in a titled span, and no update time.
+_ICON_LAYOUT = """
+<ul><li class="border-b"><a href="/library/embeddinggemma-2" class="group">
+<h2 title="embeddinggemma-2"><span>embeddinggemma-2</span></h2>
+<p class="mt-1" title="An embedding model.">An embedding model.</p>
+<div><span><span role="tooltip">Runs on your computer</span>
+<svg viewBox="0 0 24 24"><path d="M9 17"/></svg>
+<span class="font-medium">270m</span><span aria-hidden="true">&middot;</span>
+<span class="font-medium">440m</span></span>
+<div><span class="badge"><svg><path d="M2 12"/></svg>Vision</span>
+<span class="badge"><svg><path d="M1"/></svg>Embedding</span></div></div>
+<span title="5,695 downloads"><svg><path d="M3"/></svg><span>5,695</span></span>
+</a></li>
+<li><a href="/library/glm-5" class="group"><h2><span>glm-5</span></h2><p>A cloud model.</p>
+<div><span><span role="tooltip">Runs on Ollama&#39;s cloud</span>
+<svg><path d="M4"/></svg>Cloud</span>
+<div><span><svg><path d="M5"/></svg>Tools</span>
+<span><svg><path d="M6"/></svg>Thinking</span></div></div></a></li></ul>
+"""
+
+
+def test_search_parser_reads_the_icon_badge_layout() -> None:
+    local, cloud = library.parse_search_html(_ICON_LAYOUT)
+    assert local["name"] == "embeddinggemma-2"
+    assert local["capabilities"] == ["vision", "embedding"]
+    assert local["sizes"] == ["270m", "440m"]
+    assert local["pulls"] == "5,695"
+    assert local["cloud"] is False
+    assert local["updated"] == ""
+    assert cloud["capabilities"] == ["tools", "thinking"]
+    assert cloud["cloud"] is True
+
+
+# Trimmed from the live listing after the 2026-10 redesign: badges are text
+# after an icon ("Embedding"), the pull count sits under a "N downloads" title
+# and the update age is gone.
+_REDESIGNED_ENTRIES = """
+<ul>
+<li class="border-b"><a href="/library/embeddinggemma-2" class="group flex">
+  <h2 title="embeddinggemma-2"><span >embeddinggemma-2</span></h2>
+  <p class="mt-1" title="An embedding model.">An embedding model.</p>
+  <div><span class="group/tip"><span role="tooltip">Runs on your computer</span>
+    <svg aria-hidden="true"><path d="M9 17"/></svg><span  class="font-medium">270m</span>
+    <span aria-hidden="true">&middot;</span><span  class="font-medium">440m</span></span>
+  <div><span  class="inline-flex"><svg aria-hidden="true"><path d="M2"/></svg>Vision</span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M21"/></svg>Embedding</span></div>
+  </div>
+  <span class="inline-flex" title="5,435 downloads"><svg aria-hidden="true">
+    <path d="M3"/></svg><span >5,435</span></span>
+</a></li>
+<li class="border-b"><a href="/library/glm-5.3" class="group flex">
+  <h2 title="glm-5.3"><span >glm-5.3</span></h2>
+  <p class="mt-1" title="A flagship model.">A flagship model.</p>
+  <div><span class="group/tip"><span role="tooltip">Runs on Ollama&#39;s cloud</span>
+    <span class="font-medium">Cloud</span></span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M1"/></svg>Tools</span>
+  <span  class="inline-flex"><svg aria-hidden="true"><path d="M1"/></svg>Thinking</span></div>
+</a></li>
+</ul>
+"""
+
+
+def test_search_parser_reads_the_redesigned_listing() -> None:
+    embedding, cloud = library.parse_search_html(_REDESIGNED_ENTRIES)
+
+    assert embedding["name"] == "embeddinggemma-2"
+    assert embedding["description"] == "An embedding model."
+    assert embedding["capabilities"] == ["vision", "embedding"]
+    assert embedding["cloud"] is False
+    assert embedding["sizes"] == ["270m", "440m"]
+    assert embedding["pulls"] == "5,435"
+    assert embedding["updated"] == ""
+
+    assert cloud["name"] == "glm-5.3"
+    assert cloud["capabilities"] == ["tools", "thinking"]
+    assert cloud["cloud"] is True
+    assert cloud["pulls"] == ""
+
+
+def test_search_parser_reads_icon_badges_and_download_counts() -> None:
+    page = """
+    <li><a href="/library/example">
+      <h2><span>example</span></h2>
+      <p>A model whose description mentions tools without claiming that badge.</p>
+      <span><svg><title>Tools</title><path d="M0 0"/></svg>Vision</span>
+      <span><svg><path d="M0 0"/></svg>Embedding</span>
+      <span><svg><path d="M0 0"/></svg>Cloud</span>
+      <span><span>270m</span><span>440m</span></span>
+      <span title="5,358 downloads"><svg></svg><span>5,358</span></span>
+    </a></li>
+    """
+    model, = library.parse_search_html(page)
+    assert model["capabilities"] == ["vision", "embedding"]
+    assert model["cloud"] is True
+    assert model["sizes"] == ["270m", "440m"]
+    assert model["pulls"] == "5,358"
+    # The redesigned page omits timestamps; unknown must remain unknown.
+    assert model["updated"] == ""
+
+
 # ── tags parser ──────────────────────────────────────────────────────────
 
 
@@ -106,6 +207,21 @@ def test_size_units_are_read_the_way_the_catalog_writes_them(
     markup: str, expected: float | None
 ) -> None:
     assert library.parse_tags_html(markup, "x")[0]["size_gb"] == expected
+
+
+def test_tags_parser_prefers_the_rich_duplicate_over_intervening_age_text() -> None:
+    page = (
+        '<a href="/library/qwen3.5:4b">qwen3.5:4b</a>'
+        '<span>unrelated release 1 year ago</span>'
+        '<a href="/library/qwen3.5:4b">'
+        'qwen3.5:4b • 3.4GB • 256K context window • Text, Image input • 7 months ago'
+        '</a>'
+        '<a href="/library/qwen3.5:9b">qwen3.5:9b</a> 6.6GB'
+    )
+    tags = library.parse_tags_html(page, "qwen3.5")
+    small = next(item for item in tags if item["tag"] == "4b")
+    assert small["size_gb"] == 3.4
+    assert small["updated"] == "7 months ago"
 
 
 def test_tags_parser_reads_size_context_and_inputs(tags_page: str) -> None:

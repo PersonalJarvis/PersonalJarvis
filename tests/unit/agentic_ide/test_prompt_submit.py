@@ -131,8 +131,12 @@ def registry(fake_pty: FakePtyManager, monkeypatch: pytest.MonkeyPatch) -> Regis
     monkeypatch.setattr(session_mod, "_SUBMIT_RETRY_AFTER_S", 0.02)
     monkeypatch.setattr(session_mod, "_ARRIVAL_POLL_S", 0.01)
     monkeypatch.setattr(session_mod, "_ARRIVAL_WINDOW_S", 0.04)
+    monkeypatch.setattr(session_mod, "_LATE_ARRIVAL_WINDOW_S", 0.04)
     monkeypatch.setattr(fleet_actions, "READY_POLL_S", 0.01)
     monkeypatch.setattr(fleet_actions, "READY_TIMEOUT_S", 0.08)
+    # Submit mechanics, not the startup-question wait (tested on its own).
+    monkeypatch.setattr(fleet_actions, "COLOUR_PROBE_SETTLE_S", 0.0)
+    monkeypatch.setattr(fleet_actions, "STARTUP_QUIET_S", 0.0)
     return Registry(pty_manager=fake_pty)
 
 
@@ -181,9 +185,21 @@ async def test_a_booting_codex_is_not_typed_into_until_its_input_line_exists(
         term.pty_id,
         "\x1b[2J\x1b[H\u203a Ask Codex anything\x1b[1;3H\x1b[?25h",
     )
+    await asyncio.sleep(0.03)
+    # The composer is up, but Codex has not asked for its colours yet: a
+    # prompt typed now turns the colour reply into composer text.
+    assert fake_pty.typed == [], "typed before Codex's startup colour question"
+
+    # A healthy Codex reads the reply instead of drawing it, so the fake must
+    # not echo it into its composer either.
+    fake_pty.tui_echo = False
+    await fake_pty.emit(term.pty_id, "\x1b]10;?\x1b\\\x1b]11;?\x1b\\")
+    answered = len(fake_pty.typed)
+    assert answered == 1 and "rgb:" in fake_pty.typed[0], fake_pty.typed
+    fake_pty.tui_echo = True
     delivered = await sending
 
-    assert fake_pty.typed[:2] == ["review the pipeline", "\r"]
+    assert fake_pty.typed[answered : answered + 2] == ["review the pipeline", "\r"]
     assert delivered.submitted is True
 
 
@@ -421,6 +437,58 @@ async def test_a_prompt_never_seen_to_arrive_is_reported_as_unconfirmed(
     bodies = [d for d in fake_pty.typed if "Review the pipeline" in d]
     assert len(bodies) == 1, f"the prompt must not be re-typed: {fake_pty.typed}"
     assert term.submitted is None, "never seen to arrive is not a success claim"
+
+
+async def test_a_new_claude_pane_is_briefed_once_its_composer_paints(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch
+) -> None:
+    """Live 2026-10-01: a voice-created agent got its task 3 s after spawn and
+    the text sat unsent in the box. The first prompt waits for the composer."""
+    monkeypatch.setattr(session_mod, "_FIRST_PROMPT_COMPOSER_WAIT_S", 1.0)
+    fake_pty.tui_echo = True
+    term = await _live(registry, tmp_path)
+    await fake_pty.emit(term.pty_id, "\x1b[2J\x1b[H Claude Code v2 loading\r\n")
+
+    sending = asyncio.create_task(registry.send_prompt("Alex", "audit the codebase"))
+    await asyncio.sleep(0.03)
+    assert fake_pty.typed == [], "nothing is typed before the composer exists"
+
+    await fake_pty.emit(term.pty_id, "\x1b[2J\x1b[H❯ \r\n")
+    delivered = await sending
+    assert fake_pty.typed[:2] == ["audit the codebase", "\r"]
+    assert delivered.submitted is True
+
+
+async def test_a_prompt_that_surfaces_after_enter_gets_one_more_enter(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path, monkeypatch
+) -> None:
+    """A loading CLI buffers the text and drops the Enter; once the text shows
+    in the box, one guarded Enter sends it instead of leaving it there."""
+    monkeypatch.setattr(session_mod, "_LATE_ARRIVAL_WINDOW_S", 0.5)
+    term = await _live(registry, tmp_path)
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H❯ \r\n")
+
+    async def enters_typed(count: int) -> None:
+        for _ in range(400):
+            if sum(d == "\r" for d in fake_pty.typed) >= count:
+                return
+            await asyncio.sleep(0.005)
+
+    async def late_paint() -> None:
+        await enters_typed(1)
+        await asyncio.sleep(0.1)
+        await on_output("pty", "\x1b[2J\x1b[H❯ audit the codebase\r\n")
+        await enters_typed(2)
+        await on_output("pty", "\x1b[2J\x1b[H❯ \r\n")
+
+    painter = asyncio.create_task(late_paint())
+    await registry.send_prompt("Alex", "audit the codebase")
+    await painter
+    bodies = [d for d in fake_pty.typed if "audit the codebase" in d]
+    assert len(bodies) == 1, "the text is never typed twice"
+    assert [d for d in fake_pty.typed if d == "\r"] == ["\r", "\r"]
+    assert term.submitted is True
 
 
 async def test_a_prompt_that_lands_reports_submitted(

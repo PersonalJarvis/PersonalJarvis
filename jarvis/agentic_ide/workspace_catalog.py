@@ -18,8 +18,6 @@ def project_graph(registry: Registry) -> dict[str, Any]:
     Their project rows are derived without writing during a read. Selecting a
     saved workspace remains an explicit action; this function never starts it.
     """
-    from .session import MAX_TERMINALS
-
     projects = {
         project.id: {**project.to_dict(), "workspaces": []}
         for project in library.list_projects()
@@ -74,7 +72,7 @@ def project_graph(registry: Registry) -> dict[str, Any]:
                 "last_active_at": space.saved_at,
                 "active": False,
                 "status": "closed",
-                "restorable": folder_exists and len(space.terminals) <= MAX_TERMINALS,
+                "restorable": folder_exists,
             }
         )
         open_ids.add(space.session_id)
@@ -86,5 +84,4 @@ def project_graph(registry: Registry) -> dict[str, Any]:
             active.project_id or library.project_id_for(active.folder) if active else None
         ),
         "active_workspace_id": registry.active_id,
-        "max_terminals": MAX_TERMINALS,
     }

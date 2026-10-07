@@ -28,7 +28,7 @@ def test_state_starts_incomplete(client):
     assert body["terms"]["current_version"] == "1.0"
     assert body["terms"]["accepted"] is False
     assert body["terms"]["accepted_version"] is None
-    assert body["steps"][0] == "welcome"
+    assert body["steps"][0] == "name"
     assert len(body["legal_references"]) >= 3
     assert body["wake_word_acknowledged"] is False
     assert body["tour_completed"] is False

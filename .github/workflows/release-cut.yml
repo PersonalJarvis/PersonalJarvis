@@ -15,6 +15,7 @@
 #      personal-jarvis-src.tar.gz asset the install scripts fall back to. The
 #      in-app updater follows releases/latest, so this is the step that reaches
 #      users.
+#   6. runs release-smoke.yml against the published release (read-only).
 #
 # Tags pushed with GITHUB_TOKEN fire no `push: tags` event, which is why step 4
 # dispatches explicitly; workflow_dispatch is the documented exception.
@@ -43,17 +44,19 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  checks: read
+  contents: read
 
 jobs:
   cut:
     name: cut release
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      checks: read
     outputs:
       version: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
     env:
@@ -69,11 +72,7 @@ jobs:
           python-version: "3.11"
       - name: main must be green
         if: inputs.resume_sha == ''
-        run: |
-          state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?check_name=CI%20gate" \
-            --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
-          echo "CI gate on $GITHUB_SHA: $state"
-          [ "$state" = "success" ] || { echo "::error::main is not green ($state) - no release."; exit 1; }
+        run: python scripts/ci/release_admit.py --ci-only --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --wait-minutes 0
       - name: Select an already merged version commit
         id: resume
         if: inputs.resume_sha != ''
@@ -134,36 +133,58 @@ jobs:
             --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
           [ "$state" = "success" ] || { echo "::error::Candidate CI gate is $state."; exit 1; }
           gh pr merge "$candidate" --merge --match-head-commit "$sha"
+          merged="$(gh pr view "$candidate" --json mergeCommit --jq '.mergeCommit.oid')"
+          [[ "$merged" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing merge commit."; exit 1; }
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git checkout --detach "$merged"
           if [ "$TOKEN_IS_BOT" = "true" ]; then
-            gh workflow run ci.yml --ref main -f full=true -f include_macos=false
+            gh workflow run ci.yml --ref main -f full=true -f include_macos=true
           fi
       - name: Tag the admitted release
+        id: tag
         env:
           V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
         run: |
           sha="$(git rev-parse HEAD)"
-          python scripts/ci/release_admit.py --tag "v$V" --sha "$sha" --repo "$GITHUB_REPOSITORY"
+          git merge-base --is-ancestor "$sha" origin/main
+          actual="$(python -c 'from scripts.ci.release_admit import versions; print(versions()[0])')"
+          [ "$actual" = "$V" ] || { echo "::error::Merged package version changed."; exit 1; }
+          python scripts/ci/release_admit.py --ci-only --sha "$sha" --repo "$GITHUB_REPOSITORY"
           git config user.name "jarvis-release[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           if git show-ref --verify --quiet "refs/tags/v$V"; then
             [ "$(git rev-parse "v$V^{}")" = "$sha" ] || { echo "::error::The tag already names another commit."; exit 1; }
+            echo 'pushed=false' >> "$GITHUB_OUTPUT"
           else
             git tag -a "v$V" -m "v$V"
             git push origin "v$V"
+            echo 'pushed=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Dispatch the publishing workflows on the tag
         env:
           V: ${{ steps.bump.outputs.version || steps.resume.outputs.version }}
+          TAG_PUSHED: ${{ steps.tag.outputs.pushed }}
         run: |
-          for wf in release.yml desktop-installers.yml sign-installer.yml; do
-            gh workflow run "$wf" --ref "v$V"
-          done
+          # GITHUB_TOKEN tag pushes do not start CI; dispatch the immutable tag.
+          gh workflow run ci.yml --ref "v$V" -f full=true -f include_macos=true
+          python scripts/ci/release_assets.py prepare --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          # An integration token's new tag already triggered the publishers.
+          # Dispatching twice races an immutable PyPI upload against itself.
+          if [ "$TOKEN_IS_BOT" = "true" ] || [ "$TAG_PUSHED" != "true" ]; then
+            python scripts/ci/release_assets.py dispatch --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          fi
 
   publish:
     name: publish GitHub Release
     needs: cut
+    concurrency:
+      group: release-finalize-v${{ needs.cut.outputs.version }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: read
     env:
       GH_TOKEN: ${{ github.token }}
       V: ${{ needs.cut.outputs.version }}
@@ -172,6 +193,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: v${{ needs.cut.outputs.version }}
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
@@ -179,13 +201,24 @@ jobs:
       # same admission the publishing workflows wait for.
       - name: Wait for CI on the release commit
         run: python scripts/ci/release_admit.py --tag "v$V" --sha "$(git rev-parse HEAD)" --repo "$GITHUB_REPOSITORY"
-      - name: Publish the Release + resumable source asset
-        run: |
-          python scripts/ci/cut_release.py --print-notes "$V" > "$RUNNER_TEMP/notes.md"
-          git archive --format=tar.gz --prefix=personal-jarvis/ -o personal-jarvis-src.tar.gz "v$V"
-          if gh release view "v$V" >/dev/null 2>&1; then
-            gh release edit "v$V" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
-            gh release upload "v$V" personal-jarvis-src.tar.gz --clobber
-          else
-            gh release create "v$V" --title "v$V" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag personal-jarvis-src.tar.gz
-          fi
+      - name: Wait for publishers and finalize the complete release
+        run: >-
+          python scripts/ci/release_assets.py finalize
+          --repo "$GITHUB_REPOSITORY" --tag "v$V"
+          --sha "$(git rev-parse HEAD)" --wait-minutes 150
+
+  # Read-only proof that what users now download installs: assets, checksums,
+  # build provenance and the signed wrapper on Linux, Windows and macOS. Called
+  # from here because a release published with GITHUB_TOKEN fires no `release`
+  # event. A red smoke means the release is already public: follow the
+  # rollback runbook in docs/ci-pipeline.md.
+  smoke:
+    name: smoke published release
+    needs: [cut, publish]
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      tag: v${{ needs.cut.outputs.version }}
+      require_attestation: true

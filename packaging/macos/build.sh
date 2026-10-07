@@ -20,6 +20,15 @@
 #   APPLE_TEAM_ID                10-character team identifier
 #   APPLE_APP_SPECIFIC_PASSWORD  app-specific password for that Apple ID
 #
+# A CI runner has no Developer ID certificate in any keychain, so two more
+# optional variables carry it in (a maintainer's own Mac needs neither):
+#
+#   APPLE_CERTIFICATE_P12_BASE64 base64 of the exported Developer ID .p12
+#   APPLE_CERTIFICATE_PASSWORD   the password chosen when exporting it
+#
+# With those set, APPLE_SIGNING_IDENTITY may be left out: the identity is read
+# back from the imported certificate.
+#
 # With APPLE_SIGNING_IDENTITY unset the script ad-hoc signs instead and skips
 # notarization, printing one clear line about what that means for the person
 # who downloads the result. Nothing is silently "signed enough".
@@ -44,6 +53,9 @@ APP_BUNDLE="${DIST_DIR}/${APP_NAME}.app"
 OUT_DIR="${DIST_DIR}/installers"
 FRONTEND_DIST="${REPO_ROOT}/jarvis/ui/web/dist"
 ENTITLEMENTS="${SCRIPT_DIR}/entitlements.plist"
+# The copy of ENTITLEMENTS that codesign embeds; see prepare_entitlements().
+NORMALIZED_ENTITLEMENTS="${DIST_DIR}/entitlements.normalized.plist"
+SIGNING_ENTITLEMENTS="${ENTITLEMENTS}"
 ICNS="${REPO_ROOT}/assets/icons/jarvis.icns"
 
 log() { printf '[macos-build] %s\n' "$*"; }
@@ -79,6 +91,114 @@ case "${MACHINE}" in
 esac
 DMG_PATH="${OUT_DIR}/PersonalJarvis-macOS-${ARCH_TAG}.dmg"
 log "host ${MACHINE} -> building ${ARCH_TAG}"
+
+# A half-configured certificate is a mistake worth hearing about before the
+# long freeze, not after it.
+if [ -n "${APPLE_CERTIFICATE_P12_BASE64:-}" ] && [ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]; then
+  die "APPLE_CERTIFICATE_P12_BASE64 is set but APPLE_CERTIFICATE_PASSWORD is not"
+fi
+
+# --- 0b. Developer ID certificate (CI runners) -------------------------------
+#
+# codesign can only use an identity that lives in a keychain, and a GitHub
+# runner starts with none: APPLE_SIGNING_IDENTITY alone made every signed build
+# fail with "no identity found" while the workflow passed the certificate
+# secrets along to a script that never read them. The certificate is imported
+# into a throw-away keychain that is removed (and the search list restored) when
+# the script exits, so it never outlives the build. It happens FIRST, before the
+# long freeze: a wrong password or a certificate without a Developer ID identity
+# should cost seconds, not a finished PyInstaller run. No command that carries a
+# secret goes through run(), which echoes its argv.
+
+SIGNING_KEYCHAIN=""
+SIGNING_CERT_FILE=""
+ORIGINAL_KEYCHAINS=()
+
+decode_base64() {
+  # macOS spells the flag --decode on current releases and -D on older ones.
+  if base64 --decode </dev/null >/dev/null 2>&1; then base64 --decode; else base64 -D; fi
+}
+
+# Runs on EVERY exit - success, `die`, `set -e`, a signal - so a failed import
+# cannot leave the decoded certificate (the private key, password-protected) or
+# the temporary keychain behind on a machine that is not thrown away afterwards.
+cleanup_signing_material() {
+  [ -z "${SIGNING_CERT_FILE}" ] || rm -f "${SIGNING_CERT_FILE}"
+  [ -n "${SIGNING_KEYCHAIN}" ] || return 0
+  if [ "${#ORIGINAL_KEYCHAINS[@]}" -gt 0 ]; then
+    security list-keychains -d user -s "${ORIGINAL_KEYCHAINS[@]}" >/dev/null 2>&1 || true
+  fi
+  security delete-keychain "${SIGNING_KEYCHAIN}" >/dev/null 2>&1 || true
+}
+trap cleanup_signing_material EXIT
+
+import_signing_certificate() {
+  [ -n "${APPLE_CERTIFICATE_P12_BASE64:-}" ] || return 0
+
+  local scratch keychain cert_file keychain_password line identities
+  scratch="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+  scratch="${scratch%/}"
+  keychain="${scratch}/jarvis-signing.keychain-db"
+  cert_file="${scratch}/jarvis-signing-certificate.p12"
+
+  log "importing the Developer ID certificate into a temporary keychain"
+  if [ "${DRY_RUN}" = "1" ]; then
+    printf '+ security list-keychains -d user   # remembered, restored on exit\n'
+    printf '+ security create-keychain -p <redacted> %q\n' "${keychain}"
+    printf '+ security import <redacted .p12> -k %q -P <redacted> -T /usr/bin/codesign\n' "${keychain}"
+    printf '+ security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k <redacted> %q\n' "${keychain}"
+    printf '+ security list-keychains -d user -s %q <the existing keychains>\n' "${keychain}"
+    APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-<identity read from the imported certificate>}"
+    return 0
+  fi
+
+  SIGNING_KEYCHAIN="${keychain}"
+  SIGNING_CERT_FILE="${cert_file}"
+  keychain_password="$(uuidgen)"
+
+  # Remember the user's search list BEFORE creating anything: `create-keychain`
+  # adds the new keychain to it. `security` prints each path indented and
+  # quoted; strip both with sed (bash 3.2 treats quotes inside ${var#...}
+  # patterns differently from newer shells).
+  while IFS= read -r line; do
+    [ -z "${line}" ] || ORIGINAL_KEYCHAINS+=("${line}")
+  done < <(security list-keychains -d user | sed 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+
+  # A keychain left behind by an interrupted earlier run would fail the create.
+  security delete-keychain "${keychain}" >/dev/null 2>&1 || true
+  security create-keychain -p "${keychain_password}" "${keychain}"
+  # Stay unlocked for the whole build (6 h), even across an idle period.
+  security set-keychain-settings -lut 21600 "${keychain}"
+  security unlock-keychain -p "${keychain_password}" "${keychain}"
+
+  # Owner-only: the file holds the (password-protected) private key.
+  (umask 077 && printf '%s' "${APPLE_CERTIFICATE_P12_BASE64}" | decode_base64 > "${cert_file}")
+  security import "${cert_file}" -k "${keychain}" -P "${APPLE_CERTIFICATE_PASSWORD}" \
+    -T /usr/bin/codesign -T /usr/bin/security
+  rm -f "${cert_file}"
+  # Without this macOS asks (via a dialog nobody can answer on a runner) whether
+  # codesign may use the private key.
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+    -k "${keychain_password}" "${keychain}" >/dev/null
+
+  # codesign looks identities up through the search list: put ours first.
+  security list-keychains -d user -s "${keychain}" \
+    ${ORIGINAL_KEYCHAINS[@]+"${ORIGINAL_KEYCHAINS[@]}"}
+
+  if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    identities="$(security find-identity -v -p codesigning "${keychain}")"
+    APPLE_SIGNING_IDENTITY="$(
+      printf '%s\n' "${identities}" \
+        | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+        | head -n 1
+    )"
+    [ -n "${APPLE_SIGNING_IDENTITY}" ] \
+      || die "the imported certificate holds no valid 'Developer ID Application' identity - an Apple Development or App Store certificate cannot sign an app distributed outside the App Store, and the .p12 must be exported together with its certificate chain"
+    log "signing identity read from the certificate: ${APPLE_SIGNING_IDENTITY}"
+  fi
+}
+
+import_signing_certificate
 
 # --- 1. Web bundle ----------------------------------------------------------
 
@@ -152,16 +272,52 @@ if building; then
   [ -x "${APP_BUNDLE}/Contents/MacOS/${BUNDLE_EXECUTABLE}" ] \
     || die "Info.plist names '${BUNDLE_EXECUTABLE}' as CFBundleExecutable, but Contents/MacOS/${BUNDLE_EXECUTABLE} does not exist"
   log "bundle executable: ${BUNDLE_EXECUTABLE}"
+  # plutil ships with macOS only. A malformed Info.plist would make Finder call
+  # the app damaged, so say so here, before signing and notarizing it.
+  if command -v plutil >/dev/null 2>&1; then
+    run plutil -lint "${APP_BUNDLE}/Contents/Info.plist"
+  fi
 fi
 log "app bundle: ${APP_BUNDLE}"
 
+# German and Spanish permission-dialog text. The languages are declared in the
+# plist by jarvis.spec; the <lang>.lproj/InfoPlist.strings files are written here
+# from the same table, BEFORE signing: they are part of the code seal, so a file
+# added after codesign would break the signature (and the notarization).
+run "${PYTHON}" "${SCRIPT_DIR}/add_localizations.py" --app "${APP_BUNDLE}"
+if building && command -v plutil >/dev/null 2>&1; then
+  for strings_file in "${APP_BUNDLE}"/Contents/Resources/*.lproj/InfoPlist.strings; do
+    run plutil -lint "${strings_file}"
+  done
+fi
+
 # --- 3. Code signing --------------------------------------------------------
+
+# Apple documents no comment syntax for an entitlements file, so
+# entitlements.plist carries none (why each entry exists is written down in
+# packaging/macos/README.md). Where plutil exists - on macOS - the file is
+# validated and rewritten as canonical XML into a copy under dist/, and codesign
+# embeds that copy: a hand edit that is not a valid property list then fails
+# here, in seconds, not as an opaque signing error after the long freeze.
+# Elsewhere (a DRY_RUN rehearsal on another OS) the file is used as it is.
+prepare_entitlements() {
+  SIGNING_ENTITLEMENTS="${ENTITLEMENTS}"
+  if ! command -v plutil >/dev/null 2>&1; then
+    log "plutil not found - signing with ${ENTITLEMENTS} as it is"
+    return 0
+  fi
+  run mkdir -p "${DIST_DIR}"
+  run plutil -lint "${ENTITLEMENTS}"
+  run plutil -convert xml1 -o "${NORMALIZED_ENTITLEMENTS}" "${ENTITLEMENTS}"
+  SIGNING_ENTITLEMENTS="${NORMALIZED_ENTITLEMENTS}"
+}
 
 SIGNED_FOR_DISTRIBUTION=0
 if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   SIGNED_FOR_DISTRIBUTION=1
   log "signing with Developer ID identity: ${APPLE_SIGNING_IDENTITY}"
   [ -f "${ENTITLEMENTS}" ] || die "entitlements file missing: ${ENTITLEMENTS}"
+  prepare_entitlements
 
   # Inside-out first: codesign refuses to seal a bundle whose nested Mach-O
   # objects are unsigned or stale, and a PyInstaller bundle carries hundreds of
@@ -170,7 +326,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   if building; then
     while IFS= read -r -d '' object; do
       run codesign --force --timestamp --options runtime \
-        --entitlements "${ENTITLEMENTS}" \
+        --entitlements "${SIGNING_ENTITLEMENTS}" \
         --sign "${APPLE_SIGNING_IDENTITY}" "${object}"
     done < <(
       find "${APP_BUNDLE}/Contents" -type f \
@@ -186,7 +342,7 @@ if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
   fi
 
   run codesign --force --deep --timestamp --options runtime \
-    --entitlements "${ENTITLEMENTS}" \
+    --entitlements "${SIGNING_ENTITLEMENTS}" \
     --sign "${APPLE_SIGNING_IDENTITY}" "${APP_BUNDLE}"
   run codesign --verify --strict --verbose=2 "${APP_BUNDLE}"
 else

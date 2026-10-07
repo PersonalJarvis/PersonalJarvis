@@ -2527,6 +2527,17 @@ unifying both overlays under a SINGLE long-lived Tk root and swapping rendered
 content (canvas / widgets) instead of the root — a larger refactor, never the
 per-style-root approach.
 
+**Update 2026-10-06:** waiting for a restart left the old surface on screen
+(the pet stayed beside a freshly picked bar until the app restarted). A style
+the app has not built yet now starts in its own host process
+(`DesktopApp._build_hosted_surface`, the `jarvis.ui.jarvisbar.host` used on
+macOS since BUG-057), so the switch applies live on every OS without a second
+in-process root; the surface being left is hidden (in-process) or stopped
+(hosted) at once. `restart_required` remains only for a host that fails to
+start. The same change reads "what is on screen" from the app instead of
+`cfg.ui.orb_style`, which the settings route had already overwritten — an idle
+pet switched to the mascot now leaves the screen as it should.
+
 ### Regression test
 
 `tests/unit/ui/test_desktop_swap_overlay.py` pins the contract: `none` +
@@ -4201,6 +4212,14 @@ never one dialog at a time.
 
 ## BUG-058: Third macOS first-boot abort at onboarding start — unserialized PortAudio re-init + ungated Quartz event tap (HIGH, HARDENED 2026-07-14, on-device confirmation pending)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The class rule at the end of this entry ("any
+> macOS permission-gated native surface must preflight a non-prompting probe and
+> degrade honestly") is narrowed: it still holds for the event tap (the tap is
+> created only after `CGPreflightListenEventAccess()` is true, never to provoke a
+> prompt) and for a missing usage string (checked before a native request), but a
+> preflight must never refuse a feature before the OS was asked (AP-35, ADR-0038).
+> The history below is kept as written.
+
 **Symptom.** With BUG-056+057 shipped, a fresh Mac boot now shows the
 desktop window and enters first-launch onboarding — then "Python quit
 unexpectedly" again, seconds in, before any meaningful interaction. No
@@ -5727,6 +5746,14 @@ unexplainable early abort.
 ---
 
 ## BUG-083: macOS permissions "auto-denied" after an app update, Settings deep links landing on the wrong pane, and a dead second Allow button (HIGH, FIXED 2026-07-18)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The in-app request path described here (the
+> Allow buttons, the per-row "Ask again", the Settings deep-link rule, the
+> restart gating) is now the just-in-time service
+> `jarvis/platform/permission_service.py`; the rebuild keeps the live reads, the
+> own-bundle `tccutil reset` and the quit-System-Settings-before-a-deep-link rule,
+> and drops the "can_request is false while a restart is pending" machinery. The
+> history below is kept as written.
 
 **Symptom (live Intel test Mac, macOS 15.7, first run after the v1.0.11
 update).** The onboarding permissions view showed Input Monitoring and Input
@@ -11109,6 +11136,16 @@ chat hook already ran the `TriggerMatcher` and were never affected.
 
 ## BUG-159: macOS permissions read as missing although System Settings shows them enabled — a sticky restart flag, a hidden recovery, and a silent grant-wiping rebuild (HIGH, FIXED 2026-08-20)
 
+> **Superseded in part by BUG-225 (2026-10-02).** Cause 1 (the sticky pending-restart flag and the
+> global `restart_required`), the readiness aggregate (`features[...].ready`),
+> fix (d) (the `identity_reset` marker file and its note), fix (f)
+> (`_reset_or_explain()`, which wiped the grants once per unresolved round) and the
+> banner and wizard renderings of `can_reset` no longer exist: a restart is only a per-row hint
+> produced after a real failed attempt, the snapshot carries no readiness or
+> identity-reset keys, and a rebuild that changes nothing needs no note. The
+> `can_reset` capability and the own-bundle reset stay (served on Settings >
+> Privacy and the permission card). The history below is kept as written.
+
 **Symptom (maintainer's Mac, reported 2026-08-20).** Every start warned that
 macOS permissions were not enabled. Clicking the warning's button opened
 System Settings, where the permission was already switched ON. Toggling it off
@@ -11278,6 +11315,14 @@ the facts handed to the composer carry the content and never the URLs).
 ---
 
 ## BUG-161: macOS permissions still read as missing after BUG-159 — every start rebuilt the app bundle, and a copy in /Applications was treated as a stranger (HIGH, FIXED 2026-08-21)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The banner referred to here no longer exists.
+> The "canonical location" rule (both `~/Applications` and `/Applications`) survives as one
+> input to `stable`, but `stable` now decides only whether Jarvis may ask automatically and
+> whether it may reset, never whether a feature may act (AP-35 principle 6). The finding that TCC pins a grant to the
+> bundle id and signature, never to a path, is what the rebuild relies on. The live
+> window-title proof for Screen Recording stays (still unverified on a Mac). The
+> history below is kept as written.
 
 **Symptom (maintainer's Mac, reported 2026-08-21).** The app kept asking for
 permissions it had already been given. Granting them again changed nothing;
@@ -12653,6 +12698,10 @@ policy as well, so the app does not depend on every shell agreeing with it.
 ---
 
 ## BUG-181: clicking Restart sometimes only shut the window down (HIGH, FIXED 2026-08-25)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The permissions banner named in the symptom was
+> removed (no restart control lives in a permission banner any more); the restart
+> machinery this entry fixes is unchanged.
 
 **Symptom.** Click Restart (top bar, Settings, the permissions banner). The
 window closes. Sometimes nothing comes back. A Start-menu click later starts
@@ -15281,6 +15330,15 @@ blocks `lsregister`), `tests/unit/diagnostics/test_doctor_diagnostics.py`
 
 ## BUG-217: macOS asked for every permission again after each rebuild, and the Music prompt never stuck (HIGH, FIXED 2026-09-16)
 
+> **Superseded in part by BUG-225 (2026-10-02).** The Automation **consent file**
+> (`macos-automation-consent.json`), the **hidden launch** of a closed Music or
+> Spotify, and **Set up everything** with its automatic restart are removed:
+> Automation is asked once, when the user switches "Mute music while dictating" on
+> while a player is running, through the killable consent runner (120 s), and a
+> grant is re-read live per send. Root causes 1 and 2 (the certificate identity,
+> `AppleEvents` in the reset sweep, the 120 s wait) and the `/Applications`
+> follow-up stand. The history below is kept as written.
+
 **Symptom.** After an update or reinstall, Personal Jarvis asked for
 Microphone, Screen Recording, Accessibility, Input Monitoring and Input
 Control all over again. The "Music / Spotify" Automation dialog appeared in
@@ -15514,6 +15572,368 @@ safe in destructors); `__del__` only enqueues and takes no lock. The worker is
 started in ordinary code (`LockedRecognizer.__init__`, `release_recognizer`).
 Guard: `tests/unit/plugins/wake/test_vosk_native.py::test_dropping_the_proxy_inside_an_executor_submit_does_not_deadlock`.
 
+## BUG-222: the downloaded macOS app could not use a single permission — it was never accepted as "the installed app", it shipped without the microphone framework, and its Info.plist said background-only (HIGH, FIXED 2026-10-01; built and booted on macOS CI runners, not yet tried on a user's Mac)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The identity fix stands (`ACCEPTED_BUNDLE_IDS`,
+> the own-id reset, the packaging fixes and the frozen-app probe), but its premise
+> that a wrong identity "disables the whole permission surface" is gone: identity
+> now decides only who may ask automatically and who may reset, never whether a
+> feature may act (AP-35 principle 6). The `identity_ready`, `can_request` and
+> "no request button means no way to be asked" wording describes the removed
+> readiness model. The history below is kept as written.
+
+**Symptom (the identity part reproduced against the port with faked macOS
+frameworks; none of it observed on a Mac).** Run as the `.dmg` app with every
+grant present, the permission screens read every feature "not ready", refuse
+microphone capture (wake word and voice dead), tell the user to relaunch the app
+from its installed location — where it already is — and offer no **Allow** or
+**Open Settings** button. With no request button, a user has no in-app way to be
+asked at all, and enabling the app by hand in System Settings would not change
+the verdict.
+
+**Cause, three layers.** The first is code; the other two were read off the
+published v2.5.0 arm64 image (extracted and opened on Linux — its `Info.plist`,
+and the module table of the archive frozen into its executable, read with
+PyInstaller's own reader):
+
+1. **Identity.** `SystemPermissionPort` accepted exactly one bundle id,
+   `com.personal-jarvis.desktop`, the managed local bundle. The `.dmg` build
+   (`jarvis.spec`) has its own id, `ai.personaljarvis.desktop` — deliberately
+   different, because BUG-218 keeps the managed installer from rebuilding over
+   it. Run against the port with every grant present, the `.dmg` identity gave
+   `stable=False`, all six features `identity_ready=False`,
+   `runtime_access_granted(microphone)` false and every `can_request` /
+   `can_open_settings` false. The gate fails closed by design (granting Terminal
+   or a bare Python would be unsafe), so one wrong constant disabled the whole
+   permission surface — and nothing ever ran the port as the `.dmg` app.
+2. **No `AVFoundation` in the frozen app.** The port loads its frameworks by
+   NAME (`SystemPermissionPort._load("AVFoundation")`), which PyInstaller's
+   static analysis cannot follow, and the macOS job installed `.[desktop,dev]`
+   without the `desktop-macos` extra that carries `pyobjc-framework-AVFoundation`
+   (no other direct dependency requires it), so there was nothing on the build
+   machine for a hidden import to collect either. The published image's module
+   table has no `AVFoundation`. By the code path the microphone permission then
+   reads "unavailable" for good, and the voice gate has nothing to open on.
+3. **`LSBackgroundOnly` in the published `Info.plist`.** PyInstaller sets it to
+   true whenever the last executable of the `COLLECT` is a console one, and the
+   `jarvis` CLI is. LaunchServices reads the key as "this app has no Dock icon,
+   no menu bar and no windows". Whether the published app showed its window
+   regardless has not been observed.
+
+No headless smoke run can see layers 2 and 3: it starts the executable directly
+instead of the way a user does.
+
+**Fix.**
+
+- `jarvis.core.branding.MACOS_DMG_BUNDLE_ID` names the second legitimate
+  identity; `permissions.ACCEPTED_BUNDLE_IDS` is what the identity gate, the
+  `jarvis permissions` CLI and the UI's "expected id" now use. Anything else
+  (Terminal, Python, an app that merely shares the name) is still refused.
+- `tccutil reset` targets the id of the app that is RUNNING, and `reset` refuses
+  outright from any process that is not the installed app (it used to fall back
+  to the managed id, which would have wiped the rows of a different app). It is
+  scoped to one bundle id, so resetting the managed id would have left the
+  `.dmg` app's own rows untouched (the documented behaviour of `tccutil`; not
+  observed).
+- `jarvis permissions request|open-settings` find the `.dmg` app instead of
+  reporting "app not found" (`installed_macos_app_bundle_path`).
+- `jarvis.spec` collects `AVFoundation` on macOS and sets `LSBackgroundOnly` to
+  `False` explicitly; the macOS job installs `.[desktop,desktop-macos,dev]`.
+- `scripts/ci/check_frozen_macos_app.py` runs on the built `.app` in the macOS
+  job and fails the build when the bundle id is not the accepted one, the plist
+  is background-only, the executable or the microphone usage string is missing,
+  or the frozen archive lacks one of `AVFoundation`, `ApplicationServices`,
+  `AppKit`, `Foundation`, `Quartz`, `objc`. Run by hand against the published
+  v2.5.0 arm64 image it exits 1 and names exactly the two defects above.
+- The frozen smoke (`scripts/ci/check_frozen_browser.py`) boots the app on macOS
+  and asks it for `/api/permissions/status`: a microphone row that reads
+  "unavailable", or a bundle id the port does not accept, fails the job. This is
+  the only check that sees a framework whose own dependencies were left out of
+  the archive, because the port swallows an import that fails at run time.
+
+**Guards.** `tests/unit/platform/test_permissions.py` (the `.dmg` identity is
+stable and gets its buttons back, foreign ids are refused, reset hits the right
+id and refuses from a stranger), `tests/unit/setup/test_macos_dmg_identity.py`
+(the literal in `jarvis.spec` equals the branding constant, the two ids stay
+distinct, the lookup), `tests/unit/cli_ctl/test_commands_permissions.py`,
+`tests/unit/ci/test_check_frozen_macos_app.py`,
+`tests/unit/packaging/test_frozen_browser_smoke.py` (the decision, and `boot()`
+itself against a stand-in app).
+
+**Verification.** Unit level on Linux, against faked AppKit / Quartz /
+AVFoundation: the new `.dmg` tests fail on the old code, and the probe fails on
+the published image. On macOS CI runners: a branch dispatch of "Desktop
+installers" (run 36923225371, commit 43eeb7ae, no release published) built the
+image with the new `jarvis.spec` and `desktop-macos` extra on both the Apple
+Silicon (`macos-15`) and the Intel (`macos-15-intel`) runner; on both,
+`check_frozen_macos_app.py` passed, and the smoke booted the frozen app twice and
+read its permission status from it: microphone `granted`, bundle id
+`ai.personaljarvis.desktop` — so AVFoundation loads inside the app and the
+published image's "unavailable" is gone. The `granted` itself reflects the hosted
+runner's setup, not a user's decision. A first dispatch on the commit before the
+booted-app check existed (run 36922688589, arm64 only, cancelled afterwards)
+passed the same build and probe. **Not verified:** anything on a user's Mac —
+the window and Dock behaviour with `LSBackgroundOnly` off (the smoke starts the
+executable directly, not through LaunchServices), the permission prompts
+themselves, Gatekeeper and notarization (the runs were ad-hoc signed: no Apple
+secrets).
+
+**Known limits, not changed here.** `Contents/MacOS/jarvis` (the CLI inside the
+bundle) resolves to the same main bundle, so started from a terminal it would be
+read as the app although macOS attributes that process to the terminal — the
+same for the managed bundle. The Control key's Keychain-ownership migration
+(`jarvis/core/control_key.py`) recognises only the managed bundle id, so for the
+`.dmg` app that step is skipped and an item created by an earlier ad-hoc build
+may ask once more (read from the code; not observed).
+
+**Class rule.** A fail-closed identity gate needs a test that runs it as EVERY
+shipped identity. An id duplicated in a build spec that cannot import the
+constant needs a parity test, or it drifts silently. A module a runtime loads by
+NAME is invisible to a freezer: assert it in the built artifact, not in the
+source.
+
+## BUG-223: every public macOS download was ad-hoc signed — the first launch was blocked and every update forgot every grant (HIGH, FIXED IN CODE 2026-10-01; signing still needs the maintainer's Apple account)
+
+> **Superseded in part by BUG-225 (2026-10-02).** The signing finding stands (a Developer ID
+> signature is what lets grants persist across updates; the path has still never
+> run). References to the re-ask explanation note ("macOS treats the app as new")
+> describe the removed `identity_reset` note. The history below is kept as
+> written.
+
+**Symptom.** The `.dmg` behind the README's macOS link opens with "Apple cannot
+check it for malicious software", and after each update the app asks for every
+permission again.
+
+**Evidence.** The v2.5.0 "Desktop installers" run, macOS arm64 job, printed:
+
+    NOTICE: APPLE_SIGNING_IDENTITY is not set - ad-hoc signing this build. It is
+    NOT notarized; macOS will refuse the first double-click ...
+    codesign --force --deep -s - .../Personal Jarvis.app
+    NOTICE: this build is ad-hoc signed and unnotarized - suitable for local
+    testing, not for public download.
+
+and that build is the published asset.
+
+**Cause, two layers.**
+
+1. No Developer ID identity is configured: that needs an Apple Developer Program
+   membership and its credentials, which only the maintainer can provide.
+2. Configuring it would not have worked. The workflow passed
+   `APPLE_CERTIFICATE_P12_BASE64` / `APPLE_CERTIFICATE_PASSWORD` to `build.sh`,
+   which never read them; a GitHub runner starts with an empty keychain, so
+   `codesign --sign "Developer ID Application: ..."` could only fail.
+
+An ad-hoc signature is a hash of the app's bytes, and macOS pins every privacy
+grant to it: each release is a stranger and its grants are gone (BUG-083,
+BUG-217). A Developer ID signature gives the app one identity — Team ID plus
+bundle id — across versions, so its grants can persist. (BUG-218 calls the
+`.dmg` build "notarized": it is built to be, but every image published so far is
+ad-hoc.)
+
+**Fix.** `packaging/macos/build.sh` imports the certificate into a throw-away
+keychain when both secrets are present, reads the signing identity from it when
+`APPLE_SIGNING_IDENTITY` is not given, and does all of that BEFORE the web bundle
+and the ~12-minute freeze, so a certificate that cannot be used fails in
+seconds. An exit trap removes the decoded certificate file, puts the user
+keychain search list back (captured before the throw-away keychain is created)
+and deletes the keychain — also after a failed import. No secret reaches the
+log. Without secrets nothing changes. **Still open, by nature:** the Apple
+secrets (five required, `APPLE_SIGNING_IDENTITY` optional;
+`docs/desktop-installers.md` §4) have to be added before a build can be signed
+and notarized, and that path has never run.
+
+**Guards.** `tests/unit/packaging/test_macos_build_script.py` rehearses the
+script with `DRY_RUN=1` in a scratch copy of the layout (unchanged ad-hoc path
+without secrets, import order, no secret in the output, early refusal) and runs
+the REAL import branch against a stand-in `security` command: call order, the
+identity read back from the certificate, search list restored and keychain
+deleted on success and on failure, no certificate file left behind.
+
+**Verification.** Off a Mac only: `bash -n`, ShellCheck `-S style`, the tests
+above. They were also run under GNU bash 3.2.39 — the macOS shell's series (macOS
+itself ships 3.2.57), taken from an old Ubuntu package because this sandbox has
+neither a Mac nor Docker: `scripts/ci/check_shell_bash32.py --require` parses
+every tracked script, and the 12 build-script tests execute `build.sh` under it.
+Not run: a real keychain, `codesign`, `notarytool`, `stapler`, or anything on
+macOS itself.
+
+## BUG-224: macOS asked for Music and Spotify control — and opened both apps — for a feature that is off (MEDIUM, FIXED 2026-10-01, unit-tested only)
+
+> **Superseded by BUG-225 (2026-10-02).** `wanted`,
+> `features[...].active`, `active_features()`, the "Optional" tag, the banner's
+> "Not now" and the refresh event no longer exist. The over-asking they patched is
+> removed at the root: a feature the user has not switched on never touches its
+> permission (principle 7), and Automation is asked only by switching "Mute music
+> while dictating" on. The history below is kept as written.
+
+**Symptom (from the code paths of BUG-217's guided flow; not yet observed on a
+Mac).** "Set up everything" and the app-wide banner demanded the Automation
+(Music & Spotify) permission on every Mac — Music ships with macOS — started
+Music (and Spotify, when installed) hidden to show the consent dialog, and kept
+the banner on screen until it was answered, although "Mute music while
+dictating" is opt-in and off by default.
+
+**Cause.** `FEATURE_REQUIREMENTS` marked every permission needed by some
+feature as missing, whether or not the user had turned that feature on.
+
+**Fix.** The snapshot carries the policy: `features[...].active` and
+`permissions[...].wanted` (a feature the user has turned on needs it).
+`permissions.active_features(config)` switches `audio_ducking` off while
+`[ducking].enabled` is false; the routes derive it from the live configuration
+and hand it to every operation, so the status and each request/reset/open
+response agree. The banner, the guided "Set up everything" flow and the
+Settings poll consider only wanted rows; Settings still lists every row, with
+an "Optional" tag, so it can be allowed by hand. The banner also gained
+"Not now": per row, expiring after a week (re-read at every status refresh, so
+a window that stays open for days still brings it back), and a row that turns up
+later (a feature switched on afterwards) shows again; when the browser storage
+refuses the write the choice is kept in memory for that window. Switching "Mute
+music" on or off asks every open permission view to re-read the status, so the
+Automation row follows the switch without waiting for a focus event. The "macOS
+treats the app as new" note retires when the WANTED grants are back — an
+Automation row nobody asked for no longer keeps it alive.
+
+**Guards.** `tests/unit/platform/test_permissions.py` (policy, shared
+permissions stay wanted, operations report the same policy, the note retires),
+`tests/unit/ui/web/test_permissions_routes.py`, `usePermissions.test.tsx`
+(an optional row does not poll), `useMuteMusic.test.tsx`,
+`PermissionsAlertBanner.test.tsx` (expiry on refresh, unwritable storage, a
+restart that stays visible), `PermissionsPanel.test.tsx`,
+`src/lib/permissionsBannerDismissal.test.ts`.
+
+**Verification.** Unit tests with faked native frameworks, vitest, a production
+build and a light/dark look at the banner and the rows in Chromium on Linux.
+Nothing was run in the macOS desktop app.
+
+
+---
+
+## BUG-225: macOS was never asked — every protected feature refused behind the app's own permission check, so a banner, a wizard and a restart machine grew around the missing dialog (HIGH, FIXED IN CODE 2026-10-02; not yet exercised on a physical Mac)
+
+**Symptom (class: a preflight wall in front of the OS ask).** On a Mac that had
+never answered a dialog, the wake word was dead, dictation said microphone access
+was "not ready", computer use and global shortcuts refused, and no macOS dialog
+ever appeared from using the feature. The only road to a dialog was the app's own
+UI: an app-wide banner, **Set up everything** in Settings, and an onboarding step.
+The same wall produced the reports of BUG-159, BUG-161, BUG-222 and BUG-224: a
+banner that stayed although the switch was on, features dead for the whole session
+with every grant present, a whole surface disabled by one wrong identity constant,
+and Music and Spotify opened hidden for a feature that was off. The user's own
+words quoted in the history ("the permissions are extremely annoying") describe the
+result.
+
+**Cause.** `SystemPermissionPort.runtime_access_granted()` was true only for a
+stable bundle identity AND an already-granted probe, and every feature path asked it
+before touching the OS API (`audio/capture.py`, `cu/actuate/base.py`,
+`cu/capture.py`, `trigger/backends/quartz.py`, `platform/window_state.py`,
+`screen_context`, `vision/*`, dictation insert, the voice activation gate). For a
+permission in `not_determined` the answer was no, so the feature raised before the
+microphone, the tap or the capture was opened and macOS never got the chance to show
+its own dialog. The frozen plan said the opposite (AD-13: probe at first use, degrade,
+never hard-block); the shipped code inverted it on 2026-07-15 without a recorded
+decision (reconstruction in `docs/macos-permissions.md` section 2). Each later layer
+repaired a symptom of the wall instead of removing it: banner, dead-Allow fixes, sticky
+restart flag, identity-reset note, wizard with auto-restart, Automation consent file,
+`wanted` flag, "Not now". The wall also cost time on hot paths (per-frame, per-keystroke
+and per-0.25 s probes; a tap callback that overran its deadline and was disabled).
+
+**Fix (stages, all revertible).**
+
+- `jarvis/platform/permission_service.py` is the single just-in-time layer: `check`
+  (silent, never prompts) and `ensure` / `ensure_async` / `ensure_all` (interactive, only
+  from a user gesture), one coalesced episode per (pane family, feature), a backend
+  watcher that publishes `PermissionResolved` on a grant, and the `PermissionNeeded` /
+  `PermissionResolved` events (AP-4 parity). Off macOS it returns NOT_REQUIRED before
+  touching the port. Consumers receive it through the `PermissionGate` protocol.
+- Features ask at their gesture: microphone at dictation, push-to-talk, a voice session,
+  the wake-word switch and the mic self-test; Screen Recording at the first
+  user-started capture; Accessibility when Jarvis first types, clicks or focuses;
+  Input Monitoring when the user saves a global shortcut (a background listener has no
+  "on use" moment; `PUT /api/settings/keybinds` asks, the onboarding Call-shortcut click asks
+  once); Automation when the user switches "Mute music while dictating" on with a player
+  running. Helpers `check()` and
+  degrade; the computer-use engine keeps one silent Screen Recording gate and pauses
+  while a macOS consent window is frontmost.
+- Silent-failure traps are checked at the source: a flat wallpaper-only frame while the
+  state claims granted, five seconds of exact zeros from the microphone while granted.
+- Deleted: the banner and its dismissal store, the wizard and polling, the refresh
+  event, the onboarding `permissions` step, `features` / `wanted` / `active` /
+  `identity_reset` / `restart_required` / `foreground` in the snapshot, the Automation
+  consent file and hidden launch, the identity-reset marker. Packaging got one usage-string
+  table and lost the camera, speech and system-administration keys.
+- AP-35 and ADR-0038 record the rule; `docs/macos-permissions.md` is the design, the
+  evidence table and the manual Mac checklist.
+
+**Prevention (AP-35).** A feature asks the OS at first use from a user gesture through
+the service. No code path may refuse because our own preflight says "not granted"
+before the OS was asked, and none may act on a permission the OS has not granted
+(`EnsureResult.granted` only for GRANTED / NOT_REQUIRED; a native request's return value
+is never evidence). Nothing is asked at launch (boot rule), denied is a stable state with
+one toast and one click to the pane, identity decides who may ask and reset but not whether a feature may
+act, an opt-in feature owns its permission, and an agent never answers a system dialog
+(routine triggers exclude both permission events; no agent tool exposes ensure, request,
+open-settings or reset). Review rule: a new macOS-gated feature that adds its own
+"is it granted" refusal ahead of the OS ask, a banner, a wizard or a persisted "asked"
+flag is this bug again.
+
+**Guards.** `tests/contract/test_permission_service_contract.py` (scenario table on a
+macOS-shaped and a non-macOS host), `tests/unit/platform/test_permission_service.py`,
+`test_permission_service_hardening.py` and `test_permission_service_status_helpers.py`
+(episodes, cooldowns, no second native request), `tests/fakes/fake_tcc.py` with
+`tests/unit/platform/test_fake_tcc.py` (a stateful TCC simulator with an ordered call
+log), `tests/unit/platform/test_no_legacy_permission_api.py` (a ratchet: the deleted
+wall, its readiness aggregate, the identity-reset marker and the Automation consent
+file must not return to `jarvis/`, `scripts/` or `.github/`),
+`tests/unit/platform/test_permission_characterization.py` (what must survive; its last
+test fails if a `test_legacy_*` test, one that would pin the removed wall, comes back),
+`tests/unit/platform/test_permission_agent_boundary.py` and
+`tests/unit/cu/test_permission_not_agent_exposed.py` (no agent-facing tool),
+`tests/unit/platform/test_screen_access.py` and `tests/unit/cu/test_capture_permissions.py`
+(a wallpaper-only frame is refused; a failed use is reported),
+`tests/unit/speech/test_voice_permission_jit.py` (first press makes exactly one
+microphone request, a denied press adds none, boot with every permission undecided asks
+nothing, an upgrader sees zero cards, a non-macOS host consults nothing),
+`tests/unit/audio/test_capture_permission_gate.py` (the microphone is asked once at open,
+no per-frame probe), `tests/unit/audio/test_ducking_permissions.py` (only switching on
+asks), `tests/unit/dictation/test_insert_permission.py`,
+`tests/unit/trigger/test_quartz_jit_permissions.py` (no tap before the preflight is true),
+`tests/unit/screen_context/test_service_permissions.py`,
+`tests/unit/core/test_permission_events.py` (event vocabulary),
+`tests/unit/ui/web/test_permissions_routes.py` and `test_permissions_snapshot.py`
+(snapshot v2 never prompts), `tests/unit/ui/test_desktop_macos_permission_gate.py`,
+`tests/unit/ci/test_macos_desktop_permission_step.py` (the macOS lane's permission
+scripts run against FakeTCC so a step cannot rot into one that always passes), and the
+frontend `permissionToast.test.ts` (the toast planner; the earlier card, inline-note and
+Privacy-page tests were deleted with their UI, see the note below).
+
+**Follow-up note (2026-10-02, UI reset).** The custom UI this fix first shipped (a floating card,
+inline notes in five places, a Shortcuts status note and tip, the Settings > Privacy page and its
+"Ask again") was judged unfit by the user and deleted: macOS shows its own dialog and the app adds
+ONE toast with one action after a user-started use failed (`PermissionNeeded`, `origin="user"`,
+`phase="blocked"`, owner window, once per episode and again on the next try; the wake word tells a denied microphone once per
+session). The service, routes, snapshot v2, events and the boot rule are unchanged. Input Monitoring
+is asked when a shortcut is saved; the way back from a stuck "denied" is the switch in System
+Settings or the local `jarvis permissions reset <permission>` (macOS only; the HTTP reset route
+still refuses scripts). The Info.plist strings became target-neutral and gained German and
+Spanish `InfoPlist.strings` in both bundles. Details: ADR-0038 "Amendment: the UI is reduced to a
+toast". Prevention addition: a new permission surface of our own around the OS dialog (card, note,
+status page, up-front screen) is this bug's UI twin again. Guards added:
+`tests/unit/ui/web/test_keybinds_input_monitoring_ask.py`,
+`tests/unit/cli_ctl/test_commands_permissions.py` (reset), `tests/unit/packaging/test_macos_privacy_strings.py`
+(localisations) and `tests/unit/ci/test_check_frozen_macos_app.py`.
+
+**Verification.** Fake-framework unit and contract tests, vitest, Linux static gates, and
+macOS CI runners for the packaging and frozen-app probe (ad-hoc signed; a runner is not a
+user's Mac: it pre-grants TCC to its tools and shows no dialog). **Not verified, because
+nothing ran on a physical Mac:** every real dialog and its wording, whether a running
+process sees a new Screen Recording grant, hold-key semantics, the notarized build, macOS
+26 and 27, the second dialog in the embedded WebView, and the Appshot both-Option
+permission need. The rows to close these are in `docs/macos-permissions.md` section 7.
+
+**Related.** BUG-058, BUG-083, BUG-159, BUG-161, BUG-217, BUG-222, BUG-223, BUG-224
+(each carries a "superseded" note), ADR-0038, `docs/os-parity.md`,
+`docs/product/privacy-safety-and-support/permissions.md`.
+
 ## BUG-226: an agent's answer never came back during a browser voice call — the user had to ask for it (HIGH, FIXED 2026-10-02)
 
 **Symptom.** In a GPT-Live call Jarvis sent Jarvis-Scout a research task and
@@ -15559,3 +15979,155 @@ Guards: `tests/unit/speech/test_live_call_agent_replies.py`,
 `tests/unit/live/test_report_delivery.py`,
 `tests/unit/society/test_chat_binding.py::test_a_picture_that_could_not_be_shown_does_not_block_finished_work`,
 `tests/unit/agent_chat/test_media.py::test_display_errors_are_marked_so_they_never_fail_the_turn`.
+
+## BUG-227: "send Jarvis Scout a message" found no agent when speech misheard the name (HIGH, FIXED 2026-10-02)
+
+**Symptom.** On a voice call the user asked Jarvis to message their agent
+Jarvis-Scout. Speech recognition delivered "the Java Scout and Quick Meshes";
+Jarvis answered "I couldn't find agents with those names in the open
+workspaces" and did nothing. The user's own later retelling was transcribed as
+"Jarvis Code" — the same name garbled a third way.
+
+**Cause.** Two gaps. (1) Every agent lookup compared strings exactly:
+`Roster.resolve` (id, case-insensitive name, slug) and the coding-pane
+resolver in `agentic_ide/orchestration.py` (exact or same word set), so any
+misheard spelling was "unknown". (2) The live backend's instructions only
+described `workspace-orchestrate`, so a request naming a Jarvis agent went to
+the coding-pane tool, which knows nothing about the team and answered "nothing
+open matches" — with no pointer to `delegate_to_agent` / `message_agent`.
+
+**Fix.** `jarvis/core/spoken_names.py` resolves a spoken name with
+normalization, aliases, Jaro-Winkler and Cologne phonetics, plus a small
+coding-context bonus, and returns act / ask / none; every resolution is logged
+(`name resolution [surface]: heard=... -> ... score=... method=...`).
+`jarvis/society/agent_names.py` applies it to the roster (exact matches first,
+so ids and REST paths are unchanged; title, role and user aliases stored as
+`agent_aliases:<id>` in `society_meta`). `delegate_to_agent`, `society_status`
+and the message tools use it: a close name returns `needs_clarification` with a
+"did you mean" question, an unknown one lists the available agents and says
+when it names a coding pane instead. `workspace-orchestrate` resolves misheard
+custom pane names the same way (positions stay exact) and, when a name is no
+pane but a Jarvis agent, says so in `jarvis_agent`. Guards:
+`tests/unit/core/test_spoken_names.py`, `tests/unit/society/test_agent_names.py`,
+`tests/unit/plugins/tool/test_delegate_to_agent.py`.
+
+## BUG-228: an appshot photographed only the mascot or the Jarvis bar, not the app window (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** "Take an appshot" during a voice call sometimes sent the model a
+small square of the mascot instead of the window the person was working in.
+The log showed `appshot: active window 288x288 via tool -> turn` right after
+a normal 1280x696 one.
+
+**Cause.** An appshot captures the foreground window. A click on the mascot or
+the bar (to talk, mute or hang up) gives that small topmost `JarvisOrb` Tk
+overlay the Windows focus, so `GetForegroundWindow` returned the overlay and
+the capture targeted its 288x288 rectangle.
+
+**Fix.** `window_state.foreground_app_window()` looks past this process's own
+overlays (tool, non-activating or capture-excluded windows) and walks down
+the Z-order to the first real app window under them — the window the person
+used last. It steps over the taskbar, which sits between the overlays and the
+apps, and returns `None` at the wallpaper so the capture falls back to the
+monitor. The Screen Context window probe reads this instead of the raw
+foreground window. macOS and X11 need no walk: their probes never report the
+floating overlays. Guards: `tests/unit/platform/test_foreground_app_window.py`,
+`tests/unit/screen_context/test_ports.py`.
+
+## BUG-229: a mission killed by an app restart stayed "running" for 37 minutes, then failed without an artifact (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An artifact build (a GitHub-stars history dashboard, mission
+`01a0fcc3`) showed as running, then ended as `crash_recovery` /
+Failed 38 minutes later with no artifact and no partial output.
+
+**Cause.** The desktop app process was ended without a shutdown 85 s after
+the worker started (15:19:40; no crash record, the next launcher started at
+15:19:44). The Claude worker died with it before writing any file. The new
+instance's recovery sweep then judged the mission only by its timestamps: its
+last heartbeat was younger than `RECOVERY_STALE_AFTER_MS` (30 min), so it was
+"presumed owned by a live instance" and skipped on every sweep — although no
+process was running it any more. The re-sweep finally failed it at 15:56:42.
+
+**Fix.** The orchestrator stamps its process identity (pid + process start
+time) next to every mission heartbeat, starting the moment `run_mission`
+begins (`missions.owner_pid` / `owner_start_ms`, migrated in place).
+`startup_recover` asks `jarvis/missions/ownership.py` whether that owner is
+alive: a provably dead owner (or a pid now reused by another process) is
+swept at once with an `error_detail` naming the exited process. An alive or
+unknown owner keeps the old freshness guard, so a second instance still never
+sweeps a mission a live first instance is running. The restart that killed
+the worker is outside this fix. Guard: `tests/missions/test_recovery_owner.py`.
+
+## BUG-230: the mascot and the bar showed up inside appshots and screenshots (MEDIUM, FIXED 2026-10-02)
+
+**Symptom.** An appshot of the Personal Jarvis window, and a full-screen
+capture, both contained the floating mascot on top of the content, although
+the overlays are meant to stay out of every capture.
+
+**Cause.** The overlays call `exclude_tk_window_from_capture` before their
+first show. Tk creates a toplevel's outer window only when it is first mapped,
+so `GetParent(winfo_id())` was 0, the display affinity landed on the inner
+child window, and the real outer window kept affinity 0 (measured on the live
+`JarvisOrb`: `GetWindowDisplayAffinity` = 0x0).
+
+**Fix.** `jarvis/platform/capture_exclusion.py` no longer targets the inner
+child and additionally re-applies `WDA_EXCLUDEFROMCAPTURE` on every `<Map>` of
+the toplevel (bound with `add="+"`, child-widget maps ignored). Checked with a
+real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
+Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
+which is the documented intent of the module. Guard:
+`tests/unit/platform/test_capture_exclusion.py`.
+
+## BUG-231: browser voice could not start on a headless host, in any voice mode (HIGH, FIXED 2026-10-05)
+
+**Symptom.** On `jarvis serve` (a VPS, `JARVIS_VOICE=0`) typed chat worked,
+but the documented browser-voice path never opened `/ws/audio`. Every Start
+button answered "Voice is not running on this computer", and in pipeline mode
+a `[browser_voice] enabled = true` table changed nothing (GitHub issue #399).
+
+**Cause.** Three links were missing. (1) `[browser_voice]` was never a
+`JarvisConfig` field, so `load_config` dropped the table; the connect gate,
+inverted to default-off on 2026-07-08 (`0a4d541b4`), therefore kept
+`/ws/audio` closed in pipeline mode for everyone. (2) Every Start button posts
+`/api/voice/call`, which needs the desktop speech pipeline a headless host
+never has; the only browser-side start was the desktop's realtime hand-over
+(`BrowserVoiceRequested`). (3) The visible browser-microphone card that could
+start a call itself left the sidebar on 2026-09-12 (`51b4d4015`). The issue's
+note that Gemini Live lacks browser audio is not the cause: the provider
+declares it; `browser_audio` in `/api/settings/voice-mode` read only an
+explicitly pinned realtime provider (fixed separately as BUG-232).
+
+**Fix.** `BrowserVoiceConfig(enabled=True)` is now `JarvisConfig.browser_voice`;
+`browser_voice_enabled(cfg)` serves the classic bridge in pipeline mode by
+default and realtime mode always. `GET /api/voice/state` reports
+`browser_call` when no speech pipeline and no desktop shell exist. On a 503
+from `/api/voice/call`, `useVoiceCall` reads that flag and lets
+`BrowserRealtimeControl` hold the call in this browser
+(`lib/browserVoiceCall.ts`); the voice-state resync leaves such a call alone.
+Guards: `tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/browser_voice/test_route.py`,
+`tests/unit/ui/test_voice_call_routes.py`, `useVoiceCall.test.tsx`,
+`BrowserRealtimeControl.test.tsx`.
+
+## BUG-232: an unpinned browser-audio engine ran on the desktop's half-duplex path and was reported as "no browser audio" (MEDIUM, FIXED 2026-10-05)
+
+**Symptom.** With no `[brain.realtime].provider` pinned, a Gemini-only install
+showed `active_provider: gemini-live` next to `browser_audio: false` in
+`GET /api/settings/voice-mode` (seen in GitHub issue #399). On the desktop the
+same call ran on the native half-duplex path instead of the browser hand-over
+that a pinned Gemini Live call takes.
+
+**Cause.** `realtime_browser_audio(cfg)` read only the explicitly pinned
+primary. Without a pin, the session builder opens on the first
+credential-ready provider in effective order, so the transport decision and
+the provider the call actually used disagreed for every unpinned install.
+
+**Fix.** Without a pin, `realtime_browser_audio` reads the capability of the
+first credential-ready provider (`_identified_provider_candidates(...,
+limit=1)`: the same order and the same refusal rules as
+`build_realtime_session`); a pinned primary still answers for itself without
+reading credentials. The settings route and both pipeline call sites now read
+it off their loops. Speech-suite tests pick the transport as a keyless host
+does (`tests/unit/speech/conftest.py`), so a developer's real key no longer
+flips desktop-path tests. Guards: `tests/unit/realtime/test_factory.py`,
+`tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/speech/test_realtime_mode.py`.

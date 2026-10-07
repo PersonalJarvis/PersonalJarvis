@@ -106,6 +106,56 @@ def test_group_membership_keeps_individual_agent_sessions(client):
     assert after == before
 
 
+def test_shared_meeting_routes_allow_jarvis_and_read_without_spend(client):
+    c, _ = client
+    c.post("/api/society/agents", json={"name": "Scout"})
+    group = c.post("/api/society/chat-groups", json={
+        "name": "With Jarvis", "members": ["jarvis", "scout"],
+    }).json()["group"]
+    url = f"/api/society/chat-groups/{group['group_id']}/meeting"
+    assert c.get(url).json() == {"messages": [], "running": False, "room": None}
+    assert c.post(url, json={"text": "Hello"}).status_code == 409  # No chat service.
+    assert c.get(url).json()["messages"] == []
+
+
+def test_deleting_active_meeting_stops_owned_turn_and_edits_are_refused(client, tmp_path):
+    import asyncio
+
+    from jarvis.agent_chat.store import AgentChatStore
+    from tests.fakes.meeting_chat import MeetingChatFake
+
+    c, _ = client
+    for name in ("Scout", "Writer"):
+        c.post("/api/society/agents", json={"name": name, "provider": "ollama", "model": "fake"})
+    group = c.post("/api/society/chat-groups", json={
+        "name": "Team", "members": ["scout", "writer"],
+    }).json()["group"]
+    rt = c.app.state.society
+    svc = MeetingChatFake(AgentChatStore(tmp_path / "meeting-chat.db"))
+    rt._get_chat = lambda: svc
+    rt._get_cfg = lambda: SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path)))
+    svc.hold = True
+    path = f"/api/society/chat-groups/{group['group_id']}"
+    try:
+        assert c.post(f"{path}/meeting", json={"text": "Discuss"}).status_code == 200
+        c.portal.call(svc.started.wait)
+        edited = c.patch(path, json={"name": "Changed", "members": group["members"]})
+        assert edited.status_code == 409
+
+        async def release_soon():
+            asyncio.get_running_loop().call_later(0.05, svc.release.set)
+
+        c.portal.call(release_soon)
+        assert c.delete(path).status_code == 200
+        assert svc.cancelled == [("society:scout", "turn-0")]
+        assert len(svc.sent) == 1
+        assert c.get(f"{path}/meeting").status_code == 404
+    finally:
+        svc.release.set()
+        c.portal.call(rt.meetings.stop, group["group_id"])
+        svc.store.close()
+
+
 def test_create_derives_focus_and_rules(client):
     c, _ = client
     res = c.post(
@@ -333,11 +383,17 @@ def test_browser_routes(client, tmp_path, monkeypatch):
     c.post("/api/society/agents", json={"name": "Scout"})
     per_agent = c.get("/api/society/agents/scout/browser").json()
     assert per_agent["installed"] is False and per_agent["mode"] == "own"
-    assert per_agent["logged_in_profile"] is False
-    # Not installed: a login session is refused with a typed reason.
+    assert per_agent["logged_in_profile"] is None  # An unopened profile has unverified login state.
+    # On-demand setup failures remain typed; this unit test never provisions a runtime.
+    from jarvis.society.browser import install as install_mod
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("Fixture browser setup is unavailable")
+
+    monkeypatch.setattr(install_mod, "ensure_installed", unavailable)
     refused = c.post("/api/society/agents/scout/browser/login", json={})
     assert refused.status_code == 409
-    assert refused.json()["detail"]["reason"] == "blocked_by_policy"
+    assert refused.json()["detail"]["reason"] == "target_busy"
     assert c.post("/api/society/agents/scout/browser/login/done").json()["closed"] is False
     # Attach mode is a roster field with its own check.
     patched = c.patch("/api/society/agents/scout", json={"browser_mode": "attach"}).json()

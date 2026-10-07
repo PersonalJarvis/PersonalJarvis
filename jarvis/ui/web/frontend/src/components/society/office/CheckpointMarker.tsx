@@ -17,7 +17,12 @@ import { cachedCanvasTexture } from "./canvasMaterials";
 import type { Checkpoint, CheckpointKind } from "./officeLayout";
 import { CHECKPOINT_GOLD } from "./officePalette";
 
-export type CheckpointIcon = "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown" | "target";
+export type CheckpointIcon = "spawn" | "plus" | "list" | "team" | "shirt" | "star" | "coffee" | "updown" | "target" | "sparkle" | "trophy";
+
+/** The Upgrade Studio: a large four-point sparkle and a small one. */
+export const SPARKLE_PATH = "M10 3l1.6 5.4L17 10l-5.4 1.6L10 17l-1.6-5.4L3 10l5.4-1.6zM18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8z";
+/** The level guide: a trophy cup on its stand. */
+export const TROPHY_PATH = "M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4.5a2.5 2.5 0 0 0 2.6 3.6M17 6h2.5a2.5 2.5 0 0 1-2.6 3.6M12 14v3M8 20h8M9.5 17h5";
 
 /** Stroke-only icons in a 24 × 24 box (round caps and joins). */
 export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
@@ -33,11 +38,14 @@ export const CHECKPOINT_ICON_PATHS: Record<CheckpointIcon, string> = {
   updown: "M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4",
   // Mission Control: a target with crosshairs.
   target: "M12 3a9 9 0 1 1 0 18a9 9 0 1 1 0-18zM12 8a4 4 0 1 1 0 8a4 4 0 1 1 0-8zM12 1v4M12 19v4M1 12h4M19 12h4",
+  sparkle: SPARKLE_PATH,
+  trophy: TROPHY_PATH,
 };
 
 /** The icon each checkpoint wears, on its floor token and in the reception's list of places. */
 export const CHECKPOINT_ICON: Record<CheckpointKind, CheckpointIcon> = {
   spawn: "spawn", launch: "spawn", create: "plus", manage: "list", team: "team", wardrobe: "shirt", lead: "star", break: "coffee", elevator: "updown", mission: "target",
+  studio: "sparkle", levels: "trophy",
 };
 
 const TOKEN_RADIUS = 0.36;

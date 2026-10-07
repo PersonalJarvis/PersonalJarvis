@@ -224,14 +224,24 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 description = text
                 break
 
-        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", block)]
+        # Since 2026-10 a badge puts an icon before its label ("<svg>…</svg>Vision")
+        # and capitalises it; dropping the icons reads both layouts as text spans.
+        plain = re.sub(r"<svg\b.*?</svg>", "", block, flags=re.DOTALL)
+        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", plain)]
         spans = [s for s in spans if s]
-        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in spans]
+        # Every text node, not only whole spans: "Cloud" now sits beside a tooltip.
+        texts = (_text(m.group(1)) for m in re.finditer(r">([^<>]+)<", plain))
+        lowered = {t.lower() for t in texts if t}
+        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in lowered]
         sizes = [s for s in spans if re.fullmatch(r"\d+(?:\.\d+)?[bm]", s)]
 
         pulls_match = re.search(
-            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", block
+            r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", plain
+        ) or re.search(
+            r'<span\b[^>]*title="[^"]*downloads"[^>]*>\s*<span\b[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
+            plain,
         )
+        # The current search page prints no update time any more; "" then.
         updated = next((s for s in spans if s.endswith(" ago") or s == "yesterday"), "")
 
         entries.append(
@@ -239,7 +249,7 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 "name": name,
                 "description": description,
                 "capabilities": capabilities,
-                "cloud": "cloud" in spans,
+                "cloud": "cloud" in lowered,
                 "sizes": sizes,
                 "pulls": pulls_match.group(1) if pulls_match else "",
                 "updated": updated,
@@ -327,17 +337,44 @@ def parse_tags_html(page: str, name: str) -> list[dict[str, Any]]:
     href_re = re.compile(rf'href="/(?:library/)?{re.escape(name)}:([^"?#]+)"')
     matches = list(href_re.finditer(page))
     first_seen: list[tuple[str, int]] = []
-    seen: set[str] = set()
+    positions: dict[str, list[int]] = {}
     for match in matches:
         tag = match.group(1)
-        if tag not in seen:
-            seen.add(tag)
+        positions.setdefault(tag, []).append(match.start())
+        if len(positions[tag]) == 1:
             first_seen.append((tag, match.start()))
+
+    def _facts_window(tag: str, fallback: str) -> str:
+        """Prefer the duplicate link that actually carries this tag's facts.
+
+        Ollama renders mobile and desktop links for one tag, and their order has
+        changed over time. A bare desktop link can be followed by unrelated age
+        text before the next distinct tag; treating that whole span as this tag
+        made a current model look a year old. Rich mobile anchors carry their
+        own facts, so score every duplicate before using the legacy fallback.
+        """
+        candidates: list[tuple[int, str]] = []
+        for start in positions[tag]:
+            close = page.find("</a>", start)
+            if close < 0:
+                continue
+            candidate = page[start : close + 4]
+            score = sum(
+                (
+                    bool(_SIZE_RE.search(candidate)),
+                    bool(re.search(r"[\d.]+[KM]\s+context window", candidate)),
+                    bool(re.search(r"[A-Za-z][A-Za-z, ]*?\s+input\b", candidate)),
+                    bool(re.search(r"(?:\d+ \w+ ago|yesterday)", candidate)),
+                )
+            )
+            if score:
+                candidates.append((score, candidate))
+        return max(candidates, key=lambda item: item[0])[1] if candidates else fallback
 
     entries: list[dict[str, Any]] = []
     for index, (tag, start) in enumerate(first_seen):
         end = first_seen[index + 1][1] if index + 1 < len(first_seen) else len(page)
-        window = page[start:end]
+        window = _facts_window(tag, page[start:end])
 
         size_match = _SIZE_RE.search(window)
         context_match = re.search(r"([\d.]+[KM])\s+context window", window)

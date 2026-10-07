@@ -428,6 +428,110 @@ def insert_text(
         _INSERT_LOCK.release()
 
 
+#: Set when macOS may only just have started honouring synthetic keystrokes for
+#: this process: Accessibility was refused for a paste earlier in this process, or
+#: the permission layer reported a grant while an episode was open. Whether an
+#: in-process grant takes effect for already-running event posting is UNVERIFIED
+#: (the evidence conflicts), and on macOS delivery can never be observed, so the
+#: FIRST paste afterwards reports ``paste_sent`` and keeps the transcript on the
+#: clipboard instead of claiming ``inserted`` and restoring over it.
+_FIRST_PASTE_AFTER_GRANT = threading.Event()
+_PASTE_PERMISSION_FALLBACK = (
+    "Personal Jarvis needs Accessibility access to paste into other apps."
+)
+_grant_listener_gate: object | None = None
+
+
+def _permission_gate():
+    """The permission layer (``PermissionGate``); a test replaces this seam."""
+    from jarvis.platform.permission_service import get_permission_service  # noqa: PLC0415
+
+    return get_permission_service()
+
+
+def _watch_for_grant(gate: object) -> None:
+    """Flag the first paste after an in-process Accessibility grant (once per gate)."""
+    global _grant_listener_gate
+    if _grant_listener_gate is gate:
+        return
+    add_listener = getattr(gate, "add_listener", None)
+    if add_listener is None:
+        return
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+    try:
+        add_listener(PermissionId.ACCESSIBILITY, _FIRST_PASTE_AFTER_GRANT.set)
+    except Exception:  # noqa: BLE001 - the flag is advisory; a paste must not fail on it
+        log.debug("could not watch for the Accessibility grant", exc_info=True)
+        return
+    _grant_listener_gate = gate
+
+
+def _macos_paste_refusal() -> str:
+    """``""`` when Jarvis may send the paste keystroke, else a sentence for the PERSON.
+
+    macOS only (every other host answers ``""`` without touching the permission
+    layer). The first paste asks macOS for Accessibility (``wait_s=0``: the
+    dialog is answered later and the text waits on the clipboard); only a live
+    GRANTED sends a keystroke. The sentence is the service's ``user_detail`` (a
+    fixed template, never the agent-facing text, never an exception message).
+    """
+    if sys.platform != "darwin":
+        return ""
+    from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+    gate = _permission_gate()
+    _watch_for_grant(gate)
+    result = gate.ensure(PermissionId.ACCESSIBILITY, feature="dictation_insert", wait_s=0.0)
+    if result.granted:
+        return ""
+    _FIRST_PASTE_AFTER_GRANT.set()
+    return result.user_detail or _PASTE_PERMISSION_FALLBACK
+
+
+def _macos_dialog_block_reason() -> str:
+    """A sentence when a macOS system dialog is frontmost, else ``""``.
+
+    Nothing is sent while a consent or authorization dialog could be in front: a
+    Return, or any key, must never answer one (P9). This module never appends a
+    Return itself; a recorded custom paste chord may contain one, which is why the
+    guard covers every chord.
+    """
+    try:
+        from jarvis.cu import system_dialogs  # noqa: PLC0415
+
+        owner = system_dialogs.frontmost_consent_owner()
+    except Exception:  # noqa: BLE001 - an unreadable window list is "no dialog seen"
+        log.debug("could not check for a frontmost system dialog", exc_info=True)
+        return ""
+    if not owner:
+        return ""
+    return (
+        "A macOS system dialog is open, so nothing was typed into it. The text is on "
+        "your clipboard; paste it once the dialog is closed."
+    )
+
+
+def _first_paste_after_grant_result(
+    *, parked: bool, method: str, chord_name: str
+) -> InsertResult | None:
+    """The honest ``paste_sent`` for the first paste after an in-process grant, once."""
+    if not _FIRST_PASTE_AFTER_GRANT.is_set():
+        return None
+    _FIRST_PASTE_AFTER_GRANT.clear()
+    return InsertResult(
+        status="paste_sent",
+        detail=(
+            "The paste was sent right after macOS allowed Personal Jarvis to control "
+            "the keyboard. If no text appeared, paste it from your clipboard or "
+            "dictation history."
+        ),
+        clipboard_holds_text=parked,
+        method=method or f"clipboard+{chord_name}",
+        clipboard_restored=False,
+    )
+
+
 def _insert_text(
     text: str,
     *,
@@ -520,12 +624,30 @@ def _insert_text(
             clipboard_holds_text=parked,
         )
 
+    refusal = _macos_paste_refusal()
+    if refusal:
+        # macOS has not (yet) allowed keystrokes: nothing is sent, the text stays
+        # on the clipboard (the honest fallback) and the person is told why.
+        return InsertResult(
+            status="clipboard_only" if parked else "unavailable",
+            detail=f"{refusal} The text is on your clipboard — paste it where you want it.",
+            clipboard_holds_text=parked,
+        )
+
     try:
         actuator = get_actuator()
     except Exception as exc:  # noqa: BLE001 — ActuationUnavailable + anything else
+        # A permission refusal carries the PERSON's sentence; ``str(exc)`` is the
+        # agent-facing text and must never be shown to a user.
+        from jarvis.cu.actuate.base import PermissionNeededError  # noqa: PLC0415
+
+        if isinstance(exc, PermissionNeededError):
+            shown = getattr(exc.result, "user_detail", "") or _PASTE_PERMISSION_FALLBACK
+        else:
+            shown = str(exc)
         return InsertResult(
             status="clipboard_only" if parked else "unavailable",
-            detail=(f"{exc} The text is on your clipboard — paste it where you want it."),
+            detail=(f"{shown} The text is on your clipboard — paste it where you want it."),
             clipboard_holds_text=parked,
         )
 
@@ -545,6 +667,9 @@ def _insert_text(
                 ),
                 clipboard_holds_text=parked,
             )
+        first = _first_paste_after_grant_result(parked=parked, method="type", chord_name="")
+        if first is not None:
+            return first
         restored = (
             _restore(clipboard, previous)
             if restore_clipboard and _clipboard_still_holds(clipboard, text)
@@ -595,6 +720,12 @@ def _insert_text(
         # Equally load-bearing in the other direction: restoring too early
         # snatches the text away before the target app has read it.
         time.sleep(delay_after_ms / 1000.0)
+
+    first = _first_paste_after_grant_result(
+        parked=parked, method=f"clipboard+{chord_name}", chord_name=chord_name
+    )
+    if first is not None:
+        return first
 
     if os.name == "nt" or not paste_chord_is_curated(chord_name):
         # Without Windows rendering evidence, or with an arbitrary recorded
@@ -673,6 +804,10 @@ def _foreground_target() -> tuple[int, int] | None:
 
 def _input_block_reason(target: tuple[int, int] | None) -> str:
     """Do not send a chord to a changed window or with physically held modifiers."""
+    if sys.platform == "darwin":
+        # No foreground-target or held-key probe exists on macOS; the one thing
+        # to refuse is a keystroke while a system dialog could be answering it.
+        return _macos_dialog_block_reason()
     if os.name != "nt" or sys.platform != "win32":
         return ""
     if target is not None and _foreground_target() != target:

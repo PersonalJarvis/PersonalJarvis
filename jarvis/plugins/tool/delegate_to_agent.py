@@ -19,12 +19,15 @@ built on first use by the server, after the brain exists.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, Final
 
+from jarvis.core.agent_brief import AGENT_BRIEF_RULE
 from jarvis.core.delegation import origin_metadata
 from jarvis.core.protocols import ExecutionContext, ToolResult
+from jarvis.society.agent_names import AgentLookup, coding_pane_hint, lookup_agent
 from jarvis.society.communication import REPLY_POLICY_SCHEMA, select_reply_policy
 
 log = logging.getLogger(__name__)
@@ -55,6 +58,21 @@ _NO_AGENT: Final[dict[str, str]] = {
     "de": "Ich kenne keinen Agenten namens {target}.",  # i18n-allow: spoken reply
     "en": "I do not know an agent called {target}.",
     "es": "No conozco ningún agente llamado {target}.",
+}
+_ASK_AGENT: Final[dict[str, str]] = {
+    "de": "Meinst du {names}?",  # i18n-allow: spoken reply
+    "en": "Did you mean {names}?",
+    "es": "¿Te refieres a {names}?",
+}
+_OR: Final[dict[str, str]] = {
+    "de": " oder ",  # i18n-allow: spoken reply
+    "en": " or ",
+    "es": " o ",
+}
+_AVAILABLE: Final[dict[str, str]] = {
+    "de": "Verfügbar sind: {names}.",  # i18n-allow: spoken reply
+    "en": "Available agents: {names}.",
+    "es": "Agentes disponibles: {names}.",
 }
 _NO_FIT: Final[dict[str, str]] = {
     "de": "Keiner deiner Agenten passt zu dieser Aufgabe.",  # i18n-allow: spoken reply
@@ -136,6 +154,10 @@ class DelegateToAgentTool:
         "the background; you acknowledge now and its result follows reply_policy. "
         "Stay available for conversation while it runs; completion is delivered asynchronously. "
         "Never for inventory/status questions or tasks the user wants done right here. "
+        "Not for coding panes in the Agentic IDE (T1, or a named Claude Code / Codex "
+        "session): those go through workspace-orchestrate. Pass the agent's name as heard; "
+        "the app matches misheard names and, when unsure, returns needs_clarification with "
+        "a question to ask before calling again. "
         "Turn the user's intent into an actionable brief: objective, known target, relevant "
         "context, scope, constraints and completion evidence. Do not merely paraphrase or "
         "invent facts. Include context and completion_criteria so the agent can act independently. "
@@ -158,7 +180,7 @@ class DelegateToAgentTool:
                 "type": "string",
                 "description": (
                     "An actionable objective and scope faithful to the user's intent, "
-                    "not just a paraphrase."
+                    "not just a paraphrase. " + AGENT_BRIEF_RULE
                 ),
             },
             "reply_policy": REPLY_POLICY_SCHEMA,
@@ -192,16 +214,15 @@ class DelegateToAgentTool:
         runtime = await self._runtime()
         if runtime is None:
             return ToolResult(success=False, output=_NOT_READY[lang], error="society unavailable")
-        target = await runtime.roster.resolve(target_key) if target_key else None
-        if not target_key:
+        match_info = None
+        if target_key:
+            found = await lookup_agent(runtime, target_key, context=task, surface=self.name)
+            if found.agent is None:
+                return await _unresolved(found, lang)
+            target, match_info = found.agent, found.match_info()
+        else:
             target = runtime.pick_agent(task)
         if target is None:
-            if target_key:
-                return ToolResult(
-                    success=False,
-                    output=_NO_AGENT[lang].format(target=target_key),
-                    error="target_unknown",
-                )
             return ToolResult(success=False, output=_NO_FIT[lang], error="no_agent_fits")
         from jarvis.society.events import MsgType
 
@@ -248,6 +269,9 @@ class DelegateToAgentTool:
             "assignment_id": env.event_id,
             "trace_id": env.trace_id,
             "reply_policy": policy,
+            # Said differently than it is spelled: the reply names the agent
+            # that was actually reached, so the user hears who got the task.
+            **({"name_match": match_info} if match_info else {}),
         }
         if outcome is not None and outcome.msg_type is MsgType.VETO:
             reason = str(outcome.payload.get("text") or outcome.payload.get("reason") or "")
@@ -291,6 +315,54 @@ class DelegateToAgentTool:
             log.warning("delegate_to_agent: society runtime unavailable", exc_info=True)
             return None
         return runtime
+
+
+def _join(names: list[str], lang: str) -> str:
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + _OR[lang] + names[-1]
+
+
+async def _unresolved(found: AgentLookup, lang: str) -> ToolResult:
+    """The honest answer for a name no agent clearly carries: ask, or list who exists.
+
+    Never a silent "unknown": a close name becomes a question, and a name that
+    is no Jarvis agent but a coding pane in the Agentic IDE says so, because
+    the two kinds of agent are reached through different tools.
+    """
+    if found.decision == "ask" and found.candidates:
+        names = [a.name for a in found.candidates]
+        return ToolResult(
+            success=False,
+            output={
+                "status": "needs_clarification",
+                "heard": found.heard,
+                "candidates": names,
+                "question": _ASK_AGENT[lang].format(names=_join(names, lang)),
+                "next_step": "Ask the user this question; call again with the confirmed name.",
+            },
+            error="target_ambiguous",
+        )
+    reply = _NO_AGENT[lang].format(target=found.heard)
+    names = found.available_names()
+    roster = _AVAILABLE[lang].format(names=", ".join(names)) if names else _EMPTY_ROSTER[lang]
+    reply += " " + roster
+    hint = await asyncio.to_thread(coding_pane_hint, found.heard)
+    if hint:
+        panes = ", ".join(f"{p['agent']} ({p['workspace']})" for p in hint["panes"])
+        reply += (
+            f" Note: '{found.heard}' matches a coding pane in the Agentic IDE ({panes}), not a "
+            "Jarvis agent - reach it with workspace-orchestrate (resolve, then send)."
+        )
+    return ToolResult(success=False, output=reply, error="target_unknown")
+
+
+async def _status_target(runtime: Any, target_key: str, lang: str) -> Any:
+    """The agent a status question names, or the ``ToolResult`` that explains why not."""
+    found = await lookup_agent(runtime, target_key, surface="society_status")
+    if found.agent is not None:
+        return found.agent
+    return await _unresolved(found, lang)
 
 
 class SocietyStatusTool:
@@ -359,9 +431,9 @@ class SocietyStatusTool:
             if latest_assignment:
                 if not target_key:
                     return ToolResult(success=False, output=None, error="agent required")
-                target = await runtime.roster.resolve(target_key)
-                if target is None:
-                    return ToolResult(success=False, output=None, error="target_unknown")
+                target = await _status_target(runtime, target_key, lang)
+                if isinstance(target, ToolResult):
+                    return target
                 assignment = await runtime.store.latest_assignment_for_agent(
                     target.agent_id,
                     from_agent=runtime.lead_id,
@@ -426,13 +498,9 @@ class SocietyStatusTool:
         if args.get("details") is True:
             targets = await runtime.roster.list()
             if target_key:
-                target = await runtime.roster.resolve(target_key)
-                if target is None:
-                    return ToolResult(
-                        success=False,
-                        output=_NO_AGENT[lang].format(target=target_key),
-                        error="target_unknown",
-                    )
+                target = await _status_target(runtime, target_key, lang)
+                if isinstance(target, ToolResult):
+                    return target
                 targets = [target]
             rows = []
             for agent in targets:
@@ -463,13 +531,9 @@ class SocietyStatusTool:
             if not names:
                 return ToolResult(success=True, output=_EMPTY_ROSTER[lang])
             return ToolResult(success=True, output=_ROSTER[lang].format(names=names))
-        target = await runtime.roster.resolve(target_key)
-        if target is None:
-            return ToolResult(
-                success=False,
-                output=_NO_AGENT[lang].format(target=target_key),
-                error="target_unknown",
-            )
+        target = await _status_target(runtime, target_key, lang)
+        if isinstance(target, ToolResult):
+            return target
         if runtime.scheduler.active_runs(target.agent_id) > 0:
             events = await runtime.store.events_for_agent(target.agent_id, limit=5)
             text = next((e.text for e in reversed(events) if e.text), "")

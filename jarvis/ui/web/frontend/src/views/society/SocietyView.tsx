@@ -1,17 +1,23 @@
 import { lazy, Suspense, useCallback, useMemo, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { Building2, Users } from "lucide-react";
 
-import { useSocietyShell } from "@/store/societyShell";
 import { setMapFullscreen } from "@/lib/mapFullscreen";
 import { inDesktopShell } from "@/lib/nativeDrop";
 import { useLocaleChunk, useT } from "@/i18n";
+import { cn } from "@/lib/utils";
+import {
+  CAPTION_ICON_CLASS, CAPTION_ICON_STROKE, CAPTION_SEGMENT, CAPTION_SEGMENT_OFF, CAPTION_SEGMENT_ON,
+  CAPTION_SEGMENT_PX, CAPTION_THUMB, CAPTION_TRACK,
+} from "@/components/layout/captionSwitch";
 import { AgentCardOverlay } from "@/components/society/card/AgentCardOverlay";
-import { BuildingCardOverlay } from "@/components/society/card/BuildingCardOverlay";
-import { isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
-import { CreateAgentDialog } from "@/components/society/create/CreateAgentDialog";
+import { BrowserProfilesButton } from "@/components/society/browser/BrowserProfilesButton";
+import { BUILDING_CARDS, isBuildingPlace, type BuildingPlace } from "@/components/society/card/buildingCards";
+import { DeferredSocietyDialog } from "@/components/society/card/DeferredSocietyDialog";
 import type { PlaceId } from "@/components/society/world/islandLayout";
-import { useSocietyRoster } from "@/components/society/data";
+import { useQuickCreateAgent, useSocietyRoster } from "@/components/society/data";
+import { isCreateCancelled } from "@/components/society/create/createAgentStore";
 import { RosterRail } from "@/components/society/roster/RosterRail";
 import { useModelMenuData } from "@/components/society/chat/useModelMenuData";
 import { ChatGroupPanel } from "@/components/society/chat/ChatGroupPanel";
@@ -20,9 +26,19 @@ import { createSocietyChatGroup, updateSocietyChatGroup, useSocietyChatGroups } 
 import { CanvasActivity } from "@/hooks/useCanvasAwake";
 import { forgetLastAgentId, rememberLastAgentId, storedLastAgentId } from "./lastAgent";
 
+/** The page's two faces, in caption order: the Verse map, then the agent roster. */
+const MODES = [
+  { value: "world", labelKey: "society.world.mode_map", Icon: Building2 },
+  { value: "agents", labelKey: "society.roster.title", Icon: Users },
+] as const;
+
 const JarvisAgentsBoard = lazy(() =>
   import("@/views/JarvisAgentsView").then((m) => ({ default: m.JarvisAgentsView })),
 );
+
+// Do not evaluate either dialog's 3D dependencies until someone opens it.
+const loadBuildingDialog = () => import("@/components/society/card/BuildingCardOverlay")
+  .then((module) => ({ default: module.BuildingCardOverlay }));
 
 
 function isProtectedMarsInteraction(target: EventTarget | null): boolean {
@@ -44,6 +60,8 @@ export function SocietyView() {
   const openGroup = groups.find((group) => group.group_id === openGroupId) ?? null;
   const [openAgentId, setOpenAgentId] = useState<string | null>(storedLastAgentId);
   const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const quickCreate = useQuickCreateAgent();
   const [groupError, setGroupError] = useState("");
   const [openPlace, setOpenPlace] = useState<BuildingPlace | null>(null);
 
@@ -100,13 +118,6 @@ export function SocietyView() {
     }
   }, [agents, openAgentId]);
 
-  // The new agent is already on the rail (the create patched the roster), so
-  // it opens straight away — the person's next step is almost always with it.
-  const onCreated = useCallback((agentId: string) => {
-    setCreating(false);
-    selectAgent(agentId);
-  }, [selectAgent]);
-
   const [fullscreenError, setFullscreenError] = useState(false);
   const switchMode = useCallback((next: "agents" | "world") => {
     setMode(next);
@@ -114,20 +125,34 @@ export function SocietyView() {
     if (inDesktopShell()) void setMapFullscreen(next === "world").catch(() => setFullscreenError(true));
   }, []);
 
+  // The plus opens the "new agent" dialog (name, runtime, companion); the new
+  // agent's chat opens after it. Closing the dialog is not an error.
+  const createAgent = useCallback(() => {
+    if (creating) return;
+    setCreating(true);
+    setCreateError("");
+    void quickCreate()
+      .then((agent) => {
+        selectAgent(agent.agentId);
+        switchMode("agents");
+      })
+      .catch((error) => {
+        if (!isCreateCancelled(error)) setCreateError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setCreating(false));
+  }, [creating, quickCreate, selectAgent, switchMode]);
+
   useEffect(() => {
-    const reset = useSocietyShell.getState().reset;
-    reset();
     // A reload starts in Agents; restore a native window left fullscreen by it.
     if (inDesktopShell()) void setMapFullscreen(false).catch(() => setFullscreenError(true));
     return () => {
-      reset();
       void setMapFullscreen(false).catch((error) => console.warn("Fullscreen exit failed", error));
     };
   }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace && !creating) switchMode("agents");
+      if (event.key === "Escape" && !event.defaultPrevented && !isProtectedMarsInteraction(event.target) && mode === "world" && !openPlace) switchMode("agents");
     };
     const onFullscreen = () => {
       if (!document.fullscreenElement && !inDesktopShell() && !isProtectedMarsInteraction(document.activeElement)) setMode("agents");
@@ -138,7 +163,7 @@ export function SocietyView() {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("fullscreenchange", onFullscreen);
     };
-  }, [mode, creating, switchMode, openPlace]);
+  }, [mode, switchMode, openPlace]);
 
   const onIslandSelect = useCallback((agentId: string | null) => {
     if (agentId) {
@@ -153,13 +178,21 @@ export function SocietyView() {
     if (isBuildingPlace(place)) setOpenPlace(place);
   }, []);
 
+  // Icon-only, in the same caption look as the Agentic IDE's switch; the
+  // names live on as the accessible label and the hover title.
+  const modeIndex = MODES.findIndex((item) => item.value === mode);
   const modeSwitch = (
-    <div role="tablist" aria-label={t("society.world.mode_label")} className="flex items-center gap-0.5 rounded-md border border-border/60 bg-background/80 p-0.5 backdrop-blur-sm">
-      {(["world", "agents"] as const).map((value) => {
+    <div role="tablist" aria-label={t("society.world.mode_label")} className={CAPTION_TRACK}>
+      <span aria-hidden className={CAPTION_THUMB}
+        style={{ width: CAPTION_SEGMENT_PX, transform: `translateX(${Math.max(0, modeIndex) * CAPTION_SEGMENT_PX}px)` }} />
+      {MODES.map(({ value, labelKey, Icon }) => {
+        const label = t(labelKey);
         return <button key={value} type="button" role="tab" aria-selected={mode === value}
+          aria-label={label} title={label} data-testid={`society-mode-${value}`}
           onClick={() => switchMode(value)}
-          className={`inline-flex h-5 items-center justify-center rounded px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${mode === value ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-          {t(value === "world" ? "society.world.mode_map" : "society.roster.title")}
+          style={{ width: CAPTION_SEGMENT_PX }}
+          className={cn(CAPTION_SEGMENT, mode === value ? CAPTION_SEGMENT_ON : CAPTION_SEGMENT_OFF)}>
+          <Icon aria-hidden className={CAPTION_ICON_CLASS} strokeWidth={CAPTION_ICON_STROKE} />
         </button>;
       })}
     </div>
@@ -174,19 +207,20 @@ export function SocietyView() {
             modes — one switch, always centered, always a way back. */}
         {createPortal(
           <div className="pointer-events-none fixed inset-x-0 top-0 z-[140] flex h-8 items-center justify-center" data-testid="mode-switch">
-            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}</div>
+            <div className="pointer-events-auto flex items-center gap-2">{modeSwitch}<BrowserProfilesButton iconOnly /></div>
           </div>,
           document.body,
         )}
         {fullscreenError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{t("society.world.fullscreen_failed")}</p>}
         {groupError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{groupError}</p>}
+        {createError && <p role="alert" className="bg-card px-4 py-2 text-sm text-destructive">{createError}</p>}
         {mode === "world" ? (
         <div className="relative flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
-            <CanvasActivity.Provider value={!openPlace && !creating}>
+            <CanvasActivity.Provider value={!openPlace}>
               <Suspense fallback={null}>
                 <JarvisAgentsBoard onSelectAgent={onIslandSelect} onSelectPlace={onIslandPlace} onOpenAgents={() => switchMode("agents")}
-                  onCreateAgent={() => setCreating(true)} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
+                  onCreateAgent={createAgent} onOpenGroup={(groupId) => { selectGroup(groupId); switchMode("agents"); }} />
               </Suspense>
             </CanvasActivity.Provider>
           </div>
@@ -196,32 +230,36 @@ export function SocietyView() {
         <div className={mode === "agents" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
         {openGroup ? (
           <ChatGroupPanel group={openGroup} groups={groups} roster={agents} onOpenAgent={selectAgent} onOpenGroup={selectGroup}
-            onCreateAgent={() => setCreating(true)} onDeleted={() => setOpenGroupId(null)}
+            onCreateAgent={createAgent} onDeleted={() => setOpenGroupId(null)}
             onGroupAgents={groupAgents} onAddAgentToGroup={addAgentToGroup} />
         ) : openAgent ? (
           <AgentCardOverlay embedded agent={openAgent} roster={agents} rosterLoading={roster.isLoading}
             groups={groups} onSelectGroup={selectGroup}
             onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
-            sample={sample} onSelectAgent={selectAgent} onCreate={() => setCreating(true)}
+            sample={sample} onSelectAgent={selectAgent} onCreate={createAgent}
             onClose={() => setOpenAgentId(null)} />
         ) : (
           <RosterRail agents={agents} loading={roster.isLoading} sample={sample}
             groups={groups} onOpenGroup={selectGroup}
             onGroupAgents={sample ? undefined : groupAgents} onAddAgentToGroup={sample ? undefined : addAgentToGroup}
-            activeAgentId={null} onOpen={selectAgent} onCreate={() => setCreating(true)} side="left"
+            activeAgentId={null} onOpen={selectAgent} onCreate={createAgent} side="left"
             className="w-full border-0 jarvis-nav-surface" />
         )}
         </div>
       </div>
-      <BuildingCardOverlay
-        place={openPlace}
+      {openPlace && <DeferredSocietyDialog
+        load={loadBuildingDialog}
+        title={t(`society.world.${BUILDING_CARDS[openPlace].nameKey}`)}
         onClose={() => setOpenPlace(null)}
-        onCreateAgent={() => {
-          setOpenPlace(null);
-          setCreating(true);
+        dialogProps={{
+          place: openPlace,
+          onClose: () => setOpenPlace(null),
+          onCreateAgent: () => {
+            setOpenPlace(null);
+            createAgent();
+          },
         }}
-      />
-      <CreateAgentDialog open={creating} onClose={() => setCreating(false)} onCreated={onCreated} />
+      />}
     </div>
   );
 }

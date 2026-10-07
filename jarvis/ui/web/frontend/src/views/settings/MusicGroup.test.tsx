@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Identity translator so assertions can match exact i18n keys.
@@ -41,42 +41,53 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+async function openPanel(testId: string): Promise<HTMLElement> {
+  fireEvent.click(screen.getByTestId(testId));
+  return waitFor(() => screen.getByTestId(`${testId}-panel`));
+}
+
 describe("MusicGroup", () => {
-  it("renders both sections with one row per value", () => {
+  it("renders one row per choice with the saved value on its dropdown", () => {
     render(<MusicGroup />);
     expect(screen.getByText("settings_view.music_group_title")).toBeDefined();
     expect(screen.getByText("settings_view.music.service_section")).toBeDefined();
     expect(screen.getByText("settings_view.music.playback_section")).toBeDefined();
+    expect(screen.getByTestId("music-service").textContent).toContain(
+      "settings_view.music.service_labels.auto",
+    );
+    expect(screen.getByTestId("music-playback").textContent).toContain(
+      "settings_view.music.playback_labels.background",
+    );
+  });
+
+  it("lists every value and says which services are connected", async () => {
+    render(<MusicGroup />);
+    const services = await openPanel("music-service");
     for (const key of ["auto", "spotify", "youtube_music"]) {
-      expect(screen.getByText(`settings_view.music.service_labels.${key}`)).toBeDefined();
+      expect(services.textContent).toContain(`settings_view.music.service_labels.${key}`);
     }
-    for (const key of ["background", "browser"]) {
-      expect(screen.getByText(`settings_view.music.playback_labels.${key}`)).toBeDefined();
-    }
+    // Spotify is connected, YouTube Music is not — the option lines say so.
+    expect(services.textContent).toMatch(
+      /service_options\.spotify — settings_view\.music\.connected/,
+    );
+    expect(services.textContent).toMatch(
+      /service_options\.youtube_music — settings_view\.music\.not_connected/,
+    );
   });
 
-  it("marks the active rows and says which services are connected", () => {
+  it("says when the background player cannot run on this host", async () => {
     render(<MusicGroup />);
-    const pressed = screen
-      .getAllByRole("button")
-      .filter((b) => b.getAttribute("aria-pressed") === "true");
-    expect(pressed).toHaveLength(2); // one per section
-    // Spotify is connected, YouTube Music is not — the row descriptions say so.
-    expect(
-      screen.getByText(/service_options\.spotify — settings_view\.music\.connected/),
-    ).toBeDefined();
-    expect(
-      screen.getByText(/service_options\.youtube_music — settings_view\.music\.not_connected/),
-    ).toBeDefined();
-    // The background player cannot run in this fake host — the row says so.
-    expect(screen.getByText(/settings_view\.music\.player_unavailable/)).toBeDefined();
+    const playback = await openPanel("music-playback");
+    expect(playback.textContent).toMatch(/settings_view\.music\.player_unavailable/);
   });
 
-  it("clicking a row saves that value only", () => {
+  it("picking an option saves that value only", async () => {
     render(<MusicGroup />);
-    fireEvent.click(screen.getByText("settings_view.music.service_labels.youtube_music"));
+    const services = await openPanel("music-service");
+    fireEvent.click(services.querySelector('[data-value="youtube_music"]')!);
     expect(save).toHaveBeenCalledWith({ preferred_service: "youtube_music" });
-    fireEvent.click(screen.getByText("settings_view.music.playback_labels.browser"));
+    const playback = await openPanel("music-playback");
+    fireEvent.click(playback.querySelector('[data-value="browser"]')!);
     expect(save).toHaveBeenCalledWith({ playback: "browser" });
   });
 });

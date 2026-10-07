@@ -23,6 +23,8 @@ export interface PetsState {
   active: string;
   scale: number;
   bubble: boolean;
+  /** The control strip stays up even at rest (`[ui] pet_strip_always`). */
+  strip_always: boolean;
   visible: boolean;
   pets: Pet[];
 }
@@ -30,6 +32,7 @@ export interface PetsState {
 export interface PetSettingsPatch {
   scale?: number;
   bubble?: boolean;
+  strip_always?: boolean;
 }
 
 export interface CreatePetInput {
@@ -89,6 +92,11 @@ export function selectPet(petId: string): Promise<unknown> {
 
 export function savePetSettings(patch: PetSettingsPatch): Promise<unknown> {
   return putJson("/api/pets/settings", patch);
+}
+
+/** Resize the desktop pet live without saving: one step of a slider drag. */
+export function previewPetScale(scale: number): Promise<unknown> {
+  return putJson("/api/pets/settings", { scale, preview: true });
 }
 
 export function setPetVisible(visible: boolean): Promise<unknown> {

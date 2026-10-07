@@ -70,7 +70,8 @@ async def _run_nonstreaming_turn(response: str, language: str) -> list[str]:
 
     async def _transcribe(_pcm: bytes) -> Transcript:
         # i18n-allow: spoken German user prompt in the test
-        prompt = "Wie ist das Wetter?"
+        # Keep lookup acknowledgements outside this output-filter test.
+        prompt = "Antworte bitte." if language == "de" else "Please respond."  # i18n-allow
         return Transcript(text=prompt, language=language, confidence=0.99)
 
     async def _brain(*_a: object, **_kw: object) -> str:

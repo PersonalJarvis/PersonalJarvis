@@ -1,133 +1,92 @@
-import { AlertTriangle, Mic } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { ArrowRight, AudioLines, RefreshCw, Search, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useSessions } from "@/hooks/useSessions";
+import { fill, useT, useUiLanguage } from "@/i18n";
 import { useEventStore } from "@/store/events";
+import type { SessionListItem } from "@/components/sessions/types";
+import { TranscriptReader, TranscriptState } from "@/components/transcription/TranscriptReader";
+import { elapsedTime } from "@/components/transcription/transcript";
+import "@/components/transcription/transcription.css";
 
-import { ViewHeader } from "@/views/ChatsView";
-import { SessionDetail } from "@/components/sessions/SessionDetail";
-import { SessionList } from "@/components/sessions/SessionList";
-import { resolveSelectedSessionId } from "@/components/sessions/sessionSelection";
-import { useSessionDetail, useSessions } from "@/hooks/useSessions";
-import { useT } from "@/i18n";
-import { cn } from "@/lib/utils";
-
-/**
- * Below this much width the two columns stop fitting: the app's own navigation
- * rail already takes 240 px, so an 850 px window leaves ~610 px here — a 320 px
- * session rail beside it would push the transcript off screen.
- */
-const NARROW_PX = 900;
-
-/**
- * Transcription: a 320 px rail of sessions on the sidebar ground, and the
- * chosen session read as a conversation on the page ground.
- *
- * Narrow containers get the master–detail treatment instead: the rail alone,
- * and the transcript alone once a session is picked, with the way back in its
- * header. Width is measured on this view's own box, not the window — the view
- * can share the window with anything else.
- */
+/** A conversation index opens into a full reading page at every window size. */
 export function SessionsView() {
-  const assistantName = useEventStore((s) => s.assistantName);
   const t = useT();
-  const sessionsQuery = useSessions();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [narrow, setNarrow] = useState(false);
-  // Stacked layout only: whether the transcript is the thing on screen. The
-  // selection itself resolves on its own (newest finished session), and that
-  // must NOT count as opening a session — a narrow view opens on the list.
-  const [detailOpen, setDetailOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const locale = useUiLanguage();
+  const sessions = useSessions();
+  const [selected, setSelected] = useState<SessionListItem | null>(null);
+  const [search, setSearch] = useState("");
+  const lastOpened = useRef<HTMLButtonElement | null>(null);
+  const setSection = useEventStore((state) => state.setActiveSection);
+  const groups = useMemo(() => {
+    const byDay = new Map<string, SessionListItem[]>();
+    for (const session of [...(sessions.data ?? [])].sort((a, b) => b.started_ms - a.started_ms)) {
+      if (search.trim() && !session.preview.toLocaleLowerCase(locale).includes(search.trim().toLocaleLowerCase(locale))) continue;
+      const day = new Date(session.started_ms).toLocaleDateString(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+      const list = byDay.get(day) ?? [];
+      list.push(session);
+      byDay.set(day, list);
+    }
+    return [...byDay];
+  }, [sessions.data, search, locale]);
+  const disabledRecorder = sessions.error instanceof Error && /HTTP 503/.test(sessions.error.message);
 
-  useEffect(() => {
-    const list = sessionsQuery.data;
-    if (!list) return;
-    setSelectedId((currentId) => resolveSelectedSessionId(list, currentId));
-  }, [sessionsQuery.data]);
-
-  useEffect(() => {
-    const el = rootRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? 0;
-      setNarrow(width > 0 && width < NARROW_PX);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  const selectSession = useCallback((id: string) => {
-    setSelectedId(id);
-    setDetailOpen(true);
-  }, []);
-
-  const detailQuery = useSessionDetail(selectedId);
-
-  const errorMessage = sessionsQuery.error
-    ? sessionsQuery.error instanceof Error
-      ? sessionsQuery.error.message
-      : t("sessions_view.unknown_error")
-    : null;
-
-  const showList = !narrow || !detailOpen;
-  const showDetail = !narrow || detailOpen;
+  function back() {
+    setSelected(null);
+    requestAnimationFrame(() => lastOpened.current?.focus());
+  }
 
   return (
-    <div ref={rootRef} className="flex h-full flex-col">
-      <ViewHeader
-        icon={<Mic />}
-        title={t("sessions_view.title")}
-        subtitle={t("sessions_view.subtitle")}
-      />
-
-      {/* The recorder being switched off is a degraded state, not a failure:
-          everything else on this screen still works, so it is a warning
-          callout on the room's own ground. */}
-      {errorMessage && /HTTP 503/.test(errorMessage) && (
-        <div className="mx-8 mb-4 flex items-start gap-3 rounded-lg border border-warning/20 bg-warning/[0.08] px-4 py-3">
-          <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-          <div className="min-w-0">
-            <div className="text-base font-medium text-foreground-strong">
-              {t("sessions_view.recorder_disabled")}
+    <section className="transcription-workspace" aria-label={t("sessions_view.title")}>
+      <div className="transcription-library" hidden={selected !== null}>
+        <div className="transcription-library-inner">
+          <header className="transcription-masthead">
+            <p className="transcription-eyebrow"><AudioLines aria-hidden />{t("transcription.archive")}</p>
+            <h1>{t("sessions_view.title")}</h1>
+            <p className="transcription-intro">{t("transcription.intro")}</p>
+          </header>
+          <div className="transcription-library-tools">
+            <div className="transcription-search">
+              <Search aria-hidden />
+              <input aria-label={t("transcription.search_sessions")} placeholder={t("transcription.search_sessions")} value={search} onChange={(event) => setSearch(event.target.value)} type="search" />
+              {search && <button type="button" aria-label={t("transcription.clear_search")} onClick={() => setSearch("")}><X aria-hidden /></button>}
             </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {t("sessions_view.recorder_hint_a")}{" "}
-              <code className="font-mono">[sessions]</code>{" "}
-              {t("sessions_view.recorder_hint_b")}{" "}
-              <code className="font-mono">jarvis.toml</code>{" "}
-              (<code className="font-mono">enabled = true</code>){" "}
-              {t("sessions_view.recorder_hint_c")} {assistantName}.
-            </div>
+            <Button variant="ghost" disabled={sessions.isFetching} onClick={() => void sessions.refetch()} aria-label={t("transcription.refresh")}><RefreshCw aria-hidden className={sessions.isFetching ? "motion-safe:animate-spin" : undefined} /><span>{t("transcription.refresh")}</span></Button>
           </div>
+          {sessions.error && <TranscriptState kind="error" title={t(disabledRecorder ? "transcription.recorder_off" : "transcription.list_error")} body={t(disabledRecorder ? "transcription.recorder_help" : "transcription.retry_help")} retry={() => void sessions.refetch()} />}
+          {sessions.isLoading ? <TranscriptState kind="loading" title={t("transcription.loading_library")} /> : groups.length > 0 ? (
+            <>
+              <p className="transcription-library-count" role="status">{fill(t(search.trim() ? "transcription.results" : "transcription.recent_count"), { count: groups.reduce((count, [, list]) => count + list.length, 0) })}</p>
+              {groups.map(([day, list]) => (
+                <section className="transcription-day" key={day} aria-label={day}>
+                  <h2>{day}</h2>
+                  <ul>{list.map((session) => (
+                    <li key={session.id}>
+                      <button className="transcription-session" type="button" onClick={(event) => { lastOpened.current = event.currentTarget; setSelected(session); }}>
+                        <time className="transcription-session-time" dateTime={new Date(session.started_ms).toISOString()}>{new Date(session.started_ms).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}</time>
+                        <span className="transcription-session-main">
+                          <span className="transcription-session-title">{session.preview || t("transcription.untitled")}</span>
+                          <span className="transcription-session-meta">
+                            {session.ended_ms === null ? <span className="transcription-live">{t("transcription.in_progress")}</span> : session.duration_s !== null ? <span>{elapsedTime(session.duration_s * 1000)}</span> : null}
+                            <span>{fill(t("transcription.exchanges"), { count: session.turn_count })}</span>
+                            {session.language && <span>{session.language.toLocaleUpperCase(locale)}</span>}
+                          </span>
+                        </span>
+                        <ArrowRight aria-hidden className="transcription-session-arrow" />
+                      </button>
+                    </li>
+                  ))}</ul>
+                </section>
+              ))}
+            </>
+          ) : !sessions.error && (
+            <TranscriptState title={t(search.trim() ? "transcription.no_matches" : "transcription.empty_title")} body={t(search.trim() ? "transcription.search_help" : "transcription.empty_body")}>
+              {search.trim() ? <Button variant="outline" onClick={() => setSearch("")}>{t("transcription.clear_search")}</Button> : <Button variant="outline" onClick={() => setSection("chats")}>{t("transcription.open_chat")}<ArrowRight aria-hidden /></Button>}
+            </TranscriptState>
+          )}
         </div>
-      )}
-
-      <div className="flex min-h-0 flex-1 border-t border-border">
-        {showList && (
-          <div
-            className={cn(
-              "min-h-0 overflow-hidden bg-sidebar",
-              narrow ? "w-full" : "w-[320px] shrink-0 border-r border-border",
-            )}
-          >
-            <SessionList
-              sessions={sessionsQuery.data ?? []}
-              selectedId={selectedId}
-              onSelect={selectSession}
-              loading={sessionsQuery.isLoading}
-            />
-          </div>
-        )}
-        {showDetail && (
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <SessionDetail
-              detail={detailQuery.data}
-              loading={detailQuery.isLoading && selectedId !== null}
-              error={detailQuery.error as Error | null}
-              onBack={narrow ? () => setDetailOpen(false) : undefined}
-            />
-          </div>
-        )}
       </div>
-    </div>
+      {selected && <TranscriptReader key={selected.id} session={selected} onBack={back} />}
+    </section>
   );
 }

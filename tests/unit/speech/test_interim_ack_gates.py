@@ -28,6 +28,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline, TurnTakingState
+from tests.fakes.voice_session import open_classic_voice_session
 
 
 @dataclass
@@ -89,7 +90,7 @@ def _make_pipeline(
             preamble_rate_limit_per_min=rate_limit_per_min,
         )
     )
-    return pipeline
+    return open_classic_voice_session(pipeline)
 
 
 def _preamble(text: str, *, source_layer: str = "") -> AnnouncementRequested:

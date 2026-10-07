@@ -1,0 +1,65 @@
+{
+  "circle": {
+    "back": -0.4986,
+    "face": 0.4914,
+    "head": 0.0,
+    "held": 0.166,
+    "mouth": 0.4837,
+    "neck": 0.4936,
+    "outfit": 0.4936
+  },
+  "cloud": {
+    "back": -0.2984,
+    "face": 0.3595,
+    "head": 0.0,
+    "held": 0.1432,
+    "mouth": 0.3143,
+    "neck": 0.3564,
+    "outfit": 0.3564
+  },
+  "drop": {
+    "back": -0.3654,
+    "face": 0.3654,
+    "head": 0.0,
+    "held": 0.1275,
+    "mouth": 0.3485,
+    "neck": 0.3636,
+    "outfit": 0.3636
+  },
+  "hexagon": {
+    "back": -0.3805,
+    "face": 0.3805,
+    "head": 0.0,
+    "held": 0.1378,
+    "mouth": 0.3805,
+    "neck": 0.3805,
+    "outfit": 0.3805
+  },
+  "pill": {
+    "back": -0.4993,
+    "face": 0.4847,
+    "head": 0.0,
+    "held": 0.1706,
+    "mouth": 0.4689,
+    "neck": 0.4902,
+    "outfit": 0.4902
+  },
+  "squircle": {
+    "back": -0.46,
+    "face": 0.46,
+    "head": 0.0,
+    "held": 0.1819,
+    "mouth": 0.4599,
+    "neck": 0.46,
+    "outfit": 0.46
+  },
+  "triangle": {
+    "back": -0.3367,
+    "face": 0.3571,
+    "head": 0.0,
+    "held": 0.2082,
+    "mouth": 0.482,
+    "neck": 0.4592,
+    "outfit": 0.4592
+  }
+}

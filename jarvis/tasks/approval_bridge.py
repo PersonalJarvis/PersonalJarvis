@@ -77,6 +77,6 @@ class TaskAutoApprover:
         same rule the brain's tool allowlist uses (``grant_matches``), so a
         tool the turn can SEE is exactly a tool the grant can pre-authorize.
         """
-        from jarvis.tasks.templates import grant_matches  # noqa: PLC0415
+        from jarvis.tasks.grants import grant_matches  # noqa: PLC0415
 
         return any(grant_matches(grant, tool_name) for grant in granted)

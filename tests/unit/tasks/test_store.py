@@ -163,6 +163,32 @@ async def test_cleanup_interrupted_flips_running_to_interrupted(store: TaskStore
     assert task["finished_at_ns"] is not None
 
 
+async def test_retire_catalogue_tasks_cancels_only_live_template_tasks(store: TaskStore) -> None:
+    def spec(title: str, created_by: str) -> TaskSpec:
+        return TaskSpec(title=title, trigger=TriggerAfterDelay(delay_seconds=60),
+                        action=SpeakAction(text="x"), created_by=created_by)
+
+    live_template = await store.insert(spec("recap", "template"))
+    paused_template = await store.insert(spec("digest", "template"))
+    await store.update_state(paused_template, "paused")
+    done_template = await store.insert(spec("old", "template"))
+    await store.update_state(done_template, "completed")
+    routine = await store.insert(spec("[agent:Scout] brief", "society"))
+
+    assert await store.retire_catalogue_tasks() == 2
+
+    for tid in (live_template, paused_template):
+        task = await store.get(tid)
+        assert task is not None
+        assert task["state"] == "cancelled"
+        assert "retired" in task["last_error"]
+    done = await store.get(done_template)
+    assert done is not None and done["state"] == "completed"
+    kept = await store.get(routine)
+    assert kept is not None and kept["state"] == "scheduled"
+    assert await store.retire_catalogue_tasks() == 0
+
+
 async def test_get_spec_deserialises(store: TaskStore) -> None:
     spec = TaskSpec(
         title="Hallo",

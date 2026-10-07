@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Sequence
 
@@ -78,11 +80,24 @@ def read_text() -> str | None:
     return raw.replace("\r\n", "\n").replace("\r", "\n")
 
 
+def _utf8_env() -> dict[str, str] | None:
+    """The environment for a clipboard command: UTF-8 text on macOS.
+
+    ``pbcopy``/``pbpaste`` encode in the locale's charset. An app started from
+    Finder or the Dock has no locale, so they fell back to MacRoman and turned
+    umlauts and emoji into mojibake. Linux tools take bytes as given.
+    """
+    if detect_platform() != "darwin":
+        return None
+    return {**os.environ, "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8"}
+
+
 def _read_command(command: Sequence[str]) -> str | None:
     """Read clipboard text from a fixed OS command's stdout."""
     try:
         completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
             list(command),
+            env=_utf8_env(),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -106,13 +121,27 @@ def _read_command(command: Sequence[str]) -> str | None:
     return completed.stdout
 
 
+def _session_order(
+    candidates: tuple[tuple[str, list[str]], ...],
+) -> tuple[tuple[str, list[str]], ...]:
+    """The Wayland tool first only in a Wayland session; last otherwise.
+
+    ``wl-copy``/``wl-paste`` are often installed on X11 desktops too, and
+    there they fail ("Failed to connect to a Wayland server"), so trying them
+    first made every copy and paste on such a desktop fail.
+    """
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return candidates
+    return candidates[1:] + candidates[:1]
+
+
 def _read_linux() -> str | None:
-    """Use the available Wayland/X11 clipboard command, if any."""
-    candidates = (
+    """Use the clipboard command for this session (Wayland or X11), if any."""
+    candidates = _session_order((
         ("wl-paste", ["wl-paste", "--no-newline"]),
         ("xclip", ["xclip", "-selection", "clipboard", "-out"]),
         ("xsel", ["xsel", "--clipboard", "--output"]),
-    )
+    ))
     for executable, command in candidates:
         resolved = shutil.which(executable)
         if resolved:
@@ -123,6 +152,15 @@ def _read_linux() -> str | None:
 
 
 def _read_windows() -> str | None:
+    # GetClipboardData can wait 30 seconds for another application's delayed
+    # renderer. A timed-out thread still owns the clipboard lock, blocking the
+    # dictation write that follows. Isolate the read so timeout releases it.
+    from jarvis.platform.clipboard_reader import read_with_deadline
+
+    return read_with_deadline()
+
+
+def _read_windows_native() -> str | None:
     """Read Unicode text with the Win32 clipboard API.
 
     The clipboard is a shared, singly-owned resource: brief retries handle
@@ -185,25 +223,31 @@ def _read_windows() -> str | None:
 
 
 def _run_command(command: Sequence[str], text: str) -> bool:
-    """Feed clipboard text to a fixed OS command through UTF-8 stdin."""
+    """Feed clipboard text to a fixed OS command through UTF-8 stdin.
+
+    stderr goes to an anonymous file and stdout nowhere, never a pipe:
+    ``xclip``/``xsel``/``wl-copy`` fork a child that keeps serving the
+    clipboard and inherits both, so a pipe would hold ``run`` until timeout.
+    """
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
-            list(command),
-            input=text,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=_COMMAND_TIMEOUT_S,
-            check=False,
-            close_fds=True,
-            creationflags=NO_WINDOW_CREATIONFLAGS,
-        )
+        with tempfile.TemporaryFile() as err:
+            completed = subprocess.run(  # noqa: S603 - fixed, non-shell OS command
+                list(command),
+                input=text.encode("utf-8"),
+                env=_utf8_env(),
+                stdout=subprocess.DEVNULL,
+                stderr=err,
+                timeout=_COMMAND_TIMEOUT_S,
+                check=False,
+                close_fds=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            err.seek(0)
+            detail = err.read(4096).decode("utf-8", errors="replace").strip()
     except (OSError, subprocess.SubprocessError) as exc:
         log.warning("clipboard: native copy command unavailable (%s)", exc)
         return False
     if completed.returncode != 0:
-        detail = (completed.stderr or "").strip()
         log.warning(
             "clipboard: native copy command failed with exit %d%s",
             completed.returncode,
@@ -214,12 +258,12 @@ def _run_command(command: Sequence[str], text: str) -> bool:
 
 
 def _write_linux(text: str) -> bool:
-    """Use the available Wayland/X11 clipboard command, if any."""
-    candidates = (
+    """Use the clipboard command for this session (Wayland or X11), if any."""
+    candidates = _session_order((
         ("wl-copy", ["wl-copy", "--type", "text/plain;charset=utf-8"]),
         ("xclip", ["xclip", "-selection", "clipboard", "-in"]),
         ("xsel", ["xsel", "--clipboard", "--input"]),
-    )
+    ))
     for executable, command in candidates:
         resolved = shutil.which(executable)
         if resolved:

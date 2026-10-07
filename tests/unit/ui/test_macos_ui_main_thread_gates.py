@@ -81,11 +81,13 @@ def test_desktop_build_overlay_surface_on_macos(monkeypatch) -> None:
 
     monkeypatch.setattr("sys.platform", "darwin")
     spawned: list[float] = []
-    monkeypatch.setattr(
-        SubprocessBarOverlay,
-        "start_in_thread",
-        lambda self, timeout=3.0: spawned.append(timeout),
-    )
+
+    def fake_start(self, timeout=3.0):
+        # A started host owns a process; the builder checks for it.
+        spawned.append(timeout)
+        self._proc = object()
+
+    monkeypatch.setattr(SubprocessBarOverlay, "start_in_thread", fake_start)
     app = DesktopApp.__new__(DesktopApp)  # bypass heavy __init__
     app.cfg = SimpleNamespace(
         ui=SimpleNamespace(

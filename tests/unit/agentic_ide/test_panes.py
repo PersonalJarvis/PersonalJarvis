@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.agentic_ide import session as session_mod
-from jarvis.agentic_ide.session import MAX_TERMINALS, Registry, SessionError
+from jarvis.agentic_ide.session import Registry, SessionError
 from tests.fakes.fake_pty_manager import FakePtyManager
 
 
@@ -175,10 +175,13 @@ async def test_the_new_pane_starts_pending_and_addressable(
 
 
 # --------------------------------------------------------------------- limits
-async def test_adding_past_the_limit_is_refused(registry: Registry, tmp_path: Path) -> None:
-    await _open(registry, tmp_path, MAX_TERMINALS)
-    with pytest.raises(SessionError, match="maximum"):
-        await registry.add_terminal(direction="right")
+async def test_adding_past_sixteen_is_never_refused(registry: Registry, tmp_path: Path) -> None:
+    """There is no pane limit: the seventeenth pane splits off like any other."""
+    await _open(registry, tmp_path, 16)
+    term = await registry.add_terminal(anchor="T1", direction="right")
+    assert registry.session is not None
+    assert len(registry.session.terminals) == 17
+    assert registry.session.find(term.name) is term
 
 
 async def test_an_unknown_anchor_is_refused(registry: Registry, tmp_path: Path) -> None:
@@ -242,14 +245,15 @@ async def test_closing_a_whole_column_repacks_the_columns(
     assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0)]
 
 
-async def test_closing_the_last_pane_leaves_an_empty_workspace(
+async def test_closing_the_last_pane_closes_the_workspace(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Allowed on purpose: the grid then offers to open a fresh terminal."""
-    await _open(registry, tmp_path, 1)
+    """Closing the final pane must not leave a blank workspace on screen."""
+    session = await _open(registry, tmp_path, 1)
     await registry.close_terminal("T1")
-    assert registry.session is not None
-    assert registry.session.terminals == []
+    assert registry.session is None
+    assert registry.get(session.id) is None
+    assert registry.active_id is None
 
 
 async def test_closing_an_unknown_pane_names_the_real_ones(
@@ -303,7 +307,7 @@ async def test_a_closed_pane_refuses_further_prompts(registry: Registry, tmp_pat
 
 async def test_a_reopened_call_sign_is_a_fresh_pane(registry: Registry, tmp_path: Path) -> None:
     """Closing T1 and splitting again must not resurrect the old transcript."""
-    await _open(registry, tmp_path, 1)
+    await _open(registry, tmp_path, 2)
     await registry.attach("T1", 80, 24, _noop, _noop_exit)
     registry.session.terminals[0].transcript.feed("old work\r\n")
     await registry.close_terminal("T1")

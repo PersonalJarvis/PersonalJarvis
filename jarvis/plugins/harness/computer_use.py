@@ -317,6 +317,16 @@ class ComputerUseHarness:
                     if chunk.is_final:
                         final_exit_code = chunk.exit_code
                         final_stdout = chunk.stdout or ""
+                        if not final_stdout and chunk.exit_code != 0:
+                            # A mission stopped by a macOS permission or a system
+                            # dialog keeps its sentence where run control reads the
+                            # outcome (the "[cu] blocked_permission" line sits in
+                            # stderr, which the registry does not store).
+                            from jarvis.voice.action_phrases import (  # noqa: PLC0415
+                                cu_blocked_permission_sentence,
+                            )
+
+                            final_stdout = cu_blocked_permission_sentence(chunk.stderr) or ""
                         if chunk.exit_code == _CANCEL_EXIT_CODE:
                             end_reason = "cancelled"
                         elif chunk.exit_code != 0:

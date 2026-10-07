@@ -156,6 +156,12 @@ def _lexical_skeleton(source: str) -> str:
     return "\n".join(out)
 
 
+def read_source(root: str, rel: str) -> str:
+    """The text of ``rel`` under ``root`` within the same bounds, or ""."""
+    path = _safe_path(root, rel)
+    return _read(path) if path is not None else ""
+
+
 def skeleton_for(root: str, rel: str, *, max_chars: int = MAX_CHARS_PER_FILE) -> str:
     """A bounded outline of ``rel`` under ``root``. "" when unavailable."""
     if max_chars <= 0:
@@ -163,12 +169,16 @@ def skeleton_for(root: str, rel: str, *, max_chars: int = MAX_CHARS_PER_FILE) ->
     path = _safe_path(root, rel)
     if path is None:
         return ""
-    source = _read(path)
-    if not source:
+    return outline_source(rel, _read(path), max_chars=max_chars)
+
+
+def outline_source(rel: str, source: str, *, max_chars: int = MAX_CHARS_PER_FILE) -> str:
+    """The outline of already-read ``source``; ``rel`` only decides the parser."""
+    if max_chars <= 0 or not source:
         return ""
 
     out = ""
-    if path.suffix in {".py", ".pyi"}:
+    if Path(rel).suffix in {".py", ".pyi"}:
         out = _python_skeleton(source)
     if not out:
         out = _lexical_skeleton(source)
@@ -211,6 +221,8 @@ __all__ = [
     "MAX_CHARS_PER_FILE",
     "MAX_CHARS_TOTAL",
     "MAX_SKELETON_FILES",
+    "outline_source",
+    "read_source",
     "skeleton_for",
     "skeletons",
 ]

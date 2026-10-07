@@ -63,7 +63,7 @@ def quick_batch(monkeypatch):
 
 
 @pytest.fixture
-def live():
+async def live():
     call = FakeLiveCall()
     live_runtime.register(call)
     try:
@@ -155,17 +155,17 @@ async def test_simultaneous_results_are_one_report_and_later_ones_follow(live):
 
 
 @pytest.mark.asyncio
-async def test_unvoiced_report_is_offered_again_then_handed_to_the_next_call(live):
+async def test_unvoiced_report_waits_for_the_next_call_without_repeating_inference(live):
     pipe, _, _ = browser_call_pipeline()
     await pipe._on_announcement(result())
     await settle()
     assert len(live.calls) == 1
-    limit = pipeline_mod._LIVE_REPLY_MAX_ATTEMPTS
-    for failures in range(1, limit + 1):
-        live.finish_report(voiced=False)
+    live.finish_report(voiced=False)
+    pipe.live_call_paused(live)
+    for _ in range(pipeline_mod._LIVE_REPLY_MAX_ATTEMPTS):
         pipe.live_call_paused(live)
         await asyncio.sleep(0.2)
-        assert len(live.calls) == min(failures + 1, limit)
+    assert len(live.calls) == 1
     assert pipe._agent_reply_inflight is None
     assert len(pipe._agent_reply_retries) == 1
 
@@ -271,7 +271,7 @@ async def test_muted_live_call_keeps_the_result_until_unmuted(live):
     assert len(live.calls) == 1
 
 
-def test_desktop_realtime_handle_still_wins_over_a_live_call(live):
+async def test_desktop_realtime_handle_still_wins_over_a_live_call(live):
     pipe, _, _ = browser_call_pipeline()
     handle = object()
     pipe._active_realtime_handle = handle
@@ -280,7 +280,7 @@ def test_desktop_realtime_handle_still_wins_over_a_live_call(live):
     assert pipe._realtime_voice_handle() is live
 
 
-def test_a_desktop_driven_live_session_keeps_the_desktop_bookkeeping():
+async def test_a_desktop_driven_live_session_keeps_the_desktop_bookkeeping():
     pipe, _, _ = browser_call_pipeline()
     desktop = FakeLiveCall("desktop-call")
     desktop.surface = "desktop"

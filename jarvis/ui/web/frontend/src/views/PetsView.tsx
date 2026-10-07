@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useReducedMotion } from "framer-motion";
 import {
@@ -30,7 +30,7 @@ import {
 import { useRestartApp } from "@/hooks/useRestartApp";
 import { useT } from "@/i18n";
 import { NO_PET_ID, PET_STATES } from "@/lib/petStates";
-import type { Pet } from "@/lib/petsApi";
+import { previewPetScale, type Pet } from "@/lib/petsApi";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { KeybindRow, formatCombo } from "@/views/settings/KeybindRow";
@@ -55,7 +55,8 @@ const HERO_SPRITE_PX = 168;
 const TILE_SPRITE_PX = 96;
 const SCALE_MIN = 0.5;
 const SCALE_MAX = 2;
-const SCALE_STEP = 0.1;
+/** Fine enough that the thumb glides; the pet itself grows in whole pixels. */
+const SCALE_STEP = 0.01;
 
 function useStateCycle(enabled: boolean): number {
   const [index, setIndex] = useState(0);
@@ -270,6 +271,7 @@ export function PetsView() {
                 <CustomizePanel
                   scale={data.scale}
                   bubble={data.bubble}
+                  stripAlways={data.strip_always}
                   keybinds={keybinds}
                 />
               )}
@@ -314,7 +316,7 @@ export function PetsView() {
                       onSelect={() => choose(NO_PET_ID)}
                       selectedLabel={t("pets.selected")}
                     >
-                      <PetControlStripPreview size="sm" />
+                      <PetControlStripPreview size="sm" companion />
                     </PetTile>
                   </li>
                   {data.pets.map((pet) => (
@@ -414,7 +416,7 @@ function ActivePetCard({
             {stateLabel}
           </span>
         )}
-        <PetControlStripPreview />
+        <PetControlStripPreview companion />
       </div>
 
       <div className="flex min-w-0 flex-col">
@@ -448,23 +450,83 @@ function ActivePetCard({
 function CustomizePanel({
   scale,
   bubble,
+  stripAlways,
   keybinds,
 }: {
   scale: number;
   bubble: boolean;
+  stripAlways: boolean;
   keybinds: ReturnType<typeof useKeybinds>;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const save = useSavePetSettings();
   const [size, setSize] = useState(scale);
+  // While the thumb moves the pet follows it live: one preview request at a
+  // time, always the newest value, nothing written. The release saves.
+  const dragging = useRef(false);
+  const slider = useRef<HTMLInputElement>(null);
+  const preview = useRef<{ inFlight: Promise<void> | null; next: number | null; sent: boolean }>({
+    inFlight: null,
+    next: null,
+    sent: false,
+  });
 
-  // Follow the server (another window, a failed save) whenever it moves.
-  useEffect(() => setSize(scale), [scale]);
+  // Follow the server (another window, a failed save), but never yank the
+  // thumb out from under a drag.
+  useEffect(() => {
+    if (!dragging.current) setSize(scale);
+  }, [scale]);
 
-  function commitSize(next: number) {
-    const rounded = Math.round(next * 10) / 10;
-    if (rounded === scale) return;
+  function previewSize(next: number) {
+    const queue = preview.current;
+    queue.next = Math.round(next * 100) / 100;
+    if (queue.inFlight) return;
+    const pump = async () => {
+      while (queue.next !== null) {
+        const value = queue.next;
+        queue.next = null;
+        queue.sent = true;
+        try {
+          await previewPetScale(value);
+        } catch {
+          // A missed drag step is harmless: the release saves the final size
+          // and reports any error then.
+        }
+      }
+    };
+    queue.inFlight = pump().finally(() => {
+      queue.inFlight = null;
+    });
+  }
+
+  // The release can happen anywhere on screen, not only over the track.
+  function startDrag() {
+    window.addEventListener(
+      "pointerup",
+      () => {
+        if (slider.current) void commitSize(Number(slider.current.value));
+      },
+      { once: true },
+    );
+  }
+
+  function changeSize(next: number) {
+    dragging.current = true;
+    setSize(next);
+    previewSize(next);
+  }
+
+  async function commitSize(next: number) {
+    dragging.current = false;
+    const rounded = Math.round(next * 100) / 100;
+    const queue = preview.current;
+    queue.next = null;
+    const previewed = queue.sent;
+    queue.sent = false;
+    // The save must land after the last preview, or that preview would win.
+    if (queue.inFlight) await queue.inFlight;
+    if (rounded === scale && !previewed) return;
     save.mutate(
       { scale: rounded },
       {
@@ -491,17 +553,19 @@ function CustomizePanel({
         <p className="mt-0.5 text-xs text-muted-foreground">{t("pets.size_hint")}</p>
         <input
           id="pets-size"
+          ref={slider}
           type="range"
           data-testid="pets-size"
           min={SCALE_MIN}
           max={SCALE_MAX}
           step={SCALE_STEP}
           value={size}
-          disabled={save.isPending}
-          onChange={(event) => setSize(Number(event.target.value))}
-          onMouseUp={() => commitSize(size)}
-          onKeyUp={() => commitSize(size)}
-          onTouchEnd={() => commitSize(size)}
+          onChange={(event) => changeSize(Number(event.target.value))}
+          onPointerDown={startDrag}
+          onKeyUp={(event) => void commitSize(Number(event.currentTarget.value))}
+          onBlur={(event) => {
+            if (dragging.current) void commitSize(Number(event.currentTarget.value));
+          }}
           className="mt-3 w-full accent-primary disabled:opacity-50"
         />
       </div>
@@ -518,6 +582,27 @@ function CustomizePanel({
           onCheckedChange={(next) =>
             save.mutate(
               { bubble: next },
+              {
+                onError: (error) =>
+                  pushToast("error", t("pets.save_error").replace("{0}", (error as Error).message)),
+              },
+            )
+          }
+        />
+      </div>
+      <div className="flex items-center justify-between gap-4 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">{t("pets.strip_label")}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t("pets.strip_hint")}</p>
+        </div>
+        <Switch
+          checked={stripAlways}
+          disabled={save.isPending}
+          aria-label={t("pets.strip_label")}
+          data-testid="pets-strip-always"
+          onCheckedChange={(next) =>
+            save.mutate(
+              { strip_always: next },
               {
                 onError: (error) =>
                   pushToast("error", t("pets.save_error").replace("{0}", (error as Error).message)),

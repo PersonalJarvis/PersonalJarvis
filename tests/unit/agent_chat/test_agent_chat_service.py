@@ -17,6 +17,7 @@ from jarvis.agent_chat.catalog import rows_for
 from jarvis.agent_chat.service import AgentChatService, SessionBusy
 from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.protocols import BrainDelta, BrainRequest
+from jarvis.core.response_style import CONVERSATIONAL_RESPONSE_STYLE
 from jarvis.ui.web.agent_chat_routes import router
 
 
@@ -53,6 +54,57 @@ def scripted(monkeypatch: pytest.MonkeyPatch):
     )
     # Catalog has no row for fakeprov; supports_api_runner() still says yes.
     return ScriptedBrain
+
+
+@pytest.mark.parametrize(
+    ("user_text", "reply"),
+    [
+        ("What is two plus two?", "Four."),
+        (
+            "Explain all the steps in detail and include the code.",
+            "## Steps\n" + "Explain the next step completely.\n" * 100
+            + "\n```python\nprint('complete')\n```",
+        ),
+        (
+            "What happened to the upload?",
+            "The draft is saved, but the upload failed because the connection expired. "
+            "Reconnect the account to finish uploading.",
+        ),
+    ],
+    ids=["brief-answer", "requested-detail", "partial-failure"],
+)
+async def test_api_stream_preserves_complete_replies_under_the_short_default(
+    tmp_path: Path, scripted, user_text: str, reply: str,
+) -> None:
+    scripted.script = [[BrainDelta(content=reply[:12]), BrainDelta(content=reply[12:])]]
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    async def no_approval(*args):
+        pytest.fail("A text-only turn must not request approval")
+
+    store = AgentChatStore(":memory:")
+    try:
+        session = store.create_session(
+            provider="fakeprov", model="m", effort="high", cwd=str(tmp_path)
+        )
+        handle = runner_api.TurnHandle(
+            session=session, turn_id="style-test", emit=emit, request_approval=no_approval,
+            cancel=asyncio.Event(), output_language="es",
+        )
+        await runner_api.run_api_turn(handle, user_text)
+        sent = scripted.seen[0]
+        assert CONVERSATIONAL_RESPONSE_STYLE in sent.system
+        assert "Respond in this language: es" in sent.system
+        assert sent.messages[-1].content == user_text
+        assert sent.max_tokens == runner_api.MAX_TOKENS
+        assert "".join(e["payload"]["text"] for e in events if e["kind"] == "text_delta") == reply
+        assert [e["payload"]["text"] for e in events if e["kind"] == "assistant_text"] == [reply]
+        assert events[-1]["payload"]["status"] == "done"
+    finally:
+        store.close()
 
 
 async def _drain(q: asyncio.Queue, until_kind: str, timeout: float = 5.0) -> list[dict[str, Any]]:
@@ -184,6 +236,63 @@ def test_cancel_ends_the_turn(tmp_path: Path, scripted):
         assert not (tmp_path / "a").exists()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_setup_releases_pending_reservation(
+    tmp_path: Path, scripted, monkeypatch: pytest.MonkeyPatch,
+):
+    svc = AgentChatService(AgentChatStore(":memory:"))
+    session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+    original_emit = svc._emit
+    fail_once = True
+
+    async def failing_emit(session_id, event):
+        nonlocal fail_once
+        await original_emit(session_id, event)
+        if fail_once and event["kind"] == "turn_started":
+            fail_once = False
+            raise RuntimeError("start recorder failed")
+
+    monkeypatch.setattr(svc, "_emit", failing_emit)
+
+    async def fake_runner(_handle, _text):
+        return None
+
+    with pytest.raises(RuntimeError, match="start recorder failed"):
+        await svc.send(session.session_id, "First task", control_runner=fake_runner)
+    assert not svc.is_running(session.session_id)
+    assert svc.running_session_ids() == []
+    assert svc.store.list_events(session.session_id)[-1]["payload"]["status"] == "error"
+
+    await svc.send(session.session_id, "Next task", control_runner=fake_runner)
+    await svc.wait_turn(session.session_id)
+    assert not svc.is_running(session.session_id)
+
+
+async def test_delivered_incoming_receipt_releases_pre_admission_reservation(
+    tmp_path: Path, scripted,
+):
+    from jarvis.society.delivery import IncomingMessage
+
+    svc = AgentChatService(AgentChatStore(":memory:"))
+    session = svc.create_session(provider="fakeprov", cwd=str(tmp_path))
+    incoming = IncomingMessage(
+        message_id="message-1", sender_id="scout", sender_name="Scout",
+        sender_kind="agent", text="Already delivered", prompt="Already delivered",
+        trace_id="trace-1", status="delivered", turn_id="prior-turn",
+    )
+
+    assert await svc.send(session.session_id, "Duplicate", incoming=incoming) == "prior-turn"
+    assert not svc.is_running(session.session_id)
+    assert svc.running_session_ids() == []
+
+    async def fake_runner(_handle, _text):
+        return None
+
+    await svc.send(session.session_id, "New task", control_runner=fake_runner)
+    await svc.wait_turn(session.session_id)
+    assert not svc.is_running(session.session_id)
 
 
 def test_provider_error_is_reported_not_raised(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -689,3 +798,32 @@ def test_allow_always_on_a_kit_that_handles_it_does_not_flip_the_mode(
         assert remembered == [(session.session_id, "RunCommand", {"command": "echo x"})]
 
     asyncio.run(scenario())
+
+
+def test_a_new_process_closes_turns_a_restart_left_open(tmp_path: Path) -> None:
+    """A turn whose runner died with the old process ends as failed, not Working for ever."""
+    db = tmp_path / "agent_chat.db"
+    store = AgentChatStore(db)
+    open_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
+    done_chat = store.create_session(provider="claude-api", model="m", effort="medium", cwd=str(tmp_path))
+    for sid, ts in ((open_chat.session_id, 1_000), (done_chat.session_id, 1_000)):
+        store.append_event(sid, {"kind": "turn_started", "ts_ms": ts, "payload": {"turn_id": f"t-{sid}"}})
+        store.append_event(sid, {"kind": "tool_call", "ts_ms": ts + 500, "payload": {"turn_id": f"t-{sid}", "call_id": "c"}})
+    store.append_event(
+        done_chat.session_id,
+        {"kind": "turn_finished", "ts_ms": 2_000, "payload": {"turn_id": f"t-{done_chat.session_id}", "status": "done"}},
+    )
+
+    AgentChatService(AgentChatStore(db))
+
+    sealed = store.list_events(open_chat.session_id)[-1]
+    assert sealed["kind"] == "turn_finished"
+    assert sealed["payload"]["turn_id"] == f"t-{open_chat.session_id}"
+    assert sealed["payload"]["status"] == "error"
+    assert sealed["payload"]["error"]
+    # Stamped with the last thing the chat heard, so the thread list keeps its order.
+    assert sealed["ts_ms"] == 1_500
+    assert sealed["payload"]["duration_ms"] == 500
+    finished = [e for e in store.list_events(done_chat.session_id) if e["kind"] == "turn_finished"]
+    assert len(finished) == 1
+    assert store.open_turns() == []

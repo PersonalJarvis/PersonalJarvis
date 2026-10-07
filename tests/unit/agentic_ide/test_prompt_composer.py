@@ -258,19 +258,21 @@ async def test_the_writer_gets_the_rules_for_the_detected_kind(
     assert "IMPLEMENTATION task" not in seen["system"]
 
 
-async def test_the_writer_gets_candidate_paths_not_file_bodies(
+async def test_the_writer_gets_the_tree_and_a_look_inside_the_top_files(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The tree index names the files; the agent opens them.
+    """Paths alone pointed at the right folder, not the right symbol.
 
-    Sending AST outlines made the writer prompt thousands of characters and
-    looked like reading the repo. The wait was the model, not the disk, but
-    the bodies still have no place on a 1 s path.
+    Since 2026-10-01 Jarvis glances into the top candidates: their outline
+    plus the lines that mention the task reach the writer, so the brief can
+    name ``candidate_shape_ok`` instead of "the wake check".
     """
     provider = Path(workspace.folder) / "jarvis" / "plugins" / "wake" / "vosk_kws_provider.py"
     provider.write_text(
         '"""Vosk keyword spotting."""\n\n\n'
-        "def candidate_shape_ok(span: float) -> bool:\n    return True\n",
+        "def candidate_shape_ok(span: float) -> bool:\n"
+        "    # the vosk wake gate\n"
+        "    return True\n",
         encoding="utf-8",
     )
     _prime(workspace)
@@ -288,17 +290,42 @@ async def test_the_writer_gets_candidate_paths_not_file_bodies(
 
     assert "WORKSPACE TREE" in seen["user"]
     assert "jarvis/plugins/wake/" in seen["user"]
-    assert "vosk_kws_provider.py" in seen["user"]
-    assert "FILE OUTLINES" not in seen["user"]
-    assert "candidate_shape_ok" not in seen["user"]
+    assert "FILE OUTLINES AND TASK-RELEVANT LINES" in seen["user"]
+    assert "candidate_shape_ok" in seen["user"]
+    assert "L5: # the vosk wake gate" in seen["user"]
     # House rules stay out: the receiving agent already has them.
     assert "HOUSE RULES" not in seen["user"]
 
 
-def test_the_writer_does_not_read_file_bodies() -> None:
-    """Bodies were the over-sync. Paths come from the in-memory tree."""
-    assert prompt_composer._OUTLINE_FILES == 0  # noqa: SLF001
-    assert prompt_composer._OUTLINE_CHARS == 0  # noqa: SLF001
+async def test_looking_into_files_widens_the_budget_by_task_kind(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Excerpts are input the writer must read; a bare-rewrite budget would
+    send every looked-at brief to the fallback. Only when something was read."""
+    _prime(workspace)
+
+    async def _hang(**_kwargs: object) -> str:
+        import asyncio
+
+        await asyncio.sleep(60)
+        return "## Task\nNever."
+
+    monkeypatch.setattr(prompt_composer, "FAST_BUDGET_S", 0.05)
+    monkeypatch.setattr(prompt_composer, "PEEK_EXTRA_S", {"review": 0.2})
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _hang)
+
+    result = await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "fallback"
+    assert "after 0.25s" in result.note
+
+
+def test_a_deep_look_gets_more_time_than_a_glance() -> None:
+    extra = prompt_composer.PEEK_EXTRA_S
+    assert extra["investigate"] > extra["implement"] > extra["neutral"] > 0
+    assert prompt_composer.FAST_BUDGET_S + max(extra.values()) <= 4.5
 
 
 async def test_a_slow_writer_ships_the_plain_brief_inside_the_fast_budget(
@@ -315,6 +342,7 @@ async def test_a_slow_writer_ships_the_plain_brief_inside_the_fast_budget(
         return "## Task\nNever."
 
     monkeypatch.setattr(prompt_composer, "FAST_BUDGET_S", 0.05)
+    monkeypatch.setattr(prompt_composer, "PEEK_EXTRA_S", {})
     monkeypatch.setattr(prompt_composer, "COMPOSE_TIMEOUT_S", 90.0)
     monkeypatch.setattr(prompt_composer, "_llm_compose", _hang)
 

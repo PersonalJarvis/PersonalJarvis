@@ -3,18 +3,39 @@ process) and the renderer sidecar.
 
 One JSON object per line on the sidecar's stdin::
 
-    {"cmd": "show", "hint": "Esc to cancel"}   # fade the border in
+    {"cmd": "show", "hint": "Esc to cancel",   # fade the border in; with
+     "pointer": true}                          # pointer, Jarvis has the mouse
+    {"cmd": "pointer_press"}                   # the agent pointer clicks
     {"cmd": "hide"}                            # fade the border out
     {"cmd": "blank"}                           # hide INSTANTLY (capture guard)
     {"cmd": "unblank"}                         # restore after a frame grab
     {"cmd": "quit"}                            # exit the sidecar
     {"cmd": "snap", "monitor": [l, t, w, h],   # appshot shutter effect:
      "rect": [fx, fy, fw, fh],                 # flash the captured rect and
-     "thumb": "<base64 jpeg>"}                 # fly its thumbnail to a corner
+     "thumb": "<base64 jpeg>",                 # fly its thumbnail to a corner,
+     "hint": "Click to edit · Drag to share"}  # where it rests as a card
+    {"cmd": "snap_image", "image": "<b64>",    # the finished (redacted) picture
+     "id": "<appshot id>"}                     # a drag from the card hands out;
+                                               # the newest card without an id
+                                               # (or the card with it) takes it
+    {"cmd": "card", "thumb": "<b64>",          # the editor closed: the picture
+     "id": "<appshot id>", "from": [x,y,w,h]}  # comes back (flies from "from")
+    {"cmd": "card_status", "text": "Copied",   # a short line on that card
+     "id": "<appshot id>"}
+
+Cards stack in the corner: a new one lands at the bottom and the older ones
+move up; at most ``MAX_CARDS`` stay, the oldest leaves first.
 
 The sidecar answers each command with one JSON line on stdout::
 
     {"ok": "<cmd>"}
+
+and reports what the user does with the resting card::
+
+    {"event": "card", "open": true|false}      # any card up? keep the sidecar alive
+    {"event": "snap_open", "id": "<appshot>"}  # a card was clicked: edit it
+    {"event": "card_action", "action": "copy", # a card's hover button
+     "id": "<appshot>"}
 
 and exits on stdin EOF (parent death) even without a ``quit``. Everything
 is best-effort: the controller treats a missing/late ack as "sidecar gone"
@@ -32,10 +53,39 @@ CMD_BLANK = "blank"
 CMD_UNBLANK = "unblank"
 CMD_QUIT = "quit"
 CMD_SNAP = "snap"
+CMD_SNAP_IMAGE = "snap_image"
+#: Put a picture straight into the corner card (the editor closed).
+CMD_CARD = "card"
+#: A short status line on the card ("Copied", "Saved to Downloads").
+CMD_CARD_STATUS = "card_status"
+#: Jarvis is about to press a mouse button: the agent pointer dips and rings.
+CMD_POINTER_PRESS = "pointer_press"
 
 ALL_COMMANDS = frozenset(
-    {CMD_SHOW, CMD_HIDE, CMD_BLANK, CMD_UNBLANK, CMD_QUIT, CMD_SNAP}
+    {
+        CMD_SHOW,
+        CMD_HIDE,
+        CMD_BLANK,
+        CMD_UNBLANK,
+        CMD_QUIT,
+        CMD_SNAP,
+        CMD_SNAP_IMAGE,
+        CMD_CARD,
+        CMD_CARD_STATUS,
+        CMD_POINTER_PRESS,
+    }
 )
+
+EVENT_CARD = "card"
+EVENT_SNAP_OPEN = "snap_open"
+#: A hover button on the card was pressed (``action``: one of ``CARD_ACTIONS``).
+EVENT_CARD_ACTION = "card_action"
+#: What the main process does for the card; pin and close stay in the sidecar.
+CARD_ACTIONS = frozenset({"copy", "save", "copy_text"})
+#: How many cards the corner stack holds — as many appshots as the store keeps
+#: (``jarvis.appshot.store.MAX_RECENT``), so every card's buttons still work.
+MAX_CARDS = 5
+ALL_EVENTS = frozenset({EVENT_CARD, EVENT_SNAP_OPEN, EVENT_CARD_ACTION})
 
 #: Sidecar exit code when no usable GUI stack exists (PySide6 missing or
 #: no display). The controller logs it as an expected degradation.
@@ -55,7 +105,7 @@ def decode_command(line: str) -> dict[str, Any] | None:
         return None
     try:
         payload = json.loads(line)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled sidecar line is no message
         return None
     if not isinstance(payload, dict):
         return None
@@ -68,11 +118,27 @@ def encode_ack(cmd: str) -> str:
     return json.dumps({"ok": cmd}) + "\n"
 
 
+def encode_event(event: str, **fields: Any) -> str:
+    """Serialize one sidecar → controller event line."""
+    return json.dumps({"event": event, **fields}) + "\n"
+
+
+def decode_event(line: str) -> dict[str, Any] | None:
+    """Parse one stdout line as a known event; ``None`` otherwise."""
+    try:
+        payload = json.loads(line.strip())
+    except (ValueError, TypeError):  # a garbled line is no event
+        return None
+    if isinstance(payload, dict) and payload.get("event") in ALL_EVENTS:
+        return payload
+    return None
+
+
 def decode_ack(line: str) -> str | None:
     """Parse one ack line from the sidecar; ``None`` if it isn't one."""
     try:
         payload = json.loads(line.strip())
-    except (ValueError, TypeError):
+    except (ValueError, TypeError):  # a garbled line is no ack
         return None
     if isinstance(payload, dict) and isinstance(payload.get("ok"), str):
         return payload["ok"]
@@ -82,14 +148,24 @@ def decode_ack(line: str) -> str | None:
 __all__ = [
     "ALL_COMMANDS",
     "CMD_BLANK",
+    "CMD_CARD",
+    "CMD_CARD_STATUS",
     "CMD_HIDE",
+    "CMD_POINTER_PRESS",
     "CMD_QUIT",
     "CMD_SHOW",
     "CMD_SNAP",
+    "CMD_SNAP_IMAGE",
+    "EVENT_CARD",
+    "EVENT_CARD_ACTION",
+    "EVENT_SNAP_OPEN",
     "CMD_UNBLANK",
     "EXIT_NO_GUI",
+    "MAX_CARDS",
     "decode_ack",
     "decode_command",
     "encode_ack",
+    "decode_event",
     "encode_command",
+    "encode_event",
 ]

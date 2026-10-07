@@ -112,14 +112,14 @@ ceremony was performed.
 # base64 the PKCS#8 PEM and store it as an encrypted GitHub secret.
 # The key never touches the repository.
 base64 -w0 /tmp/wave2_offline.key | \
-    gh secret set WAVE2_OFFLINE_KEY_B64 --repo PersonalJarvis/PersonalJarvis
+    gh secret set WAVE2_OFFLINE_KEY_B64 --env release-signing --repo PersonalJarvis/PersonalJarvis
 ```
 
 Custody model:
 
 | Property | Value | Why |
 |---|---|---|
-| At-rest location | GitHub Actions secret `WAVE2_OFFLINE_KEY_B64` | GitHub encrypts secrets at rest and injects them only into workflow runs; the private key never appears in the repo tree, not even encrypted. |
+| At-rest location | GitHub Actions secret `WAVE2_OFFLINE_KEY_B64` of the `release-signing` environment | GitHub encrypts secrets at rest and injects them only into the tag-only, maintainer-approved signing job; the private key never appears in the repo tree, not even encrypted. |
 | Encoding | base64 of the PKCS#8 PEM | Lets a multi-line PEM travel as a single secret value; the workflow base64-decodes it into a runner tempfile at sign time. |
 | Passphrase | none | There is no encrypted key file to unlock, so there is no passphrase to store, disclose, or rotate. |
 | Backup | maintainer's password manager | A single offline copy so the key can be re-set if the GitHub secret is ever lost. |
@@ -128,7 +128,7 @@ Custody model:
 
 ```bash
 # Decode the secret value back to a PEM and confirm it is a valid key.
-gh secret list --repo PersonalJarvis/PersonalJarvis   # WAVE2_OFFLINE_KEY_B64 present
+gh secret list --env release-signing --repo PersonalJarvis/PersonalJarvis   # WAVE2_OFFLINE_KEY_B64 present
 base64 -d /tmp/wave2_offline_b64.txt > /tmp/wave2_decoded.key
 openssl pkey -in /tmp/wave2_decoded.key -noout
 # (no output = valid PEM Ed25519 private key)
@@ -243,9 +243,9 @@ Ideally:
 
 ```bash
 base64 -w0 offline-ceremony.key | \
-    gh secret set WAVE2_OFFLINE_KEY_B64 --repo PersonalJarvis/PersonalJarvis
+    gh secret set WAVE2_OFFLINE_KEY_B64 --env release-signing --repo PersonalJarvis/PersonalJarvis
 # Verify:
-gh secret list --repo PersonalJarvis/PersonalJarvis
+gh secret list --env release-signing --repo PersonalJarvis/PersonalJarvis
 # WAVE2_OFFLINE_KEY_B64  Updated 2026-MM-DD HH:MM:SS
 ```
 
@@ -442,7 +442,7 @@ git ls-tree HEAD install/keys/ | grep -F 'PRIVATE KEY' && echo "FAIL: private ke
 git ls-tree HEAD install/tuf/1.root.json
 
 # 4. Private-key secret is set (proves custody)
-gh secret list --repo PersonalJarvis/PersonalJarvis | grep -F 'WAVE2_OFFLINE_KEY_B64'
+gh secret list --env release-signing --repo PersonalJarvis/PersonalJarvis | grep -F 'WAVE2_OFFLINE_KEY_B64'
 
 # 5. TUF root metadata loads + threshold=2
 python -c "from tuf.api.metadata import Metadata; m = Metadata.from_file('install/tuf/1.root.json'); assert m.signed.roles['root'].threshold == 2; print('PASS')"

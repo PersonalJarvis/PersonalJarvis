@@ -179,8 +179,8 @@ def free_positions(taken: Iterable[str], count: int) -> list[str]:
 
 # Number words a person actually speaks for a pane. Capped where speech stops
 # being the way anybody addresses a pane: past twenty nobody says "terminal
-# twenty-three" — they say the digits, which the digit form below covers up to
-# MAX_TERMINALS. One table per language, so a locale can be extended without
+# twenty-three" — they say the digits, which the digit form below covers for
+# any pane number. One table per language, so a locale can be extended without
 # touching the others.
 #
 # The indefinite article is deliberately NOT a number word, in any locale:

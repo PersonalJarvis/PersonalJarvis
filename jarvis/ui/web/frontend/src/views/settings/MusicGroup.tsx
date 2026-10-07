@@ -1,5 +1,3 @@
-import { Check } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useMusicSettings } from "@/hooks/useMusicSettings";
@@ -9,13 +7,19 @@ import {
   type MusicPlaybackMode,
   type MusicService,
 } from "@/lib/musicSettings";
+import {
+  SettingsCard,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+} from "@/views/settings/SettingsLayout";
 
 /**
  * "Music" group inside the Settings view — two connectors, one domain.
  *
  * Which service a request that names no service goes to (Spotify vs YouTube
  * Music), and where YouTube Music plays (the background player window or the
- * browser). Same row-button idiom as the Languages group; both option lists
+ * browser). One row per choice with its dropdown on the right; both option lists
  * are the frozen TS mirror of `music_constants.py`, and the row descriptions
  * say which connectors are actually connected so a choice never looks live
  * when it would do nothing.
@@ -57,99 +61,45 @@ export function MusicGroup() {
   };
 
   return (
-    <div className="mb-8 space-y-4">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("settings_view.music_group_title")}
-      </h3>
-
-      <Section
-        title={t("settings_view.music.service_section")}
-        hint={t("settings_view.music.service_hint")}
-      >
-        {MUSIC_SERVICES.map((service) => (
-          <ChoiceRow
-            key={`service-${service}`}
-            active={settings?.preferred_service === service}
-            disabled={loading}
-            label={t(`settings_view.music.service_labels.${service}`)}
-            description={serviceDescription(service)}
-            onClick={() => void choose({ preferred_service: service })}
-          />
-        ))}
-      </Section>
-
-      <Section
-        title={t("settings_view.music.playback_section")}
-        hint={t("settings_view.music.playback_hint")}
-      >
-        {MUSIC_PLAYBACK_MODES.map((mode) => (
-          <ChoiceRow
-            key={`playback-${mode}`}
-            active={settings?.playback === mode}
-            disabled={loading}
-            label={t(`settings_view.music.playback_labels.${mode}`)}
-            description={playbackDescription(mode)}
-            onClick={() => void choose({ playback: mode })}
-          />
-        ))}
-      </Section>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <div className="mb-1 text-micro text-muted-foreground">
-        {title}
-      </div>
-      <div className="mb-3 text-xs text-muted-foreground">{hint}</div>
-      <ul className="space-y-2">{children}</ul>
-    </div>
-  );
-}
-
-function ChoiceRow({
-  active,
-  disabled,
-  label,
-  description,
-  onClick,
-}: {
-  active: boolean;
-  disabled: boolean;
-  label: string;
-  description: string;
-  onClick: () => void;
-}) {
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-pressed={active}
-        className={cn(
-          "flex w-full items-center gap-3 rounded-lg border px-4 py-3 text-left text-sm transition-colors disabled:opacity-60",
-          active
-            ? "bg-secondary"
-            : "border-border bg-card hover:border-border-strong hover:bg-secondary",
-        )}
-      >
-        <div className="flex-1">
-          <div className="font-medium">{label}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>
-        </div>
-        {active && <Check className="h-4 w-4 shrink-0 text-muted-foreground" />}
-      </button>
-    </li>
+    <SettingsSection title={t("settings_view.music_group_title")}>
+      <SettingsCard>
+        <SettingsRow
+          title={t("settings_view.music.service_section")}
+          description={t("settings_view.music.service_hint")}
+          control={
+            <SettingsSelect
+              value={settings?.preferred_service ?? "auto"}
+              disabled={loading}
+              testId="music-service"
+              ariaLabel={t("settings_view.music.service_section")}
+              onValueChange={(service) => void choose({ preferred_service: service as MusicService })}
+              options={MUSIC_SERVICES.map((service) => ({
+                value: service,
+                label: t(`settings_view.music.service_labels.${service}`),
+                description: serviceDescription(service),
+              }))}
+            />
+          }
+        />
+        <SettingsRow
+          title={t("settings_view.music.playback_section")}
+          description={t("settings_view.music.playback_hint")}
+          control={
+            <SettingsSelect
+              value={settings?.playback ?? "background"}
+              disabled={loading}
+              testId="music-playback"
+              ariaLabel={t("settings_view.music.playback_section")}
+              onValueChange={(mode) => void choose({ playback: mode as MusicPlaybackMode })}
+              options={MUSIC_PLAYBACK_MODES.map((mode) => ({
+                value: mode,
+                label: t(`settings_view.music.playback_labels.${mode}`),
+                description: playbackDescription(mode),
+              }))}
+            />
+          }
+        />
+      </SettingsCard>
+    </SettingsSection>
   );
 }

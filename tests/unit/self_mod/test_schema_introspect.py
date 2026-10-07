@@ -38,7 +38,7 @@ class TestReach:
         assert "stt.bias_prompt" in paths
 
     def test_literal_enum_field_is_mutable(self) -> None:
-        # ui.language is Literal["en","de","es"] — a constrained string, fully
+        # ui.language is Literal["en","de","es","zh"] — a constrained string, fully
         # settable by voice. A Literal must count as a primitive leaf.
         paths = _paths(introspect_mutable_specs())
         assert "ui.language" in paths
@@ -188,7 +188,7 @@ class TestDescribeField:
     def test_enum_literal(self) -> None:
         d = describe_field("ui.language")
         assert d["value_type"] == "enum"
-        assert set(d["allowed_values"]) == {"en", "de", "es"}
+        assert set(d["allowed_values"]) == {"en", "de", "es", "zh"}
 
     def test_undeclared_extra_key_is_graceful(self) -> None:
         # ui.theme is an extra="allow" key — no declared type to read.
@@ -221,7 +221,7 @@ class TestDescribeField:
     def test_enum_literal_lists_allowed_values(self) -> None:
         d = describe_field("ui.language")
         assert d["value_type"] == "enum"
-        assert set(d["allowed_values"]) == {"en", "de", "es"}
+        assert set(d["allowed_values"]) == {"en", "de", "es", "zh"}
 
     def test_undeclared_extra_key_is_graceful(self) -> None:
         # A key under an extra="allow" section that the schema does not declare

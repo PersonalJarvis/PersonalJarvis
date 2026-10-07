@@ -51,7 +51,7 @@ HOLDING_PAGE_FOREGROUND: dict[str, str] = {
 #: ``--muted-foreground``: the holding page's secondary line.
 HOLDING_PAGE_MUTED: dict[str, str] = {
     "dark": "#a1a1a1",
-    "light": "#666666",
+    "light": "#545454",
 }
 
 _DEFAULT_THEME: Theme = "dark"

@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import os
 import re
 import shlex
@@ -93,7 +94,7 @@ from . import (
     remote,
     resume_store,
 )
-from .activity import NO_READING, Reading, has_work_behind_it, observed
+from .activity import NO_READING, Reading, has_work_behind_it, observed, record_work_start
 from .agent_sessions import (
     ResumeHandle,
     can_fork,
@@ -111,6 +112,7 @@ from .names import free_positions, normalize, position_of, resolve
 from .terminal_input import (
     THEME_COLOURS,
     TerminalQueryResponder,
+    TerminalQueryWatch,
     classify_terminal_input,
     is_pointer_noise_only,
 )
@@ -215,6 +217,22 @@ def accepts_prompts(agent: str) -> bool:
     return spec is not None and spec.is_coding_agent and spec.accepts_typed_prompts
 
 
+def steers_mid_turn(agent: str) -> bool:
+    """Does a line submitted while this agent works reach its running turn?"""
+    spec = workspace_agents.get_agent(agent)
+    return accepts_prompts(agent) and spec is not None and spec.steers_mid_turn
+
+
+#: How a delivery treats a pane that is in a turn (``Registry.send_prompt``).
+WHEN_BUSY = ("refuse", "steer", "interrupt")
+#: How long an interrupt-and-resume waits for the turn to end after Stop.
+INTERRUPT_SETTLE_S = 15.0
+_INTERRUPT_POLL_S = 0.5
+#: Stop for a running turn: the key every coding CLI's own hint names
+#: ("esc to interrupt"). Ctrl+C is not used: pressed twice it quits some CLIs.
+_INTERRUPT_KEY = "\x1b"
+
+
 def _unavailable(agent: str) -> str:
     """Why this pane cannot open, said in the terms of what it would have run.
 
@@ -232,28 +250,37 @@ def _unavailable(agent: str) -> str:
     return f"{pretty} cannot open: this machine has no shell Jarvis can start."
 
 
-# How many coding sessions one workspace may hold. Every pane is a full CLI
-# process with its own pseudo-terminal and socket, so this is a resource
-# ceiling, not a layout rule. It matches the largest grid the workspace draws
-# (MAX_GRID_COLUMNS x MAX_GRID_ROWS); past it, a second workspace tab is the
-# better home. Voice call-signs cover it (see `names._NUMBER_WORDS`). Mirrored
-# by the frontend's `workspaceDocking.ts`, which reads the count from the state.
-MAX_GRID_COLUMNS = 4
-MAX_GRID_ROWS = 4
-MAX_TERMINALS = MAX_GRID_COLUMNS * MAX_GRID_ROWS
+# A workspace holds as many panes as the user opens, and they may be arranged
+# in any shape: there is no pane limit and no grid limit (maintainer request,
+# 2026-10-02 — a full workspace and a refused drop were both reported as the
+# product getting in the way). What remains is a guard on ONE request: a
+# misheard "open 500 terminals" must not start 500 CLI processes in one go.
+# Opening panes one request after another is never refused. Mirrored by
+# `MAX_PANES_PER_REQUEST` in the frontend's ``workspaceDocking.ts``.
+MAX_PANES_PER_REQUEST = 100
+
+# How wide the even grid prefers to be. Up to this many columns squared it
+# grows a row per this many panes; past that it stays roughly square so every
+# pane keeps both a usable width and a usable height. A preference for
+# `balanced_columns` and the anchor-less add, never a limit on the layout.
+BALANCED_GRID_COLUMNS = 4
 
 
 def balanced_columns(count: int) -> int:
     """Columns of the even grid ``count`` panes are dealt into, row by row.
 
     Two panes read best side by side; three to eight form two rows (six is
-    3 x 2); beyond that the grid grows a row per four panes, never wider than
-    MAX_GRID_COLUMNS. Mirrored by `balancedLayout` in ``workspaceDocking.ts``.
+    3 x 2); up to sixteen the grid grows a row per four panes; beyond that it
+    grows in both directions, staying about square. Mirrored by
+    `balancedColumns` in ``workspaceDocking.ts``.
     """
     if count <= 2:
         return max(1, count)
-    rows = 2 if count <= 2 * MAX_GRID_COLUMNS else -(-count // MAX_GRID_COLUMNS)
-    return min(MAX_GRID_COLUMNS, -(-count // rows))
+    wide = BALANCED_GRID_COLUMNS
+    if count > wide * wide:
+        return math.ceil(math.sqrt(count))
+    rows = 2 if count <= 2 * wide else -(-count // wide)
+    return min(wide, -(-count // rows))
 
 
 # How deep a wizard-opened column is filled before the next one is started.
@@ -335,6 +362,12 @@ MAX_WORKSPACES: int | None = None
 # faster than the old fixed delay, and a busy one gets the time it needs.
 _ARRIVAL_POLL_S = 0.2
 _ARRIVAL_WINDOW_S = 3.0
+# After an unconfirmed send, how long to watch for the text surfacing late in
+# the box (a loading CLI that buffered it and dropped the Enter).
+_LATE_ARRIVAL_WINDOW_S = 8.0
+# How long a process's FIRST prompt waits for the composer to paint on a CLI
+# that otherwise skips the typing wait; past it the prompt goes out anyway.
+_FIRST_PROMPT_COMPOSER_WAIT_S = 20.0
 
 Status = str  # "pending" | "live" | "exited" | "error"
 
@@ -901,25 +934,9 @@ def _behind_win_shim(spec: workspace_agents.WorkspaceAgent, shim: str) -> tuple[
 
     ``cmd /c <shim>`` works and stays the fallback, but it wedges a second
     process between the pane and the agent, which costs clean signal delivery
-    and a clean exit. When the entry declares where the real thing sits inside
-    the installed package we skip the shim entirely.
-
-    Two shapes exist and the entry says which: a Node script that needs
-    ``node.exe`` in front of it, and a native executable that is simply run.
-    ``None`` whenever the declared path is not actually there — an install
-    laid out differently than expected must fall back, never fail.
+    and a clean exit (:func:`jarvis.workspace.agents.behind_win_shim`).
     """
-    if spec.win_shim is None:
-        return None
-    target = Path(shim).resolve().parent.joinpath(*spec.win_shim.relative_path)
-    if not target.is_file():
-        return None
-    if spec.win_shim.kind == "exe":
-        return (str(target),)
-    from jarvis.core.path_augment import resolve_node_executable
-
-    node = resolve_node_executable()
-    return (node, str(target)) if node else None
+    return workspace_agents.behind_win_shim(spec, shim)
 
 
 @dataclass(slots=True)
@@ -1153,6 +1170,9 @@ class Terminal:
     last_submit_at: float | None = None
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
+    # Was the last prompt Jarvis sent typed into a RUNNING turn (native
+    # steering) rather than at an idle prompt? Read by the delivery receipt.
+    last_send_mid_turn: bool = False
     # A hand-pressed Enter on an injected prompt is being checked against the
     # screen. Kept explicit so another Enter stays on the verified path rather
     # than being mistaken for a brand-new manual instruction.
@@ -1221,6 +1241,9 @@ class Terminal:
     activity: str = ""
     activity_at: float = 0.0
     activity_since: float = 0.0
+    # The task's start, independent of activity detection and app uptime.
+    work_started_at: float = 0.0
+    work_pty_id: str = ""
     # Monotonic identity for the process currently occupying this pane. The
     # notification watcher outlives PTYs, so it uses this to discard the old
     # process's screen fingerprint before interpreting a replacement process.
@@ -1251,6 +1274,11 @@ class Terminal:
     # into a prompt the agent has long since opened, which is the corruption
     # this exists to prevent. Only live output reaches it.
     queries: TerminalQueryResponder = field(default_factory=TerminalQueryResponder)
+    # When this process's CLI asked its terminal questions (colours, version,
+    # keyboard protocol…) — seen in the output the app receives, so on every
+    # backend including the PTY host. A prompt is not typed into a CLI that is
+    # still asking (``fleet_actions.terminal_questions_settled``).
+    terminal_queries: TerminalQueryWatch = field(default_factory=TerminalQueryWatch)
     # Where this pane's output currently goes, or None while nobody is looking.
     #
     # A mutable slot rather than a closure captured at spawn time, and that is
@@ -1500,6 +1528,8 @@ class Terminal:
             account=self.account,
             account_pinned=self.account_pinned,
             continuation_needed=self.resume_continuation_needed,
+            work_started_at=self.work_started_at,
+            work_pty_id=self.work_pty_id,
             model=self.model,
             effort=self.effort,
             permission_mode=self.permission_mode,
@@ -1913,16 +1943,6 @@ class SessionError(RuntimeError):
     """A request the registry refuses, with a user-facing English message."""
 
 
-class WorkspaceFull(SessionError):
-    """The refusal is the pane cap (``MAX_TERMINALS``), not anything else.
-
-    Its own type because callers answer it differently from every other
-    refusal — the voice path says "the workspace is full" in the turn's
-    language instead of reading the English sentence out — and matching on
-    the message's wording broke the moment a message was reworded.
-    """
-
-
 class SessionNotReady(SessionError):
     """The addressed workspace is not open — not "not here", but "not yet".
 
@@ -1933,6 +1953,22 @@ class SessionNotReady(SessionError):
     stops trying for good. Every caller that can wait must be able to tell the
     two apart — see the PTY socket's close codes.
     """
+
+
+class AgentBusyError(SessionError):
+    """The pane is in a turn and the caller did not choose how to reach it.
+
+    Raised BEFORE any text is typed, like every ``SessionError`` (an interrupt
+    may have pressed Stop, which ``interrupted`` reports). Its own type
+    because "busy" is the one refusal a caller can act on with a different
+    delivery (steer, interrupt-and-resume or a queue), while every other
+    refusal means the pane cannot be typed into at all. ``interrupted`` is
+    True when Stop was pressed and the turn had not ended in time.
+    """
+
+    def __init__(self, message: str, *, interrupted: bool = False) -> None:
+        super().__init__(message)
+        self.interrupted = interrupted
 
 
 class PlacementError(SessionError):
@@ -2130,7 +2166,6 @@ class Registry:
         return {
             "active": session is not None,
             "session": session.to_dict() if session else None,
-            "max_terminals": MAX_TERMINALS,
             "max_workspaces": MAX_WORKSPACES,
             "active_id": self._active,
             "workspaces": self.workspaces(),
@@ -2143,7 +2178,6 @@ class Registry:
         return {
             "active": session is not None,
             "workspace": session.to_brief() if session else None,
-            "max_terminals": MAX_TERMINALS,
             "other_workspaces": [
                 {"name": s.name, "terminals": len(s.terminals)}
                 for s in self._sessions.values()
@@ -2501,6 +2535,24 @@ class Registry:
         self._cold_start_holds.add(task)
         task.add_done_callback(self._cold_start_holds.discard)
 
+    def start_pending(self, wanted: str, workspace_id: str | None = None) -> Terminal:
+        """Start a pane nobody has opened yet, without waiting for a viewer.
+
+        A new pane's agent is spawned by the first viewer that attaches, so a
+        pane opened from somewhere that never shows it (the office's spawn
+        point) stayed ``pending`` and its first task was given up on (live
+        2026-10-02: T2 started only when its workspace was opened a minute
+        later). Anything other than ``pending`` is left alone: a running pane
+        must not be restarted, and an exited or failed one is the user's call.
+        """
+        found = self.find_terminal(wanted, workspace_id)
+        if found is None:
+            raise self._unknown_terminal(wanted)
+        session, term = found
+        if term.status == "pending" and not term.pty_id:
+            self._start_in_background(session, term)
+        return term
+
     def _host_went_away(self) -> bool:
         """Did the PTY host this process was attached to just drop away?"""
         current = self._pty
@@ -2602,6 +2654,10 @@ class Registry:
         term.transcript.feed(result.replay)
         term.replay.clear()
         term.replay.feed(result.replay)
+        # The agent has been running all along; a question in its replay was
+        # answered back then.
+        term.terminal_queries.reset()
+        term.terminal_queries.feed(result.replay, time.time())
         if result.truncated:
             term.replay.truncated = True
         term.pty_id = info.terminal_id
@@ -2617,8 +2673,34 @@ class Registry:
         term.last_output_at = time.time() if result.replay else None
         if await self._adopted_with_work(term):
             term.adopted_generation = term.process_generation
+        await self._recover_work_start(term)
         logger.info("Agentic IDE: {} re-joined its running agent after an app restart", term.name)
         return True
+
+    @staticmethod
+    async def _recover_work_start(term: Terminal) -> None:
+        """Reconstruct existing tasks off-loop, without sending the agent input."""
+        from .work_timing import recover_start
+
+        saved = term.work_started_at if term.work_pty_id == term.pty_id else 0.0
+        term.work_started_at = saved
+        term.work_pty_id = term.pty_id or ""
+        if term.resume is None:
+            return
+        generation = (term.process_generation, term.pty_id, term.last_submit_at)
+        try:
+            started = await asyncio.to_thread(
+                recover_start, term.agent, term.resume.id, account_home(term.agent, term.account)
+            )
+        except Exception as exc:  # noqa: BLE001 - unavailable timing must not break adoption
+            logger.warning("Agentic IDE: could not recover {}'s task clock: {}", term.name, exc)
+            return
+        if generation != (term.process_generation, term.pty_id, term.last_submit_at):
+            return  # A new process or submission owns the clock now.
+        if started is not None:
+            # The record also covers tasks started/finished while Jarvis was
+            # closed; a saved clock alone cannot know about those boundaries.
+            term.work_started_at = started if 0 < started <= time.time() else 0.0
 
     @staticmethod
     async def _adopted_with_work(term: Terminal) -> bool:
@@ -2651,6 +2733,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.terminal_queries.feed(text, term.last_output_at)
             for viewer in _viewers(term):
                 await viewer(text)
 
@@ -2694,9 +2777,10 @@ class Registry:
         async with self._lock:
             if not requested:
                 raise SessionError("Pick at least one terminal.")
-            if len(requested) > MAX_TERMINALS:
+            if len(requested) > MAX_PANES_PER_REQUEST:
                 raise SessionError(
-                    f"At most {MAX_TERMINALS} terminals per session (got {len(requested)})."
+                    f"At most {MAX_PANES_PER_REQUEST} terminals open in one go "
+                    f"(got {len(requested)}). Open the rest once these are running."
                 )
 
             # expanduser() is string/env work, not a filesystem call — the real
@@ -3115,40 +3199,12 @@ class Registry:
         """Keep legacy geometry consistent with the persistent terminal order."""
         # Rebuild the legacy split tree from the new order. Old geometry
         # must never sort the terminals back into their previous positions.
-        columns = balanced_columns(len(session.terminals))
-        rows = [
-            layout_tree.normalize(
-                layout_tree.Split(
-                    direction="row",
-                    children=[
-                        layout_tree.Leaf(term.key)
-                        for term in session.terminals[start : start + columns]
-                    ],
-                    weights=[1.0] * len(session.terminals[start : start + columns]),
-                )
-            )
-            for start in range(0, len(session.terminals), columns or 1)
-        ]
-        session.layout = (
-            layout_tree.normalize(
-                layout_tree.Split(
-                    direction="column",
-                    children=rows,
-                    weights=[1.0] * len(rows),
-                )
-            )
-            if rows
-            else None
-        )
+        keys = [term.key for term in session.terminals]
+        session.layout = layout_tree.row_major(keys, balanced_columns(len(keys)))
         Registry._renumber(session)
 
     async def _restore_one_locked(self, space: resume_store.SnapshotWorkspace) -> Session | None:
         """Reopen one remembered workspace. Caller holds the lock."""
-        if len(space.terminals) > MAX_TERMINALS:
-            raise SessionError(
-                f"This saved workspace has {len(space.terminals)} terminals; "
-                f"the workspace limit is {MAX_TERMINALS}. Its saved sessions were preserved."
-            )
         root = Path(space.folder).expanduser()  # noqa: ASYNC240
         try:
             if not await asyncio.to_thread(root.is_dir):
@@ -3177,6 +3233,8 @@ class Registry:
                 resume=entry.resume,
                 prompts_sent=entry.prompts_sent,
                 resume_continuation_needed=entry.continuation_needed,
+                work_started_at=entry.work_started_at,
+                work_pty_id=entry.work_pty_id,
                 account=account,
                 # The pin survives the restart only while the seat it vouches
                 # for does — a fallback onto the active account is not the
@@ -3998,7 +4056,13 @@ class Registry:
             hosted = self._hosted_for(manager).get(term.history_id)
             if hosted is not None:
                 await self._adopt_one(manager, term, hosted)
-        if appearance in THEME_COLOURS:
+        # Only a viewer that takes the pane over — or one starting its agent —
+        # may change what the CLI is told about the screen. A background viewer
+        # (an office monitor, a forgotten browser tab in light mode) used to
+        # overwrite it, and Claude Code on theme "auto" then fixed its whole
+        # palette for light: user messages on a white bar inside a dark pane.
+        running = bool(term.pty_id and manager.has(term.pty_id))
+        if appearance in THEME_COLOURS and (claim_owner or not running):
             term.queries.appearance = appearance
             if term.pty_id and hasattr(manager, "set_appearance"):
                 # A hosted agent's emulator queries are answered in the host,
@@ -4216,6 +4280,7 @@ class Registry:
         # in the replay buffer belongs to a terminal that no longer exists, and
         # replaying it to the next viewer would show output from a dead agent.
         term.replay.clear()
+        term.terminal_queries.reset()
         _watch(term, on_output, on_exit, cols, rows, on_geometry=on_geometry)
         term.reattached = False
         # This pane is wanted again, so the last deliberate kill is history.
@@ -4234,6 +4299,7 @@ class Registry:
             term.transcript.feed(text)
             term.replay.feed(text)
             term.last_output_at = time.time()
+            term.terminal_queries.feed(text, term.last_output_at)
             # To EVERY viewer, not only the newest one. A pane open in two
             # places has two screens and both are supposed to show the same
             # agent; sending to one of them is how a window ends up frozen
@@ -4476,6 +4542,8 @@ class Registry:
         term.activity = ""
         term.activity_at = 0.0
         term.activity_since = 0.0
+        term.work_started_at = 0.0
+        term.work_pty_id = ""
         # And this process has not stood still yet, whatever the previous one
         # did. Everything it is about to draw is a CLI painting itself, not an
         # agent working — see the field.
@@ -4483,7 +4551,9 @@ class Registry:
             from . import fleet_actions
 
             try:
-                ready = await fleet_actions.wait_for_prompt_ready(
+                # The input line, not full prompt readiness: the slot guards
+                # the shared store's boot, which is over once the line exists.
+                ready = await fleet_actions.wait_for_input_line(
                     session,
                     [term.name],
                     timeout_s=fleet_actions.READY_TIMEOUT_S,
@@ -4737,6 +4807,7 @@ class Registry:
                 term.manual_submit_pending = True
                 self._schedule_manual_submit_confirmation(owner, term)
             else:
+                record_work_start(term, term.last_input_at)
                 term.last_submit_at = term.last_input_at
                 term.submit_generation = term.process_generation
             # And the pane's conversation may have just begun, which for most
@@ -4778,6 +4849,7 @@ class Registry:
                 term.manual_submit_pending = False
                 term.submitted = submitted
                 if submitted:
+                    record_work_start(term, time.time())
                     term.last_submit_at = time.time()
                     term.submit_generation = term.process_generation
                     self._lookup_after_conversation(owner, term)
@@ -5118,9 +5190,15 @@ class Registry:
                 term.name,
             )
             return False
-        # The replayed screen has to follow the real one; otherwise the
-        # transcript keeps wrapping at the old width.
-        if (term.transcript.cols, term.transcript.rows) == (cols, rows):
+        # Already the PTY's size: nothing to resize. Compared against the PTY,
+        # not the transcript — the transcript is a display mirror that can
+        # drift (see `Terminal.pty_cols`), and a request matching only the
+        # mirror was answered "granted" while the agent stayed in another size.
+        if (term.pty_cols, term.pty_rows) == (cols, rows):
+            # The replayed screen has to follow the real one; otherwise the
+            # transcript keeps wrapping at the old width.
+            if (term.transcript.cols, term.transcript.rows) != (cols, rows):
+                term.transcript.resize(cols, rows)
             return True
         clears_before = term.replay.clears
         if not self._pool(term).resize(term.pty_id, cols, rows):
@@ -5306,10 +5384,6 @@ class Registry:
             session = self.get(selected_id) if selected_id else None
             if session is None:
                 raise SessionError("No Agentic-IDE session is running.")
-            if len(session.terminals) >= MAX_TERMINALS:
-                raise WorkspaceFull(
-                    f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
-                )
             if direction not in ("right", "down", "left", "up", "above", "below"):
                 raise SessionError("Direction must be 'right', 'down', 'left', or 'up'.")
 
@@ -5415,13 +5489,12 @@ class Registry:
                     direction,
                 )
             else:
-                session.layout = layout_tree.append_pane(session.layout, term.key)
-            # A split or an appended column may not leave the largest grid the
-            # workspace draws; past it the panes are dealt into the even grid
-            # instead (voice and the CLI have no preview to stop them first).
-            columns, rows = layout_tree.grid_span(session.layout)
-            if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-                self._row_major_grid(session)
+                session.layout = layout_tree.add_unanchored(
+                    session.layout,
+                    term.key,
+                    max_columns=BALANCED_GRID_COLUMNS,
+                    balanced_columns=balanced_columns,
+                )
             # Then every terminal back to an equal share — the same act as the
             # grid's "even out" button, run for the user on every open — EXCEPT
             # inside a container whose boundaries were dragged by hand
@@ -5975,12 +6048,6 @@ class Registry:
         session, source = found
         if not accepts_prompts(source.agent):
             raise SessionError(f"{source.name} is a plain terminal — it has no chat to fork.")
-        # Checked before a worktree is created, so a full workspace does not
-        # leave an orphaned branch behind.
-        if len(session.terminals) >= MAX_TERMINALS:
-            raise WorkspaceFull(
-                f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
-            )
         folder = ""
         branch = ""
         if worktree:
@@ -6044,8 +6111,10 @@ class Registry:
         if selected is None:
             raise SessionError("No Agentic-IDE session is running.")
         wanted = max(1, int(count))
-        if len(selected.terminals) + wanted > MAX_TERMINALS:
-            raise WorkspaceFull(f"A workspace can contain at most {MAX_TERMINALS} terminals.")
+        if wanted > MAX_PANES_PER_REQUEST:
+            raise SessionError(
+                f"At most {MAX_PANES_PER_REQUEST} terminals open in one go (asked for {wanted})."
+            )
         created: list[Terminal] = []
         for _ in range(wanted):
             try:
@@ -6196,10 +6265,6 @@ class Registry:
                     f"{term.name} can only move to a workspace on the same folder; "
                     f"{target.name} works in another one."
                 )
-            if len(target.terminals) >= MAX_TERMINALS:
-                raise SessionError(
-                    f"{target.name} already has the maximum of {MAX_TERMINALS} terminals."
-                )
             if term.placing:
                 raise SessionError(
                     f"{term.name} is still being set up on its computer. "
@@ -6269,14 +6334,19 @@ class Registry:
             else:
                 # It joins the workspace edge like an anchor-less add: no
                 # pane was chosen to sit beside.
-                target.layout = layout_tree.append_pane(target.layout, term.key)
-                columns, rows = layout_tree.grid_span(target.layout)
-                if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-                    self._row_major_grid(target)
+                target.layout = layout_tree.add_unanchored(
+                    target.layout,
+                    term.key,
+                    max_columns=BALANCED_GRID_COLUMNS,
+                    balanced_columns=balanced_columns,
+                )
             # Every pane then gets an even share, as after any add.
             target.layout = layout_tree.evened(target.layout)
             self._renumber(target)
             await self._persist()
+            if not source.terminals:
+                await self._close_locked(source.id)
+                await self._persist()
             logger.info(
                 "Agentic IDE: moved terminal {} from workspace {} to {} as {}",
                 old_name,
@@ -6292,10 +6362,9 @@ class Registry:
     ) -> layout_tree.LayoutNode | None:
         """``target``'s tree with pane ``key`` split off ``anchor`` — or None.
 
-        None means no place was asked for. A named pane that is not there, or
-        a side that would push the grid past its largest shape, is refused:
-        quietly re-dealing the grid would put the pane somewhere the user did
-        not choose.
+        None means no place was asked for. A named pane that is not there is
+        refused: quietly placing the pane elsewhere would put it somewhere the
+        user did not choose.
         """
         if anchor is None:
             return None
@@ -6306,15 +6375,7 @@ class Registry:
         tree = target.layout or layout_tree.from_grid(
             (t.key, t.column, t.slot) for t in target.terminals
         )
-        placed = layout_tree.split_pane(tree, beside.key, key, cast("Any", side))
-        columns, rows = layout_tree.grid_span(placed)
-        if columns > MAX_GRID_COLUMNS or rows > MAX_GRID_ROWS:
-            where = {"left": "left of", "right": "right of"}.get(side, side)
-            raise SessionError(
-                f"No room {where} {beside.name}: a workspace holds at most "
-                f"{MAX_GRID_COLUMNS} columns and {MAX_GRID_ROWS} rows."
-            )
-        return placed
+        return layout_tree.split_pane(tree, beside.key, key, cast("Any", side))
 
     async def refold(self, depth: int) -> Session:
         """Re-deal every pane into columns ``depth`` deep, in reading order.
@@ -6581,6 +6642,11 @@ class Registry:
             self._renumber(session)
             if resolved:
                 await self._persist()
+                if not session.terminals:
+                    # Save the empty pane list before closing so the previous
+                    # terminals cannot return through the workspace restore offer.
+                    await self._close_locked(session.id)
+                    await self._persist()
                 logger.info(
                     "Agentic IDE: closed terminals {}",
                     ", ".join(term.name for term in resolved),
@@ -6634,12 +6700,30 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         followup: dict[str, str] | None = None,
+        expected_location: tuple[str, str, str] | None = None,
+        when_busy: str = "refuse",
     ) -> Terminal:
         """Serialize deliveries and pin the pane before the first await.
 
         Explicit Jarvis voice requests retain a result receipt. Direct pane input
         and work supervised by another agent keep their existing reporting owner.
+
+        ``require_idle`` gates on a pane in a turn, and ``when_busy`` says what
+        a busy pane gets. ``refuse`` (the default) raises ``AgentBusyError`` —
+        an ordinary message never reaches into running work. The other two are
+        for a correction the USER directed at that work:
+
+        * ``steer`` types it into the running turn, on a CLI whose own mid-turn
+          input reaches that turn (``steers_mid_turn``). Nothing is stopped.
+        * ``interrupt`` presses Stop, waits for the turn to end, then types it
+          at the prompt. The process, its conversation and its files stay; only
+          the step in flight is cut short, as the pane's own Stop does.
+
+        Neither types into an open question or permission prompt, which would
+        answer it.
         """
+        if when_busy not in WHEN_BUSY:
+            raise SessionError(f"Unknown busy delivery {when_busy!r}; nothing was sent.")
         found = self.find_terminal(wanted, workspace_id)
         if found is None:
             raise self._unknown_terminal(wanted)
@@ -6654,22 +6738,47 @@ class Registry:
                 or self.input_token(term) != expected_input
             ):
                 raise SessionError("The input request changed; nothing was sent.")
+            mid_turn = False
             if require_idle:
-                activity = term.reading().activity
-                has_submission = (
-                    term.last_submit_at is not None
-                    and term.submit_generation == term.process_generation
-                )
-                if activity in ("working", "asking", "failed", "exited") or (
-                    has_submission and activity != "waiting"
-                ):
-                    raise SessionError("The selected coding agent is busy; nothing was sent.")
+                busy = await self.turn_in_progress(term)
+                if busy in ("working", "starting") and when_busy == "interrupt":
+                    busy, pressed = await self._interrupt_turn(owner, term)
+                    if busy in ("working", "starting"):
+                        raise AgentBusyError(
+                            f"Stop was pressed, but {term.name} had not ended its turn after "
+                            f"{INTERRUPT_SETTLE_S:.0f} s; nothing was typed."
+                            if pressed
+                            else f"{term.name} was still starting its turn after "
+                            f"{INTERRUPT_SETTLE_S:.0f} s, so Stop was not pressed; "
+                            "nothing was typed.",
+                            interrupted=pressed,
+                        )
+                if busy in ("failed", "exited"):
+                    raise SessionError(
+                        f"{term.name} is not running ({busy}); nothing was sent."
+                    )
+                if busy == "asking" and when_busy != "refuse":
+                    raise SessionError(
+                        f"{term.name} is asking a question; answer it with respond "
+                        "(the correction can be the answer). Nothing was sent."
+                    )
+                if busy and when_busy == "steer":
+                    if not steers_mid_turn(term.agent):
+                        raise AgentBusyError(
+                            f"{agent_display(term.agent)} does not take a message in the middle "
+                            "of a turn; nothing was sent. Interrupt it first or queue the "
+                            "message for when the turn ends."
+                        )
+                    mid_turn = True
+                elif busy:
+                    self._log_busy_refusal(term, busy)
+                    raise AgentBusyError("The selected coding agent is busy; nothing was sent.")
             pending = None
             if followup is not None and followup.get("reply_surface") in {"voice", "chat"}:
                 from .followthrough import prepare
 
                 pending = await prepare(term, text, typed, followup)
-            return await self._send_prompt_locked(
+            result = await self._send_prompt_locked(
                 identity,
                 text,
                 workspace_id=owner.id,
@@ -6678,7 +6787,93 @@ class Registry:
                 expected_input=expected_input,
                 allow_question=allow_question,
                 pending_result=pending,
+                expected_location=expected_location,
             )
+            result.last_send_mid_turn = mid_turn
+            from .delegation_wait import track_submission
+
+            track_submission(self, owner, result)
+            return result
+
+    @staticmethod
+    async def turn_in_progress(term: Terminal) -> str:
+        """What keeps ``term`` from taking a prompt now, or "" when nothing does.
+
+        Judged on fresh lifecycle evidence, never the sweep's stamp.
+        """
+        from .activity import send_reading
+        from .task_state import probe
+
+        await probe(term)
+        activity = send_reading(term)
+        has_submission = (
+            term.last_submit_at is not None
+            and term.submit_generation == term.process_generation
+        )
+        if activity in ("working", "asking", "failed", "exited"):
+            return activity
+        # An interrupted turn ("stopped") sits at its prompt like a finished
+        # one; only a pane that is still starting with a task already handed
+        # over waits — it is about to work, but no turn is proven yet.
+        if has_submission and activity not in ("waiting", "stopped"):
+            return "starting"
+        return ""
+
+    @staticmethod
+    def _log_busy_refusal(term: Terminal, busy: str) -> None:
+        """Record what a busy refusal was based on, so a wrong one can be traced.
+
+        A refusal of an idle agent (live 2026-10-07) left nothing behind to
+        tell a stale stamp from missing lifecycle evidence. No prompt text.
+        """
+        from .task_state import evidence
+
+        now = time.time()
+        proof = evidence(term, now=now)
+
+        def age(at: float | None) -> str:
+            return f"{now - at:.0f}s" if at else "never"
+
+        logger.info(
+            "Agentic IDE: refused a prompt for {} as busy ({}): evidence={} ({} old), "
+            "stamp={} ({} old), last submit age={}, submitted to this process={}",
+            term.name,
+            busy,
+            proof.state if proof else "none",
+            age(proof.at) if proof else "-",
+            term.activity or "none",
+            age(term.activity_at),
+            age(term.last_submit_at),
+            term.submit_generation == term.process_generation,
+        )
+
+    async def _interrupt_turn(self, owner: Session, term: Terminal) -> tuple[str, bool]:
+        """Press Stop once and wait for the turn to end.
+
+        Returns the busy word left (if any) and whether Stop was pressed.
+
+        Stop is pressed only on a PROVEN turn ("working"): Escape at an idle
+        prompt opens some CLIs' history views or clears a draft, so a pane
+        that is merely starting is watched until it works or settles, and a
+        turn that ended meanwhile is not stopped again. One key, never a kill —
+        the process and its conversation stay, and an unsaved edit in the step
+        in flight is the CLI's own Stop semantics.
+        """
+        deadline = time.monotonic() + INTERRUPT_SETTLE_S
+        busy = await self.turn_in_progress(term)
+        while busy == "starting" and time.monotonic() < deadline:
+            await asyncio.sleep(_INTERRUPT_POLL_S)
+            busy = await self.turn_in_progress(term)
+        if busy != "working":
+            return busy, False
+        if not self.write("pane:" + term.history_id, _INTERRUPT_KEY, owner.id):
+            raise SessionError(f"{term.name} is not running; nothing was sent.")
+        logger.info("Agentic IDE: pressed Stop on {} to deliver a correction", term.name)
+        deadline = time.monotonic() + INTERRUPT_SETTLE_S
+        while busy in ("working", "starting") and time.monotonic() < deadline:
+            await asyncio.sleep(_INTERRUPT_POLL_S)
+            busy = await self.turn_in_progress(term)
+        return busy, True
 
     @staticmethod
     def input_token(term: Terminal) -> str:
@@ -6697,6 +6892,7 @@ class Registry:
         expected_input: str = "",
         allow_question: bool = False,
         pending_result: Any = None,
+        expected_location: tuple[str, str, str] | None = None,
     ) -> Terminal:
         """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
@@ -6773,6 +6969,15 @@ class Registry:
 
         process_id = term.pty_id
         generation = term.process_generation
+        if term.submit_generation != generation or term.last_submit_at is None:
+            # The FIRST prompt of a process lets the composer paint even on a
+            # CLI that opts out of the typing wait. Typed early, Claude Code
+            # buffers the text but drops the Enter, so the task sat unsent in a
+            # new agent's box (live 2026-10-01: briefed 3 s after spawn). Soft:
+            # an unrecognised composer still gets the opt-out fast path below.
+            await fleet_actions.wait_for_input_line(
+                owner, [wanted], timeout_s=_FIRST_PROMPT_COMPOSER_WAIT_S
+            )
         ready = await fleet_actions.wait_for_prompt_ready(
             owner,
             [wanted],
@@ -6796,6 +7001,10 @@ class Registry:
             or term.status != "live"
         ):
             raise SessionError("The selected terminal changed while waiting; nothing was sent.")
+        if expected_location is not None and expected_location != (
+            term.cwd(owner.folder), term.computer_id, term.remote_folder,
+        ):
+            raise SessionError("The image destination changed while waiting; nothing was sent.")
         if expected_input and (
             self.input_token(term) != expected_input
             or term.reading().activity
@@ -6837,6 +7046,7 @@ class Registry:
         # at its prompt" bell for work that never started. The moment the user
         # presses Enter on that box themselves, `write` stamps it for real.
         if submitted is not False:
+            record_work_start(term, term.last_prompt_at)
             term.last_submit_at = term.last_prompt_at
             term.submit_generation = term.process_generation
         term.manual_submit_pending = False
@@ -7039,6 +7249,20 @@ class Registry:
         manager.write(term.pty_id or "", "\r")
         left_the_box = await self._confirm_submitted(term, payload, manager)
 
+        if not arrived and left_the_box and await self._await_arrival(
+            term, payload, window_s=_LATE_ARRIVAL_WINDOW_S
+        ):
+            # The text surfaced in the box only after the Enter went out: the
+            # pane buffered it while loading and dropped that early Enter. It
+            # is provably sitting there now, so one more Enter is safe and is
+            # the difference between a briefed agent and an idle one.
+            logger.warning(
+                "Agentic IDE: the prompt reached {} only after Enter — pressing Enter again",
+                term.name,
+            )
+            term.last_input_at = time.time()
+            manager.write(term.pty_id or "", "\r")
+            return await self._confirm_submitted(term, payload, manager)
         if not arrived and left_the_box:
             # The prompt was never SEEN in the box, and an empty box is exactly
             # what a successful submit looks like — so "it went out" and "the
@@ -7056,7 +7280,9 @@ class Registry:
             return None
         return left_the_box
 
-    async def _await_arrival(self, term: Terminal, payload: str) -> bool:
+    async def _await_arrival(
+        self, term: Terminal, payload: str, *, window_s: float | None = None
+    ) -> bool:
         """Wait until the pane visibly holds ``payload``, or give up.
 
         Returns as soon as the text (or the TUI's collapsed stand-in for it) is
@@ -7064,7 +7290,8 @@ class Registry:
         so on a healthy pane this costs a fraction of the old fixed delay.
         """
         needle = _submit_needle(payload)
-        deadline = max(1, int(_ARRIVAL_WINDOW_S / _ARRIVAL_POLL_S)) if _ARRIVAL_POLL_S else 1
+        window = _ARRIVAL_WINDOW_S if window_s is None else window_s
+        deadline = max(1, int(window / _ARRIVAL_POLL_S)) if _ARRIVAL_POLL_S else 1
         for _ in range(deadline):
             await asyncio.sleep(_ARRIVAL_POLL_S)
             if _input_line_holds(term.transcript.tail(10), needle):
@@ -7439,9 +7666,8 @@ __all__ = [
     "AGENT_BINARIES",
     "AGENT_DISPLAY",
     "MAX_PROMPT_CHARS",
-    "MAX_GRID_COLUMNS",
-    "MAX_GRID_ROWS",
-    "MAX_TERMINALS",
+    "BALANCED_GRID_COLUMNS",
+    "MAX_PANES_PER_REQUEST",
     "MAX_WORKSPACES",
     "INHERIT_PLACEMENT",
     "PLAIN_TERMINAL",
@@ -7451,7 +7677,6 @@ __all__ = [
     "SessionError",
     "SessionNotReady",
     "Terminal",
-    "WorkspaceFull",
     "accepts_prompts",
     "agent_argv",
     "agent_display",

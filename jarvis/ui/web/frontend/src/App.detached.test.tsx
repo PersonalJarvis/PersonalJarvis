@@ -42,9 +42,6 @@ vi.mock("@/components/layout/TopBar", () => ({
 vi.mock("@/components/layout/MainView", () => ({
   MainView: () => <div data-testid="main-view" />,
 }));
-vi.mock("@/components/layout/PermissionsAlertBanner", () => ({
-  PermissionsAlertBanner: () => null,
-}));
 vi.mock("@/components/layout/InputIsolationBanner", () => ({
   InputIsolationBanner: () => null,
 }));
@@ -100,6 +97,16 @@ describe("App shell around detached coding views", () => {
       screen.getByTestId("main-view").parentElement?.classList.contains("jarvis-section-stage"),
     ).toBe(true);
     expect(document.documentElement.classList.contains("jarvis-wallpaper")).toBe(false);
+  });
+
+  it.each(["agents", "docs", "memory"] as const)("gives the %s section the whole window", (section) => {
+    useEventStore.setState({ activeSection: section });
+
+    render(<App />);
+
+    expect(screen.queryByTestId("sidebar")).toBeNull();
+    expect(screen.queryByTestId("sidebar-resizer")).toBeNull();
+    expect(screen.getByTestId("main-view")).toBeTruthy();
   });
 
   it("keeps the sidebar reachable in the main window", () => {

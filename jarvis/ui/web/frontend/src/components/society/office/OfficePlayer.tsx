@@ -22,6 +22,10 @@ import { useOfficeDog } from "./dogLife";
 import { TreatBone } from "./dogProps";
 import { isRunning, useOfficeSettings } from "./officeSettings";
 import { jumpSquash, newJump, pressJump, stepJump } from "./officeJump";
+import { useProgression } from "../progression/progressionStore";
+import { PERSON_SUBJECT } from "../progression/progressionApi";
+import { LevelChip } from "../progression/LevelHud";
+import { useDressedFigure } from "../progression/regalia/dress";
 
 /** The person's pace: a brisk walk, and a sprint on Shift (m/s). */
 export const PLAYER_WALK_SPEED = 2.0;
@@ -46,6 +50,18 @@ export function ownsKeyboard(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true;
   const tag = target.tagName;
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || !!target.closest("[role='dialog']");
+}
+
+/**
+ * Held movement keys stop counting the moment a modal (an arcade game, the
+ * elevator panel) takes the keyboard: the dialog swallows the keys pressed
+ * inside it, and the character must not keep walking behind it on a key that
+ * was still held when it opened. Returns true when it forgot something.
+ */
+export function forgetHeldKeysUnderDialog(pressed: Set<string>): boolean {
+  if (pressed.size === 0 || !ownsKeyboard(null)) return false;
+  pressed.clear();
+  return true;
 }
 
 /** Space on a focused button, tab or switch activates that control, never a jump. */
@@ -81,12 +97,13 @@ function useMoveKeys(enabled: boolean, onInteract: () => void, onJump: () => voi
     // visibilitychange: the desktop WebView reports visible windows as hidden.)
     const release = () => { pressed.current.clear(); jumpHeld.current = false; };
     window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
+    // Releases are heard in the capture phase, before any overlay that handles its own keys can swallow them.
+    window.addEventListener("keyup", up, true);
     window.addEventListener("blur", release);
     return () => {
       release();
       window.removeEventListener("keydown", down);
-      window.removeEventListener("keyup", up);
+      window.removeEventListener("keyup", up, true);
       window.removeEventListener("blur", release);
     };
   }, [enabled, onInteract, onJump]);
@@ -106,7 +123,8 @@ function nearestInteractable(layout: OfficeLayout): Selection | null {
     if (d <= AGENT_TALK_RANGE && d < bestDistance) { best = { kind: "agent", id }; bestDistance = d; }
   }
   for (const item of layout.furniture) {
-    if (item.kind !== "arcade") continue;
+    // The break room's cabinet, and every game cabinet on the arcade floor.
+    if (item.kind !== "arcade" && item.kind !== "retroCabinet") continue;
     // The cabinet's screen faces its local +z; you play standing in front of it.
     const fx = item.x + Math.sin(item.rotationY) * 0.85, fz = item.z + Math.cos(item.rotationY) * 0.85;
     const d = Math.hypot(fx - player.x, fz - player.z);
@@ -142,6 +160,12 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
   // Seated at Mission Control the camera is the character's eyes: its own figure would block the view.
   const firstPerson = useLeadSeat((s) => !!layout.command && s.seated === layout.command.id);
   const { pressed, run, jumpHeld } = useMoveKeys(awake, interact, onJump);
+  // A level-up of the person's own: the character hops for joy and waves while it stands.
+  useEffect(() => useProgression.subscribe((state, prev) => {
+    if (state.cheerUntil > prev.cheerUntil && !reduced) pressJump(jump);
+  }), [jump, reduced]);
+  const level = useProgression((s) => (s.snapshot ? s.subjects[PERSON_SUBJECT]?.level ?? 1 : null));
+  const dressed = useDressedFigure("person", PERSON_SUBJECT, look);
 
   // Arrive by the elevator once per app run; coming back to the map keeps the
   // character where it was, unless a changed floor plan put that spot in a wall.
@@ -197,7 +221,8 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       const free = isWalkable(grid, goal) ? null : nearestWalkable(grid, goal);
       player.path = findPath(grid, player, goal) ?? (free ? findPath(grid, player, free) : null) ?? [];
     }
-    // Keyboard movement, relative to where the camera looks.
+    // Keyboard movement, relative to where the camera looks; nothing while a dialog owns the keys.
+    if (forgetHeldKeysUnderDialog(pressed.current)) jumpHeld.current = false;
     let ix = 0, iz = 0;
     for (const code of pressed.current) { ix += MOVE_KEYS[code][0]; iz += MOVE_KEYS[code][1]; }
     const sprinting = isRunning(run.current, useOfficeSettings.getState().alwaysRun);
@@ -238,7 +263,7 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
       applySeparation(player, separation(player, player.heading, bodiesExcept(null, null)), dt, (q) => isWalkable(grid, q));
     }
     player.moving = moved > 0;
-    drive.current.mode = moved > 0 ? "walk" : "idle";
+    drive.current.mode = moved > 0 ? "walk" : performance.now() < useProgression.getState().cheerUntil ? "wave" : "idle";
     drive.current.speed = moved / Math.max(dt, 1e-3);
     if (group.current) {
       group.current.position.set(player.x, 0, player.z);
@@ -267,12 +292,14 @@ export function OfficePlayer({ layout, grid, look, name, awake, reduced }: {
         <meshBasicMaterial color="#f5b83d" transparent opacity={0.8} side={DoubleSide} depthWrite={false} />
       </mesh>
       <group ref={body}>
-        <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined} />
+        <ToyFigure look={dressed.look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} holding={hasBone ? <TreatBone scale={1.15} /> : undefined}
+          regalia={dressed.regalia} />
         {!firstPerson && (
           <Html center position={[0, OFFICE_FIGURE_HEIGHT_M + 0.35, 0]} zIndexRange={[25, 0]}>
             <span className="office-plate office-plate-player" data-office-ui>
               <span className="office-plate-badge" style={{ background: "#f5b83d" }} aria-hidden>★</span>
               <span className="office-plate-name">{name}</span>
+              {level !== null && <LevelChip kind="person" level={level} />}
             </span>
           </Html>
         )}

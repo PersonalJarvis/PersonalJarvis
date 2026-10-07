@@ -27,10 +27,6 @@ vi.mock("@/views/AgenticIdeView", () => {
   loads.push("ide");
   return { AgenticIdeView: () => null };
 });
-vi.mock("@/views/AutomationsView", () => {
-  loads.push("tasks");
-  return { AutomationsView: () => null };
-});
 vi.mock("@/views/SessionsView", () => {
   loads.push("sessions");
   return { SessionsView: () => null };
@@ -46,10 +42,6 @@ vi.mock("@/views/DocsView", () => {
 vi.mock("@/views/BoardView", () => {
   loads.push("board");
   return { BoardView: () => null };
-});
-vi.mock("@/views/RunInspectorView", () => {
-  loads.push("runs");
-  return { RunInspectorView: () => null };
 });
 vi.mock("@/views/VoiceHubView", () => {
   loads.push("voice");

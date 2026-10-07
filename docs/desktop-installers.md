@@ -122,12 +122,67 @@ The wizard itself is `packaging/windows/PersonalJarvis.iss`:
 # -> dist/installers/PersonalJarvis-macOS-<arm64|x64>.dmg
 ```
 
-Owned by `packaging/macos/`. It reads `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+Owned by `packaging/macos/`. It reads `APPLE_CERTIFICATE_P12_BASE64` and
+`APPLE_CERTIFICATE_PASSWORD` (imported into a throw-away keychain before the long
+freeze, so an unusable certificate fails early), `APPLE_SIGNING_IDENTITY`
+(optional: read from the imported certificate when absent), `APPLE_ID`,
 `APPLE_TEAM_ID` and `APPLE_APP_SPECIFIC_PASSWORD`; with none of them set it
 ad-hoc signs, skips notarization and prints a one-line notice. The `.app`'s
-identity (bundle id, minimum system version, and the microphone / speech /
-camera / Apple-Events usage strings macOS requires before it will let the
-process touch those APIs) comes from the `BUNDLE` block in `jarvis.spec`.
+identity (bundle id, minimum system version) comes from the `BUNDLE` block in
+`jarvis.spec`. The usage strings macOS shows in its permission dialogs
+(microphone, screen capture, Apple events, the Desktop / Documents / Downloads /
+removable-volume / network-volume folders, local network) come from ONE table,
+`jarvis/core/macos_privacy_strings.py`, which `jarvis.spec` and the managed
+source-install app both load by path, so the two apps cannot drift apart. The same
+table carries the German and Spanish versions: `jarvis.spec` declares the languages
+(`CFBundleLocalizations`) and `build.sh` writes
+`Contents/Resources/{de,es}.lproj/InfoPlist.strings` into the finished `.app`
+(`packaging/macos/add_localizations.py`) BEFORE it signs it, because the files are
+part of the code seal. There
+is deliberately no camera string, no speech-recognition string and no camera
+entitlement: Jarvis has no caller for either. The entitlements embedded by the
+Developer ID path live in `packaging/macos/entitlements.plist` (no comments; the
+reasoning is in `packaging/macos/README.md`).
+
+Several things in that block are easy to get wrong and invisible to a headless
+smoke run, so the macOS job checks the finished bundle
+(`python scripts/ci/check_frozen_macos_app.py --app "dist/Personal Jarvis.app"`):
+
+- `LSBackgroundOnly` must be `False`. PyInstaller sets it to true whenever the
+  last executable of the bundle is a console one (the `jarvis` CLI is), and
+  LaunchServices then treats the app as having no Dock icon and no windows.
+- The pyobjc frameworks the permission code loads by name (`AVFoundation`
+  above all) must be in the frozen archive. That needs the `desktop-macos` extra
+  on the build machine; the macOS job installs it.
+- Every usage string of the table must be in `Info.plist` with exactly that
+  text, and the removed keys must not be.
+- The bundle must declare its German and Spanish localisation, and each
+  `{de,es}.lproj/InfoPlist.strings` must exist with exactly the text of the table.
+- On a signed build, `codesign -d --entitlements :-` must report every
+  entitlement of `entitlements.plist` and not the camera one. An ad-hoc or
+  unsigned build embeds no entitlements, so the check skips itself with a NOTE
+  line; that is a skip, not a pass, and the hardened-runtime behaviour of a
+  signed build has never been run on a Mac (unverified).
+
+The frozen smoke boots the app twice and, on macOS, also reads its permission
+status each time: a microphone row that reads "unavailable" means the framework
+did not load inside the app (the check above only sees that the module is in the
+archive). The v2.5.0 image shipped with the first two defects (BUG-222).
+
+**Permission prompts.** Personal Jarvis asks for a macOS permission at the moment
+a feature you start needs it (the first dictation asks for the microphone, the
+first screen capture for Screen Recording, and so on) and never at launch;
+nothing is requested up front and no banner or wizard nags. Apple's own dialog or
+System Settings pane does the asking and the app draws nothing around it. Declining
+a permission degrades that one feature and leaves the rest of the app working; the
+app then shows one short toast with one click to the right System Settings pane.
+The dialog text is German and Spanish on a German or Spanish Mac (the build writes
+the `.lproj` strings before signing). `jarvis permissions reset <permission>` makes
+macOS ask again. This is the designed behaviour; it has not been exercised on a real
+Mac yet (unverified). The
+downloaded app and the managed source-install app are separate apps to macOS
+(`ai.personaljarvis.desktop` and `com.personal-jarvis.desktop`) and each keeps its
+own grants.
 
 ### Linux
 
@@ -150,11 +205,24 @@ working installer and says, in one line, that it is unsigned.
 | Platform | Mechanism                    | Secrets                                                                                                     |
 | -------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Windows  | Azure Trusted Signing        | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`, `AZURE_CERTIFICATE_PROFILE` |
-| macOS    | Developer ID + notarization  | `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`                          |
+| macOS    | Developer ID + notarization  | `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_CERTIFICATE_P12_BASE64`, `APPLE_CERTIFICATE_PASSWORD` (and optionally `APPLE_SIGNING_IDENTITY`; `build.sh` reads it from the imported certificate) |
 | Linux    | none (AppImage is unsigned)  | -                                                                                                             |
 
 Private key material only ever exists as a GitHub Actions secret (AP-29); no
 signing step ever reads a file from the repository.
+
+Without the macOS secrets the published `.dmg` is ad-hoc signed and not
+notarized: macOS blocks the first launch (System Settings > Privacy & Security >
+Open Anyway) and treats every update as a new app, so every permission is asked
+for again. `packaging/macos/build.sh` is written to import the certificate into
+a temporary keychain on the runner and read the signing identity from it; that
+step has been rehearsed (`DRY_RUN`) and run against a stand-in `security`
+command, but not yet against a real keychain or with an Apple account.
+`packaging/macos/README.md` lists how to obtain the certificate.
+
+A run started by hand from a branch (`workflow_dispatch`) builds the installers
+without publishing a release, which is the way to try the macOS job, its
+certificate import and the app probe before tagging.
 
 On Windows the workflow signs the **setup executable**. That is the file the
 browser marks with Mark-of-the-Web, so it is the signature SmartScreen weighs;
@@ -171,8 +239,10 @@ PyInstaller bootloaders, and can be added the same way.
 manually via `workflow_dispatch`):
 
 1. `windows`, `macos` (arm64 + x64) and `linux` each install Python 3.12 and
-   Node 22, `pip install -e ".[desktop,dev]"`, run their OS build script and
-   upload the artifact.
+   Node 22, `pip install -e ".[desktop,dev]"` (macOS adds `desktop-macos`), run
+   their OS build script and upload the artifact. The macOS jobs also read the
+   finished `.app` with `scripts/ci/check_frozen_macos_app.py` before the
+   headless smoke test.
 2. `release` downloads all of them, refuses to continue if any promised asset is
    missing, verifies the tag equals `jarvis.__version__`, writes
    `installers-SHA256SUMS.txt` (plain `sha256sum` format, flat file names),

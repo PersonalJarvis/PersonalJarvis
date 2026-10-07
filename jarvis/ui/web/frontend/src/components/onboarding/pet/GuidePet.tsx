@@ -17,12 +17,11 @@ import { useReducedMotion } from "framer-motion";
 import { useEffect, useState, type ReactNode } from "react";
 import { MascotGigi } from "@/components/MascotGigi";
 import { PetSprite } from "@/components/pets/PetSprite";
-import { NO_PET_ID, type PetState } from "@/lib/petStates";
-import type { Pet } from "@/lib/petsApi";
+import { pickActivePet } from "@/hooks/usePets";
+import type { PetState } from "@/lib/petStates";
+import type { Pet, PetsState } from "@/lib/petsApi";
 import { cn } from "@/lib/utils";
 
-/** The pet shown when none is chosen. */
-const DEFAULT_PET_ID = "gigi";
 /** Typing speed of a line, ms per character. */
 const TYPE_MS = 18;
 
@@ -33,10 +32,7 @@ function loadGuidePet(): Promise<Pet | null> {
     try {
       const res = await fetch("/api/pets");
       if (!res.ok) return null;
-      const data = (await res.json()) as { active?: string; pets?: Pet[] };
-      const pets = Array.isArray(data.pets) ? data.pets : [];
-      const id = data.active && data.active !== NO_PET_ID ? data.active : DEFAULT_PET_ID;
-      return pets.find((p) => p.id === id) ?? pets.find((p) => p.id === DEFAULT_PET_ID) ?? pets[0] ?? null;
+      return pickActivePet((await res.json()) as PetsState);
     } catch {
       // No pets endpoint: the mascot stands in.
       return null;

@@ -1,6 +1,7 @@
 """The Live contract must behave identically on every OS, without a microphone."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +35,7 @@ class Gateway:
         self.calls.append((name, args, request))
         return ToolResult(True, {"verified": True})
 
-    async def cancel_pending(self, trace):
+    async def cancel_pending(self, trace, *, reason="voice_vetoed"):
         return True
 
 
@@ -169,7 +170,7 @@ def test_config_matches_frontend_interface():
 
     source = Path("jarvis/ui/web/frontend/src/components/providers/LiveProfile.tsx").read_text()
     body = source.split("export interface LiveProfileValue {", 1)[1].split("}", 1)[0]
-    assert set(re.findall(r"(\w+):", body)) == set(LiveConfig.model_fields)
+    assert set(re.findall(r"(\w+)\??:", body)) == set(LiveConfig.model_fields)
 
 
 @pytest.mark.asyncio
@@ -211,6 +212,160 @@ async def test_approval_requires_new_unambiguous_confirmation(ledger):
     runtime.user_text = "yes please"
     assert (await runtime.execute("confirmed", "confirm_action", approval, 1))["success"]
     assert len(gateway.calls) == 2
+
+
+class _ApprovalGateway(Gateway):
+    async def execute(self, name, args, request):
+        from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL
+
+        self.calls.append((name, args, request))
+        return ToolResult(False, {}, VOICE_CONFIRM_SENTINEL)
+
+    async def execute_confirmed(self, trace, request):
+        self.calls.append(("confirmed", {}, request))
+        return ToolResult(True, {"verified": True})
+
+
+async def _pending_approval(runtime):
+    request = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    result = await runtime.execute("c", "call_tool", request, 0)
+    assert "confirm_action" in result["next_step"]
+    runtime.revision = 1
+    return result["approval_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", ["Ja.", "Sí", "Yes"])
+async def test_approval_in_any_locale_survives_an_auto_session_language(ledger, answer):
+    # Live 2026-10-01: an "auto" session resolves to English, which rejected "Ja".
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval}, 1)
+    assert result["success"]
+    assert gateway.calls[-1][0] == "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_veto_still_wins_over_a_listed_affirmation(ledger):
+    runtime = LiveTools(_ApprovalGateway(), ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "nein"
+    result = await runtime.execute("no", "confirm_action", {"approval_id": approval}, 1)
+    assert not result["success"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        ". Ja, send ihn",  # i18n-allow: live 2026-10-01 transcript
+        "Ja. Ja, schick ihn los",  # i18n-allow: spoken confirmation vocabulary
+        "okay, do it",
+    ],
+)
+async def test_a_short_spoken_go_ahead_approves(ledger, answer):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval}, 1)
+    assert result["success"]
+    assert gateway.calls[-1][0] == "confirmed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "nein, nicht senden",  # i18n-allow: spoken veto vocabulary
+        "Ja, aber warte noch",  # i18n-allow: spoken hedge vocabulary
+        "yes but change the target",
+        "Wieso nicht gepromptet hast",  # i18n-allow: live 2026-10-01 transcript
+    ],
+)
+async def test_a_hedge_veto_or_new_instruction_does_not_approve(ledger, answer):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = answer
+    result = await runtime.execute("no", "confirm_action", {"approval_id": approval}, 1)
+    assert not result["success"]
+    assert gateway.calls[-1][0] != "confirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_mistyped_approval_id_still_confirms_the_only_pending_action(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "Ja"
+    result = await runtime.execute("ok", "confirm_action", {"approval_id": approval[:-1]}, 1)
+    assert result["success"]
+
+
+@pytest.mark.asyncio
+async def test_closing_the_call_is_not_recorded_as_a_veto(ledger):
+    reasons = []
+
+    class _Recording(_ApprovalGateway):
+        async def cancel_pending(self, trace, *, reason="voice_vetoed"):
+            reasons.append(reason)
+            return True
+
+    runtime = LiveTools(_Recording(), ledger, "s", language="en", backend_model="")
+    await _pending_approval(runtime)
+    await runtime.close()
+    assert reasons == ["voice_session_closed"]
+
+
+@pytest.mark.asyncio
+async def test_a_schema_violation_tells_the_model_what_to_fix(ledger):
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    request = {"name": "write-file", "arguments_json": '{"text": 5}'}
+    result = await runtime.execute("bad", "call_tool", request, 0)
+    assert result["success"] is False
+    assert result["executed"] is False and result["retryable"] is True
+    assert "text" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_yes_to_a_pending_approval_does_not_hang_up(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    questions = []
+
+    async def ask(question):
+        questions.append(question)
+
+    runtime.ask_hangup = ask
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "Ja"
+    refused = await runtime.execute("bye", "end_call", {}, 1)
+    assert not refused["success"]
+    assert refused["approval_ids"] == [approval]
+    assert not runtime.end_requested
+    runtime.user_text = "Leg auf"  # i18n-allow: spoken hang-up request
+    runtime.revision = 2
+    assert not (await runtime.execute("bye2", "end_call", {}, 2))["success"]
+    assert questions == ["Do you really want to hang up?"]
+    assert not runtime.end_requested
+    runtime.user_text = "Yes"
+    runtime.revision = 3
+    assert (await runtime.execute("bye3", "end_call", {}, 3))["success"]
+    assert runtime.end_requested
+
+
+@pytest.mark.asyncio
+async def test_built_ins_wrapped_in_call_tool_still_run(ledger):
+    gateway = _ApprovalGateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    approval = await _pending_approval(runtime)
+    runtime.user_text = "ja bitte"  # i18n-allow: spoken confirmation vocabulary
+    wrapped = {"name": "confirm_action", "arguments_json": f'{{"approval_id":"{approval}"}}'}
+    assert (await runtime.execute("w", "call_tool", wrapped, 1))["success"]
+    assert gateway.calls[-1][0] == "confirmed"
 
 
 @pytest.mark.asyncio
@@ -389,9 +544,13 @@ def test_disabled_computer_use_does_not_expose_its_primitives(monkeypatch):
     setting = SimpleNamespace(enabled=False)
     manager = SimpleNamespace(_tools={}, _config=SimpleNamespace(computer_use=setting))
     gateway = BrainSupervisorToolGateway(manager)
-    assert "click" not in {d.name for d in gateway.voice_catalog()}
+    assert not {"click", "computer"} & {d.name for d in gateway.voice_catalog()}
     setting.enabled = True
-    assert "click" in {d.name for d in gateway.voice_catalog()}
+    names = {d.name for d in gateway.voice_catalog()}
+    # ADR-0039: the live model operates the screen with ``computer``; raw
+    # screen-unit primitives are not offered beside it.
+    assert "computer" in names
+    assert "click" not in names
 
 
 def test_recovery_history_is_bounded_and_keeps_user_text_as_data():
@@ -452,7 +611,10 @@ async def test_recovery_preserves_context_and_waits_for_new_input(ledger, monkey
     ledger.append(TranscriptFragment("s", "a", "user", "Remember the blue folder", 0, 10))
     session._last_end["user"] = 10
     assert await session._recover()
-    assert opened[0].session["input"][0]["content"][0]["text"] == "Remember the blue folder"
+    history = opened[0].session["input"]
+    assert all(message["role"] == "assistant" for message in history)
+    restored = json.loads(history[0]["content"][0]["text"].split("\n", 1)[1])
+    assert restored == [{"role": "user", "text": "Remember the blue folder"}]
     assert not session._tools.accepting
     assert not session._tools.gateway.calls
     await session._event(
@@ -509,6 +671,7 @@ async def test_recovery_usage_accumulates_but_unconfirmed_segments_stay_unconfir
     session._past_voice_seconds = 12
     session._had_unconfirmed_wire = True
     await session._event({"type": "session.usage.updated", "usage": {"seconds": 5}})
+    session._closing = True
     await session._event(
         {"type": "session.closed", "reason": "close_requested", "usage": {"seconds": 6}}
     )
@@ -565,7 +728,7 @@ async def test_cancelled_work_stays_cancelled_when_a_new_request_arrives(ledger)
             assert not request.cancel_token.is_cancelled()
             return ToolResult(True, "New request completed")
 
-        async def cancel_pending(self, trace):
+        async def cancel_pending(self, trace, *, reason="voice_vetoed"):
             self.cancelled.append(trace)
             return True
 
@@ -953,3 +1116,83 @@ async def test_live_usage_keeps_the_calls_model_after_a_settings_change(ledger):
     assert ledger._db.execute("SELECT model FROM live_backend_usage").fetchone() == (
         "starting-model",
     )
+
+
+@pytest.mark.asyncio
+async def test_native_tool_search_ranks_instead_of_requiring_every_word(ledger):
+    # 2026-09-20: "die Jarvis Agenten" found nothing on the native path because
+    # every query word had to occur in one tool; Jarvis said none existed.
+    runtime = LiveTools(Gateway(), ledger, "s", language="en", backend_model="")
+    runtime.declarations()
+    result = await runtime.execute("d", "discover_tools", {"query": "please write the file"}, 0)
+    assert [tool["name"] for tool in result["tools"]] == ["write-file"]
+
+
+def test_steering_tools_are_declared_before_the_size_budget_runs_out(ledger):
+    class Crowded(Gateway):
+        def catalog(self):
+            filler = tuple(
+                SupervisorToolDescriptor(
+                    f"a-tool-{index:02d}", "x" * 900, {"type": "object"}, "safe"
+                )
+                for index in range(60)
+            )
+            steering = SupervisorToolDescriptor(
+                "workspace-orchestrate", "Route coding tasks", {"type": "object"}, "monitor"
+            )
+            return (*filler, steering)
+
+    runtime = LiveTools(Crowded(), ledger, "s", language="en", backend_model="")
+    declared = runtime.declarations()
+    assert "workspace-orchestrate" in {runtime._names.get(d["name"]) for d in declared}
+
+
+@pytest.mark.asyncio
+async def test_a_read_is_not_discarded_when_the_user_kept_talking(ledger):
+    class Reads(Gateway):
+        def catalog(self):
+            return (
+                SupervisorToolDescriptor("list-agents", "List agents", {"type": "object"}, "safe"),
+                *super().catalog(),
+            )
+
+    gateway = Reads()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    runtime.revision = 2
+    read = {"name": "list-agents", "arguments_json": "{}"}
+    assert (await runtime.execute("r", "call_tool", read, 1))["success"]
+    action = {"name": "write-file", "arguments_json": '{"text":"x"}'}
+    assert (await runtime.execute("w", "call_tool", action, 1))["status"] == "superseded"
+
+
+@pytest.mark.parametrize(
+    ("fragment", "counts"),
+    [("Mhm.", False), (" hm", False), ("Ähm", False), (" Ja", True), ("stop", True)],  # i18n-allow
+)
+def test_only_words_beyond_a_backchannel_count_as_new_input(fragment, counts):
+    from jarvis.live.session import _says_something
+
+    assert _says_something(fragment) is counts
+
+
+def test_a_refusal_that_ran_nothing_does_not_block_reconnecting(ledger):
+    ledger.claim("s", "bye", "end_call", {}, 0)
+    ledger.finish("s", "bye", {"success": False, "executed": False, "error": "Stay on the call."})
+    resumable, _ = ledger.recovery_state("s")
+    assert resumable
+
+
+@pytest.mark.asyncio
+async def test_a_tool_sees_the_order_not_only_the_answer_to_a_question(ledger):
+    # A worker once started with the task "Ja, los": the bleed guard compared
+    # the order with the latest caption segment only.
+    gateway = Gateway()
+    runtime = LiveTools(gateway, ledger, "s", language="en", backend_model="")
+    runtime.user_text = "Write a file that says hello"
+    runtime.user_text = "Write a file that says hello please"
+    runtime.user_text = "Yes, go"
+    assert runtime.user_text == "Yes, go"
+    request = {"name": "write-file", "arguments_json": '{"text":"hello"}'}
+    assert (await runtime.execute("w", "call_tool", request, 0))["success"]
+    utterance = gateway.calls[-1][2].user_utterance
+    assert utterance == "Write a file that says hello please Yes, go"

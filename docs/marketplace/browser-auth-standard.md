@@ -100,8 +100,11 @@ Enforced by:
 - `scripts/ci/check_plugin_auth_contract.py` — blocking configuration and
   browser-evidence gate. `plugin-e2e-audit.json` records all seven observed
   stages, a real action for each smoke PASS, concrete blockers, and a fingerprint
-  of each plugin's auth and execution configuration. New built-ins require PASS;
-  `--require-e2e-pass` rejects every remaining blocker for release qualification.
+  of each plugin's auth and execution configuration. New built-ins require PASS.
+  The catalog field `acceptance` is "verified" only with a completed PASS; every
+  other plugin ships as "preview" and the app shows a Preview badge on it.
+  `--require-e2e-pass` (release qualification) also requires every PASS to ship
+  as verified.
 
 Evidence is an attestation of an observed provider journey. A schema check cannot
 perform account consent. Neither an opened page, a successful mock, nor MCP tool

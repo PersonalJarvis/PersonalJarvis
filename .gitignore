@@ -50,6 +50,7 @@ build/
 # this on every v1.0.x release). Rebuilt + committed as part of each release.
 !jarvis/ui/web/dist/
 !jarvis/ui/web/dist/**
+jarvis/ui/web/.frontend-*
 
 # Installer-managed-install marker: written by install/installer.py at install
 # time to opt a checkout into in-app self-update. Must NEVER be committed — a
@@ -500,3 +501,6 @@ docs/plans/mars-world/
 
 # Figure build: fetched CC0 sources and generated sheets (scripts/figures/README.md)
 scripts/figures/cache/
+
+# Launch-video renders from the /brag skill (thousands of frames).
+brag-output/

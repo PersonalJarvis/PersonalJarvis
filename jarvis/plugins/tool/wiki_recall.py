@@ -46,6 +46,8 @@ log = logging.getLogger(__name__)
 class WikiRecallTool:
     """Router-tier keyword search over the long-term Obsidian wiki vault."""
 
+    read_only = True
+
     name: str = "wiki-recall"
     description: str = (
         "Search the user's long-term Obsidian wiki for notes matching keywords. "

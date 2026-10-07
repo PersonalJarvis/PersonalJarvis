@@ -37,8 +37,12 @@ class _FakeWindow:
         self.title = title
         self.url = url
         self.destroyed = False
+        self.shown = 0
         self.evaluated: list[str] = []
         self.events = SimpleNamespace(loaded=_List(), closed=_List(), closing=_List())
+
+    def show(self) -> None:
+        self.shown += 1
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -61,10 +65,12 @@ def _fake_webview(created: list[_FakeWindow], *, fail: bool = False) -> ModuleTy
     class WebViewException(Exception):
         pass
 
-    def create_window(title: str, url: str, **_kwargs: Any) -> _FakeWindow:
+    def create_window(title: str, url: str, **kwargs: Any) -> _FakeWindow:
         if fail:
             raise WebViewException("runtime window creation unsupported")
         window = _FakeWindow(title, url)
+        window.frameless = kwargs.get("frameless", False)
+        window.resizable = kwargs.get("resizable", True)
         created.append(window)
         return window
 
@@ -108,10 +114,12 @@ def _app(monkeypatch: pytest.MonkeyPatch | None = None) -> DesktopApp:
 # --- open_detached_window ----------------------------------------------------
 
 
-def test_open_detached_creates_titled_solo_window(monkeypatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_open_detached_creates_titled_solo_window(monkeypatch, platform) -> None:
     import sys
 
     app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
 
@@ -120,6 +128,8 @@ def test_open_detached_creates_titled_solo_window(monkeypatch) -> None:
     assert result == {"ok": True, "already_open": False, "view": "agentic-ide"}
     assert len(created) == 1
     window = created[0]
+    assert window.frameless is (platform != "darwin")
+    assert window.resizable is True
     # Distinct title: FindWindowW-exact focus and the icon setter key on it.
     assert window.title == f"{WINDOW_TITLE} — Agents"
     assert window.title != WINDOW_TITLE
@@ -311,10 +321,64 @@ def test_snapshot_lists_detached_views(monkeypatch) -> None:
 # --- _ensure_main_window -----------------------------------------------------
 
 
-def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
+@pytest.mark.parametrize("view", ["agentic-ide", "chats", "appshot-editor"])
+def test_second_launch_reopens_main_while_a_detached_window_keeps_running(
+    monkeypatch, view,
+) -> None:
+    """The real focus route must recover a closed main without replacing its process."""
+    import sys
+
+    from jarvis.ui import desktop_app
+    from jarvis.ui.web import launcher
+
+    app = _app(monkeypatch)
+    secondary = _FakeWindow(app._detached_title(view))
+    app._detached_windows[view] = secondary
+    assert app._on_window_closing() is True
+    app._on_main_window_closed()
+    assert not app._user_requested_quit
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+    monkeypatch.setattr(desktop_app, "window_needs_restore", lambda _title: False)
+    monkeypatch.setattr(desktop_app, "window_restores_maximized", lambda _title: False)
+    app._restore_overlay_for_visible_window = lambda: None
+    api = FastAPI()
+    api.state.desktop_app = app
+    app._install_focus_route(SimpleNamespace(app=api))
+
+    def unexpected_recovery(*_args, **_kwargs):
+        pytest.fail("A live detached window must not trigger stuck-process recovery")
+
+    with TestClient(api) as client:
+        def focus():
+            response = client.post("/api/window/focus")
+            assert response.json() == {"ok": True, "focused": True}
+            return desktop_app._focus_response_means_window_raised(response)
+
+        for _ in range(2):
+            assert launcher._recover_from_already_running(
+                desktop_app.SingleInstanceError("already running (pid=4242)"),
+                focus=focus,
+                read_meta=lambda: {"pid": 4242, "port": 47821},
+                health=lambda _port: True,
+                ask=unexpected_recovery,
+                terminate=unexpected_recovery,
+                acquire=unexpected_recovery,
+            ) is None
+
+    assert len(created) == 1
+    assert app._window is created[0]
+    assert created[0].shown == 2
+    assert app._detached_windows == {view: secondary}
+    assert not secondary.destroyed
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_ensure_main_window_recreates_and_rehooks(monkeypatch, platform) -> None:
     import sys
 
     app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
     app._window = None
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
@@ -324,10 +388,30 @@ def test_ensure_main_window_recreates_and_rehooks(monkeypatch) -> None:
     assert len(created) == 1
     assert created[0].title == WINDOW_TITLE
     assert app._window is created[0]
+    assert created[0].frameless is (platform != "darwin")
+    assert created[0].resizable is True
     assert app._window_visible is True
     assert len(created[0].events.closing) == 1  # quit contract re-attached
     assert len(created[0].events.closed) == 1  # null-out re-attached
     assert len(created[0].events.loaded) == 2  # drop bridge and authenticated shell restore
+
+
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_main_window_chrome_matches_native_frame(monkeypatch, platform) -> None:
+    import sys
+
+    app = _app(monkeypatch)
+    monkeypatch.setattr(sys, "platform", platform)
+    options = app._main_window_kwargs()
+    assert options["frameless"] is (platform != "darwin")
+    assert options["resizable"] is True
+    app._window.frameless = options["frameless"]
+    snapshot = app.window_chrome_snapshot()
+    assert snapshot["frameless"] is options["frameless"]
+    assert snapshot["controls"] == ("none" if platform == "darwin" else "trailing")
+
+    app._window = None
+    assert app.window_chrome_snapshot()["controls"] == "none"
 
 
 # --- native drop bridge --------------------------------------------------------

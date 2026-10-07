@@ -16,7 +16,10 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useSt
 import { Command } from "cmdk";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
-import { colourForKind } from "@/lib/wikiGraph";
+import { Search } from "lucide-react";
+
+import { cleanTitle, groupOfKind, readableSnippet, type WikiGroupId } from "@/lib/wikiModel";
+import { KindGlyph } from "@/components/wiki/KindGlyph";
 import { useT } from "@/i18n";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -64,6 +67,17 @@ interface RecentEntry {
   path: string;
   kind: string;
   mtime: number;
+}
+
+/** A search hit carries only its vault path; its top folder names the kind. */
+function groupOfPath(path: string): WikiGroupId {
+  const top = path.split(/[\\/]/)[0] ?? "";
+  if (top === "entities") return "entity";
+  if (top === "projects") return "project";
+  if (top === "concepts") return "concept";
+  if (top === "sessions") return "session";
+  if (top === "society") return "agent";
+  return path.includes("/") ? "other" : "system";
 }
 
 async function fetchSearch(query: string): Promise<SearchResponse> {
@@ -130,7 +144,7 @@ function highlightSnippet(snippet: string, pattern: RegExp | null): JSX.Element 
     <>
       {parts.map((part, idx) =>
         idx % 2 === 1 ? (
-          <mark key={idx} className="bg-foreground/30 text-foreground">
+          <mark key={idx} className="rounded-sm bg-accent-soft text-foreground">
             {part}
           </mark>
         ) : (
@@ -221,6 +235,22 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
   });
   const recent = useMemo(() => selectRecentPages(tree), [tree]);
 
+  // The palette's own selection. cmdk picks its first row only when it does
+  // the filtering itself; with the backend ranking the hits it would leave
+  // nothing selected, so Enter right after typing did nothing.
+  const [selectedValue, setSelectedValue] = useState("");
+  const firstValue =
+    debouncedQuery.length === 0
+      ? recent[0]
+        ? `recent:${recent[0].slug}`
+        : ""
+      : data?.ok && data.hits[0]
+        ? `hit:${data.hits[0].slug}`
+        : "";
+  useEffect(() => {
+    setSelectedValue(firstValue);
+  }, [firstValue]);
+
   const handlePick = useCallback(
     (slug: string) => {
       onResultClick(slug);
@@ -235,6 +265,8 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
     <Command.Dialog
       open={open}
       onOpenChange={setOpen}
+      value={selectedValue}
+      onValueChange={setSelectedValue}
       label={t("wiki_search.dialog_label")}
       // The backend already ranked these hits (FTS5/BM25 over full page
       // bodies). cmdk's built-in filter would score them a SECOND time
@@ -244,7 +276,7 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
       // returned results and the palette showed an empty list.
       shouldFilter={false}
       data-testid="wiki-search-dialog"
-      contentClassName="fixed left-1/2 top-[20vh] z-50 w-[min(640px,90vw)] -translate-x-1/2 rounded-xl border border-border bg-background"
+      contentClassName="fixed left-1/2 top-[18vh] z-50 w-[min(640px,90vw)] -translate-x-1/2 overflow-hidden rounded-lg bg-popover shadow-float"
       overlayClassName="fixed inset-0 z-40 bg-scrim/40 backdrop-blur-sm"
     >
       {/* Screen-reader-only title and description — required by Radix Dialog's
@@ -253,24 +285,24 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
       <p className="sr-only" id="wiki-search-description">
         {t("wiki_search.dialog_description")}
       </p>
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <span aria-hidden="true" className="text-muted-foreground">⌕</span>
+      <div className="flex h-12 items-center gap-3 border-b border-border px-4">
+        <Search className="h-4 w-4 shrink-0 text-foreground-faint" aria-hidden />
         <Command.Input
           value={rawQuery}
           onValueChange={setRawQuery}
           placeholder={t("wiki_search.input_placeholder")}
           data-testid="wiki-search-input"
-          className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          className="flex-1 bg-transparent text-base text-foreground outline-none placeholder:text-foreground-faint"
           autoFocus
         />
-        <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 text-micro text-muted-foreground">
+        <kbd className="rounded-sm border border-border px-1.5 py-0.5 font-mono text-xs text-foreground-faint">
           Esc
         </kbd>
       </div>
 
       <Command.List
         data-testid="wiki-search-list"
-        className="max-h-[60vh] overflow-y-auto p-2 text-sm"
+        className="max-h-[60vh] overflow-y-auto p-2 text-base [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:text-sm [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-foreground-faint"
       >
         {debouncedQuery.length === 0 ? (
           <Command.Group heading={t("wiki_search.recent_heading")} data-testid="wiki-search-recent">
@@ -286,15 +318,11 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
                   onSelect={() => handlePick(entry.slug)}
                   data-testid="wiki-search-recent-item"
                   data-slug={entry.slug}
-                  className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 aria-selected:bg-muted"
+                  className="flex h-9 cursor-pointer items-center gap-2.5 rounded-md px-2 text-foreground aria-selected:bg-secondary"
                 >
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-2 w-2 rounded-full"
-                    style={{ background: colourForKind(entry.kind) }}
-                  />
-                  <span className="font-medium">{entry.title}</span>
-                  <span className="text-muted-foreground">— {entry.path}</span>
+                  <KindGlyph group={groupOfKind(entry.kind)} className="h-2.5 w-2.5 text-foreground-faint" />
+                  <span className="truncate">{cleanTitle(entry.title, entry.slug)}</span>
+                  <span className="ml-auto truncate text-sm text-foreground-faint">{entry.path}</span>
                 </Command.Item>
               ))
             )}
@@ -332,14 +360,15 @@ export const WikiSearch = forwardRef<WikiSearchHandle, WikiSearchProps>(function
                 onSelect={() => handlePick(hit.slug)}
                 data-testid="wiki-search-hit"
                 data-slug={hit.slug}
-                className="flex cursor-pointer flex-col gap-1 rounded px-2 py-1.5 aria-selected:bg-muted"
+                className="flex cursor-pointer flex-col gap-1 rounded-md px-2 py-2 aria-selected:bg-secondary"
               >
-                <span className="flex items-center gap-2">
-                  <span className="font-medium">{hit.title}</span>
-                  <span className="text-muted-foreground">— {hit.path}</span>
+                <span className="flex items-center gap-2.5">
+                  <KindGlyph group={groupOfPath(hit.path)} className="h-2.5 w-2.5 text-foreground-faint" />
+                  <span className="truncate text-foreground">{cleanTitle(hit.title, hit.slug)}</span>
+                  <span className="ml-auto truncate text-sm text-foreground-faint">{hit.path}</span>
                 </span>
-                <span className="line-clamp-2 text-xs text-muted-foreground">
-                  {highlightSnippet(hit.snippet, highlightPattern)}
+                <span className="line-clamp-2 pl-5 text-sm text-muted-foreground">
+                  {highlightSnippet(readableSnippet(hit.snippet), highlightPattern)}
                 </span>
               </Command.Item>
             ))}

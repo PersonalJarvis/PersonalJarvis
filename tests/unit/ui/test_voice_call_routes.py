@@ -42,11 +42,23 @@ class _Pipeline:
         return self._stopped
 
 
-def _client(monkeypatch, pipeline) -> TestClient:
+def _client(monkeypatch, pipeline, *, config=None, desktop_shell=False) -> TestClient:
     monkeypatch.setattr(voice_call_routes, "_pipeline", lambda: pipeline)
     app = FastAPI()
     app.include_router(router)
+    if config is not None:
+        app.state.config = config
+    if desktop_shell:
+        app.state.native_file_actions = True
     return TestClient(app)
+
+
+def _cfg(mode: str = "pipeline", **browser_voice):
+    from jarvis.core.config import JarvisConfig
+
+    return JarvisConfig.model_validate(
+        {"voice": {"mode": mode}, "browser_voice": browser_voice}
+    )
 
 
 def test_call_arms_a_wake_style_session(monkeypatch):
@@ -85,7 +97,40 @@ def test_headless_answers_honestly_instead_of_500(monkeypatch):
         "available": False,
         "state": "unavailable",
         "voice_state": "idle",
+        # No config attached: the bridge cannot be read, so it is not offered.
+        "browser_call": False,
     }
+
+
+def test_headless_host_tells_the_browser_to_hold_the_call(monkeypatch):
+    # Issue #399: `jarvis serve` has no speech pipeline, so the browser that
+    # presses Start holds the call over /ws/audio.
+    client = _client(monkeypatch, None, config=_cfg("pipeline"))
+    body = client.get("/api/voice/state").json()
+    assert body["available"] is False
+    assert body["browser_call"] is True
+
+
+def test_headless_realtime_mode_also_offers_the_browser_call(monkeypatch):
+    client = _client(monkeypatch, None, config=_cfg("realtime", enabled=False))
+    assert client.get("/api/voice/state").json()["browser_call"] is True
+
+
+def test_switched_off_bridge_is_not_offered(monkeypatch):
+    client = _client(monkeypatch, None, config=_cfg("pipeline", enabled=False))
+    assert client.get("/api/voice/state").json()["browser_call"] is False
+
+
+def test_desktop_shell_without_a_pipeline_never_offers_a_browser_call(monkeypatch):
+    # A desktop app that is still booting has no pipeline yet; a browser-held
+    # call there would be a second microphone owner.
+    client = _client(monkeypatch, None, config=_cfg("pipeline"), desktop_shell=True)
+    assert client.get("/api/voice/state").json()["browser_call"] is False
+
+
+def test_a_running_pipeline_owns_the_call(monkeypatch):
+    client = _client(monkeypatch, _Pipeline(), config=_cfg("pipeline"))
+    assert client.get("/api/voice/state").json()["browser_call"] is False
 
 
 def test_state_names_the_pipeline_state(monkeypatch):
@@ -94,6 +139,7 @@ def test_state_names_the_pipeline_state(monkeypatch):
         "available": True,
         "state": "idle",
         "voice_state": "idle",
+        "browser_call": False,
     }
 
 
@@ -109,6 +155,7 @@ def test_state_mirrors_the_supervisor_while_a_session_runs(monkeypatch):
         "available": True,
         "state": "active",
         "voice_state": "listening",
+        "browser_call": False,
     }
 
 
@@ -131,4 +178,5 @@ def test_state_clamps_a_left_over_supervisor_state_to_idle(monkeypatch):
         "available": True,
         "state": "idle",
         "voice_state": "idle",
+        "browser_call": False,
     }

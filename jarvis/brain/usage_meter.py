@@ -86,6 +86,16 @@ class MeteredBrain:
     # -- the metered call ---------------------------------------------------
 
     def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        from jarvis.core.model_selection import operation_model
+
+        selected = operation_model.get()
+        if (
+            selected is not None
+            and selected.brain_override is not None
+            and selected.brain_override is not self
+            and selected.brain_override is not self._inner
+        ):
+            raise RuntimeError("This operation cannot use a different model or billing account.")
         caller = current_caller()
         return self._metered(self._inner.complete(req), caller, self._model_of(req))
 
