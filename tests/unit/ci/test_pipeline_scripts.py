@@ -710,7 +710,8 @@ def test_apply_without_a_queue_merges_directly_and_pins_the_head(tmp_path, monke
     agent_integrate.apply(tmp_path, plan, False, True)
     merge = next(c for c in fake.calls if c[:2] == ("pr", "merge"))
     assert merge[-2:] == ("--match-head-commit", "a" * 40) and "--squash" in merge
-    assert ("workflow", "run", "ci.yml", "--ref", "main", "-f", "full=false") in fake.calls
+    dispatch = ("workflow", "run", "ci.yml", "--ref", "main", "-f", "full=false")
+    assert dispatch + ("-f", "include_macos=false") in fake.calls  # no macOS lanes per merge
 
 
 # --------------------------------------------------------------------------- release

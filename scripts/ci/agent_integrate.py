@@ -850,7 +850,10 @@ def enqueue(entry: dict) -> int:
 
 
 def dispatch_ci(ref: str) -> None:
-    gh("workflow", "run", "ci.yml", "--ref", ref, "-f", "full=false")
+    """Stand-in for the push run a GITHUB_TOKEN merge never fires (direct-merge
+    fallback only; queue merges fire a real push). The dispatch input's
+    default would add every macOS lane (~10x runner cost) to each merge."""
+    gh("workflow", "run", "ci.yml", "--ref", ref, "-f", "full=false", "-f", "include_macos=false")
 
 
 def _bundle_is_safe(sha: str, entry: dict, main_sha: str, checkout: Path) -> bool:
