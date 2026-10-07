@@ -38,7 +38,11 @@ from jarvis.missions.standalone_run import read_marker as read_standalone_marker
 from jarvis.missions.state_machine import MissionState, is_terminal
 from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.platform import detect_platform
-from jarvis.ui.web.artifact_view import ARTIFACT_PAGE_CSP, VIEW_CSP, render_artifact_html
+from jarvis.ui.web.artifact_view import (
+    ARTIFACT_PAGE_CSP,
+    VIEW_HEADER_CSP,
+    render_artifact_html,
+)
 from jarvis.ui.web.mission_graph import build_mission_graph, render_mission_graph_html
 from jarvis.ui.web.run_plan import build_run_plan
 
@@ -100,6 +104,10 @@ class OutputSummary(BaseModel):
     needs_review: bool = False
     active_child_id: str | None = None
     active_child_slug: str | None = None
+    # Parked for capacity (MissionState.WAITING_CAPACITY): ``status`` stays
+    # "running" (not landed yet); this tells the UI to offer the decision
+    # between waiting, a per-mission paid approval, and cancelling.
+    waiting_capacity: bool = False
 
 
 class OutputsResponse(BaseModel):
@@ -175,7 +183,7 @@ def _parse_slug(name: str) -> dict[str, Any]:
 
             dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
             started_at: float | None = dt.timestamp()
-        except ValueError:
+        except ValueError:  # no parseable timestamp means no start time
             started_at = None
         rough = m.group("utterance").replace("-", " ").strip()
         utterance = rough[:1].upper() + rough[1:] if rough else None
@@ -354,7 +362,7 @@ async def _terminal_outcome_details(
     for event_type, payload_json in rows:
         try:
             payload = json.loads(payload_json or "{}")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # a corrupt event row is skipped; the run renders
             continue
         event_type = str(event_type)
         if event_type == "MissionApproved":
@@ -402,6 +410,8 @@ _STATE_TO_STATUS: dict[str, str] = {
     # MissionState (state_machine.py) — real DB labels
     "CRITIQUING": "running",
     "LOOPING": "running",
+    # Parked for capacity: not landed yet, resumes from its checkpoint.
+    "WAITING_CAPACITY": "running",
     # Legacy aliases kept for back-compat with older missions on disk
     "CRITIC_REVIEW": "running",
     "AWAITING_CORRECTION": "running",
@@ -465,7 +475,7 @@ async def _live_continuation_map(request: Request) -> dict[str, str]:
             continue  # only a LIVE child resolves the run/not-run ambiguity
         try:
             parent = json.loads(payload_json or "{}").get("parent_mission_id")
-        except (ValueError, TypeError):
+        except (ValueError, TypeError):  # a corrupt payload names no parent
             parent = None
         if not parent:
             continue
@@ -579,7 +589,7 @@ async def list_outputs(request: Request) -> OutputsResponse:
         if parsed["started_at"] is None:
             try:
                 parsed["started_at"] = entry.stat().st_mtime
-            except OSError:
+            except OSError:  # an unreadable folder keeps no start time
                 pass
         prefix = dir_to_mission_prefix.get(entry.name)
         # Look up by the mission-id prefix encoded in the dir-name. For
@@ -613,6 +623,9 @@ async def list_outputs(request: Request) -> OutputsResponse:
         if mission_row is not None:
             status = _STATE_TO_STATUS.get(str(mission_row["state"]), "unknown")
             summary["status"] = status
+            summary["waiting_capacity"] = (
+                str(mission_row["state"]) == MissionState.WAITING_CAPACITY.value
+            )
             summary["mission_id"] = mission_row.get("full_id")
             full_id = mission_row.get("full_id")
             child_id = continuation.get(str(full_id)) if full_id else None
@@ -683,7 +696,7 @@ def _count_deliverables(session_dir: Path) -> int:
                 continue
             try:
                 rel_parts = child.relative_to(session_dir).parts
-            except ValueError:
+            except ValueError:  # a path outside the session is no deliverable
                 continue
             if _is_deliverable_relpath(rel_parts):
                 count += 1
@@ -807,7 +820,7 @@ async def get_output_graph(slug: str, request: Request) -> HTMLResponse:
     return HTMLResponse(
         render_mission_graph_html(data),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -969,7 +982,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
                 continue
             try:
                 stat = child.stat()
-            except OSError:
+            except OSError:  # a file that vanished mid-listing is skipped
                 continue
             rel = "/".join(rel_parts)
             entry: dict[str, Any] = {
@@ -985,7 +998,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
                     if len(preview) > _ARTIFACT_PREVIEW_BYTES:
                         preview = preview[:_ARTIFACT_PREVIEW_BYTES] + "\n…"
                     entry["preview"] = preview
-                except OSError:
+                except OSError:  # an unreadable file just shows no preview
                     pass
             files.append(entry)
             if len(files) >= _ARTIFACT_MAX_LISTING:
@@ -1069,7 +1082,7 @@ async def download_output_artifact(
     # worker-authored artifact cannot execute code against the app.
     active_document_types = {"text/html", "image/svg+xml"}
     if disposition == "inline" and media_type in active_document_types:
-        headers["Content-Security-Policy"] = VIEW_CSP
+        headers["Content-Security-Policy"] = VIEW_HEADER_CSP
     return FileResponse(
         target,
         media_type=media_type or "application/octet-stream",
@@ -1084,7 +1097,11 @@ async def download_output_artifact(
 # no-script inline download). FastAPI registers only GET for ``@router.get``, so
 # the probe used to answer 405 on every backend and the fallback ALWAYS won —
 # the page's own scripts never ran. FileResponse sends headers only for HEAD.
-@router.api_route("/{slug}/files/{path:path}/page", methods=["GET", "HEAD"])
+# Two registrations, not one ``methods=["GET", "HEAD"]`` route: FastAPI gives
+# both methods of a single route the same operationId, which makes the
+# published OpenAPI document invalid for client generators.
+@router.get("/{slug}/files/{path:path}/page")
+@router.head("/{slug}/files/{path:path}/page", include_in_schema=False)
 async def serve_artifact_page(slug: str, path: str, request: Request) -> FileResponse:
     """Serve an HTML deliverable as an ARTIFACT PAGE — scripts allowed, network shut.
 
@@ -1141,7 +1158,7 @@ async def view_output_artifact(slug: str, path: str, request: Request) -> HTMLRe
         # the app's theme rather than the OS's; absent = OS preference.
         render_artifact_html(target.name, text, theme=request.query_params.get("theme")),
         headers={
-            "Content-Security-Policy": VIEW_CSP,
+            "Content-Security-Policy": VIEW_HEADER_CSP,
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -1217,19 +1234,80 @@ def _macos_app_present(display_name: str) -> bool:
     return False
 
 
+def _editor_install_candidates(app_id: str) -> list[Path]:
+    """The standard install locations of VS Code and Cursor on this OS.
+
+    Checked before the generic resolver so the editor's own GUI executable is
+    found even when its shell command is not on ``PATH`` (a GUI-launched
+    backend often has a short ``PATH``) and so Windows launches ``Code.exe`` /
+    ``Cursor.exe`` rather than the ``.cmd`` shim. macOS is not listed: its
+    ``.app`` bundles resolve through ``open -a``.
+    """
+    plat = detect_platform()
+    home = Path.home()
+    if plat == "win32":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        program_dirs = [
+            Path(value)
+            for value in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"))
+            if value
+        ]
+        if app_id == "code":
+            return [
+                base / "Microsoft VS Code" / "Code.exe"
+                for base in (local / "Programs", *program_dirs)
+            ]
+        if app_id == "cursor":
+            return [local / "Programs" / "cursor" / "Cursor.exe"] + [
+                base / "Cursor" / "Cursor.exe" for base in program_dirs
+            ]
+        return []
+    if plat == "linux":
+        flatpak_bins = [
+            Path("/var/lib/flatpak/exports/bin"),
+            home / ".local" / "share" / "flatpak" / "exports" / "bin",
+        ]
+        if app_id == "code":
+            return [
+                Path("/usr/bin/code"),
+                Path("/usr/share/code/code"),
+                Path("/snap/bin/code"),
+                *(base / "com.visualstudio.code" for base in flatpak_bins),
+            ]
+        if app_id == "cursor":
+            appimages = sorted((home / "Applications").glob("[Cc]ursor*.AppImage"), reverse=True)
+            return [
+                Path("/usr/bin/cursor"),
+                Path("/usr/share/cursor/cursor"),
+                Path("/opt/Cursor/cursor"),
+                Path("/opt/cursor/cursor"),
+                home / ".local" / "bin" / "cursor",
+                *appimages,
+            ]
+    return []
+
+
 def _resolve_installed(app_id: str) -> tuple[str, str] | None:
     """Resolve *app_id* to a launch ``(kind, value)`` IFF it is actually
     installed, else None. Distinguishes a real resolution (executable / a
     Start-Menu ``.lnk`` / a present macOS ``.app``) from the resolver's
     raw-name ``startfile`` fallback, which just means "not found"."""
-    from jarvis.plugins.tool.app_resolver import resolve_app_launch_target
+    from jarvis.plugins.tool.app_resolver import (
+        launch_services_can_open,
+        resolve_app_launch_target,
+    )
 
+    for candidate in _editor_install_candidates(app_id):
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return ("executable", str(candidate))
     target = resolve_app_launch_target(app_id)
     if target.kind == "executable":
         return (target.kind, target.value)
     if target.kind == "startfile" and target.value.lower().endswith(".lnk"):
         return (target.kind, target.value)
-    if target.kind == "open_a" and _macos_app_present(target.value):
+    if target.kind == "open_a" and (
+        _macos_app_present(target.value) or launch_services_can_open({target.value})
+    ):
         return (target.kind, target.value)
     return None
 
@@ -1400,3 +1478,135 @@ async def open_output(slug: str, request: Request) -> dict[str, Any]:
     if not opened:
         return {"opened": False, "path": str(target), "reason": "open failed"}
     return {"opened": True, "path": str(target)}
+
+
+# --- Delete -----------------------------------------------------------------
+# The Artifacts library's right-click "Delete". A card is either one artifact
+# file or a whole run, so there are two routes. Both refuse a run that is still
+# working (its worker may be writing into the very folder) and both stay inside
+# the same sandbox as every other route here: a slug resolves inside an outputs
+# root, a file path must be a genuine deliverable.
+
+
+async def _run_is_live(request: Request, slug: str) -> bool:
+    """True while the mission behind ``slug`` has not reached a terminal state.
+
+    Only ``mission_<short>`` dirs map to a mission row; any other run (a
+    standalone visualisation) finished the moment its folder existed. Without
+    a mission manager nothing can be running. A failing lookup raises 503: we
+    cannot prove the worker is done, so we do not pull the folder from under it.
+    """
+    prefix = _mission_id_prefix_for_dir(slug)
+    mgr = getattr(request.app.state, "mission_manager", None)
+    if prefix is None or mgr is None:
+        return False
+    try:
+        cur = await mgr.store.conn.execute(
+            "SELECT state FROM missions WHERE id LIKE ? ORDER BY updated_ms DESC LIMIT 1",
+            (f"{prefix}%",),
+        )
+        row = await cur.fetchone()
+        await cur.close()
+    except Exception as exc:  # noqa: BLE001 - any DB failure means "cannot confirm"
+        logger.warning("outputs: liveness lookup failed for %s: %s", slug, exc)
+        raise HTTPException(
+            status_code=503, detail="could not confirm the run has finished"
+        ) from exc
+    return row is not None and str(row[0]) not in _TERMINAL_STATE_VALUES
+
+
+def _force_rmtree(path: Path) -> None:
+    """``shutil.rmtree`` that also removes read-only files.
+
+    Workers leave read-only files behind (git objects, copied installers); on
+    Windows a plain rmtree stops at the first one with "Access is denied".
+    Clearing the read-only bit and retrying is the documented recipe.
+    """
+    import shutil
+    import stat
+    import sys
+
+    def _retry(func: Any, target: str, _exc: object) -> None:
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_retry)
+    else:
+        shutil.rmtree(path, onerror=_retry)
+
+
+def _delete_run_dirs(request: Request, slug: str) -> int:
+    """Remove ``slug`` from every readable outputs root; return how many went.
+
+    Every root, not only the canonical one: a retained legacy copy of the same
+    slug would otherwise surface again on the next listing.
+    """
+    removed = 0
+    for candidate_root in _outputs_roots(request):
+        root = candidate_root.resolve()
+        target = (root / slug).resolve()
+        if target == root or not target.is_relative_to(root) or not target.is_dir():
+            continue
+        _force_rmtree(target)
+        removed += 1
+    return removed
+
+
+def _prune_empty_parents(start: Path, stop: Path) -> None:
+    """Remove now-empty folders from ``start`` up to (not including) ``stop``."""
+    current = start
+    while current != stop and current.is_relative_to(stop):
+        try:
+            current.rmdir()
+        except OSError:  # a non-empty or locked folder ends the sweep
+            return
+        current = current.parent
+
+
+@router.delete("/{slug}")
+async def delete_output(slug: str, request: Request) -> dict[str, Any]:
+    """Delete a whole run: its folder and everything it produced."""
+    _resolve_output_dir(request, slug)
+    if await _run_is_live(request, slug):
+        raise HTTPException(status_code=409, detail="run is still working")
+    try:
+        removed = await asyncio.to_thread(_delete_run_dirs, request, slug)
+    except OSError as exc:
+        logger.warning("outputs: deleting run %s failed: %s", slug, exc)
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}") from exc
+    logger.info("outputs: deleted run %s (%d folder(s))", slug, removed)
+    return {"deleted": "run", "slug": slug}
+
+
+@router.delete("/{slug}/files/{path:path}")
+async def delete_output_artifact(slug: str, path: str, request: Request) -> dict[str, Any]:
+    """Delete one artifact file.
+
+    When that was the run's last deliverable the whole run goes with it: a run
+    with nothing left to show would come back as an empty "Output" card, which
+    is not what deleting the card the user right-clicked means.
+    """
+    target = _resolve_artifact_target(request, slug, path)
+    if await _run_is_live(request, slug):
+        raise HTTPException(status_code=409, detail="run is still working")
+    base = _resolve_output_dir(request, slug)
+    rel_parts = target.relative_to(base).parts
+    # tasks/<id>/artifacts/files — the deliverable root this file sits under.
+    files_root = base.joinpath(*rel_parts[:4])
+
+    def _delete() -> str:
+        target.unlink()
+        _prune_empty_parents(target.parent, files_root)
+        if _count_deliverables(base) == 0:
+            _delete_run_dirs(request, slug)
+            return "run"
+        return "file"
+
+    try:
+        deleted = await asyncio.to_thread(_delete)
+    except OSError as exc:
+        logger.warning("outputs: deleting %s/%s failed: %s", slug, path, exc)
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}") from exc
+    logger.info("outputs: deleted %s/%s (%s)", slug, path, deleted)
+    return {"deleted": deleted, "slug": slug, "path": path}

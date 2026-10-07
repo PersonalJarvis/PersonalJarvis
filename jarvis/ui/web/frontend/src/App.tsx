@@ -1,7 +1,6 @@
-import { useSocietyShell } from "@/store/societyShell";
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
-import { isSectionId, useEventStore } from "@/store/events";
+import { isSectionId, useEventStore, type SectionId } from "@/store/events";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useBrainStatus } from "@/hooks/useBrainStatus";
 import { useVoiceStatus } from "@/hooks/useVoiceStatus";
@@ -13,21 +12,20 @@ import { useSectionUrlMemory } from "@/hooks/useSectionUrlMemory";
 import {
   Sidebar,
   SIDEBAR_DEFAULT_WIDTH,
-  SIDEBAR_RAIL_AT_WIDTH,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from "@/components/layout/Sidebar";
 import { PaneResizer } from "@/components/layout/PaneResizer";
 import { useResizablePane } from "@/hooks/useResizablePane";
 import { TopBar } from "@/components/layout/TopBar";
-import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
-import { ReadyCelebration } from "@/components/ReadyCelebration";
 import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
 import { CommandActivityLayer } from "@/components/CommandActivityLayer";
+import { AppshotEditorHost } from "@/components/appshot/AppshotEditorHost";
 import { EditContextMenu } from "@/components/EditContextMenu";
+import { useMacWindowCloseFallback } from "@/lib/macWindowClose";
 /*
   Lazy on purpose. The overlay pulls in the dialog primitives, the keyboard
   layout table and the keybind hook — none of which anything needs before
@@ -39,15 +37,23 @@ const ShortcutOverlay = lazy(() =>
   import("@/components/ShortcutOverlay").then((m) => ({ default: m.ShortcutOverlay })),
 );
 import { shouldOpenShortcutOverlay } from "@/lib/shortcutOverlayTrigger";
+import { appChord } from "@/store/appChordSettings";
 /*
   Lazy for the same reason: the switcher carries every locale for its
   cross-language search, and nobody needs it before the first Ctrl+Space.
 */
+const CreateAgentDialog = lazy(() =>
+  import("@/components/society/create/CreateAgentDialog").then((m) => ({ default: m.CreateAgentDialogHost })),
+);
 const QuickSwitcher = lazy(() =>
   import("@/components/QuickSwitcher").then((m) => ({ default: m.QuickSwitcher })),
 );
 import { eventMatchesChord } from "@/lib/quickSwitchChord";
 import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
+import { useAppZoom } from "@/hooks/useAppZoom";
+import { ZoomIndicator } from "@/components/ZoomIndicator";
+import { useQuickSwitcher } from "@/store/quickSwitcher";
+import { useCreateAgentDialog } from "@/components/society/create/createAgentStore";
 import { JarvisDock } from "@/components/JarvisDock";
 import { CliConnectPoller } from "@/components/CliConnectPoller";
 import { OnboardingGate } from "@/components/onboarding/OnboardingGate";
@@ -58,6 +64,9 @@ import { cn } from "@/lib/utils";
 
 /** Where the collapsed/expanded choice for the nav sidebar is remembered. */
 const NAV_COLLAPSED_KEY = "jarvis.sidebar.collapsed.v1";
+
+/** Sections that fill the whole window instead of sitting beside the nav. */
+const FULLSCREEN_SECTIONS: readonly SectionId[] = ["agents", "docs", "memory"];
 
 /**
  * The surface the active section is drawn on.
@@ -107,7 +116,7 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!shouldOpenShortcutOverlay(event)) return;
+      if (!shouldOpenShortcutOverlay(event, appChord("shortcut_overlay"))) return;
       event.preventDefault();
       setShortcutsOpen(true);
     };
@@ -125,25 +134,33 @@ export default function App() {
     chord toggles. While the Settings recorder is capturing, the chord must
     reach the recorder instead, so a recording session is skipped.
   */
-  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherOpen = useQuickSwitcher((s) => s.open);
+  const createAgentOpen = useCreateAgentDialog((s) => s.open);
   const switcherEnabled = useQuickSwitchSettings((s) => s.enabled);
   const switcherCombo = useQuickSwitchSettings((s) => s.combo);
   useEffect(() => {
-    if (!switcherEnabled || !switcherCombo) {
-      setSwitcherOpen(false);
+    if (!switcherEnabled) {
+      useQuickSwitcher.getState().hide();
       return;
     }
+    if (!switcherCombo) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.repeat || !eventMatchesChord(event, switcherCombo)) return;
       if (document.querySelector('[data-keybind-recording="true"]')) return;
+      // Inside the code editor Ctrl+Space asks for suggestions, as in every
+      // code editor; any other switcher chord still works there.
+      const inEditor = event.target instanceof Element && event.target.closest(".monaco-editor");
+      const ctrlSpace = event.code === "Space" && event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey;
+      if (inEditor && ctrlSpace) return;
       event.preventDefault();
       event.stopPropagation();
-      setSwitcherOpen((open) => !open);
+      useQuickSwitcher.getState().toggle();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [switcherEnabled, switcherCombo]);
 
+  useMacWindowCloseFallback();
   useWebSocket();
   useBrainStatus();
   useVoiceStatus();
@@ -151,6 +168,12 @@ export default function App() {
   useAssistantNameSeed();
   useCodingMode();
   useFileDropGuard();
+  /*
+   * Ctrl + `+` / `-` / `0` zoom the whole window, like a browser — real engine
+   * zoom through the desktop shell. Chords and on/off live under Settings →
+   * Keyboard shortcuts. See hooks/useAppZoom.
+   */
+  useAppZoom();
   /*
    * A reload puts the user back on the section they were on.
    *
@@ -224,8 +247,8 @@ export default function App() {
    * The sidebar starts EXPANDED (2026-08-23 — it used to start as the icon
    * rail). The front page's own controls live in it now: the Voice | Chat
    * switch, "New chat", the recent runs and chats. A rail would hide the one
-   * switch the page is built around. Collapsing is still one click away and
-   * is remembered.
+   * switch the page is built around. A rail left by an earlier version is
+   * still honored until the seam is dragged.
    *
    * Persisted separately from the drag width on purpose: expanding restores the
    * column the user sized, not the designed default. A storage read that throws
@@ -239,17 +262,6 @@ export default function App() {
       return false;
     }
   });
-  const toggleNav = useCallback(() => {
-    setNavCollapsed((current) => {
-      const next = !current;
-      try {
-        window.localStorage.setItem(NAV_COLLAPSED_KEY, next ? "true" : "false");
-      } catch {
-        /* storage unavailable — the choice simply does not survive a restart */
-      }
-      return next;
-    });
-  }, []);
   // Dragging the seam is itself an "I want the sidebar" gesture: a drag that
   // left the rail state behind would snap straight back to icons and read as a
   // broken handle.
@@ -260,7 +272,7 @@ export default function App() {
         try {
           window.localStorage.setItem(NAV_COLLAPSED_KEY, "false");
         } catch {
-          /* see above */
+          /* storage unavailable — the choice simply does not survive a restart */
         }
       }
       sidebar.startResize(event);
@@ -269,28 +281,12 @@ export default function App() {
   );
 
   const activeSection = useEventStore((s) => s.activeSection);
-  const agentsNavOpen = useSocietyShell((s) => s.navigationOpen);
-  const toggleAgentsNav = useSocietyShell((s) => s.toggleNavigation);
-  const hideNavigation = activeSection === "agents" && !agentsNavOpen;
+  // Agents, Docs and the Wiki fill the window: each brings its own navigation column,
+  // and the caption's home/back buttons leave it, so the app sidebar and the
+  // toggle that used to reveal it are not needed there.
+  const sectionFullscreen = FULLSCREEN_SECTIONS.includes(activeSection);
   const solo = useEventStore((s) => s.solo);
   const detachedViews = useEventStore((s) => s.detachedViews);
-  /*
-   * The caption's leading navigation (sidebar toggle beside back/forward).
-   *
-   * The toggle moved here from the sidebar header, so the stranded handlers
-   * move with it: the agents section folds its own navigation, every other
-   * section folds the main column. The collapsed flag mirrors the rail the sidebar itself reports — a dragged
-   * narrow column reads as collapsed even before the toggle was touched.
-   */
-  const navToggle = activeSection === "agents"
-    ? {
-        collapsed: !agentsNavOpen || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
-        onToggle: toggleAgentsNav,
-      }
-    : {
-        collapsed: navCollapsed || sidebar.size < SIDEBAR_RAIL_AT_WIDTH,
-        onToggle: toggleNav,
-      };
 
   /*
    * The realtime broker must exist exactly ONCE across all windows: it
@@ -337,7 +333,11 @@ export default function App() {
         </main>
         <ToastLayer />
         <CommandActivityLayer />
+        {/* Only this window's own "Edit" opens it here; the card's request
+            goes to the main window (handleAppshotEditRequest). */}
+        <AppshotEditorHost />
         <EditContextMenu />
+        <ZoomIndicator />
         {shortcutsOpen && (
           <Suspense fallback={null}>
             <ShortcutOverlay open onOpenChange={setShortcutsOpen} />
@@ -352,22 +352,24 @@ export default function App() {
       {brokerMounted && <SubscriptionRealtimeTransportBroker />}
       <BrowserRealtimeControl controlOnly />
 
-      {!hideNavigation && <>
-      <Sidebar
-        width={sidebar.size}
-        collapsed={activeSection === "agents" ? false : navCollapsed}
-      />
+      {!sectionFullscreen && (
+        <>
+          <Sidebar
+            width={sidebar.size}
+            collapsed={navCollapsed}
+          />
 
-      <PaneResizer
-        showLine={false}
-        orientation="vertical"
-        onPointerDown={startSidebarResize}
-        onDoubleClick={sidebar.reset}
-        onNudge={sidebar.nudge}
-        active={sidebar.isResizing}
-        title="Drag to resize the sidebar — double-click to reset"
-      />
-      </>}
+          <PaneResizer
+            showLine={false}
+            orientation="vertical"
+            onPointerDown={startSidebarResize}
+            onDoubleClick={sidebar.reset}
+            onNudge={sidebar.nudge}
+            active={sidebar.isResizing}
+            title="Drag to resize the sidebar — double-click to reset"
+          />
+        </>
+      )}
 
       {/*
         The stage column carries NO z-index, and must not get one back.
@@ -388,20 +390,13 @@ export default function App() {
         {/* Gray, like the sidebar. The content panel below rounds its
             top-left corner so this gray shows in the curve. */}
         <div className="h-8 shrink-0" data-testid="caption-rule" />
-        <div className={activeSection === "agents" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
-        {/* App-wide macOS permission alert — topmost so a missing grant is
-            impossible to miss on any view. No-op on other platforms. */}
-        <PermissionsAlertBanner />
+        <div className={sectionFullscreen ? "flex min-h-0 min-w-0 flex-1 flex-col" : "jarvis-sheet flex min-h-0 min-w-0 flex-1 flex-col"}>
         {/* Outside input software (dictation, text expanders, auto-type) cannot
-            reach an elevated window. Sits next to the permission alert because
-            it is the same class of problem: an OS-level gate the user must be
-            told about, since nothing else reports it. */}
+            reach an elevated window: an OS-level gate the user must be told
+            about, since nothing else reports it. */}
         <InputIsolationBanner />
-        <TopBar navToggle={navToggle} />
+        <TopBar />
         {!(["agentic-ide", "chat-workspace", "agentic-ide-classic"].includes(activeSection)) && <VoiceWarmingBanner />}
-        {/* The one-time "all lights green" note — the first time every
-            section of the active voice mode answers. Never again after. */}
-        <ReadyCelebration />
         <SectionStage visualization={visualizationActive}>
           <MainView />
         </SectionStage>
@@ -410,6 +405,9 @@ export default function App() {
 
       <ToastLayer />
       <CommandActivityLayer />
+      {/* The appshot editor, over whatever is open (a click on the appshot
+          card in the screen corner opens it). */}
+      <AppshotEditorHost />
       {/* Right-click Cut/Copy/Paste. The desktop WebView ships with its own
           context menu disabled, so without this there is no mouse-driven paste
           anywhere in the app — including the IDE terminals. */}
@@ -426,9 +424,21 @@ export default function App() {
           a detached solo window IS one section, there is nowhere to switch. */}
       {switcherOpen && (
         <Suspense fallback={null}>
-          <QuickSwitcher open onOpenChange={setSwitcherOpen} />
+          <QuickSwitcher
+            open
+            onOpenChange={(next) => (next ? useQuickSwitcher.getState().show() : useQuickSwitcher.getState().hide())}
+            initialQuery={useQuickSwitcher.getState().initialQuery}
+          />
         </Suspense>
       )}
+      {/* Every plus in the agent society opens this; the chunk loads on first use. */}
+      {createAgentOpen && (
+        <Suspense fallback={null}>
+          <CreateAgentDialog />
+        </Suspense>
+      )}
+      {/* Names the level after Ctrl + Plus / Minus, like Chrome's zoom bubble. */}
+      <ZoomIndicator />
       {/* `?` anywhere in the app opens this; the chunk loads on first use. */}
       {shortcutsOpen && (
         <Suspense fallback={null}>

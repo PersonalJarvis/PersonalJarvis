@@ -1,7 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useEventStore } from "@/store/events";
+import {
+  browserVoiceCallLive,
+  startBrowserVoiceCall,
+  stopBrowserVoiceCall,
+} from "@/lib/browserVoiceCall";
 import {
   setBrowserVoiceInputOwnership,
   setVoiceInputLevel,
@@ -28,7 +33,7 @@ const fakes = vi.hoisted(() => ({
     onInputLevel?: (level: number) => void;
     onStatus?: (status: string, payload: Record<string, unknown>) => void;
   },
-  options: null as null | { requiresWebRtcOffer?: boolean },
+  options: null as null | { requiresWebRtcOffer?: boolean; browserAudio?: boolean },
 }));
 
 vi.mock("@/hooks/useCapabilities", () => ({
@@ -389,6 +394,70 @@ describe("BrowserRealtimeControl", () => {
     );
   });
 
+  describe("a refused microphone", () => {
+    const MAC_UA =
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)";
+    let fetchSpy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+      vi.stubGlobal("fetch", fetchSpy);
+      fakes.connect.mockRejectedValueOnce(new DOMException("denied", "NotAllowedError"));
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    it("reports a Mac desktop denial so the permission toast can show, with a desktop sentence", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.native = false;
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied_desktop")).toBeTruthy();
+      expect(screen.queryByText("sidebar.realtime_microphone_denied")).toBeNull();
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe("/api/permissions/microphone/request?dry_run=false");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({ feature: "browser_voice" });
+    });
+
+    it("keeps the browser site-settings sentence, and reports nothing, in a plain browser", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      render(<BrowserRealtimeControl />);
+      fireEvent.click(screen.getByRole("button", { name: "sidebar.realtime_start" }));
+
+      expect(await screen.findByText("sidebar.realtime_microphone_denied")).toBeTruthy();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it("does not report a denial of a call the wake word started", async () => {
+      vi.spyOn(navigator, "userAgent", "get").mockReturnValue(MAC_UA);
+      (window as unknown as { pywebview?: unknown }).pywebview = { api: {} };
+      fakes.browserAudio = true;
+      useEventStore.setState({
+        events: [
+          {
+            id: "wake-denied",
+            name: "BrowserVoiceRequested",
+            ts: Date.now(),
+            payload: { action: "start" },
+          },
+        ],
+      });
+      render(<BrowserRealtimeControl controlOnly />);
+
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
   it("maps every connection/voice combination onto exactly one look", () => {
     expect(waveformPhase("idle", "idle")).toBe("idle");
     expect(waveformPhase("connecting", "idle")).toBe("connecting");
@@ -410,5 +479,89 @@ describe("BrowserRealtimeControl", () => {
     expect((button as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText("sidebar.realtime_https_required")).toBeTruthy();
     expect(fakes.connect).not.toHaveBeenCalled();
+  });
+
+  // Issue #399: on a host with no speech pipeline the browser that presses
+  // Start holds the call itself, in pipeline mode through the classic chain.
+  describe("call held by this browser", () => {
+    beforeEach(() => {
+      fakes.mode = "pipeline";
+      fakes.available = false;
+      useEventStore.setState({ toasts: [] });
+    });
+
+    it("starts in pipeline mode with plain PCM and keeps the call through the mode gate", async () => {
+      // A realtime transport pinned in the settings must not leak into a
+      // classic call: it has no WebRTC peer and no browser-audio contract.
+      fakes.requiresWebRtcOffer = true;
+      fakes.browserAudio = true;
+      render(<BrowserRealtimeControl controlOnly />);
+
+      act(() => {
+        expect(startBrowserVoiceCall()).toBe(true);
+      });
+
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+      expect(fakes.options).toMatchObject({ requiresWebRtcOffer: false, browserAudio: false });
+      expect(useEventStore.getState().voiceState).toBe("connecting");
+      expect(browserVoiceCallLive()).toBe(true);
+
+      act(() => fakes.callbacks?.onStatus?.("audio_ready", {}));
+      expect(useEventStore.getState().voiceState).toBe("listening");
+      // Pipeline mode hides the realtime surface; it must not hang this up.
+      expect(fakes.disconnect).not.toHaveBeenCalled();
+
+      act(() => {
+        expect(stopBrowserVoiceCall()).toBe(true);
+      });
+      await waitFor(() => expect(fakes.disconnect).toHaveBeenCalledTimes(1));
+      expect(useEventStore.getState().voiceState).toBe("idle");
+      expect(browserVoiceCallLive()).toBe(false);
+    });
+
+    it("reports a failed start as a toast and frees the controls", async () => {
+      fakes.connect.mockRejectedValueOnce(new Error("socket closed"));
+      render(<BrowserRealtimeControl controlOnly />);
+
+      act(() => {
+        startBrowserVoiceCall();
+      });
+
+      await waitFor(() => expect(useEventStore.getState().voiceState).toBe("idle"));
+      // A classic call has no realtime provider to blame; the line points at
+      // the chain it actually runs on.
+      expect(
+        useEventStore.getState().toasts.map(({ kind, message }) => ({ kind, message })),
+      ).toEqual([{ kind: "error", message: "sidebar.browser_voice_error" }]);
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(browserVoiceCallLive()).toBe(false);
+    });
+
+    it("shows the server's sentence when the server closes the call", async () => {
+      render(<BrowserRealtimeControl controlOnly />);
+      act(() => {
+        startBrowserVoiceCall();
+      });
+      await waitFor(() => expect(fakes.connect).toHaveBeenCalledTimes(1));
+
+      act(() =>
+        fakes.callbacks?.onStatus?.("disconnected", {
+          code: 1011,
+          reason: "Voice could not start: a provider is missing. Check API Keys.",
+        }),
+      );
+
+      await waitFor(() => expect(useEventStore.getState().voiceState).toBe("idle"));
+      expect(useEventStore.getState().toasts.map((toast) => toast.message)).toEqual([
+        "Voice could not start: a provider is missing. Check API Keys.",
+      ]);
+      expect(fakes.disconnect).toHaveBeenCalled();
+    });
+
+    it("is owned only by the app-root control", () => {
+      render(<BrowserRealtimeControl />);
+      expect(startBrowserVoiceCall()).toBe(false);
+      expect(stopBrowserVoiceCall()).toBe(false);
+    });
   });
 });

@@ -7,23 +7,26 @@ export const DOCK_LABELS: Record<PaneMovePosition, string> = {
 };
 
 /**
- * The largest grid a workspace draws, and so how many agents it holds. Mirrors
- * `MAX_GRID_COLUMNS` / `MAX_GRID_ROWS` in `jarvis/agentic_ide/session.py`; the
- * live count limit comes from the server's `max_terminals`.
+ * A workspace holds any number of panes in any shape. The only guard is on ONE
+ * request: a launch opens at most this many at once. Mirrors
+ * `MAX_PANES_PER_REQUEST` in `jarvis/agentic_ide/session.py`.
  */
-export const MAX_GRID_COLUMNS = 4;
-export const MAX_GRID_ROWS = 4;
-export const MAX_WORKSPACE_PANES = MAX_GRID_COLUMNS * MAX_GRID_ROWS;
-export const GRID_LIMIT_HINT = `A workspace holds at most ${MAX_GRID_COLUMNS} columns and ${MAX_GRID_ROWS} rows.`;
+export const MAX_PANES_PER_REQUEST = 100;
+
+/** How wide the even grid prefers to be; a preference, never a limit. Mirrors `BALANCED_GRID_COLUMNS`. */
+export const BALANCED_GRID_COLUMNS = 4;
 
 /**
  * Columns of the even grid: two panes share a row, three to eight use two
- * rows, beyond that one more row per four panes. Mirrors `balanced_columns`.
+ * rows, up to sixteen one more row per four panes, beyond that about square.
+ * Mirrors `balanced_columns`.
  */
 export function balancedColumns(count: number): number {
   if (count <= 2) return Math.max(1, count);
-  const rows = count <= 2 * MAX_GRID_COLUMNS ? 2 : Math.ceil(count / MAX_GRID_COLUMNS);
-  return Math.min(MAX_GRID_COLUMNS, Math.ceil(count / rows));
+  const wide = BALANCED_GRID_COLUMNS;
+  if (count > wide * wide) return Math.ceil(Math.sqrt(count));
+  const rows = count <= 2 * wide ? 2 : Math.ceil(count / wide);
+  return Math.min(wide, Math.ceil(count / rows));
 }
 
 /** The even grid for `keys`, dealt row by row. */
@@ -40,7 +43,7 @@ export function balancedLayout(keys: readonly string[]): LayoutNode | null {
 export function workspaceLayout(tree: LayoutNode | null | undefined, terminals: readonly Pick<TerminalState, "key">[]): LayoutNode | null {
   const keys = terminals.map((terminal) => terminal.key);
   const leaves = treeLeaves(tree);
-  return tree && fitsWorkspace(tree) && leaves.length === keys.length && new Set(leaves).size === keys.length && leaves.every((key) => keys.includes(key))
+  return tree && leaves.length === keys.length && new Set(leaves).size === keys.length && leaves.every((key) => keys.includes(key))
     ? tree : balancedLayout(keys);
 }
 
@@ -49,10 +52,6 @@ export function layoutSpan(tree: LayoutNode | null, axis: "row" | "column"): num
   if (!isSplit(tree)) return 1;
   const spans = tree.children.map((child) => layoutSpan(child, axis));
   return tree.direction === axis ? spans.reduce((a, b) => a + b, 0) : Math.max(0, ...spans);
-}
-
-export function fitsWorkspace(tree: LayoutNode | null): boolean {
-  return layoutSpan(tree, "row") <= MAX_GRID_COLUMNS && layoutSpan(tree, "column") <= MAX_GRID_ROWS;
 }
 
 export function isBalancedWorkspace(tree: LayoutNode | null | undefined, terminals: readonly Pick<TerminalState, "key" | "name">[]): boolean {
@@ -108,22 +107,6 @@ export function previewSplit(
     };
   };
   return insert(tree);
-}
-
-/** Whether one more pane split off `anchorKey` stays within the pane limit and the grid. */
-export function canSplitFit(
-  tree: LayoutNode | null | undefined,
-  terminals: readonly Pick<TerminalState, "key">[],
-  anchorKey: string | undefined,
-  direction: "right" | "down" | "left" | "above",
-  maxPanes: number = MAX_WORKSPACE_PANES,
-): boolean {
-  if (terminals.length >= maxPanes) return false;
-  if (terminals.length === 0 || !anchorKey) return true;
-  const current = workspaceLayout(tree, terminals);
-  if (!current) return true;
-  const preview = previewSplit(current, anchorKey, "__preview__", direction);
-  return fitsWorkspace(preview);
 }
 
 /** The nearest outer quarter is a docking edge; the middle swaps whole panes. */

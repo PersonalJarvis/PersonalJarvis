@@ -24,6 +24,8 @@ _MAX_TIMEOUT_S = 60.0
 
 
 class WaitForUIStateTool:
+    read_only = True
+
     name: str = "wait_for_ui_state"
     risk_tier: str = "safe"
     description: str = (

@@ -22,13 +22,17 @@ def _client(native: bool, home: Path) -> TestClient:
     app.state.native_file_actions = native
     app.include_router(downloads_router)
     client = TestClient(app)
-    # Both Path.home() (in the route) resolve to the temp home.
+    # The route's Downloads folder resolves into the temp home.
     return client
 
 
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    # Windows asks the known-folder API, which ignores Path.home().
+    monkeypatch.setattr(
+        "jarvis.platform.user_dirs.downloads_dir", lambda: tmp_path / "Downloads"
+    )
     return tmp_path
 
 

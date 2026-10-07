@@ -535,6 +535,8 @@ class AudioPlayer:
         # boost + soft limiter so 100% is a real loudness lift, not just unity.
         # Clamped so a stray config/runtime value can never invert or over-range.
         self._volume = clamp_volume(volume)
+        self._output_muted = False
+        self._output_generation = 0
         # How deep the device buffer is opened. See DEFAULT_OUTPUT_BUFFER_S:
         # it is the process's only defense against an event-loop stall eating
         # a hole out of the middle of a spoken answer.
@@ -818,6 +820,38 @@ class AudioPlayer:
         """
         self._volume = clamp_volume(volume)
 
+    @property
+    def output_muted(self) -> bool:
+        return getattr(self, "_output_muted", False)
+
+    @property
+    def output_generation(self) -> int:
+        """Invalidate queued PCM on both mute edges, independently of stop()."""
+        return getattr(self, "_output_generation", 0)
+
+    def set_muted(self, muted: bool) -> None:
+        """Discard native buffered speech without cancelling its producer or mic."""
+        with self._get_stream_state_lock():
+            if bool(muted) == self.output_muted:
+                return
+            self._output_muted = bool(muted)
+            self._output_generation = self.output_generation + 1
+            stream = getattr(self, "_active_stream", None) if muted else None
+            if stream is not None:
+                self._active_stream = None
+                self._active_source_rate = None
+                self._active_device_rate = None
+        if muted:
+            level_tap.reset_playing()
+        if stream is not None:
+            try:
+                stream.abort()
+            except Exception:
+                log.debug("Speaker mute could not abort output", exc_info=True)
+            if self._close_output_stream(stream) is False:
+                with self._get_stream_state_lock():
+                    self._unclean_stream = stream
+
     def _log_device_once(self) -> None:
         """Log the active output device once per AudioPlayer instance.
 
@@ -856,6 +890,9 @@ class AudioPlayer:
         stream produces no clicks. For streaming TTS playback see
         ``play_chunks``, which keeps a persistent stream open.
         """
+        output_generation = self.output_generation
+        if self.output_muted:
+            return
         if self._native_playback_poisoned():
             log.error("One-shot playback skipped: native audio worker is still wedged.")
             return
@@ -863,6 +900,8 @@ class AudioPlayer:
         rate = sample_rate or self._sample_rate
         pcm = _apply_edge_fades(pcm, rate)
         async with self._get_play_lock():
+            if self.output_muted or self.output_generation != output_generation:
+                return
             if self._native_playback_poisoned():
                 log.error(
                     "One-shot playback skipped after lock wait: native audio "
@@ -876,6 +915,7 @@ class AudioPlayer:
                     pcm,
                     rate,
                     playback_generation,
+                    output_generation,
                 )
             )
             try:
@@ -907,13 +947,17 @@ class AudioPlayer:
                 return
 
     def _play_blob(
-        self, pcm: bytes, source_rate: int, playback_generation: int
+        self, pcm: bytes, source_rate: int, playback_generation: int,
+        output_generation: int | None = None,
     ) -> None:
         """Sync: open, register, write, and close one cancellation-safe stream."""
         arr = np.frombuffer(pcm, dtype=np.int16)
+        if output_generation is None:
+            output_generation = self.output_generation
         state_lock = self._get_stream_state_lock()
         with state_lock:
-            if getattr(self, "_playback_generation", 0) != playback_generation:
+            if (getattr(self, "_playback_generation", 0) != playback_generation
+                    or self.output_muted or self.output_generation != output_generation):
                 raise _PlaybackSuperseded
             # ``play_chunks`` intentionally keeps its stream open between
             # sentences. The async playback lock guarantees it is idle here;
@@ -933,6 +977,7 @@ class AudioPlayer:
         with state_lock:
             superseded = (
                 getattr(self, "_playback_generation", 0) != playback_generation
+                or self.output_muted or self.output_generation != output_generation
             )
             if not superseded:
                 self._active_stream = stream
@@ -957,6 +1002,7 @@ class AudioPlayer:
                 source_rate,
                 device_rate,
                 playback_generation=playback_generation,
+                output_generation=output_generation,
             )
         finally:
             should_close = False
@@ -1122,6 +1168,7 @@ class AudioPlayer:
         device_rate: int,
         *,
         playback_generation: int | None = None,
+        output_generation: int | None = None,
     ) -> None:
         """Int16 mono → float32 device channels + resample + ``stream.write()``.
 
@@ -1181,7 +1228,7 @@ class AudioPlayer:
         # buffer: the property takes the stream-state lock stop() also uses —
         # bounded, benign contention, deliberately not per sub-block.
         level_delay_s = self.output_latency_s if feed_level else 0.0
-        # Master output volume: scale the whole buffer once via the shared gain
+        # Master output volume is sampled for each sub-block via the gain
         # helper (makeup boost + look-ahead peak limiter above unity, plain
         # attenuation below), then write it in sub-blocks. ``arr_out is arr_f``
         # when the knob sits exactly at unity, so full playback stays
@@ -1199,18 +1246,28 @@ class AudioPlayer:
         if limiter is None:
             limiter = PeakLimiter()
             self._output_limiter = limiter
-        arr_out = apply_output_gain(
-            arr_f,
-            getattr(self, "_volume", 1.0),
-            sample_rate=device_rate,
-            limiter=limiter,
-        )
+        if output_generation is None:
+            output_generation = self.output_generation
         block = max(1, int(device_rate * 0.06))
-        for start in range(0, arr_out.shape[0], block):
-            out = arr_out[start:start + block]
+        for start in range(0, arr_f.shape[0], block):
+            if self.output_muted or self.output_generation != output_generation:
+                return
+            if playback_generation is not None:
+                with self._get_stream_state_lock():
+                    if (getattr(self, "_playback_generation", 0) != playback_generation
+                            or self._active_stream is not stream):
+                        return
+            out = apply_output_gain(
+                arr_f[start:start + block],
+                getattr(self, "_volume", 1.0),
+                sample_rate=device_rate,
+                limiter=limiter,
+            )
             try:
                 underflowed = stream.write(out)
             except _PortAudioError:
+                if self.output_muted or self.output_generation != output_generation:
+                    return
                 # ``stop()`` deliberately aborts the native stream while this
                 # blocking write may still be running in a worker thread. Core
                 # Audio and several Windows backends report that expected abort
@@ -1350,6 +1407,7 @@ class AudioPlayer:
         # watchdog invariant.
         chunk_aiter = chunks.__aiter__()
         first_chunk: AudioChunk | None = None
+        first_generation = self.output_generation
         while True:
             try:
                 candidate = await chunk_aiter.__anext__()
@@ -1357,10 +1415,12 @@ class AudioPlayer:
                 return False  # producer yielded nothing
             if candidate.pcm:
                 first_chunk = candidate
+                first_generation = self.output_generation
                 break
 
         async def _from_first() -> AsyncIterator[AudioChunk]:
-            if first_chunk is not None:
+            if (first_chunk is not None and not self.output_muted
+                    and first_generation == self.output_generation):
                 yield first_chunk
             async for _c in chunk_aiter:
                 yield _c
@@ -1377,7 +1437,9 @@ class AudioPlayer:
             # the main answer is dropped here rather than queued behind it.
             if should_play is not None and not should_play():
                 return False
-            def _ensure_stream(needed_rate: int) -> tuple[sd.OutputStream, int]:
+            def _ensure_stream(
+                needed_rate: int, output_generation: int,
+            ) -> tuple[sd.OutputStream, int]:
                 # Reuse the persistent OutputStream across sentence-by-sentence
                 # play_chunks() calls — closing+reopening per sentence is what
                 # caused the "haaaaa lalala oooo" stretch (see __init__ comment).
@@ -1385,6 +1447,7 @@ class AudioPlayer:
                     if (
                         getattr(self, "_playback_generation", 0)
                         != playback_generation
+                        or self.output_muted or self.output_generation != output_generation
                     ):
                         raise _PlaybackSuperseded
                     if (
@@ -1406,6 +1469,7 @@ class AudioPlayer:
                     if (
                         getattr(self, "_playback_generation", 0)
                         == playback_generation
+                        and not self.output_muted and self.output_generation == output_generation
                     ):
                         self._active_stream = new_stream
                         self._active_source_rate = needed_rate
@@ -1417,6 +1481,7 @@ class AudioPlayer:
                 raise _PlaybackSuperseded
 
             pending = bytearray()
+            pending_generation = self.output_generation
             pending_rate: int | None = None
             first_audio_published = False
             wrote_audio = False
@@ -1426,6 +1491,9 @@ class AudioPlayer:
                 nonlocal pending, pending_rate, first_audio_published
                 nonlocal last_flushed_sample, wrote_audio
                 if not pending or pending_rate is None:
+                    return True
+                if self.output_muted or self.output_generation != pending_generation:
+                    pending.clear()
                     return True
                 target_ms = (
                     TTS_WRITE_BUFFER_MS
@@ -1442,11 +1510,11 @@ class AudioPlayer:
                 pending.clear()
                 try:
                     stm, dev_rate = await asyncio.to_thread(
-                        _ensure_stream, pending_rate
+                        _ensure_stream, pending_rate, pending_generation
                     )
                 except _PlaybackSuperseded:
                     pending.clear()
-                    return False
+                    return getattr(self, "_playback_generation", 0) == playback_generation
                 arr = np.frombuffer(pcm, dtype=np.int16)
                 if arr.size:
                     # Where the written waveform ends — the stall fade-out
@@ -1473,12 +1541,13 @@ class AudioPlayer:
                         pending_rate,
                         dev_rate,
                         playback_generation=playback_generation,
+                        output_generation=pending_generation,
                     )
                 except _PortAudioError as exc:
                     if not is_local_output_error(exc) or not self.recover_output_device():
                         raise
                     stm, dev_rate = await asyncio.to_thread(
-                        _ensure_stream, pending_rate
+                        _ensure_stream, pending_rate, pending_generation
                     )
                     await asyncio.to_thread(
                         self._write_samples,
@@ -1487,6 +1556,7 @@ class AudioPlayer:
                         pending_rate,
                         dev_rate,
                         playback_generation=playback_generation,
+                        output_generation=pending_generation,
                     )
                 if arr.size:
                     wrote_audio = True
@@ -1497,7 +1567,7 @@ class AudioPlayer:
                         or getattr(self, "_active_stream", None) is not stm
                     )
                 if playback_superseded:
-                    return False
+                    return getattr(self, "_playback_generation", 0) == playback_generation
                 # First audible sample reached PortAudio — tell the bus so the
                 # mascot mouth + SPEAKING bubble sync to actual audio start
                 # instead of the speculative SPEAKING state-transition.
@@ -1571,6 +1641,14 @@ class AudioPlayer:
                     except StopAsyncIteration:
                         break
                     if not chunk.pcm:
+                        continue
+                    if pending_generation != self.output_generation:
+                        pending.clear()
+                        last_flushed_sample = 0
+                        pending_generation = self.output_generation
+                    if self.output_muted:
+                        pending.clear()
+                        last_flushed_sample = 0
                         continue
                     if (
                         pending_rate is not None

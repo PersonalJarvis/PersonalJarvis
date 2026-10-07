@@ -27,7 +27,7 @@ const attachmentState = vi.hoisted(() => ({
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key, fill: (text: string) => text }));
 vi.mock("./AgentModelPicker", () => ({ AgentModelPicker: () => null }));
-vi.mock("@/components/home/JarvisBar", () => ({ JarvisBar: () => <div data-testid="jarvis-bar" /> }));
+vi.mock("@/components/home/VoiceComposer", () => ({ VoiceComposer: () => <div data-testid="voice-composer" /> }));
 vi.mock("@/components/home/Greeting", () => ({ Greeting: () => <div>Greeting</div> }));
 vi.mock("@/components/agentic/useVoiceCall", () => ({ useVoiceCall: () => ({ connecting: false }) }));
 vi.mock("@/hooks/useVoiceReadiness", () => ({ useVoiceReadiness: () => ({ connected: true, warming: false }) }));
@@ -40,7 +40,9 @@ vi.mock("@/components/agentchat/useComposerDictation", () => ({
   useComposerDictation: () => ({ dictating: false, stop() {}, toggle() {} }),
 }));
 vi.mock("@/components/agentchat/DictationButton", () => ({ DictationButton: () => null }));
-vi.mock("@/components/agentchat/useChatAttachments", () => ({
+vi.mock("@/components/agentchat/useChatAttachments", async (importOriginal) => ({
+  // The pure helpers (attachmentMedia, ...) stay real; only the hook is scripted.
+  ...(await importOriginal<typeof import("@/components/agentchat/useChatAttachments")>()),
   useChatAttachments: () => ({
     attachments: attachmentState.current,
     analyzing: 0,
@@ -228,7 +230,7 @@ it("reads archived calls on the actual voice stage and returns there fresh after
   expect(await screen.findByText("Archived question")).toBeTruthy();
   expect(screen.getByText("Archived answer")).toBeTruthy();
   expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
-  expect(screen.getByTestId("jarvis-bar")).toBeTruthy();
+  expect(screen.getByTestId("voice-composer")).toBeTruthy();
   expect(screen.queryByTestId("voice-thread-stage")).toBeNull();
   fireEvent.click(screen.getByTestId("society-jarvis-mode-chat"));
   fireEvent.click(screen.getByTestId("society-jarvis-mode-voice"));
@@ -242,7 +244,10 @@ it("reads archived calls on the actual voice stage and returns there fresh after
   expect(screen.getByTestId("society-chat").getAttribute("data-mode")).toBe("voice");
   expect(screen.getByTestId("voice-stage").getAttribute("data-empty")).toBe("true");
   expect(screen.queryByText("Archived question")).toBeNull();
-  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/agent-chat/voice-chat", expect.objectContaining({
+    method: "PUT", body: JSON.stringify({ session_id: null, voice_session_id: null }),
+  })));
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === "/api/chats/voice/new")).toBe(false);
 });
 
 it.each(["specialist", "lead"] as const)("/clear empties only the %s view and keeps its session and context", (tier) => {

@@ -1,7 +1,8 @@
 import { ChatCommandPanel, useChatCommands } from "./ChatCommands";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
+  AudioLines,
   Bot,
   Brain,
   FolderCode,
@@ -21,7 +22,10 @@ import { useAgentChat, useAgentChatApi } from "@/components/agentchat/AgentChatS
 import type { ProviderOption } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { folderLeaf } from "@/lib/folderPath";
-import { isApiRunner, pickAgentChatFolder } from "@/lib/agentChatApi";
+import { effortLadder, snapEffort } from "@/lib/effortLadder";
+import { rankModels } from "@/lib/modelRanking";
+import { isApiRunner, pickAgentChatFolder, type CuratedModel } from "@/lib/agentChatApi";
+import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 import { runningTurn } from "@/components/agentchat/reduce";
 import { permissionModeIcon } from "@/components/agentchat/permissionIcons";
 import { useComposerDictation } from "@/components/agentchat/useComposerDictation";
@@ -33,9 +37,16 @@ import { ChatAttachmentStrip } from "@/components/agentchat/ChatAttachmentStrip"
 import { DictationButton } from "@/components/agentchat/DictationButton";
 import { ComposerAddMenu } from "@/components/agentchat/ComposerAddMenu";
 import { ComposerChipField, type ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
+import {
+  COMPOSER_CONTROL_CLASS,
+  ComposerBrainPicker,
+  type BrainSection,
+} from "@/components/agentchat/ComposerBrainPicker";
 import type { ToolChoice } from "@/components/agentchat/toolChoices";
+import { readComposerDraft, useComposerDraft, writeComposerDraft } from "./composerDrafts";
 import { useAppshotClaim } from "@/components/agentchat/useAppshotClaim";
-import { GigiMark } from "@/components/GigiMark";
+import { PetMark } from "@/components/pets/PetMark";
+import { useVoiceModeSwitch } from "@/components/home/assistantStatus";
 import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -79,22 +90,51 @@ import { cn } from "@/lib/utils";
  *
  * A pick applies to the open session at once (the backend patches it and
  * the next turn runs on it); with no session open it seeds the next one.
+ *
+ * The front page (`jarvis` surface) draws the same controls as one quiet
+ * row under the text (2026-10-05): a round "+", then three labelled picks
+ * split by hairlines — the brain (provider mark and model, one menu with a
+ * provider rail and favourites), the effort word, the permission stance as
+ * glyph and word — and on the right dictation and one round blue button
+ * that is voice mode while the box is empty, Send once there is something
+ * to send, and Stop while a turn runs. The IDE keeps the labelled pills:
+ * there a folder, a stance and a model are things a person checks before
+ * every run.
  */
 export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const t = useT();
-  const [value, setValueState] = useState("");
+  const store = useAgentChatApi();
+  const activeSessionId = useAgentChat((s) => s.activeSessionId);
+  const messageDraft = useComposerDraft(store, activeSessionId);
+  const { text: value, choices: selectedTools } = messageDraft;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fieldRef = useRef<ComposerChipFieldHandle>(null);
+  const setSelectedTools = useCallback((choices: ToolChoice[]) => {
+    writeComposerDraft(store, activeSessionId, { ...readComposerDraft(store, activeSessionId), choices });
+  }, [store, activeSessionId]);
+  const setValueState = useCallback((next: string | ((current: string) => string)) => {
+    const current = readComposerDraft(store, activeSessionId);
+    writeComposerDraft(store, activeSessionId, {
+      ...current,
+      text: typeof next === "function" ? next(current.text) : next,
+    });
+  }, [store, activeSessionId]);
   const setValue = useCallback(
     (next: string | ((current: string) => string)) => {
-      setValueState((current) => {
-        const text = typeof next === "function" ? next(current) : next;
-        fieldRef.current?.setText(text);
-        return text;
-      });
+      const current = readComposerDraft(store, activeSessionId).text;
+      const text = typeof next === "function" ? next(current) : next;
+      setValueState(text);
+      fieldRef.current?.setText(text);
     },
-    [],
+    [store, activeSessionId, setValueState],
   );
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    const current = field?.getDraft();
+    if (current && (current.text !== messageDraft.text || JSON.stringify(current.choices) !== JSON.stringify(messageDraft.choices))) {
+      field?.hydrate(messageDraft.text, messageDraft.choices);
+    }
+  }, [store, activeSessionId, messageDraft]);
   const connected = useEventStore((s) => s.connected);
   const wsWarming = useEventStore((s) => s.wsWarming);
   const assistantName = useEventStore((s) => s.assistantName);
@@ -102,20 +142,16 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [restarting, setRestarting] = useState(false);
 
-  const store = useAgentChatApi();
   const surface = useAgentChat((s) => s.surface);
   const catalog = useAgentChat((s) => s.catalog);
+  const catalogStale = useAgentChat((s) => s.catalogStale);
   const catalogError = useAgentChat((s) => s.catalogError);
   const backendOutdated = useAgentChat((s) => s.backendOutdated);
   const connections = useAgentChat((s) => s.connections);
   const liveModels = useAgentChat((s) => s.liveModels);
+  const savedHidden = useSavedHiddenModels((s) => s.hidden);
   const health = useAgentChat((s) => s.health);
   const draft = useAgentChat((s) => s.draft);
-  const activeSessionId = useAgentChat((s) => s.activeSessionId);
-  const [selectedTools, setSelectedTools] = useState<ToolChoice[]>([]);
-  useEffect(() => {
-    setSelectedTools([]);
-  }, [activeSessionId, surface]);
   const timeline = useAgentChat((s) => s.timeline);
   const busy = useAgentChat((s) => s.busy);
   const lastError = useAgentChat((s) => s.lastError);
@@ -130,10 +166,14 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   const cancel = useAgentChat((s) => s.cancel);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadHealth = useAgentChat((s) => s.loadHealth);
+  // Not an aliased narrowing: the IDE branch below still names the surface.
+  const minimal: boolean = String(surface) === "jarvis";
+  const voiceMode = useVoiceModeSwitch();
 
+  // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
-    if (!catalog) void loadCatalog();
-  }, [catalog, loadCatalog]);
+    if (!catalog || catalogStale) void loadCatalog();
+  }, [catalog, catalogStale, loadCatalog]);
 
   // A real call changed a seat's recorded health, or a key was saved or
   // removed somewhere: re-read the dots (a plain read — the server never
@@ -168,9 +208,9 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     stopAndSend: stopDictationAndSend,
   } = useComposerDictation(setValue, () => void onSend());
 
-  // Files going in with this message. Held here rather than in the store: they
-  // belong to the sentence being typed, and a chat opened elsewhere must not
-  // inherit them.
+  // Files going in with this message. Kept per chat store and session, like
+  // the typed text: they belong to the sentence being typed, a chat opened
+  // elsewhere must not inherit them, and a section switch must not drop them.
   const [attachError, setAttachError] = useState("");
   const onAttachProblem = useCallback(
     (message: string, severity: "warning" | "error") => {
@@ -186,9 +226,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       surface,
     },
     onAttachProblem,
+    { owner: store, key: activeSessionId ?? "" },
   );
   // A shortcut appshot parked for "the next message" joins this one.
-  useAppshotClaim(files.attachFiles, surface === "jarvis");
+  useAppshotClaim(files.attachFiles, surface === "jarvis", activeSessionId ?? "new");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pasteRescue = usePasteRescue();
 
@@ -206,6 +247,8 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     provider: draft.provider,
     cwd: draft.cwd,
     triggers,
+    model: draft.model,
+    stance: draft.permissionMode,
   }, fieldRef);
 
   const running = runningTurn(timeline) !== null;
@@ -221,12 +264,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     if ((!content && files.attachments.length === 0) || (running || busy) && !commands.canSteer) return;
     if (files.analyzing > 0) return; // a file still being read would be sent without its contents
     if (dictating) stopDictation();
-    setValueState("");
+    const selected = selectedTools;
+    writeComposerDraft(store, sessionAtSend, { text: "", choices: [] });
     fieldRef.current?.clear();
     setAttachError("");
     const attached = files.attachments;
     files.clear();
-    const selected = selectedTools;
     if (selected.length)
       await send(
         content,
@@ -236,10 +279,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     else await send(content, attached);
     if (sessionAtSend && store.getState().activeSessionId !== sessionAtSend) return;
     if (store.getState().lastError) {
-      setSelectedTools(selected);
-      setValueState((current) => current || content);
-    } else {
-      setSelectedTools([]);
+      const target = store.getState().activeSessionId;
+      const current = readComposerDraft(store, target);
+      if (!current.text && !current.choices.length) {
+        writeComposerDraft(store, target, { text: value, choices: selected });
+      }
     }
   }
 
@@ -281,6 +325,51 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   // greyed with its "connect" hint, so the list is a map and not a void. No
   // "active" marker either — that word is the voice sub-agent's, and the
   // pick here is its own thing: what you choose here is what the chat runs.
+  // A provider's mark plus its live health dot — the same face in the IDE's
+  // provider list and in the front page's brain pick.
+  // A coding CLI installed on this machine wears its own mark; a catalog row
+  // wears its provider family's. Both are real brand files — the fallback
+  // either would otherwise take is a letter in a box, and a letter is not a
+  // logo.
+  const providerMark = useCallback(
+    (p: ProviderOption) =>
+      p.agentMark ? (
+        <AgentMark agent={p.agentMark} label={p.label} logoUrl={p.logoUrl} variant="plain" size="sm" />
+      ) : (
+        <ProviderLogo providerId={p.id} label={p.label} size="sm" />
+      ),
+    [],
+  );
+  const providerIcon = useCallback(
+    (p: ProviderOption) => {
+      const live = liveHealthFor(p, health[p.id]);
+      const broken = p.connected && live?.status === "error";
+      const working = p.connected && live?.status === "ok";
+      return (
+        <span className="relative inline-flex shrink-0">
+          {providerMark(p)}
+          {(broken || working) && (
+            <span
+              data-testid={`provider-health-${p.id}`}
+              data-health={live?.status}
+              title={live?.detail || undefined}
+              aria-label={
+                broken
+                  ? healthReasonLabel(live?.reason ?? "", t)
+                  : t("agent_chat.provider_health_ok")
+              }
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
+                broken ? "bg-destructive" : "bg-muted-foreground",
+              )}
+            />
+          )}
+        </span>
+      );
+    },
+    [health, providerMark, t],
+  );
+
   const providerGroups = useMemo<ComboboxGroup[]>(() => {
     const anyConnected = providers.some((p) => p.connected);
     const shown = anyConnected ? providers.filter((p) => p.connected) : providers;
@@ -293,7 +382,6 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // not paint "Key rejected" on that CLI.
       const live = liveHealthFor(p, health[p.id]);
       const broken = p.connected && live?.status === "error";
-      const working = p.connected && live?.status === "ok";
       return {
         value: p.id,
         label: p.label,
@@ -308,41 +396,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         // and refusing the click would strand someone whose account recovered
         // a minute ago. The dot and the reason are the honest part.
         disabled: !p.connected,
-        icon: (
-          <span className="relative inline-flex shrink-0">
-            {/* A coding CLI installed on this machine wears its own mark; a
-                catalog row wears its provider family's. Both are real brand
-                files — the fallback either would otherwise take is a letter
-                in a box, and a letter is not a logo. */}
-            {p.agentMark ? (
-              <AgentMark
-                agent={p.agentMark}
-                label={p.label}
-                logoUrl={p.logoUrl}
-                variant="plain"
-                size="sm"
-              />
-            ) : (
-              <ProviderLogo providerId={p.id} label={p.label} size="sm" />
-            )}
-            {(broken || working) && (
-              <span
-                data-testid={`provider-health-${p.id}`}
-                data-health={live?.status}
-                title={live?.detail || undefined}
-                aria-label={
-                  broken
-                    ? healthReasonLabel(live?.reason ?? "", t)
-                    : t("agent_chat.provider_health_ok")
-                }
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-popover",
-                  broken ? "bg-destructive" : "bg-muted-foreground",
-                )}
-              />
-            )}
-          </span>
-        ),
+        icon: providerIcon(p),
         searchText: `${p.family} ${p.runner}`,
       };
     };
@@ -362,7 +416,70 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         });
     }
     return groups;
-  }, [providers, health, t]);
+  }, [providers, health, providerIcon, t]);
+
+  // The front page's single brain pick: every offered provider as a group,
+  // its default first, then its models (live when loaded, else curated).
+  // Each row says whose model it is on a quiet second line; the rail on the
+  // panel's left picks which provider's rows are listed.
+  const brainProviders = useMemo<ProviderOption[]>(() => {
+    if (!minimal) return [];
+    const anyConnected = providers.some((p) => p.connected);
+    return anyConnected ? providers.filter((p) => p.connected) : providers;
+  }, [minimal, providers]);
+
+  const brainSections = useMemo<BrainSection[]>(
+    () => brainProviders.map((p) => ({ id: p.id, label: p.label, icon: providerIcon(p), muted: !p.connected })),
+    [brainProviders, providerIcon],
+  );
+
+  const brainGroups = useMemo<ComboboxGroup[]>(() => {
+    return brainProviders.map((p) => {
+      const live = liveModels[p.id];
+      const listed = p.models_source === "live" && live && live.length ? live : (p.curated_models ?? []);
+      // Models switched off on the API Keys page stay out; the current pick stays.
+      const models = offeredModels(p, listed, p.id === draft.provider ? draft.model : "", savedHidden);
+      const disabled = !p.connected;
+      const hint = disabled
+        ? p.cli_installed === false
+          ? t("agent_chat.provider_not_installed")
+          : t("agent_chat.provider_connect")
+        : undefined;
+      const owner = (note?: string) => (
+        <span className="inline-flex min-w-0 items-center gap-1.5">
+          <span className="inline-flex shrink-0 scale-[0.86]">{providerMark(p)}</span>
+          <span className="truncate">{note ? `${p.label} · ${note}` : p.label}</span>
+        </span>
+      );
+      const toOption = (m: CuratedModel): ComboboxOption => ({
+        value: brainValue(p.id, m.id),
+        label: m.label || m.id,
+        description: owner(m.note),
+        hint,
+        disabled,
+        searchText: `${p.label} ${m.id}`,
+      });
+      // Newest of each model line first; earlier versions fold away.
+      const { current, older } = rankModels(models.filter((m) => m.id));
+      return {
+        id: p.id,
+        label: p.label,
+        options: [
+          {
+            value: brainValue(p.id, ""),
+            label: t("agent_chat.model_default"),
+            triggerLabel: p.label,
+            description: owner(),
+            hint,
+            disabled,
+            searchText: `${p.label} ${p.family}`,
+          },
+          ...current.map(toOption),
+        ],
+        more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
+      };
+    });
+  }, [brainProviders, liveModels, providerMark, t, draft.provider, draft.model, savedHidden]);
 
   const modelList = useMemo(() => {
     if (!provider) return [];
@@ -374,40 +491,59 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
 
   const modelGroups = useMemo<ComboboxGroup[]>(() => {
     if (!provider) return [];
+    const toOption = (m: CuratedModel): ComboboxOption => ({
+      value: m.id,
+      label: m.label || m.id,
+      hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
+      searchText: m.id,
+    });
+    // Models switched off on the API Keys page stay out; the current pick stays.
+    const { current, older } = rankModels(offeredModels(provider, modelList, draft.model, savedHidden).filter((m) => m.id));
     const options: ComboboxOption[] = [
       { value: "", label: t("agent_chat.model_default"), hint: provider.label },
-      ...modelList
-        .filter((m) => m.id)
-        .map((m) => ({
-          value: m.id,
-          label: m.label || m.id,
-          hint: m.note || (m.label && m.label !== m.id ? m.id : undefined),
-          searchText: m.id,
-        })),
+      ...current.map(toOption),
     ];
-    return [{ id: "models", options }];
-  }, [provider, modelList, t]);
+    return [{
+      id: "models",
+      options,
+      more: older.length ? { label: t("agent_chat.older_models"), options: older.map(toOption) } : undefined,
+    }];
+  }, [provider, modelList, t, draft.model, savedHidden]);
 
   // The effort ladder is the provider's, narrowed to the chosen model's own
   // levels when the catalog knows them (agy's Pro: low/high; its Claude
   // models: none at all, so the pick disappears).
-  const effortLevels = useMemo<string[]>(() => {
-    if (!provider) return [];
-    const model = modelList.find((m) => m.id === draft.model);
-    if (model && Array.isArray(model.efforts)) return model.efforts;
-    return provider.effort_levels ?? [];
-  }, [provider, modelList, draft.model]);
+  const effortLevels = useMemo<string[]>(
+    () => effortLadder(provider, modelList, draft.model),
+    [provider, modelList, draft.model],
+  );
 
   useEffect(() => {
     // A model change can leave the picked effort off that model's ladder;
-    // snap to the nearest lower level (else the first) like the backend does.
-    if (!provider || !effortLevels.length || effortLevels.includes(draft.effort)) return;
-    const order = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-    const idx = order.indexOf(draft.effort);
-    const lower = effortLevels.filter((l) => order.indexOf(l) <= idx && order.indexOf(l) >= 0);
-    const next = lower.length ? lower[lower.length - 1] : effortLevels[0];
+    // fold it the way the backend does, so the label is the level that runs.
+    if (!provider || !effortLevels.some(Boolean)) return;
+    const next = snapEffort(draft.effort, effortLevels, provider.default_effort);
     if (next !== draft.effort) void setDraft({ effort: next });
   }, [provider, effortLevels, draft.effort, setDraft]);
+
+  const showEffort = Boolean(provider) && effortLevels.length > 1;
+
+  // The front page's effort menu: a heading over the ladder, and the
+  // provider's own default marked so a person can find their way back.
+  const effortMenuGroups = useMemo<ComboboxGroup[]>(
+    () => [
+      {
+        id: "effort",
+        label: t("agent_chat.effort_heading"),
+        options: effortLevels.map((lvl) => ({
+          value: lvl,
+          label: effortLabel(lvl, t),
+          badge: lvl === provider?.default_effort ? t("agent_chat.default_badge") : undefined,
+        })),
+      },
+    ],
+    [effortLevels, provider, t],
+  );
 
   const effortGroups = useMemo<ComboboxGroup[]>(
     () => [
@@ -428,6 +564,12 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
   );
   const hasPlan = Boolean((provider?.permission_modes ?? []).some((m) => m.id === "plan"));
   const planOn = draft.permissionMode === "plan";
+  // The front page has no Plan switch (maintainer, 2026-10-05): a chat left
+  // in Plan from before would stay read-only with nothing on screen saying
+  // so, so it returns to the stance Build would use.
+  useEffect(() => {
+    if (minimal && planOn && !locks?.permissionMode) void setPlan(false);
+  }, [minimal, planOn, locks?.permissionMode, setPlan]);
   // Every mode wears its stance's glyph (permissionIcons.ts) in the list and,
   // once picked, on the pill — the Combobox draws the selected option's icon
   // on its trigger, so the column's shield below only shows for a pick the
@@ -449,10 +591,31 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
     ],
     [permissionModes],
   );
+  // The front page's permission menu: each stance with its glyph, its name
+  // and one quiet line on what it lets through.
+  const permissionMenuGroups = useMemo<ComboboxGroup[]>(
+    () => [
+      {
+        id: "permission",
+        options: permissionModes.map((m) => {
+          const Icon = permissionModeIcon(m.id);
+          return {
+            value: m.id,
+            label: m.label,
+            description: m.description || undefined,
+            searchText: m.description,
+            icon: <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />,
+          };
+        }),
+      },
+    ],
+    [permissionModes],
+  );
   // While Plan is on, the permission pill shows the mode Build would return to.
   const permissionValue = planOn ? draft.buildMode || provider?.default_permission_mode || "" : draft.permissionMode;
   const permissionDescription =
     (provider?.permission_modes ?? []).find((m) => m.id === draft.permissionMode)?.description ?? "";
+  const permissionLabel = permissionModes.find((m) => m.id === permissionValue)?.label ?? "";
 
   const canSend =
     commands.isCommand || connected &&
@@ -483,8 +646,10 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
       // the thing it looks like is a target people miss.
       {...files.dragHandlers}
       className={cn(
-        "relative flex flex-col gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim transition-[border-color,box-shadow]",
-        "focus-within:border-primary/40",
+        "relative flex flex-col transition-[border-color,box-shadow]",
+        minimal
+          ? "gap-2 rounded-3xl border border-border bg-card px-3 pb-3 pt-3.5 shadow-rim focus-within:border-border-strong"
+          : "gap-2 rounded-2xl border border-border-strong bg-card p-3 shadow-rim focus-within:border-primary/40",
         files.dragging && "border-primary/60",
       )}
     >
@@ -492,7 +657,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         <div
           data-testid="composer-drop-overlay"
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/70 bg-card text-sm font-medium text-primary"
+          className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] border-2 border-dashed border-primary/70 bg-card text-sm font-medium text-primary"
         >
           {t("agent_chat.attach_drop_hint")}
         </div>
@@ -502,6 +667,11 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         attachments={files.attachments}
         analyzing={files.analyzing}
         onRemove={files.remove}
+        previews={files.previews}
+        // The picture alone, as in the thread composer: a card with the file
+        // name and a "not described" receipt crowded a strip whose only job
+        // is to show what goes in with the message (maintainer, 2026-10-06).
+        look="thumbnail"
       />
       <ComposerTypeahead
         anchorRef={cardRef}
@@ -520,8 +690,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
         autoFocus={autoFocus}
         onSubmit={() => (dictating ? stopDictationAndSend() : void onSend())}
         onDraftChange={(draft) => {
-          setValueState(draft.text);
-          setSelectedTools(draft.choices);
+          writeComposerDraft(store, activeSessionId, { text: draft.text, choices: draft.choices });
         }}
         onKeyDown={(ev) => {
           if (commands.onKeyDown(ev)) return true;
@@ -533,8 +702,173 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           pasteRescue.onPaste();
           files.onPaste(e);
         }}
-        className="max-h-[50vh] text-reading scrollbar-jarvis"
+        className={cn("max-h-[50vh] scrollbar-jarvis", minimal ? "min-h-[64px] px-2 text-base" : "text-reading")}
       />
+      {minimal ? (
+        <div className="flex min-w-0 items-center gap-0.5" data-testid="composer-row">
+          <ComposerAddMenu
+            key={activeSessionId ?? "new"}
+            compact
+            anchorRef={cardRef}
+            provider={draft.provider}
+            model={draft.model}
+            cwd={draft.cwd}
+            stance={draft.permissionMode}
+            selected={selectedTools}
+            onChange={setSelectedTools}
+            onInsert={(row) => fieldRef.current?.insertChip(row)}
+            onAttach={() => fileInputRef.current?.click()}
+            onFolder={() => void onPickFolder()}
+            onConnect={(row) =>
+              setActiveSection(
+                row.category === "mcp" ? "mcps" : row.category === "skills" ? "skills" : "plugins",
+              )
+            }
+            disabled={!connected || busy}
+          />
+          {/* Who answers, how hard it thinks, what it may do — three labelled
+              picks in one line, split by hairlines. Each opens its own menu:
+              the models with a provider rail, the effort ladder with the
+              provider's default marked, the stances with one line each. */}
+          <span className="flex min-w-0 items-center" data-testid="composer-brain">
+            <ComposerBrainPicker
+              value={brainValue(draft.provider, draft.model)}
+              groups={brainGroups}
+              sections={brainSections}
+              currentSection={draft.provider}
+              onChange={(v) => {
+                const [nextProvider, nextModel] = splitBrainValue(v);
+                void setDraft(
+                  nextProvider !== draft.provider ? { provider: nextProvider, model: nextModel } : { model: nextModel },
+                );
+              }}
+              ariaLabel={t("agent_chat.pick_model")}
+              fallbackLabel={
+                catalogError
+                  ? t("agent_chat.catalog_unavailable")
+                  : provider
+                    ? draft.model || provider.label
+                    : t("agent_chat.pick_provider")
+              }
+              searchPlaceholder={t("agent_chat.search_models")}
+              triggerPrefix={provider ? providerIcon(provider) : undefined}
+              disabled={!catalog || (Boolean(locks?.provider) && Boolean(locks?.model))}
+              title={locks?.model ?? locks?.provider}
+              className="min-w-0"
+            />
+            {showEffort && (
+              <>
+                <ControlSeparator />
+                <span className="inline-flex shrink-0" title={locks?.effort}>
+                  <Combobox
+                    value={draft.effort}
+                    groups={effortMenuGroups}
+                    onChange={(v) => void setDraft({ effort: v })}
+                    ariaLabel={t("agent_chat.pick_effort")}
+                    fallbackLabel={effortLabel(draft.effort, t)}
+                    disabled={Boolean(locks?.effort)}
+                    testId="composer-effort"
+                    triggerHint={false}
+                    panelMinWidth={220}
+                    className={COMPOSER_CONTROL_CLASS}
+                  />
+                </span>
+              </>
+            )}
+          </span>
+          {provider && permissionModes.length > 0 && (
+            <>
+              <ControlSeparator />
+              {/* The stance as glyph and word, in the row's one grey like
+                  every other pick — no stance is singled out by colour. */}
+              <span
+                title={locks?.permissionMode ?? [permissionLabel, permissionDescription].filter(Boolean).join(" — ")}
+                className="inline-flex min-w-0 shrink"
+              >
+                <Combobox
+                  value={permissionValue}
+                  groups={permissionMenuGroups}
+                  onChange={(v) => void setDraft({ permissionMode: v })}
+                  ariaLabel={permissionLabel ? `${t("agent_chat.pick_permission")}: ${permissionLabel}` : t("agent_chat.pick_permission")}
+                  fallbackLabel={t("agent_chat.pick_permission")}
+                  disabled={Boolean(locks?.permissionMode)}
+                  testId="composer-permission"
+                  triggerHint={false}
+                  panelMinWidth={320}
+                  className={cn(
+                    COMPOSER_CONTROL_CLASS,
+                    "max-w-[200px] max-md:[&>span.truncate]:sr-only",
+                  )}
+                />
+              </span>
+            </>
+          )}
+          <span className="min-w-2 flex-1" />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="sr-only"
+            tabIndex={-1}
+            onChange={(event) => {
+              const picked = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              if (picked.length > 0) files.attachFiles(picked);
+            }}
+          />
+          <DictationButton
+            dictating={dictating}
+            onToggle={toggleDictation}
+            disabled={!connected}
+            startLabel={t("chats_view.dictation_start")}
+            stopLabel={t("chats_view.dictation_stop")}
+            shape="round"
+          />
+          {/* One round action in the signal blue: voice mode while the box is
+              empty, Send once there is something to send, Stop while a turn
+              runs. */}
+          {live && !commands.isCommand && !(commands.canSteer && value.trim()) ? (
+            <button
+              type="button"
+              onClick={() => void cancel()}
+              aria-label={t("agent_chat.stop")}
+              title={t("agent_chat.stop")}
+              data-testid="composer-stop"
+              className={cn(ROUND_ACTION_CLASS, "bg-accent text-accent-foreground hover:bg-accent/85")}
+            >
+              <Square className="h-3 w-3 fill-current" />
+            </button>
+          ) : value.trim() || files.attachments.length > 0 || dictating || commands.isCommand ? (
+            <button
+              type="button"
+              onClick={() => (dictating ? stopDictationAndSend() : void onSend())}
+              disabled={!canSend && !canFinishDictation}
+              aria-label={t("agent_chat.send")}
+              data-testid="composer-send"
+              className={cn(
+                ROUND_ACTION_CLASS,
+                canSend || canFinishDictation
+                  ? "bg-accent text-accent-foreground hover:bg-accent/85"
+                  : "bg-secondary text-muted-foreground",
+              )}
+            >
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={voiceMode.enter}
+              disabled={voiceMode.busy}
+              aria-label={t("assistant_chat.voice_enter")}
+              title={fill(t("assistant_chat.voice_enter_hint"), { name: assistantName })}
+              data-testid="composer-voice-mode"
+              className={cn(ROUND_ACTION_CLASS, "bg-accent text-accent-foreground hover:bg-accent/85 disabled:opacity-60")}
+            >
+              <AudioLines className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="flex flex-wrap items-center gap-1">
         {surface === "jarvis" && (
           <ComposerAddMenu
@@ -576,7 +910,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           className="inline-flex h-7 max-w-[180px] shrink-0 items-center gap-1.5 rounded-lg bg-secondary px-2 text-xs font-medium text-foreground"
         >
           {surface === "jarvis" ? (
-            <GigiMark size={18} />
+            <PetMark size={20} />
           ) : (
             <FolderCode className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           )}
@@ -754,6 +1088,7 @@ export function AgentComposer({ autoFocus = false }: { autoFocus?: boolean }) {
           </button>
         )}
       </div>
+      )}
       {backendOutdated && (
         <div
           className="flex items-center gap-2 px-1 text-xs text-muted-foreground"
@@ -867,7 +1202,7 @@ function liveHealthFor(
   return live;
 }
 
-/** One compact pick on the composer's bottom row — a pill-sized Combobox. */
+/** One pick on the IDE composer's bottom row — a pill-sized Combobox. */
 function Pick({
   testId,
   ariaLabel,
@@ -921,6 +1256,27 @@ function Pick({
       />
     </span>
   );
+}
+
+/** The thin upright line between two picks on the front page's row. */
+function ControlSeparator() {
+  return <span aria-hidden className="mx-0.5 hidden h-4 w-px shrink-0 bg-border-strong sm:block" />;
+}
+
+/** The front page's one round action — voice mode, Send or Stop. */
+const ROUND_ACTION_CLASS =
+  "ml-1 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors";
+
+const BRAIN_SEP ="\u0001";
+
+/** One value for a provider + model pair in the front page's brain pick. */
+export function brainValue(provider: string, model: string): string {
+  return `${provider}${BRAIN_SEP}${model}`;
+}
+
+export function splitBrainValue(value: string): [string, string] {
+  const at = value.indexOf(BRAIN_SEP);
+  return at < 0 ? [value, ""] : [value.slice(0, at), value.slice(at + 1)];
 }
 
 export function effortLabel(level: string, t: (key: string) => string): string {

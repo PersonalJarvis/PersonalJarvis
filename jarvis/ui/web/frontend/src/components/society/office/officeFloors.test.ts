@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildOfficeLayout, type OfficeAgentInput } from "./officeLayout";
 import { buildNavGrid, isWalkable } from "./officeNav";
 import { arrivalPose, knownOnFloor, noteArrivals } from "./officeFloors";
-import { officeSession, otherFloor, player, switchFloor, useOfficeStore } from "./officeStore";
+import { floorLevel, OFFICE_FLOORS, officeSession, player, switchFloor, useOfficeStore } from "./officeStore";
+import { callDirection } from "./ElevatorCallButton";
+import { floorForKey, PANEL_FLOORS } from "./ElevatorPanel";
+import { buildArcadeLayout } from "../arcade/arcadeFloorLayout";
 
 const AGENTS: OfficeAgentInput[] = [
   { agentId: "a1", name: "One", tier: "specialist", providerLabel: "Codex", state: "working", createdMs: 1 },
@@ -20,14 +23,27 @@ function resetBuilding() {
 afterEach(resetBuilding);
 
 describe("floors", () => {
-  it("names the other floor", () => {
-    expect(otherFloor("agents")).toBe("coding");
-    expect(otherFloor("coding")).toBe("agents");
+  it("stacks the floors bottom to top, and the elevator panel lists them top first", () => {
+    expect(OFFICE_FLOORS).toEqual(["agents", "coding", "arcade"]);
+    expect(OFFICE_FLOORS.map(floorLevel)).toEqual([0, 1, 2]);
+    expect(PANEL_FLOORS).toEqual(["arcade", "coding", "agents"]);
+    expect(callDirection("agents")).toBe("up");
+    expect(callDirection("coding")).toBe("both");
+    expect(callDirection("arcade")).toBe("down");
   });
 
-  it("steps out of the elevator onto walkable floor, facing away from the doors, on both floors", () => {
-    for (const variant of ["agents", "coding"] as const) {
-      const layout = buildOfficeLayout(AGENTS, { variant });
+  it("picks a floor by its number key", () => {
+    expect(floorForKey("0")).toBe("agents");
+    expect(floorForKey("1")).toBe("coding");
+    expect(floorForKey("2")).toBe("arcade");
+    expect(floorForKey("3")).toBeNull();
+    expect(floorForKey("e")).toBeNull();
+    expect(floorForKey("12")).toBeNull();
+  });
+
+  it("steps out of the elevator onto walkable floor, facing away from the doors, on every floor", () => {
+    for (const variant of ["agents", "coding", "arcade"] as const) {
+      const layout = variant === "arcade" ? buildArcadeLayout() : buildOfficeLayout(AGENTS, { variant });
       const stop = layout.checkpoints.find((cp) => cp.id === "elevator");
       expect(stop, variant).toBeDefined();
       const pose = arrivalPose(layout, "elevator");

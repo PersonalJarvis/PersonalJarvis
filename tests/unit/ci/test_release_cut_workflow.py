@@ -31,6 +31,7 @@ gh() {
   case "$1 $2" in
     'pr create') printf 'https://github.com/example/project/pull/1\n' ;;
     'pr merge') return "$LAND_EXIT" ;;
+    'pr view') printf '%s\n' "$FAKE_SHA" ;;
     'workflow run') return 0 ;;
     'run list') printf '123\n' ;;
     'run view') printf '\n' ;;
@@ -49,7 +50,14 @@ python() {
 """
 
 
-def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
+def _exercise(
+    tmp_path: Path,
+    step_names: list[str],
+    *,
+    workflow_name: str = "release-cut.yml",
+    job_id: str = "cut",
+    **overrides: str,
+):
     bash = shutil.which("bash")
     if os.name == "nt":
         # System32/bash.exe enters WSL instead of the runner's Windows shell.
@@ -61,8 +69,8 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
     if bash is None:
         pytest.skip("the workflow shell requires Bash")
     root = Path(__file__).resolve().parents[3]
-    workflow = yaml.safe_load((root / ".github/workflows/release-cut.yml").read_text("utf-8"))
-    steps = {step.get("name"): step for step in workflow["jobs"]["cut"]["steps"]}
+    workflow = yaml.safe_load((root / ".github/workflows" / workflow_name).read_text("utf-8"))
+    steps = {step.get("name"): step for step in workflow["jobs"][job_id]["steps"]}
     trace = tmp_path / "commands.txt"
     script = tmp_path / "release-test.sh"
     script.write_text(
@@ -95,6 +103,7 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
             "RESUME_SHA": _SHA,
             "BASE_VERSION": "1.2.3",
             "RESUME_VERSION": "1.2.3",
+            "RELEASE_REF": "refs/tags/v1.2.3",
             "TAG_EXISTS": "1",
             "TAG_SHA": _SHA,
             **overrides,
@@ -107,6 +116,36 @@ def _exercise(tmp_path: Path, step_names: list[str], **overrides: str):
     )
     commands = trace.read_text("utf-8").splitlines() if trace.exists() else []
     return result, commands
+
+
+_QUALIFY = "Qualify plugin auth and disclose preview plugins"
+
+
+def test_release_qualification_is_strict_with_no_per_tag_exception(tmp_path):
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github/workflows/ci.yml").read_text("utf-8")
+    assert "refs/tags/v2.9.0" not in workflow  # the one-time exception is gone
+    result, commands = _exercise(
+        tmp_path,
+        [_QUALIFY],
+        workflow_name="ci.yml",
+        job_id="release-qualification",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert commands == ["python scripts/ci/check_plugin_auth_contract.py --require-e2e-pass"]
+    assert (tmp_path / "summary.txt").exists()
+
+
+def test_release_qualification_fails_on_a_failing_auth_contract(tmp_path):
+    result, _commands = _exercise(
+        tmp_path,
+        [_QUALIFY],
+        workflow_name="ci.yml",
+        job_id="release-qualification",
+        ADMIT_EXIT="1",
+    )
+    assert result.returncode != 0
+    assert not (tmp_path / "summary.txt").exists()
 
 
 @pytest.mark.parametrize(
@@ -170,7 +209,7 @@ def test_resume_requires_merged_current_version_and_admission(tmp_path, override
         assert not any(command.startswith("git checkout ") for command in commands)
     if success:
         assert commands[-1] == "git push origin v1.2.3"
-        assert (tmp_path / "outputs.txt").read_text("utf-8") == "version=1.2.3\n"
+        assert (tmp_path / "outputs.txt").read_text("utf-8") == "version=1.2.3\npushed=true\n"
     else:
         assert not any(command.startswith("git tag ") for command in commands)
         assert "git push origin v1.2.3" not in commands

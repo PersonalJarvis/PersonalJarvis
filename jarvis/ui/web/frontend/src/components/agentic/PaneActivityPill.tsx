@@ -2,74 +2,7 @@ import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PaneActivity } from "@/lib/agenticIdeApi";
 
-/**
- * The one badge on a pane: is anybody still owed something by this terminal?
- *
- * ## The question it replaced
- *
- * Every pane used to be labelled `live`, which answers a question nobody was
- * asking. `live` is a property of the PIPE — the socket is up and a process is
- * on the other end — and it stays true for a terminal that finished its work
- * twenty minutes ago, for one sitting on an unanswered permission prompt, and
- * for one grinding through a refactor. In a chat-mode list of a dozen agents,
- * that is a column of identical green dots next to twelve panes in completely
- * different states, and the user has to open each one to find out which.
- *
- * What a person actually wants to know is whether the agent is still WORKING or
- * has STOPPED, and this pill answers that instead. The pipe is still reported,
- * but only when it has something to say (connecting, exited, broken) — a
- * healthy connection is the boring case and is now spent on the useful claim.
- *
- * ## Why it holds for every coding CLI, including ones added later
- *
- * The distinction is not made here and not made from anything a product prints.
- * The backend derives it from the terminal SCREEN — a pane whose picture keeps
- * changing is working, a pane that stands still has stopped — which is a
- * property of the terminal rather than of whatever is running inside it. Two
- * earlier attempts read Claude Code's interrupt hint and Codex's bracketed
- * clock, and each broke on the next product and on the next release of its own.
- * See `jarvis/agentic_ide/activity.py`, which measured all four installed CLIs
- * before committing to the rule.
- *
- * So a CLI connected next year gets a working status pill with no code here,
- * and none there either.
- *
- * ## Why "done" and "idle" are not the same word
- *
- * A finished agent and a terminal nobody has ever spoken to show the SAME still
- * screen. Calling both "done" would invent a job for the second one, and be
- * read as "your work is ready" for a pane that has done none. `worked` — has
- * anything ever been asked of this pane, including the conversation it resumed
- * — is what separates them.
- *
- * Nothing here claims the work is CORRECT. "done" means the pane went quiet,
- * which is all a terminal can prove.
- *
- * ## Why motion means "busy" and colour means "ready"
- *
- * The two states a person scans this list for — still grinding vs. finished —
- * are told apart by SHAPE first, not by hue: a pane that is working shows a
- * turning spinner, and a pane that has finished shows a check mark. That reads
- * at a glance, survives every colour-blindness, and it is why the working state
- * is no longer a pulsing dot: a slow throb and a steady dot are the same
- * silhouette at 8 pixels, so the difference lived entirely in a colour the eye
- * had to compare against its neighbours to judge.
- *
- * The finished state is a CHECK and not a still dot for the same reason. A dot
- * is what every list uses for "online", and beside a row of green spinners a
- * green dot read as "also busy, just not animated right now" — the maintainer
- * asked for an indicator that says working or done, looking at a list that
- * already had one (2026-08-27). A check says finished the way a spinner says
- * busy: on its own, without a neighbour to compare against.
- *
- * Colour then carries the second question — is this pane's stillness news?
- * The product has three status hues and this badge uses all three and nothing
- * else. Green (life) marks a pane that is healthy: working, a check for a
- * finished job, a hollow ring for one that is merely ready and has done
- * nothing yet. Amber (degraded) is spent on the one state that wants an action
- * from you right now, a pane stopped on a question. Grey — which is ink, not a
- * status — is for a pane with nothing to report, red for a broken one.
- */
+/** Task lifecycle supplied by the backend. Silence alone never means done. */
 
 /**
  * The badge's vocabulary, as a key rather than a word.
@@ -88,7 +21,9 @@ export type PaneActivityState =
   | "live"
   | "exited"
   | "failed"
-  | "error";
+  | "error"
+  | "stopped"
+  | "unknown";
 
 /** The accessible meaning of each activity, and how its icon is drawn. */
 type Look = {
@@ -116,14 +51,22 @@ type Look = {
  * — see the module docstring.
  */
 const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
+  stopped: {
+    state: "stopped", label: "stopped", className: "text-muted-foreground",
+    icon: "ring", hint: "The task was interrupted.",
+  },
+  unknown: {
+    state: "unknown", label: "status unknown", className: "text-muted-foreground",
+    icon: "ring", hint: "No verified task status is available.",
+  },
   working: {
     state: "working",
     label: "working",
     // Life. A status is never --foreground: ink is the colour of everything
     // that is NOT a signal, so a state painted in it reads as a label.
-    className: "text-success",
+    className: "text-accent",
     icon: "spinner",
-    hint: "Working — its screen is still changing.",
+    hint: "Working — the task is still in progress.",
   },
   starting: {
     state: "starting",
@@ -168,7 +111,7 @@ const LOOK: Record<Exclude<PaneActivity, "" | "waiting">, Look> = {
 const DONE: Look = {
   state: "done",
   label: "done",
-  className: "text-success",
+  className: "text-accent",
   icon: "check",
   glow: true,
   hint: "Finished and waiting at its prompt. That it stopped, not that the work is right.",
@@ -185,7 +128,7 @@ const DONE: Look = {
 const IDLE: Look = {
   state: "idle",
   label: "idle",
-  className: "text-success",
+  className: "text-accent",
   icon: "ring",
   hint: "Waiting at its prompt. Nothing has been sent to it yet.",
 };

@@ -9,36 +9,31 @@
  * A second hand-written list anywhere would be the classic drift trap (AP-4):
  * a section added here would silently never appear on the deck.
  */
+import { KeyRound, type LucideIcon } from "lucide-react";
 import {
-  BookOpen,
-  Boxes,
-  Contact,
-  Gauge,
-  KeyRound,
-  MessageSquare,
-  MessageSquareWarning,
-  MessagesSquare,
-  Mic,
-  Notebook,
-  ScrollText,
-  Server,
-  Settings,
-  Shapes,
-  Share2,
-  Sparkles,
-  Store,
-  Terminal,
-  UserCircle2,
-  Users,
-  Wallet,
-  Workflow,
-  PawPrint,
-  Keyboard,
-  ScanLine,
-  ShieldCheck,
-  type LucideIcon,
-} from "lucide-react";
-import { OllamaIcon } from "@/components/icons/OllamaIcon";
+  AgentsIcon,
+  ArtifactsIcon,
+  BoardIcon,
+  CaptureIcon,
+  ChatIcon,
+  CodeIcon,
+  ComputersIcon,
+  DocsIcon,
+  ExtensionsIcon,
+  FeedbackIcon,
+  AssistantIcon,
+  MarketplaceIcon,
+  MicrophoneIcon,
+  PetsIcon,
+  ProfileIcon,
+  SettingsIcon,
+  ShortcutsIcon,
+  SocialsIcon,
+  SpeechIcon,
+  SpendIcon,
+  TerminalIcon,
+  WikiIcon,
+} from "@/components/icons/sectionIcons";
 import type { SectionId } from "@/store/events";
 import type { HomeSurface } from "@/lib/homeSurface";
 
@@ -61,7 +56,7 @@ export function resolveNavLabel(t: (key: string) => string, item: NavItem): stri
  */
 export function presentNavItem(item: NavItem, _surface?: HomeSurface): NavItem {
   if (item.id !== "chats") return item;
-  return { ...item, labelKey: "sidebar.surface_chat", icon: MessageSquare, fallbackLabel: "Chat" };
+  return { ...item, labelKey: "sidebar.surface_chat", icon: ChatIcon, fallbackLabel: "Chat" };
 }
 
 export interface NavItem {
@@ -123,16 +118,16 @@ export const NAV_GROUP_META: readonly NavGroupMeta[] = [
 // (AP-4): a section added here would silently never appear on the deck.
 export const NAV_GROUPS: NavItem[][] = [
   // 0) The front page — Voice or Chat, named after the face the switch picked.
-  [{ id: "chats", labelKey: "nav.chats", icon: MessageSquare }],
+  [{ id: "chats", labelKey: "nav.chats", icon: ChatIcon }],
   // 1) Workspace — what the user builds with and reads back.
   [
-    { id: "agents", labelKey: "nav.agents", icon: Users },
+    { id: "agents", labelKey: "nav.agents", icon: AgentsIcon },
     // The compact catalog opens on Plugins; direct section navigation selects
     // its corresponding tab and keeps this shared row highlighted.
     {
       id: "plugins",
       labelKey: "nav.extensions",
-      icon: Boxes,
+      icon: ExtensionsIcon,
       matchIds: ["skills", "plugins", "mcps"],
     },
     // The marketplace fills those lists: a plugin or a skill published there
@@ -140,37 +135,33 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "marketplace",
       labelKey: "nav.marketplace",
-      icon: Store,
+      icon: MarketplaceIcon,
       fallbackLabel: "Marketplace",
     },
-    // Automations — the recurring agent tasks and their catalogue. The id stays
-    // "tasks" (navigate parity, deep links); only the label and glyph changed.
-    { id: "tasks", labelKey: "nav.tasks", icon: Workflow, fallbackLabel: "Automations" },
     // Artifacts — everything a run produced. The id stays "visualization"
     // because it crosses the navigate parity test, the detachable-view
     // registry and deep links.
     {
       id: "visualization",
       labelKey: "nav.visualization",
-      icon: Shapes,
+      icon: ArtifactsIcon,
       fallbackLabel: "Artifacts",
     },
-    { id: "board", labelKey: "nav.board", icon: Sparkles },
-    { id: "memory", labelKey: "nav.wiki", icon: Notebook },
-    { id: "docs", labelKey: "nav.docs", icon: BookOpen },
+    { id: "board", labelKey: "nav.board", icon: BoardIcon },
+    { id: "memory", labelKey: "nav.wiki", icon: WikiIcon },
+    { id: "docs", labelKey: "nav.docs", icon: DocsIcon },
   ],
   // 2) Tools — the instruments: transcription, the run inspector, the CLIs
   // and the Agentic IDE (which puts real coding agents to work in a folder,
   // so its row says "Beta" up front).
   [
-    { id: "sessions", labelKey: "nav.sessions", icon: Mic },
-    { id: "run_inspector", labelKey: "nav.run_inspector", icon: Gauge },
+    { id: "sessions", labelKey: "nav.sessions", icon: MicrophoneIcon },
     // CLIs — the CLIs list + the CLI Test Hub behind one tab switch (CLIs first).
-    { id: "clis", labelKey: "nav.clis_hub", icon: Terminal, matchIds: ["clis", "cli-test-hub"] },
+    { id: "clis", labelKey: "nav.clis_hub", icon: TerminalIcon, matchIds: ["clis", "cli-test-hub"] },
     {
       id: "agentic-ide",
       labelKey: "nav.agentic_ide",
-      icon: MessagesSquare,
+      icon: CodeIcon,
       fallbackLabel: "Agentic IDE",
       // The classic grid is the same destination as far as the row is
       // concerned: someone who stepped back into it should still see where
@@ -182,18 +173,17 @@ export const NAV_GROUPS: NavItem[][] = [
   // 3) You — what the assistant knows about the user, and the user's own
   // ledgers.
   [
-    { id: "profile", labelKey: "nav.profile", icon: UserCircle2 },
+    { id: "profile", labelKey: "nav.profile", icon: ProfileIcon },
     {
       id: "agent-instructions",
       labelKey: "nav.agent_instructions",
-      icon: ScrollText,
-      fallbackLabel: "Instructions",
+      icon: AssistantIcon,
+      fallbackLabel: "Assistant",
     },
-    { id: "contacts", labelKey: "nav.contacts", icon: Contact },
     // Spend & Tokens — every token the app spent, priced per provider, model
     // and role. It reports, it does not configure.
-    { id: "costs", labelKey: "nav.costs", icon: Wallet, fallbackLabel: "Spend" },
-    { id: "socials", labelKey: "nav.socials", icon: Share2 },
+    { id: "costs", labelKey: "nav.costs", icon: SpendIcon, fallbackLabel: "Spend" },
+    { id: "socials", labelKey: "nav.socials", icon: SocialsIcon },
   ],
   // 4) System. API Keys also fronts the former "Telephony" screen — the
   // telephony status/credentials/scripts/calls live as a section inside the
@@ -207,7 +197,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "computers",
       labelKey: "nav.computers",
-      icon: Server,
+      icon: ComputersIcon,
       fallbackLabel: "Computers",
     },
     {
@@ -216,18 +206,10 @@ export const NAV_GROUPS: NavItem[][] = [
       icon: KeyRound,
       matchIds: ["apikeys", "telephony", "telephony-setup"],
     },
-    // Local models sit directly under API Keys: the same "which brain" question,
-    // answered for the machine itself instead of a hosted account.
-    {
-      id: "local-models",
-      labelKey: "nav.local_models",
-      icon: OllamaIcon,
-      fallbackLabel: "Local models",
-    },
     {
       id: "settings",
       labelKey: "nav.settings",
-      icon: Settings,
+      icon: SettingsIcon,
       matchIds: ["settings", "taskbar", "languages"],
     },
     // The voice section — dictation, the custom vocabulary, the keys that start
@@ -236,7 +218,7 @@ export const NAV_GROUPS: NavItem[][] = [
     {
       id: "dictation",
       labelKey: "nav.voice",
-      icon: Mic,
+      icon: SpeechIcon,
       matchIds: [
         "dictation",
         "dictionary",
@@ -257,7 +239,7 @@ export const NAV_GROUPS: NavItem[][] = [
  * `NavItem` so the deck and the rail can still list it from one definition.
  */
 export const NAV_FOOTER_ITEMS: NavItem[] = [
-  { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
+  { id: "feedback", labelKey: "nav.feedback", icon: FeedbackIcon },
 ];
 
 /**
@@ -269,17 +251,11 @@ export const SETTINGS_HUB_ONLY_ITEMS: NavItem[] = [
   {
     id: "shortcuts",
     labelKey: "nav.shortcuts",
-    icon: Keyboard,
+    icon: ShortcutsIcon,
     fallbackLabel: "Keyboard shortcuts",
   },
-  { id: "appshots", labelKey: "nav.appshots", icon: ScanLine, fallbackLabel: "Appshots" },
-  { id: "pets", labelKey: "nav.pets", icon: PawPrint, fallbackLabel: "My Pets" },
-  {
-    id: "jarvis-actions",
-    labelKey: "nav.jarvis_actions",
-    icon: ShieldCheck,
-    fallbackLabel: "Jarvis actions",
-  },
+  { id: "appshots", labelKey: "nav.appshots", icon: CaptureIcon, fallbackLabel: "Appshots" },
+  { id: "pets", labelKey: "nav.pets", icon: PetsIcon, fallbackLabel: "My Pets" },
 ];
 
 /**
@@ -298,17 +274,14 @@ export const SETTINGS_HUB_IDS: readonly SectionId[] = [
   "languages",
   "profile",
   "agent-instructions",
-  "contacts",
   "socials",
   "apikeys",
   "telephony",
   "telephony-setup",
-  "local-models",
   "computers",
   "appshots",
   "shortcuts",
   "pets",
-  "jarvis-actions",
   "costs",
   "feedback",
 ];

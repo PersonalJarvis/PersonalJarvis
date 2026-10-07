@@ -35,7 +35,7 @@ def test_pipeline_change_runs_everything():
 
 
 def test_frontend_source_change_keeps_python_on_because_tests_read_it():
-    result = classify_changes.classify(["jarvis/ui/web/frontend/src/views/tasks/taskSpec.ts"])
+    result = classify_changes.classify(["jarvis/ui/web/frontend/src/lib/tasksApi.ts"])
     assert result["frontend"] is True
     assert result["python"] is True
     assert result["realtime"] is False
@@ -68,6 +68,101 @@ def test_unrelated_python_change_leaves_the_updater_lane_off():
     result = classify_changes.classify(["jarvis/society/roster.py"])
     assert result["python"] is True
     assert result["updater"] is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # Packaging: the spec, the build script, the entitlements and the single
+        # usage-string table both macOS bundles load.
+        "jarvis.spec",
+        "packaging/macos/build.sh",
+        "packaging/macos/entitlements.plist",
+        "packaging/macos/README.md",
+        "jarvis/core/macos_privacy_strings.py",
+        # The just-in-time permission service, its port and its HTTP surface.
+        "jarvis/platform/permission_service.py",
+        "jarvis/platform/permissions.py",
+        "jarvis/ui/web/permissions_routes.py",
+        # Every directory whose code asks for, or acts on, a macOS permission.
+        "jarvis/audio/capture.py",
+        "jarvis/cu/engine.py",
+        "jarvis/vision/screenshot.py",
+        "jarvis/screen_context/capture.py",
+        "jarvis/dictation/insert.py",
+        "jarvis/trigger/backends/quartz.py",
+        "jarvis/platform/window_state.py",
+        # The voice gates, the wake/mic routes, the shared events and protocols, and
+        # the fakes and contract tests the macOS lane runs.
+        "jarvis/speech/pipeline.py",
+        "jarvis/speech/diagnose.py",
+        "jarvis/ui/web/settings_routes.py",
+        "jarvis/core/events.py",
+        # Consumers that capture, type or relay: tools, appshot, routes, CLI, bundle ids.
+        "jarvis/plugins/tool/screen_snapshot.py",
+        "jarvis/plugins/tool/type_text.py",
+        "jarvis/plugins/tool/verify_localhost.py",
+        "jarvis/plugins/harness/computer_use.py",
+        "jarvis/appshot/gesture.py",
+        "jarvis/ui/web/screen_context_routes.py",
+        "jarvis/cli_ctl/commands/permissions.py",
+        "jarvis/core/branding.py",
+        "jarvis/tasks/event_catalog.py",
+        "jarvis/core/protocols.py",
+        "tests/fakes/fake_tcc.py",
+        "tests/fakes/fake_permission_service.py",
+        "tests/contract/test_permission_service_contract.py",
+        "tests/unit/core/test_permission_events.py",
+        "tests/unit/ci/test_macos_desktop_permission_step.py",
+        "tests/unit/ui/web/test_permissions_routes.py",
+        "tests/unit/trigger/test_quartz_backend.py",
+        # The windows spelling of a path must classify the same way.
+        "jarvis\\core\\macos_privacy_strings.py",
+    ],
+)
+def test_macos_permission_and_packaging_paths_turn_on_the_macos_lane(path):
+    result = classify_changes.classify([path])
+
+    assert result["macos_desktop"] is True, path
+    assert result["full"] is False, path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "jarvis/society/roster.py",
+        "jarvis/ui/web/society_browser_routes.py",
+        "packaging/windows/PersonalJarvis.iss",
+        "packaging/linux/build.sh",
+        "docs/macos-permissions.md",
+    ],
+)
+def test_unrelated_paths_leave_the_macos_lane_off(path):
+    assert classify_changes.classify([path])["macos_desktop"] is False, path
+
+
+def test_the_macos_lane_gate_names_the_new_paths_it_adds_to_the_prefix_tables():
+    """Guard the data, not just the outcome: a refactor must not drop an entry."""
+    assert {"jarvis.spec", "jarvis/core/macos_privacy_strings.py"} <= classify_changes._MACOS_FILES
+    assert "jarvis/ui/web/permissions_routes.py" in classify_changes._MACOS_FILES
+    assert {
+        "jarvis/plugins/tool/screen_snapshot.py",
+        "jarvis/plugins/tool/type_text.py",
+        "jarvis/plugins/tool/verify_localhost.py",
+        "jarvis/speech/diagnose.py",
+        "jarvis/ui/web/screen_context_routes.py",
+        "jarvis/cli_ctl/commands/permissions.py",
+        "jarvis/core/branding.py",
+        "jarvis/tasks/event_catalog.py",
+    } <= classify_changes._MACOS_FILES
+    assert {
+        "packaging/macos/",
+        "jarvis/screen_context/",
+        "jarvis/dictation/",
+        "jarvis/appshot/",
+    } <= set(
+        classify_changes._MACOS_PREFIXES
+    )
 
 
 def test_lockfile_change_reaches_deps_realtime_and_installer():
@@ -161,7 +256,14 @@ def test_runner_reports_failures_and_passes(tmp_path):
 
 def _report(path: Path, failed: list[str], passed: int = 10) -> Path:
     path.write_text(
-        json.dumps({"failed_ids": failed, "counts": {"passed": passed}, "elapsed_seconds": 1}),
+        json.dumps(
+            {
+                "failed_ids": failed,
+                "files": 1,
+                "counts": {"passed": passed, "tests": passed + len(failed)},
+                "elapsed_seconds": 1,
+            }
+        ),
         encoding="utf-8",
     )
     return path
@@ -185,9 +287,9 @@ def test_ratchet_matches_timeouts_regardless_of_budget(tmp_path):
     assert ratchet_tests.main(["check", "--baseline", str(baseline), str(report)]) == 0
 
 
-def test_missing_baseline_is_report_only(tmp_path):
+def test_missing_baseline_rejects_unapproved_failures(tmp_path):
     report = _report(tmp_path / "r.json", ["t::new"])
-    assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(tmp_path / "no.json"), str(report)]) == 1
 
 
 def test_update_writes_a_baseline_the_check_accepts(tmp_path):
@@ -195,6 +297,40 @@ def test_update_writes_a_baseline_the_check_accepts(tmp_path):
     out = tmp_path / "base.json"
     assert ratchet_tests.main(["update", "--out", str(out), str(report)]) == 0
     assert ratchet_tests.main(["check", "--baseline", str(out), str(report)]) == 0
+
+
+def _junit(run_dir: Path, cases: dict[str, str]) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    body = {"passed": "", "failed": "<failure/>", "skipped": "<skipped/>"}
+    xml = ""
+    for fid, outcome in cases.items():
+        module, name = fid.split("::")
+        xml += f'<testcase classname="{module}" name="{name}">{body[outcome]}</testcase>'
+    (run_dir / "junit-linux-1.xml").write_text(f"<testsuite>{xml}</testsuite>", encoding="utf-8")
+    return run_dir
+
+
+def test_prune_drops_only_entries_that_passed_in_every_run(tmp_path):
+    baseline = tmp_path / "b.json"
+    known = ["t.a::stable", "t.a::flips", "t.a::skipped", "t.a::still_fails", "t.a::gone"]
+    baseline.write_text(json.dumps({"known_failures": known}), encoding="utf-8")
+    first = {"stable": "passed", "flips": "passed", "skipped": "skipped", "still_fails": "failed"}
+    second = {"stable": "passed", "flips": "failed", "skipped": "passed", "still_fails": "failed"}
+    run1 = _junit(tmp_path / "r1", {f"t.a::{k}": v for k, v in first.items()})
+    run2 = _junit(tmp_path / "r2", {f"t.a::{k}": v for k, v in second.items()})
+    args = ["prune", "--baseline", str(baseline), "--os", "linux", str(run1), str(run2)]
+    assert ratchet_tests.main(args) == 0
+    remaining = json.loads(baseline.read_text(encoding="utf-8"))["known_failures"]
+    assert remaining == ["t.a::flips", "t.a::skipped", "t.a::still_fails", "t.a::gone"]
+
+
+def test_prune_refuses_a_run_without_evidence(tmp_path):
+    baseline = tmp_path / "b.json"
+    baseline.write_text(json.dumps({"known_failures": ["t.a::x"]}), encoding="utf-8")
+    (tmp_path / "empty").mkdir()
+    args = ["prune", "--baseline", str(baseline), "--os", "linux", str(tmp_path / "empty")]
+    assert ratchet_tests.main(args) == 1
+    assert json.loads(baseline.read_text(encoding="utf-8"))["known_failures"] == ["t.a::x"]
 
 
 # --------------------------------------------------------------------------- selection
@@ -386,7 +522,9 @@ def test_publication_requires_a_tag(filename, job):
             encoding="utf-8"
         )
     )
-    assert workflow["jobs"][job]["if"] == "github.ref_type == 'tag'"
+    condition = workflow["jobs"][job]["if"]
+    assert "github.ref_type == 'tag'" in condition.split(" && ")
+    assert "||" not in condition
 
 
 def test_bump_and_commit_notes():
@@ -403,7 +541,9 @@ def test_bump_and_commit_notes():
 
 def test_apply_moves_notes_under_a_dated_section(tmp_path):
     (tmp_path / "jarvis").mkdir()
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.0.0"\n', encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "personal-jarvis"\nversion = "1.0.0"\n', encoding="utf-8"
+    )
     (tmp_path / "jarvis" / "__init__.py").write_text('__version__ = "1.0.0"\n', encoding="utf-8")
     (tmp_path / "uv.lock").write_text(
         '[[package]]\nname = "dependency"\nversion = "1.0.0"\n\n'
@@ -430,7 +570,7 @@ def test_apply_moves_notes_under_a_dated_section(tmp_path):
     assert release_admit.check_identity("v1.2.0", tmp_path)
 
 
-def test_any_failure_inside_a_flaky_file_is_known(tmp_path):
+def test_flaky_file_metadata_cannot_waive_new_failures(tmp_path):
     baseline = tmp_path / "b.json"
     baseline.write_text(
         json.dumps({"flaky_files": ["tests/unit/x/test_timing.py"], "known_failures": []}),
@@ -439,8 +579,8 @@ def test_any_failure_inside_a_flaky_file_is_known(tmp_path):
     flip = _report(tmp_path / "r1.json", ["tests.unit.x.test_timing::test_ramp"])
     crash = _report(tmp_path / "r2.json", ["tests/unit/x/test_timing.py::<timeout 300s>"])
     other = _report(tmp_path / "r3.json", ["tests.unit.x.test_timing_other::test_a"])
-    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(flip)]) == 0
-    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(crash)]) == 0
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(flip)]) == 1
+    assert ratchet_tests.main(["check", "--baseline", str(baseline), str(crash)]) == 1
     assert ratchet_tests.main(["check", "--baseline", str(baseline), str(other)]) == 1
     out = tmp_path / "b.json"
     assert ratchet_tests.main(["update", "--out", str(out), str(other)]) == 0

@@ -125,6 +125,7 @@ async def finish_message(rt, chat, request, **kwargs):
     try:
         done, events = completion(**kwargs)
         await rt._complete_message_reply(
+            # Jarvis' message runs in the receiver's conversation chat with Jarvis.
             chat.store.get_session(f"society:{request.to_agent}"),
             done,
             events,

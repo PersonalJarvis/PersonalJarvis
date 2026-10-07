@@ -350,5 +350,10 @@ async def stream_complete(
                         # cache hits were invisible in cost and telemetry and
                         # cache regressions could not be measured.
                         "cache_hit_tokens": int(getattr(usage, "cache_read_input_tokens", 0) or 0),
+                        # Cache writes bill above the input rate; a mission's
+                        # paid-use cap counts them (jarvis/missions/capacity.py).
+                        "cache_write_tokens": int(
+                            getattr(usage, "cache_creation_input_tokens", 0) or 0
+                        ),
                     }
                 yield BrainDelta(finish_reason=finish, usage=usage_d or None)

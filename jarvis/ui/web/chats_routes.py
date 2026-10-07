@@ -31,6 +31,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jarvis.sessions import chat_titles
+from jarvis.sessions.chat_titles import TitleRequest
+from jarvis.sessions.continuation import CALL_SEGMENT_PREFIX
 from jarvis.sessions.formatter import _jarvis_outputs_for_turn
 from jarvis.state.chat_store import ChatStore
 from jarvis.state.conversation_constants import (
@@ -152,14 +155,15 @@ def _optional_pipeline(request: Request) -> Any | None:
 # ----------------------------------------------------------------------
 
 
-def _voice_session_to_summary(s: Any) -> ConversationSummary:
+def _voice_session_to_summary(s: Any, title: str = "") -> ConversationSummary:
+    """A voice session as a history row. An empty ``title`` means "no topic"."""
     preview = getattr(s, "preview", "") or ""
     started = int(getattr(s, "started_ms", 0) or 0)
     ended = getattr(s, "ended_ms", None)
     return ConversationSummary(
         kind=CONVERSATION_KIND_VOICE,
         id=str(s.id),
-        title=preview or "Voice session",
+        title=title,
         preview=preview,
         created_ms=started,
         updated_ms=int(ended) if ended else started,
@@ -206,7 +210,21 @@ def _normalized_messages(
         events = _voice_events(session_store, cid)
         live_messages = _live_voice_messages(events)
         if live_messages:
-            return live_messages
+            # A reopened voice chat can hold an older turn-based call ahead of
+            # its live calls (jarvis/sessions/continuation.py). Those earlier
+            # turns carry no caption rows, so they would vanish behind the
+            # captions; keep them, in time order, in front.
+            first_live = min(m.ts_ms for m in live_messages)
+            captioned = {
+                getattr(e, "turn_id", None)
+                for e in events
+                if e.kind == "VoiceTranscriptUpdated"
+            }
+            earlier = [
+                turn for turn in turns
+                if int(turn.started_ms) < first_live and str(turn.id) not in captioned
+            ]
+            return _turn_messages(earlier, events) + live_messages
         # Older GPT-Live sessions retained every fragment even while the chat
         # rendered only the current caption. Recover them without a migration.
         from jarvis.core.paths import user_data_dir
@@ -219,34 +237,39 @@ def _normalized_messages(
                 role=caption.role, text=caption.text,
                 ts_ms=int(session.started_ms) + caption.start_ms - origin,
             ) for caption in legacy]
-        out: list[ChatTurn] = []
-        for turn in turns:
-            if getattr(turn, "user_text", ""):
-                out.append(
-                    ChatTurn(role="user", text=turn.user_text, ts_ms=int(turn.started_ms))
-                )
-            turn_id = str(getattr(turn, "id", "") or "")
-            turn_events = [
-                event for event in events
-                if turn_id and getattr(event, "turn_id", None) == turn_id
-            ]
-            # Use the export's audible-track projection: preambles and progress
-            # can be all the user heard before hanging up. They remain spoken
-            # history even when no final brain reply or tool call exists.
-            for output in _jarvis_outputs_for_turn(turn, turn_events):
-                out.append(
-                    ChatTurn(
-                        role="assistant",
-                        text=output.text,
-                        ts_ms=output.ts_ms,
-                        trace=(
-                            _voice_turn_trace(turn, events)
-                            if output.is_reply else None
-                        ),
-                    )
-                )
-        return out
+        return _turn_messages(turns, events)
     return None
+
+
+def _turn_messages(turns: list[Any], events: list[Any]) -> list[ChatTurn]:
+    """A turn-based call's messages: the heard words and the audible answers."""
+    out: list[ChatTurn] = []
+    for turn in turns:
+        if getattr(turn, "user_text", ""):
+            out.append(
+                ChatTurn(role="user", text=turn.user_text, ts_ms=int(turn.started_ms))
+            )
+        turn_id = str(getattr(turn, "id", "") or "")
+        turn_events = [
+            event for event in events
+            if turn_id and getattr(event, "turn_id", None) == turn_id
+        ]
+        # Use the export's audible-track projection: preambles and progress
+        # can be all the user heard before hanging up. They remain spoken
+        # history even when no final brain reply or tool call exists.
+        for output in _jarvis_outputs_for_turn(turn, turn_events):
+            out.append(
+                ChatTurn(
+                    role="assistant",
+                    text=output.text,
+                    ts_ms=output.ts_ms,
+                    trace=(
+                        _voice_turn_trace(turn, events)
+                        if output.is_reply else None
+                    ),
+                )
+            )
+    return out
 
 
 def _voice_events(session_store: Any, session_id: str) -> list[Any]:
@@ -281,7 +304,20 @@ def _live_voice_messages(events: list[Any]) -> list[ChatTurn]:
             "start": previous["start"] if previous else event.ts_ms,
             "end": event.ts_ms, "audio_start": int(payload.get("start_ms", 0)),
         }
-    ordered = sorted(segments.values(), key=lambda item: (item["audio_start"], item["start"]))
+    # Each call's audio clock starts at zero. A reopened voice chat holds
+    # several calls (their segment ids carry the call, see
+    # SessionRecorder._maybe_append_raw), so order calls by when they began
+    # and only then by the audio clock inside each call.
+    for segment_id, item in segments.items():
+        continued = segment_id.startswith(CALL_SEGMENT_PREFIX)
+        item["call"] = segment_id.split(":", 2)[1] if continued else ""
+    call_start: dict[str, int] = {}
+    for item in segments.values():
+        call_start[item["call"]] = min(call_start.get(item["call"], item["start"]), item["start"])
+    ordered = sorted(
+        segments.values(),
+        key=lambda item: (call_start[item["call"]], item["audio_start"], item["start"]),
+    )
     messages = []
     trace_start = min((item["start"] for item in ordered), default=0)
     for item in ordered:
@@ -331,15 +367,56 @@ def _seed_pairs(messages: list[ChatTurn]) -> list[tuple[str, str]]:
     return pairs[-_SEED_MAX_MESSAGES:]
 
 
+def _voice_title_request(
+    s: Any, chat_store: ChatStore, session_store: Any
+) -> TitleRequest:
+    """What the titler needs to name one voice session (read lazily, off-request)."""
+    sid = str(s.id)
+    ended = getattr(s, "ended_ms", None)
+
+    def load() -> list[tuple[str, str]]:
+        messages = _normalized_messages(CONVERSATION_KIND_VOICE, sid, chat_store, session_store)
+        return [(m.role, m.text) for m in messages or []]
+
+    return TitleRequest(
+        kind=chat_titles.KIND_VOICE,
+        conv_id=sid,
+        version=str(ended or ""),
+        message_count=int(getattr(s, "turn_count", 0) or 0),
+        updated_ms=int(ended or getattr(s, "started_ms", 0) or 0),
+        settled=ended is not None,
+        seed=str(getattr(s, "preview", "") or ""),
+        loader=load,
+    )
+
+
+def _voice_titles(
+    request: Request, sessions: list[Any], chat_store: ChatStore, session_store: Any
+) -> dict[tuple[str, str], str]:
+    """Topic titles for voice sessions; the rules over the preview if the titler fails."""
+    requests = [_voice_title_request(s, chat_store, session_store) for s in sessions]
+    try:
+        return chat_titles.titler_for_state(request.app.state).titles_for(requests)
+    except Exception:  # noqa: BLE001 - a title is never worth an empty history
+        log.warning("chat titles unavailable, using the plain rules", exc_info=True)
+        return {(r.kind, r.conv_id): chat_titles.tidy_title([r.seed]) for r in requests}
+
+
 def _conversation_title(
-    kind: str, cid: str, chat_store: ChatStore, session_store: Any | None
+    request: Request,
+    kind: str,
+    cid: str,
+    chat_store: ChatStore,
+    session_store: Any | None,
 ) -> str:
     if kind == CONVERSATION_KIND_TEXT:
         thread = chat_store.get_thread(cid)
         return (thread or {}).get("title", "") if thread else ""
     if kind == CONVERSATION_KIND_VOICE and session_store is not None:
-        session = session_store.get_session(cid)
-        return "Voice session" if session is not None else ""
+        if session_store.get_session(cid) is None:
+            return ""
+        titler = chat_titles.titler_for_state(request.app.state)
+        return titler.known(chat_titles.KIND_VOICE, cid)
     return ""
 
 
@@ -366,8 +443,11 @@ def list_conversations(
     ]
     if session_store is not None:
         try:
-            for s in session_store.list_sessions(limit=limit, include_empty=False):
-                items.append(_voice_session_to_summary(s))
+            sessions = session_store.list_sessions(limit=limit, include_empty=False)
+            titles = _voice_titles(request, sessions, chat_store, session_store)
+            for s in sessions:
+                title = titles.get((chat_titles.KIND_VOICE, str(s.id)), "")
+                items.append(_voice_session_to_summary(s, title))
         except Exception as exc:  # noqa: BLE001 — voice list must never 500 the page
             log.warning("voice session list failed, showing text-only: %s", exc)
 
@@ -413,6 +493,17 @@ async def new_voice_run(request: Request) -> NewVoiceRunResponse:
         brain.seed_history([])
         cleared = True
 
+    # A fresh run is a fresh chat too: its turns must not land in the chat the
+    # previous call continued, or the new run would read as part of it.
+    try:
+        from .agent_chat_routes import _service_from_state
+
+        chat = _service_from_state(request.app.state)
+        if chat is not None:
+            chat.bind_voice_chat(None)
+    except Exception as exc:  # noqa: BLE001 — the reset itself already happened
+        log.warning("new voice run could not unbind the voice chat: %s", exc)
+
     ended = False
     pipeline = _optional_pipeline(request)
     if pipeline is not None and hasattr(pipeline, "request_voice_hangup"):
@@ -436,7 +527,7 @@ async def get_conversation(
     return ConversationDetail(
         kind=kind,
         id=cid,
-        title=_conversation_title(kind, cid, chat_store, session_store),
+        title=_conversation_title(request, kind, cid, chat_store, session_store),
         messages=messages,
     )
 
@@ -464,7 +555,7 @@ async def resume_conversation(
     return ResumeResponse(
         kind=kind,
         id=cid,
-        title=_conversation_title(kind, cid, chat_store, session_store),
+        title=_conversation_title(request, kind, cid, chat_store, session_store),
         messages=messages,
         seeded_turns=seeded,
     )

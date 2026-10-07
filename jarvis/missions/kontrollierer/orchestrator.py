@@ -28,14 +28,39 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
+from ..capacity import (
+    CAPACITY_WAIT_REASON_VALUES,
+    MAX_REVIEW_RETRIES,
+    PAID_MISSION_CAP_USD,
+    CapacityDecision,
+    CapacityDecisionRejected,
+    CapacityPolicy,
+    CapacityWaitReason,
+    CriticCapacityUnavailable,
+    MissionPaidLedger,
+    PaidCallGate,
+    PaidOffer,
+    PaidOption,
+    RouteDecision,
+    WorkerCapacityUnavailable,
+    decide_route,
+    delete_checkpoint,
+    is_subscription_family,
+    read_checkpoint,
+    resume_backoff_s,
+    worker_family,
+    write_checkpoint,
+)
 from ..critic.escalation import FRONTIER_MODEL
 from ..critic.reflections import ReflectionMemory
 from ..critic.runner import MAX_CRITIC_LOOPS, CriticRunner
@@ -51,8 +76,11 @@ from ..events import (
     EventEnvelope,
     MissionApproved,
     MissionCancelled,
+    MissionCapacityDecision,
     MissionFailed,
+    MissionPaidUsage,
     MissionPlanReady,
+    MissionWaitingCapacity,
     WorkerCorrectionRequired,
     WorkerDraftReady,
     WorkerKilled,
@@ -144,6 +172,14 @@ _CORRECTION_WORKER_TIMEOUT_S: float = 360.0
 _TASK_TIME_BUDGET_S: float = 1380.0
 # One critic subprocess call (mirrors critic.runner.DEFAULT_TIMEOUT_SECONDS).
 _CRITIC_TIME_RESERVE_S: float = 240.0
+
+# Leads the first worker prompt of a step resumed from a capacity checkpoint.
+_RESUME_NOTE: Final[str] = (
+    "RESUMED TASK: this workspace already contains the partial work of an "
+    "earlier attempt at this task, which stopped when the provider ran out of "
+    "capacity. Inspect it and continue from it; do not start over or redo "
+    "finished parts."
+)
 
 
 def _worker_error_is_transient(err: str) -> bool:
@@ -344,6 +380,31 @@ def _safe_read_text(path: Path) -> str:
         return ""
 
 
+# Windows antivirus and the search indexer briefly hold files that were just
+# copied into a snapshot tree, and renaming the tree's directory then fails
+# with WinError 5/32 although nothing is wrong. Seen under parallel load
+# (2026-10-07): the archive returned None and the worker's deliverable was not
+# archived. A short bounded retry rides that out; any other error class still
+# fails at once, and the final PermissionError is re-raised unchanged.
+_SNAPSHOT_RENAME_RETRY_DELAYS_S: tuple[float, ...] = (
+    0.0, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6,
+)
+
+
+def _rename_with_retry(src: Path, dst: Path) -> None:
+    last_error: PermissionError | None = None
+    for delay_s in _SNAPSHOT_RENAME_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        try:
+            src.replace(dst)
+            return
+        except PermissionError as exc:  # transient share lock: retried, re-raised below
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+
+
 def _real_diff_is_empty(diff_text: str) -> bool:
     """True iff the diff carries no foreign hunks after stripping
     managed persona files.
@@ -390,6 +451,45 @@ def _real_diff_is_empty(diff_text: str) -> bool:
 # Cap on the content embedded for a verified external file. Large enough for a
 # typical document deliverable, small enough not to blow the Critic's prompt.
 _EXTERNAL_VERIFY_MAX_CHARS: Final[int] = 8000
+
+
+@dataclass(frozen=True)
+class _ResumeClaim:
+    """A parked mission this caller moved to RUNNING, ready to continue."""
+
+    prompt: str
+    plan: MissionPlan
+    done: frozenset[str]
+    restore_dirs: dict[str, Path]
+    checkpoint: dict[str, Any]
+    #: Steps whose worker delivered and only the critic is owed.
+    review_only: frozenset[str] = frozenset()
+    #: Non-capacity critic failures so far, per step (bounded retries).
+    review_failures: dict[str, int] | None = None
+
+
+def _plan_from_checkpoint(checkpoint: dict[str, Any] | None) -> MissionPlan | None:
+    """The plan a parked mission was running, or None if the checkpoint has none."""
+    raw = checkpoint.get("plan") if checkpoint else None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return MissionPlan.model_validate(raw)
+    except ValueError:  # pydantic.ValidationError is a ValueError
+        logger.warning("Checkpoint plan does not validate", exc_info=True)
+        return None
+
+
+def _done_task_ids(checkpoint: dict[str, Any]) -> set[str]:
+    """Task ids a checkpoint records as approved — never run again."""
+    steps = checkpoint.get("steps")
+    if not isinstance(steps, list):
+        return set()
+    return {
+        str(step["task_id"])
+        for step in steps
+        if isinstance(step, dict) and step.get("done") is True and step.get("task_id")
+    }
 
 
 def _path_is_within(child: Path, parent: Path) -> bool:
@@ -743,10 +843,22 @@ class TaskOutcome:
     # stays the generic ERROR -> task_error. (Voice strings live in
     # readback.FAILURE_REASON_PHRASES; see the deep-dive README.)
     TIMED_OUT = "timed_out"
+    # The worker has no usable capacity (spent window, dead subscription login,
+    # nothing it may run on without a paid fallback). The mission is parked in
+    # WAITING_CAPACITY with a checkpoint instead of failing — see
+    # jarvis/missions/capacity.py.
+    WAITING_CAPACITY = "waiting_capacity"
 
 
 class Kontrollierer:
     """Orchestrator class that drives a mission end-to-end."""
+
+    #: Worktree create/remove run git in a worker thread (off the shared event
+    #: loop) but stay serialized, as they were while they blocked the loop:
+    #: parallel ``git worktree add`` on one repo races for its admin files.
+    #: Class-wide because every instance works on the same checkout; a thread
+    #: lock because only worker threads ever take it.
+    _worktree_lock: Final[threading.Lock] = threading.Lock()
 
     def __init__(
         self,
@@ -788,8 +900,18 @@ class Kontrollierer:
         # Phase-5 safety hooks (all optional — None = no-op):
         safety_enabled: bool = True,
         extra_blocked_globs: tuple[str, ...] = (),
+        # The paid-API alternative for a mission no subscription can run
+        # (None = paid use never happens). Used on the user's consent only:
+        # the [missions] paid_api_fallback setting or a per-mission approval
+        # — see jarvis/missions/capacity.py and `decide_capacity`.
+        paid_option: PaidOption | None = None,
+        # Live answers for capacity decisions (pinned install, paid-fallback
+        # setting, daily paid ledger). None = the install's real ones.
+        capacity_policy: CapacityPolicy | None = None,
     ) -> None:
         self._manager = manager
+        self._paid_option = paid_option
+        self._policy = capacity_policy or CapacityPolicy()
         self._decomposer = decomposer
         self._runner = critic_runner
         self._worktrees = worktree_mgr
@@ -828,6 +950,43 @@ class Kontrollierer:
         # generic "worktree_setup_failed" fallback. Last write wins, same
         # convention as `_mission_failure_context`.
         self._setup_failure_reason: dict[str, str] = {}
+        # Per-mission capacity-wait cause (reason, provider, error_detail) —
+        # written where a task returns WAITING_CAPACITY, consumed once by
+        # `_park_mission`. Last write wins, as above.
+        self._capacity_wait: dict[str, dict[str, str | None]] = {}
+        # Missions resumed from a capacity checkpoint: the provider family they
+        # are pinned to (no other family runs them without approval), which
+        # resume attempt this is, and how many steps were done before it.
+        self._resume_family: dict[str, str] = {}
+        self._resume_attempt: dict[str, int] = {}
+        self._resume_done_before: dict[str, int] = {}
+        # Steps whose worker delivered but whose critic could not run: the
+        # checkpoint marks them "pending_review" so a resume only reviews.
+        # ``_review_failures`` counts non-capacity critic failures per step.
+        self._pending_review: dict[str, set[str]] = {}
+        self._review_failures: dict[str, dict[str, int]] = {}
+        # Approved paid runs: the exact offer the user accepted. In memory on
+        # purpose — an approval covers one run of one mission and dies with it
+        # (or with the process).
+        self._paid_approval: dict[str, PaidOffer] = {}
+        # Per-mission paid-use ledger, shared by parallel steps, worker and
+        # critic calls (reservation before every paid call). Opened per run
+        # from the mission's recorded MissionPaidUsage, so the cap is
+        # cumulative over every run of the mission.
+        self._ledgers: dict[str, MissionPaidLedger] = {}
+        # What this run paid, per (provider, model, automatic) — one
+        # MissionPaidUsage event each when the run ends.
+        self._run_paid: dict[str, dict[tuple[str, str, bool], dict[str, float]]] = {}
+        # The subscription family a mission lacked capacity on (what a park
+        # waits for — never the paid key it may have moved to).
+        self._wait_family: dict[str, str] = {}
+        # Resume backoff bookkeeping: consecutive parks without progress and
+        # how many steps were pending review when the run started.
+        self._resume_idle_parks: dict[str, int] = {}
+        self._resume_pending_before: dict[str, int] = {}
+        # Paid runs started by an approval; referenced so they are not
+        # garbage-collected mid-flight.
+        self._background_runs: set[asyncio.Task[Any]] = set()
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
         # voice readback speaks the actual answer instead of "Mission
@@ -840,7 +999,7 @@ class Kontrollierer:
     async def run_mission(self, mission_id: str) -> MissionState:
         """Runs a mission end-to-end and returns the final state.
 
-        Returns: APPROVED | FAILED | CANCELLED | TIMED_OUT.
+        Returns: APPROVED | FAILED | CANCELLED | TIMED_OUT | WAITING_CAPACITY.
 
         The in-flight asyncio task is tracked in ``_running_missions`` so an
         external cancel (REST ``POST /api/missions/{id}/cancel``) can abort
@@ -866,6 +1025,9 @@ class Kontrollierer:
         the dying task cannot race the user's decision (``_safe_transition``
         and ``_fail_mission`` both tolerate the already-terminal state).
         """
+        # The caller made the mission terminal (CANCELLED): a parked mission's
+        # checkpoint has nothing left to resume.
+        self._drop_checkpoint(mission_id)
         task = self._running_missions.get(mission_id)
         if task is None or task.done():
             return False
@@ -908,6 +1070,14 @@ class Kontrollierer:
         for mission_id in list(self._running_missions.keys()):
             task = self._running_missions.get(mission_id)
             if task is None or task.done():
+                continue
+            # A mission resumed from a capacity checkpoint is parked again,
+            # not cancelled: its checkpoint still holds the work, and the
+            # next start resumes it (jarvis/missions/capacity.py).
+            if await self._repark_on_shutdown(mission_id, reason):
+                task.cancel()
+                tasks.append(task)
+                finalized.append(mission_id)
                 continue
             transitioned = False
             try:
@@ -971,7 +1141,13 @@ class Kontrollierer:
         # Error states (FAILED / TIMED_OUT / ESCALATED / ORCHESTRATOR_CRASH)
         # stay re-runnable ON PURPOSE: a crash_recovery'd mission must still be
         # retryable to completion (test_recovery_then_rerun_is_idempotent).
-        if view.state in (MissionState.APPROVED, MissionState.CANCELLED):
+        # A parked mission continues only through `resume_mission`, from its
+        # checkpoint — a fresh run would re-plan and redo finished steps.
+        if view.state in (
+            MissionState.APPROVED,
+            MissionState.CANCELLED,
+            MissionState.WAITING_CAPACITY,
+        ):
             logger.info(
                 "run_mission: %s already %s — skipping re-run",
                 mission_id, view.state.value,
@@ -980,6 +1156,12 @@ class Kontrollierer:
 
         # PENDING -> RUNNING
         await self._safe_transition(mission_id, MissionState.RUNNING, "kontrollierer-start")
+        # Claim ownership before planning so recovery can tell, from the very
+        # first second, whether the process running this mission still exists.
+        try:
+            await self._manager.store.touch_heartbeat(mission_id, now_ms())
+        except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory; freshness guard still applies
+            logger.debug("Initial mission heartbeat failed (non-fatal): %s", hb_exc)
 
         # Decomposer: determine the plan.
         try:
@@ -1000,6 +1182,63 @@ class Kontrollierer:
             ",".join(step.slug for step in plan.steps),
             plan.expected_output,
         )
+        return await self._execute_plan(mission_id, view.prompt, plan)
+
+    async def _execute_plan(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        *,
+        done_task_ids: frozenset[str] = frozenset(),
+        restore_dirs: dict[str, Path] | None = None,
+        review_only_task_ids: frozenset[str] = frozenset(),
+    ) -> MissionState:
+        """One run of a mission's plan, with its paid-use ledger open.
+
+        The ledger starts from what the mission already paid in earlier runs
+        (cumulative cap); a manual approval of this run grants up to
+        ``PAID_MISSION_CAP_USD`` more. What this run paid is logged as
+        ``MissionPaidUsage`` when it ends.
+        """
+        ledger = MissionPaidLedger(await self._mission_paid_spent(mission_id))
+        if mission_id in self._paid_approval:
+            ledger.grant_manual()
+        self._ledgers[mission_id] = ledger
+        self._run_paid[mission_id] = {}
+        try:
+            return await self._execute_plan_steps(
+                mission_id,
+                prompt,
+                plan,
+                done_task_ids=done_task_ids,
+                restore_dirs=restore_dirs,
+                review_only_task_ids=review_only_task_ids,
+            )
+        finally:
+            await self._record_paid_usage(mission_id)
+            self._ledgers.pop(mission_id, None)
+            self._run_paid.pop(mission_id, None)
+            self._wait_family.pop(mission_id, None)
+
+    async def _execute_plan_steps(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        *,
+        done_task_ids: frozenset[str] = frozenset(),
+        restore_dirs: dict[str, Path] | None = None,
+        review_only_task_ids: frozenset[str] = frozenset(),
+    ) -> MissionState:
+        """Run the plan's open steps, then aggregate every step's outcome.
+
+        ``done_task_ids`` are steps a checkpoint records as approved: they are
+        not run again and count as approved. ``restore_dirs`` maps an open
+        step to the artifacts its earlier attempt archived, restored into the
+        fresh workspace before the worker starts (see ``resume_mission``).
+        """
+        restore_dirs = restore_dirs or {}
 
         # Mission directory for reflections + logs.
         # 2026-05-17 (BUG-LIVE-10): UUID7 IDs share the first 8 hex chars
@@ -1015,18 +1254,26 @@ class Kontrollierer:
 
         # Parallel task execution with semaphore limit
         sem = asyncio.Semaphore(min(plan.n_workers, self._max_workers))
-        task_outcomes: list[str] = []
+        step_outcomes: dict[str, str] = {
+            tid: TaskOutcome.APPROVED
+            for tid in done_task_ids
+            if any(step.task_id == tid for step in plan.steps)
+        }
+        task_outcomes: list[str] = list(step_outcomes.values())
 
         async def _run(step: Step) -> None:
             outcome = await self._run_task_with_critic_loop(
                 mission_id=mission_id,
-                mission_prompt=view.prompt,
+                mission_prompt=prompt,
                 step=step,
                 mission_dir=mission_dir,
                 reflections=reflections,
                 sem=sem,
+                restore_dir=restore_dirs.get(step.task_id),
+                review_only=step.task_id in review_only_task_ids,
             )
             task_outcomes.append(outcome)
+            step_outcomes[step.task_id] = outcome
 
         # Cross-mission concurrency cap: serialise the heavy claude
         # (worker + critic) phase so a burst of missions cannot overload the
@@ -1037,6 +1284,8 @@ class Kontrollierer:
                 async with asyncio.timeout(self._mission_deadline_s):
                     async with asyncio.TaskGroup() as tg:
                         for step in plan.steps:
+                            if step.task_id in step_outcomes:
+                                continue  # approved in an earlier run
                             tg.create_task(_run(step), name=f"task-{step.task_id[:13]}")
             except TimeoutError:
                 # The mission ran past its wall-clock deadline. TaskGroup
@@ -1065,7 +1314,7 @@ class Kontrollierer:
             await self._fail_mission(mission_id, "task_error")
             return MissionState.FAILED
         if all(o == TaskOutcome.APPROVED for o in task_outcomes):
-            await self._approve_mission(mission_id, plan, prompt=view.prompt)
+            await self._approve_mission(mission_id, plan, prompt=prompt)
             return MissionState.APPROVED
 
         # Which task failed determines the failure reason.
@@ -1074,6 +1323,21 @@ class Kontrollierer:
         # or critic-reject is more recoverable when the user can see the
         # work the worker actually produced.
         partial = self._collect_partial_artifacts(mission_id, plan)
+        # A task without worker capacity parks the whole mission with a
+        # checkpoint — the finished steps are kept, nothing is failed and no
+        # provider is switched (jarvis/missions/capacity.py). Only an exceeded
+        # budget outranks it: that is a hard stop, not a wait.
+        if (
+            TaskOutcome.WAITING_CAPACITY in task_outcomes
+            and TaskOutcome.BUDGET_EXCEEDED not in task_outcomes
+        ):
+            return await self._park_mission(
+                mission_id,
+                plan,
+                prompt=prompt,
+                step_outcomes=step_outcomes,
+                partial_artifacts=partial,
+            )
         # Execution/setup failures outrank review outcomes in a multi-task
         # mission. Otherwise one review time guard can mask a real worker crash
         # in another step and show the user the wrong terminal cause.
@@ -1149,8 +1413,15 @@ class Kontrollierer:
         mission_dir: Path,
         reflections: ReflectionMemory,
         sem: asyncio.Semaphore,
+        restore_dir: Path | None = None,
+        review_only: bool = False,
     ) -> str:
-        """Runs a step through the Worker+Critic loop (max MAX_CRITIC_LOOPS)."""
+        """Runs a step through the Worker+Critic loop (max MAX_CRITIC_LOOPS).
+
+        ``restore_dir`` is this step's archived artifacts from a run that was
+        parked for capacity; its work is put back into the fresh workspace so
+        the worker continues instead of starting over.
+        """
         async with sem:
             try:
                 # Pre-spawn budget check — do not start a worker if already over.
@@ -1167,7 +1438,14 @@ class Kontrollierer:
                 # the whole codebase first. The AGENTS.md contract is
                 # materialised into BOTH shapes identically (below), and
                 # `_capture_diff` works against both because each has a HEAD.
-                worktree = self._worktrees.create(
+                #
+                # Off the loop: a full worktree of this repo is several git
+                # subprocesses and thousands of file writes. Run inline it
+                # froze every route and WebSocket of the desktop app for 15 s+
+                # (loop-watchdog stack 2026-10-02: worktree.create ->
+                # _write_base_sha -> CreateProcess).
+                worktree = await asyncio.to_thread(
+                    self._create_worktree,
                     mission_slug=_short_slug(mission_prompt),
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
@@ -1207,6 +1485,33 @@ class Kontrollierer:
                     worktree, exc_info=True,
                 )
 
+            restored = False
+            if restore_dir is not None:
+                restored = await asyncio.to_thread(
+                    self._restore_task_workspace, worktree, restore_dir
+                )
+
+            if review_only and not restored:
+                # Only the review is owed and the delivered result could not
+                # be put back: re-running the worker would redo (and possibly
+                # re-bill) finished work. Park; after MAX_REVIEW_RETRIES such
+                # failures the step fails honestly as critic_unavailable.
+                logger.warning(
+                    "Task %s: the saved result for its pending review could not "
+                    "be restored — parking instead of re-running the worker",
+                    step.task_id,
+                )
+                try:
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        "the saved result could not be restored for review",
+                        counts_as_failure=True,
+                    )
+                finally:
+                    await asyncio.shield(
+                        asyncio.to_thread(self._remove_worktree_only, worktree)
+                    )
+
             try:
                 return await self._run_iterations(
                     mission_id=mission_id,
@@ -1215,32 +1520,62 @@ class Kontrollierer:
                     mission_dir=mission_dir,
                     worktree=worktree,
                     reflections=reflections,
+                    resumed=restored,
+                    review_only=review_only and restored,
                 )
             finally:
-                # Persist worker artifacts BEFORE the worktree teardown.
-                # Without this step the worktree (and everything the agent
-                # wrote into it) is gone the moment the task finishes,
-                # leaving the "outputs folder" the user expects in the
-                # sub-agents-outputs sidebar permanently empty even on a
-                # successful mission.
-                try:
-                    self._archive_task_artifacts(
+                # Archive + teardown run in a worker thread (git and file
+                # copies would otherwise stall the loop) and are shielded: a
+                # second cancellation interrupts only this wait, never the
+                # cleanup, which the thread always finishes.
+                await asyncio.shield(
+                    asyncio.to_thread(
+                        self._finish_task_workspace,
                         worktree=worktree,
                         mission_dir=mission_dir,
                         task_id=step.task_id,
                     )
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "artifact archive failed for %s", worktree, exc_info=True
-                    )
-                # Worktree cleanup MUST run for every return path so we don't
-                # leak per-task git worktrees on disk (Phase-6 hard rule #4).
-                try:
-                    self._worktrees.remove(worktree, force=True)
-                except Exception:  # noqa: BLE001
-                    logger.warning(
-                        "worktree cleanup failed for %s", worktree, exc_info=True
-                    )
+                )
+
+    def _create_worktree(self, **kwargs: Any) -> Path:
+        """``WorktreeManager.create``, one at a time. Worker thread only."""
+        with self._worktree_lock:
+            return self._worktrees.create(**kwargs)
+
+    def _remove_worktree_only(self, worktree: Path) -> None:
+        """Remove a workspace WITHOUT archiving it — its archive must keep the
+        earlier, delivered result. Worker thread only."""
+        try:
+            with self._worktree_lock:
+                self._worktrees.remove(worktree, force=True)
+        except Exception:  # noqa: BLE001
+            logger.warning("worktree cleanup failed for %s", worktree, exc_info=True)
+
+    def _finish_task_workspace(
+        self, *, worktree: Path, mission_dir: Path, task_id: str
+    ) -> None:
+        """Archive a task's artifacts, then remove its worktree. Worker thread only."""
+        # Persist worker artifacts BEFORE the worktree teardown.
+        # Without this step the worktree (and everything the agent
+        # wrote into it) is gone the moment the task finishes,
+        # leaving the "outputs folder" the user expects in the
+        # sub-agents-outputs sidebar permanently empty even on a
+        # successful mission.
+        try:
+            self._archive_task_artifacts(
+                worktree=worktree,
+                mission_dir=mission_dir,
+                task_id=task_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("artifact archive failed for %s", worktree, exc_info=True)
+        # Worktree cleanup MUST run for every return path so we don't
+        # leak per-task git worktrees on disk (Phase-6 hard rule #4).
+        try:
+            with self._worktree_lock:
+                self._worktrees.remove(worktree, force=True)
+        except Exception:  # noqa: BLE001
+            logger.warning("worktree cleanup failed for %s", worktree, exc_info=True)
 
     async def _run_iterations(
         self,
@@ -1251,9 +1586,12 @@ class Kontrollierer:
         mission_dir: Path,
         worktree: Path,
         reflections: ReflectionMemory,
+        resumed: bool = False,
+        review_only: bool = False,
     ) -> str:
         """Inner critic-loop body. Extracted so the worktree-finally in the
-        caller wraps every return path."""
+        caller wraps every return path. ``resumed`` means the workspace holds
+        restored partial work from a parked run (see ``resume_mission``)."""
         # Anchor for the per-task time budget (queue wait excluded — the
         # caller already holds the concurrency semaphore, mirroring
         # _MISSION_DEADLINE_S semantics).
@@ -1282,6 +1620,8 @@ class Kontrollierer:
         for iteration in range(MAX_CRITIC_LOOPS):
             # Per-iteration: render reflections, spawn worker, capture diff+log
             prior_block = reflections.render_for_worker_prompt(n=3)
+            if resumed and iteration == 0 and not review_only:
+                prior_block = "\n\n".join(b for b in (_RESUME_NOTE, prior_block) if b)
             # Lead every worker prompt with the artifact-language directive so
             # generated code defaults to English regardless of the request
             # language (the German-request -> German-code leak). This is the one
@@ -1335,40 +1675,99 @@ class Kontrollierer:
                 mission_id, MissionState.CRITIQUING, f"iter-{iteration}-start"
             )
 
-            # Worker spawn (real or fake depending on the factory)
-            worker = self._worker_factory(step)
             log_dir = mission_dir / "tasks" / step.task_id[:13] / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-
-            try:
-                # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
-                # across critic iterations. Live repro mission_019e2605
-                # showed that `openclaw` 2026.5.7 prefers the failover chain
-                # persisted in the session-state file over the explicit
-                # `--model` CLI flag on resume — so iter1 silently retried
-                # `openai/gpt-5.5` instead of `xai/grok-4.3` and died with
-                # `chain_exhausted`. The Critic's correction context is
-                # already injected into the worker prompt via
-                # `prior_block` (see line 250), so a fresh session loses
-                # nothing.
-                spawn_result = await self._spawn_worker_collect(
-                    worker=worker,
-                    worker_prompt=worker_prompt,
-                    worktree=worktree,
-                    mission_dir=mission_dir,
-                    log_dir=log_dir,
-                    mission_id=mission_id,
-                    step=step,
-                    iteration=iteration,
-                    resume_session_id=None,
+            if review_only and iteration == 0:
+                # The worker delivered before the mission parked on its
+                # critic: that result is restored in the workspace and its log
+                # is still archived. Only the review is missing — run it, never
+                # the worker again (and never on a paid approval).
+                worker = None
+                paid_gate: PaidCallGate | None = None
+                spawn_result = self._SpawnResult(
+                    worker_id=f"review-{step.task_id[:13]}",
+                    cost_usd=0.0,
+                    tokens_used=0,
+                    session_id=None,
                 )
-            except Exception:  # noqa: BLE001
-                logger.exception("Task %s iter %d: worker spawn failed", step.task_id, iteration)
-                if iteration == MAX_CRITIC_LOOPS - 1:
-                    return TaskOutcome.ERROR
-                continue
+            else:
+                # Worker spawn (real or fake depending on the factory). A factory
+                # that refuses to switch to a billing fallback parks the task.
+                try:
+                    worker, paid_gate = self._make_worker(mission_id, step)
+                except WorkerCapacityUnavailable as exc:
+                    logger.warning(
+                        "Task %s iter %d: no worker capacity (%s) — parking the "
+                        "mission instead of switching provider",
+                        step.task_id, iteration, exc,
+                    )
+                    self._capacity_wait[mission_id] = {
+                        "reason": exc.reason,
+                        "provider": exc.provider,
+                        "error_detail": exc.detail or None,
+                    }
+                    return TaskOutcome.WAITING_CAPACITY
+                try:
+                    # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
+                    # across critic iterations. Live repro mission_019e2605
+                    # showed that `openclaw` 2026.5.7 prefers the failover chain
+                    # persisted in the session-state file over the explicit
+                    # `--model` CLI flag on resume — so iter1 silently retried
+                    # `openai/gpt-5.5` instead of `xai/grok-4.3` and died with
+                    # `chain_exhausted`. The Critic's correction context is
+                    # already injected into the worker prompt via
+                    # `prior_block` (see line 250), so a fresh session loses
+                    # nothing.
+                    spawn_result = await self._spawn_worker_collect(
+                        worker=worker,
+                        worker_prompt=worker_prompt,
+                        worktree=worktree,
+                        mission_dir=mission_dir,
+                        log_dir=log_dir,
+                        mission_id=mission_id,
+                        step=step,
+                        iteration=iteration,
+                        resume_session_id=None,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception(
+                        "Task %s iter %d: worker spawn failed", step.task_id, iteration
+                    )
+                    if iteration == MAX_CRITIC_LOOPS - 1:
+                        return TaskOutcome.ERROR
+                    continue
 
-            diff_text = self._capture_diff(worktree)
+            if paid_gate is not None:
+                # Whatever the worker reported beyond its gated calls is
+                # charged too (fail closed), then: consent gone or a cap hit
+                # mid-run parks the mission; the work so far is archived
+                # with the checkpoint and restored on resume.
+                automatic = paid_gate.last_automatic
+                if automatic is None:  # the worker never went through the gate
+                    automatic = mission_id not in self._paid_approval
+                paid_gate.settle_reported(spawn_result.cost_usd, automatic=automatic)
+                refusal = paid_gate.refusal
+                if refusal is None and spawn_result.worker_error and self._paid_exhausted(
+                    mission_id
+                ):
+                    refusal = "paid_cap_reached"
+                if refusal is not None:
+                    logger.warning(
+                        "Task %s iter %d: paid run on %s stopped (%s) — parking "
+                        "the mission",
+                        step.task_id, iteration, paid_gate.provider, refusal,
+                    )
+                    self._capacity_wait[mission_id] = {
+                        "reason": refusal,
+                        "provider": paid_gate.provider,
+                        "error_detail": None,
+                    }
+                    # No iteration diff recorded: the task's final archive
+                    # falls back to a fresh diff of the worktree.
+                    return TaskOutcome.WAITING_CAPACITY
+
+            # git add/diff/ls-files over the whole worktree: off the loop.
+            diff_text = await asyncio.to_thread(self._capture_diff, worktree)
             log_text = self._read_stream_log(log_dir)
             # Out-of-worktree deliverables (live mission_019e7abd, 2026-05-30):
             # a task may legitimately target an absolute path outside the
@@ -1591,6 +1990,17 @@ class Kontrollierer:
                     # (auth/billing/non-timeout crash) stays ERROR.
                     if is_timeout:
                         return TaskOutcome.TIMED_OUT
+                    # A spent quota window is not a fault of the work: park
+                    # the mission with its checkpoint instead of failing it —
+                    # on a subscription install. A key-only install keeps its
+                    # fail-or-cross behaviour (AP-22); it never parks.
+                    if error_class == "provider_quota" and self._policy.pinned():
+                        self._capacity_wait[mission_id] = {
+                            "reason": "provider_quota",
+                            "provider": worker_family(worker),
+                            "error_detail": error_detail,
+                        }
+                        return TaskOutcome.WAITING_CAPACITY
                     return TaskOutcome.ERROR
 
             # WorkerDraftReady event — BudgetTracker.bind_to_event_bus
@@ -1674,6 +2084,13 @@ class Kontrollierer:
                     f"{spawn_result.supervisor_tool_refusals}\n"
                 )
             env = self._env_builder(mission_dir)
+            # A paid critic call is possible only on consent (setting or an
+            # approval of this run); the gate re-checks it per call. Off the
+            # loop: it reads the config and the key store.
+            critic_gate = await asyncio.to_thread(self._critic_gate, mission_id)
+            critic_kwargs: dict[str, Any] = (
+                {"paid_gate": critic_gate} if critic_gate is not None else {}
+            )
             try:
                 verdict = await self._runner.run(
                     mission_prompt=mission_prompt,
@@ -1684,6 +2101,21 @@ class Kontrollierer:
                     worktree=worktree,
                     env=env,
                     security_tag=_detect_security_tag(step.prompt),
+                    **critic_kwargs,
+                )
+            except CriticCapacityUnavailable as exc:
+                # No critic can grade: no subscription has capacity and no
+                # consented paid call was possible. The worker's result is kept
+                # (archived with the checkpoint) and only the review resumes
+                # later — no worker re-run.
+                logger.warning(
+                    "Task %s iter %d: critic has no capacity (%s) — parking the "
+                    "mission with the review pending",
+                    step.task_id, iteration, exc,
+                )
+                return self._park_for_review(
+                    mission_id, step, exc.reason, exc.provider, exc.detail,
+                    counts_as_failure=False,
                 )
             except CriticTimeout as exc:
                 # A critic timeout is TRANSIENT (the critic also shells out to
@@ -1696,6 +2128,13 @@ class Kontrollierer:
                     "Task %s iter %d: critic timed out (transient, likely OAuth "
                     "contention): %s", step.task_id, iteration, exc,
                 )
+                if not _real_diff_is_empty(diff_text):
+                    # Delivered work is never redone for a critic that did
+                    # not answer: park and review it later (bounded).
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        str(exc)[:200], counts_as_failure=True,
+                    )
                 if iteration == MAX_CRITIC_LOOPS - 1:
                     # No iterations left to retry the critic.
                     return (
@@ -1717,6 +2156,14 @@ class Kontrollierer:
                 continue
             except (CriticSchemaInvalid, CriticVerdictInconsistent) as exc:
                 logger.warning("Task %s iter %d: critic failed: %s", step.task_id, iteration, exc)
+                if not _real_diff_is_empty(diff_text):
+                    # The worker delivered; the critic could not judge it.
+                    # Keep the work, never re-run the worker, review it later
+                    # — and fail honestly once the critic stays broken.
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        str(exc)[:200], counts_as_failure=True,
+                    )
                 # Live forensic 2026-05-16 (mission_019e3288): a Critic
                 # subprocess crash on iter0 (EPERM symlink + Unknown
                 # agent id) currently degrades to `continue` and the
@@ -2755,17 +3202,17 @@ class Kontrollierer:
                 # exchange flags.
                 moved_previous = False
                 if files_root.exists():
-                    files_root.replace(previous_root)
+                    _rename_with_retry(files_root, previous_root)
                     moved_previous = True
                 try:
-                    staged_root.replace(files_root)
+                    _rename_with_retry(staged_root, files_root)
                 except OSError:
                     if (
                         moved_previous
                         and previous_root.exists()
                         and not files_root.exists()
                     ):
-                        previous_root.replace(files_root)
+                        _rename_with_retry(previous_root, files_root)
                     raise
                 if moved_previous:
                     shutil.rmtree(previous_root, ignore_errors=True)
@@ -2813,12 +3260,936 @@ class Kontrollierer:
                 )
                 return False
 
+    # --- Capacity resume ----------------------------------------------------
+
+    async def resume_waiting_missions(self) -> list[str]:
+        """One pass over parked missions: resume each whose provider has
+        capacity again.
+
+        Sequential on purpose — resumed missions must not compete for the one
+        subscription window that just came back. Returns the resumed ids.
+        """
+        resumed: list[str] = []
+        for mission_id, _prompt, state in await self._manager.store.list_non_terminal_missions():
+            if state != MissionState.WAITING_CAPACITY.value:
+                continue
+            if mission_id in self._running_missions:
+                continue
+            if not await self._capacity_is_back(mission_id):
+                continue
+            # Its own task, shielded: cancelling the timer loop on shutdown
+            # must not tear a resumed mission down half-way. The shutdown path
+            # (`cancel_all_running`) finalizes it like any in-flight mission.
+            task = asyncio.create_task(
+                self.resume_mission(mission_id), name=f"mission-resume-{mission_id[:13]}"
+            )
+            await asyncio.shield(task)
+            resumed.append(mission_id)
+        return resumed
+
+    async def _capacity_is_back(self, mission_id: str) -> bool:
+        """Whether a parked mission can make progress now, offline.
+
+        - Its backoff (repeat parks without progress) must have expired.
+        - A step that still needs its worker: the worker factory answers on a
+          subscription (any — moving between subscriptions is free) or on the
+          metered provider the mission was configured for.
+        - A step whose review is pending: a critic has capacity.
+        - Otherwise: consented automatic paid use (setting ON, caps left).
+
+        Never calls a provider: the factory and critic probes read login
+        files, quota/auth flags and key viability only.
+        """
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            return True  # resume_mission fails it honestly (checkpoint_missing)
+        next_ms = checkpoint.get("next_resume_ms")
+        if isinstance(next_ms, (int, float)) and not isinstance(next_ms, bool):
+            if now_ms() < next_ms:
+                return False
+        done = _done_task_ids(checkpoint)
+        open_steps = [step for step in plan.steps if step.task_id not in done]
+        if not open_steps:
+            return True
+        pending = {
+            str(entry.get("task_id"))
+            for entry in checkpoint.get("steps") or []
+            if isinstance(entry, dict) and entry.get("pending_review") is True
+        }
+        work_steps = [step for step in open_steps if step.task_id not in pending]
+        review_steps = [step for step in open_steps if step.task_id in pending]
+        pinned = checkpoint.get("provider")
+        pinned_family = pinned if isinstance(pinned, str) and pinned else None
+        if work_steps and await self._worker_capacity_back(
+            mission_id, work_steps[0], pinned_family
+        ):
+            return True
+        if review_steps and await asyncio.to_thread(self._critic_capacity_back):
+            return True
+        raw_reason = checkpoint.get("reason")
+        reason: CapacityWaitReason = (
+            raw_reason  # type: ignore[assignment]
+            if raw_reason in CAPACITY_WAIT_REASON_VALUES
+            else "provider_quota"
+        )
+        spent = await self._mission_paid_spent(mission_id)
+        decision = await asyncio.to_thread(
+            self._automatic_paid_decision, reason, pinned_family, spent
+        )
+        return decision.route == "paid"
+
+    async def _worker_capacity_back(
+        self, mission_id: str, step: Step, pinned_family: str | None
+    ) -> bool:
+        try:
+            worker = await asyncio.to_thread(self._worker_factory, step)
+        except WorkerCapacityUnavailable:  # still no capacity: stay parked, ask again next tick
+            return False
+        except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
+            logger.warning(
+                "Mission %s: capacity probe failed — staying parked", mission_id,
+                exc_info=True,
+            )
+            return False
+        family = worker_family(worker)
+        if is_subscription_family(family) or family == pinned_family:
+            return True
+        if not await asyncio.to_thread(self._policy.pinned):
+            return True  # a key-only install's keys are its primary (AP-22)
+        logger.info(
+            "Mission %s stays parked: the configured worker is now the metered "
+            "%s, which needs the user's consent", mission_id, family,
+        )
+        return False
+
+    def _critic_capacity_back(self) -> bool:
+        probe = getattr(self._runner, "capacity_available", None)
+        if not callable(probe):
+            return True
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
+            logger.warning("critic capacity probe failed — staying parked", exc_info=True)
+            return False
+
+    def _automatic_paid_decision(
+        self, reason: CapacityWaitReason, pinned_family: str | None, spent_usd: float
+    ) -> RouteDecision:
+        """Would the paid-fallback SETTING let a parked mission go on now?
+        (A manual approval resumes through ``decide_capacity`` instead.)"""
+        enabled = self._policy.paid_fallback_enabled()
+        offer = None
+        if enabled and self._paid_option is not None and self._policy.pinned():
+            offer = self._paid_option.offer(
+                pinned_family=pinned_family, open_steps=1, reason=reason
+            )
+        return decide_route(
+            subscription_ok=False,
+            unavailable_reason=reason,
+            manual_approval=False,
+            paid_fallback_enabled=enabled,
+            paid_option_available=offer is not None,
+            mission_remaining_usd=max(PAID_MISSION_CAP_USD - spent_usd, 0.0),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
+        )
+
+    async def resume_mission(self, mission_id: str) -> MissionState:
+        """Continue a WAITING_CAPACITY mission exactly from its checkpoint.
+
+        Steps the checkpoint records as approved are not run again; open
+        steps get their archived partial work restored into a fresh workspace,
+        and the critic's earlier reflections still lead their prompts. Tracked
+        in ``_running_missions`` like ``run_mission`` so cancel and shutdown
+        reach it.
+        """
+        claim = await self._claim_resume(mission_id)
+        if isinstance(claim, MissionState):
+            return claim
+        return await self._run_claimed_resume(mission_id, claim, paid=None)
+
+    async def _claim_resume(self, mission_id: str) -> _ResumeClaim | MissionState:
+        """Take a parked mission out of WAITING_CAPACITY for exactly one run.
+
+        Returns the claim, or the mission's current state when it is not
+        resumable by this caller (not parked, already running here, or its
+        checkpoint is unusable — then it is failed honestly).
+        """
+        if mission_id in self._running_missions:
+            # Already running here — that caller owns the mission and its
+            # tracking; a second resume must not touch either.
+            view = await self._manager.mission(mission_id)
+            return view.state if view is not None else MissionState.FAILED
+        view = await self._manager.mission(mission_id)
+        if view is None:
+            raise KeyError(f"Mission not found: {mission_id}")
+        if view.state != MissionState.WAITING_CAPACITY:
+            logger.info(
+                "resume_mission: %s is %s, not parked — nothing to resume",
+                mission_id, view.state.value,
+            )
+            return view.state
+
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            logger.error(
+                "resume_mission: %s has no usable checkpoint in %s — cannot "
+                "continue exactly where it stopped",
+                mission_id, mission_dir,
+            )
+            await self._fail_mission(mission_id, "checkpoint_missing")
+            return MissionState.FAILED
+
+        plan_ids = {step.task_id for step in plan.steps}
+        done = _done_task_ids(checkpoint) & plan_ids
+        restore_dirs: dict[str, Path] = {}
+        for step in plan.steps:
+            artifacts = mission_dir / "tasks" / step.task_id[:13] / "artifacts"
+            if step.task_id not in done and artifacts.is_dir():
+                restore_dirs[step.task_id] = artifacts
+
+        # The claim: only the caller that moves the mission out of
+        # WAITING_CAPACITY runs it, so a mission is never resumed twice.
+        if not await self._safe_transition(
+            mission_id, MissionState.RUNNING, "capacity_resumed"
+        ):
+            current = await self._manager.mission(mission_id)
+            return current.state if current is not None else MissionState.FAILED
+        try:
+            return await self._finish_claim(
+                mission_id, view.prompt, plan, done, restore_dirs, checkpoint
+            )
+        except BaseException:
+            # The claim moved the mission to RUNNING; nobody will run it now.
+            # Put it back so the next tick (or the user) can resume it.
+            logger.exception("resume_mission: %s claim failed — parking it again", mission_id)
+            await self._safe_transition(
+                mission_id, MissionState.WAITING_CAPACITY, "capacity:resume_claim_failed"
+            )
+            raise
+
+    async def _finish_claim(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        done: set[str],
+        restore_dirs: dict[str, Path],
+        checkpoint: dict[str, Any],
+    ) -> _ResumeClaim:
+        """The part of a claim that runs after the RUNNING transition."""
+        plan_ids = {step.task_id for step in plan.steps}
+        try:
+            await self._manager.store.touch_heartbeat(mission_id, now_ms())
+        except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory
+            logger.debug("Resume heartbeat failed (non-fatal): %s", hb_exc)
+        review_only: set[str] = set()
+        review_failures: dict[str, int] = {}
+        for entry in checkpoint.get("steps") or []:
+            if not isinstance(entry, dict) or entry.get("task_id") not in plan_ids:
+                continue
+            task_id = str(entry["task_id"])
+            if entry.get("pending_review") is True and task_id not in done:
+                review_only.add(task_id)
+            failures = entry.get("review_failures")
+            if isinstance(failures, int) and failures > 0:
+                review_failures[task_id] = failures
+        return _ResumeClaim(
+            prompt=prompt,
+            plan=plan,
+            done=frozenset(done),
+            restore_dirs=restore_dirs,
+            checkpoint=checkpoint,
+            review_only=frozenset(review_only),
+            review_failures=review_failures,
+        )
+
+    async def _run_claimed_resume(
+        self, mission_id: str, claim: _ResumeClaim, *, paid: PaidOffer | None
+    ) -> MissionState:
+        """Run a claimed mission's open steps. ``paid`` is the offer the user
+        approved for this one run; it exists only inside this call."""
+        task = asyncio.current_task()
+        if task is not None:
+            self._running_missions[mission_id] = task
+        try:
+            checkpoint = claim.checkpoint
+            pinned = checkpoint.get("provider")
+            if isinstance(pinned, str) and pinned:
+                self._resume_family[mission_id] = pinned
+            attempts = checkpoint.get("resume_attempts")
+            self._resume_attempt[mission_id] = (
+                attempts if isinstance(attempts, int) else 0
+            ) + 1
+            self._resume_done_before[mission_id] = len(claim.done)
+            self._resume_pending_before[mission_id] = len(claim.review_only)
+            idle = checkpoint.get("idle_parks")
+            self._resume_idle_parks[mission_id] = (
+                idle if isinstance(idle, int) and not isinstance(idle, bool) else 0
+            )
+            answers = checkpoint.get("task_answers")
+            if isinstance(answers, list) and answers:
+                self._task_answers[mission_id] = [str(a) for a in answers]
+            if paid is not None:
+                self._paid_approval[mission_id] = paid
+            if claim.review_failures:
+                self._review_failures[mission_id] = dict(claim.review_failures)
+
+            logger.info(
+                "resume_mission: %s resumes on %s — %d/%d step(s) already done, "
+                "%d with partial work to restore (attempt %d)",
+                mission_id,
+                f"{paid.provider}/{paid.model} (approved paid run)" if paid else pinned,
+                len(claim.done), len(claim.plan.steps), len(claim.restore_dirs),
+                self._resume_attempt[mission_id],
+            )
+            return await self._execute_plan(
+                mission_id,
+                claim.prompt,
+                claim.plan,
+                done_task_ids=claim.done,
+                restore_dirs=claim.restore_dirs,
+                review_only_task_ids=claim.review_only,
+            )
+        finally:
+            if self._running_missions.get(mission_id) is task:
+                self._running_missions.pop(mission_id, None)
+            self._resume_family.pop(mission_id, None)
+            self._resume_attempt.pop(mission_id, None)
+            self._resume_done_before.pop(mission_id, None)
+            self._resume_pending_before.pop(mission_id, None)
+            self._resume_idle_parks.pop(mission_id, None)
+            self._paid_approval.pop(mission_id, None)
+            self._pending_review.pop(mission_id, None)
+            self._review_failures.pop(mission_id, None)
+
+    # --- Paid-API approval ---------------------------------------------------
+
+    async def paid_offer(self, mission_id: str) -> PaidOffer | None:
+        """The paid alternative for a parked mission, or None.
+
+        Computed fresh on every call and never stored: an offer is only what
+        the user is looking at right now. No provider is called.
+        """
+        if self._paid_option is None:
+            return None
+        view = await self._manager.mission(mission_id)
+        if view is None or view.state != MissionState.WAITING_CAPACITY:
+            return None
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        plan = _plan_from_checkpoint(checkpoint)
+        if checkpoint is None or plan is None:
+            return None
+        open_steps = len(plan.steps) - len(_done_task_ids(checkpoint))
+        pinned = checkpoint.get("provider")
+        reason = checkpoint.get("reason")
+        return await asyncio.to_thread(
+            self._paid_option.offer,
+            pinned_family=pinned if isinstance(pinned, str) else None,
+            open_steps=max(open_steps, 1),
+            reason=reason if isinstance(reason, str) else "provider_quota",
+        )
+
+    @property
+    def capacity_policy(self) -> CapacityPolicy:
+        """The live capacity answers this runner decides with (read-only)."""
+        return self._policy
+
+    @property
+    def paid_option(self) -> PaidOption | None:
+        """The paid alternative this runner offers, if any (read-only)."""
+        return self._paid_option
+
+    async def paid_spent_usd(self, mission_id: str) -> float:
+        """What this mission has paid for API use so far, across all runs."""
+        ledger = self._ledgers.get(mission_id)
+        if ledger is not None:
+            return round(ledger.spent_usd, 6)
+        return round(await self._mission_paid_spent(mission_id), 6)
+
+    async def _mission_paid_spent(self, mission_id: str) -> float:
+        """Sum of the mission's recorded ``MissionPaidUsage`` events. Fails
+        closed: an unreadable history counts as a spent automatic cap."""
+        try:
+            events = await self._manager.store.events_for_mission(mission_id)
+        except Exception:  # noqa: BLE001 - logged; the cap must not open on a read error
+            logger.warning(
+                "Mission %s: paid-usage history unreadable — treating the "
+                "automatic cap as spent", mission_id, exc_info=True,
+            )
+            return PAID_MISSION_CAP_USD
+        return sum(
+            float(e.payload.cost_usd)
+            for e in events
+            if isinstance(e.payload, MissionPaidUsage)
+        )
+
+    async def decide_capacity(
+        self,
+        mission_id: str,
+        decision: CapacityDecision,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> MissionState:
+        """Apply the user's answer to a parked mission's paid-API offer.
+
+        - ``wait``: logged; the mission stays parked and keeps waiting for its
+          own subscription.
+        - ``cancel``: logged; the mission is cancelled, its work stays saved.
+        - ``approve_paid``: only for the offer the user saw — ``provider`` and
+          ``model`` must match the current offer, or nothing happens. The
+          approval covers this one run of this one mission; it is never
+          stored, and reaching the cost cap parks the mission again.
+
+        Raises :class:`CapacityDecisionRejected` when the decision cannot apply.
+        """
+        view = await self._manager.mission(mission_id)
+        if view is None:
+            raise KeyError(f"Mission not found: {mission_id}")
+        if view.state != MissionState.WAITING_CAPACITY:
+            raise CapacityDecisionRejected(
+                f"mission is {view.state.value}, not waiting for capacity"
+            )
+        offer = await self.paid_offer(mission_id)
+        if decision == "approve_paid":
+            if offer is None:
+                raise CapacityDecisionRejected("no paid option is available for this mission")
+            if (provider, model) != (offer.provider, offer.model):
+                raise CapacityDecisionRejected(
+                    "the paid option changed since it was shown; review it again"
+                )
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir) or {}
+        reason = checkpoint.get("reason")
+        await self._manager.store.append_and_publish(
+            EventEnvelope(
+                mission_id=mission_id,
+                source_actor="ui",
+                ts_ms=now_ms(),
+                payload=MissionCapacityDecision(
+                    decision=decision,
+                    provider=offer.provider if offer else None,
+                    model=offer.model if offer else None,
+                    estimated_cost_usd=offer.estimated_cost_usd if offer else None,
+                    cost_cap_usd=offer.cost_cap_usd if offer else None,
+                    reason=reason if isinstance(reason, str) else "",
+                ),
+            )
+        )
+        logger.info(
+            "Mission %s capacity decision: %s (offer=%s)", mission_id, decision,
+            f"{offer.provider}/{offer.model} est=${offer.estimated_cost_usd:.2f} "
+            f"cap=${offer.cost_cap_usd:.2f}" if offer else "none",
+        )
+        if decision == "wait":
+            return MissionState.WAITING_CAPACITY
+        if decision == "cancel":
+            if not await self._safe_transition(
+                mission_id, MissionState.CANCELLED, "ui_cancel"
+            ):
+                current = await self._manager.mission(mission_id)
+                return current.state if current is not None else MissionState.FAILED
+            await self._manager.store.append_and_publish(
+                EventEnvelope(
+                    mission_id=mission_id,
+                    source_actor="ui",
+                    ts_ms=now_ms(),
+                    payload=MissionCancelled(cascade=False, reason="ui_cancel"),
+                )
+            )
+            self._drop_checkpoint(mission_id)
+            return MissionState.CANCELLED
+
+        assert offer is not None  # approve_paid was validated above
+        claim = await self._claim_resume(mission_id)
+        if isinstance(claim, MissionState):
+            return claim
+        run = asyncio.create_task(
+            self._run_claimed_resume(mission_id, claim, paid=offer),
+            name=f"mission-paid-resume-{mission_id[:13]}",
+        )
+        self._background_runs.add(run)
+        run.add_done_callback(self._background_runs.discard)
+        return MissionState.RUNNING
+
+    def _make_worker(self, mission_id: str, step: Step) -> tuple[Any, PaidCallGate | None]:
+        """The worker for one iteration, and its paid-call gate if it bills.
+
+        Subscriptions first — the factory moves between connected
+        subscriptions itself. Only when none can run does the capacity rule
+        (:func:`decide_route`) allow a paid worker: on an active approval of
+        this run, or on the paid-fallback setting within the caps. Anything
+        else raises :class:`WorkerCapacityUnavailable` and the mission parks.
+        """
+        try:
+            worker = self._worker_factory(step)
+            self._check_resume_billing(mission_id, worker)
+            return worker, None
+        except WorkerCapacityUnavailable as exc:  # decided below: paid by consent, or re-raised
+            unavailable = exc
+        self._wait_family.setdefault(mission_id, unavailable.provider)
+        pinned_family = self._resume_family.get(mission_id) or unavailable.provider
+        decision, offer = self._paid_route(
+            mission_id, reason=unavailable.reason, pinned_family=pinned_family
+        )
+        if decision.route != "paid" or offer is None or self._paid_option is None:
+            reason = decision.reason or unavailable.reason
+            if reason == unavailable.reason:
+                raise unavailable
+            raise WorkerCapacityUnavailable(
+                reason, offer.provider if offer is not None else unavailable.provider
+            )
+        logger.warning(
+            "Mission %s: no subscription has capacity (%s) — continuing on %s/%s "
+            "(%s paid use, capped)",
+            mission_id, unavailable.reason, offer.provider, offer.model,
+            "automatic" if decision.automatic else "approved",
+        )
+        gate = self._make_gate(mission_id, offer)
+        return self._paid_option.worker(offer, gate=gate, task_text=step.prompt), gate
+
+    def _ledger(self, mission_id: str) -> MissionPaidLedger:
+        ledger = self._ledgers.get(mission_id)
+        if ledger is None:
+            # Outside a run (never on the normal path): start empty but
+            # remember it, so parallel callers still share one ledger.
+            ledger = self._ledgers.setdefault(mission_id, MissionPaidLedger())
+        return ledger
+
+    def _authorize_paid(self, mission_id: str) -> RouteDecision:
+        """The consent check in front of every paid call (fresh each time)."""
+        approval = self._paid_approval.get(mission_id)
+        ledger = self._ledger(mission_id)
+        enabled = approval is None and self._policy.paid_fallback_enabled()
+        return decide_route(
+            subscription_ok=False,
+            unavailable_reason="paid_consent_revoked",
+            manual_approval=approval is not None,
+            paid_fallback_enabled=enabled,
+            paid_option_available=True,
+            mission_remaining_usd=ledger.remaining(automatic=approval is None),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
+        )
+
+    def _paid_route(
+        self, mission_id: str, *, reason: CapacityWaitReason, pinned_family: str | None
+    ) -> tuple[RouteDecision, PaidOffer | None]:
+        """Decide paid-vs-park for a mission no subscription can serve."""
+        approval = self._paid_approval.get(mission_id)
+        offer: PaidOffer | None = approval
+        enabled = False
+        if approval is None:
+            enabled = self._policy.paid_fallback_enabled()
+            if enabled and self._paid_option is not None and self._policy.pinned():
+                offer = self._paid_option.offer(
+                    pinned_family=pinned_family, open_steps=1, reason=reason
+                )
+        ledger = self._ledger(mission_id)
+        decision = decide_route(
+            subscription_ok=False,
+            unavailable_reason=reason,
+            manual_approval=approval is not None,
+            paid_fallback_enabled=enabled,
+            paid_option_available=offer is not None,
+            mission_remaining_usd=ledger.remaining(automatic=approval is None),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
+        )
+        return decision, offer
+
+    def _make_gate(self, mission_id: str, offer: PaidOffer) -> PaidCallGate:
+        return PaidCallGate(
+            mission_id=mission_id,
+            offer=offer,
+            ledger=self._ledger(mission_id),
+            daily=self._policy.daily,
+            authorize=lambda: self._authorize_paid(mission_id),
+            on_charge=lambda o, automatic, cost: self._note_paid_charge(
+                mission_id, o, automatic, cost
+            ),
+        )
+
+    def _critic_gate(self, mission_id: str) -> PaidCallGate | None:
+        """A paid-critic gate when consent exists right now (an approval of
+        this run, or the setting on a subscription install), else None."""
+        approval = self._paid_approval.get(mission_id)
+        if approval is not None:
+            return self._make_gate(mission_id, approval)
+        if self._paid_option is None or not self._policy.paid_fallback_enabled():
+            return None
+        if not self._policy.pinned():
+            return None
+        offer = self._paid_option.offer(
+            pinned_family=self._critic_family(), open_steps=1, reason="provider_quota"
+        )
+        return self._make_gate(mission_id, offer) if offer is not None else None
+
+    def _paid_exhausted(self, mission_id: str) -> bool:
+        """True when this mission cannot spend another cent on its consent."""
+        approval = self._paid_approval.get(mission_id)
+        return self._ledger(mission_id).remaining(automatic=approval is None) <= 0
+
+    def _note_paid_charge(
+        self, mission_id: str, offer: PaidOffer, automatic: bool, cost: float
+    ) -> None:
+        run = self._run_paid.setdefault(mission_id, {})
+        entry = run.setdefault(
+            (offer.provider, offer.model, automatic),
+            {"cost": 0.0, "estimate": float(offer.estimated_cost_usd)},
+        )
+        entry["cost"] += cost
+
+    async def _record_paid_usage(self, mission_id: str) -> None:
+        """Log what this run paid (event + log line), one event per provider,
+        model and consent kind. An approved run is always logged, even when
+        its approval ended up unused."""
+        run = dict(self._run_paid.get(mission_id) or {})
+        approval = self._paid_approval.get(mission_id)
+        if approval is not None:
+            run.setdefault(
+                (approval.provider, approval.model, False),
+                {"cost": 0.0, "estimate": float(approval.estimated_cost_usd)},
+            )
+        for (provider, model, automatic), entry in run.items():
+            spent = round(entry["cost"], 6)
+            logger.info(
+                "Mission %s paid %s use on %s/%s cost $%.4f (cap $%.2f)",
+                mission_id, "automatic" if automatic else "approved",
+                provider, model, spent, PAID_MISSION_CAP_USD,
+            )
+            try:
+                await self._manager.store.append_and_publish(
+                    EventEnvelope(
+                        mission_id=mission_id,
+                        source_actor="kontrollierer",
+                        ts_ms=now_ms(),
+                        payload=MissionPaidUsage(
+                            provider=provider,
+                            model=model,
+                            cost_usd=spent,
+                            cost_cap_usd=PAID_MISSION_CAP_USD,
+                            estimated_cost_usd=round(entry["estimate"], 6),
+                            automatic=automatic,
+                        ),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the log line above still records it
+                logger.exception("Mission %s: paid-usage event could not be stored", mission_id)
+
+    def _drop_checkpoint(self, mission_id: str) -> None:
+        """Delete a terminal mission's checkpoint. ``getattr``: bare test
+        fixtures build the class without __init__."""
+        root = getattr(self, "_isolation_root", None)
+        if root is None:
+            return
+        delete_checkpoint(root / f"mission_{mission_id[:13]}")
+
+    async def _repark_on_shutdown(self, mission_id: str, reason: str) -> bool:
+        """Shutdown path for a running mission that HAS a capacity checkpoint:
+        park it again (its checkpoint resumes it after the restart) instead of
+        cancelling it. False when it has none or cannot be parked."""
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        if checkpoint is None:
+            return False
+        if not await self._safe_transition(
+            mission_id, MissionState.WAITING_CAPACITY, f"capacity:{reason}"
+        ):
+            return False
+        raw_reason = checkpoint.get("reason")
+        wait_reason = (
+            raw_reason if raw_reason in CAPACITY_WAIT_REASON_VALUES else "provider_unavailable"
+        )
+        steps = [e for e in checkpoint.get("steps") or [] if isinstance(e, dict)]
+        provider = checkpoint.get("provider")
+        try:
+            await self._manager.store.append_and_publish(
+                EventEnvelope(
+                    mission_id=mission_id,
+                    source_actor="kontrollierer",
+                    ts_ms=now_ms(),
+                    payload=MissionWaitingCapacity(
+                        reason=wait_reason,  # type: ignore[arg-type]
+                        provider=provider if isinstance(provider, str) else None,
+                        steps_done=sum(1 for e in steps if e.get("done") is True),
+                        steps_total=len(steps),
+                        checkpoint_path=str(mission_dir / "checkpoint.json"),
+                        resume_attempt=int(checkpoint.get("resume_attempts") or 0),
+                        # Nothing new for the voice layer: the app is stopping.
+                        repeat=True,
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 - the state flip already parked it
+            logger.exception("Mission %s: re-park event could not be stored", mission_id)
+        logger.info("Mission %s parked again on %s (checkpoint kept)", mission_id, reason)
+        return True
+
+    def _drop_review_state(self, mission_id: str) -> None:
+        """Forget a mission's pending-review bookkeeping (terminal paths).
+        ``getattr``: bare test fixtures build the class without __init__."""
+        for attr in ("_pending_review", "_review_failures"):
+            getattr(self, attr, {}).pop(mission_id, None)
+
+    def _critic_family(self) -> str:
+        """The family that grades missions (for the capacity readback)."""
+        family_fn = getattr(self._runner, "critic_family", None)
+        if callable(family_fn):
+            try:
+                return str(family_fn())
+            except Exception:  # noqa: BLE001 - a label only; logged
+                logger.warning("critic family unreadable", exc_info=True)
+        return "claude"
+
+    def _park_for_review(
+        self,
+        mission_id: str,
+        step: Step,
+        reason: str,
+        provider: str,
+        detail: str,
+        *,
+        counts_as_failure: bool,
+    ) -> str:
+        """Park a step whose worker delivered but whose critic could not run.
+
+        The step is marked ``pending_review`` in the checkpoint so a resume
+        runs only the critic on the archived result. Capacity waits are
+        unbounded (the window comes back); other critic failures count, and
+        after ``MAX_REVIEW_RETRIES`` the task fails as critic_unavailable.
+        """
+        failures = self._review_failures.setdefault(mission_id, {})
+        if counts_as_failure:
+            failures[step.task_id] = failures.get(step.task_id, 0) + 1
+            if failures[step.task_id] >= MAX_REVIEW_RETRIES:
+                logger.error(
+                    "Task %s: critic failed %d times on delivered work — "
+                    "surfacing critic_unavailable",
+                    step.task_id, failures[step.task_id],
+                )
+                return TaskOutcome.CRITIC_UNAVAILABLE
+        self._pending_review.setdefault(mission_id, set()).add(step.task_id)
+        self._capacity_wait[mission_id] = {
+            "reason": reason,
+            "provider": provider,
+            "error_detail": detail or None,
+        }
+        return TaskOutcome.WAITING_CAPACITY
+
+    def _check_resume_billing(self, mission_id: str, worker: Any) -> None:
+        """A resumed mission may move to ANY subscription (free) or run on the
+        metered provider it was configured for; a different metered family is
+        a billing switch and goes through the capacity rule instead."""
+        pinned = self._resume_family.get(mission_id)
+        if pinned is None:
+            return
+        family = worker_family(worker)
+        if is_subscription_family(family) or family == pinned:
+            return
+        raise WorkerCapacityUnavailable(
+            "provider_unavailable",
+            pinned,
+            f"the configured worker is now the metered {family}; that needs consent",
+        )
+
+    def _restore_task_workspace(self, worktree: Path, artifacts: Path) -> bool:
+        """Put a parked step's archived work back into its fresh workspace.
+
+        ``diff.patch`` first (it carries edits to existing files and the full
+        content of new ones); when it does not apply — the repository moved
+        on since — the ``files/`` deliverable snapshot is copied instead.
+        Worker thread only. Returns True when anything was restored.
+        """
+        try:
+            patch = artifacts / "diff.patch"
+            if patch.is_file() and patch.stat().st_size > 0:
+                result = subprocess.run(  # noqa: S603
+                    ["git", "apply", "--whitespace=nowarn", str(patch)],
+                    cwd=str(worktree),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=30.0,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+                if result.returncode == 0:
+                    logger.info("Restored partial work into %s from %s", worktree, patch)
+                    return True
+                logger.warning(
+                    "Partial-work patch %s does not apply (%s) — restoring the "
+                    "file snapshot instead",
+                    patch, (result.stderr or "").strip()[:200],
+                )
+            files_root = artifacts / "files"
+            copied = 0
+            if files_root.is_dir():
+                for src in files_root.rglob("*"):
+                    if not src.is_file():
+                        continue
+                    dst = worktree / src.relative_to(files_root)
+                    if not _path_is_within(dst, worktree):
+                        continue
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst)
+                    copied += 1
+            if copied:
+                logger.info("Restored %d saved file(s) into %s", copied, worktree)
+            return copied > 0
+        except (OSError, subprocess.SubprocessError):
+            # The worker then starts from a clean workspace; the archived work
+            # stays on disk untouched.
+            logger.warning("Restoring partial work into %s failed", worktree, exc_info=True)
+            return False
+
+    async def _park_mission(
+        self,
+        mission_id: str,
+        plan: MissionPlan,
+        *,
+        prompt: str,
+        step_outcomes: dict[str, str],
+        partial_artifacts: list[str],
+    ) -> MissionState:
+        """Checkpoint the mission and park it in WAITING_CAPACITY.
+
+        The checkpoint records every step with its outcome and where its
+        archived artifacts live (the per-task archive already ran in each
+        task's ``finally``). The ``MissionWaitingCapacity`` event carries only
+        counts and paths, so the voice layer renders it as a static phrase.
+        """
+        # Answers of approved read-only steps feed the final summary; they go
+        # into the checkpoint so a resumed run can still report them.
+        task_answers = self._task_answers.pop(mission_id, [])
+        pending_review = self._pending_review.pop(mission_id, set())
+        review_failures = self._review_failures.pop(mission_id, {})
+        self._mission_failure_context.pop(mission_id, None)
+        attempt = self._resume_attempt.get(mission_id, 0)
+        done_before = self._resume_done_before.get(mission_id, 0)
+        pending_before = self._resume_pending_before.get(mission_id, 0)
+        idle_before = self._resume_idle_parks.get(mission_id, 0)
+        wait = self._capacity_wait.pop(mission_id, {})
+        reason = wait.get("reason") or "provider_quota"
+        provider = wait.get("provider")
+        error_detail = wait.get("error_detail")
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+
+        steps: list[dict[str, Any]] = []
+        files_saved = 0
+        for step in plan.steps:
+            outcome = step_outcomes.get(step.task_id, "not_started")
+            files_dir = mission_dir / "tasks" / step.task_id[:13] / "artifacts" / "files"
+            try:
+                n_files = sum(1 for p in files_dir.rglob("*") if p.is_file())
+            except OSError:
+                # Missing or unreadable: nothing countable was saved for it.
+                n_files = 0
+            files_saved += n_files
+            steps.append({
+                "task_id": step.task_id,
+                "slug": step.slug,
+                "prompt": step.prompt,
+                "outcome": outcome,
+                "done": outcome == TaskOutcome.APPROVED,
+                # Worker delivered, critic still owed: a resume only reviews.
+                "pending_review": step.task_id in pending_review,
+                "review_failures": review_failures.get(step.task_id, 0),
+                "files_saved": n_files,
+                "artifacts_dir": str(files_dir.parent),
+            })
+        steps_done = sum(1 for st in steps if st["done"])
+        # Backoff: a resume that parked again without finishing a step or
+        # delivering a new result for review waits longer before the next try
+        # (5 min doubling to 60 min, jittered) instead of churning.
+        # A paid run that hit its consent or cap limit is a new condition,
+        # not churn: it never adds backoff.
+        progressed = (
+            steps_done > done_before
+            or len(pending_review) > pending_before
+            or str(reason).startswith("paid_")
+        )
+        idle_parks = idle_before + 1 if attempt > 0 and not progressed else 0
+        backoff_s = resume_backoff_s(idle_parks)
+        ledger = self._ledgers.get(mission_id)
+
+        checkpoint_path = ""
+        try:
+            checkpoint_path = str(await asyncio.to_thread(
+                write_checkpoint,
+                mission_dir,
+                {
+                    "mission_id": mission_id,
+                    "prompt": prompt,
+                    "reason": reason,
+                    # The family the mission waits for. A paid run that parks
+                    # again keeps waiting for its original subscription — never
+                    # for the paid key, which needs a fresh approval.
+                    "provider": (
+                        self._resume_family.get(mission_id)
+                        or self._wait_family.get(mission_id)
+                        or provider
+                    ),
+                    "error_detail": error_detail,
+                    "created_ms": now_ms(),
+                    "resume_attempts": attempt,
+                    "idle_parks": idle_parks,
+                    "next_resume_ms": now_ms() + int(backoff_s * 1000) if backoff_s else 0,
+                    "paid_spent_usd": round(ledger.spent_usd, 6) if ledger else None,
+                    "plan": plan.model_dump(mode="json"),
+                    "steps": steps,
+                    "task_answers": task_answers,
+                    "partial_artifacts": partial_artifacts,
+                },
+            ))
+        except OSError:
+            # The per-task archives still hold the work; only the index is
+            # missing, and the event says so (empty checkpoint_path).
+            logger.exception("Mission %s: checkpoint write failed", mission_id)
+
+        if not await self._safe_transition(
+            mission_id, MissionState.WAITING_CAPACITY, f"capacity:{reason}"
+        ):
+            # Cancelled (or otherwise finished) while the tasks wound down.
+            current = await self._manager.mission(mission_id)
+            return current.state if current is not None else MissionState.FAILED
+        await self._manager.store.append_and_publish(
+            EventEnvelope(
+                mission_id=mission_id,
+                source_actor="kontrollierer",
+                ts_ms=now_ms(),
+                payload=MissionWaitingCapacity(
+                    reason=reason,  # type: ignore[arg-type]
+                    provider=provider,
+                    steps_done=steps_done,
+                    steps_total=len(plan.steps),
+                    files_saved=files_saved,
+                    checkpoint_path=checkpoint_path,
+                    error_detail=error_detail,
+                    resume_attempt=attempt,
+                    repeat=attempt > 0 and steps_done <= done_before,
+                ),
+            )
+        )
+        logger.warning(
+            "Mission %s parked in WAITING_CAPACITY (%s, provider=%s): %d/%d "
+            "steps done, %d file(s) saved, checkpoint=%s",
+            mission_id, reason, provider, steps_done, len(plan.steps),
+            files_saved, checkpoint_path or "<none>",
+        )
+        return MissionState.WAITING_CAPACITY
+
     async def _approve_mission(
         self, mission_id: str, plan: MissionPlan, *, prompt: str = ""
     ) -> None:
         # Hygiene: a retried-then-approved mission must not leak a stale
         # worker-failure context into a later run (mirror of _fail_mission).
         self._mission_failure_context.pop(mission_id, None)
+        self._drop_review_state(mission_id)
         transitioned = await self._safe_transition(
             mission_id,
             MissionState.APPROVED,
@@ -2826,6 +4197,7 @@ class Kontrollierer:
         )
         if not transitioned:
             return
+        self._drop_checkpoint(mission_id)
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
         # files (diff.patch + untracked file copies persisted by
@@ -2935,6 +4307,7 @@ class Kontrollierer:
         partial_artifacts: list[str] | None = None,
     ) -> None:
         self._task_answers.pop(mission_id, None)  # hygiene: drop captured answers
+        self._drop_review_state(mission_id)
         # Consume the classified worker-failure context (if any) so the
         # terminal MissionFailed event names the real cause instead of the
         # bare mission-level reason (2026-07-06 incident: error_class was
@@ -2960,6 +4333,7 @@ class Kontrollierer:
             return
         if not await self._safe_transition(mission_id, MissionState.FAILED, reason):
             return
+        self._drop_checkpoint(mission_id)
         env = EventEnvelope(
             mission_id=mission_id,
             source_actor="kontrollierer",

@@ -375,6 +375,22 @@ class SessionStore:
                 ),
             )
 
+    def record_turn_progress(self, *, turn_id: str, user_text: str, jarvis_text: str) -> None:
+        """Store an OPEN turn's words so far; a finalized turn is never touched.
+
+        A continuous call is one turn that stays open until hang-up. Without
+        this, every reader of the store saw the running call as empty for its
+        whole length and fell back to the previous call.
+        """
+        with self._lock:
+            self._c.execute(
+                """
+                UPDATE voice_turns SET user_text = ?, jarvis_text = ?
+                WHERE id = ? AND ended_ms IS NULL
+                """,
+                (user_text, jarvis_text, turn_id),
+            )
+
     def set_turn_polished(self, *, turn_id: str, text: str) -> None:
         """Attach the polished reading of a turn's user text.
 
@@ -453,8 +469,8 @@ class SessionStore:
     ) -> list[SessionListItem]:
         """Sessions by started_ms desc — newest first.
 
-        ``preview`` is the first user utterance (the first turn row with
-        a non-empty ``user_text``), falling back to the first phrase the
+        ``preview`` is the first user utterance from turn rows or realtime
+        speaker snapshots, falling back to the first assistant phrase the
         session voiced. Set ``include_empty=False`` for conversation-history
         surfaces: finished attempts without any persisted user or assistant
         transcript stay available to diagnostics, but do not crowd out real
@@ -473,6 +489,30 @@ class SessionStore:
             if self._has_json1
             else "''"
         )
+        # Realtime calls can persist only speaker snapshots, without legacy
+        # turn aggregates or SpeechSpoken events. Use the latest revision of
+        # each segment, just as the conversation detail replays it.
+        live_transcripts = "SELECT '' AS text, '' AS role, 0 AS seq WHERE 0"
+        if self._has_json1:
+            live_transcripts = """
+                SELECT TRIM(COALESCE(json_extract(live.payload_json, '$.text'), '')) AS text,
+                       json_extract(live.payload_json, '$.role') AS role,
+                       live.seq AS seq
+                FROM voice_events live
+                WHERE live.session_id = s.id
+                  AND live.kind = 'VoiceTranscriptUpdated'
+                  AND json_extract(live.payload_json, '$.role') IN ('user', 'assistant')
+                  AND COALESCE(json_extract(live.payload_json, '$.segment_id'), '') != ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM voice_events newer
+                      WHERE newer.session_id = live.session_id
+                        AND newer.kind = 'VoiceTranscriptUpdated'
+                        AND json_extract(newer.payload_json, '$.segment_id')
+                            = json_extract(live.payload_json, '$.segment_id')
+                        AND COALESCE(json_extract(newer.payload_json, '$.revision'), 0)
+                            > COALESCE(json_extract(live.payload_json, '$.revision'), 0)
+                  )
+            """
         sql = f"""
                 SELECT s.*,
                        COALESCE(
@@ -481,6 +521,10 @@ class SessionStore:
                           WHERE t.session_id = s.id
                             AND t.user_text != ''
                           ORDER BY t.idx ASC
+                          LIMIT 1),
+                         (SELECT text FROM ({live_transcripts})
+                          WHERE text != ''
+                          ORDER BY (role = 'user') DESC, seq ASC
                           LIMIT 1),
                          (SELECT {spoken_text}
                           FROM voice_events spoken
@@ -494,6 +538,7 @@ class SessionStore:
                 FROM voice_sessions s
                 WHERE ? = 1
                    OR s.ended_ms IS NULL
+                   OR EXISTS (SELECT 1 FROM ({live_transcripts}) WHERE text != '')
                    OR EXISTS (
                         SELECT 1
                         FROM voice_turns meaningful
@@ -512,7 +557,7 @@ class SessionStore:
                    )
                 ORDER BY s.started_ms DESC
                 LIMIT ? OFFSET ?
-                """  # noqa: S608 — spoken_text is a fixed literal, never input
+        """  # noqa: S608 — SQL fragments are fixed literals, never input
         with self._lock:
             cur = self._c.execute(
                 sql,

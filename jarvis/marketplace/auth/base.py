@@ -96,7 +96,18 @@ def sanitize_provider_error(detail: str, *, limit: int = 160) -> str:
     lowered = detail.lower()
     if "access_denied" in lowered:
         message = "Authorization was declined. Try again when access is approved."
-    elif "invalid_client" in lowered or "unauthorized_client" in lowered:
+    elif any(
+        code in lowered
+        for code in (
+            "invalid_client",
+            "unauthorized_client",
+            # Google answers a deleted or disabled OAuth client with these
+            # codes instead of invalid_client. Unmapped, they fell through to
+            # the generic text and the refresh retried forever as transient.
+            "deleted_client",
+            "disabled_client",
+        )
+    ):
         message = "invalid_client: The provider does not accept this app registration."
     elif "invalid_grant" in lowered:
         message = "Authorization expired or was revoked. Connect again."

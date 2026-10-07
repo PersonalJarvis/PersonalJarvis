@@ -4,6 +4,10 @@ Subscribes ``VoiceSessionStarted`` (mute others) / ``VoiceSessionEnded``
 (restore). The blocking backend work runs in ``asyncio.to_thread`` with
 ``CoInitialize`` so it never touches the event loop. Our own PID is excluded
 from the mute sweep, which automatically protects Jarvis's own TTS voice.
+
+A session never asks the OS for anything: ``mute_others`` is non-interactive.
+The only asking path is :meth:`AudioDuckController.set_enabled` (the user turning
+the feature on), which runs the backend's ``prewarm`` off ``self._lock``.
 """
 from __future__ import annotations
 
@@ -74,20 +78,30 @@ class AudioDuckController:
         await self._restore_locked()
 
     # ---- public live controls ------------------------------------------
-    async def set_enabled(self, enabled: bool) -> None:
-        """Live-apply the toggle. Turning OFF mid-session restores immediately."""
+    async def set_enabled(self, enabled: bool) -> Any:
+        """Live-apply the toggle. Turning OFF mid-session restores immediately.
+
+        Turning ON is the user's gesture, so it is the ONE place that may ask the
+        OS for a permission: the backend's ``prewarm`` (macOS: Automation consent
+        for each running player, through the permission service) runs here, on a
+        worker thread and NOT under ``self._lock``, so a session that starts while
+        a dialog is open is never held up by it. Returns the backend's permission
+        report (``DuckPermissionReport``), or ``None`` when the backend has none
+        (Windows, no backend) or the feature was switched off.
+        """
         try:
             self._cfg.ducking.enabled = bool(enabled)
         except Exception:  # noqa: BLE001
             log.debug("in-memory ducking.enabled update skipped", exc_info=True)
         if not enabled:
             await self._restore_locked()
-            return
-        # Best-effort backend prewarm (macOS: fires the one-time Automation
-        # TCC consent prompt at enable time instead of mid-session).
+            return None
         pre = getattr(self._ducker, "prewarm", None)
         if callable(pre):
-            await self._run(pre)
+            report = await self._run(pre)
+            # _run answers [] when the backend call failed (already logged).
+            return report if hasattr(report, "as_dict") else None
+        return None
 
     async def restore(self) -> None:
         """Force-restore (live path: turning the toggle off)."""
@@ -134,7 +148,11 @@ class AudioDuckController:
             log.info("ducking: restored %d session(s)", len(pids))
 
     async def _run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        """Run a blocking pycaw call off the loop, with COM init on the worker."""
+        """Run a blocking backend call off the loop, with COM init on the worker.
+
+        Never called with ``self._lock`` held around an ask: only the silent,
+        bounded ``mute_others`` / ``restore`` calls run under the lock.
+        """
 
         def _call() -> Any:
             initialized = False

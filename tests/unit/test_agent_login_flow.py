@@ -132,6 +132,32 @@ def _state(flow_id: str) -> dict[str, Any]:
 # ------------------------------------------------------------------ the URL
 
 
+def test_partial_sign_in_link_is_never_published(tmp_path: Path) -> None:
+    flow = agent_login_flow._Flow(flow_id="partial-url", account=_account(tmp_path))
+    agent_login_flow._ingest(flow, "Open \x1b[36m" + _URL[:60])
+    assert flow.to_dict()["url"] is None
+    agent_login_flow._ingest(flow, _URL[60:] + "\x1b[0m")
+    assert flow.to_dict()["url"] is None
+    agent_login_flow._ingest(flow, "\r\n")
+    assert flow.to_dict()["url"] == _URL
+
+
+def test_docs_link_does_not_hide_a_split_sign_in_link(tmp_path: Path) -> None:
+    flow = agent_login_flow._Flow(flow_id="docs-and-partial-url", account=_account(tmp_path))
+    agent_login_flow._ingest(flow, "See https://docs.example.com/help\r\nOpen " + _URL[:60])
+    assert flow.to_dict()["url"] is None
+    agent_login_flow._ingest(flow, _URL[60:] + "\r\n")
+    assert flow.to_dict()["url"] == _URL
+
+
+def test_sign_in_link_replaces_an_earlier_docs_fallback(tmp_path: Path) -> None:
+    flow = agent_login_flow._Flow(flow_id="docs-before-url", account=_account(tmp_path))
+    agent_login_flow._ingest(flow, "See https://docs.example.com/help\r\n")
+    agent_login_flow._ingest(flow, "Open " + _URL[:60])
+    agent_login_flow._ingest(flow, _URL[60:] + "\r\n")
+    assert flow.to_dict()["url"] == _URL
+
+
 def test_url_survives_ansi_noise_and_a_chunk_boundary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

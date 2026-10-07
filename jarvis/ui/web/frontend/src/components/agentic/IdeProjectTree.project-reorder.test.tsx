@@ -21,6 +21,7 @@ vi.mock("@/lib/chatLibraryApi", () => {
     patchProject: vi.fn(async () => ({})),
     openProject: vi.fn(async () => ({ id: "p1" })),
     reorderProjects,
+    fetchProjectLaunchers: vi.fn(async () => ({ file_manager: false, editors: [], remote_url: null, remote_label: null })),
     ChatLibraryError: MockChatLibraryError,
   };
 });

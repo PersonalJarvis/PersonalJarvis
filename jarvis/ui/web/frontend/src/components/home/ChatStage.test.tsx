@@ -1,14 +1,20 @@
-import { act, cleanup, fireEvent, render as rtlRender, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatStage } from "@/components/home/ChatStage";
+
+/** A finished, answered turn folds its work behind "Thought for …"; open every fold. */
+const openWork = () => {
+  for (const toggle of Array.from(document.querySelectorAll<HTMLElement>("[data-testid='conversation-work-fold'][data-open='false'] > button"))) fireEvent.click(toggle);
+};
 import { EMPTY_TIMELINE, reduceEvents } from "@/components/agentchat/reduce";
 import type { AgentChatCatalog, AgentChatEvent } from "@/lib/agentChatApi";
 import { AgentChatStoreProvider } from "@/components/agentchat/AgentChatStoreContext";
 import { useAgentChatStore, useAgentSessionStore } from "@/store/agentChat";
 import { useEventStore } from "@/store/events";
 import { useHomeStore } from "@/store/home";
+import { composerDraftsFor } from "@/components/agentchat/composerDrafts";
 
 const CATALOG: AgentChatCatalog = {
   default_cwd: "C:\\work",
@@ -181,35 +187,172 @@ describe("ChatStage (agent chat)", () => {
     window.localStorage.clear();
     useEventStore.setState({ connected: true, wsWarming: false, assistantName: "Jarvis" });
     useAgentChatStore.setState(seedState());
+    composerDraftsFor(useAgentChatStore).setState({ drafts: new Map() });
+    composerDraftsFor(useAgentSessionStore).setState({ drafts: new Map() });
   });
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  it("shows the greeting and the composer with the four picks when there is nothing yet", () => {
+  it("opens on a short greeting over the quiet composer when there is nothing yet", () => {
     render(<ChatStage />);
     expect(screen.getByTestId("chat-stage").getAttribute("data-empty")).toBe("true");
+    // One line, no explainer paragraph under it.
+    expect(screen.getByTestId("home-greeting").querySelector("p")).toBeNull();
     const composer = screen.getByTestId("agent-composer");
-    expect(within(composer).getByTestId("composer-provider").getAttribute("data-value")).toBe("claude-api");
-    expect(within(composer).getByTestId("composer-model")).toBeTruthy();
+    expect(within(composer).getByTestId("composer-row")).toBeTruthy();
+    // Provider and model are ONE pick on the front page.
+    expect(within(composer).queryByTestId("composer-provider")).toBeNull();
+    expect(within(composer).getByTestId("composer-model").getAttribute("data-value")).toBe("claude-api\u0001");
     expect(within(composer).getByTestId("composer-effort").getAttribute("data-value")).toBe("high");
     expect(within(composer).getByTestId("composer-permission").getAttribute("data-value")).toBe("acceptEdits");
-    // Claude Code has a plan entry, so the Build | Plan switch is drawn.
-    expect(within(composer).getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+    // No Build | Plan switch on the front page, even for a ladder with a plan entry.
+    expect(within(composer).queryByTestId("composer-plan")).toBeNull();
+    // No surface chip, no paperclip: "+" carries attaching.
+    expect(within(composer).queryByTestId("composer-surface")).toBeNull();
+    expect(within(composer).queryByTestId("composer-attach")).toBeNull();
+    expect(within(composer).getByTestId("composer-add")).toBeTruthy();
   });
 
-  it("says who is answering: the front page names the assistant, the IDE names a coding agent", () => {
-    // The maintainer's complaint, twice over: the two chats wear the same face,
-    // so nothing on screen said which of them you were in (2026-08-25). They
-    // are different harnesses — Jarvis with a keyboard vs a coding agent in a
-    // folder — and the composer now says so before a word is typed.
+  it("turns the empty composer's round button into voice mode, and into Send once there is text", () => {
+    useHomeStore.setState({ surface: "chat" });
+    render(<ChatStage />);
+    expect(screen.queryByTestId("composer-send")).toBeNull();
+    const box = screen.getByRole("textbox");
+    box.textContent = "hello";
+    fireEvent.input(box);
+    expect(screen.getByTestId("composer-send")).toBeTruthy();
+    expect(screen.queryByTestId("composer-voice-mode")).toBeNull();
+    box.textContent = "";
+    fireEvent.input(box);
+    fireEvent.click(screen.getByTestId("composer-voice-mode"));
+    expect(useHomeStore.getState().surface).toBe("voice");
+    useHomeStore.setState({ surface: "chat" });
+  });
+
+  it("restores an unsent multiline draft after leaving the chat section", () => {
+    const text = "  Draft to finish later\nKeep this second line too.  ";
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = text;
+    fireEvent.input(box);
+    first.unmount();
+
+    const second = render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe(text);
+    expect(screen.getByTestId("composer-send")).toBeTruthy();
+    const restored = screen.getByRole("textbox");
+    restored.textContent = `${text}\nAnd a third line.`;
+    fireEvent.input(restored);
+    second.unmount();
+
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe(`${text}\nAnd a third line.`);
+  });
+
+  it("keeps drafts separate when switching conversations", () => {
+    render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "New conversation draft";
+    fireEvent.input(box);
+    act(() => useAgentChatStore.setState({ activeSessionId: "other-chat" }));
+    expect(screen.getByRole("textbox").textContent).toBe("");
+    const other = screen.getByRole("textbox");
+    other.textContent = "Existing conversation draft";
+    fireEvent.input(other);
+
+    act(() => useAgentChatStore.setState({ activeSessionId: null }));
+    expect(screen.getByRole("textbox").textContent).toBe("New conversation draft");
+    act(() => useAgentChatStore.setState({ activeSessionId: "other-chat" }));
+    expect(screen.getByRole("textbox").textContent).toBe("Existing conversation draft");
+  });
+
+  it("does not transfer the front page draft into the IDE chat", () => {
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "Front page draft";
+    fireEvent.input(box);
+    first.unmount();
+    useAgentSessionStore.setState(seedState());
+    const ide = render(<AgentChatStoreProvider store={useAgentSessionStore}><ChatStage /></AgentChatStoreProvider>);
+    expect(screen.getByRole("textbox").textContent).toBe("");
+    ide.unmount();
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe("Front page draft");
+  });
+
+  it("keeps a manually cleared draft empty after remounting", () => {
+    const first = render(<ChatStage />);
+    const box = screen.getByRole("textbox");
+    box.textContent = "Discard this draft";
+    fireEvent.input(box);
+    box.textContent = "";
+    fireEvent.input(box);
+    first.unmount();
+    render(<ChatStage />);
+    expect(screen.getByRole("textbox").textContent).toBe("");
+  });
+
+  it("does not restore a successfully sent draft after remounting", async () => {
+    const originalSend = useAgentChatStore.getState().send;
+    const sent: string[] = [];
+    useAgentChatStore.setState({ send: async (text) => { sent.push(text); } });
+    try {
+      const first = render(<ChatStage />);
+      const box = screen.getByRole("textbox");
+      box.textContent = "Send this once";
+      fireEvent.input(box);
+      await act(async () => fireEvent.click(screen.getByTestId("composer-send")));
+      expect(sent).toEqual(["Send this once"]);
+      first.unmount();
+      render(<ChatStage />);
+      expect(screen.getByRole("textbox").textContent).toBe("");
+    } finally {
+      useAgentChatStore.setState({ send: originalSend });
+    }
+  });
+
+  it("restores a failed send in the field and across remounts", async () => {
+    const originalSend = useAgentChatStore.getState().send;
+    useAgentChatStore.setState({ send: async () => { useAgentChatStore.setState({ lastError: "Offline" }); } });
+    try {
+      const first = render(<ChatStage />);
+      const box = screen.getByRole("textbox");
+      box.textContent = "Keep this if sending fails";
+      fireEvent.input(box);
+      await act(async () => fireEvent.click(screen.getByTestId("composer-send")));
+      expect(screen.getByRole("textbox").textContent).toBe("Keep this if sending fails");
+      first.unmount();
+      render(<ChatStage />);
+      expect(screen.getByRole("textbox").textContent).toBe("Keep this if sending fails");
+    } finally {
+      useAgentChatStore.setState({ send: originalSend });
+    }
+  });
+
+  it("lists each connected provider with its models in the one brain pick", async () => {
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-model"));
+    const panel = await screen.findByTestId("composer-model-panel");
+    const options = within(panel).getAllByRole("option").map((el) => el.getAttribute("data-value"));
+    expect(options).toEqual([
+      "claude-api\u0001",
+      "claude-api\u0001claude-opus-5",
+      "claude-api\u0001claude-sonnet-5",
+    ]);
+    // Codex is not installed on this box, so it is not offered at all.
+    expect(within(panel).queryByText("GPT-5.4")).toBeNull();
+    fireEvent.click(within(panel).getByText("Claude Sonnet 5"));
+    await act(async () => {});
+    expect(useAgentChatStore.getState().draft.provider).toBe("claude-api");
+    expect(useAgentChatStore.getState().draft.model).toBe("claude-sonnet-5");
+  });
+
+  it("says who is answering in the IDE; the front page needs no label for its own assistant", () => {
     const { unmount } = render(<ChatStage />);
-    const front = screen.getByTestId("composer-surface");
-    expect(front.getAttribute("data-surface")).toBe("jarvis");
-    expect(front.textContent).toContain("Jarvis");
-    // The front page's subtitle says it is the assistant the microphone reaches.
-    expect(screen.getByTestId("home-greeting").textContent).toContain("microphone");
+    expect(screen.queryByTestId("composer-surface")).toBeNull();
+    expect(screen.getByTestId("home-greeting")).toBeTruthy();
     unmount();
 
     useAgentSessionStore.setState(seedState());
@@ -234,7 +377,6 @@ describe("ChatStage (agent chat)", () => {
     // nobody chose (maintainer, 2026-08-25). The folder itself did not go
     // away; a CLI seat still starts in one. It is just no longer a control.
     const { unmount } = render(<ChatStage />);
-    expect(screen.getByTestId("composer-surface").getAttribute("data-surface")).toBe("jarvis");
     expect(screen.queryByTestId("composer-folder")).toBeNull();
     unmount();
 
@@ -248,7 +390,7 @@ describe("ChatStage (agent chat)", () => {
     expect(screen.getByTestId("composer-folder")).toBeTruthy();
   });
 
-  it("bylines a turn with the assistant on the front page and with the coding agent in the IDE", () => {
+  it("answers as plain text on the front page and bylines the coding agent in the IDE", () => {
     const timeline = reduceEvents(EMPTY_TIMELINE, [
       ev("user_message", { text: "list the files" }),
       ev("turn_started", { turn_id: "t1", provider: "claude-api", model: "claude-opus-5", effort: "high", runner: "brain" }),
@@ -257,7 +399,9 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s1", timeline });
     const { unmount } = render(<ChatStage />);
-    expect(screen.getByTestId("agent-turn").textContent).toContain("Jarvis");
+    const front = screen.getByTestId("agent-turn");
+    expect(front.textContent).toContain("Two files.");
+    expect(front.textContent).not.toContain("Anthropic Claude");
     unmount();
 
     useAgentSessionStore.setState({ ...seedState(), activeSessionId: "ide-1", timeline });
@@ -289,7 +433,8 @@ describe("ChatStage (agent chat)", () => {
       cli_installed: null,
     };
     const localRow = { ...apiRow, id: "ollama", label: "Ollama", family: "ollama", keyless: true };
-    useAgentChatStore.setState({
+    useAgentSessionStore.setState({
+      ...seedState(),
       catalog: { ...CATALOG, providers: [...CATALOG.providers, apiRow, localRow] },
       connections: [
         { jarvis: "claude-api", key_set: true, is_active_brain: false },
@@ -297,7 +442,11 @@ describe("ChatStage (agent chat)", () => {
         { jarvis: "openai", key_set: true, is_active_brain: true },
       ],
     });
-    render(<ChatStage />);
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
     fireEvent.click(screen.getByTestId("composer-provider"));
     const panel = await screen.findByTestId("composer-provider-panel");
     // The headings, in catalog order — never "connected / not connected".
@@ -313,13 +462,18 @@ describe("ChatStage (agent chat)", () => {
   });
 
   it("with nothing connected yet, lists every provider greyed with its connect hint", async () => {
-    useAgentChatStore.setState({
+    useAgentSessionStore.setState({
+      ...seedState(),
       connections: [
         { jarvis: "claude-api", key_set: false, is_active_brain: false },
         { jarvis: "openai-codex", key_set: false, is_active_brain: false },
       ],
     });
-    render(<ChatStage />);
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
     fireEvent.click(screen.getByTestId("composer-provider"));
     const panel = await screen.findByTestId("composer-provider-panel");
     const options = within(panel).getAllByRole("option");
@@ -347,20 +501,41 @@ describe("ChatStage (agent chat)", () => {
 
   it("draws a different glyph per permission mode in the pill and the list", async () => {
     render(<ChatStage />);
+    // The labelled pick row draws no glyph on the pill; the list carries them.
     const pill = screen.getByTestId("composer-permission");
-    // acceptEdits wears the pen, not the column's shield.
-    expect(pill.querySelector("svg.lucide-file-pen")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const glyphs = within(panel)
       .getAllByRole("option")
       .map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    // default → question shield, acceptEdits → pen, bypass → shield off; plan lives on the switch.
-    expect(glyphs.some((c) => c.includes("lucide-shield-question"))).toBe(true);
+    // default → hand, acceptEdits → pen, bypass → warning shield; plan lives on the switch.
+    expect(glyphs.some((c) => c.includes("lucide-hand"))).toBe(true);
     expect(glyphs.some((c) => c.includes("lucide-file-pen"))).toBe(true);
-    expect(glyphs.some((c) => c.includes("lucide-shield-off"))).toBe(true);
+    expect(glyphs.some((c) => c.includes("lucide-shield-alert"))).toBe(true);
     expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+
+  it("marks the provider's default effort and explains each stance in its menu", async () => {
+    useAgentChatStore.setState({
+      catalog: {
+        ...CATALOG,
+        providers: CATALOG.providers.map((p) => ({
+          ...p,
+          permission_modes: p.permission_modes.map((m) => ({ ...m, description: `What ${m.label} lets through.` })),
+        })),
+      },
+    });
+    render(<ChatStage />);
+    fireEvent.click(screen.getByTestId("composer-effort"));
+    const effort = await screen.findByTestId("composer-effort-panel");
+    expect(effort.textContent).toContain("Reasoning");
+    const high = within(effort).getAllByRole("option").find((el) => el.getAttribute("data-value") === "high");
+    expect(high?.textContent).toContain("Default");
+    fireEvent.keyDown(effort, { key: "Escape" });
+
+    fireEvent.click(screen.getByTestId("composer-permission"));
+    const stances = await screen.findByTestId("composer-permission-panel");
+    expect(stances.textContent).toContain("What Auto-accept edits lets through.");
   });
 
   it("wears one glyph per stance on the unified ladder", async () => {
@@ -387,20 +562,31 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
     const pill = screen.getByTestId("composer-permission");
     expect(pill.getAttribute("data-value")).toBe("ask");
-    expect(pill.querySelector("svg.lucide-shield-question")).not.toBeNull();
-    expect(pill.querySelector("svg.lucide-shield-check")).toBeNull();
     fireEvent.click(pill);
     const panel = await screen.findByTestId("composer-permission-panel");
     const rows = within(panel).getAllByRole("option");
     // Plan is the switch next door, so the list holds the other three.
     expect(rows.map((el) => el.getAttribute("data-value"))).toEqual(["ask", "accept-edits", "bypass"]);
     const glyphs = rows.map((el) => el.querySelector("svg")?.getAttribute("class") ?? "");
-    expect(glyphs[0]).toContain("lucide-shield-question");
+    expect(glyphs[0]).toContain("lucide-hand");
     expect(glyphs[1]).toContain("lucide-file-pen");
-    expect(glyphs[2]).toContain("lucide-shield-off");
+    expect(glyphs[2]).toContain("lucide-shield-alert");
     expect(new Set(glyphs).size).toBe(glyphs.length);
-    // The plan entry still powers the Build | Plan switch.
-    expect(screen.getByTestId("composer-plan").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("draws Bypass in the row's plain grey, like every other stance", () => {
+    useAgentChatStore.setState((s) => ({ draft: { ...s.draft, permissionMode: "bypassPermissions" } }));
+    render(<ChatStage />);
+    const pill = screen.getByTestId("composer-permission");
+    expect(pill.getAttribute("data-value")).toBe("bypassPermissions");
+    expect(pill.className).not.toContain("text-warning");
+  });
+
+  it("brings a chat left in Plan back to its build stance, since the front page has no switch", async () => {
+    const setPlan = vi.fn(async () => {});
+    useAgentChatStore.setState((s) => ({ setPlan, draft: { ...s.draft, permissionMode: "plan" } }) as never);
+    render(<ChatStage />);
+    await waitFor(() => expect(setPlan).toHaveBeenCalledWith(false));
   });
 
   it("accepts a prompt through the current rich text composer", () => {
@@ -424,6 +610,9 @@ describe("ChatStage (agent chat)", () => {
     const hint = screen.getByTestId("composer-connect-hint");
     expect(hint.textContent).toContain("Anthropic Claude");
     // Send stays off until the provider is usable.
+    const box = screen.getByRole("textbox");
+    box.textContent = "hello";
+    fireEvent.input(box);
     expect((screen.getByTestId("composer-send") as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -436,8 +625,12 @@ describe("ChatStage (agent chat)", () => {
       ev("assistant_text", { turn_id: "t1", message_id: "m1", text: "Two files: **a.py** and b.py." }),
       ev("turn_finished", { turn_id: "t1", status: "done", duration_ms: 1200, usage: {} }),
     ]);
-    useAgentChatStore.setState({ activeSessionId: "s1", timeline });
-    render(<ChatStage />);
+    useAgentSessionStore.setState({ ...seedState(), activeSessionId: "s1", timeline });
+    render(
+      <AgentChatStoreProvider store={useAgentSessionStore}>
+        <ChatStage />
+      </AgentChatStoreProvider>,
+    );
     expect(screen.getByTestId("chat-stage").getAttribute("data-empty")).toBe("false");
     expect(screen.getByTestId("agent-message-user").textContent).toContain("list the files");
     const turn = screen.getByTestId("agent-turn");
@@ -608,8 +801,8 @@ describe("ChatStage (agent chat)", () => {
     render(<ChatStage />);
 
     const trace = screen.getByTestId("work-trace");
-    expect(within(trace).getByRole("button", { name: "Thought for 1.0s" })).toBeTruthy();
-    expect(within(trace).getByRole("button", { name: "Thought for 4.0s" })).toBeTruthy();
+    // The finished turn folds its work; one tap brings it back in order.
+    openWork();
     const text = trace.textContent!;
     expect(text.indexOf("First the port.")).toBeLessThan(text.indexOf("Get-NetTCPConnection"));
     expect(text.indexOf("Get-NetTCPConnection")).toBeLessThan(text.indexOf("It is listening."));
@@ -634,8 +827,10 @@ describe("ChatStage (agent chat)", () => {
     expect(outcome.textContent).toContain("448");
     // Only the output side reaches the receipt.
     expect(outcome.textContent).not.toContain("35.4k");
-    // The failure reads on the row itself, without opening anything.
-    expect(screen.getByText(/permission check failed for command/).textContent).toContain("permission check failed");
+    // With no answer the report IS the outcome: it stands open and the
+    // failure reads without opening anything.
+    expect(screen.getByText(/permission check failed for command/)).toBeTruthy();
+    expect(document.querySelector("[data-trace-entry='call']")?.textContent).toContain("Failed");
     // Nothing claims to still be working.
     expect(screen.queryByTestId("agent-turn-live")).toBeNull();
   });
@@ -651,19 +846,17 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s5", timeline });
     render(<ChatStage />);
-    const fold = screen.queryByTestId("conversation-work-fold");
-    if (fold) fireEvent.click(within(fold).getByRole("button"));
-    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
-    if (activity) fireEvent.click(within(activity).getByRole("button"));
-
-    const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
-    fireEvent.click(within(shell).getByRole("button"));
-    // The full receipt is available on demand.
-    expect(within(shell).getByText("Input")).toBeTruthy();
-    expect(shell.textContent).toContain("a.py");
-
-    fireEvent.click(within(grep).getByRole("button"));
-    // More than the summary could say, so the whole input is worth printing.
+    // With no answer the timeline stands open: one quiet line for the stretch.
+    const stretch = screen.getByRole("button", { name: /^Ran a command, searched the files/ });
+    fireEvent.click(stretch);
+    const [shell, grep] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
+    expect(shell.textContent).toContain("ls -la");
+    expect(grep.textContent).toContain("Searched for TODO in src");
+    // The full receipt is available on demand: what ran, and what it printed.
+    fireEvent.click(within(shell).getByRole("button", { name: /^ls -la/ }));
+    expect(shell.querySelector("[data-trace-output]")?.textContent).toContain("a.py");
+    // More than the line could say, so the whole input is worth printing.
+    fireEvent.click(within(grep).getByRole("button", { name: /^Searched for TODO/ }));
     expect(within(grep).getByText("Input")).toBeTruthy();
   });
 
@@ -681,22 +874,21 @@ describe("ChatStage (agent chat)", () => {
     ]);
     useAgentChatStore.setState({ activeSessionId: "s9", timeline });
     render(<ChatStage />);
-    const fold = screen.queryByTestId("conversation-work-fold");
-    if (fold) fireEvent.click(within(fold).getByRole("button"));
-    const activity = document.querySelector<HTMLElement>("[data-trace-summary]");
-    if (activity) fireEvent.click(within(activity).getByRole("button"));
+    openWork();
+    // The plugin the turn used shows on its line by its own logo.
+    const stretch = screen.getByRole("button", { name: /^Ran a command, used GitHub/ });
+    expect(stretch.querySelector("img, [data-logo]")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Ran a command, used GitHub/ }));
+    const [shell, github] = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-entry='call']"));
+    expect(shell.textContent).toContain("Get-ChildItem -Path 'C:\\Users'");
+    fireEvent.click(within(shell).getByRole("button"));
+    expect(shell.querySelector("[data-trace-output]")?.textContent).toContain("ok");
+    // An MCP call is named after its service, and wears its mark.
+    expect(github.textContent).toContain("GitHub");
+    expect(github.querySelector("img, [data-logo]")).toBeTruthy();
 
-    const tools = Array.from(document.querySelectorAll<HTMLElement>("[data-trace-tool]"));
-    expect(tools[0].textContent).toContain("Run command");
-    fireEvent.click(within(tools[0]).getByRole("button"));
-    expect(tools[0].textContent).toContain("PowerShell");
-    expect(tools[0].textContent).toContain("Get-ChildItem");
-    // An MCP call is named after its server, and wears its mark.
-    expect(tools[1].textContent).toContain("GitHub");
-
-    // Thinking with no readable text still shows its time and does not open.
-    const reasoning = screen.getByRole("button", {name: "Thought for 8.6s"});
-    expect(reasoning.hasAttribute("disabled")).toBe(true);
+    // Thinking with no readable text draws no line of its own.
+    expect(document.querySelectorAll("[data-trace-entry='reasoning']")).toHaveLength(0);
 
     const footer = within(screen.getByTestId("work-trace")).getByRole("status");
     expect(footer.textContent).toContain("12s");

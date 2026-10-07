@@ -1,27 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Settings,
-  Mic,
-  Loader2,
-  Languages,
-} from "lucide-react";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { BrandedSelect } from "@/components/ui/select";
 import { OverlayTaskbarGroup } from "@/views/settings/OverlayTaskbarGroup";
 import { LanguagesGroup } from "@/views/settings/LanguagesGroup";
 import { MusicGroup } from "@/views/settings/MusicGroup";
 import { AppSettingsGroup } from "@/views/settings/AppSettingsGroup";
-import { PermissionsPanel } from "@/views/settings/PermissionsPanel";
 import { RealtimeVoiceGroup } from "@/views/settings/RealtimeVoiceGroup";
-import { SilenceWindowGroup } from "@/views/settings/SilenceWindowGroup";
 import { VolumeGroup } from "@/views/settings/VolumeGroup";
 import { AudioDevicesGroup } from "@/views/settings/AudioDevicesGroup";
 import { SystemPromptGroup } from "@/views/settings/SystemPromptGroup";
 import { SettingsGroupBoundary } from "@/views/settings/SettingsGroupBoundary";
 import { settingsInputCls } from "@/views/settings/SettingsBlock";
+import {
+  SettingsCard,
+  SettingsNote,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+  SettingsSelect,
+} from "@/views/settings/SettingsLayout";
 import {
   useWakeWord,
   useLocalSpeechInstall,
@@ -60,49 +58,17 @@ interface WakeSelfTestResult {
   hint: string;
 }
 
-interface SettingRow {
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  control?: React.ReactNode;
-  value?: string;
-}
-
+/**
+ * The General settings page: one reading column of sections, each a heading
+ * over a grouped card. Every group is fault-isolated — one panel throwing
+ * costs that one panel, never the whole page. Section and row anchors keep the
+ * `settings-<id>` ids the hub search and the first-run guide scroll to.
+ */
 export function SettingsView({ searchTarget, onSearchTargetHandled }: {
   searchTarget?: string | null;
   onSearchTargetHandled?: () => void;
 } = {}) {
   const t = useT();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
-
-  // The nav follows the scroll: the topmost group intersecting the upper
-  // third of the column is the active one.
-  useEffect(() => {
-    const root = scrollRef.current;
-    if (!root || typeof IntersectionObserver === "undefined") return;
-    const visible = new Map<string, number>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          const id = (entry.target as HTMLElement).dataset.settingsSection ?? "";
-          if (entry.isIntersecting) visible.set(id, entry.boundingClientRect.top);
-          else visible.delete(id);
-        }
-        if (visible.size === 0) return;
-        const [top] = [...visible.entries()].sort((a, b) => a[1] - b[1]);
-        setActiveSection(top[0]);
-      },
-      { root, rootMargin: "0px 0px -66% 0px", threshold: 0 },
-    );
-    root.querySelectorAll<HTMLElement>("[data-settings-section]").forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, []);
-
-  const jumpTo = useCallback((id: string) => {
-    setActiveSection(id);
-    document.getElementById(`settings-${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, []);
 
   useEffect(() => {
     if (!searchTarget) return;
@@ -113,114 +79,70 @@ export function SettingsView({ searchTarget, onSearchTargetHandled }: {
   }, [searchTarget, onSearchTargetHandled]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="px-8">
-        <PageHeader
-          icon={<Settings />}
-          title={t("settings_view.title")}
-          description={t("settings_view.subtitle")}
-          className="pb-2"
-        />
-      </div>
-      {/* Two columns (v4): a sticky section nav on the left, the groups as
-          cards stretching across the remaining width on the right. Each group is fault-isolated:
-          one panel throwing costs that one panel, never the whole page. */}
-      <div
-        data-testid="settings-scroll"
-        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis"
-        ref={scrollRef}
-      >
-        <div className="flex gap-10 px-8 pb-12 pt-4">
-          <SettingsSectionNav sections={SECTIONS} active={activeSection} onPick={jumpTo} />
-          <div className="min-w-0 flex-1 space-y-10">
-            {SECTIONS.map((section) => (
-              <section
-                key={section.id}
-                id={`settings-${section.id}`}
-                data-settings-section={section.id}
-                data-tour={`settings-${section.id}`}
-                className="scroll-mt-4"
-              >
-                <SettingsGroupBoundary group={section.id}>
-                  {section.render()}
-                </SettingsGroupBoundary>
-              </section>
-            ))}
+    <div data-testid="settings-scroll" className="h-full min-h-0">
+      <SettingsPage title={t("settings_hub.general")}>
+        {SECTIONS.map((section) => (
+          <div
+            key={section.id}
+            id={`settings-${section.id}`}
+            data-settings-section={section.id}
+            data-tour={`settings-${section.id}`}
+            className="scroll-mt-6"
+          >
+            <SettingsGroupBoundary group={section.id}>
+              {section.render()}
+            </SettingsGroupBoundary>
           </div>
-        </div>
-      </div>
+        ))}
+      </SettingsPage>
     </div>
   );
 }
 
-/** The groups in page order; the nav on the left reads the same list. */
-const SECTIONS: readonly { id: string; labelKey: string; render: () => React.ReactNode }[] = [
-  { id: "languages", labelKey: "settings_view.nav.languages", render: () => <LanguagesGroup /> },
-  { id: "app", labelKey: "settings_view.nav.app", render: () => <AppSettingsGroup /> },
-  { id: "permissions", labelKey: "settings_view.nav.permissions", render: () => <PermissionsPanel /> },
-  { id: "realtime-voice", labelKey: "settings_view.nav.realtime_voice", render: () => <RealtimeVoiceGroup /> },
-  { id: "system-prompt", labelKey: "settings_view.nav.system_prompt", render: () => <SystemPromptGroup /> },
-  { id: "wake-word", labelKey: "settings_view.nav.wake_word", render: () => <WakeWordPanel /> },
-  { id: "silence-window", labelKey: "settings_view.nav.silence_window", render: () => <SilenceWindowGroup /> },
-  { id: "volume", labelKey: "settings_view.nav.volume", render: () => <VolumeGroup /> },
-  { id: "audio-devices", labelKey: "settings_view.nav.audio_devices", render: () => <AudioDevicesGroup /> },
-  { id: "music", labelKey: "settings_view.nav.music", render: () => <MusicGroup /> },
-  { id: "more", labelKey: "settings_view.nav.more", render: () => <MoreSettings /> },
-  { id: "overlay-taskbar", labelKey: "settings_view.nav.overlay_taskbar", render: () => <OverlayTaskbarGroup /> },
-];
-
-function SettingsSectionNav({
-  sections,
-  active,
-  onPick,
-}: {
-  sections: readonly { id: string; labelKey: string }[];
-  active: string;
-  onPick: (id: string) => void;
-}) {
+/**
+ * The voice rows share one card. Each keeps its own boundary and its own
+ * `settings-<id>` anchor, so search still lands on the exact row.
+ */
+function VoiceSettingsGroup() {
   const t = useT();
   return (
-    <nav
-      aria-label={t("settings_view.title")}
-      data-testid="settings-section-nav"
-      className="sticky top-0 hidden w-60 shrink-0 self-start lg:block"
-    >
-      <ul className="space-y-0.5">
-        {sections.map((s) => {
-          const isActive = s.id === active;
-          return (
-            <li key={s.id}>
-              <button
-                type="button"
-                onClick={() => onPick(s.id)}
-                aria-current={isActive ? "true" : undefined}
-                className={cn(
-                  "flex h-8 w-full items-center rounded-md px-3 text-left text-base transition-colors",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isActive
-                    ? "jarvis-nav-active bg-secondary font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                )}
-              >
-                {t(s.labelKey)}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
+    <SettingsSection title={t("settings_view.sections.voice")}>
+      <SettingsCard>
+        <SettingsGroupBoundary group="realtime-voice" inline>
+          <RealtimeVoiceGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="volume" inline>
+          <VolumeGroup />
+        </SettingsGroupBoundary>
+        <SettingsGroupBoundary group="audio-devices" inline>
+          <AudioDevicesGroup />
+        </SettingsGroupBoundary>
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 
-function useMoreSettingRows(): SettingRow[] {
+/** The groups in page order. */
+const SECTIONS: readonly { id: string; render: () => React.ReactNode }[] = [
+  { id: "languages", render: () => <LanguagesGroup /> },
+  { id: "app", render: () => <AppSettingsGroup><AutopilotToastsRow /></AppSettingsGroup> },
+  { id: "voice", render: () => <VoiceSettingsGroup /> },
+  { id: "wake-word", render: () => <WakeWordPanel /> },
+  { id: "system-prompt", render: () => <SystemPromptGroup /> },
+  { id: "music", render: () => <MusicGroup /> },
+  { id: "overlay-taskbar", render: () => <OverlayTaskbarGroup /> },
+];
+
+/** "Autopilot toasts" — the one row of the former "More" group. */
+function AutopilotToastsRow() {
   const t = useT();
   const [autopilotToasts, setAutopilotToasts] = useState(isAutopilotToastsEnabled);
-  return [
-    {
-      icon: Settings,
-      title: t("settings_view.rows.toasts_title"),
-      description: t("settings_view.rows.toasts_description"),
-      control: (
+  return (
+    <SettingsRow
+      id="settings-more"
+      title={t("settings_view.rows.toasts_title")}
+      description={t("settings_view.rows.toasts_description")}
+      control={
         <Switch
           checked={autopilotToasts}
           aria-label={t("settings_view.rows.toasts_title")}
@@ -229,42 +151,8 @@ function useMoreSettingRows(): SettingRow[] {
             setAutopilotToastsEnabled(next);
           }}
         />
-      ),
-    },
-  ];
-}
-
-function MoreSettings() {
-  const rows = useMoreSettingRows();
-  return (
-    <ul className="space-y-3">
-      {rows.map((r) => (
-        <SettingRow key={r.title} row={r} />
-      ))}
-    </ul>
-  );
-}
-
-function SettingRow({ row }: { row: SettingRow }) {
-  const Icon = row.icon;
-  return (
-    <li className="flex items-center gap-3 rounded-lg border border-border bg-card p-block">
-      {/* Secondary ink, never --primary: an icon that is brighter than the
-          heading it labels inverts the ramp (rule 8). */}
-      <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="text-title font-semibold text-foreground-strong">
-          {row.title}
-        </div>
-        <p className="mt-1 text-meta text-muted-foreground">{row.description}</p>
-      </div>
-      {row.value && (
-        <span className="font-mono text-meta tabular-nums text-muted-foreground">
-          {row.value}
-        </span>
-      )}
-      {row.control}
-    </li>
+      }
+    />
   );
 }
 
@@ -305,7 +193,7 @@ function LanguageDropdown({
   disabled?: boolean;
 }) {
   return (
-    <BrandedSelect
+    <SettingsSelect
       value={value}
       onValueChange={(code) => onChange(code as WakeLanguage)}
       ariaLabel={placeholder}
@@ -510,142 +398,117 @@ function WakeWordPanel() {
     }
   }
 
-  return (
-    <div className="rounded-lg border border-border bg-card p-block">
-      <div className="flex items-start gap-3">
-        <Mic className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <h4 className="text-title font-semibold text-foreground-strong">
-            {t("settings_view.wake_word.title")}
-          </h4>
-          <p className="mt-1 text-meta text-muted-foreground">
-            {t("settings_view.wake_word.description")}
-          </p>
+  const showResultNote = selfTest.state === "done" && selfTest.data;
 
-          <div className="mt-block flex items-center justify-between gap-4">
-            <span className="text-body text-foreground">
-              {t("settings_view.wake_word.activation_title")}
-            </span>
+  return (
+    <SettingsSection
+      title={t("settings_view.wake_word.title")}
+      description={t("settings_view.wake_word.description")}
+    >
+      <SettingsCard>
+        <SettingsRow
+          title={t("settings_view.wake_word.activation_title")}
+          description={t("settings_view.wake_word.activation_hint")}
+          control={
             <Switch
               checked={enabled}
               disabled={loading || togglingActivation}
               aria-label={t("settings_view.wake_word.activation_title")}
               onCheckedChange={onToggleActivation}
             />
-          </div>
-          <p className="mt-1 text-meta text-muted-foreground">
-            {t("settings_view.wake_word.activation_hint")}
+          }
+        >
+          {error && <p className="text-sm text-destructive">{error}</p>}
+        </SettingsRow>
+
+        {/* Phrase input — free text, no quick-picks */}
+        <SettingsRow
+          title={t("settings_view.wake_word.phrase_label")}
+          description={
+            derivedName
+              ? t("settings_view.wake_word.derived_name").replace("{0}", derivedName)
+              : undefined
+          }
+          control={
+            <input
+              value={phrase}
+              onChange={(e) => setPhrase(e.target.value)}
+              maxLength={64}
+              placeholder={t("settings_view.wake_word.phrase_placeholder")}
+              aria-label={t("settings_view.wake_word.phrase_label")}
+              disabled={loading}
+              className={settingsInputCls + " h-8 w-56 disabled:opacity-50"}
+            />
+          }
+        />
+
+        {/* LANGUAGE — the #1 cause of a silently dead wake word is picking
+            the wrong one, and the trap is unintuitive: it is the language the
+            user SPEAKS (their pronunciation), NOT the origin of the word
+            ("Ruben" is heard by the German model because the user speaks it
+            in German). Bound to the wake word's OWN language pin
+            ([trigger.wake_word] language) — the app display language and the
+            STT recognition language stay untouched, and neither can move
+            this choice. */}
+        <SettingsRow
+          title={t("settings_view.wake_word.language_label")}
+          description={t("settings_view.wake_word.language_callout_title")}
+          control={
+            <LanguageDropdown
+              value={wakeLang}
+              options={WAKE_LANGUAGES}
+              placeholder={t("settings_view.wake_word.language_placeholder")}
+              labelFor={(code) => t(`languages_view.options.${code}.label`)}
+              onChange={(code) => void onPickWakeLanguage(code)}
+              disabled={loading}
+            />
+          }
+        >
+          <p className="text-sm text-muted-foreground">
+            {t("settings_view.wake_word.language_hint")}
           </p>
+        </SettingsRow>
 
-          {error && (
-            <p className="mt-stack text-meta text-destructive">{error}</p>
-          )}
-
-          {/* Phrase input — free text, no quick-picks */}
-          <label className="mt-block block text-meta text-muted-foreground">
-            {t("settings_view.wake_word.phrase_label")}
-          </label>
-          <input
-            value={phrase}
-            onChange={(e) => setPhrase(e.target.value)}
-            maxLength={64}
-            placeholder={t("settings_view.wake_word.phrase_placeholder")}
-            disabled={loading}
-            className={settingsInputCls + " mt-1.5 disabled:opacity-50"}
-          />
-
-          {derivedName ? (
-            <p className="mt-1.5 text-meta text-muted-foreground">
-              {t("settings_view.wake_word.derived_name").replace("{0}", derivedName)}
-            </p>
-          ) : null}
-
-          {/* LANGUAGE — deliberately prominent + over-explained. Picking the
-              wrong language here is the #1 cause of a silently dead wake word,
-              and the trap is unintuitive: it is about the language the user
-              SPEAKS (their accent/pronunciation), NOT the origin of the word
-              ("Ruben" is heard by the German model because the user speaks it
-              in German, not because the name is German). Bound to the wake
-              word's OWN language pin ([trigger.wake_word] language) — the app
-              display language and the STT recognition language stay untouched,
-              and neither can move this choice. */}
-          {/* A lift surface inside the card — the step up the ladder that says
-              "this one matters", drawn in fill rather than in a tinted rim.
-              It used to be --primary at 5 % behind a --primary hairline with a
-              --primary heading: white ink on a white wash, which made a piece
-              of guidance the loudest mark on the page and read as a status it
-              is not. Emphasis is the surface and the ink ceiling now. */}
-          <div className="mt-block rounded-md bg-secondary p-4">
-            <div className="flex items-center gap-2">
-              <Languages className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="text-title font-semibold text-foreground-strong">
-                {t("settings_view.wake_word.language_label")}
-              </span>
-            </div>
-            <p className="mt-1.5 text-body text-foreground">
-              {t("settings_view.wake_word.language_callout_title")}
-            </p>
-            <div className="mt-stack">
-              <LanguageDropdown
-                value={wakeLang}
-                options={WAKE_LANGUAGES}
-                placeholder={t("settings_view.wake_word.language_placeholder")}
-                labelFor={(code) => t(`languages_view.options.${code}.label`)}
-                onChange={(code) => void onPickWakeLanguage(code)}
-                disabled={loading}
-              />
-            </div>
-            <p className="mt-stack text-meta text-muted-foreground">
-              {t("settings_view.wake_word.language_hint")}
-            </p>
-          </div>
-
-          {/* Engine select */}
-          <label className="mt-block block text-meta text-muted-foreground">
-            {t("settings_view.wake_word.engine_label")}
-          </label>
-          <BrandedSelect
-            value={engine}
-            onValueChange={setEngine}
-            ariaLabel={t("settings_view.wake_word.engine_label")}
-            disabled={loading}
-            className="mt-1"
-            options={WAKE_ENGINES.map((wakeEngine) => ({
-              value: wakeEngine,
-              label: t(WAKE_ENGINE_I18N_KEY[wakeEngine]),
-            }))}
-          />
-
-          {/* Custom ONNX model path */}
+        <SettingsRow
+          title={t("settings_view.wake_word.engine_label")}
+          control={
+            <SettingsSelect
+              value={engine}
+              onValueChange={setEngine}
+              ariaLabel={t("settings_view.wake_word.engine_label")}
+              disabled={loading}
+              options={WAKE_ENGINES.map((wakeEngine) => ({
+                value: wakeEngine,
+                label: t(WAKE_ENGINE_I18N_KEY[wakeEngine]),
+              }))}
+            />
+          }
+        >
           {engine === "custom_onnx" && (
-            <>
-              <label className="mt-block block text-meta text-muted-foreground">
+            <label className="block">
+              <span className="mb-1.5 block text-sm text-muted-foreground">
                 {t("settings_view.wake_word.custom_model_path_label")}
-              </label>
+              </span>
               <input
                 value={customModelPath}
                 onChange={(e) => setCustomModelPath(e.target.value)}
                 placeholder="C:\\Users\\...\\my_wakeword.onnx"
                 disabled={loading}
-                className={settingsInputCls + " mt-1.5 font-mono text-meta disabled:opacity-50"}
+                className={settingsInputCls + " font-mono text-sm disabled:opacity-50"}
               />
-            </>
+            </label>
           )}
 
           {/* Any-phrase enablement: install the local speech pack in-app so
               an arbitrary wake word works, instead of silently degrading. */}
           {showNeedsWhisperHint && (
-            <div className="mt-stack rounded-md bg-secondary p-4 text-body text-foreground">
+            <SettingsNote>
               <p className="text-warning">
                 {t("settings_view.wake_word.needs_whisper_hint")}
               </p>
 
               {installStatus.state === "idle" && (
-                <Button
-                  size="sm"
-                  className="mt-stack"
-                  onClick={() => void install()}
-                >
+                <Button size="sm" className="mt-stack" onClick={() => void install()}>
                   {t("settings_view.wake_word.enable_local_button")}
                 </Button>
               )}
@@ -665,11 +528,7 @@ function WakeWordPanel() {
                       {installStatus.message}
                     </p>
                   )}
-                  <Button
-                    size="sm"
-                    className="mt-stack"
-                    onClick={() => void install()}
-                  >
+                  <Button size="sm" className="mt-stack" onClick={() => void install()}>
                     {t("settings_view.wake_word.enable_local_retry")}
                   </Button>
                 </div>
@@ -680,73 +539,39 @@ function WakeWordPanel() {
                   {t("settings_view.wake_word.enable_local_done")}
                 </p>
               )}
-            </div>
+            </SettingsNote>
           )}
+        </SettingsRow>
 
-          {/* Save + Test buttons */}
-          <div className="mt-block flex items-center gap-3">
-            <Button
-              size="sm"
-              onClick={onSave}
-              disabled={saving || loading || !trimmedPhrase}
-            >
-              {saving
-                ? t("settings_view.saving")
-                : t("settings_view.wake_word.save")}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void onSelfTest()}
-              disabled={selfTest.state === "running" || loading || !trimmedPhrase}
-            >
-              {selfTest.state === "running" ? (
-                <span className="flex items-center gap-2">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("settings_view.wake_word.self_test_running")}
-                </span>
-              ) : (
-                t("settings_view.wake_word.self_test_button")
-              )}
-            </Button>
-          </div>
-
-          {/* Self-test result — honest readiness verdict (engine + language +
-              vocabulary + mic), the fast way to see WHY a word won't wake. */}
-          {selfTest.state === "done" && selfTest.data && (
-            /* One surface for both verdicts, the verdict carried by the status
-               ink on the sentence. A pass used to be a --primary wash and a
-               fail a --foreground wash: two brightness washes standing in for
-               a meaning that colour states directly, on a ground where neither
-               was legible as a state at all. */
-            <div className="mt-stack rounded-md bg-secondary p-4 text-body">
-              <p
-                className={
-                  selfTest.data.ok ? "text-success" : "text-destructive"
-                }
-              >
+        {/* Save + Test, then the honest verdicts they produce. */}
+        <div className="space-y-3 px-4 py-3.5">
+          {/* Self-test result — readiness verdict (engine + language +
+              vocabulary + mic), the fast way to see WHY a word won't wake.
+              One surface for both verdicts; the status ink carries it. */}
+          {showResultNote && selfTest.data && (
+            <SettingsNote>
+              <p className={selfTest.data.ok ? "text-success" : "text-destructive"}>
                 {selfTest.data.message}
               </p>
               {selfTest.data.hint && (
                 <p className="mt-1 text-muted-foreground">{selfTest.data.hint}</p>
               )}
-              <p className="mt-1 font-mono text-meta text-muted-foreground">
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
                 engine: {selfTest.data.engine} · language: {selfTest.data.language}
                 {selfTest.data.phrase_in_vocab === false ? " · not in vocabulary" : ""}
                 {selfTest.data.mic_ok ? "" : " · mic quiet"}
               </p>
-            </div>
+            </SettingsNote>
           )}
 
-          {/* Save result */}
           {result && (
-            <div className="mt-stack rounded-md bg-secondary p-4 text-body">
+            <SettingsNote>
               <p className={result.degraded ? "text-warning" : "text-success"}>
                 {result.degraded
                   ? t("settings_view.wake_word.degraded_warning")
                   : result.message}
               </p>
-              <p className="mt-1 font-mono text-meta text-muted-foreground">
+              <p className="mt-1 font-mono text-xs text-muted-foreground">
                 engine: {result.resolved_engine}
               </p>
               {result.degraded && result.message && (
@@ -758,17 +583,12 @@ function WakeWordPanel() {
                 </p>
               )}
 
-              {/* In-app recovery for the degraded ("stt_match only") scenario:
-                  wires the backend's own suggestion (Settings -> Wake word ->
-                  "Download wake model") to a real button instead of a
-                  CLI/API-only route. */}
+              {/* In-app recovery for the degraded ("stt_match only")
+                  scenario: the backend's own suggestion as a real button. */}
               {result.degraded && (
                 <div className="mt-stack">
                   {wakeModelDownload.state === "idle" && (
-                    <Button
-                      size="sm"
-                      onClick={() => void onDownloadWakeModel()}
-                    >
+                    <Button size="sm" onClick={() => void onDownloadWakeModel()}>
                       {t("settings_view.wake_word.download_model_button")}
                     </Button>
                   )}
@@ -804,11 +624,38 @@ function WakeWordPanel() {
                   )}
                 </div>
               )}
-            </div>
+            </SettingsNote>
           )}
+
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void onSelfTest()}
+              disabled={selfTest.state === "running" || loading || !trimmedPhrase}
+            >
+              {selfTest.state === "running" ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  {t("settings_view.wake_word.self_test_running")}
+                </>
+              ) : (
+                t("settings_view.wake_word.self_test_button")
+              )}
+            </Button>
+            <Button
+              size="sm"
+              onClick={onSave}
+              disabled={saving || loading || !trimmedPhrase}
+            >
+              {saving
+                ? t("settings_view.saving")
+                : t("settings_view.wake_word.save")}
+            </Button>
+          </div>
         </div>
-      </div>
-    </div>
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 

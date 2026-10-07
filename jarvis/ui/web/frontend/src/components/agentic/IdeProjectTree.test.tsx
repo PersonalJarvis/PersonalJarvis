@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { IdeProjectTree } from "./IdeProjectTree";
+import { IdeProjectTree, resetLauncherCacheForTests } from "./IdeProjectTree";
 import { useIdeProjectsStore } from "@/store/ideProjects";
 import { IdeApiError, type IdeProject } from "@/lib/agenticIdeApi";
 import { ChatLibraryError } from "@/lib/chatLibraryApi";
@@ -36,6 +36,7 @@ const project = (id = "p1", pinned = false) => ({ id, path: `/${id}`, name: id =
   workspaces: [{ id: `${id}-w1`, name: "Work", status: "open", live_terminals: 1, terminals: 1, restorable: true }] }) as IdeProject;
 
 beforeEach(() => {
+  resetLauncherCacheForTests();
   localStorage.clear();
   patchProject.mockReset().mockResolvedValue({});
   openProject.mockReset().mockResolvedValue({ id: "p1" });
@@ -107,7 +108,7 @@ it("expands a manually collapsed project when its first workspace becomes active
   expect(screen.getByTestId("ide-workspace-p1-w1")).toBeDefined();
 });
 
-it("counts agent sessions across a project's workspaces", () => {
+it("counts agent sessions per row, and on the header only when folded", () => {
   const withTwo = { ...project(), workspaces: [
     { ...project().workspaces[0], terminals: 6 },
     { ...project().workspaces[0], id: "p1-w2", terminals: 3 },
@@ -115,6 +116,7 @@ it("counts agent sessions across a project's workspaces", () => {
   useIdeProjectsStore.setState({ projects: [withTwo] });
   render(<IdeProjectTree />);
   // Open, the rows carry their own counts; folded, the header sums them.
+  expect(screen.getByLabelText("6 agent sessions").textContent).toBe("6");
   expect(screen.queryByLabelText("9 agent sessions")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Collapse App" }));
   expect(screen.getByLabelText("9 agent sessions").textContent).toBe("9");
@@ -143,6 +145,12 @@ it("marks a queued workspace before the active workspace changes", () => {
   const row = screen.getByTestId("ide-workspace-p1-w1");
   expect(row.getAttribute("aria-busy")).toBe("true");
   expect(row.textContent).toContain("Switching workspace");
+  // The ⋯ button shares the spinner's spot, so it stays hidden while switching.
+  const menu = screen.getByRole("button", { name: "Workspace actions for Work" });
+  expect(menu.className).toContain("pointer-events-none");
+  expect(menu.className).not.toContain("group-hover/space:opacity-100");
+  act(() => useIdeProjectsStore.getState().setPendingWorkspaceId(null));
+  expect(menu.className).toContain("group-hover/space:opacity-100");
 });
 
 it("gives every workspace row a ⋯ menu and dispatches Jarvis Live", () => {
@@ -317,6 +325,47 @@ it("offers the project's real launchers and runs them", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
   fireEvent.click(await screen.findByRole("menuitem", { name: "Open on GitHub" }));
   await waitFor(() => expect(openProjectIn).toHaveBeenCalledWith("p1", "remote"));
+});
+
+it("shows VS Code and Cursor with their logos and greys out the one not installed", async () => {
+  fetchProjectLaunchers.mockResolvedValue({
+    file_manager: true, remote_url: null, remote_label: null,
+    editors: [{ id: "code", label: "VS Code", installed: true }, { id: "cursor", label: "Cursor", installed: false }],
+  });
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  const vscode = await screen.findByTestId("ide-project-menu-editor-code");
+  const cursor = screen.getByTestId("ide-project-menu-editor-cursor");
+  expect((vscode as HTMLButtonElement).disabled).toBe(false);
+  expect(screen.getByTestId("ide-project-menu-editor-code-logo").className).not.toContain("grayscale");
+  expect((cursor as HTMLButtonElement).disabled).toBe(true);
+  expect(cursor.textContent).toBe("Open in CursorNot installed");
+  expect(screen.getByTestId("ide-project-menu-editor-cursor-logo").className).toContain("grayscale");
+  fireEvent.click(cursor);
+  expect(openProjectIn).not.toHaveBeenCalled();
+});
+
+it("has the editors ready the moment the menu opens", async () => {
+  render(<IdeProjectTree />);
+  await waitFor(() => expect(fetchProjectLaunchers).toHaveBeenCalledWith("p1"));
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  // Synchronously present: no await between the click and the query.
+  expect(screen.getByRole("menuitem", { name: "Open in VS Code" })).toBeDefined();
+});
+
+it("says at once that the editor is opening, and when it could not start", async () => {
+  const pushToast = vi.fn();
+  const { useEventStore } = await import("@/store/events");
+  useEventStore.setState({ pushToast } as never);
+  render(<IdeProjectTree />);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open in VS Code" }));
+  expect(pushToast).toHaveBeenCalledWith("info", "Opening VS Code…");
+  openProjectIn.mockResolvedValueOnce(false);
+  fireEvent.click(screen.getByRole("button", { name: "Project actions for App" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open in VS Code" }));
+  await waitFor(() => expect(pushToast).toHaveBeenCalledWith("error", "VS Code could not be started"));
 });
 
 it("hides launchers the backend cannot offer", async () => {

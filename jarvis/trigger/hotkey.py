@@ -9,7 +9,10 @@ per-OS work lives in ``jarvis/trigger/backends/``:
     (``backends/global_hotkeys.py`` — the ``_KEY_MAP``, the single-checker
     refcount, the remove-by-string + pre-remove-on-reentry sequence — relocated
     **verbatim** because each line carries a hard-won BUG fix, AD-7).
-  * macOS / Linux-X11 use ``pynput`` (``backends/pynput.py``).
+  * macOS uses a listen-only Quartz event tap (``backends/quartz.py``), which
+    needs Input Monitoring only and is created lazily: the trigger re-arms it
+    when the permission service reports the grant (no restart, no second path).
+  * Linux-X11 uses ``pynput`` (``backends/pynput.py``).
   * Wayland / no-hotkey hosts get ``backends/noop.py`` (logged-once no-op, AD-8).
 
 The backend is chosen by ``make_hotkey_backend()`` from the shared
@@ -48,7 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -69,6 +72,21 @@ from jarvis.trigger.backends.global_hotkeys import (
 )
 
 log = logging.getLogger(__name__)
+
+# How often a trigger whose backend waits for Input Monitoring renews its
+# background permission episode. The service closes an unresolved episode after
+# 10 minutes without calling any listener, and it tells a listener about a grant
+# only inside an open episode, so a grant given later than that would never
+# re-arm the shortcuts. Renewing well inside that window keeps the episode open
+# for as long as the backend waits (a cheap silent read, never a request).
+_EPISODE_RENEW_S = 240.0
+# How often the liveness watch asks a tap that exposes ``report_if_deaf`` whether
+# it looks deaf (a cheap flag check until a tap runs and the user types). Never
+# restarts anything: a deaf tap only produces a "quit and reopen" hint.
+_LIVENESS_POLL_S = 15.0
+# How long ``__aexit__`` waits for a grant-driven ``backend.start`` that is
+# already running in a worker thread (the tap handshake takes up to 5 s).
+_GRANT_TASK_JOIN_S = 6.0
 
 
 def __getattr__(name: str):
@@ -429,8 +447,8 @@ def mouse_hotkeys_available(platform: str | None = None) -> tuple[bool, str]:
     * Windows — always: the backend polls ``GetAsyncKeyState``, which reports
       mouse buttons alongside keys.
     * macOS — needs pyobjc's ``Quartz`` (the event tap already exists; it just
-      listens for mouse events too now) plus the Accessibility / Input
-      Monitoring grants the backend already checks at ``start``.
+      listens for mouse events too now) plus the Input Monitoring grant the
+      backend waits for at ``start`` (a listen-only tap needs nothing else).
     * Linux/X11 — needs ``pynput`` (the opt-in ``[desktop-linux]`` extra).
       Wayland has no global button grabs at all, the same reason keyboard
       shortcuts degrade there.
@@ -691,6 +709,15 @@ class HotkeyTrigger:
         push_to_talk: frozenset[str] | set[str] = frozenset(),
     ) -> None:
         self._bindings_cfg = bindings
+        # Grant-driven re-arm (backends that wait for a permission only).
+        self._unsubscribe_grant: Callable[[], None] | None = None
+        self._grant_task: asyncio.Task[None] | None = None
+        # Keeps the service's background episode open while the backend waits.
+        self._keepalive_task: asyncio.Task[None] | None = None
+        # Reports a tap that hears nothing although the grant is visible.
+        self._liveness_task: asyncio.Task[None] | None = None
+        # Set once ``__aexit__`` begins: no new grant re-arm may start after that.
+        self._closing = False
         # Event names that should fire on BOTH key edges (push-to-talk): such
         # a binding emits ``<name>_press`` on the down edge and
         # ``<name>_release`` on the up edge, so the consumer can start
@@ -756,6 +783,40 @@ class HotkeyTrigger:
                 log.exception("Hotkey %r handler failed (edge dropped).", event_name)
 
         return _on_press
+
+    def listening(self) -> bool | None:
+        """Is the backend's OS listener actually running right now?
+
+        Three answers, like ``chord_is_down``: ``True`` / ``False`` when the
+        backend can say (the macOS event tap: ``False`` while Input Monitoring is
+        missing and no tap exists; the no-op backend and a failed backend
+        selection: ``False``, nothing listens), ``None`` when it cannot (Windows
+        poller, pynput, not entered yet). A consumer that must not promise a key
+        it does not hold (the "Esc to cancel" pill) treats only ``False`` as "no".
+        """
+        backend = self._backend
+        if backend is None:
+            # Entered but no backend (selection failed) or already left: nothing
+            # listens. Before ``__aenter__`` there is nothing to say yet.
+            return False if self._loop is not None else None
+        probe = getattr(backend, "is_listening", None)
+        if not callable(probe):
+            return None
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 — a failed probe is "unknown"
+            log.debug("is_listening() failed", exc_info=True)
+            return None
+
+    @property
+    def armed(self) -> bool:
+        """True only when the backend positively reports a running listener."""
+        return self.listening() is True
+
+    @property
+    def needs_input_monitoring(self) -> bool:
+        """The backend declined to start because Input Monitoring is not granted."""
+        return getattr(self._backend, "waiting_for_permission", False) is True
 
     def chord_is_down(self, event_name: str) -> bool | None:
         """Is the chord bound to ``event_name`` physically down right now?
@@ -854,6 +915,7 @@ class HotkeyTrigger:
 
     async def __aenter__(self) -> HotkeyTrigger:
         self._loop = asyncio.get_running_loop()
+        self._closing = False
 
         # Choose the per-OS backend (Windows global-hotkeys / pynput / no-op).
         # The factory itself never raises (AD-6); a missing optional package is
@@ -890,6 +952,7 @@ class HotkeyTrigger:
         self._backend = backend
         self._registered = bindings
         self._combo_strings = combo_strings
+        self._watch_for_grant(backend)
         log.info(
             "Hotkey-Trigger armed (%s): %s",
             type(backend).__name__,
@@ -899,7 +962,182 @@ class HotkeyTrigger:
         )
         return self
 
+    # ------------------------------------------------------------------
+    # Grant-driven re-arm (a backend that waits for a permission: macOS tap)
+    # ------------------------------------------------------------------
+
+    def _watch_for_grant(self, backend: HotkeyBackend) -> None:
+        """Re-arm this trigger's backend when Input Monitoring gets granted.
+
+        Only a backend that can wait for the permission (it exposes
+        ``waiting_for_permission``) takes part; Windows, Linux and the no-op
+        backend never touch the permission service. While the backend waits we
+        open a BACKGROUND episode (``interactive=False``: no native request, no
+        toast, status snapshot only) because the service tells its listeners about
+        a grant only inside an open episode. Never raises.
+        """
+        if not hasattr(backend, "waiting_for_permission"):
+            return
+        self._start_liveness_watch(backend)
+        try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415
+                get_permission_service,
+            )
+            from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+            service = get_permission_service()
+            if self._unsubscribe_grant is None:
+                self._unsubscribe_grant = service.add_listener(
+                    PermissionId.INPUT_MONITORING, self._on_input_monitoring_granted
+                )
+            if self.needs_input_monitoring:
+                service.ensure(
+                    PermissionId.INPUT_MONITORING,
+                    feature="global_shortcuts",
+                    interactive=False,
+                )
+                self._start_episode_keepalive()
+        except Exception:  # noqa: BLE001 — shortcuts must never take voice down
+            log.debug("Watching for the Input Monitoring grant failed.", exc_info=True)
+
+    def _start_liveness_watch(self, backend: HotkeyBackend) -> None:
+        """Watch a backend that can report a deaf tap (one task at most)."""
+        task = self._liveness_task
+        loop = self._loop
+        if (
+            not callable(getattr(backend, "report_if_deaf", None))
+            or (task is not None and not task.done())
+            or loop is None
+            or loop.is_closed()
+        ):
+            return
+        self._liveness_task = loop.create_task(
+            self._watch_liveness(backend), name="hotkey-liveness-watch"
+        )
+
+    async def _watch_liveness(self, backend: HotkeyBackend) -> None:
+        """Ask the backend every ``_LIVENESS_POLL_S`` whether its tap is deaf.
+
+        The backend tells the permission service ONCE per tap (a ``restart_hint``
+        episode) and ends the episode again if the tap starts hearing events; this
+        loop only gives it a worker thread and a clock. It ends when the backend
+        says the tap has proven healthy, or with the trigger. AP-18: nothing escapes.
+        """
+        try:
+            while True:
+                await asyncio.sleep(_LIVENESS_POLL_S)
+                if self._closing or self._backend is not backend:
+                    return
+                if not await asyncio.to_thread(backend.report_if_deaf):
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a lost liveness pass only delays a hint, never voice
+            log.debug("The hotkey liveness watch failed.", exc_info=True)
+
+    def _start_episode_keepalive(self) -> None:
+        """Renew the background episode while the backend waits (one task at most)."""
+        task = self._keepalive_task
+        loop = self._loop
+        if (task is not None and not task.done()) or loop is None or loop.is_closed():
+            return
+        self._keepalive_task = loop.create_task(
+            self._keep_episode_open(), name="hotkey-episode-keepalive"
+        )
+
+    async def _keep_episode_open(self) -> None:
+        """Re-touch the service episode every ``_EPISODE_RENEW_S`` while the backend waits.
+
+        ``service.ensure(interactive=False)`` blocks on a native read, so it runs
+        in a worker thread. It makes no request and shows no toast; it only keeps
+        the episode (and with it the grant listener) alive past the service's
+        own expiry. Ends once the backend no longer waits. AP-18: nothing escapes.
+        """
+        try:
+            from jarvis.platform.permission_service import (  # noqa: PLC0415
+                get_permission_service,
+            )
+            from jarvis.platform.permissions import PermissionId  # noqa: PLC0415
+
+            while True:
+                await asyncio.sleep(_EPISODE_RENEW_S)
+                if self._backend is None or not self.needs_input_monitoring:
+                    return
+                await asyncio.to_thread(
+                    get_permission_service().ensure,
+                    PermissionId.INPUT_MONITORING,
+                    feature="global_shortcuts",
+                    interactive=False,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a lost renewal only delays the re-arm, never voice
+            log.debug("Renewing the Input Monitoring episode failed.", exc_info=True)
+
+    def _on_input_monitoring_granted(self) -> None:
+        """Permission-service listener: cheap, never raises, hops onto our loop."""
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._spawn_grant_rearm)
+        except RuntimeError:
+            log.debug("The loop closed before the shortcut re-arm could be scheduled.")
+
+    def _spawn_grant_rearm(self) -> None:
+        task = self._grant_task
+        if task is not None and not task.done():
+            return  # one re-arm in flight is enough
+        loop = self._loop
+        if self._closing or self._backend is None or loop is None or loop.is_closed():
+            return
+        self._grant_task = loop.create_task(self._rearm_after_grant(), name="hotkey-grant-rearm")
+
+    async def _rearm_after_grant(self) -> None:
+        """Start the waiting backend off the loop once Input Monitoring is granted.
+
+        The backend already holds the bindings, so ``backend.start`` creating the tap is
+        the whole re-arm (a pipeline reload would only register the same bindings again).
+        ``backend.start`` is idempotent and blocks for the tap thread handshake,
+        so it runs in a worker thread. AP-18: nothing escapes this task.
+        """
+        backend = self._backend
+        if backend is None:
+            return
+        try:
+            await asyncio.to_thread(backend.start)
+            log.info(
+                "Input Monitoring was allowed — global shortcuts %s.",
+                "are armed" if self.listening() is not False else "could not be armed yet",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — a failed re-arm leaves shortcuts off, never voice
+            log.error(
+                "Re-arming the global shortcuts after the grant failed — they stay off "
+                "until the next restart; voice still works via wake word / mascot click.",
+                exc_info=True,
+            )
+
     async def __aexit__(self, *exc_info) -> None:
+        self._closing = True
+        unsubscribe, self._unsubscribe_grant = self._unsubscribe_grant, None
+        if unsubscribe is not None:
+            unsubscribe()
+        keepalive, self._keepalive_task = self._keepalive_task, None
+        if keepalive is not None and not keepalive.done():
+            keepalive.cancel()
+        liveness, self._liveness_task = self._liveness_task, None
+        if liveness is not None and not liveness.done():
+            liveness.cancel()
+        task, self._grant_task = self._grant_task, None
+        if task is not None and not task.done():
+            # Cancelling the task would NOT stop the worker thread already inside
+            # ``backend.start``: that start would finish after ``stop`` below and
+            # leave a live tap on a backend nobody owns. Let it finish first.
+            await asyncio.wait({task}, timeout=_GRANT_TASK_JOIN_S)
+            if not task.done():
+                task.cancel()
         backend = self._backend
         if backend is None:
             return  # never created (degraded) — nothing to tear down
@@ -939,6 +1177,11 @@ class HotkeyTrigger:
             return  # entered degraded (no package) — nothing to re-arm
 
         new_bindings, combo_strings = self._build_bindings()
+        grant_task = self._grant_task
+        if grant_task is not None and not grant_task.done():
+            # A grant-driven start is in a worker thread: let it finish before the
+            # backend is torn down under it.
+            await asyncio.wait({grant_task}, timeout=6.0)
         try:
             backend.stop()
             backend.unregister()
@@ -956,6 +1199,7 @@ class HotkeyTrigger:
             backend.start()
             self._registered = new_bindings
             self._combo_strings = combo_strings
+            self._watch_for_grant(backend)
             log.info(
                 "🔁 Hotkey-Live-Reload — re-armed: %s",
                 ", ".join(

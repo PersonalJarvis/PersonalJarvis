@@ -182,6 +182,34 @@ def test_pair_first_dm_claims_empty_allowlist(
     assert ch._cfg.allowed_user_ids == [777]  # noqa: SLF001
 
 
+def test_pair_first_dm_refused_after_the_pairing_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stranger who finds the bot after the owner's setup window closed must
+    not claim it: messaging the bot is prompting Jarvis with its tools."""
+    persisted: list[int] = []
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.add_discord_allowed_user_id",
+        lambda user_id: persisted.append(user_id),
+    )
+    cfg = DiscordConfig(enabled=True, allowed_user_ids=[], pair_on_first_dm=True)
+    ch = _make_channel(cfg)
+    ch._pairing_closes_at = time.monotonic() - 1.0  # noqa: SLF001
+    assert ch._pair_first_dm(_make_message(user_id=666)) is False  # noqa: SLF001
+    assert ch._cfg.allowed_user_ids == []  # noqa: SLF001
+    assert persisted == []
+
+
+def test_pairing_window_spans_the_documented_length() -> None:
+    from jarvis.channels.base import FIRST_CONTACT_PAIRING_WINDOW_S
+
+    before = time.monotonic()
+    ch = _make_channel(DiscordConfig(enabled=True, allowed_user_ids=[]))
+    closes_at = ch._pairing_closes_at  # noqa: SLF001
+    assert before + FIRST_CONTACT_PAIRING_WINDOW_S <= closes_at
+    assert closes_at <= time.monotonic() + FIRST_CONTACT_PAIRING_WINDOW_S
+
+
 def test_pair_first_dm_off_when_allowlist_nonempty() -> None:
     cfg = DiscordConfig(enabled=True, allowed_user_ids=[1], pair_on_first_dm=True)
     ch = _make_channel(cfg)

@@ -14,6 +14,12 @@ an idle pet costs next to nothing). So this renderer works the other way round:
   frame boundary or the next state change the state machine will make on its
   own (a one-shot ending, the pet falling asleep).
 
+Idle acts: while the pet idles, it now and then plays one of its acts (a yawn,
+a stretch, a puff of fire) once and goes back to idling — after a random pause
+of :data:`ACT_FIRST_DELAY_S` once it starts idling, then every
+:data:`ACT_GAP_S`, never the same act twice in a row. Any other state cancels
+a running act; the overlay's frame timer covers the wait, so nothing extra runs.
+
 Talking follows the voice: the talking row is drawn closed → widest, and while
 a live output level arrives the frame is picked from that level (smoothed,
 bucketed — an unchanged level gives an unchanged key, so no repaint). Without a
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import sys
 import time
 from collections.abc import Callable, Hashable, Mapping, Sequence
@@ -42,8 +49,8 @@ from ui.orb import controls as orb_controls
 log = logging.getLogger("jarvis.orb")
 
 #: The visible figure's larger side at 100 % display scaling and ``pet_scale``
-#: 1.0, in logical pixels — about the size of the companion in the Codex app,
-#: so the control strip under it (``controls.PET_SLOT``) reads as its own.
+#: 1.0, in logical pixels — a desk companion's size, big enough that the
+#: control strip under it (``controls.PET_SLOT``) reads as its own.
 PET_TARGET_FIGURE_PX = 180
 
 #: Nominal window edge before a pack is loaded (the real size replaces it).
@@ -72,6 +79,14 @@ LEVEL_OPEN_SPAN = 0.45
 
 #: Source pixels kept around the cropped figure (sparkles may touch the edge).
 _CROP_MARGIN = 1
+
+#: Seconds of idling before the first idle act, as a random ``(low, high)`` range.
+#: Long on purpose: a pet that is mostly still feels calm, not hyperactive.
+ACT_FIRST_DELAY_S = (40.0, 100.0)
+#: Seconds between the end of one idle act and the next, as a random range.
+ACT_GAP_S = (90.0, 240.0)
+#: Frame-key prefix of an idle act (an act and a state can share a name).
+_ACT_KEY = "act:"
 
 _ColorKey = tuple[int, int, int]
 
@@ -267,8 +282,16 @@ class PetRenderer:
         loader: Callable[[str], Any] | None = None,
         to_color_key: Callable[[Image.Image, int, _ColorKey], Image.Image] | None = None,
         machine: Any | None = None,
+        rng: random.Random | None = None,
     ) -> None:
         self._clock = clock
+        self._rng = rng or random.Random()  # noqa: S311 — a pet's whim, not crypto
+        #: The idle stretch the act schedule belongs to (its start time).
+        self._idle_epoch: float | None = None
+        #: The running act ``(name, started_at)``, and when the next one is due.
+        self._act: tuple[str, float] | None = None
+        self._act_due = math.inf
+        self._last_act: str | None = None
         self._color_key = tuple(int(c) for c in color_key)
         self._dpi_ratio = float(dpi_ratio)
         self._pet_scale = float(pet_scale)
@@ -285,6 +308,7 @@ class PetRenderer:
         self._level = 0.0
         self._level_at = -math.inf
         self._smoothed = 0.0
+        self._greet_until = 0.0
         self.load(pet_id)
 
     # -- pack ------------------------------------------------------------
@@ -320,13 +344,21 @@ class PetRenderer:
 
     def _rescale(self) -> None:
         self._frames = {}
+        self._act_names: tuple[str, ...] = ()
+        self._act = None
         self._blank = None
         pack = self._pack
         if pack is None:
             self._use_strip_only_size()
             return
         edge = int(pack.manifest.frame_size)
-        source: Mapping[str, Any] = pack.frames
+        acts: Mapping[str, Any] = getattr(pack, "acts", None) or {}
+        # Act frames join the crop (a flame may reach past the idle figure)
+        # and are scaled with the states, under a prefixed key.
+        source: Mapping[str, Any] = {
+            **pack.frames,
+            **{_ACT_KEY + str(name): seq for name, seq in acts.items()},
+        }
         try:
             crop, (idle_w, idle_h) = figure_crop(source, edge)
             factor = pixel_factor(max(idle_w, idle_h), self._dpi_ratio, self._pet_scale)
@@ -353,6 +385,7 @@ class PetRenderer:
             self._use_strip_only_size()
             return
         self._frames = frames
+        self._act_names = tuple(name for name in acts if frames.get(_ACT_KEY + name))
         self._factor = factor
         self._size = ((crop[2] - crop[0]) * factor, (crop[3] - crop[1]) * factor)
         self._figure_width = idle_w * factor
@@ -399,13 +432,37 @@ class PetRenderer:
     # -- state feed ------------------------------------------------------
 
     def on_mode(self, mode: str) -> None:
+        if mode != "listen":
+            self._greet_until = 0.0
         self._machine.on_mode(mode)
+
+    def greet(self) -> None:
+        """Briefly nod on activation, using the selected pet's listening row."""
+        if self.has_figure and self.state() == "listening":
+            self._greet_until = float(self._clock()) + 0.7
+
+    def _greet_inset(self) -> int:
+        remaining = self._greet_until - float(self._clock())
+        if remaining <= 0 or self.state() != "listening":
+            return 0
+        # A small squash and rise stays inside the existing window bounds.
+        phase = (0.7 - remaining) / 0.7
+        return max(0, round(self._size[1] * 0.10 * math.sin(math.pi * phase) ** 2))
 
     def on_outcome(self, kind: str) -> None:
         self._machine.on_outcome(kind)
 
     def on_activity(self) -> None:
         self._machine.on_activity()
+
+    def on_action(self, kind: str | None) -> None:
+        self._machine.on_action(kind)
+
+    def on_busy(self, busy: bool) -> None:
+        self._machine.on_busy(busy)
+
+    def on_held(self, held: bool) -> None:
+        self._machine.on_held(held)
 
     def state(self) -> str:
         return str(self._machine.state())
@@ -434,9 +491,48 @@ class PetRenderer:
 
     # -- frame selection -------------------------------------------------
 
+    def _idle_act(self, state: str) -> tuple[str, Any, int, float] | None:
+        """The idle act on screen now, starting or ending one as its time comes.
+
+        Returns ``(frame key, spec, frame index, elapsed)`` while an act plays,
+        else ``None``. Only an idling pet with acts ever plays one.
+        """
+        if state != "idle" or not self._act_names:
+            self._idle_epoch = None
+            self._act = None
+            return None
+        now = float(self._clock())
+        epoch = float(self._machine.state_started_at())
+        if epoch != self._idle_epoch:
+            self._idle_epoch = epoch
+            self._act = None
+            self._act_due = epoch + self._rng.uniform(*ACT_FIRST_DELAY_S)
+        acts = self._pack.manifest.acts
+        if self._act is not None:
+            name, started = self._act
+            spec = acts[name]
+            if now - started >= spec.frames / float(spec.fps):
+                self._act = None
+                self._act_due = now + self._rng.uniform(*ACT_GAP_S)
+        if self._act is None and now >= self._act_due:
+            choices = [n for n in self._act_names if n != self._last_act] or list(self._act_names)
+            name = self._rng.choice(choices)
+            self._act = (name, now)
+            self._last_act = name
+        if self._act is None:
+            return None
+        name, started = self._act
+        spec = acts[name]
+        elapsed = max(0.0, now - started)
+        return _ACT_KEY + name, spec, frame_index(elapsed, spec.frames, spec.fps, False), elapsed
+
     def _current(self) -> tuple[str, Any, int, float, bool]:
         """(resolved state, spec, frame index, elapsed seconds, level-driven) for now."""
         state = self.state()
+        act = self._idle_act(state)
+        if act is not None:
+            key, spec, index, elapsed = act
+            return key, spec, index, elapsed, False
         resolved, spec = self._pack.manifest.spec_for(state)
         resolved = str(resolved)
         sequence = self._frames.get(resolved) or self._frames.get(state) or ()
@@ -462,12 +558,16 @@ class PetRenderer:
         if self._pack is None:
             return ("none", self._size)
         resolved, _spec, index, _elapsed, _driven = self._current()
-        return (self._pet_id, self._factor, resolved, index)
+        key = (self._pet_id, self._factor, resolved, index)
+        inset = self._greet_inset()
+        return (*key, inset) if inset else key
 
     def next_frame_delay_ms(self, t: float = 0.0) -> int:
         """How long the overlay may sleep before the next repaint is due."""
         _ = t
         waits: list[float] = []
+        if self._greet_until > float(self._clock()) and self.state() == "listening":
+            waits.append(1 / 30)
         change = self._machine.next_change_in()
         if change is not None:
             waits.append(max(0.0, float(change)))
@@ -481,6 +581,11 @@ class PetRenderer:
                 boundary = seconds_to_next_frame(elapsed, frames, float(spec.fps), loop)
                 if boundary is not None:
                     waits.append(boundary)
+            if resolved.startswith(_ACT_KEY):
+                # The act's last frame holds until the act is over.
+                waits.append(max(0.0, spec.frames / float(spec.fps) - elapsed))
+            elif self._idle_epoch is not None and math.isfinite(self._act_due):
+                waits.append(max(0.0, self._act_due - float(self._clock())))
         if not waits:
             return MAX_FRAME_DELAY_MS
         # A hair past the boundary, so the tick lands on the new frame rather
@@ -503,4 +608,14 @@ class PetRenderer:
             if self._blank is None:
                 self._blank = Image.new("RGB", self._size, self._color_key)
             return self._blank
-        return sequence[min(index, len(sequence) - 1)]
+        frame = sequence[min(index, len(sequence) - 1)]
+        inset = self._greet_inset()
+        if not inset:
+            return frame
+        result = Image.new("RGB", self._size, self._color_key)
+        # Preserve pixel edges; never crop the sprite or change host geometry.
+        nodded = frame.resize(
+            (frame.width, max(1, frame.height - inset)), Image.Resampling.NEAREST
+        )
+        result.paste(nodded, (0, inset))
+        return result

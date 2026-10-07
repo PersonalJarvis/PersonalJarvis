@@ -35,7 +35,7 @@ from typing import Any
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.safety.command_impact import DESTRUCTIVE, classify_command
-from jarvis.safety.explicit_intent import utterance_confirms_destruction
+from jarvis.safety.explicit_intent import command_confirms_destruction
 
 if sys.platform == "win32":
     _SHELL_LABEL = "Windows PowerShell 5.1"
@@ -123,6 +123,7 @@ def _powershell_argv(command: str) -> list[str]:
 
 class RunShellTool:
     name: str = "run_shell"
+    read_only: bool = False
     risk_tier: str = "monitor"
     description: str = (
         f"Runs a shell command via {_SHELL_LABEL} on this machine. "
@@ -170,17 +171,14 @@ class RunShellTool:
     def intent_confirms_args(self, args: dict[str, Any], utterance: str) -> bool:
         """True when the user's own words already authorize this command.
 
-        Claude-Code permission model: a destructive command the USER asked
-        for by name ("delete the folder Urlaub") needs no second question —
-        the ToolExecutor consults this hook before arming a confirmation.
-        Only the destruction verb-class is matched (deterministic vocabulary,
-        no entity matching — STT garbles names); a brain-initiated deletion
-        whose utterance never mentioned deleting still confirms.
+        Only an unambiguous single deletion of the exact absolute path named
+        by the user can waive approval. Inferred targets and general shell
+        programs keep the ordinary confirmation workflow.
         """
         command = (args.get("command") or "").strip()
         if not command or classify_command(command).level != DESTRUCTIVE:
             return False
-        return utterance_confirms_destruction(utterance)
+        return command_confirms_destruction(command, utterance)
 
     def describe_args(self, args: dict[str, Any]) -> dict[str, str] | None:
         """Plain-language impact summary for the confirmation question.

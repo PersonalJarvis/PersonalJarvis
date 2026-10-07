@@ -13,6 +13,9 @@ import { useEventStore } from "@/store/events";
 import { AgentSwatch } from "../AgentSwatch";
 import type { SocietyAgent } from "../data";
 import { AgentMemoryFiles, LearnedInstructions } from "./AgentKnowledge";
+import { CompanionEditor } from "../companion/CompanionEditor";
+import { resolveCompanion, type CompanionAppearance } from "../companion/appearance";
+import { defaultRecipe } from "../figures/figureRecipe";
 
 const fieldClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60";
 
@@ -41,6 +44,10 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
   const [saved, setSaved] = useState({ title: agent.title, description: agent.description });
   const [discard, setDiscard] = useState(false);
   const [tab, setTab] = useState("profile");
+  // The look edited here is the same symbol the lists and the Jarvis Verse draw.
+  const [look, setLook] = useState<CompanionAppearance>(() => resolveCompanion(agent.agentId, agent.figure?.companion));
+  const [savedLook, setSavedLook] = useState(() => JSON.stringify(look));
+  const lookDirty = !lead && JSON.stringify(look) !== savedLook;
   const instructions = useQuery({
     queryKey: ["society", "profile-instructions", agent.agentId],
     enabled: lead && !sample,
@@ -49,13 +56,17 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
   });
   const content = lead ? (leadDraft ?? instructions.data?.content ?? "") : description;
   const dirty = lead ? leadDraft !== null && leadDraft !== (instructions.data?.content ?? "")
-    : title !== saved.title || description !== saved.description;
+    : title !== saved.title || description !== saved.description || lookDirty;
   const save = useMutation({
     mutationFn: async () => {
       const response = await fetch(lead ? "/api/settings/agent-instructions" : `/api/society/agents/${encodeURIComponent(agent.agentId)}`, {
         method: lead ? "PUT" : "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lead ? { content } : { title: title.trim(), description }),
+        body: JSON.stringify(lead ? { content } : {
+          title: title.trim(), description,
+          // Keep the character recipe and imports; only the companion look changes.
+          ...(lookDirty ? { avatar: { ...(agent.figure ?? defaultRecipe()), companion: look } } : {}),
+        }),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json() as Promise<{ content?: string; filename?: string }>;
@@ -67,9 +78,11 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
       } else {
         setTitle(title.trim());
         setSaved({ title: title.trim(), description });
+        setSavedLook(JSON.stringify(look));
       }
       setDiscard(false);
       void client.invalidateQueries({ queryKey: ["society", "roster"] });
+      if (!lead) void client.invalidateQueries({ queryKey: ["mars"] });
     },
   });
   const close = () => {
@@ -84,7 +97,12 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
         <Dialog.Overlay className="fixed inset-0 z-50 bg-scrim/60 backdrop-blur-sm" />
         <Dialog.Content data-testid="agent-profile-dialog" onCloseAutoFocus={(event) => { event.preventDefault(); opener.current?.focus(); }} className="fixed left-1/2 top-1/2 z-50 flex h-[min(82dvh,780px)] w-[min(800px,calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-popover text-foreground shadow-float outline-none">
           <header className="flex shrink-0 items-center gap-4 border-b border-border p-6">
-            <AgentSwatch agent={agent} size={56} />
+            {lead ? <AgentSwatch agent={agent} size={56} /> : (
+              <button type="button" onClick={() => setTab("look")} aria-label={t("society.profile_card.look")} title={t("society.profile_card.look")}
+                className="rounded-xl p-1 transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <AgentSwatch agent={{ ...agent, figure: { ...(agent.figure ?? defaultRecipe()), companion: look } }} size={56} />
+              </button>
+            )}
             <div className="min-w-0 flex-1">
               <Dialog.Title className="truncate text-xl font-semibold">{displayName}</Dialog.Title>
               <Dialog.Description className="mt-1 truncate text-sm text-muted-foreground">{agent.title || t("society.profile_card.subtitle")}</Dialog.Description>
@@ -99,6 +117,7 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
           <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
             <TabsList className="mx-6 mt-4 w-fit shrink-0" aria-label={t("society.profile_card.subtitle")}>
               <TabsTrigger value="profile">{t("society.profile_card.profile")}</TabsTrigger>
+              {!lead && <TabsTrigger value="look">{t("society.profile_card.look")}</TabsTrigger>}
               <TabsTrigger value="memory">{t("society.profile_card.memory")}</TabsTrigger>
             </TabsList>
             <TabsContent value="profile" className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
@@ -120,6 +139,9 @@ export function AgentProfileDialog({ agent, sample, onClose }: {
                 <div><dt className="text-xs text-muted-foreground">{t("society.profile_card.location")}</dt><dd className="mt-1 break-all font-mono text-xs">{`society/${agent.agentId}/`}</dd></div>
               </dl>
             </TabsContent>
+            {!lead && <TabsContent value="look" className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+              <CompanionEditor value={look} onChange={setLook} disabled={sample || save.isPending} preview3d={false} agentId={agent.agentId} />
+            </TabsContent>}
             <TabsContent value="memory" className="mt-3 min-h-0 flex-1 overflow-hidden"><AgentMemoryFiles agentId={agent.agentId} sample={sample} /></TabsContent>
           </Tabs>
           <footer className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border px-6 py-4">

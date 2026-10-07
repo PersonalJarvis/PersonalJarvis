@@ -91,6 +91,21 @@ def isolated_profile_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "_verify_spawn_binary", lambda _path: None)
 
 
+@pytest.fixture
+def graphical_desktop_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the host to a desktop that can host the interactive login.
+
+    The login flow and the missing-profile status degrade on a headless Linux
+    host (no DISPLAY / WAYLAND_DISPLAY, e.g. a CI runner) and on a Linux
+    desktop without a terminal emulator. Tests about the desktop login flow
+    must not inherit that from the machine running them; the degraded paths
+    have their own dedicated tests.
+    """
+    monkeypatch.setattr(transport, "_headless_linux", lambda: False)
+    monkeypatch.setattr(transport, "_pure_wayland_linux", lambda: False)
+    monkeypatch.setattr(transport, "_linux_login_terminal_missing", lambda: False)
+
+
 class FakeStdin:
     def __init__(self, process: FakeProcess) -> None:
         self.process = process
@@ -383,7 +398,12 @@ async def test_lazy_start_handshake_scrubs_api_billing_environment_and_reaps_tre
     assert len(harness.calls) == 1
     assert client.ready is True
     argv, kwargs = harness.calls[0]
-    assert argv[:5] == (
+    codex_offset = argv.index("codex-test")
+    if os.name == "posix":
+        assert any(str(value).endswith("child_lifeline.py") for value in argv[:codex_offset])
+    else:
+        assert codex_offset == 0
+    assert argv[codex_offset:codex_offset + 5] == (
         "codex-test",
         "app-server",
         "--strict-config",
@@ -1141,6 +1161,7 @@ def test_capability_revalidates_profile_after_login_status_probe(
     assert capability.reason == "profile changed during status"
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_missing_dedicated_profile_is_a_login_required_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1682,6 +1703,7 @@ async def test_disconnect_leaves_a_foreign_mutation_untouched(
     assert transport._subscription_profile_mutating is True
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_reaper_launch_failure_releases_guard_and_state(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3340,6 +3362,16 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     import jarvis.core.paths as paths
 
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
+    if os.name == "posix":
+        # Exercise the Windows runtime layout while retaining real POSIX
+        # private-file checks; Win32 ACL APIs do not exist on this host.
+        def private_fixture_file(descriptor):
+            assert os.fstat(descriptor).st_mode & 0o777 == 0o600
+
+        monkeypatch.setattr(
+            "jarvis.core.exclusive_process_lock._validate_windows_file_security",
+            private_fixture_file,
+        )
     monkeypatch.setattr(transport.sys, "platform", "win32")
     monkeypatch.setattr(transport, "_normalized_machine", lambda: "x86_64")
     monkeypatch.setattr(
@@ -3377,6 +3409,11 @@ def test_exact_windows_codex_runtime_state_is_allowed_and_tampering_is_refused(
     wrapper = f'@echo off\n"{binary}" --codex-run-as-apply-patch %*\n'
     (runtime / "apply_patch.bat").write_text(wrapper, encoding="utf-8")
     (runtime / "applypatch.bat").write_text(wrapper, encoding="utf-8")
+
+    if os.name == "posix":
+        runtime.chmod(0o700)
+        for fixture_file in (home / "installation_id", *runtime.iterdir()):
+            fixture_file.chmod(0o600)
 
     assert (
         transport._validated_subscription_home(
@@ -3418,6 +3455,13 @@ def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    if os.name != "posix":
+        # Product code validates symlink aliases only on a POSIX host (Windows
+        # gets ``.cmd`` wrappers instead). A Windows host that may create
+        # symlinks returns ``os.readlink`` targets with the extended-length
+        # path prefix, so the simulated Linux layout never matches the trusted
+        # binary there.
+        pytest.skip("Unix runtime aliases are only validated on a POSIX host")
     import jarvis.core.paths as paths
 
     monkeypatch.setattr(paths, "user_data_dir", lambda: tmp_path / "data")
@@ -3483,6 +3527,7 @@ def test_exact_unix_codex_runtime_aliases_must_target_trusted_binary(
         )
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_subscription_login_guard_covers_process_and_reaper(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3577,6 +3622,7 @@ def test_subscription_login_guard_covers_process_and_reaper(
     assert transport._subscription_login_process is None
 
 
+@pytest.mark.usefixtures("graphical_desktop_host")
 def test_subscription_login_spawn_failure_releases_guard(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

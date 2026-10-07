@@ -43,6 +43,7 @@ from loguru import logger
 
 from .agent_sessions import ResumeHandle, has_conversation
 from .library import project_id_for
+from .work_timing import timestamp
 
 # Saves arrive from more than one thread (see `save`), and the last one has to
 # be the one that lands rather than the one that happened to finish its rename
@@ -89,6 +90,10 @@ class SnapshotTerminal:
     # a conversation existing does not mean its last turn was interrupted.
     # Missing on older snapshots deliberately means False (fail closed).
     continuation_needed: bool = False
+    # Task time survives rejoining the SAME hosted process. Never reuse it for
+    # a replacement process or mistake the snapshot/app time for the task start.
+    work_started_at: float = 0.0
+    work_pty_id: str = ""
     # What the pane was OPENED on — the model, the effort level and the
     # permission stance chosen for it (jarvis.workspace.launch_picks). Kept so
     # a restored pane comes back on the same three picks instead of quietly
@@ -134,6 +139,8 @@ class SnapshotTerminal:
             "account": self.account,
             "account_pinned": self.account_pinned,
             "continuation_needed": self.continuation_needed,
+            "work_started_at": self.work_started_at,
+            "work_pty_id": self.work_pty_id,
             "model": self.model,
             "effort": self.effort,
             "permission_mode": self.permission_mode,
@@ -171,6 +178,8 @@ class SnapshotTerminal:
             ),
             account_pinned=data.get("account_pinned") is True,
             continuation_needed=data.get("continuation_needed") is True,
+            work_started_at=timestamp(data.get("work_started_at")),
+            work_pty_id=str(data.get("work_pty_id") or ""),
             model=str(data.get("model") or "").strip(),
             effort=str(data.get("effort") or "").strip(),
             permission_mode=str(data.get("permission_mode") or "").strip(),

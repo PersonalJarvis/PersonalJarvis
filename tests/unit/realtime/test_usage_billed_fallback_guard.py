@@ -51,6 +51,19 @@ def _registered_browser_token():
         revoke_token(_VALID_TOKEN)
 
 
+@pytest.fixture(autouse=True)
+def _realtime_transport_sees_no_host_credentials(monkeypatch):
+    """The desktop-path guards here must not follow the host's real keys.
+
+    Without a pin, ``realtime_browser_audio`` follows the first
+    credential-ready provider, so a real Gemini key on a developer machine
+    would hand these desktop calls to the browser while CI never does.
+    """
+    monkeypatch.setattr(
+        "jarvis.realtime.factory.get_secret_any", lambda _candidates: None
+    )
+
+
 class _FailingDesktopSession:
     """A realtime session that dies in its handshake, like a refused plan."""
 

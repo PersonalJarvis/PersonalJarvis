@@ -94,7 +94,7 @@ async def test_stop_cancels_queued_live_session_refresh(
     class _BlockingRegistry:
         calls = 0
 
-        async def refresh_plugin(self, _plugin_id: str) -> None:
+        async def refresh_credentials(self, _plugin_id: str) -> None:
             self.calls += 1
             entered.set()
             try:

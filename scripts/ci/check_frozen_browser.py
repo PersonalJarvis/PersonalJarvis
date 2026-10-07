@@ -1,8 +1,13 @@
-"""Exercise automatic provisioning and real frames in the shipped frozen app.
+"""Exercise requested browser provisioning and real frames in the frozen app.
 
 Run after packaging, with --executable pointing at the built launcher. Two
 headless boots share a fresh scratch profile; no source imports, account keys,
-desktop input, or existing user state are passed to the child application.
+desktop input, or existing user state are passed to the child application. On
+macOS each boot also asks the running app for its permission status, which is
+the only way to see whether its pyobjc frameworks loaded (BUG-222).
+
+Headless startup deliberately leaves the optional browser idle. The probe
+requests installation through the same authenticated API as the product UI.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 from jarvis.core.config_writer import _WRITE_LOCK, _atomic_write  # noqa: E402
 from jarvis.core.instance import DEV_PORT_OFFSET  # noqa: E402
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS, wait_procs  # noqa: E402
+from jarvis.platform.permissions import ACCEPTED_BUNDLE_IDS  # noqa: E402
 
 
 def isolated_env(profile: Path, port: int, key: str) -> dict[str, str]:
@@ -106,16 +112,56 @@ class ProbeHTTPError(RuntimeError):
         super().__init__(f"Frozen probe request failed: HTTP {code}")
 
 
-def request_json(port: int, path: str, key: str) -> dict:
+def request_json(port: int, path: str, key: str, *, method: str = "GET") -> dict:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
-        connection.request("GET", path, headers={"Authorization": f"Bearer {key}"})
+        connection.request(method, path, headers={"Authorization": f"Bearer {key}"})
         response = connection.getresponse()
         if response.status != 200:
             raise ProbeHTTPError(response.status)
         return json.loads(response.read())
     finally:
         connection.close()
+
+
+def check_macos_permissions(port: int, key: str) -> dict:
+    """On macOS, prove the running app can read its own microphone permission.
+
+    The permission port loads its pyobjc frameworks by NAME, which a freezer
+    cannot follow, and reports a framework that did not load as "unavailable"
+    without any error: the v2.5.0 .dmg shipped without AVFoundation and could
+    never read its microphone permission (BUG-222). Whether the module is in
+    the archive is checked statically by check_frozen_macos_app.py; this asks
+    the app itself, which also catches a framework whose own dependencies were
+    left out. Elsewhere there is nothing to ask.
+
+    The status route is passive (it never raises a system dialog), and this
+    reads only keys that survive in the snapshot: ``permissions[].id/status``
+    and ``app_identity.bundle_id``.
+    """
+    if sys.platform != "darwin":
+        return {}
+    try:
+        snapshot = request_json(port, "/api/permissions/status", key)
+    except ProbeHTTPError as exc:
+        if exc.code == 404:
+            # Not "still starting": waiting for the deadline would only hide it.
+            raise RuntimeError("Frozen app does not serve /api/permissions/status") from None
+        raise
+    rows = [row for row in snapshot.get("permissions", []) if isinstance(row, dict)]
+    microphone = next((row.get("status") for row in rows if row.get("id") == "microphone"), None)
+    if microphone in (None, "unavailable"):
+        raise RuntimeError(
+            f"Frozen app cannot read its microphone permission (status {microphone!r}): "
+            "the pyobjc AVFoundation framework did not load"
+        )
+    bundle_id = (snapshot.get("app_identity") or {}).get("bundle_id")
+    if bundle_id not in ACCEPTED_BUNDLE_IDS:
+        raise RuntimeError(
+            f"Frozen app runs as {bundle_id!r}, which the permission port does not accept "
+            f"(expected one of {', '.join(ACCEPTED_BUNDLE_IDS)})"
+        )
+    return {"microphone_permission": microphone, "bundle_id": bundle_id}
 
 
 def capture_frame(port: int, key: str, output: Path) -> dict:
@@ -153,7 +199,7 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
         port = sock.getsockname()[1]
     env = isolated_env(profile, port, key)
     started = time.monotonic()
-    report: dict = {}
+    report: dict = {"browser_install_requested": False}
     with output.with_suffix(".log").open("w", encoding="utf-8") as log:
         process = subprocess.Popen(
             [str(executable), "serve"],
@@ -176,6 +222,8 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                         if health.get("instance") != "dev":
                             raise RuntimeError("Frozen probe reached the wrong app instance")
                         report["healthy_seconds"] = round(time.monotonic() - started, 3)
+                    if "permissions" not in report and "healthy_seconds" in report:
+                        report["permissions"] = check_macos_permissions(port, key)
                     status = request_json(port, "/api/society/browser/status", key)
                 except ProbeHTTPError as exc:
                     if exc.code not in {503, 404}:
@@ -187,13 +235,26 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                 except (OSError, http.client.HTTPException):
                     time.sleep(1)
                     continue
+                if (
+                    "healthy_seconds" in report
+                    and not report["browser_install_requested"]
+                    and not status.get("installed")
+                    and not status.get("running")
+                    and status.get("phase") == "idle"
+                ):
+                    status = request_json(
+                        port, "/api/society/browser/install", key, method="POST"
+                    )
+                    if not any(status.get(field) for field in ("started", "running", "installed")):
+                        raise RuntimeError("Frozen app declined the requested browser setup")
+                    report["browser_install_requested"] = True
                 phase = status.get("phase")
                 if phase != last_phase:
                     print(f"{output.name}: browser phase={phase}", flush=True)
                     last_phase = phase
                 if status.get("error"):
                     raise RuntimeError(
-                        "Frozen app automatic browser provisioning failed; inspect its log"
+                        "Frozen app browser provisioning failed; inspect its log"
                     )
                 if status.get("installed") and "healthy_seconds" in report:
                     report["browser_ready_seconds"] = round(time.monotonic() - started, 3)
@@ -201,7 +262,7 @@ def boot(executable: Path, profile: Path, output: Path, key: str, timeout: float
                     return report
                 time.sleep(1)
             raise TimeoutError(
-                "Frozen app did not automatically prepare its browser before the deadline"
+                "Frozen app did not prepare the requested browser before the deadline"
             )
         finally:
             stop_owned_tree(process)

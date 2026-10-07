@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderPlus, Loader2, X } from "lucide-react";
-import { FolderPicker } from "@/components/agentic/FolderPicker";
+import { FolderPlus, Loader2, Plus, X } from "lucide-react";
+import { useT } from "@/i18n";
+import { CustomCliDialog } from "@/components/agentic/CustomCliDialog";
+import { ProjectConnectDialog } from "@/components/agentic/ProjectConnectDialog";
 import { VoiceBubble, storedVoiceBubbleOpen, storeVoiceBubbleOpen } from "@/components/agentic/VoiceBubble";
 import { RetainedWorkspaceGrid } from "@/components/agentic/RetainedWorkspaceGrid";
 import { WorkspaceAgentSetup } from "@/components/agentic/WorkspaceAgentSetup";
@@ -9,11 +11,12 @@ import { WorkspaceOptionsDialog } from "@/components/agentic/WorkspaceOptionsDia
 import { FONT_DEFAULT } from "@/components/agentic/paneFont";
 import { storePaneStyle, storedPaneStyle, type PaneStyle } from "@/components/agentic/terminalThemes";
 import { IdeSidePanelFrame } from "@/components/agentic/sidePanel/IdeSidePanel";
-import { GRID_LIMIT_HINT, MAX_WORKSPACE_PANES, canSplitFit, fitsWorkspace, isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
+import { isBalancedWorkspace } from "@/components/agentic/workspaceDocking";
 import { AgentMark } from "@/components/agentic/AgentMark";
 import { CloseAgentDialog, type CloseTarget } from "@/components/agentic/CloseAgentDialog";
 import { IdeHotkeyMenu } from "@/components/agentic/IdeHotkeyMenu";
-import { LEADER_PASSTHROUGH, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { leaderPassthrough, PANE_COMMAND_EVENT, PANE_INPUT_EVENT, type IdeHotkeyAction, type PaneCommand, type PaneCommandDetail, type PaneInputDetail } from "@/components/agentic/ideHotkeys";
+import { appChord } from "@/store/appChordSettings";
 import { GitCheckoutPicker } from "@/components/agentic/git/GitCheckoutPicker";
 import { GitPanelDialog } from "@/components/agentic/git/GitPanelDialog";
 import { KEEP_CHECKOUT, prepareGit, type GitPlan } from "@/lib/gitApi";
@@ -24,6 +27,13 @@ import { BrandedSelect } from "@/components/ui/select";
 import { useEventStore } from "@/store/events";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeSkillsStore } from "@/store/ideSkills";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { ThreadView } from "@/components/agentic/threads/ThreadView";
+import { ThreadTerminalDrawer } from "@/components/agentic/threads/ThreadTerminalDrawer";
+import { CodeEditorStage } from "@/components/agentic/editor/CodeEditorStage";
+import { useCodeEditorStore } from "@/store/codeEditor";
 import { openProject } from "@/lib/chatLibraryApi";
 import {
   activateWorkspace, addTerminal, closeTerminal, closeWorkspace, fetchIdeAgents, fetchIdeProjects, fetchIdeState, renameWorkspace,
@@ -74,12 +84,21 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const setWorkspaces = useIdeChatStore((state) => state.setWorkspaces);
   const paneRequest = useIdeChatStore((state) => state.paneRequest);
   const setStagedPane = useIdeChatStore((state) => state.setStagedPane);
+  // Grid of terminals, or one thread at a time (see store/ideThreads).
+  const layout = useIdeThreadsStore((state) => state.layout);
+  const threads = layout === "threads";
+  // The code editor lies over the grid or the thread; both stay mounted underneath.
+  const ideWorkspace = useIdeChatStore((state) => state.workspace);
+  const stagedPane = useIdeChatStore((state) => state.stagedPane);
+  const editorShown = useCodeEditorStore((state) => state.visible && state.tabs.some((tab) => tab.workspaceId === ideWorkspace?.id));
+  // A maximized side panel (the Verse) covers the grid, which only turns invisible
+  // and keeps a narrowed tile. Its panes leave the stage so they neither paint
+  // nor size their agents to a strip nobody is reading.
+  const panelCoversGrid = useIdeSidePanelStore((state) => state.open && state.maximized);
   const [state, setState] = useState<IdeState | null>(null);
   const [projects, setProjects] = useState<IdeProject[]>([]);
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [projectDialog, setProjectDialog] = useState(false);
-  const [projectPath, setProjectPath] = useState<string | null>(null);
-  const [projectName, setProjectName] = useState("");
   const [workspaceProject, setWorkspaceProject] = useState<IdeProject | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [workspaceAgents, setWorkspaceAgents] = useState<string[]>([]);
@@ -94,6 +113,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const [gitOpen, setGitOpen] = useState(false);
   const [selected, setSelected] = useState("");
   const [agentPicker, setAgentPicker] = useState<{ id: string; name: string } | null>(null);
+  // "Add your own command" from inside the agent picker: the CLI the user wants
+  // is usually missing exactly when they are looking at this list.
+  const [customCliOpen, setCustomCliOpen] = useState(false);
+  const t = useT();
   // Where the next agent opens: split off `splitAnchor` (a pane call-sign) in
   // `splitDirection`, or — with no anchor — the automatic even grid.
   const [splitDirection, setSplitDirection] = useState<PaneSplitDirection>(storedSplitDirection);
@@ -120,9 +143,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   const activationRunning = useRef(false);
   const pendingActivation = useRef<string | null>(null);
   const gridMutations = useRef(0);
-  const normalizingLayout = useRef(false);
   const session = state?.session ?? null;
-  const maxPanes = state?.max_terminals ?? MAX_WORKSPACE_PANES;
   const codingAgents = agents.filter((agent) => agent.kind !== "shell" && agent.accepts_prompts !== false);
   const installed = codingAgents.filter((agent) => agent.installed);
   // On a connected computer the CLI has to be installed THERE, not here: the
@@ -137,7 +158,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   }, [session?.id]);
 
   useEffect(() => {
-    if (!dialogOpen) return;
+    // The custom-CLI form sits above the agent picker and owns its own focus and
+    // Escape; trapping keys for the picker underneath would steal them.
+    if (!dialogOpen || projectDialog || customCliOpen) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = document.querySelector<HTMLElement>("[data-ide-dialog]");
     if (!dialog) return;
@@ -162,10 +185,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => { document.removeEventListener("keydown", onKeyDown, true); previous?.focus(); };
-  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy]);
+  }, [dialogOpen, projectDialog, workspaceProject, renameOpen, agentPicker, busy, customCliOpen]);
 
   const refresh = useCallback(async (allowDuringActivation = false) => {
-    if (normalizingLayout.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation)) return;
+    if (((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation)) return;
     const epoch = ++refreshEpoch.current;
     let [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     // A workspace switch can fall between the two reads. Never publish a tree
@@ -174,17 +197,6 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       [nextState, listing] = await Promise.all([fetchIdeState(), fetchIdeProjects()]);
     }
     if (epoch !== refreshEpoch.current || pendingActivation.current || ((activationRunning.current || gridMutations.current > 0) && !allowDuringActivation) || nextState.active_id !== listing.active_workspace_id) return;
-    const incoming = nextState.session;
-    if (incoming?.layout && incoming.terminals.length <= (nextState.max_terminals ?? MAX_WORKSPACE_PANES) && !fitsWorkspace(incoming.layout)) {
-      // Older snapshots and terminals opened outside this view may exceed the
-      // grid bounds. Persist the same balanced fallback the grid displays.
-      normalizingLayout.current = true;
-      try {
-        nextState = await reorderIdeTerminals(incoming.id, incoming.terminals.map((terminal) => terminal.history_id ?? terminal.key));
-        listing = await fetchIdeProjects();
-      } finally { normalizingLayout.current = false; }
-      if (epoch !== refreshEpoch.current || pendingActivation.current || nextState.active_id !== listing.active_workspace_id) return;
-    }
     setState(nextState);
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
@@ -231,6 +243,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Report the selected pane: it is the voice/prompt target, and the backend
   // saves it with the workspace so a reopened app restores the focus.
   const sessionId = session?.id ?? "";
+  // The Skills tab pastes into the selected pane when a card's button is used.
+  useEffect(() => {
+    useIdeSkillsStore.getState().setTarget(sessionId && selected ? { workspaceId: sessionId, pane: selected } : null);
+  }, [sessionId, selected]);
+  useEffect(() => () => useIdeSkillsStore.getState().setTarget(null), []);
   useEffect(() => {
     if (!sessionId || !selected) return;
     void syncAgenticIdeSurface({ workspaceId: sessionId, view: "grid", onScreen, terminal: null, promptTarget: selected })
@@ -311,16 +328,18 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     void activateFromTree(action.workspaceId);
   }, [action, activateFromTree, installed, projects, session?.id]);
 
-  const connect = () => void run(async () => {
+  const connect = async (projectPath: string, projectName?: string) => {
     if (!projectPath) throw new Error("Choose a folder for this project.");
-    const project = await openProject(projectPath, projectName.trim() || undefined);
-    setProjectDialog(false); setProjectPath(null); setProjectName("");
+    const project = await openProject(projectPath, projectName);
     const listing = await fetchIdeProjects();
     setProjects(listing.projects);
     publishProjects(listing.projects, listing.active_workspace_id);
     const found = listing.projects.find((entry) => entry.id === project.id);
+    // In the thread layout a new project starts a thread, not a workspace.
+    if (found && useIdeThreadsStore.getState().layout === "threads") { useIdeThreadsStore.getState().newThread(found.id); setProjectDialog(false); return; }
     if (found) { setWorkspaceProject(found); setWorkspaceAgents([installed[0]?.name ?? ""]); setWorkspaceGit(KEEP_CHECKOUT); setWorkspaceComputer(storedRunOn(found.id)); }
-  });
+    setProjectDialog(false);
+  };
 
   const notify = useCallback((message: string) => pushToast("success", message), [pushToast]);
 
@@ -392,8 +411,8 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     }, { onMessage: notify });
     onDone?.();
     // Grow an automatic grid evenly when adding without an explicit anchor;
-    // keep a custom arrangement until another pane would exceed the workspace bounds.
-    if (next.id === workspaceId && next.terminals.length > 1 && ((wasBalanced && !hasExplicitAnchor) || (next.layout && !fitsWorkspace(next.layout)))) {
+    // a custom arrangement is always kept — it has no size limit.
+    if (next.id === workspaceId && next.terminals.length > 1 && wasBalanced && !hasExplicitAnchor) {
       const balanced = await reorderIdeTerminals(next.id, next.terminals.map((terminal) => terminal.history_id ?? terminal.key));
       next = balanced.session ?? next;
     }
@@ -441,15 +460,10 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
     setAgentComputer(anchorPane ? anchorPane.computer_id || null : workspaceRunsOn(session.terminals));
     setAgentPicker({ id: session.id, name: session.name ?? session.project.name });
   }, [session, selected]);
-  // The chosen direction when it fits; otherwise the first that does; null
-  // when the anchor has no room at all (the agent then joins the even grid).
-  const workspaceFull = Boolean(session && session.terminals.length >= maxPanes);
+  // The chosen direction beside the chosen pane; null without an anchor (the
+  // agent then joins the grid). Every direction fits: a workspace has no size limit.
   const pickerAnchorKey = session?.terminals.find((terminal) => terminal.name === splitAnchor)?.key;
-  const directionFits = (direction: PaneSplitDirection) =>
-    Boolean(session && pickerAnchorKey && canSplitFit(session.layout, session.terminals, pickerAnchorKey, direction, maxPanes));
-  const effectiveDirection = !pickerAnchorKey ? null
-    : directionFits(splitDirection) ? splitDirection
-    : SPLIT_DIRECTIONS.find((item) => directionFits(item.id))?.id ?? null;
+  const effectiveDirection = pickerAnchorKey ? splitDirection : null;
   const closeVoice = () => { setVoiceOpen(false); storeVoiceBubbleOpen(false); };
   const jumpToPane = (workspaceId: string, pane: string) => void run(async () => {
     if (workspaceId !== session?.id) setState(await activateWorkspace(workspaceId));
@@ -474,7 +488,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
   // Ctrl+B, then a key (see components/agentic/ideHotkeys): the IDE's
   // key menu. Pane commands go to the grid that owns the pane; the rest are
   // the same calls the buttons and the sidebar make.
-  const hotkeysEnabled = onScreen && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
+  const hotkeysEnabled = onScreen && !threads && !dialogOpen && !optionsOpen && !gitOpen && !closeRequest;
   const hotkeyAgents = installed.map((agent) => ({ name: agent.name, label: agent.display_name }));
   const sendPaneCommand = (command: PaneCommand) => {
     if (!session || !selected) return;
@@ -499,10 +513,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       }
       case "spawn": {
         if (!session) { setProjectDialog(true); return; }
-        if (session.terminals.length >= maxPanes) { pushToast("error", `This workspace is full (${maxPanes} agents). Close a pane, or open another workspace.`); return; }
         const anchor = session.terminals.find((terminal) => terminal.name === selected);
-        const fits = Boolean(anchor && hotkey.direction && canSplitFit(session.layout, session.terminals, anchor.key, hotkey.direction, maxPanes));
-        if (anchor && hotkey.direction && !fits) pushToast("info", `No room beside ${anchor.name} there; the new agent joins the even grid.`);
+        // A workspace has no size limit: beside the selected pane always fits.
+        const fits = Boolean(anchor && hotkey.direction);
         addAgent(hotkey.agent, session.id, fits ? anchor!.name : undefined, fits ? hotkey.direction! : "down",
           anchor ? anchor.computer_id || null : workspaceRunsOn(session.terminals));
         return;
@@ -554,7 +567,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
   return <div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="igentic-ide">
     <WorkspaceOptionsDialog open={optionsOpen && !!session} onOpenChange={setOptionsOpen} workspace={session?.name ?? session?.project.name ?? ""}
-      count={session?.terminals.length ?? 0} maxPanes={maxPanes} busy={busy} canAdd={agents.some((agent) => agent.installed && (agent.kind === "shell" || agent.accepts_prompts !== false))}
+      count={session?.terminals.length ?? 0} busy={busy} canAdd={agents.some((agent) => agent.installed && (agent.kind === "shell" || agent.accepts_prompts !== false))}
       onAdd={openAgentPicker} onBalance={balanceLayout} onRename={() => { setRenameValue(session?.name ?? session?.project.name ?? ""); setRenameOpen(true); }}
       onClose={stopWorkspace} onGit={() => setGitOpen(true)} appearance={appearance} onAppearance={saveAppearance}
       paneStyle={paneStyle} onPaneStyle={savePaneStyle}
@@ -565,8 +578,18 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
 
     <main className="min-h-0 flex-1">
       <IdeSidePanelFrame markInUse={paneStyle === "minimal"} appearance={appearance ?? undefined} onScreen={onScreen}>
-      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
-        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} maxPanes={maxPanes} fontSize={fontSize} appearance={appearance} disabled={busy}
+      <div className="relative h-full min-h-0">
+      {/* The thread over its terminal drawer. The drawer stays mounted in the
+          grid too, so its shells keep running while the layout switches. */}
+      <div className={cn("h-full min-h-0 flex-col", threads ? "flex" : "hidden")}>
+        {threads && <div className="min-h-0 flex-1"><ThreadView onScreen={onScreen && !editorShown} /></div>}
+        <ThreadTerminalDrawer onScreen={onScreen && threads && !editorShown && !panelCoversGrid} />
+      </div>
+      {/* The grid stays mounted behind the threads: its terminals keep running
+          and come back exactly as they were when the layout switches back. */}
+      <div hidden={threads} className="h-full min-h-0">
+      {session ? <RetainedWorkspaceGrid session={session} onScreen={onScreen && !threads && !editorShown && !panelCoversGrid} workspaceIds={state.workspaces?.map((workspace) => workspace.id)} onChanged={(next) => setState((current) => current?.session?.id === next.id ? { ...current, session: next } : current)}
+        onAdd={openAgentPicker} onClose={closeAgent} onSelect={setSelected} selected={selected} fontSize={fontSize} appearance={appearance} disabled={busy}
         onMutationStart={beginGridMutation} onMutationEnd={endGridMutation} paneStyle={paneStyle} workspaces={state.workspaces ?? []} />
       : <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <FolderPlus className="h-8 w-8 text-muted-foreground/70" />
@@ -574,6 +597,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
         <p className="max-w-md text-sm text-muted-foreground">{projects.some((project) => !project.scratch && !project.archived) ? "Select a workspace from Projects, or create one with + beside its project." : "Connect a folder to bring its coding agents and Jarvis into one workspace."}</p>
         <button type="button" onClick={() => setProjectDialog(true)} className="mt-2 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent">Connect folder</button>
       </div>}
+      </div>
+      <CodeEditorStage workspaceId={ideWorkspace?.id ?? null} workspacePath={ideWorkspace?.path ?? ""} stagedPane={stagedPane} />
+      </div>
       </IdeSidePanelFrame>
     </main>
 
@@ -581,7 +607,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       onRenamePane={(name) => sendPaneCommand({ kind: "rename", name })}
       onPassThrough={() => {
         if (!session || !selected) return;
-        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data: LEADER_PASSTHROUGH };
+        // The control code of the user's leader chord; a leader that is not
+        // Ctrl+letter has none to pass through.
+        const data = leaderPassthrough(appChord("ide_menu"));
+        if (data === null) return;
+        const detail: PaneInputDetail = { workspaceId: session.id, pane: selected, data };
         window.dispatchEvent(new CustomEvent(PANE_INPUT_EVENT, { detail }));
       }} />
     <VoiceBubble open={voiceOpen} onClose={closeVoice} onScreen={onScreen} onJumpToPane={jumpToPane} promptTarget={selected} />
@@ -591,7 +621,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Add coding agent"
         className="w-full max-w-lg rounded-2xl border border-border bg-card p-5 shadow-2xl">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}{session && <> · {session.terminals.length} of {maxPanes} agents</>}</p></div>
+          <div><h2 className="text-base font-semibold">Add coding agent</h2><p className="mt-1 text-xs text-muted-foreground">{agentPicker.name}{session && <> · {session.terminals.length} {session.terminals.length === 1 ? "agent" : "agents"}</>}</p></div>
           <button type="button" aria-label="Close" onClick={() => setAgentPicker(null)} className="rounded-md p-1.5 hover:bg-muted"><X className="h-4 w-4" /></button>
         </div>
 
@@ -615,10 +645,9 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             </div>
             {anchorTerminal ? <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="Split direction">
               {SPLIT_DIRECTIONS.map((item) => {
-                const fits = directionFits(item.id);
                 const checked = effectiveDirection === item.id;
                 return <button key={item.id} type="button" role="radio" aria-checked={checked} aria-label={`Split ${item.label.toLowerCase()}`}
-                  disabled={busy || !fits} title={fits ? item.hint : `No room here. ${GRID_LIMIT_HINT}`}
+                  disabled={busy} title={item.hint}
                   onClick={() => { setSplitDirection(item.id); storeSplitDirection(item.id); }}
                   className={cn("flex flex-col items-center justify-center gap-1.5 rounded-lg border py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
                     checked ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary/40" : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground")}>
@@ -626,14 +655,11 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
                 </button>;
               })}
             </div> : <p className="text-xs text-muted-foreground">The new agent joins the grid and every pane gets an equal share.</p>}
-            {anchorTerminal && !effectiveDirection && <p className="text-xs text-muted-foreground">No room beside {anchorTerminal.name}; the new agent joins the automatic grid instead.</p>}
           </div>;
         })()}
 
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {workspaceFull && agentGit.mode === "current" && <p role="status" className="col-span-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-            This workspace is full ({maxPanes} agents). Close a pane, or open another workspace for more agents.</p>}
-          {agentChoices.map((agent) => <button key={agent.name} type="button" disabled={busy || (workspaceFull && agentGit.mode === "current")}
+          {agentChoices.map((agent) => <button key={agent.name} type="button" disabled={busy}
             onClick={() => {
               const owner = agentPicker.id;
               // Copying a folder to a computer takes a while: the dialog stays
@@ -646,6 +672,13 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             className="flex min-h-12 items-center gap-3 rounded-lg border border-border px-3 py-2 text-left text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <AgentMark agent={agent.name} label={agent.display_name} logoUrl={agent.logo_url} variant="plain" />{agent.display_name}
           </button>)}
+          {/* A command of the user's own, named and marked by them. Once saved
+              it is listed here, in every pane menu, and by its name to voice
+              ("open five Cursor terminals"). */}
+          <button type="button" disabled={busy} data-testid="add-agent-custom-cli" onClick={() => setCustomCliOpen(true)}
+            className="flex min-h-12 items-center gap-3 rounded-lg border border-dashed border-border px-3 py-2 text-left text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Plus className="h-4 w-4" aria-hidden="true" />{t("custom_cli.add_button")}
+          </button>
         </div>
         {busy && agentComputer && <p role="status" className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />Copying the folder and starting the agent there. Large folders take a minute.</p>}
@@ -653,36 +686,13 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
       </section>
     </div>}
 
-    {projectDialog && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setProjectDialog(false); }}>
-      {/* A fixed height, so the dialog does not jump each time a folder with
-          a different number of subfolders is opened. */}
-      <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="Connect project" aria-describedby="connect-project-hint" aria-busy={busy}
-        className="flex h-[min(46rem,90vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
-        <header className="shrink-0 px-6 pb-1 pt-6">
-          <div className="flex items-center justify-between gap-4">
-            <h2 className="text-xl font-semibold tracking-tight">Connect a project</h2>
-            <button type="button" aria-label="Close" disabled={busy} onClick={() => setProjectDialog(false)}
-              className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><X className="h-5 w-5" /></button>
-          </div>
-          <p id="connect-project-hint" className="mt-1 text-sm text-muted-foreground">Choose the folder your coding agents will work in. Open it in the list, find it by name, or make a new one.</p>
-        </header>
-        <div className="flex min-h-0 flex-1 flex-col px-3"><FolderPicker selected={projectPath} onSelect={setProjectPath} /></div>
-        <footer className="flex shrink-0 flex-wrap items-end gap-3 border-t border-border bg-muted/20 px-6 py-4">
-          <label className="min-w-[14rem] flex-1 text-xs font-medium text-muted-foreground">Project name <span className="font-normal opacity-70">(optional)</span>
-            <input value={projectName} onChange={(event) => setProjectName(event.target.value)}
-              onKeyDown={(event) => { if (event.key === "Enter" && projectPath && !busy) { event.preventDefault(); connect(); } }}
-              placeholder={projectPath?.split(/[\\/]/).filter(Boolean).at(-1) ?? "Uses the folder name"}
-              className="mt-1.5 h-10 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring/30" />
-          </label>
-          <div className="flex gap-2">
-            <button type="button" disabled={busy} onClick={() => setProjectDialog(false)} className="h-10 rounded-lg px-4 text-sm text-muted-foreground hover:bg-muted disabled:opacity-50">Cancel</button>
-            <button type="button" disabled={busy || !projectPath} onClick={connect} title={projectPath ? undefined : "Choose a folder first"}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
-              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}Connect project</button>
-          </div>
-        </footer>
-      </section>
-    </div>}
+    {/* Outside the picker's backdrop on purpose: a portal still bubbles React
+        events to its parent, and a click in this form must not read as a click
+        on the backdrop that dismisses the picker. */}
+    <CustomCliDialog open={customCliOpen} onOpenChange={setCustomCliOpen}
+      onSaved={() => void fetchIdeAgents(true).then((response) => setAgents(response.agents)).catch((error) => pushToast("error", (error as Error).message))} />
+
+    {projectDialog && <ProjectConnectDialog onClose={() => setProjectDialog(false)} onConnect={connect} />}
 
     {workspaceProject && <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setWorkspaceProject(null); }}>
       <section data-ide-dialog tabIndex={-1} role="dialog" aria-modal="true" aria-label="New workspace" aria-busy={busy}
@@ -702,7 +712,7 @@ export function AgenticIdeView({ onScreen = true }: AgenticIdeViewProps) {
             <input value={workspaceName} disabled={busy} onChange={(event) => setWorkspaceName(event.target.value)}
               placeholder="Workspace" className="mt-2 h-11 w-full rounded-lg border border-input bg-background/60 px-3 text-sm text-foreground outline-none focus:border-ring focus:ring-1 focus:ring-ring/30" />
           </label>
-          <WorkspaceAgentSetup agents={workspaceChoices} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} maxSessions={maxPanes} />
+          <WorkspaceAgentSetup agents={workspaceChoices} sessions={workspaceAgents} onChange={setWorkspaceAgents} disabled={busy} />
           <GitCheckoutPicker folder={workspaceProject.path} value={workspaceGit} onChange={setWorkspaceGit} disabled={busy} context="workspace" />
           <RunOnPicker value={workspaceComputer} onChange={setWorkspaceComputer} disabled={busy} />
         </div>

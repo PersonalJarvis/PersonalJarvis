@@ -9,11 +9,14 @@ agent that starts by searching for the file you already named.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from jarvis.agentic_ide import file_index
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 
 @pytest.fixture()
@@ -201,3 +204,40 @@ def test_a_documentation_request_still_reaches_documentation(tmp_path: Path):
     hits = file_index.build_index(str(tmp_path)).suggest("update the architecture docs", limit=3)
 
     assert "docs/architecture-overview.md" in hits
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git on PATH")
+def test_a_checkout_is_listed_by_git_so_ignored_data_never_crowds_the_code(
+    tmp_path: Path,
+) -> None:
+    """Live 2026-10-01: 21 000 of 30 000 walked files came from two ignored
+    data folders and the walk stopped at its cap. Git knows the project."""
+    git = shutil.which("git")
+    assert git is not None
+    subprocess.run(
+        [git, "init", "-q", str(tmp_path)],
+        check=True,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+    )
+    (tmp_path / ".gitignore").write_text("data/\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "wake_gate.py").write_text("x", encoding="utf-8")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "wake_log.json").write_text("{}", encoding="utf-8")
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "wake_secret.py").write_text("x", encoding="utf-8")
+
+    rels = {entry.rel for entry in file_index.build_index(tmp_path).entries}
+
+    assert "src/wake_gate.py" in rels
+    assert "data/wake_log.json" not in rels
+    assert ".hidden/wake_secret.py" not in rels
+
+
+def test_a_folder_that_is_no_checkout_is_still_walked(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "wake_gate.py").write_text("x", encoding="utf-8")
+
+    rels = {entry.rel for entry in file_index.build_index(tmp_path).entries}
+
+    assert rels == {"src/wake_gate.py"}

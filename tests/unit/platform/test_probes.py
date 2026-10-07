@@ -76,9 +76,29 @@ def test_has_hotkey_false_on_wayland(monkeypatch):
 
 def test_has_hotkey_true_on_x11_with_pynput(monkeypatch):
     _force_platform(monkeypatch, "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(probes, "is_wayland", lambda: False)
     monkeypatch.setattr(probes, "_has_module", lambda n: n == "pynput")
     assert probes.has_hotkey() is True
+
+
+def test_has_hotkey_false_on_a_headless_box_with_pynput(monkeypatch):
+    """No display, no keyboard: the shortcut must not report itself armed."""
+    _force_platform(monkeypatch, "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    monkeypatch.setattr(probes, "is_wayland", lambda: False)
+    monkeypatch.setattr(probes, "_has_module", lambda n: n == "pynput")
+    assert probes.has_hotkey() is False
+    assert "no desktop" in probes.hotkey_unavailable_reason()
+
+
+def test_a_missing_pynput_names_the_extra(monkeypatch):
+    _force_platform(monkeypatch, "linux")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(probes, "is_wayland", lambda: False)
+    monkeypatch.setattr(probes, "_has_module", lambda _n: False)
+    assert "personal-jarvis[desktop-linux]" in probes.hotkey_unavailable_reason()
 
 
 def test_has_hotkey_windows_uses_global_hotkeys(monkeypatch):
@@ -123,49 +143,6 @@ def test_ax_permission_linux_needs_bus(monkeypatch):
     assert probes.ax_permission_granted() is False
     monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
     assert probes.ax_permission_granted() is True
-
-
-# --- screen_recording_granted (tri-state, H1) ------------------------------
-
-
-def test_screen_recording_true_off_darwin(monkeypatch):
-    # Only macOS gates screenshots behind a TCC Screen-Recording grant; Windows
-    # and Linux need no per-app grant.
-    _force_platform(monkeypatch, "win32")
-    assert probes.screen_recording_granted() is True
-    _force_platform(monkeypatch, "linux")
-    assert probes.screen_recording_granted() is True
-
-
-def test_screen_recording_macos_reflects_preflight(monkeypatch):
-    import sys
-    import types
-
-    _force_platform(monkeypatch, "darwin")
-    # Replaces any already-cached Quartz module so the function-local
-    # `from Quartz import ...` re-resolves to this fake (matters on a real Mac
-    # with pyobjc installed, where the genuine module would otherwise win).
-    monkeypatch.setitem(
-        sys.modules,
-        "Quartz",
-        types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: True),
-    )
-    assert probes.screen_recording_granted() is True
-    monkeypatch.setitem(
-        sys.modules,
-        "Quartz",
-        types.SimpleNamespace(CGPreflightScreenCaptureAccess=lambda: False),
-    )
-    assert probes.screen_recording_granted() is False
-
-
-def test_screen_recording_macos_unknown_without_quartz(monkeypatch):
-    import sys
-
-    _force_platform(monkeypatch, "darwin")
-    # pyobjc-Quartz absent → import raises → unknown (None), never a hard False.
-    monkeypatch.setitem(sys.modules, "Quartz", None)
-    assert probes.screen_recording_granted() is None
 
 
 # --- has_elevation ---------------------------------------------------------
@@ -255,5 +232,4 @@ def test_all_probes_run_without_raising_on_host():
     assert isinstance(probes.has_overlay(), bool)
     assert isinstance(probes.has_elevation(), bool)
     assert probes.ax_permission_granted() in (True, False, None)
-    assert probes.screen_recording_granted() in (True, False, None)
     assert isinstance(probes.webview_backend_available(), bool)

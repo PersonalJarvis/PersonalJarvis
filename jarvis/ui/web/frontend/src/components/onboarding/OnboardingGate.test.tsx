@@ -6,45 +6,29 @@ vi.mock("./setup/SetupTour", () => ({
     preview,
     startAt,
     onFinished,
-    onSkipAll,
   }: {
     preview: boolean;
     startAt?: string;
     onFinished: () => void;
-    onSkipAll?: () => void;
   }) => (
-    <>
-      <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
-        guide
-      </button>
-      <button type="button" data-testid="guide-skip-all" onClick={onSkipAll}>
-        skip
-      </button>
-    </>
+    <button type="button" data-testid="guide" data-preview={String(preview)} data-start={startAt ?? ""} onClick={onFinished}>
+      guide
+    </button>
   ),
 }));
-vi.mock("./tour/GuidedTour", () => ({
-  GuidedTour: ({ onDone }: { onDone: () => void }) => (
+vi.mock("./setup/SectionWalk", () => ({
+  SectionWalk: ({ onDone }: { onDone: () => void }) => (
     <button type="button" data-testid="tour" onClick={onDone}>
       tour
     </button>
   ),
 }));
 
-vi.mock("./firstSteps/FirstStepsGuide", () => ({
-  FirstStepsGuide: ({ onClose }: { onClose: () => void }) => (
-    <button type="button" data-testid="first-steps" onClick={onClose}>
-      first steps
-    </button>
-  ),
-}));
-
 import { OnboardingGate } from "./OnboardingGate";
-import { FIRST_STEPS_START_EVENT, SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
+import { SETUP_REPLAY_EVENT, TOUR_START_EVENT } from "./tourEvents";
 
 afterEach(() => {
   cleanup();
-  window.localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -55,7 +39,7 @@ const base = {
   terms: { accepted: false, accepted_version: null, current_version: "1.0" },
   wake_word_acknowledged: false,
   legal_references: [],
-  steps: ["welcome"],
+  steps: ["name"],
 };
 
 function stub(state: object | "error") {
@@ -72,7 +56,7 @@ it("shows the guide while setup is not complete", async () => {
   stub({ ...base, completed: false, tour_completed: false });
   render(<OnboardingGate />);
   await waitFor(() => expect(screen.getByTestId("guide")).toBeDefined());
-  // A first run is real: it completes and restarts once its tour ends.
+  // A first run is real: it completes and restarts once its walk ends.
   expect(screen.getByTestId("guide").dataset.preview).toBe("false");
   expect(screen.queryByTestId("tour")).toBeNull();
 });
@@ -162,7 +146,7 @@ it("replays the setup on a finished install without completing it", async () => 
   }
 });
 
-it("replays setup from the explainer on request from Settings", async () => {
+it("replays setup from the first step on request from Settings", async () => {
   stub({ ...base, completed: true, tour_completed: true });
   render(<OnboardingGate activeSection="profile" />);
   await new Promise((r) => setTimeout(r, 20));
@@ -171,21 +155,21 @@ it("replays setup from the explainer on request from Settings", async () => {
     window.dispatchEvent(new CustomEvent(SETUP_REPLAY_EVENT));
   });
   await waitFor(() => expect(screen.getByTestId("guide").dataset.preview).toBe("true"));
-  expect(screen.getByTestId("guide").dataset.start).toBe("how");
+  expect(screen.getByTestId("guide").dataset.start).toBe("");
 });
 
-it("goes from setup straight into the tour and completes when the tour ends", async () => {
+it("completes a real first run when its walk ends, the walk recorded first", async () => {
   const fetchMock = stub({ ...base, completed: false, tour_completed: false });
   render(<OnboardingGate activeSection="chats" />);
   const guide = await screen.findByTestId("guide");
-  act(() => guide.click());
-  const tour = await screen.findByTestId("tour");
   const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
-  // Nothing completes (and nothing restarts) while the tour is still showing.
+  // Nothing completes (and nothing restarts) while the guide is still showing.
   expect(urls()).not.toContain("/api/onboarding/complete");
-  act(() => tour.click());
+  act(() => guide.click());
   await waitFor(() => expect(urls()).toContain("/api/onboarding/complete"));
   expect(urls().indexOf("/api/onboarding/tour-complete")).toBeLessThan(urls().indexOf("/api/onboarding/complete"));
+  expect(screen.queryByTestId("guide")).toBeNull();
+  expect(screen.queryByTestId("tour")).toBeNull();
 });
 
 it("never completes onboarding after a replayed setup", async () => {
@@ -197,77 +181,9 @@ it("never completes onboarding after a replayed setup", async () => {
   });
   const guide = await screen.findByTestId("guide");
   act(() => guide.click());
-  const tour = await screen.findByTestId("tour");
-  act(() => tour.click());
-  await waitFor(() => expect(screen.queryByTestId("tour")).toBeNull());
+  await waitFor(() => expect(screen.queryByTestId("guide")).toBeNull());
   await new Promise((r) => setTimeout(r, 20));
-  expect(fetchMock.mock.calls.map((c) => String(c[0]))).not.toContain("/api/onboarding/complete");
-});
-
-it("hands the first tour over to the first-steps guide, and keeps it after a reload", async () => {
-  stub({ ...base, completed: true, tour_completed: false });
-  render(<OnboardingGate activeSection="chats" />);
-  const tour = await screen.findByTestId("tour");
-  act(() => tour.click());
-  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
-  cleanup();
-  // The completion restart reloads the window: the guide comes back from storage.
-  stub({ ...base, completed: true, tour_completed: true });
-  render(<OnboardingGate activeSection="chats" />);
-  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
-});
-
-it("does not bring the first-steps guide back once it was closed", async () => {
-  stub({ ...base, completed: true, tour_completed: false });
-  render(<OnboardingGate activeSection="chats" />);
-  const tour = await screen.findByTestId("tour");
-  act(() => tour.click());
-  const guide = await screen.findByTestId("first-steps");
-  act(() => guide.click());
-  await waitFor(() => expect(screen.queryByTestId("first-steps")).toBeNull());
-  // A later tour replay must not restart a guide the user already met.
-  act(() => {
-    window.dispatchEvent(new CustomEvent(TOUR_START_EVENT));
-  });
-  const again = await screen.findByTestId("tour");
-  act(() => again.click());
-  await new Promise((r) => setTimeout(r, 20));
-  expect(screen.queryByTestId("first-steps")).toBeNull();
-});
-
-it("starts the first-steps guide on request from Settings", async () => {
-  stub({ ...base, completed: true, tour_completed: true });
-  render(<OnboardingGate activeSection="profile" />);
-  await new Promise((r) => setTimeout(r, 20));
-  expect(screen.queryByTestId("first-steps")).toBeNull();
-  act(() => {
-    window.dispatchEvent(new CustomEvent(FIRST_STEPS_START_EVENT));
-  });
-  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
-});
-
-it("skips the whole first run: tour recorded, onboarding completed, no guide left", async () => {
-  const fetchMock = stub({ ...base, completed: false, tour_completed: false });
-  render(<OnboardingGate activeSection="chats" />);
-  const skip = await screen.findByTestId("guide-skip-all");
-  act(() => skip.click());
-  const urls = () => fetchMock.mock.calls.map((c) => String(c[0]));
-  await waitFor(() => expect(urls()).toContain("/api/onboarding/complete"));
-  expect(urls()).toContain("/api/onboarding/tour-complete");
-  expect(screen.queryByTestId("guide")).toBeNull();
-  expect(screen.queryByTestId("tour")).toBeNull();
-});
-
-it("starts the first-steps guide fresh at the end of a real first run, even if an old one was closed", async () => {
-  window.localStorage.setItem(
-    "jarvis.firstSteps.v1",
-    JSON.stringify({ status: "dismissed", done: [], skipped: [], current: "wake", collapsed: false }),
-  );
-  stub({ ...base, completed: false, tour_completed: false });
-  render(<OnboardingGate activeSection="chats" />);
-  const guide = await screen.findByTestId("guide");
-  act(() => guide.click());
-  const tour = await screen.findByTestId("tour");
-  act(() => tour.click());
-  await waitFor(() => expect(screen.getByTestId("first-steps")).toBeDefined());
+  const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+  expect(urls).not.toContain("/api/onboarding/complete");
+  expect(urls).not.toContain("/api/onboarding/tour-complete");
 });

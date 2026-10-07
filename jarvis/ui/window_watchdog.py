@@ -73,6 +73,20 @@ RELOAD_BUDGET = 3
 #: so this bounds the silence the user sees, not the recovery.
 SILENT_PATIENCE_S = 45.0
 
+#: How long a window that already showed our page may leave the state probe
+#: unanswered, while the server is healthy, before it counts as hung. A busy
+#: but usable page misses a probe now and then; nine in a row (at ``POLL_S``)
+#: is a page whose main thread no longer runs anything. Live 2026-10-02: the
+#: main window's renderer sat at 100 % of a core for seven minutes and this
+#: guard waited the whole time, until the user closed the app.
+HUNG_PATIENCE_S = 45.0
+
+#: A renderer at or above this share of one core is spinning, not idling.
+HUNG_RENDERER_CPU_PERCENT = 80.0
+
+#: How long each renderer's CPU use is sampled before it is judged.
+HUNG_RENDERER_SAMPLE_S = 1.0
+
 #: What the window is showing.
 #:
 #: ``up``     — our document is loaded (``#root`` exists). From here the page's
@@ -140,6 +154,10 @@ class Verdict:
     action: Action
     reason: BlankReason | None = None
     after_up: bool = False
+    #: The page is not blank but hung: its renderer must be ended before the
+    #: reload, because a same-origin navigation is committed to that same busy
+    #: process and never arrives (reproduced with a ``while(true)`` page).
+    hung: bool = False
 
 
 class BlankWindowPolicy:
@@ -157,14 +175,17 @@ class BlankWindowPolicy:
         settle_s: float = RELOAD_SETTLE_S,
         reload_budget: int = RELOAD_BUDGET,
         silent_patience_s: float = SILENT_PATIENCE_S,
+        hung_patience_s: float = HUNG_PATIENCE_S,
     ) -> None:
         self._grace_s = grace_s
         self._settle_s = settle_s
         self._budget = reload_budget
         self._silent_patience_s = silent_patience_s
+        self._hung_patience_s = hung_patience_s
         self._reloads_left = reload_budget
         self._deadline: float | None = None
         self._blank_since: float | None = None
+        self._unanswered_since: float | None = None
         self._explained: BlankReason | None = None
         self._was_healthy = True
         self._seen_up = False
@@ -180,6 +201,7 @@ class BlankWindowPolicy:
             self._reloads_left = self._budget
             self._deadline = obs.now + self._grace_s
             self._blank_since = None
+            self._unanswered_since = None
             self._explained = None
             self._was_healthy = obs.server_healthy
             self._seen_up = True
@@ -197,7 +219,8 @@ class BlankWindowPolicy:
             and self._blank_since is None
             and obs.backend_alive
         ):
-            return Verdict(Action.WAIT)
+            return self._judge_unanswered(obs)
+        self._unanswered_since = None
 
         if self._blank_since is None:
             # The grace measures how long the window has been EMPTY, not how
@@ -255,6 +278,29 @@ class BlankWindowPolicy:
 
     # ---- internals ---------------------------------------------------------
 
+    def _judge_unanswered(self, obs: Observation) -> Verdict:
+        """A page that showed up earlier and now does not answer: busy or hung.
+
+        Short silences are waited out (see above). Only silence that outlasts
+        ``hung_patience_s`` while the server answers is a hung page, and that
+        one is recovered from the same budget as a blank window. The clock
+        restarts after each attempt, so a recovery that did not take gets the
+        full patience again before the next one.
+        """
+        if self._unanswered_since is None:
+            self._unanswered_since = obs.now
+        if not obs.server_healthy:
+            # The page may only be waiting on a blocked backend; a reload would
+            # land on the same silent server.
+            return Verdict(Action.WAIT)
+        if obs.now - self._unanswered_since < self._hung_patience_s:
+            return Verdict(Action.WAIT)
+        if self._reloads_left <= 0:
+            return Verdict(Action.WAIT)
+        self._reloads_left -= 1
+        self._unanswered_since = obs.now
+        return Verdict(Action.RELOAD, after_up=True, hung=True)
+
     def _arm_after_reload(self, now: float) -> None:
         # Escalating settle: 1x, 2x, 4x the base. A window that did not come
         # back after one reload is loading slowly, not broken — burning the
@@ -298,7 +344,7 @@ class BlankWindowPolicy:
 # The explanation page
 # ---------------------------------------------------------------------------
 
-#: One entry per reason per language. German and Spanish are product surface
+#: One entry per reason per language. German, Spanish and Chinese are product surface
 #: (AGENTS.md §1): this page is shown TO the user, and it cannot reach the
 #: bundle's i18n — the bundle is exactly what failed to load. The language is
 #: picked in the page from ``navigator.language``, the same way
@@ -349,6 +395,21 @@ _TEXTS: dict[str, dict[str, str]] = {
         "view_empty": ("Personal Jarvis responde, pero la ventana no cargó su página."),
         "button": "Recargar",
         "retrying": "Reintentando…",
+    },
+    "zh": {
+        # i18n-allow: product surface, no bundle available here.
+        "title": "窗口一直是空白的。",
+        "backend_dead": (
+            "Personal Jarvis 正在运行，但负责这个窗口的部分已经停止。"
+            "重新启动应用即可恢复。"
+        ),
+        "backend_silent": (
+            "Personal Jarvis 正忙，暂时还没有响应这个窗口。"
+            "一旦恢复响应，它会自动重新加载。"
+        ),
+        "view_empty": ("Personal Jarvis 已响应，但窗口没有加载出页面。"),
+        "button": "重新加载",
+        "retrying": "正在重试…",
     },
 }
 
@@ -454,6 +515,93 @@ def render_notice(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Ending a hung renderer
+# ---------------------------------------------------------------------------
+
+
+def end_busy_renderers(
+    *,
+    cpu_percent: float = HUNG_RENDERER_CPU_PERCENT,
+    sample_s: float = HUNG_RENDERER_SAMPLE_S,
+) -> list[int]:
+    """End this app's web-view renderer processes that are spinning a core.
+
+    A page stuck in a JavaScript loop cannot be reloaded from outside: the
+    navigation is handed to the same busy process. Ending that process frees
+    the window, and the reload that follows starts a fresh one (verified with
+    WebView2 2026-10-02: ``load_url`` alone left the page hung; end + load
+    brought it back in under a second).
+
+    Only renderers of the WebView2 this process hosts are considered, and only
+    those measured busy — an idle renderer serving another window is left
+    alone. Elsewhere (WKWebView on macOS, WebKitGTK or Qt on Linux) there is no
+    such browser child: nothing is ended and the reload proceeds as before.
+    Returns the PIDs that were ended.
+    """
+    try:
+        import psutil  # noqa: PLC0415 — only needed on this rare path
+    except ImportError:
+        logger.info("Hung window: psutil is unavailable, so its renderer cannot be ended.")
+        return []
+
+    candidates = []
+    for child in _own_web_view_renderers(psutil):
+        try:
+            child.cpu_percent(None)
+        except psutil.Error:  # a process that exited is skipped
+            continue
+        candidates.append(child)
+    if not candidates:
+        return []
+    time.sleep(sample_s)
+    ended: list[int] = []
+    for child in candidates:
+        try:
+            busy = child.cpu_percent(None)
+            if busy < cpu_percent:
+                continue
+            child.kill()
+        except psutil.Error as exc:
+            logger.debug("Hung window: renderer {} could not be ended: {}", child.pid, exc)
+            continue
+        logger.warning(
+            "Hung window: ended web-view renderer pid={} ({:.0f} % CPU) so the window can reload.",
+            child.pid,
+            busy,
+        )
+        ended.append(child.pid)
+    return ended
+
+
+def _own_web_view_renderers(psutil: Any) -> list[Any]:
+    """Renderer processes of the web view THIS process hosts, nothing else.
+
+    The browser process of an embedded web view is a direct child of the app;
+    its renderers are that browser's children. A Chrome the app launched for
+    an agent, or the music player's own web view (a separate host process),
+    are deliberately out of reach: a busy page there is not a hung window here.
+    """
+    renderers = []
+    for browser in psutil.Process().children(recursive=False):
+        try:
+            browser_args = browser.cmdline()
+        except psutil.Error:  # a process that exited is skipped
+            continue
+        if "--embedded-browser-webview=1" not in browser_args or any(
+            a.startswith("--type=") for a in browser_args
+        ):
+            continue
+        for child in browser.children(recursive=False):
+            try:
+                args = child.cmdline()
+            except psutil.Error:  # a process that exited is skipped
+                continue
+            if "--type=renderer" in args and "--extension-process" not in args:
+                renderers.append(child)
+    return renderers
+
+
 @dataclass
 class _Slot:
     """One in-flight window call and its outcome."""
@@ -539,6 +687,8 @@ class BlankWindowWatchdog:
         poll_s: float = POLL_S,
         caller: _WindowCaller | None = None,
         action_caller: _WindowCaller | None = None,
+        end_hung_renderer: Callable[[], list[int]] | None = None,
+        stack_probe: Any = None,
     ) -> None:
         self._window = window
         self._url = url
@@ -559,6 +709,10 @@ class BlankWindowWatchdog:
         # the diagnosis.
         self._caller = caller or _WindowCaller()
         self._action_caller = action_caller or _WindowCaller()
+        self._end_hung_renderer = end_hung_renderer or end_busy_renderers
+        # Names the script a hung page is stuck in before the renderer, and
+        # with it the evidence, is ended (``jarvis/ui/webview_hang_probe.py``).
+        self._stack_probe = stack_probe
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -597,9 +751,12 @@ class BlankWindowWatchdog:
             if window is None:
                 continue
             try:
+                page = self._page_state(window)
+                if page == "up" and self._stack_probe is not None:
+                    self._stack_probe.arm()
                 verdict = self._policy.decide(
                     Observation(
-                        page=self._page_state(window),
+                        page=page,
                         backend_alive=self._safe(self._backend_alive, default=True),
                         server_healthy=self._safe(self._health_probe, default=False),
                         now=time.monotonic(),
@@ -622,6 +779,8 @@ class BlankWindowWatchdog:
         """
         detail = ""
         if verdict.action is Action.RELOAD:
+            if verdict.hung:
+                self._recover_hung_page()
             target = self._url
             if verdict.after_up:
                 parts = urlsplit(target)
@@ -656,7 +815,9 @@ class BlankWindowWatchdog:
             return False
         # Logged only once it actually happened, so a window that is not there
         # yet cannot fill the log with attempts nobody saw.
-        if verdict.action is Action.RELOAD:
+        if verdict.action is Action.RELOAD and verdict.hung:
+            logger.warning("Desktop window was hung — reloaded it.")
+        elif verdict.action is Action.RELOAD:
             logger.info("Desktop window is blank — reloading it (the server answers again).")
         elif verdict.reason is not None:
             logger.warning(
@@ -666,6 +827,29 @@ class BlankWindowWatchdog:
                 f" Detail: {detail}" if detail else "",
             )
         return True
+
+    def _recover_hung_page(self) -> None:
+        """Free a window whose page stopped answering, before it is reloaded.
+
+        The probe worker is replaced too: its last ``evaluate_js`` went into
+        the hung page and may never return, and a wedged worker refuses every
+        later probe — the guard would read a recovered window as still hung.
+        The old thread is a daemon parked in a native wait; it is left behind.
+        """
+        logger.warning(
+            "Desktop window stopped answering while the server is healthy — "
+            "its page is hung; ending its renderer and reloading."
+        )
+        if self._stack_probe is not None:
+            stack = self._safe(self._stack_probe.capture, default=[])
+            if stack:
+                logger.warning(
+                    "Hung window: the page's JavaScript was stuck here:\n{}", "\n".join(stack)
+                )
+            else:
+                logger.warning("Hung window: no JavaScript stack could be captured.")
+        self._safe(self._end_hung_renderer, default=[])
+        self._caller = _WindowCaller()
 
     def _page_state(self, window: Any) -> PageState:
         """Ask the window what it is showing without guessing on a timeout."""

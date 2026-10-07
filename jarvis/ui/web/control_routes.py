@@ -40,11 +40,17 @@ from jarvis.core.self_mod import (
     SelfModAudit,
     SelfModRegistry,
 )
+from jarvis.core.self_mod.errors import (
+    ProviderSwitchLockedError,
+    SelfModError,
+    TypeMismatchError,
+)
 from jarvis.core.self_mod.pending import PendingMutationStore
 from jarvis.ui.web.control_auth import (
     require_control_key,
     require_control_key_or_session,
 )
+from jarvis.ui.web.error_text import internal_error
 
 log = logging.getLogger("jarvis.control")
 
@@ -215,6 +221,27 @@ def get_config(path: str, request: Request) -> dict[str, Any]:
     }
 
 
+def _self_mod_http_error(exc: SelfModError) -> HTTPException:
+    """Map a failed self-mod step to an HTTP status the caller can act on.
+
+    The request's own faults keep their message (it names the path and the
+    reason); a failed backup, write, reload or rollback is the server's
+    problem and gets a stable sentence, with the detail in the log.
+    """
+    if isinstance(exc, (SecretAccessError, ProviderSwitchLockedError)):
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
+    if isinstance(exc, AllowlistViolationError):
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if isinstance(exc, (PreValidateError, TypeMismatchError)):
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=internal_error("config write", exc, logger=log),
+    )
+
+
 def _apply_config_write(
     store: PendingMutationStore, path: str, value: Any, reason: str | None
 ) -> dict[str, Any]:
@@ -227,18 +254,16 @@ def _apply_config_write(
     )
     try:
         pending = store.create(request_obj)
-    except SecretAccessError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    except AllowlistViolationError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except PreValidateError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+    except SelfModError as exc:
+        raise _self_mod_http_error(exc) from exc
     return _pending_envelope(pending)
 
 
-@router.put("/config", dependencies=[Depends(require_control_key)], openapi_extra={"x-jarvis-dangerous": True})
+@router.put(
+    "/config",
+    dependencies=[Depends(require_control_key)],
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 def put_config(body: ConfigWriteBody, request: Request) -> dict[str, Any]:
     store = _pending_store(request)
     return _apply_config_write(store, body.path, body.value, body.reason)
@@ -255,6 +280,10 @@ def confirm_config(body: PendingIdBody, request: Request) -> dict[str, Any]:
         result = store.confirm(mutation_id)
     except KeyError as exc:
         raise HTTPException(status_code=410, detail="pending mutation expired or unknown") from exc
+    except SelfModError as exc:
+        # The entry is consumed either way; a failed apply is an error status,
+        # never a 200 the caller would read as "applied".
+        raise _self_mod_http_error(exc) from exc
     return {
         "ok": result.ok,
         "applied": result.ok,
@@ -290,13 +319,41 @@ def put_language(body: LanguageBody, request: Request) -> dict[str, Any]:
     mirrors the input language). Both are SAFE -> applied immediately, and the
     interface switches live in the open UI via the ConfigReloaded broadcast."""
     store = _pending_store(request)
-    result = _apply_config_write(
-        store, "brain.reply_language", body.reply_language, "control-api language switch"
-    )
-    if body.reply_language in ("de", "en", "es"):
-        ui = _apply_config_write(
-            store, "ui.language", body.reply_language, "control-api language switch"
-        )
+    reason = "control-api language switch"
+    switch_ui = body.reply_language in ("de", "en", "es")
+    # Validate BOTH writes before applying either, so a refused interface
+    # language never leaves the reply language switched on its own.
+    writer = _control_writer(request)
+    paths = ["brain.reply_language"] + (["ui.language"] if switch_ui else [])
+    for path in paths:
+        try:
+            writer.prevalidate(
+                MutationRequest(
+                    path=path,
+                    new_value=body.reply_language,
+                    actor=AuditActor.USER,
+                    source=AuditSource.UI,
+                    reason=reason,
+                )
+            )
+        except SelfModError as exc:
+            raise _self_mod_http_error(exc) from exc
+    result = _apply_config_write(store, "brain.reply_language", body.reply_language, reason)
+    if switch_ui:
+        try:
+            ui = _apply_config_write(store, "ui.language", body.reply_language, reason)
+        except HTTPException:
+            # The second write failed after the first landed (a disk or
+            # reload error). Put the reply language back, then report.
+            previous = result.get("old_value")
+            if previous is not None:
+                try:
+                    _apply_config_write(
+                        store, "brain.reply_language", previous, f"{reason} (rolled back)"
+                    )
+                except HTTPException:
+                    log.error("control: reply_language rollback failed after ui.language error")
+            raise
         result["ui_language"] = {"applied": ui.get("applied"), "value": body.reply_language}
     return result
 
@@ -351,7 +408,11 @@ def list_secrets() -> dict[str, Any]:
     return {"secrets": items}
 
 
-@router.put("/secrets/{key}", dependencies=[Depends(require_control_key)], openapi_extra={"x-jarvis-dangerous": True})
+@router.put(
+    "/secrets/{key}",
+    dependencies=[Depends(require_control_key)],
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
         raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")

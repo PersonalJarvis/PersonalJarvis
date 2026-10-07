@@ -52,7 +52,10 @@ _HOP_BY_HOP = frozenset(
 _INBOUND_AUTH = frozenset({"authorization", "x-api-key", "x-goog-api-key"})
 # Never copy the inbound Host (it is the proxy host, not the vendor's) or the
 # request's content-length (httpx recomputes it for the new body).
-_DROP_REQUEST_HEADERS = _HOP_BY_HOP | _INBOUND_AUTH | {"host", "content-length"}
+_DROP_REQUEST_HEADERS = _HOP_BY_HOP | _INBOUND_AUTH | {
+    "host", "content-length", "accept-encoding",
+}
+_DECODED_ENCODINGS = frozenset({"identity", "gzip", "deflate"})
 # Hop-by-hop response headers + ones httpx/Starlette will set themselves.
 _DROP_RESPONSE_HEADERS = _HOP_BY_HOP | {"content-length", "content-encoding"}
 
@@ -144,6 +147,9 @@ async def handle_passthrough(
     # 4. Build the upstream request.
     body = await request.body()
     out_headers = _safe_request_headers(request.headers)
+    # gzip/deflate decoders ship with httpx. Optional Brotli/zstd packages may
+    # not exist on this proxy even when the downstream browser supports them.
+    out_headers["accept-encoding"] = "gzip, deflate"
     out_query = dict(query_params)
     # Strip the inbound gemini ?key= before placement (defence in depth — the
     # placement function also pops it).
@@ -182,11 +188,22 @@ async def handle_passthrough(
             status_code=502,
         )
 
+    encoding = upstream_response.headers.get("content-encoding", "")
+    if encoding and any(
+        part.strip().lower() not in _DECODED_ENCODINGS for part in encoding.split(",")
+    ):
+        await upstream_response.aclose()
+        return JSONResponse(
+            {"error": "unsupported_encoding", "detail": "unsupported upstream content encoding"},
+            status_code=502,
+        )
+
     usage_buffer = bytearray()
 
     async def body_iterator():
         try:
-            async for chunk in upstream_response.aiter_raw():
+            # Headers describe decoded content; meter and forward the same bytes.
+            async for chunk in upstream_response.aiter_bytes():
                 if len(usage_buffer) < _USAGE_BUFFER_CAP:
                     usage_buffer.extend(chunk[: _USAGE_BUFFER_CAP - len(usage_buffer)])
                 yield chunk

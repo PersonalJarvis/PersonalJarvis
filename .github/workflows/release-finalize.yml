@@ -1,0 +1,52 @@
+# All tag publishers stage assets in a draft. The last successful publisher
+# triggers this trusted-main coordinator; partial/failed builds stay private.
+name: Finalize release
+
+on:
+  workflow_run:
+    workflows: [Release to PyPI, Desktop installers, Sign installer (Sigstore keyless)]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing draft release tag (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-finalize-${{ inputs.tag || github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'v') &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Verify publishers, checksums and release completeness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          args=()
+          [ -n "$SHA" ] && args+=(--sha "$SHA")
+          python scripts/ci/release_assets.py finalize --repo "$GITHUB_REPOSITORY" --tag "$TAG" "${args[@]}"

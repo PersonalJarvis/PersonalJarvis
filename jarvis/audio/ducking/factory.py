@@ -24,6 +24,9 @@ def _osascript_available() -> bool:
 def make_audio_ducker(cfg: Any | None = None) -> AudioDucker:
     """Windows + pycaw → WindowsPycawDucker; macOS + osascript →
     MacOSScriptDucker; otherwise a logged NullDucker.
+
+    The macOS ducker resolves the permission service itself (lazily, per call),
+    so nothing here asks the OS for anything.
     """
     if sys.platform == "win32" and _pycaw_available():
         from jarvis.audio.ducking.windows import WindowsPycawDucker

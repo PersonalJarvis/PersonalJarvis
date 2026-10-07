@@ -19,13 +19,13 @@ _ACTIONS = frozenset({"minimize", "maximize", "close"})
 def window_chrome(platform: str | None = None) -> dict[str, Any]:
     """Where the page should put the window buttons.
 
-    macOS keeps them on the left, like the traffic lights they replace.
-    Windows and Linux keep them on the right. ``frameless`` is filled in by
-    the desktop shell from the live window — this helper only names the side.
+    macOS uses Cocoa's native traffic lights, so the page draws no controls.
+    Windows and Linux keep their web controls on the right. ``frameless`` is
+    filled in by the desktop shell from the live window.
     """
     plat = platform if platform is not None else sys.platform
     if plat == "darwin":
-        name, controls = "darwin", "leading"
+        name, controls = "darwin", "none"
     elif plat == "win32":
         name, controls = "windows", "trailing"
     else:
@@ -43,8 +43,8 @@ def run_window_command(
 
     ``maximized`` is the operating system's answer when the caller has one
     (Windows ``IsZoomed``). Without it, the last action this process took is
-    the answer — enough for macOS and Linux, where only these buttons change
-    that state.
+    the fallback answer. macOS uses native caption controls instead of this
+    web-caption toggle: Cocoa's restore API only deminiaturizes a window.
     """
     if window is None:
         return {"ok": False, "reason": "no_window"}

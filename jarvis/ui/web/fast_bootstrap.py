@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .spa_build import build_is_complete, holding_page_html, recover_conflicted_index
-from .surface_security import SurfaceSecurity
+from .surface_security import SurfaceSecurity, foreign_site_initiated, open_access_granted
 
 # The built React frontend lives next to this module (jarvis/ui/web/dist),
 # the same directory the real FastAPI app serves it from. Resolving it here —
@@ -117,17 +117,26 @@ class FastBootstrap:
 
     @property
     def app(self) -> Any:
-        """The SECURED bootstrap entry, for tests and external embedders.
-
-        NOT what :meth:`serve` binds. Production serves :meth:`_asgi` directly
-        (see the comment in :meth:`_start_server`): the warming surface is
-        deliberately credential-free — static shell, health, onboarding
-        fastpath, accept-then-close 1013 websockets — and every held request
-        delegates to the real app, which applies its own SurfaceSecurity.
-        This wrapped variant adds the boundary in front of the SAME warming
-        surface for callers that embed the bootstrap somewhere less trusted.
-        """
+        """The shared secured entry for production, tests and embedders."""
         return self._entry_app
+
+    def _onboarding_fastpath_allowed(self, scope: dict) -> bool:
+        """Whether the warming onboarding handler may answer ``scope`` itself.
+
+        Reads need a trusted Host and no foreign Origin. Writes (Terms consent,
+        completion) additionally need the app's own Origin plus local open
+        access or a session this bootstrap issued — the bar the real boundary
+        sets for a browser-made change. A request that misses it is held for
+        the real app instead, which judges it with its full credential set.
+        """
+        guard = self._secured_app
+        if not guard.host_is_trusted(scope):
+            return False
+        method = str(scope.get("method", "GET") or "GET").upper()
+        if method in ("GET", "HEAD"):
+            return guard.origin_is_trusted(scope) and not foreign_site_initiated(scope)
+        local_user = open_access_granted(scope) or guard.issued_session_presented(scope)
+        return local_user and guard.origin_is_trusted(scope, required=True)
 
     async def _entry_app(self, scope: dict, receive: Any, send: Any) -> None:
         """Guard warm-up, then delegate directly to the secured full app."""
@@ -189,7 +198,17 @@ class FastBootstrap:
         # state/terms/step/complete calls are answered here (stdlib-only
         # handler, shared with the real routes) instead of being held. Once
         # set_app runs, the delegation branch above owns these paths again.
-        if kind == "http" and scope.get("path", "").startswith("/api/onboarding"):
+        #
+        # This branch runs WITHOUT the outer security boundary (see
+        # _start_server), so it only answers what that boundary would let
+        # through as local open access: a trusted Host (no DNS rebinding) and,
+        # for the consent writes, a same-origin page. Anything else falls
+        # through to the hold below and is judged by the real app's boundary.
+        if (
+            kind == "http"
+            and scope.get("path", "").startswith("/api/onboarding")
+            and self._onboarding_fastpath_allowed(scope)
+        ):
             from jarvis.setup.onboarding_fastpath import handle as _onboarding_handle
 
             if await _onboarding_handle(scope, receive, send):
@@ -478,17 +497,13 @@ class FastBootstrap:
         # it as ``app(scope)`` and crash. A module-level-style closure is
         # correctly detected as ASGI3.
         #
-        # DELIBERATELY ``_asgi`` and not the secured ``self.app``: the warming
-        # surface must stay credential-free. Gating it on the session cookie
-        # would race the desktop token injection at every boot (AuthGate would
-        # 401 before pywebview delivers the token) and would go dark for
-        # WebKit websockets entirely (BUG-065). Everything held during warm-up
-        # is delegated to the real app afterwards, which enforces its own
-        # SurfaceSecurity — so nothing protected is ever served from here.
+        # Use the same boundary as embedders and tests. Public shell/health
+        # reads and warming websocket 1013 responses remain credential-free;
+        # setup mutations must pass Host, Origin and write authorization.
         _self = self
 
         async def _asgi3(scope: dict, receive: Any, send: Any) -> None:
-            await _self._asgi(scope, receive, send)
+            await _self.app(scope, receive, send)
 
         self._server = uvicorn.Server(
             uvicorn.Config(

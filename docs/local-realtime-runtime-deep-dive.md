@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-08
 
-**Status:** Proposed; diagnosis and implementation plan only
+**Status:** Superseded on 2026-10-01 by the
+[local live voice rebuild plan](local-live-voice-rebuild.md) and
+[ADR-0037](adr/0037-jarvis-owned-local-voice-engine.md). Kept as history;
+do not implement the recovery plan below.
 
 **Scope:** Managed local realtime voice, its model stack, process lifecycle,
 connection path, latency, resource planning, protocol boundary, and release

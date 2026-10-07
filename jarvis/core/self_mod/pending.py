@@ -110,8 +110,8 @@ class PendingMutationStore:
         """Prepare a mutation — or confirm immediately for SAFE-tier paths.
 
         Raises `AllowlistViolationError` / `SecretAccessError` from the
-        allowlist check and (for SAFE auto-confirm) `PreValidateError` from
-        the writer. The tool layer converts these into a
+        allowlist check and `PreValidateError` from the writer — for an
+        auto-applied write and for a parked one alike. The tool layer converts these into a
         `ToolResult(success=False, ...)` response.
         """
         spec: MutableSpec = SelfModRegistry.require_spec(request.path)
@@ -137,6 +137,10 @@ class PendingMutationStore:
                 backup_path=result.backup_path,
                 description=spec.description,
             )
+
+        # Refuse a value the schema rejects now, while the caller can still
+        # correct it — not after the user confirmed a change that cannot land.
+        self._writer.prevalidate(request)
 
         pending = PendingMutation(
             id=request.correlation_id,

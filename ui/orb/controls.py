@@ -366,22 +366,27 @@ def render_row(
 
 
 # --- The pet's control strip ------------------------------------------------
-# The desktop pet (``docs/pets.md``) carries its controls in the shape the
-# Codex companion made familiar: a pen in its own filled disc, then ONE filled
+# The desktop pet (``docs/pets.md``) carries its controls in a compact row:
+# a bell in its own filled disc, then ONE filled
 # pill holding microphone mute, the talk orb and the speaker, with thin
-# low-contrast dividers. Same hard-edge rules as the row above: every
-# silhouette that meets the colour key goes through a binary mask, every glyph
-# and the orb's gradient are drawn at 4x and downscaled INSIDE the opaque
-# surface, so their antialiasing never meets the key.
+# low-contrast dividers, then the phone in its own disc — quiet at rest, and
+# under the pointer green to call Jarvis or red to hang up, the colours every
+# phone app uses for exactly those two. Same
+# hard-edge rules as the row above: every silhouette that meets the colour key
+# goes through a binary mask, every glyph and the orb's gradient are drawn at
+# 4x and downscaled INSIDE the opaque surface, so their antialiasing never
+# meets the key.
 
 #: The strip's actions, left to right. The voice orb's ``ACTIONS`` stay as they
 #: are; the two layouts never share a hit-test.
-PET_ACTIONS: tuple[str, ...] = ("compose", "mic_mute", "orb", "speaker")
+PET_ACTIONS: tuple[str, ...] = ("bell", "mic_mute", "orb", "speaker", "call")
+#: The actions inside the pill, left to right.
+PET_PILL_ACTIONS: tuple[str, ...] = ("mic_mute", "orb", "speaker")
 
 #: Unscaled geometry, in logical pixels at 100 % display scaling and
 #: ``pet_scale`` 1.0 — sized against the companion figure (about 180 px), so the
-#: strip is roughly 0.3 x the figure's width tall, as in the Codex app.
-#: ``PET_SLOT`` is the pill's height and the pen disc's diameter.
+#: strip is roughly 0.3 x the figure's width tall.
+#: ``PET_SLOT`` is the pill's height and the bell and phone discs' diameter.
 PET_SLOT = 50
 PET_ICON_SLOT = 46
 PET_ORB_SLOT = 52
@@ -407,9 +412,10 @@ PET_INDICATOR_SPACING = 0.24
 PET_INDICATOR_HALF_W = 0.068
 PET_INDICATOR_MIN_H = 0.18
 PET_INDICATOR_MAX_H = 0.64
-#: At rest the strokes stand still and dimmed; the middle one a little taller,
-#: so the three read as one control and not as three loose dots.
-PET_INDICATOR_REST_H: tuple[float, ...] = (0.22, 0.32, 0.22)
+#: At rest the strokes stand still, dimmed and all equally short: the look of
+#: silence. A taller middle stroke read as someone speaking; the strokes only
+#: grow when there is a real voice to follow.
+PET_INDICATOR_REST_H: tuple[float, ...] = (PET_INDICATOR_MIN_H,) * PET_INDICATOR_BARS
 PET_INDICATOR_REST_GLOW = 0.78
 #: Animation steps per cycle. Voice: the strokes wobble around the level in
 #: ``PET_VOICE_PHASES`` steps of ``PET_VOICE_STEP_S``. Thinking: a highlight
@@ -461,6 +467,26 @@ PET_CLOUD_SOFTNESS = 0.8
 #: resting or unlit stroke still reads as sky.
 PET_INDICATOR_NIGHT = (24, 44, 84)
 
+#: The bell rings when a notification arrives: a damped swing about its crown,
+#: ``PET_RING_PHASES`` steps of ``PET_RING_STEP_S``, peak ``PET_RING_DEG``
+#: degrees. Phase 0 is the bell at rest, so a still strip stays one cached frame.
+PET_RING_PHASES = 14
+PET_RING_STEP_S = 0.04
+PET_RING_DEG = 16.0
+
+#: At rest the phone disc wears the bell disc's fill and glyph colour — the
+#: strip is one quiet family. Only under the pointer does it take a phone app's
+#: colour: green when a click would call Jarvis, red when it would hang up.
+PET_CALL_HOVER_START = (22, 163, 74)
+PET_CALL_HOVER_HANGUP = (220, 38, 38)
+PET_CALL_HOVER_ICON = (255, 255, 255)
+#: Pressing call rings the handset: the bell's damped swing, played
+#: ``PET_CALL_RING_PASSES`` times so it reads as a phone ringing out.
+PET_CALL_RING_PASSES = 2
+#: The handset's turn from its call pose (lucide's ``phone``) to its hang-up
+#: pose (lying flat, ends down) — the 135 degrees phone apps animate.
+PET_HANGUP_TILT_DEG = 135.0
+
 
 def _spx(value: float, scale: float) -> int:
     """One unscaled length at ``scale``, never below one pixel."""
@@ -473,8 +499,10 @@ class PetStripLayout:
 
     width: int
     height: int
-    #: The pen disc: centre and radius.
+    #: The bell disc: centre and radius.
     pen: tuple[float, float, float]
+    #: The phone disc: centre and radius.
+    call: tuple[float, float, float]
     #: The pill's bounding box ``(x0, y0, x1, y1)``, x1/y1 exclusive.
     pill: tuple[int, int, int, int]
     #: Each pill action's horizontal span ``(x0, x1)`` inside the window.
@@ -504,18 +532,20 @@ def pet_strip_layout(scale: float = 1.0) -> PetStripLayout:
     slots: list[tuple[str, int, int]] = []
     dividers: list[int] = []
     x = pill_x0 + inset
-    for index, action in enumerate(PET_ACTIONS[1:]):
+    for index, action in enumerate(PET_PILL_ACTIONS):
         slots.append((action, x, x + widths[action]))
         x += widths[action]
-        if index < 2:
+        if index < len(PET_PILL_ACTIONS) - 1:
             dividers.append(x)
             x += divider
-    width = pill[2] + pad
+    call = (pill[2] + gap + pen_r, pad + pen_r, pen_r)
+    width = pill[2] + gap + slot + pad
     height = slot + 2 * pad
     return PetStripLayout(
         width=width,
         height=height,
         pen=pen,
+        call=call,
         pill=pill,
         slots=tuple(slots),
         dividers=tuple(dividers),
@@ -544,7 +574,7 @@ def _inside_stadium(x: float, y: float, box: tuple[int, int, int, int]) -> bool:
 def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     """Which pet action a click at ``(x, y)`` lands on, or ``None``.
 
-    Outside the pen disc and the pill is nothing — that empty area is where the
+    Outside the bell disc, the pill and the phone disc is nothing — that empty area is where the
     user grabs the strip to drag the pet (the only handle when the pet is
     "None"). Inside the pill every pixel belongs to a slot: a divider resolves
     to the nearer neighbour instead of eating the click.
@@ -552,7 +582,10 @@ def pet_hit_test(x: float, y: float, scale: float = 1.0) -> str | None:
     layout = pet_strip_layout(scale)
     pcx, pcy, pr = layout.pen
     if math.hypot(x - pcx, y - pcy) <= pr:
-        return "compose"
+        return "bell"
+    ccx, ccy, cr = layout.call
+    if math.hypot(x - ccx, y - ccy) <= cr:
+        return "call"
     if not _inside_stadium(x, y, layout.pill):
         return None
     best: str | None = None
@@ -586,10 +619,12 @@ class PetStripState:
 
     #: Jarvis's microphone is muted (``VoiceMuteChanged``).
     mic_muted: bool = False
+    #: The Jarvis Bar: the pen (a new text chat) replaces the pet's bell.
+    jarvis_bar: bool = False
     #: The assistant's voice is muted for this session.
     speaker_muted: bool = False
-    #: A conversation is running — the talk control hangs up instead of
-    #: starting one.
+    #: A conversation is running — the talk control and the phone hang up
+    #: instead of starting one.
     active: bool = False
     #: The voice level step (``quantize_level``); drawn only in ``voice``.
     level: int = 0
@@ -598,6 +633,13 @@ class PetStripState:
     phase: int = 0
     #: Which control the pointer is over, if any.
     hovered: str | None = None
+    #: The user switched notifications off with the bell (this run only).
+    notify_off: bool = False
+    #: The bell's swing step (``ring_angle``); 0 is at rest.
+    ring: int = 0
+    #: The handset's ringing step, counted across ``PET_CALL_RING_PASSES``
+    #: swings (``call_ring_angle``); 0 is at rest.
+    call_ring: int = 0
 
 
 # -- glyphs ------------------------------------------------------------------
@@ -636,6 +678,164 @@ class _Pen:
         for angle in (start, end):
             a = math.radians(angle)
             self.cap((x + rr * math.cos(a), y + rr * math.sin(a)), color)
+
+
+def _cubic(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    p3: tuple[float, float],
+    steps: int = 10,
+) -> list[tuple[float, float]]:
+    """A cubic bezier sampled into ``steps + 1`` points."""
+    out = []
+    for i in range(steps + 1):
+        t = i / steps
+        a, b, c, d = (1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t * t, t**3
+        out.append(
+            (
+                a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0],
+                a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1],
+            )
+        )
+    return out
+
+
+def _arc_points(
+    cu: float, cv: float, r: float, start: float, end: float, steps: int = 12
+) -> list[tuple[float, float]]:
+    """A circular arc (degrees, y down like PIL) sampled into points."""
+    return [
+        (
+            cu + r * math.cos(math.radians(start + (end - start) * i / steps)),
+            cv + r * math.sin(math.radians(start + (end - start) * i / steps)),
+        )
+        for i in range(steps + 1)
+    ]
+
+
+@functools.lru_cache(maxsize=1)
+def _bell_outline() -> tuple[tuple[tuple[float, float], ...], ...]:
+    """The bell as polylines on the 24-unit grid (lucide's ``bell``).
+
+    Polylines rather than PIL arcs so the whole glyph can swing: a rotated
+    point list is still a bell, a rotated ``d.arc`` box is not.
+    """
+    body = (
+        _cubic((3, 17), (3, 17), (6, 15), (6, 8))
+        + _arc_points(12, 8, 6, 180, 360)[1:]
+        + _cubic((18, 8), (18, 15), (21, 17), (21, 17))[1:]
+    )
+    body.append((3, 17))
+    clapper = _arc_points(12, 20.03, 1.94, 151.2, 28.8, steps=8)
+    return (tuple(body), tuple(clapper))
+
+
+def ring_angle(phase: int) -> float:
+    """The bell's swing in degrees at ``phase`` — a damped back-and-forth."""
+    if phase <= 0 or phase >= PET_RING_PHASES:
+        return 0.0
+    t = phase / PET_RING_PHASES
+    return PET_RING_DEG * math.sin(t * 3.0 * 2.0 * math.pi) * (1.0 - t) ** 1.5
+
+
+def _glyph_bell(pen: _Pen, color: _Rgb, *, angle: float = 0.0, slashed: bool = False) -> None:
+    """A bell, swung by ``angle`` degrees about its crown; struck through when off."""
+    a = math.radians(angle)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+    pivot_u, pivot_v = 12.0, 2.0
+
+    def turn(point: tuple[float, float]) -> tuple[float, float]:
+        du, dv = point[0] - pivot_u, point[1] - pivot_v
+        return (pivot_u + du * cos_a - dv * sin_a, pivot_v + du * sin_a + dv * cos_a)
+
+    for line in _bell_outline():
+        pen.lines([turn(point) for point in line], color)
+    if slashed:
+        _glyph_slash(pen, color)
+
+
+def call_ring_angle(phase: int) -> float:
+    """The handset's shake in degrees at ``phase``: the bell's swing, repeated."""
+    if phase <= 0 or phase >= PET_RING_PHASES * PET_CALL_RING_PASSES:
+        return 0.0
+    return ring_angle(phase % PET_RING_PHASES)
+
+
+def _svg_arc(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    r: float,
+    *,
+    large: bool,
+    sweep: bool,
+    steps: int = 8,
+) -> list[tuple[float, float]]:
+    """A circular SVG ``A`` segment from ``p0`` to ``p1``, sampled; ``p0`` excluded."""
+    (x0, y0), (x1, y1) = p0, p1
+    mx, my = (x0 - x1) / 2.0, (y0 - y1) / 2.0
+    half = math.hypot(mx, my)
+    r = max(r, half)
+    # Centre on the chord's perpendicular bisector; flags pick the side.
+    k = math.sqrt(max(0.0, r * r - half * half)) / max(half, 1e-9)
+    if large == sweep:
+        k = -k
+    cx = (x0 + x1) / 2.0 + k * my
+    cy = (y0 + y1) / 2.0 - k * mx
+    a0 = math.atan2(y0 - cy, x0 - cx)
+    a1 = math.atan2(y1 - cy, x1 - cx)
+    delta = a1 - a0
+    if sweep and delta < 0:
+        delta += 2.0 * math.pi
+    elif not sweep and delta > 0:
+        delta -= 2.0 * math.pi
+    return [
+        (cx + r * math.cos(a0 + delta * i / steps), cy + r * math.sin(a0 + delta * i / steps))
+        for i in range(1, steps + 1)
+    ]
+
+
+@functools.lru_cache(maxsize=1)
+def _handset_outline() -> tuple[tuple[float, float], ...]:
+    """Lucide's ``phone`` on the 24-unit grid, as one closed polyline.
+
+    The same line icon set as the bell, microphone and speaker, so the phone
+    reads as part of the strip rather than as a button of its own.
+    """
+    pts: list[tuple[float, float]] = [(13.832, 16.568)]
+
+    def arc(end: tuple[float, float], r: float, *, large: bool = False, sweep: bool) -> None:
+        pts.extend(_svg_arc(pts[-1], end, r, large=large, sweep=sweep))
+
+    arc((15.045, 16.265), 1, sweep=False)
+    pts.append((15.4, 15.8))
+    arc((17, 15), 2, sweep=True)
+    pts.append((20, 15))
+    arc((22, 17), 2, sweep=True)
+    pts.append((22, 20))
+    arc((20, 22), 2, sweep=True)
+    arc((2, 4), 18, sweep=True)
+    arc((4, 2), 2, sweep=True)
+    pts.append((7, 2))
+    arc((9, 4), 2, sweep=True)
+    pts.append((9, 7))
+    arc((8.2, 8.6), 2, sweep=True)
+    pts.append((7.732, 8.951))
+    arc((7.44, 10.184), 1, sweep=False)
+    arc((13.832, 16.568), 14, sweep=False)
+    return tuple(pts)
+
+
+def _glyph_phone(pen: _Pen, color: _Rgb, *, hangup: bool, shake: float = 0.0) -> None:
+    """The handset: lucide's phone to call, turned flat to hang up; ``shake`` rings it."""
+    a = math.radians((PET_HANGUP_TILT_DEG if hangup else 0.0) + shake)
+    cos_a, sin_a = math.cos(a), math.sin(a)
+
+    def turn(point: tuple[float, float]) -> tuple[float, float]:
+        du, dv = point[0] - 12.0, point[1] - 12.0
+        return (12.0 + du * cos_a - dv * sin_a, 12.0 + du * sin_a + dv * cos_a)
+
+    pen.lines([turn(point) for point in _handset_outline()], color)
 
 
 def _glyph_compose(pen: _Pen, color: _Rgb) -> None:
@@ -685,6 +885,14 @@ def _draw_glyph(
 ) -> None:
     if action == "compose":
         _glyph_compose(_Pen(d, cx, cy, box, stroke), PET_ICON)
+    elif action == "bell":
+        color = PET_ICON_MUTED if state.notify_off else PET_ICON
+        _glyph_bell(
+            _Pen(d, cx, cy, box, stroke),
+            color,
+            angle=ring_angle(state.ring),
+            slashed=state.notify_off,
+        )
     elif action == "mic_mute":
         color = PET_ICON_MUTED if state.mic_muted else PET_ICON
         pen = _Pen(d, cx, cy, box, stroke)
@@ -816,6 +1024,9 @@ def _stroke_mask(width: int, height: int) -> Image.Image:
     return mask
 
 
+PET_ORB_HIGHLIGHT = (169, 208, 255)
+
+
 def _draw_indicator(
     layer: Image.Image, cx: float, cy: float, pill_h: float, state: PetStripState
 ) -> None:
@@ -843,14 +1054,36 @@ def _draw_indicator(
         layer.paste(stroke, (x0, y0), _stroke_mask(width, h))
 
 
+def _render_call_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
+    """The phone disc: the bell disc's look, green or red under the pointer."""
+    size = diameter * _SS
+    if state.hovered == "call":
+        fill = PET_CALL_HOVER_HANGUP if state.active else PET_CALL_HOVER_START
+        icon = PET_CALL_HOVER_ICON
+    else:
+        fill, icon = PET_FILL, PET_ICON
+    layer = Image.new("RGB", (size, size), fill)
+    d = ImageDraw.Draw(layer)
+    box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
+    stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
+    _glyph_phone(
+        _Pen(d, size / 2.0, size / 2.0, box, stroke),
+        icon,
+        hangup=state.active,
+        shake=call_ring_angle(state.call_ring),
+    )
+    return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
+
+
 def _render_pen_disc(state: PetStripState, diameter: int, scale: float) -> Image.Image:
     size = diameter * _SS
-    hovered = state.hovered == "compose"
+    action = "compose" if state.jarvis_bar else "bell"
+    hovered = state.hovered == action
     layer = Image.new("RGB", (size, size), PET_FILL_HOVER if hovered else PET_FILL)
     d = ImageDraw.Draw(layer)
     box = _spx(PET_SLOT, scale) * PET_ICON_BOX * _SS
     stroke = PET_ICON_STROKE * max(0.5, scale) * _SS
-    _draw_glyph("compose", d, size / 2.0, size / 2.0, box, stroke, state)
+    _draw_glyph(action, d, size / 2.0, size / 2.0, box, stroke, state)
     return layer.resize((diameter, diameter), Image.Resampling.LANCZOS)
 
 
@@ -877,6 +1110,8 @@ def _render_pill(state: PetStripState, layout: PetStripLayout, scale: float) -> 
     for action, sx0, sx1 in layout.slots:
         cx = ((sx0 + sx1) / 2.0 - x0) * _SS
         if action == "orb":
+            # The pet and the Jarvis Bar share one talk control: the three
+            # strokes that rest, follow the voice and run while Jarvis thinks.
             _draw_indicator(layer, cx, cy, h_ss, state)
         else:
             _draw_glyph(action, d, cx, cy, box, stroke, state)
@@ -914,6 +1149,10 @@ def render_pet_strip(
     x0, y0, x1, y1 = layout.pill
     pill = _render_pill(state, layout, scale)
     frame.paste(pill, (x0, y0), _binary_stadium_mask(x1 - x0, y1 - y0))
+    ccx, ccy, cr = layout.call
+    call_d = int(round(cr * 2))
+    call = _render_call_disc(state, call_d, scale)
+    frame.paste(call, (int(round(ccx - cr)), int(round(ccy - cr))), _disc_mask(call_d))
     return frame
 
 
@@ -938,6 +1177,9 @@ def toggle_speaker_mute(source: str = "orb") -> bool | None:
     pipeline = get_speech_pipeline()
     if pipeline is None:
         return None
+    toggle = getattr(pipeline, "toggle_speaker_mute", None)
+    if callable(toggle):
+        return bool(toggle(source=source))
     setter = getattr(pipeline, "set_tts_volume", None)
     if not callable(setter):
         return None
@@ -1027,6 +1269,9 @@ def speaker_is_muted() -> bool:
     pipeline = get_speech_pipeline()
     if pipeline is None:
         return False
+    muted = getattr(pipeline, "is_speaker_muted", None)
+    if muted is not None:
+        return bool(muted)
     return _current_tts_volume(pipeline) <= 0.0
 
 

@@ -155,6 +155,6 @@ class JarvisShell:
                 continue
             if cmd.action == "open_ui":
                 self.request_show()
-            elif cmd.action == "quit":
+            elif cmd.action in ("quit", "quit_all"):
                 self.quit()
                 break

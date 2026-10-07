@@ -492,57 +492,143 @@ def test_get_actuator_on_this_host():
             assert actuator.name.startswith("posix-")
 
 
-def test_macos_input_permissions_fail_closed_before_backend_init(monkeypatch):
-    from jarvis.platform.permissions import PermissionId, PermissionState
+class _Clock:
+    """A monotonic clock a test advances (the service's cooldown and grant cache)."""
 
-    probes: list[PermissionId] = []
+    def __init__(self) -> None:
+        self.now = 1000.0
 
-    class _PermissionPort:
-        def state(self, permission_id):
-            return {
-                PermissionId.ACCESSIBILITY: PermissionState.GRANTED,
-                PermissionId.EVENT_POSTING: PermissionState.NOT_GRANTED,
-            }[permission_id]
+    def __call__(self) -> float:
+        return self.now
 
-        def runtime_access_granted(self, permission_id):
-            probes.append(permission_id)
-            return permission_id is PermissionId.ACCESSIBILITY
 
-    monkeypatch.setattr(base_mod.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: _PermissionPort(),
-    )
+@pytest.fixture
+def macos_ax(monkeypatch):
+    """The REAL permission service on a REAL port that sits on FakeTCC.
 
-    with pytest.raises(ActuationUnavailable, match="Input Control"):
+    Builds a darwin world per call. ``sys.platform`` is switched to ``darwin``
+    because the actuator only consults the permission layer on macOS; nothing
+    here ran on a real Mac, FakeTCC models the OS.
+    """
+    from jarvis.platform import permission_service as service_module
+    from jarvis.platform.permission_service import PermissionService
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    created: list[PermissionService] = []
+
+    def build(platform: str = "darwin", **tcc_kwargs):
+        tcc = FakeTCC(**tcc_kwargs)
+        install_port(monkeypatch, tcc.port(platform))
+        clock = _Clock()
+        service = PermissionService(clock=clock, watch_interval_s=3600.0)
+        monkeypatch.setattr(service_module, "_SERVICE", service)
+        created.append(service)
+        if platform == "darwin":
+            monkeypatch.setattr(base_mod.sys, "platform", "darwin")
+        return types.SimpleNamespace(tcc=tcc, service=service, clock=clock)
+
+    yield build
+    for service in created:
+        service._shutdown()
+
+
+def test_macos_first_input_asks_once_and_refuses_with_the_agent_prefix(macos_ax):
+    from tests.fakes.fake_tcc import DialogPolicy
+
+    world = macos_ax(default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    with pytest.raises(base_mod.PermissionNeededError) as first:
         base_mod.get_actuator()
 
-    assert probes == [PermissionId.ACCESSIBILITY, PermissionId.EVENT_POSTING]
+    # The text for an LLM tool error: the prefix the engine maps, prohibitive.
+    assert str(first.value).startswith("[permission_needed:accessibility] ")
+    assert "must not retry" in str(first.value)
+    assert isinstance(first.value, ActuationUnavailable)  # flat tools keep their handler
+    assert first.value.result.granted is False
+    assert len(world.tcc.requests("accessibility")) == 1
+    assert world.tcc.implicit_prompts() == []
+
+    # A second action inside the cooldown asks nothing more (the dialog is open).
+    world.clock.now += 5
+    with pytest.raises(base_mod.PermissionNeededError):
+        base_mod.get_actuator()
+    assert len(world.tcc.requests("accessibility")) == 1
 
 
-def test_macos_input_permissions_are_rechecked_after_revocation(monkeypatch):
-    from jarvis.platform.permissions import PermissionState
+def test_macos_input_never_proceeds_on_a_denied_accessibility_grant(macos_ax):
+    from tests.fakes.fake_tcc import DialogPolicy
 
-    states = [True, True, False, True]
+    world = macos_ax(default_policy=DialogPolicy.DENY)
 
-    class _PermissionPort:
-        def runtime_access_granted(self, _permission_id):
-            return states.pop(0)
+    with pytest.raises(base_mod.PermissionNeededError):
+        base_mod.get_actuator()
+    world.clock.now += 5
+    with pytest.raises(base_mod.PermissionNeededError):
+        base_mod.get_actuator()
 
-        def state(self, _permission_id):
-            return PermissionState.NOT_GRANTED
+    # A decision is on file: macOS is not asked again and nothing acts.
+    assert len(world.tcc.requests("accessibility")) == 1
+    assert world.tcc.ignored_requests("accessibility") == []
 
+
+def test_macos_input_with_the_grant_present_asks_nothing(macos_ax):
+    world = macos_ax(granted=("accessibility",))
+
+    base_mod._ensure_macos_input_permission("computer_use")
+
+    assert world.tcc.requests() == []
+    assert world.tcc.implicit_prompts() == []
+
+
+def test_macos_input_is_rechecked_after_revocation(macos_ax):
+    from tests.fakes.fake_tcc import DialogPolicy
+
+    world = macos_ax(granted=("accessibility",), default_policy=DialogPolicy.NEVER_ANSWERED)
+
+    base_mod._ensure_macos_input_permission("computer_use")
+    world.tcc.deny("accessibility")
+    world.clock.now += 5  # the service caches a grant for about a second
+    with pytest.raises(base_mod.PermissionNeededError, match="permission_needed"):
+        base_mod._ensure_macos_input_permission("computer_use")
+
+
+def test_macos_input_names_the_feature_that_wanted_it(monkeypatch):
+    from tests.fakes.fake_permission_service import FakePermissionService
+
+    gate = FakePermissionService(default="needs_settings")
+    monkeypatch.setattr(base_mod, "_permission_gate", lambda: gate)
     monkeypatch.setattr(base_mod.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        "jarvis.platform.permissions.get_system_permission_port",
-        lambda: _PermissionPort(),
-    )
 
-    base_mod._require_macos_input_permissions()
-    with pytest.raises(ActuationUnavailable, match="Accessibility"):
-        base_mod._require_macos_input_permissions()
+    with pytest.raises(base_mod.PermissionNeededError):
+        base_mod.get_actuator()
 
-    assert states == []
+    (call,) = gate.ensure_calls()
+    assert call.permission.value == "accessibility"  # event_posting is an alias: one ask
+    assert call.feature == "computer_use"
+    assert call.interactive is True
+    assert call.wait_s == 0.0  # a tool body never blocks on a person
+
+
+def test_an_empty_gate_answer_is_not_a_grant(monkeypatch):
+    class _Gate:
+        def ensure_all(self, permissions, **_kwargs):
+            return []
+
+    monkeypatch.setattr(base_mod, "_permission_gate", lambda: _Gate())
+    monkeypatch.setattr(base_mod.sys, "platform", "darwin")
+
+    with pytest.raises(base_mod.PermissionNeededError) as refusal:
+        base_mod._ensure_macos_input_permission("computer_use")
+    assert str(refusal.value).startswith("[permission_needed:accessibility] ")
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_off_macos_the_actuator_never_touches_the_permission_layer(macos_ax, platform):
+    world = macos_ax(platform=platform)
+
+    base_mod._ensure_macos_input_permission("computer_use")
+
+    world.tcc.assert_silent()
 
 
 def test_pynput_key_table_maps_core_vocabulary():

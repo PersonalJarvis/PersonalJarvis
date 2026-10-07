@@ -51,7 +51,7 @@ export interface ChatRowsApi {
 }
 
 export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRowsApi {
-  const { conversations, openConversation } = useConversations({ poll });
+  const { conversations, openConversation, reopenLiveConversation } = useConversations({ poll });
   const sessions = useAgentChatStore((s) => s.sessions);
   const activeSessionId = useAgentChatStore((s) => s.activeSessionId);
   const activeVoiceId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
@@ -67,7 +67,10 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
       .map((c) => ({
         kind: "voice",
         id: c.id,
-        title: c.title || c.preview,
+        // The backend names each chat by its topic; "" means it has none, and
+        // the row then says what kind of chat it was (chatRowLabel) instead
+        // of promoting its first words ("Hallo", "Kannst") to a headline.
+        title: c.title,
         preview: c.preview,
         updatedMs: c.updated_ms,
         messageCount: c.message_count,
@@ -77,7 +80,7 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
     const agent: ChatRow[] = sessions.map((s) => ({
       kind: "agent",
       id: s.session_id,
-      title: s.title || s.preview,
+      title: s.title,
       preview: s.preview,
       updatedMs: s.updated_ms,
       messageCount: s.message_count,
@@ -94,15 +97,30 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
 
   const open = useCallback(
     (row: ChatRow) => {
+      // A history row is Jarvis' conversation: it takes the stage back from
+      // an agent's chat opened from the sidebar.
+      useHomeStore.getState().openAgentChat(null);
       if (row.kind === "voice") {
+        if (reopenLiveConversation(row.id)) {
+          setSurface("voice");
+          setActiveSection("chats");
+          return;
+        }
         // End the agent session on stage first: the chat stage renders the
         // voice archive only while no agent chat is open, and its socket has
         // no business staying connected to a conversation nobody is looking at.
-        useAgentChatStore.getState().newChat();
+        // The voice chat goes on stage as itself: calls from here continue it
+        // (one row in the history), not a new chat beside it.
+        useAgentChatStore.getState().newChat({ voiceSessionId: row.id });
+        useHomeStore.getState().setContinuedVoiceId(row.id);
         const stayOnVoice = useHomeStore.getState().surface === "voice";
         const opened = openConversation("voice", row.id);
         if (stayOnVoice) {
-          void opened.then((messages) => seedTranscript(transcriptFromMessages(messages)));
+          void opened.then((messages) => {
+            const active = useEventStore.getState();
+            if (messages === null || active.activeKind !== "voice" || active.activeThreadId !== row.id) return;
+            seedTranscript(transcriptFromMessages(messages));
+          });
         } else {
           void opened;
           setSurface("chat");
@@ -117,7 +135,7 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
       }
       setActiveSection("chats");
     },
-    [openConversation, seedTranscript, setActiveConversation, setActiveSection, setMessages, setSurface],
+    [openConversation, reopenLiveConversation, seedTranscript, setActiveConversation, setActiveSection, setMessages, setSurface],
   );
 
   const remove = useCallback((row: ChatRow) => {
@@ -126,6 +144,21 @@ export function useChatRows({ poll = false }: { poll?: boolean } = {}): ChatRows
   }, []);
 
   return { rows, isActive, open, remove };
+}
+
+/**
+ * What a row is called: its topic, or — when it has none — what it was.
+ * ``untitled`` lets a list set those rows in a quieter tone.
+ */
+export function chatRowLabel(row: ChatRow, t: (key: string) => string): { text: string; untitled: boolean } {
+  const title = row.title.trim();
+  if (title) return { text: title, untitled: false };
+  if (row.kind === "voice") {
+    const when = formatChatWhen(row.updatedMs);
+    const kind = t("sidebar.untitled_voice_chat");
+    return { text: when ? `${kind} · ${when}` : kind, untitled: true };
+  }
+  return { text: t("chats_view.new_chat"), untitled: true };
 }
 
 /** Short time for a row: clock today, day + month before that. */

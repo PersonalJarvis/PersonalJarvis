@@ -3,6 +3,12 @@ import { useCallback, useState } from "react";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
+/** Options of one `restart()` call. */
+export interface RestartOptions {
+  /** Shown instead of the raw error when the restart could not be started. */
+  failureMessage?: string;
+}
+
 /**
  * The one-click app restart a setting needs when it cannot apply live (a bar
  * <-> orb-window overlay switch, BUG-031). Shared by the display-style picker
@@ -19,7 +25,7 @@ export function useRestartApp() {
   const [restarting, setRestarting] = useState(false);
   const [forceArmed, setForceArmed] = useState(false);
 
-  const restart = useCallback(async () => {
+  const restart = useCallback(async (options?: RestartOptions) => {
     if (restarting) return;
     setRestarting(true);
     try {
@@ -46,7 +52,7 @@ export function useRestartApp() {
       pushToast("info", t("taskbar_view.restarting"));
     } catch (e) {
       setRestarting(false);
-      pushToast("error", (e as Error).message);
+      pushToast("error", options?.failureMessage ?? (e as Error).message);
     }
   }, [forceArmed, pushToast, restarting, t]);
 

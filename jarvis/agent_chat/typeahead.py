@@ -80,6 +80,8 @@ GROUP_ACCOUNT: Final[str] = "account"
 GROUP_PLUGINS: Final[str] = "plugins"
 GROUP_JARVIS: Final[str] = "jarvis"
 GROUP_AGENTS: Final[str] = "agents"
+#: The user's own agents (the society roster) — not a CLI's subagents.
+GROUP_TEAMMATES: Final[str] = "teammates"
 GROUP_FILES: Final[str] = "files"
 
 #: Hidden directories that still hold things worth offering under ``@``.
@@ -124,7 +126,14 @@ class Suggestion:
 #: but its chat completes teammates and capabilities with ``@`` as well.
 TRIGGERS_BY_SURFACE: Final[dict[str, tuple[str, ...]]] = {
     "society": (SLASH, MENTION),
+    # The front page's Jarvis chat: ``@`` names the user's agents here, and
+    # the composer adds the connected plugins and tools from the same catalog
+    # its Add menu reads (``/api/agent-chat/tools``), whatever seat answers.
+    "jarvis": (MENTION,),
 }
+
+#: The society's lead is Jarvis itself — the front page never offers it.
+_LEAD_AGENT_ID: Final[str] = "jarvis"
 
 
 def triggers_for(runner: str, surface: str = "") -> tuple[str, ...]:
@@ -175,6 +184,11 @@ def suggest(
         # Teammates and connected capabilities — never the folder's files: an
         # agent works in its own workspace and reaches tools by name.
         rows = _filter_definitions(teammates(agent_id) + connected_capabilities(), q)
+    elif surface == "jarvis":
+        # The Jarvis chat's folder is a scratch workspace, not a project, so
+        # its files are never what "@" means there. The agents are; the
+        # composer merges the plugin catalog in beside them.
+        rows = _filter_definitions(teammates(_LEAD_AGENT_ID), q)
     else:
         rows = claude_agents(folder) if runner in _CLAUDE_SHAPED else []
         rows = _filter_definitions(rows, q) if q else rows
@@ -213,11 +227,12 @@ def teammates(agent_id: str) -> list[Suggestion]:
             continue
         out.append(
             Suggestion(
-                value=agent.name,
+                # "X Marketing" would end the @token at its space.
+                value=re.sub(r"\s+", "-", agent.name.strip()),
                 label=agent.name,
                 hint=agent.title,
                 kind="agent",
-                group=GROUP_AGENTS,
+                group=GROUP_TEAMMATES,
             )
         )
     return out
@@ -861,6 +876,7 @@ def file_suggestions(folder: Path | None, query: str, *, limit: int = 40) -> lis
 __all__ = [
     "GROUP_ACCOUNT",
     "GROUP_AGENTS",
+    "GROUP_TEAMMATES",
     "GROUP_FILES",
     "GROUP_JARVIS",
     "GROUP_PLUGINS",

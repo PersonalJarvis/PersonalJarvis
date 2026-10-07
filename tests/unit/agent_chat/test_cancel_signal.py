@@ -8,8 +8,8 @@ from jarvis.agent_chat.service import AgentChatService
 
 async def test_cancel_signal_is_immediate_and_does_not_touch_another_chat():
     loop = asyncio.get_running_loop()
-    own = SimpleNamespace(task=loop.create_future(), cancel=asyncio.Event())
-    other = SimpleNamespace(task=loop.create_future(), cancel=asyncio.Event())
+    own = SimpleNamespace(turn_id="own-turn", task=loop.create_future(), cancel=asyncio.Event())
+    other = SimpleNamespace(turn_id="other-turn", task=loop.create_future(), cancel=asyncio.Event())
     service = object.__new__(AgentChatService)
     service._running = {"own": own, "other": other}
     service._approvals = {"a": loop.create_future(), "b": loop.create_future()}

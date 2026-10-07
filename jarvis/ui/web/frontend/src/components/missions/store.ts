@@ -195,6 +195,7 @@ function normalizeState(s: string): MissionState {
     case "FAILED":
     case "CANCELLED":
     case "TIMED_OUT":
+    case "WAITING_CAPACITY":
       return upper as MissionState;
     default:
       return "PENDING";

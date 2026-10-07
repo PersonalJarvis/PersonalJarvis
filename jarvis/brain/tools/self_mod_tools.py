@@ -90,6 +90,8 @@ class ListMutableSettingsTool:
     `set_config_value` and Phase-7.5 skill authoring).
     """
 
+    read_only = True
+
     name: ClassVar[str] = "list_mutable_settings"
     risk_tier: ClassVar[str] = "safe"
     description: ClassVar[str] = (
@@ -155,6 +157,8 @@ class GetConfigValueTool:
     Denies `security.*` paths even for reads (Plan-§AP-9 hash-leak protection).
     """
 
+    read_only = True
+
     name: ClassVar[str] = "get_config_value"
     risk_tier: ClassVar[str] = "safe"
     description: ClassVar[str] = (
@@ -167,7 +171,7 @@ class GetConfigValueTool:
             "path": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Dotted-Pfad in jarvis.toml, z.B. 'tts.provider'.",
+                "description": "Dotted path in jarvis.toml, e.g. 'tts.provider'.",
             },
         },
         "required": ["path"],
@@ -285,8 +289,8 @@ class SetConfigValueTool:
             "reason": {
                 "type": "string",
                 "description": (
-                    "Kurzer human-readable Grund. Leerer String erlaubt, aber "
-                    "Pflicht-Feld (strict-Mode)."
+                    "Short human-readable reason. An empty string is allowed, "
+                    "but the field is required in strict mode."
                 ),
             },
         },

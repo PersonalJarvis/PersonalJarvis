@@ -126,6 +126,55 @@ def test_a_path_inside_the_folder_is_referenced_where_it_lies(
     assert not (tmp_path / ".jarvis" / "drops").exists()
 
 
+def test_an_attached_picture_is_served_back_for_its_thumbnail(
+    tmp_path: Path, described
+) -> None:
+    """A file attached by path has no bytes in the window; the route draws it."""
+    outside = tmp_path / "gallery"
+    outside.mkdir()
+    shot = outside / "appshot.png"
+    shot.write_bytes(PNG)
+    folder = tmp_path / "project"
+    folder.mkdir()
+
+    with TestClient(_app(tmp_path)) as client:
+        attached = client.post(
+            "/api/agent-chat/attachments",
+            data={"cwd": str(folder), "paths": str(shot)},
+        ).json()
+        (row,) = attached["attachments"]
+        res = client.get(
+            "/api/agent-chat/attachments/file",
+            params={"cwd": attached["cwd"], "reference": row["reference"]},
+        )
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"] == "image/png"
+    assert res.content == PNG
+
+
+def test_the_thumbnail_route_serves_nothing_outside_the_folder(tmp_path: Path) -> None:
+    folder = tmp_path / "project"
+    folder.mkdir()
+    (tmp_path / "secret.png").write_bytes(PNG)
+    (folder / "notes.txt").write_text("not a picture", encoding="utf-8")
+    (folder / "logo.svg").write_text("<svg/>", encoding="utf-8")
+
+    with TestClient(_app(tmp_path)) as client:
+        refused = [
+            '"../secret.png"',
+            f'"{tmp_path / "secret.png"}"',
+            '"notes.txt"',
+            '"logo.svg"',
+            '""',
+        ]
+        for reference in refused:
+            res = client.get(
+                "/api/agent-chat/attachments/file",
+                params={"cwd": str(folder), "reference": reference},
+            )
+            assert res.status_code == 404, reference
+
+
 # ------------------------------------------------------------- composition
 
 

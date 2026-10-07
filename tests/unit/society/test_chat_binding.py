@@ -404,6 +404,78 @@ async def test_busy_turn_defers_provider_reseat_until_it_finishes(tmp_path: Path
         await rt.close()
 
 
+async def test_an_older_side_chat_is_read_only(tmp_path: Path):
+    """Side chats from before the one-chat change stay readable, never run."""
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        legacy = store.create_session(
+            session_id=f"{agent.session_id}:with:jarvis", surface="society",
+            provider="openai", model="", effort="", cwd=str(tmp_path),
+            permission_mode="bypass", title="Scout · Jarvis",
+        )
+        with pytest.raises(PermissionError, match="read-only"):
+            await svc.bind_society_session(legacy.session_id)
+        chat = ensure_session(svc, cfg, agent)
+        assert chat.session_id == agent.session_id
+        assert (await svc.bind_society_session(chat.session_id)).session_id == agent.session_id
+    finally:
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_routine_turn_does_not_reserve_direct_chat_seat(tmp_path: Path):
+    import asyncio
+
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        direct = ensure_session(svc, cfg, agent)
+        routine = store.create_session(
+            session_id=f"{agent.session_id}:routine:task-1:run-1",
+            surface="society", provider="openai", model="", effort="low",
+            cwd=direct.cwd, permission_mode="bypass",
+        )
+
+        async def held_runner(_handle, _text):
+            entered.set()
+            await release.wait()
+
+        await svc.send(
+            direct.session_id, "Direct task", control_runner=held_runner,
+            control_owned=True, direct_user=False,
+        )
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        await svc.send(
+            routine.session_id, "Scheduled task", control_runner=held_runner,
+            control_owned=True, direct_user=False, routine_run=True,
+        )
+        assert svc.is_running(direct.session_id)
+        assert svc.is_running(routine.session_id)
+    finally:
+        release.set()
+        await svc.cancel_all()
+        await rt.close()
+
+
 async def test_build_cannot_raise_a_safe_agent_above_its_ceiling(world):
     from jarvis.agent_chat.control import ChatControls
     from jarvis.agent_chat.control_types import CommandRequest
@@ -511,6 +583,270 @@ async def test_inactive_agent_cannot_bind_canonical_chat(world, blocked_by):
         await bind_society_session(svc, agent.session_id)
 
 
+@pytest.mark.parametrize(
+    ("blocked_by", "active_goal"), [("paused", True), ("kill_switch", False)]
+)
+async def test_live_roster_change_during_pre_admission_await_blocks_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_by: str, active_goal: bool,
+):
+    import asyncio
+
+    from jarvis.agent_chat.control_types import GoalState
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    sending = None
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        session = ensure_session(svc, cfg, agent)
+        controls = svc.controls
+        if active_goal:
+            state = controls.state(session.session_id)
+            state.goal = GoalState(
+                id="goal-1", objective="Keep the task", started_ms=1, updated_ms=1
+            )
+            controls.store.save(state)
+        original_get = rt.roster.get
+        calls = 0
+
+        async def held_second_roster_read(agent_id):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                entered.set()
+                await release.wait()
+            return await original_get(agent_id)
+
+        monkeypatch.setattr(rt.roster, "get", held_second_roster_read)
+
+        async def fake_runner(_handle, _text):
+            pytest.fail("a disabled Society agent must never start paid work")
+
+        sending = asyncio.create_task(
+            svc.send(session.session_id, "Task", control_runner=fake_runner)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        assert controls.state(session.session_id).last_status == "running"
+        if blocked_by == "paused":
+            await rt.roster.update(agent.agent_id, {"state": "paused"})
+        else:
+            await rt.store.set_kill_switch(True)
+        release.set()
+        with pytest.raises(PermissionError, match="paused or disabled"):
+            await sending
+        assert not svc.is_running(session.session_id)
+        state = controls.state(session.session_id)
+        assert state.last_status == ("interrupted" if active_goal else "failed")
+        if active_goal:
+            assert state.goal is not None
+            assert state.goal.status == "paused"
+            assert state.goal.objective == "Keep the task"
+        assert not any(
+            event["kind"] in ("user_message", "turn_started")
+            for event in store.list_events(session.session_id)
+        )
+    finally:
+        release.set()
+        if sending is not None and not sending.done():
+            sending.cancel()
+            await asyncio.gather(sending, return_exceptions=True)
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_final_society_rebind_keeps_read_only_turn_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    observed: list[tuple[str, str]] = []
+
+    async def held_control_message(_sid, _text):
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(svc.controls, "user_message", held_control_message)
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        session = ensure_session(svc, cfg, agent)
+
+        async def fake_runner(handle, _text):
+            observed.append((handle.session.permission_mode, handle.stance))
+
+        sending = asyncio.create_task(
+            svc.send(session.session_id, "Read only task", read_only=True,
+                     control_runner=fake_runner)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        release.set()
+        await sending
+        await svc.wait_turn(session.session_id)
+        assert observed == [("plan", "plan")]
+        assert store.get_session(session.session_id).permission_mode == "bypass"
+    finally:
+        release.set()
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_two_sends_cannot_replace_pre_admission_control_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+
+    from jarvis.agent_chat.events import make_event
+    from jarvis.agent_chat.service import AgentChatService, SessionBusy
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+    sending = None
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        session = ensure_session(svc, cfg, agent)
+        controls = svc.controls
+        original_completed = controls.turn_completed
+
+        async def mark_completed(*args):
+            await original_completed(*args)
+            finished.set()
+
+        monkeypatch.setattr(controls, "turn_completed", mark_completed)
+        original_get = rt.roster.get
+        calls = 0
+
+        async def held_second_roster_read(agent_id):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                entered.set()
+                await release.wait()
+            return await original_get(agent_id)
+
+        monkeypatch.setattr(rt.roster, "get", held_second_roster_read)
+
+        async def fake_runner(handle, _text):
+            await handle.emit(make_event(
+                "turn_finished", {"turn_id": handle.turn_id, "status": "done"}
+            ))
+
+        sending = asyncio.create_task(
+            svc.send(session.session_id, "Task A", control_runner=fake_runner)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        assert controls.state(session.session_id).last_request == "Task A"
+        with pytest.raises(SessionBusy):
+            await svc.send(session.session_id, "Task B", control_runner=fake_runner)
+        assert controls.state(session.session_id).last_request == "Task A"
+
+        release.set()
+        await sending
+        await asyncio.wait_for(finished.wait(), timeout=3)
+        state = controls.state(session.session_id)
+        assert state.last_request == "Task A"
+        assert state.last_status == "done"
+        assert not any(
+            event["kind"] == "user_message"
+            and event["payload"].get("text") == "Task B"
+            for event in store.list_events(session.session_id)
+        )
+    finally:
+        release.set()
+        if sending is not None and not sending.done():
+            sending.cancel()
+            await asyncio.gather(sending, return_exceptions=True)
+        await svc.cancel_all()
+        await rt.close()
+
+
+async def test_stop_during_final_roster_lookup_prevents_a_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    import asyncio
+
+    from jarvis.agent_chat.service import AgentChatService
+
+    store = AgentChatStore(tmp_path / "agent_chat.db")
+    svc = AgentChatService(store, assistant_name=lambda: "Test")
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    sending = None
+    try:
+        agent, _ = await rt.roster.create(name="Scout", provider="openai")
+        session = ensure_session(svc, cfg, agent)
+        controls = svc.controls
+        original_get = rt.roster.get
+        calls = 0
+
+        async def held_second_roster_read(agent_id):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                entered.set()
+                await release.wait()
+            return await original_get(agent_id)
+
+        monkeypatch.setattr(rt.roster, "get", held_second_roster_read)
+
+        async def fake_runner(_handle, _text):
+            pytest.fail("Stop must prevent the runner from starting")
+
+        sending = asyncio.create_task(
+            svc.send(session.session_id, "Task", control_runner=fake_runner)
+        )
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        assert controls.state(session.session_id).last_status == "running"
+        assert svc.is_running(session.session_id)
+        await controls.pause(session.session_id, "Stopped by the user")
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await sending
+        assert not svc.is_running(session.session_id)
+        assert controls.state(session.session_id).last_status == "interrupted"
+        assert not any(
+            event["kind"] == "turn_started"
+            for event in store.list_events(session.session_id)
+        )
+    finally:
+        release.set()
+        if sending is not None and not sending.done():
+            sending.cancel()
+            await asyncio.gather(sending, return_exceptions=True)
+        await svc.cancel_all()
+        await rt.close()
+
+
 async def test_roster_mode_edit_defers_busy_chat_and_preserves_override(world, monkeypatch):
     from jarvis.ui.web.society_routes import router
 
@@ -610,6 +946,7 @@ async def test_deliver_hook_frames_and_sends(world):
         payload={"text": "Where is the VPS note?", "refs": ["wiki:society/archivist/vps.md"]},
     )
     await deliver(scout, env)
+    # A teammate's message runs in Scout's one chat, as a delegation card.
     assert svc.sent == [
         (
             "society:scout",
@@ -621,6 +958,8 @@ async def test_deliver_hook_frames_and_sends(world):
             "messaging connector. No preliminary acknowledgement is needed.",
         )
     ]
+    assert svc.store.get_session("society:scout:with:archivist") is None
+    assert svc.store.get_session("society:scout").title == "Scout"
     svc.busy.add("society:scout")
     with pytest.raises(RuntimeError, match="target busy"):
         await deliver(scout, env)
@@ -669,7 +1008,9 @@ def test_unfiltered_session_list_hides_society_sessions(tmp_path: Path):
     )
     app = FastAPI()
     app.include_router(router)
-    app.state.agent_chat = SimpleNamespace(store=store, is_running=lambda sid: False)
+    app.state.agent_chat = SimpleNamespace(
+        store=store, is_running=lambda sid: False, pending_approvals=lambda sid: []
+    )
     with TestClient(app) as c:
         everything = c.get("/api/agent-chat/sessions").json()["sessions"]
         assert [s["surface"] for s in everything] == ["agent"]
@@ -905,5 +1246,37 @@ async def test_durable_read_failure_releases_the_agent_slot(tmp_path: Path, monk
         ]
         assert svc.cancelled_turns == ["turn-1"]
         assert rt.scheduler.running == {}
+    finally:
+        await rt.close()
+
+
+async def test_a_picture_that_could_not_be_shown_does_not_block_finished_work(tmp_path: Path):
+    """Live 2026-10-02: Scout's finished research came back "blocked" because
+    two screenshots it mentioned could not be displayed in its chat."""
+    import asyncio
+
+    svc = FakeTurnService(AgentChatStore(tmp_path / "agent_chat.db"))
+    cfg = SimpleNamespace(memory=SimpleNamespace(data_dir=str(tmp_path / "data")))
+    rt = SocietyRuntime(
+        tmp_path, seed_starter_team=False, chat_service=lambda: svc, cfg=lambda: cfg
+    )
+    await rt.ensure_started()
+    try:
+        await rt.roster.create(name="Scout", provider="openai")
+        env = await rt.say(from_agent="user", to_agent="scout", text="x", msg_type=MsgType.ASSIGN)
+        for q in list(svc.queues["society:scout"]):
+            for kind, payload in (
+                ("assistant_text", {"text": "Research done: three findings."}),
+                ("assistant_text", {"text": "![image](/media/a.png)", "media_only": True}),
+                ("error", {"message": "Media could not be displayed: a.png",
+                           "display_only": True}),
+                ("turn_finished", {"status": "ok"}),
+            ):
+                q.put_nowait({"kind": kind, "payload": {"turn_id": "turn-1", **payload}})
+        await asyncio.sleep(0.05)
+        result = (await rt.store.events_for_trace(env.trace_id))[-1]
+        assert result.msg_type is MsgType.RESULT
+        assert result.payload["status"] == "done"
+        assert result.payload["done"] == "Research done: three findings."
     finally:
         await rt.close()

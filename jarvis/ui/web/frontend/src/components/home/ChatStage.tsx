@@ -14,6 +14,7 @@ import { VoiceThreadStage } from "@/components/home/VoiceThreadStage";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
 import { fill, useT } from "@/i18n";
 import { folderLeaf } from "@/lib/folderPath";
+import { useHistoryPolling } from "@/hooks/useHistoryPolling";
 import { FolderCode } from "lucide-react";
 
 /**
@@ -69,16 +70,18 @@ function ChatStageContent() {
   const view = useTranscriptView(surface === "jarvis" ? activeSessionId : null, allItems);
   const items = view.items;
   const catalog = useAgentChat((s) => s.catalog);
+  const catalogStale = useAgentChat((s) => s.catalogStale);
   const decide = useAgentChat((s) => s.decide);
   const loadCatalog = useAgentChat((s) => s.loadCatalog);
   const loadSessions = useAgentChat((s) => s.loadSessions);
   const voiceThreadId = useEventStore((s) => (s.activeKind === "voice" ? s.activeThreadId : null));
   const hasContent = items.length > 0;
 
+  // A copy from before paints the picks at once; the fresh read still runs.
   useEffect(() => {
-    if (!catalog) void loadCatalog();
-    void loadSessions();
-  }, [catalog, loadCatalog, loadSessions]);
+    if (!catalog || catalogStale) void loadCatalog();
+  }, [catalog, catalogStale, loadCatalog]);
+  useHistoryPolling(loadSessions);
 
   const providerLabel = useCallback(
     (id: string) => catalog?.providers.find((p) => p.id === id)?.label ?? id,
@@ -201,15 +204,27 @@ function ChatStageContent() {
   // chat is coding sessions and never shows a spoken thread.
   if (surface === "jarvis" && voiceThreadId && !activeSessionId) return <VoiceThreadStage />;
 
+  // The front page opens the way the Codex app does: the greeting alone in
+  // the middle of the page, the composer already where it will stay — at the
+  // bottom — so the first send moves nothing.
+  if (!hasContent && isJarvis) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
+        <div className="flex w-full flex-1 flex-col items-center justify-center px-6 pb-8">
+          <Greeting />
+        </div>
+        <div className="relative w-full max-w-[720px] px-6 pb-5 pt-2">
+          <AgentComposer autoFocus />
+        </div>
+      </div>
+    );
+  }
+
   if (!hasContent) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center" data-testid="chat-stage" data-empty="true">
         <div className="flex w-full max-w-[720px] flex-1 flex-col justify-center gap-8 px-6 pb-20">
-          {isJarvis ? (
-            <Greeting subtitle={subtitle} />
-          ) : (
-            <FolderHeadline folder={cwd} subtitle={subtitle} />
-          )}
+          <FolderHeadline folder={cwd} subtitle={subtitle} />
           <AgentComposer autoFocus />
         </div>
       </div>
@@ -221,13 +236,18 @@ function ChatStageContent() {
       <ScrollArea ref={setRoot} className="min-h-0 w-full flex-1">
         <div
           ref={columnRef}
-          className="relative mx-auto flex w-full max-w-[720px] flex-col gap-5 px-6 pb-6 pt-8"
+          className="relative mx-auto flex w-full max-w-[720px] flex-col gap-6 px-6 pb-6 pt-8"
         >
           <AgentTimeline
             items={items}
             assistantName={isJarvis ? assistantName : t("agent_chat.surface_agent")}
             providerLabel={providerLabel}
             onDecide={onDecide}
+            bubbles={isJarvis}
+            // The Agentic IDE mirrors Claude Code and Codex, whose own traces
+            // the maintainer kept; every other surface draws the rail.
+            traceLook={isJarvis ? "rail" : "classic"}
+            traceCompanion={isJarvis}
           />
           <div ref={spacerRef} aria-hidden data-testid="chat-bottom-spacer" className="shrink-0" />
         </div>

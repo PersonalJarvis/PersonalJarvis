@@ -41,7 +41,7 @@ describe("initial section deep links", () => {
 
   it("prefers ?view= over ?doc when both are present", () => {
     // Pinned: the explicit deep link wins over the docs shortcut.
-    expect(initialSectionFromSearch("?view=tasks&doc=x")).toBe("tasks");
+    expect(initialSectionFromSearch("?view=board&doc=x")).toBe("board");
   });
 });
 

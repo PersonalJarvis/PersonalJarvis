@@ -7,10 +7,12 @@ import pytest
 from jarvis.speech.hangup import (
     END_CALL_SIGNAL,
     HANGUP_RE,
+    HangupConfirmation,
     contains_end_signal,
     is_legacy_farewell,
     strip_end_signal,
     supports_semantic_hangup,
+    user_asked_to_hang_up,
 )
 
 
@@ -171,3 +173,84 @@ def test_semantic_closure_requires_positive_user_evidence(text: str) -> None:
 ])
 def test_task_completion_and_quoted_closings_are_not_session_closure(text: str) -> None:
     assert not supports_semantic_hangup(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Leg auf", "auflegen bitte", "Tschüss Jarvis", "hang up", "Goodbye",  # i18n-allow
+    "Danke, das war alles", "That's it for today", "Cuelga", "Adiós",  # i18n-allow
+])
+def test_end_call_gate_accepts_the_users_own_closing(text: str) -> None:
+    assert user_asked_to_hang_up(text)
+
+
+@pytest.mark.parametrize("text", [
+    "", None, "Ja", "Ja.", "Yes", "Sí", "Okay", "Alles klar", "Mach das",  # i18n-allow
+    "Danke", "Thanks", "Hey George, hallo",  # i18n-allow
+])
+def test_end_call_gate_refuses_a_model_hang_up_without_user_evidence(text) -> None:
+    # Live 2026-10-01: the model answered a spoken "Ja" with end_call.
+    assert not user_asked_to_hang_up(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Don't hang up", "Please don't hang up", 'Translate "hang up"',
+    "How do I quit the editor?", "Say goodbye to the error",
+    "Nicht auflegen", "Bitte das Programm beenden",  # i18n-allow
+    "Wenn ich auflegen sage, frag bitte nach",  # i18n-allow
+    "Ich will die Datei ablegen", "Das darf nicht auffliegen",  # i18n-allow
+])
+def test_closing_words_inside_a_sentence_are_not_commands(text):
+    assert HANGUP_RE.search(text) is None
+    assert not user_asked_to_hang_up(text)
+
+
+def test_hangup_requires_our_question_and_a_separate_turn():
+    guard = HangupConfirmation()
+    assert guard.observe("Yes", "unrelated-approval") == ""
+    assert guard.observe("hang up", "request") == "request"
+    assert guard.observe("Yes", "no-question-delivered") == ""
+    guard.arm("request")
+    assert guard.observe("hang up", "request") == "waiting"
+    assert guard.observe("yes", "answer") == "confirmed"
+    assert guard.observe("yes", "another-answer") == ""
+
+
+@pytest.mark.parametrize("answer", ["No", "Yes, but keep talking", "Explain this", "Maybe", "Okay"])
+def test_any_non_confirmation_revokes_pending_hangup(answer):
+    guard = HangupConfirmation()
+    guard.arm("request")
+    assert guard.observe(answer, "answer") != "confirmed"
+    assert guard.observe("yes", "later-approval") == ""
+
+
+def test_hangup_confirmation_expires_and_cannot_cross_call_reset():
+    guard = HangupConfirmation()
+    guard.arm("request")
+    guard.expires_at = 0
+    assert guard.observe("yes", "late-answer") == ""
+    guard.arm("request")
+    guard.reset()
+    assert guard.observe("yes", "new-call") == ""
+
+
+def test_same_turn_correction_cannot_confirm_or_leave_a_stale_request():
+    guard = HangupConfirmation()
+    guard.arm("request")
+    assert guard.observe("hang up, no, keep talking", "request") == ""
+    assert guard.observe("yes", "answer") == ""
+
+
+@pytest.mark.parametrize("answer, expected", [
+    ("yes", "confirmed"),
+    ("no", "cancelled"),
+    ("yes, but keep talking", ""),
+    ("no, please explain", ""),
+    ("explain yes", ""),
+    ("explain no", ""),
+])
+def test_padded_confirmation_still_requires_the_complete_answer(answer, expected):
+    guard = HangupConfirmation()
+    guard.arm("request")
+    padding = " \t\n" * 1000
+    assert guard.observe(padding + answer + padding, "answer") == expected
+    assert guard.observe("yes", "later-approval") == ""

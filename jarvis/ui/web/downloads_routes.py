@@ -6,8 +6,9 @@ defaulting to ``False`` — its EdgeChromium handler then *silently cancels* eve
 browser download (blob ``<a download>``, ``Content-Disposition: attachment``).
 So the client-side download that works in a plain browser produces a "success"
 toast but no file on the desktop. To put a file where the user expects it, the
-backend writes it directly to ``~/Downloads`` (cross-platform via
-``Path.home()``) and reports the absolute path back for the toast.
+backend writes it directly to the user's Downloads folder
+(:func:`jarvis.platform.user_dirs.downloads_dir`: the Windows known folder, the
+XDG download folder on Linux) and reports the absolute path back for the toast.
 
 This mirrors the Outputs view, which already takes the native path on the
 desktop (``open_path.reveal_in_folder`` / ``open_file``) instead of a browser
@@ -44,7 +45,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from jarvis.platform import detect_platform
+from jarvis.core.path_safety import contained_path
+from jarvis.platform import detect_platform, user_dirs
 
 # Reuse the proven collision-avoidance helper from the sessions save path
 # instead of duplicating it (the two save flows share the same ~/Downloads
@@ -133,9 +135,9 @@ async def save_to_downloads(
         raise HTTPException(status_code=413, detail="file-too-large")
 
     filename = _safe_basename(body.filename)
-    downloads = Path.home() / "Downloads"
+    downloads = user_dirs.downloads_dir()
     downloads.mkdir(parents=True, exist_ok=True)
-    target = _avoid_collision(downloads / filename)
+    target = _avoid_collision(contained_path(downloads, filename))
 
     target.write_bytes(data)
     log.info("DownloadSave: %s (%d bytes)", target, len(data))
@@ -176,7 +178,7 @@ def _resolve_saved_file(path_str: str) -> Path:
         p = Path(path_str).resolve()
     except OSError as exc:
         raise HTTPException(status_code=400, detail="invalid-path") from exc
-    downloads = (Path.home() / "Downloads").resolve()
+    downloads = user_dirs.downloads_dir().resolve()
     if p != downloads and downloads not in p.parents:
         raise HTTPException(status_code=403, detail="path-outside-downloads")
     if not p.is_file():

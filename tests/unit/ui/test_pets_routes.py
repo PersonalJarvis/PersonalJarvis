@@ -85,8 +85,8 @@ class FakeDesktop:
         self.calls.append(("set_pet", pet_id))
         return {"ok": True, "applied_live": self._applied}
 
-    def set_pet_look(self, scale: float, bubble: bool) -> dict:
-        self.calls.append(("set_pet_look", scale, bubble))
+    def set_pet_look(self, scale: float, bubble: bool, strip_always: bool) -> dict:
+        self.calls.append(("set_pet_look", scale, bubble, strip_always))
         return {"ok": True, "applied_live": self._applied}
 
     def set_pet_visible(self, visible: bool) -> dict:
@@ -260,15 +260,39 @@ def test_put_settings_clamps_saves_and_applies(env) -> None:
     assert (body["scale"], body["bubble"]) == (2.0, False)
     assert _toml_ui(env)["pet_scale"] == 2.0
     assert _toml_ui(env)["pet_bubble"] is False
-    assert env.app.state.desktop_app.calls == [("set_pet_look", 2.0, False)]
+    assert env.app.state.desktop_app.calls == [("set_pet_look", 2.0, False, False)]
     (event,) = env.app.state.bus.events
     assert (event.scale, event.bubble) == (2.0, False)
+
+
+def test_a_preview_resizes_live_but_writes_and_announces_nothing(env) -> None:
+    before = env.toml.read_text(encoding="utf-8")
+    r = env.client.put("/api/pets/settings", json={"scale": 1.37, "preview": True})
+    assert r.status_code == 200
+    assert r.json()["persisted"] is False
+    assert env.app.state.desktop_app.calls == [("set_pet_look", 1.37, True, False)]
+    assert env.toml.read_text(encoding="utf-8") == before
+    assert env.app.state.bus.events == []
+    # The release that follows saves it like any other change.
+    env.client.put("/api/pets/settings", json={"scale": 1.37})
+    assert _toml_ui(env)["pet_scale"] == 1.37
+    assert len(env.app.state.bus.events) == 1
 
 
 def test_put_settings_changes_only_what_is_sent(env) -> None:
     env.client.put("/api/pets/settings", json={"bubble": False})
     assert "pet_scale" not in _toml_ui(env)
-    assert env.app.state.desktop_app.calls == [("set_pet_look", 1.0, False)]
+    assert env.app.state.desktop_app.calls == [("set_pet_look", 1.0, False, False)]
+
+
+def test_the_always_on_strip_is_saved_applied_and_reported(env) -> None:
+    assert env.client.get("/api/pets").json()["strip_always"] is False
+    r = env.client.put("/api/pets/settings", json={"strip_always": True})
+    assert r.status_code == 200
+    assert r.json()["strip_always"] is True
+    assert _toml_ui(env)["pet_strip_always"] is True
+    assert env.app.state.desktop_app.calls == [("set_pet_look", 1.0, True, True)]
+    assert env.client.get("/api/pets").json()["strip_always"] is True
 
 
 def test_put_settings_needs_something_to_change(env) -> None:

@@ -216,6 +216,38 @@ def _pipe(mode: str = "realtime") -> SpeechPipeline:
 
 
 @pytest.mark.asyncio
+async def test_unpinned_browser_audio_engine_hands_the_call_to_the_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Issue #399 follow-up: a Gemini-only install without a pinned provider
+    # ran Gemini Live on the half-duplex native path, because the transport
+    # decision read only the (absent) pin. The real registry decides here.
+    handed_over: list[dict] = []
+
+    async def _browser_call(_bus, _hangup, **kwargs):
+        handed_over.append(kwargs)
+        return "client_stop"
+
+    def _native_build(**_kwargs):
+        raise AssertionError("the native desktop session must not be built")
+
+    monkeypatch.setattr(
+        "jarvis.realtime.factory.get_secret_any",
+        lambda candidates: (
+            "gemini-key" if any(slot == "gemini_api_key" for slot, _ in candidates) else None
+        ),
+    )
+    monkeypatch.setattr("jarvis.live.runtime.run_browser_call", _browser_call)
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _native_build)
+
+    reason = await asyncio.wait_for(_pipe()._active_realtime_session(), timeout=2.0)
+
+    assert reason == "client_stop"
+    assert len(handed_over) == 1
+    assert handed_over[0]["session_id"] == "desktop-session"
+
+
+@pytest.mark.asyncio
 async def test_desktop_realtime_handshake_streams_audio_and_ends_single_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

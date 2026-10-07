@@ -75,6 +75,10 @@ Runner = Literal[
     "glm-cli",
     "dsh-cli",
     "cursor-cli",
+    # Society agent runtimes (``service.EXTERNAL_RUNTIME_RUNNERS``): picked by
+    # the agent's runtime, never by a provider row.
+    "hermes-cli",
+    "openclaw-cli",
 ]
 
 
@@ -175,6 +179,19 @@ CLAUDE_CODE_MODELS: Final[tuple[CuratedModel, ...]] = (
     CuratedModel("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", efforts=()),
     CuratedModel("claude-opus-4-5-20251101", "Claude Opus 4.5", efforts=()),
 )
+
+
+def claude_model_efforts(model: str) -> tuple[str, ...] | None:
+    """The effort levels Claude Code's ``model`` takes; ``None`` = the full ladder.
+
+    A model newer than :data:`CLAUDE_CODE_MODELS` (the discovery feed's) or an
+    alias gets ``None``: the provider ladder applies and Claude Code folds.
+    """
+    picked = (model or "").strip()
+    for row in CLAUDE_CODE_MODELS:
+        if row.id == picked:
+            return row.efforts
+    return None
 
 
 def claude_code_models() -> tuple[CuratedModel, ...]:
@@ -426,6 +443,19 @@ def offers(surface: str, provider_id: str) -> bool:
     """Whether ``provider_id`` is one of ``surface``'s rows."""
     pid = (provider_id or "").strip().lower()
     return any(row.id == pid for row in rows_for(surface))
+
+
+#: Reserved ``account_id`` values on a dual row (``claude-api``: one id for a
+#: subscription login AND an API key). They pin one agent's seat to one way of
+#: paying, chosen in the "New agent" dialog; ``""`` keeps the automatic choice
+#: (the API Keys page's setting, then whichever credential is there).
+#: ``API_KEY_ACCOUNT`` runs on the provider's saved API key.
+API_KEY_ACCOUNT: Final[str] = "api-key"
+#: ``SUBSCRIPTION_ACCOUNT`` runs on the subscription login even when an API key
+#: is saved too (Hermes / OpenClaw: Claude Code's login, billed as extra usage).
+SUBSCRIPTION_ACCOUNT: Final[str] = "subscription"
+#: Both reserved values: never the id of a real login.
+ACCESS_ACCOUNTS: Final[frozenset[str]] = frozenset({API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT})
 
 
 #: A CLI-only row and the API row of the same brand. A chat that was seated

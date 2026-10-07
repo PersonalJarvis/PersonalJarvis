@@ -1370,6 +1370,11 @@ def _agent_alternation() -> str:
     return "|".join(sorted(parts, key=len, reverse=True))
 
 
+#: The patterns below are built from the LIVE registry, which changes while the
+#: app runs: a CLI the user adds in the workspace dialog has to be openable by
+#: name ("open five Cursor terminals") in the same session, not after a
+#: restart. :func:`refresh_agent_patterns` rebuilds them; the registry calls it
+#: whenever its entries change.
 _AGENT_ALTERNATION = _agent_alternation()
 
 _AGENT_RE = re.compile(rf"\b(?P<agent>{_AGENT_ALTERNATION})\b", re.IGNORECASE)
@@ -1558,7 +1563,7 @@ def _spoken_count(text: str) -> int:
     First hit wins. A count is optional — "open another terminal" is a perfectly
     clear request for one — so this never fails, it defaults.
     """
-    from .session import MAX_TERMINALS
+    from .session import MAX_PANES_PER_REQUEST
 
     # Read the FIRST number in speech order. Searching all digits before number
     # words contradicted this function's contract and turned "five terminals;
@@ -1571,7 +1576,7 @@ def _spoken_count(text: str) -> int:
     for match in re.finditer(r"\b(?:\d{1,3}|[^\W\d_]+)\b", text, re.UNICODE):
         value = _count_at(text, match)
         if value is not None:
-            return max(1, min(value, MAX_TERMINALS))
+            return max(1, min(value, MAX_PANES_PER_REQUEST))
     return 1
 
 
@@ -1581,12 +1586,14 @@ def _spoken_count(text: str) -> int:
 #: "three terminals of Codex" as often as "three Codex terminals") plus the
 #: usual qualifiers. Bounded at two words so the count and the agent cannot
 #: drift into different clauses of the sentence.
-_COUNT_AGENT_RE = re.compile(
+_COUNT_AGENT_PREFIX = (
     r"\b(?P<count>\d{1,3}|[a-zäöüñ]+)\s+"  # i18n-allow: input vocab
     r"(?:(?:neue|weitere|zus[aä]tzliche|more|new|extra|"  # i18n-allow: input vocab
     r"additional|de|del|"
     r"otros|otras|m[aá]s|terminals?|terminales|panes?|tabs?)\s+){0,2}"
-    rf"(?P<agent>{_AGENT_ALTERNATION})\b",
+)
+_COUNT_AGENT_RE = re.compile(
+    rf"{_COUNT_AGENT_PREFIX}(?P<agent>{_AGENT_ALTERNATION})\b",
     re.IGNORECASE,
 )
 
@@ -1635,6 +1642,34 @@ _ARTICLE_SIZES_RE = re.compile(
     rf"(?:{_PANE_NOUN_RE.pattern}|{_AGENT_RE.pattern})",
     re.IGNORECASE,
 )
+
+
+def _compile_agent_patterns(alternation: str) -> None:
+    """Rebind every module pattern that spells out the registered CLI names."""
+    global _AGENT_ALTERNATION, _AGENT_RE, _COUNT_AGENT_RE, _ARTICLE_SIZES_RE
+    _AGENT_ALTERNATION = alternation
+    _AGENT_RE = re.compile(rf"\b(?P<agent>{alternation})\b", re.IGNORECASE)
+    _COUNT_AGENT_RE = re.compile(
+        rf"{_COUNT_AGENT_PREFIX}(?P<agent>{alternation})\b",
+        re.IGNORECASE,
+    )
+    _ARTICLE_SIZES_RE = re.compile(
+        rf"\s*(?:[^\W\d_]+\s+){{0,{_ARTICLE_FILLER_WORDS}}}"
+        rf"(?:{_PANE_NOUN_RE.pattern}|{_AGENT_RE.pattern})",
+        re.IGNORECASE,
+    )
+
+
+def refresh_agent_patterns() -> None:
+    """Re-read the registry's spoken names into this parser's patterns.
+
+    Called by :mod:`jarvis.workspace.agents` whenever an entry is added,
+    edited or removed. Cheap when nothing changed — the alternation is
+    compared before anything is recompiled.
+    """
+    alternation = _agent_alternation()
+    if alternation != _AGENT_ALTERNATION:
+        _compile_agent_patterns(alternation)
 
 
 def _article_sizes_something(text: str, end: int) -> bool:
@@ -1840,12 +1875,11 @@ def _merge_groups(found: list[SpawnGroup]) -> tuple[SpawnGroup, ...]:
     fleet can now be described across SEVERAL clauses (see ``_spawn_regions``)
     and two merge rules would be free to disagree about the same sentence.
 
-    The clamp takes the TOTAL, not each group: the workspace maximum is a
-    property of the workspace. Trimming from the back keeps the groups the
-    user named first intact rather than shrinking all of them into
-    uselessness.
+    The clamp takes the TOTAL, not each group: the guard is on how many panes
+    ONE request may start. Trimming from the back keeps the groups the user
+    named first intact rather than shrinking all of them into uselessness.
     """
-    from .session import MAX_TERMINALS
+    from .session import MAX_PANES_PER_REQUEST
 
     merged: dict[str, int] = {}
     for group in found:
@@ -1853,7 +1887,7 @@ def _merge_groups(found: list[SpawnGroup]) -> tuple[SpawnGroup, ...]:
         merged[key] = merged.get(key, 0) + group.count
 
     out: list[SpawnGroup] = []
-    remaining = MAX_TERMINALS
+    remaining = MAX_PANES_PER_REQUEST
     for agent, count in merged.items():
         if remaining <= 0:
             break

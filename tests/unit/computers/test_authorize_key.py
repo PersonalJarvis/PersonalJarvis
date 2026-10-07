@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,8 +22,12 @@ OLD_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIold"
 def _run(home: Path) -> None:
     subprocess.run(  # noqa: S603 — fixed argv
         [str(SH), "-c", authorize_key_command(NEW_KEY)],
-        env={"HOME": str(home), "PATH": str(Path(str(SH)).parent)},
+        env={
+            "HOME": str(home),
+            "PATH": os.pathsep.join((str(Path(str(SH)).parent), os.defpath)),
+        },
         check=True,
+        encoding="utf-8",
         creationflags=NO_WINDOW_CREATIONFLAGS,
     )
 

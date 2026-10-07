@@ -13,54 +13,101 @@ hallucinates from a blank input.
 These tests exercise the helper against real on-disk git worktrees so
 the assertions cover the actual behaviour of `git add -N`, `git diff
 HEAD`, and `git ls-files --others --exclude-standard` together.
+
+The worktrees branch off a tiny seed repository built in the test's temp
+directory, never off the host checkout: a full checkout of this repository
+per test cost 10-16 s on a desktop, contended for the shared repository lock
+with every other session, left `test/*` branches in the developer's repo, and
+pushed the product's 10 s git caps and the CI per-file budget into timeouts on
+a loaded runner. The seed carries the shape the tests rely on — a tracked
+README.md and AGENTS.md, and a `/*.log` ignore rule like the host repo's.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import uuid
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
 
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.missions.isolation.worktree import WorktreeManager
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 from jarvis.missions.worker_runtime.workspace import materialize_worker_contract
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# Fixture-side git calls ignore the developer's or runner's global and system
+# config (signing, hooks, templates, autocrlf) and carry their own identity.
+_SEED_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_AUTHOR_NAME": "Seed",
+    "GIT_AUTHOR_EMAIL": "seed@personal-jarvis.local",
+    "GIT_COMMITTER_NAME": "Seed",
+    "GIT_COMMITTER_EMAIL": "seed@personal-jarvis.local",
+}
 
 
-def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _git(
+    *args: str, cwd: Path | None = None, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603
         ["git", *args],
         cwd=str(cwd) if cwd else None,
         check=False,
         capture_output=True,
         text=True,
-        # Worktree materialization can exceed 15 seconds while other mission
-        # or release sessions briefly hold the shared repository lock.
-        timeout=60.0,
+        encoding="utf-8",
+        env=dict(env) if env is not None else None,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+        # Generous ceiling for a loaded CI runner; a healthy call on the tiny
+        # seed repo returns in milliseconds.
+        timeout=120.0,
     )
 
 
+@pytest.fixture(scope="module")
+def seed_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A one-commit repository on `main` that every worktree branches off."""
+    if shutil.which("git") is None:
+        pytest.skip("git not in PATH")
+    repo = tmp_path_factory.mktemp("capture-diff-seed")
+    (repo / "README.md").write_text("# Seed repository\n", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("# Seed agent rules\n", encoding="utf-8")
+    (repo / ".gitignore").write_text("/*.log\n", encoding="utf-8")
+    for args in (
+        ("-c", "init.defaultBranch=main", "init"),
+        ("add", "README.md", "AGENTS.md", ".gitignore"),
+        ("-c", "commit.gpgsign=false", "commit", "-m", "seed"),
+    ):
+        result = _git(*args, cwd=repo, env=_SEED_GIT_ENV)
+        if result.returncode != 0:
+            pytest.fail(f"git {' '.join(args)} failed: {result.stderr.strip()[:300]}")
+    return repo
+
+
 @pytest.fixture
-def worktree(tmp_path: Path):
-    """Yield a fresh git worktree branched off `main` in the host repo.
+def worktree(tmp_path: Path, seed_repo: Path) -> Iterator[Path]:
+    """Yield a fresh git worktree branched off the seed repo's `main`.
 
     Cleans up the worktree + temporary branch after the test, even on
-    failure, so the host repo's `.git/worktrees/` doesn't accumulate
-    dangling entries.
+    failure, so the seed repo's `.git/worktrees/` stays small.
     """
     branch = f"test/capture-diff-{uuid.uuid4().hex[:8]}"
     wt = tmp_path / "wt"
-    add = _git("worktree", "add", "-b", branch, str(wt), "main", cwd=PROJECT_ROOT)
+    add = _git(
+        "worktree", "add", "-b", branch, str(wt), "main", cwd=seed_repo, env=_SEED_GIT_ENV
+    )
     if add.returncode != 0:
-        pytest.skip(f"git worktree add failed: {add.stderr.strip()[:200]}")
+        pytest.fail(f"git worktree add failed: {add.stderr.strip()[:300]}")
     try:
         yield wt
     finally:
-        _git("worktree", "remove", "--force", str(wt), cwd=PROJECT_ROOT)
-        _git("branch", "-D", branch, cwd=PROJECT_ROOT)
+        _git("worktree", "remove", "--force", str(wt), cwd=seed_repo, env=_SEED_GIT_ENV)
+        _git("branch", "-D", branch, cwd=seed_repo, env=_SEED_GIT_ENV)
 
 
 @pytest.fixture
@@ -130,12 +177,12 @@ _GIT_AVAILABLE = shutil.which("git") is not None
 
 
 @pytest.fixture
-def lean_manager(tmp_path: Path) -> WorktreeManager:
+def lean_manager(tmp_path: Path, seed_repo: Path) -> WorktreeManager:
     """A WorktreeManager whose outputs land under tmp_path. The lean path uses
     `git init` (no host-repo checkout), so repo_root only needs to be a real
-    git repo for the manager's own bookkeeping — point it at the host repo."""
+    git repo for the manager's own bookkeeping — the seed repo is one."""
     return WorktreeManager(
-        repo_root=PROJECT_ROOT, outputs_root=tmp_path / "lean-outputs"
+        repo_root=seed_repo, outputs_root=tmp_path / "lean-outputs"
     )
 
 
@@ -457,6 +504,45 @@ def test_snapshot_promotion_failure_rolls_back_previous_durable_draft(
     assert not list(draft_artifacts.glob(".files-previous-*"))
 
 
+def test_snapshot_promotion_rides_out_a_transient_share_lock(
+    worktree: Path,
+    kontrollierer: Kontrollierer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An antivirus or indexer handle on a just-copied file makes the staged
+    tree's rename fail with WinError 5 for a moment (reproduced under parallel
+    load on Windows). The archive must retry, not drop the deliverable."""
+    # The real retry schedule stays in place: the two simulated denials cost
+    # 50 ms, and the remaining attempts still cover a genuine scanner lock on
+    # this host's freshly copied file.
+    output = worktree / "report.html"
+    output.write_text("<!doctype html><p>deliverable</p>", encoding="utf-8")
+    real_replace = Path.replace
+    denials: list[str] = []
+
+    def locked_twice(source: Path, target: Path) -> Path:
+        if source.name.startswith(".files-next-") and len(denials) < 2:
+            denials.append(source.name)
+            raise PermissionError(5, "Access is denied", str(source))
+        return real_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", locked_twice)
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+
+    artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree, mission_dir=mission_dir, task_id="share-lock",
+    )
+
+    assert len(denials) == 2
+    assert artifacts is not None
+    assert (artifacts / "files" / "report.html").read_text(encoding="utf-8") == (
+        "<!doctype html><p>deliverable</p>"
+    )
+    assert not list(artifacts.glob(".files-next-*"))
+
+
 # --- 2026-05-27 hardening audit: archive must round-trip non-ASCII and
 #     gitignored deliverables, and must NOT leak materialized contract files.
 
@@ -578,7 +664,7 @@ def _commit(cwd: Path, *paths: str, message: str) -> None:
     _git("add", *paths, cwd=cwd)
     _git(
         "-c", "user.name=Worker", "-c", "user.email=worker@personal-jarvis.local",
-        "commit", "-m", message, cwd=cwd,
+        "-c", "commit.gpgsign=false", "commit", "-m", message, cwd=cwd,
     )
 
 

@@ -467,6 +467,18 @@ label,
   height: 0;
 }
 
+/* A chat transcript scrolls like a messenger's: no bar beside the words.
+   The jump-to-latest button stands in for the bar's "you are not at the end".
+   Top-level so the class survives Tailwind's purge like the rules above. */
+.chat-scroller {
+  scrollbar-width: none;
+}
+
+.chat-scroller::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* The icon rail (the deck's dock and the collapsed sidebar) scrolls when the
    window is shorter than its column of icons, but shows no bar: a 10 px thumb
    inside a 64 px rail would sit on the icons themselves. Top-level for the
@@ -572,8 +584,8 @@ label,
     --memory-to: 194 92% 48%;
     --vivid-card-foreground: 0 0% 100%;
     --surface-raised: 0 0% 93%; /* #EDEDED — pressed/selected rows, code blocks */
-    --border: 0 0% 90%; /* #E5E5E5 — hairline */
-    --border-strong: 0 0% 82%; /* #D1D1D1 — input borders, focused card, float rim */
+    --border: 0 0% 86%; /* #DBDBDB — hairline */
+    --border-strong: 0 0% 74%; /* #BDBDBD — input borders, focused card, float rim */
 
     /* --- Ink. Four steps, one job each ------------------------------------
        The split is what stops a single ink slab from reading as harsh: with
@@ -581,10 +593,10 @@ label,
        has nothing to justify its weight. */
     --foreground-strong: 0 0% 4%; /* #0A0A0A — headings, headline numbers */
     --foreground: 0 0% 9%; /* #171717 — body, labels, running text */
-    --muted-foreground: 0 0% 40%; /* #666666 — labels, meta, table heads (5.7:1) */
-    --faint-foreground: 0 0% 46%; /* #757575 — placeholder + disabled ONLY (4.6:1) */
-    --foreground-faint: 0 0% 46%; /* = --faint-foreground; the Tailwind name */
-    --foreground-secondary: 0 0% 32%; /* #525252 — body on cards, descriptions */
+    --muted-foreground: 0 0% 33%; /* #545454 — labels, meta, table heads (7.5:1, the dark twin's 7.9:1) */
+    --faint-foreground: 0 0% 42%; /* #6B6B6B — placeholder + disabled ONLY (5.3:1) */
+    --foreground-faint: 0 0% 42%; /* = --faint-foreground; the Tailwind name */
+    --foreground-secondary: 0 0% 26%; /* #424242 — body on cards, descriptions */
 
     /* --primary is a FILL, not an ink: buttons, marks, active indicators,
        focus rings. It never paints running text, a byline or a decorative
@@ -937,6 +949,53 @@ body {
   --tw-prose-invert-links: hsl(var(--accent));
 }
 
+/* A docs guide reads from theme tokens only, so the same class list serves
+   light and dark; the plugin's inverted palette is pointed at the same
+   values. Body copy sits one step below heading ink. */
+.docs-prose {
+  --tw-prose-body: hsl(var(--foreground-secondary));
+  --tw-prose-headings: hsl(var(--foreground-strong));
+  --tw-prose-lead: hsl(var(--muted-foreground));
+  --tw-prose-bold: hsl(var(--foreground-strong));
+  --tw-prose-counters: hsl(var(--muted-foreground));
+  --tw-prose-bullets: hsl(var(--foreground-faint));
+  --tw-prose-hr: hsl(var(--border));
+  --tw-prose-quotes: hsl(var(--foreground-secondary));
+  --tw-prose-quote-borders: hsl(var(--border-strong));
+  --tw-prose-code: hsl(var(--foreground-strong));
+  --tw-prose-th-borders: hsl(var(--border));
+  --tw-prose-td-borders: hsl(var(--border));
+  --tw-prose-invert-body: hsl(var(--foreground-secondary));
+  --tw-prose-invert-headings: hsl(var(--foreground-strong));
+  --tw-prose-invert-bold: hsl(var(--foreground-strong));
+  --tw-prose-invert-bullets: hsl(var(--foreground-faint));
+  --tw-prose-invert-hr: hsl(var(--border));
+  --tw-prose-invert-code: hsl(var(--foreground-strong));
+  font-size: 16px;
+  line-height: 28px;
+  letter-spacing: 0;
+}
+
+/* Headings are wrapped in their own anchor (rehype-autolink-headings). The
+   anchor keeps heading ink and reveals a quiet "#" on hover, so a section
+   link can be copied without turning every heading into link colour. */
+.docs-prose :is(h2, h3, h4) > a {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+}
+.docs-prose :is(h2, h3, h4) > a::after {
+  content: "#";
+  margin-left: 0.4em;
+  color: hsl(var(--foreground-faint));
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.docs-prose :is(h2, h3, h4):hover > a::after,
+.docs-prose :is(h2, h3, h4) > a:focus-visible::after {
+  opacity: 1;
+}
+
 /* Selecting text answers in the theme's own material, not the engine's
    default blue — the one saturated slab a black-and-white product used to
    show every time someone dragged across a sentence. */
@@ -1194,17 +1253,6 @@ body {
 }
 
 @layer utilities {
-  /* A transparent full-screen map must not reveal the app bar's labels under
-     its own toolbar. The shell controls stay hidden while the map is expanded
-     and return immediately when it restores. */
-  main:has(
-      > .jarvis-section-stage
-        #wiki-workspace[data-graph-expanded="true"]
-    )
-    > :not(.jarvis-section-stage) {
-    visibility: hidden;
-  }
-
   /* Staggered reveal on view mount — one orchestrated page-load moment.
      Pair with an inline `animationDelay` for the stagger cadence. */
   @keyframes profile-rise {
@@ -1272,6 +1320,31 @@ body {
     background-clip: text;
     color: transparent;
     animation: thinking-shimmer 2.4s linear infinite;
+  }
+  /* A live work-log line: a narrow band of full-contrast text slides across
+     the muted label in steps. Portions adapted from pingdotgg/t3code
+     @ e22c880 (apps/web/src/index.css), MIT License, Copyright (c) 2026
+     T3 Tools Inc. — third_party/t3code/LICENSE. */
+  @keyframes live-tool-shine {
+    from {
+      background-position: -4.5rem 0, 0 0;
+    }
+    to {
+      background-position: calc(100% + 4.5rem) 0, 0 0;
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    .live-tool-shine {
+      color: transparent;
+      background-image:
+        linear-gradient(to right, transparent, hsl(var(--foreground)), transparent),
+        linear-gradient(hsl(var(--muted-foreground)), hsl(var(--muted-foreground)));
+      background-size: 4.5rem 100%, 100% 100%;
+      background-repeat: no-repeat;
+      -webkit-background-clip: text;
+      background-clip: text;
+      animation: live-tool-shine 2.2s steps(30) infinite;
+    }
   }
   @keyframes thinking-ring {
     0% {

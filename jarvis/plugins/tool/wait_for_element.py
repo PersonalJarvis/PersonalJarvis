@@ -29,6 +29,8 @@ _MAX_TIMEOUT_S = 60.0
 
 
 class WaitForElementTool:
+    read_only = True
+
     name: str = "wait_for_element"
     risk_tier: str = "safe"
     description: str = (

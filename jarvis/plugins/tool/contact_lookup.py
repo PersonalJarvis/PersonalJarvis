@@ -46,6 +46,8 @@ log = logging.getLogger(__name__)
 class ContactLookupTool:
     """Router-tier resolver: name/alias -> a contact's e-mails/phones/address."""
 
+    read_only = True
+
     name: str = "contact-lookup"
     description: str = (
         "Look up a saved contact by name or alias and return their e-mail "

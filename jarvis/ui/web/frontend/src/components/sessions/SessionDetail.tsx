@@ -28,6 +28,7 @@ import {
   useSetPreferredOpener,
 } from "@/hooks/useOutputs";
 import { useT, useUiLanguage } from "@/i18n";
+import { localeForUiLanguage } from "@/components/runs/format";
 
 import { fetchSessionExport, openSessionWith, sessionExportUrl } from "./api";
 import { hangupLabel } from "./SessionList";
@@ -71,8 +72,7 @@ interface Props {
 export function SessionDetail({ detail, loading, error, onBack }: Props) {
   const t = useT();
   const uiLanguage = useUiLanguage();
-  const locale =
-    uiLanguage === "de" ? "de-DE" : uiLanguage === "es" ? "es-ES" : "en-US";
+  const locale = localeForUiLanguage(uiLanguage);
   const pushToast = useEventStore((s) => s.pushToast);
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;

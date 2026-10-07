@@ -2,9 +2,8 @@ import { act, cleanup, fireEvent, render as rtlRender, screen } from "@testing-l
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { VoiceStage, hintFor, waveformPhase } from "@/components/home/VoiceStage";
+import { VoiceStage, hintFor } from "@/components/home/VoiceStage";
 import { NEAR_END_PX, isNearEnd } from "@/hooks/useStickToBottom";
-import { stateKey } from "@/components/home/JarvisBar";
 import { greetingKey } from "@/components/home/Greeting";
 import { useHomeStore } from "@/store/home";
 import { useEventStore } from "@/store/events";
@@ -12,16 +11,14 @@ import type { TranscriptLine } from "@/lib/homeTranscript";
 
 const t = (key: string) => key;
 
-// The bar owns a canvas waveform and two hooks of its own; the stage's
+// The composer owns hooks of its own (engine, Prompt Mode); the stage's
 // scrolling is what these tests are about, so it stands in as a marker.
-vi.mock("@/components/home/JarvisBar", async () => {
-  const actual = await vi.importActual<typeof import("@/components/home/JarvisBar")>(
-    "@/components/home/JarvisBar",
-  );
-  return { ...actual, JarvisBar: () => <div data-testid="jarvis-bar" /> };
-});
+vi.mock("@/components/home/VoiceComposer", () => ({
+  VoiceComposer: ({ hint }: { hint: string }) => <div data-testid="voice-composer">{hint}</div>,
+}));
+const call = vi.hoisted(() => ({ active: false }));
 vi.mock("@/components/agentic/useVoiceCall", () => ({
-  useVoiceCall: () => ({ active: false, busy: false, connecting: false, toggleCall: () => {} }),
+  useVoiceCall: () => ({ active: call.active, busy: false, connecting: false, toggleCall: () => {} }),
 }));
 vi.mock("@/hooks/useVoiceReadiness", () => ({
   useVoiceReadiness: () => ({
@@ -76,7 +73,9 @@ function viewport(): HTMLElement {
 
 afterEach(() => {
   cleanup();
+  call.active = false;
   useHomeStore.getState().resetTranscript();
+  useEventStore.setState({ voiceState: "idle" });
 });
 
 describe("VoiceStage transcript", () => {
@@ -151,7 +150,7 @@ describe("VoiceStage transcript", () => {
     render();
     expect(screen.getByTestId("voice-stage").dataset.empty).toBe("true");
     expect(document.querySelector("[data-radix-scroll-area-viewport]")).toBeNull();
-    expect(screen.getByTestId("jarvis-bar")).toBeTruthy();
+    expect(screen.getByTestId("voice-composer")).toBeTruthy();
   });
 
   it("shows the words still being said under the finished ones", () => {
@@ -161,6 +160,43 @@ describe("VoiceStage transcript", () => {
 
     expect(screen.getByTestId("transcript-live").textContent).toContain("still talking");
     act(() => useEventStore.setState({ transcription: "", transcriptionFinal: true }));
+  });
+});
+
+describe("VoiceStage turn pet", () => {
+  function liveSteps(i: number): TranscriptLine {
+    return {
+      id: `s${i}`,
+      who: "steps",
+      text: "",
+      ts: i,
+      live: true,
+      startedTs: i,
+      lastTs: i,
+      steps: [{ id: "t1", kind: "tool", labelKey: "thinking.tool", detail: "web_search", status: "active", startedTs: i }],
+    };
+  }
+
+  it("draws the pet under the lane while the turn has no live trace", () => {
+    call.active = true;
+    act(() => useHomeStore.getState().seedTranscript([said("user", "hello", 1)]));
+    act(() => useEventStore.setState({ voiceState: "thinking" }));
+    render();
+
+    expect(screen.getByTestId("voice-turn-indicator")).toBeTruthy();
+  });
+
+  it("draws no second pet while a live trace sits above the answer", () => {
+    // The live trace already carries the pet on its status line; the answer
+    // streaming in under it must not add another one below.
+    call.active = true;
+    act(() =>
+      useHomeStore.getState().seedTranscript([said("user", "hello", 1), liveSteps(2), said("assistant", "Alles klar", 3)]),
+    );
+    act(() => useEventStore.setState({ voiceState: "speaking" }));
+    render();
+
+    expect(screen.queryByTestId("voice-turn-indicator")).toBeNull();
   });
 });
 
@@ -174,15 +210,6 @@ describe("VoiceStage helpers", () => {
     expect(isNearEnd(0, 1000, 100)).toBe(false);
     // A conversation shorter than the viewport is always at its end.
     expect(isNearEnd(0, 100, 400)).toBe(true);
-  });
-
-  it("maps the voice state onto the waveform phases, idle when offline", () => {
-    expect(waveformPhase("listening", false)).toBe("idle");
-    expect(waveformPhase("listening", true)).toBe("listening");
-    expect(waveformPhase("thinking", true)).toBe("working");
-    expect(waveformPhase("speaking", true)).toBe("speaking");
-    expect(waveformPhase("error", true)).toBe("error");
-    expect(waveformPhase("paused", true)).toBe("idle");
   });
 
   it("names the wake phrase in the idle hint and the state otherwise", () => {
@@ -206,14 +233,5 @@ describe("VoiceStage helpers", () => {
     expect(greetingKey(8)).toBe("home.greeting_morning");
     expect(greetingKey(13)).toBe("home.greeting_afternoon");
     expect(greetingKey(21)).toBe("home.greeting_evening");
-  });
-});
-
-describe("JarvisBar state word", () => {
-  it("says offline before anything else, connecting over a stale state", () => {
-    expect(stateKey("speaking", false, false)).toBe("offline");
-    expect(stateKey("idle", true, true)).toBe("connecting");
-    expect(stateKey("listening", false, true)).toBe("listening");
-    expect(stateKey("speaking", false, true)).toBe("speaking");
   });
 });

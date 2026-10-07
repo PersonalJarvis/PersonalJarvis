@@ -49,6 +49,63 @@
       "frames": 6,
       "fps": 3,
       "loop": true
+    },
+    "working": {
+      "row": 7,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "searching": {
+      "row": 8,
+      "frames": 8,
+      "fps": 8,
+      "loop": true
+    },
+    "held": {
+      "row": 9,
+      "frames": 6,
+      "fps": 10,
+      "loop": true
+    }
+  },
+  "acts_sheet": "acts.png",
+  "acts": {
+    "yarn_play": {
+      "row": 0,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "groom": {
+      "row": 1,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "big_yawn": {
+      "row": 2,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "butterfly": {
+      "row": 3,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
+    },
+    "loaf": {
+      "row": 4,
+      "frames": 8,
+      "fps": 6,
+      "loop": false
+    },
+    "knock_cup": {
+      "row": 5,
+      "frames": 8,
+      "fps": 8,
+      "loop": false
     }
   }
 }

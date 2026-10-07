@@ -147,9 +147,23 @@ _LEGACY_PAT_AUTH_DIGESTS = {
     "stripe": "e19610b1b59a59ffe1e231e8d5adda082437eebb59cec1c2df215470c742dde4",
 }
 
-# Full shipped Slack auth block before channel listing and Canvas permissions.
-# Never widen a user's custom scopes, client, redirect, or server configuration.
-_LEGACY_SLACK_AUTH_DIGEST = "7222ece276d51c75bcdf6f8f0dc28412674950ef21301975b7870a73340c1de2"
+# Full shipped Slack auth blocks of the hosted-MCP era: the first one predates
+# channel listing and Canvas permissions, the second carried the MCP server's
+# granular search scopes. Both pair with the hosted Slack MCP server below,
+# which Slack only opens to Marketplace-listed or internal apps; the plugin now
+# runs the native Web API tool with its own scope set. Never widen a user's
+# custom scopes, client, redirect, or server configuration.
+_LEGACY_SLACK_AUTH_DIGESTS = frozenset(
+    {
+        "7222ece276d51c75bcdf6f8f0dc28412674950ef21301975b7870a73340c1de2",
+        "48825f1d1cbee11f6d8d45e524325cbea053b26fb74a253267ec9d8c590aec15",
+    }
+)
+_LEGACY_SLACK_MCP_SERVER = {
+    "transport": "http",
+    "url": "https://mcp.slack.com/mcp",
+    "auth_header_template": "Authorization: Bearer ${plugin_slack_access_token}",
+}
 
 
 def _has_obsolete_slack_scopes(plugin: dict, seed_plugin: dict) -> bool:
@@ -159,8 +173,10 @@ def _has_obsolete_slack_scopes(plugin: dict, seed_plugin: dict) -> bool:
     digest = hashlib.sha256(
         json.dumps(auth, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    return digest == _LEGACY_SLACK_AUTH_DIGEST and plugin.get("mcp_server") == seed_plugin.get(
-        "mcp_server"
+    return digest in _LEGACY_SLACK_AUTH_DIGESTS and plugin.get("mcp_server") in (
+        None,
+        _LEGACY_SLACK_MCP_SERVER,
+        seed_plugin.get("mcp_server"),
     )
 
 
@@ -276,5 +292,12 @@ def load_catalog(path: Path | None = None) -> PluginCatalog:
     return PluginCatalog.model_validate(raw)
 
 
+@lru_cache(maxsize=1)
+def load_seed_catalog() -> PluginCatalog:
+    """Package-owned identities and endpoints, without runtime overrides."""
+    return _read(_PACKAGE_SEED_PATH)
+
+
 def clear_cache() -> None:
     load_catalog.cache_clear()
+    load_seed_catalog.cache_clear()

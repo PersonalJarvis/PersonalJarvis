@@ -9,7 +9,8 @@ Three gates:
 3. PII filter: implicit via the Pydantic schema ``extra='forbid'`` (Plan §C-Sec).
 
 The signature-verify order is:
-``schema-validate → pubkey-registered? → signature-valid? → ts within window?``
+``schema-validate → pubkey-registered? → signature-valid? → aud == this
+endpoint? → ts within window?``
 
 Schema and pubkey lookup are cheap; the crypto only runs after that.
 """
@@ -24,7 +25,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from .config import Settings
-from .crypto import verify_with_recanonicalize
+from .crypto import AUDIENCE_FIELD, signed_audience, verify_with_recanonicalize
 from .db import session_dep
 from .models import Identity
 from .rate_limit import RateLimiter
@@ -83,6 +84,32 @@ def require_admin_token(
 # Signed-request gate
 # ----------------------------------------------------------------------
 
+def _request_path(request: Request) -> str:
+    """The route path as the client addressed it, minus a deployment prefix."""
+    path = request.url.path
+    root = str(request.scope.get("root_path") or "")
+    if root and path.startswith(root):
+        path = path[len(root):] or "/"
+    return path
+
+
+def _check_audience(request: Request, payload: dict) -> dict:
+    """Require the signed ``aud`` to name THIS endpoint; return the payload
+    without it so route schemas (``extra='forbid'``) see only their fields.
+
+    Runs after the signature check, so ``aud`` is authenticated: a body signed
+    for one route cannot be replayed at another (reactions are forwarded to
+    friends verbatim, which made the owner's signed bodies available to them).
+    """
+    expected = signed_audience(request.method, _request_path(request))
+    if payload.get(AUDIENCE_FIELD) != expected:
+        raise HTTPException(
+            status_code=401,
+            detail=f"signature audience does not match {expected}",
+        )
+    return {key: value for key, value in payload.items() if key != AUDIENCE_FIELD}
+
+
 class SignedAuth:
     """Container that signed routes receive via ``Depends``.
 
@@ -134,7 +161,10 @@ async def require_signed_request(
     ):
         raise HTTPException(status_code=401, detail="invalid signature")
 
-    # 3. Replay protection
+    # 3. Endpoint binding (authenticated by the signature above)
+    payload = _check_audience(request, payload)
+
+    # 4. Replay protection
     ts_ms = payload.get("ts_ms")
     if not isinstance(ts_ms, int):
         raise HTTPException(status_code=400, detail="payload.ts_ms missing")
@@ -233,6 +263,8 @@ async def require_federation_signed(
         parsed_payload=payload,
     ):
         raise HTTPException(status_code=401, detail="invalid signature")
+
+    payload = _check_audience(request, payload)
 
     ts_ms = payload.get("ts_ms")
     if not isinstance(ts_ms, int):

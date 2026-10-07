@@ -500,6 +500,7 @@ describe("warmTerminalFont", () => {
       const specs = load.mock.calls.map((call) => String((call as unknown[])[0]));
       expect(specs).toEqual([
         expect.stringMatching(/^500 15px "JetBrains Mono"$/),
+        expect.stringMatching(/^600 15px "JetBrains Mono"$/),
         expect.stringMatching(/^700 15px "JetBrains Mono"$/),
       ]);
     } finally {

@@ -94,9 +94,6 @@ const PluginsDialog = lazyPropView<{ onClose: () => void; area: PluginArea; onAr
 const AgenticIdeView = lazyPropView<AgenticIdeViewProps>(["agentic-ide", "agentic-ide-classic", "chat-workspace"], () =>
   import("@/views/AgenticIdeView").then((m) => ({ default: m.AgenticIdeView })),
 );
-const AutomationsView = lazyView(["tasks"], () =>
-  import("@/views/AutomationsView").then((m) => ({ default: m.AutomationsView })),
-);
 const SessionsView = lazyView(["sessions"], () =>
   import("@/views/SessionsView").then((m) => ({ default: m.SessionsView })),
 );
@@ -108,11 +105,6 @@ const DocsView = lazyView(["docs"], () =>
 );
 const BoardView = lazyView(["board"], () =>
   import("@/views/BoardView").then((m) => ({ default: m.BoardView })),
-);
-const RunInspectorView = lazyView(["run_inspector"], () =>
-  import("@/views/RunInspectorView").then((m) => ({
-    default: m.RunInspectorView,
-  })),
 );
 // Dictation + Dictionary + Shortcuts + Language + Voice API keys are merged
 // behind the one "{name} Voice" sidebar entry. Only the hub is split out here —
@@ -366,12 +358,8 @@ function SwitchOnActiveSection({ active }: { active: string }) {
       return <ClisHubView />;
     case "docs":
       return <DocsView />;
-    case "tasks":
-      return <AutomationsView />;
     case "sessions":
       return <SessionsView />;
-    case "run_inspector":
-      return <RunInspectorView />;
     case "board":
       return <BoardView />;
     case "memory":

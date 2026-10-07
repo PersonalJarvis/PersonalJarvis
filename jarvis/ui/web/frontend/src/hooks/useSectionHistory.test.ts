@@ -8,7 +8,7 @@ import {
   useSectionNavHistory,
 } from "./useSectionHistory";
 
-function visit(section: "chats" | "agents" | "dictation" | "tasks"): void {
+function visit(section: "chats" | "agents" | "dictation" | "board"): void {
   act(() => useEventStore.getState().setActiveSection(section));
 }
 
@@ -75,7 +75,7 @@ describe("useSectionHistory", () => {
     });
     expect(result.current.canGoForward).toBe(true);
 
-    visit("tasks");
+    visit("board");
     expect(result.current.canGoForward).toBe(false);
     expect(result.current.canGoBack).toBe(true);
   });
@@ -84,7 +84,7 @@ describe("useSectionHistory", () => {
     const { result } = renderHook(() => useSectionHistory());
     visit("agents");
     visit("dictation");
-    visit("tasks");
+    visit("board");
 
     act(() => {
       result.current.goBack();
@@ -107,6 +107,24 @@ describe("useSectionHistory", () => {
       result.current.goForward();
     });
     expect(useEventStore.getState().activeSection).toBe("agents");
+  });
+
+  it.each(["agents", "dictation", "board"] as const)("leaves a freshly opened %s section for the front page", (section) => {
+    useEventStore.setState({ activeSection: section });
+    const { result } = renderHook(() => useSectionHistory());
+
+    expect(result.current.canGoBack).toBe(true);
+    expect(result.current.canGoForward).toBe(false);
+
+    let target: string | null = null;
+    act(() => {
+      target = result.current.goBack();
+    });
+
+    expect(target).toBe("chats");
+    expect(useEventStore.getState().activeSection).toBe("chats");
+    expect(result.current.canGoBack).toBe(false);
+    expect(result.current.canGoForward).toBe(true);
   });
 
   it("ignores a back step with no history", () => {

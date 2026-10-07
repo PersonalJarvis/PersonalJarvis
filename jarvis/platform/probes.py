@@ -86,32 +86,6 @@ def ax_permission_granted() -> bool | None:
     return bool(os.environ.get("AT_SPI_BUS") or os.environ.get("DBUS_SESSION_BUS_ADDRESS"))
 
 
-def screen_recording_granted() -> bool | None:
-    """Tri-state: is screen capture (screenshot) permitted?
-
-    ``True`` granted (or no grant needed) · ``False`` explicitly denied · ``None``
-    unknown (macOS where pyobjc-Quartz is absent, so we cannot probe). Only macOS
-    gates screenshots behind a TCC "Screen Recording" grant; Windows and Linux
-    need no per-app grant — Wayland's capture restriction is a separate, non-TCC
-    concern handled at the capture site. Without the macOS grant ``mss`` returns
-    only the desktop wallpaper with no error, so Computer-Use would click blind;
-    callers detect-and-degrade with a clear message (AD-13), never hard-block.
-    """
-    if detect_platform() != "darwin":
-        return True
-    try:
-        from Quartz import (  # type: ignore[import-not-found]
-            CGPreflightScreenCaptureAccess,
-        )
-    except (ImportError, ModuleNotFoundError):
-        return None  # pyobjc-Quartz absent → unknown until installed.
-    try:
-        return bool(CGPreflightScreenCaptureAccess())
-    except Exception:  # pragma: no cover - native call guard
-        log.debug("CGPreflightScreenCaptureAccess() raised; treating as unknown.")
-        return None
-
-
 def has_ax_tree() -> bool:
     """Is a UI-element accessibility tree backend available for this OS?"""
     plat = detect_platform()
@@ -128,8 +102,28 @@ def has_hotkey() -> bool:
     plat = detect_platform()
     if plat == "win32":
         return _has_module("global_hotkeys")
-    # macOS/Linux use pynput; Wayland blocks global grabs by design (AD-8).
-    return _has_module("pynput") and not is_wayland()
+    # macOS/Linux use pynput; Wayland blocks global grabs by design (AD-8),
+    # and a headless box has no keyboard to listen to.
+    return _has_module("pynput") and display_present() and not is_wayland()
+
+
+def hotkey_unavailable_reason() -> str:
+    """Why :func:`has_hotkey` says no, in words a person can act on."""
+    plat = detect_platform()
+    if plat != "win32":
+        if not display_present():
+            return "There is no desktop on this computer, so there is no keyboard to listen to."
+        if is_wayland():
+            return (
+                "Wayland does not let apps listen for global shortcuts. Use an X11 "
+                "session, or ask by voice or with the button."
+            )
+    if plat == "linux" and not _has_module("pynput"):
+        return (
+            "Global shortcuts need the desktop-linux extra: "
+            'pip install "personal-jarvis[desktop-linux]".'
+        )
+    return "Global shortcuts are not available on this desktop."
 
 
 def has_cursor() -> bool:
@@ -188,9 +182,9 @@ __all__ = [
     "is_wayland",
     "has_pty",
     "ax_permission_granted",
-    "screen_recording_granted",
     "has_ax_tree",
     "has_hotkey",
+    "hotkey_unavailable_reason",
     "has_cursor",
     "has_overlay",
     "has_elevation",

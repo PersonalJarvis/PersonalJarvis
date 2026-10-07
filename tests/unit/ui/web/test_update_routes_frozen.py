@@ -33,6 +33,7 @@ def _reset_cache() -> None:
     u._status_cache_until = 0.0
     u._status_cache_root = None
     u._last_good_release = None
+    u._downloads_swept = False
 
 
 @pytest.fixture
@@ -78,6 +79,10 @@ def _patch_frozen(
     monkeypatch.setattr(u, "is_frozen", lambda: frozen)
     monkeypatch.setattr(u, "_running_version", lambda: running)
     monkeypatch.setattr(u, "installer_asset_name", lambda _p, _m: asset_name)
+    # The real preflight inspects THIS process (no AppImage on a CI runner, no
+    # app bundle in a test run); the cases below opt into a blocker explicitly.
+    monkeypatch.setattr(u, "update_blocker", lambda: None)
+    monkeypatch.setattr(u, "sweep_stale_downloads", lambda: 0)
 
 
 def _patch_latest(monkeypatch: pytest.MonkeyPatch, release: dict[str, Any] | None) -> None:
@@ -397,9 +402,7 @@ def test_apply_refuses_before_downloading_while_missions_run(
     monkeypatch.setattr(u, "download_and_verify", _never)
     desktop = _FakeDesktop()
 
-    response = _client_with(missions=["m-1", "m-2"], desktop=desktop).post(
-        "/api/update/apply"
-    )
+    response = _client_with(missions=["m-1", "m-2"], desktop=desktop).post("/api/update/apply")
 
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -416,9 +419,7 @@ def test_apply_with_force_overrides_the_mission_guard(
     seen = _capture_install(monkeypatch)
     desktop = _FakeDesktop()
 
-    response = _client_with(missions=["m-1"], desktop=desktop).post(
-        "/api/update/apply?force=true"
-    )
+    response = _client_with(missions=["m-1"], desktop=desktop).post("/api/update/apply?force=true")
 
     assert response.status_code == 200
     assert seen["installer"].name == SETUP_NAME
@@ -527,3 +528,115 @@ def test_a_mission_started_during_the_download_still_stops_the_handover(
     assert desktop.quit_calls == 0
     progress = TestClient(app).get("/api/update/progress").json()
     assert "missions are running" in str(progress["error"])
+
+
+# --------------------------------------------------------------------------- #
+# Preflight: an install that cannot replace itself is told so BEFORE download
+# --------------------------------------------------------------------------- #
+BLOCKED = "macOS is running Personal Jarvis from a temporary copy. Move it first."
+
+
+def test_status_announces_the_update_and_says_why_it_cannot_install(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    monkeypatch.setattr(u, "update_blocker", lambda: BLOCKED)
+
+    body = client.get("/api/update/status").json()
+
+    # The user still learns that 1.6.0 exists...
+    assert body["update_available"] is True
+    # ...and the reason travels with it.
+    assert body["blocked_reason"] == BLOCKED
+
+
+def test_status_does_not_run_the_preflight_without_an_update(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch, running="1.6.0")
+    _patch_latest(monkeypatch, _release("1.6.0"))
+
+    def _never() -> str:
+        raise AssertionError("nothing to install, nothing to preflight")
+
+    monkeypatch.setattr(u, "update_blocker", _never)
+    body = client.get("/api/update/status").json()
+    assert body["blocked_reason"] is None
+
+
+def test_apply_refuses_a_blocked_install_before_downloading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    monkeypatch.setattr(u, "update_blocker", lambda: BLOCKED)
+
+    async def _never(*_args: Any, **_kwargs: Any) -> Path:
+        raise AssertionError("a blocked install must not download several hundred MB")
+
+    monkeypatch.setattr(u, "download_and_verify", _never)
+    desktop = _FakeDesktop()
+    client = _client_with(desktop=desktop)
+
+    response = client.post("/api/update/apply")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == BLOCKED
+    assert desktop.quit_calls == 0
+    progress = client.get("/api/update/progress").json()
+    assert progress["phase"] == "failed"
+    assert progress["error"] == BLOCKED
+
+
+def test_status_reclaims_old_downloads_once_per_process(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    sweeps: list[int] = []
+    monkeypatch.setattr(u, "sweep_stale_downloads", lambda: sweeps.append(1) or 0)
+
+    client.get("/api/update/status?force=true")
+    client.get("/api/update/status?force=true")
+
+    assert sweeps == [1]
+
+
+def test_a_failing_sweep_never_breaks_the_status_check(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+
+    def _explode() -> int:
+        raise OSError("temp folder vanished")
+
+    monkeypatch.setattr(u, "sweep_stale_downloads", _explode)
+    body = client.get("/api/update/status").json()
+    assert body["update_available"] is True
+
+
+def test_the_frozen_asset_follows_the_native_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Intel build under Rosetta asks for the arm64 installer."""
+    seen: list[tuple[str, str]] = []
+    monkeypatch.setattr(u, "machine_for_update", lambda: "arm64")
+    monkeypatch.setattr(
+        u, "installer_asset_name", lambda platform, machine: seen.append((platform, machine))
+    )
+    u._frozen_asset_name()
+    assert seen and seen[0][1] == "arm64"
+
+
+def test_apply_downloads_into_a_fresh_private_folder(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frozen(monkeypatch)
+    _patch_latest(monkeypatch, _release("1.6.0"))
+    seen = _capture_install(monkeypatch)
+    workdir = tmp_path / "jarvis-update-test"
+    workdir.mkdir()
+    monkeypatch.setattr(u, "download_workdir", lambda: workdir)
+
+    assert client.post("/api/update/apply").status_code == 200
+    assert seen["installer"].parent == workdir

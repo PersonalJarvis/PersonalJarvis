@@ -7,9 +7,16 @@
  * +x east, +z south, origin at the floor centre. The camera looks from the
  * south-east, so tall rooms stand in the north and the lobby lies in front.
  *
- *   ┌──────────── north strip: Lead office · Team room · Wardrobe ───────────┐
- *   │        departments (open office, 2 columns) · spawn point in the middle  │
- *   └──── south strip: Reception + lobby (Agent board) · Break room ─────────┘
+ *   ┌──────────── north strip: Lead office · Team room · Wardrobe ───────────┐ ┌───────┐
+ *   │        departments (open office, 2 columns) · spawn point in the middle  │ │ Level │
+ *   └──── south strip: Reception + lobby (Agent board) · Break room ─────────┘ │ Hall  │
+ *                                                                               └───────┘
+ *
+ * The agents floor adds the Level Hall as an east wing across the whole depth,
+ * one aisle beyond the office: the Upgrade Studio's stage under the Level Wall
+ * in the north, the Level Road lined with a pedestal per reward down the
+ * middle, and the level guide at its start in the south. Its doors open onto
+ * the north aisle, the spawn point's cross aisle and the south aisle.
  *
  * The coding floor (variant "coding", one elevator ride up) keeps the same
  * frame: its departments are the Agentic IDE workspaces, and the north strip
@@ -26,6 +33,7 @@
  * agents upstairs, and everyone new to the floor appears on its pad.
  */
 import type { AgentRunState, AgentTier } from "../data";
+import { REWARD_IDS } from "../progression/levelCatalog";
 import { agentsAmbience } from "./agentsAmbience";
 import { codingAmbience } from "./codingAmbience";
 
@@ -64,11 +72,18 @@ export interface Department extends Rect {
   tint: number;
 }
 
-/** "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe. */
-export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server";
+/**
+ * "command" (Mission Control) and "server" only exist on the coding floor, in place of the lead office and the wardrobe.
+ * The arcade floor has its own rooms: three game rooms ("classics", "puzzle", "action"), the open hall between them
+ * ("arcade"), and the "foyer" with the elevator, the prize shop ("prizes") and the "snack" bar.
+ */
+export type RoomKind = "lead" | "team" | "wardrobe" | "reception" | "break" | "command" | "server"
+  | "arcade" | "classics" | "puzzle" | "action" | "foyer" | "prizes" | "snack"
+  // The agents floor's east wing: the Level Hall.
+  | "levels";
 
-/** Which floor a layout draws: the society agents' office, or the coding agents' floor above it. */
-export type OfficeVariant = "agents" | "coding";
+/** Which floor a layout draws: the society agents' office, the coding agents' floor above it, or the arcade floor on top. */
+export type OfficeVariant = "agents" | "coding" | "arcade";
 
 export interface Door { side: "north" | "south" | "east" | "west"; /** Centre of the gap along the wall. */ at: number; width: number }
 
@@ -87,8 +102,10 @@ export interface WallSegment { x1: number; z1: number; x2: number; z2: number; r
  * "mission" is Mission Control on the coding floor.
  * "spawn" (agents floor) and "launch" (coding floor) are the spawn point in the floor's middle:
  * a new Jarvis agent downstairs, a new coding agent upstairs.
+ * "studio" (the Upgrade Studio's stage) and "levels" (the level guide) are the Level Hall's.
  */
-export type CheckpointKind = "spawn" | "launch" | "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission";
+export type CheckpointKind = "spawn" | "launch" | "create" | "manage" | "team" | "wardrobe" | "lead" | "break" | "elevator" | "mission"
+  | "studio" | "levels";
 
 /** A place the person can walk to (or click from afar) to act. "floor" = the open office, outside every room. */
 export interface Checkpoint extends Point {
@@ -128,7 +145,13 @@ export type FurnitureKind =
   | "brandWall" | "agentTotem" | "lobbySofa" | "lobbyArmchair" | "lobbyTable" | "sideTable" | "lobbyLamp" | "oliveTree"
   | "awardCase" | "entranceMat" | "lobbyRug"
   // The spawn point in the middle of both floors: the flat pad and the terminal standing on it.
-  | "spawnPad" | "spawnTerminal";
+  | "spawnPad" | "spawnTerminal"
+  // Arcade floor: the playable game cabinets (id `cabinet-<gameId>`, see arcade/arcadeGames.ts), the prize
+  // counter, the token changer, a claw machine, an air-hockey table, a pinball machine and a snack-bar counter.
+  | "retroCabinet" | "prizeCounter" | "tokenMachine" | "clawMachine" | "airHockey" | "pinball" | "snackCounter"
+  // Level Hall (agents floor): the Level Wall over the studio's stage, the round stage itself, a pedestal per reward
+  // (id `level-pedestal-<n>`, lowest unlock first), the Level Road between them, the double-sided level guide.
+  | "levelWall" | "studioStage" | "rewardPedestal" | "levelRoad" | "levelGuide";
 
 /**
  * Footprint (x-extent × z-extent before rotation) and height of each piece.
@@ -217,6 +240,22 @@ export const FURNITURE_SIZE: Record<FurnitureKind, { w: number; d: number; h: nu
   // tops out at 2.2 m). The pad fits the 3.2 m aisle crossing with a margin to every department.
   spawnPad: { w: 2 * 1.42, d: 2 * 1.42, h: 0.02, solid: false },
   spawnTerminal: { w: 1.2, d: 0.7, h: 2.2, solid: true },
+  // Arcade floor. A cabinet's screen and controls face its local +z; the person plays standing in front of it.
+  retroCabinet: { w: 0.8, d: 0.8, h: 1.95, solid: true },
+  prizeCounter: { w: 3.4, d: 0.9, h: 2.2, solid: true },
+  tokenMachine: { w: 0.6, d: 0.5, h: 1.7, solid: true },
+  clawMachine: { w: 1.0, d: 1.0, h: 2.0, solid: true },
+  airHockey: { w: 2.1, d: 1.2, h: 0.95, solid: true },
+  pinball: { w: 0.75, d: 1.45, h: 1.9, solid: true },
+  snackCounter: { w: 2.6, d: 0.8, h: 1.1, solid: true },
+  // Level Hall. The wall carries the live level display; the stage is a flat round disc anyone can step on (its
+  // ring of lights stays inside the box); a pedestal is a plinth with a glass case and the reward floating in it;
+  // the road is a lit floor strip, sized per instance; the guide is a free-standing screen, the same on both faces.
+  levelWall: { w: 6.6, d: 0.34, h: 3.1, solid: true },
+  studioStage: { w: 3.2, d: 3.2, h: 0.02, solid: false },
+  rewardPedestal: { w: 0.8, d: 0.8, h: 1.75, solid: true },
+  levelRoad: { w: 1, d: 1, h: 0.02, solid: false },
+  levelGuide: { w: 3.4, d: 0.36, h: 2.45, solid: true },
 };
 
 /**
@@ -233,7 +272,7 @@ export interface Furniture extends Point {
   /** Rotation about +y. 0 = the prop's front faces +z (south, towards the camera). */
   rotationY: number;
   room: RoomKind | "floor";
-  /** Only rugs (plain, executive, team, lobby) and the entrance mat are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
+  /** Only rugs (plain, executive, team, lobby), the entrance mat and the Level Road are sized per instance (w × d); everything else uses FURNITURE_SIZE. */
   size?: { w: number; d: number };
 }
 
@@ -287,6 +326,14 @@ const DEPT_MARGIN_X = 1.1;
 const DEPT_HEADER_Z = 1.8;
 const DEPT_FOOTER_Z = 0.8;
 const AISLE = 3.2;
+/**
+ * The Level Hall (agents floor only): the aisle between the office and the
+ * hall, the hall's width, where the stage stands, and how far the Level Road
+ * runs from each end of the hall.
+ */
+export const LEVEL_HALL = { aisle: AISLE, width: 9.2, stageZ: 4.5, stageR: 1.6, roadNorth: 8.2, roadSouth: 6.4, guideZ: 3.3 } as const;
+/** The pedestals stand this far either side of the hall's centre line, the Level Road between them. */
+export const PEDESTAL_OFFSET_X = 1.8;
 /**
  * Mission Control's desk, in its own space (origin = desk centre, +z = the
  * side where the chair stands): the desk top and the chair the person works
@@ -457,7 +504,7 @@ export function footprint(item: Pick<Furniture, "x" | "z" | "kind" | "rotationY"
   return { minX: item.x - w / 2, maxX: item.x + w / 2, minZ: item.z - d / 2, maxZ: item.z + d / 2 };
 }
 
-function wallsOf(room: Room): WallSegment[] {
+export function wallsOf(room: Room): WallSegment[] {
   if (!room.walled) return [];
   const sides: { side: Door["side"]; a: Point; b: Point }[] = [
     { side: "north", a: { x: room.minX, z: room.minZ }, b: { x: room.maxX, z: room.minZ } },
@@ -495,7 +542,7 @@ export function archPosts(room: Rect): Point[] {
   return [{ x: cx - ARCH.halfSpan, z }, { x: cx + ARCH.halfSpan, z }];
 }
 
-function wallRect(w: WallSegment): Rect {
+export function wallRect(w: WallSegment): Rect {
   const t = WALL_THICKNESS / 2;
   return { minX: Math.min(w.x1, w.x2) - t, maxX: Math.max(w.x1, w.x2) + t, minZ: Math.min(w.z1, w.z2) - t, maxZ: Math.max(w.z1, w.z2) + t };
 }
@@ -575,7 +622,16 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   const receptionRoom: Room = { id: "reception", kind: "reception", walled: false, minX, maxX: maxX - breakW, minZ: southMinZ, maxZ: bottomZ, doors: [] };
   const breakRoom: Room = { id: "break", kind: "break", walled: true, minX: maxX - breakW, maxX, minZ: southMinZ, maxZ: bottomZ,
     doors: [{ side: "north", at: maxX - breakW / 2, width: 2.2 }, { side: "west", at: southMinZ + SOUTH_DEPTH / 2, width: 2 }] };
-  const rooms = [leadRoom, teamRoom, wardrobeRoom, receptionRoom, breakRoom];
+  // The Level Hall: the agents floor's east wing, one aisle beyond the office, across the whole depth.
+  const hallMinX = maxX + LEVEL_HALL.aisle;
+  const levelRoom: Room | null = coding ? null : {
+    id: "levels", kind: "levels", walled: true, minX: hallMinX, maxX: hallMinX + LEVEL_HALL.width, minZ: topZ, maxZ: bottomZ,
+    // The spawn point's cross aisle leads to the main door (it carries the sign); the north and south aisles have one each.
+    doors: [plazaZ, northMaxZ + AISLE / 2, southMinZ - AISLE / 2].map((at) => ({ side: "west" as const, at, width: 2 })),
+  };
+  const outerMaxX = levelRoom ? levelRoom.maxX : maxX;
+  const rooms = [leadRoom, teamRoom, wardrobeRoom, receptionRoom, breakRoom, ...(levelRoom ? [levelRoom] : [])];
+  const hall = levelRoom ? levelHall(levelRoom) : null;
 
   // The lead's executive desk faces south, towards the door and the office. A
   // second lead gets a partner desk to its east; there is never an empty one.
@@ -714,6 +770,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "break-nook", kind: "readingNook", x: bx0 + 0.53, z: bz0 + 0.58, rotationY: 0, room: "break" },
     { id: "break-plant", kind: "breakPlant", x: bx0 + 0.6, z: bottomZ - 0.6, rotationY: 0, room: "break" },
     { id: "break-plant-e", kind: "breakPlant", x: breakRoom.maxX - 0.45, z: bz0 + 5.9, rotationY: 0, room: "break" },
+    ...(hall?.furniture ?? []),
   ];
   for (const dept of departments) {
     furniture.push({ id: `${dept.id}-plant-w`, kind: "plant", x: dept.minX + 0.45, z: dept.maxZ - 0.45, rotationY: 0, room: "floor" });
@@ -752,6 +809,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
       ...lobbySpots(receptionRoom),
     ] satisfies Spot[]),
     { id: "board", kind: "board", pose: "stand", x: tcx - 0.6, z: topZ + 1.2, facing: Math.PI, room: "team" },
+    ...(hall?.spots ?? []),
   ];
   // Meeting chairs: three per long side of the team table.
   for (let i = 0; i < 3; i += 1) {
@@ -759,7 +817,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     spots.push({ id: `meeting-n${i}`, kind: "meeting", pose: "sit", x, z: table.z - 1.25, facing: 0, room: "team" });
     spots.push({ id: `meeting-s${i}`, kind: "meeting", pose: "sit", x, z: table.z + 1.25, facing: Math.PI, room: "team" });
   }
-  // Window spots along the east and west railing, looking out at the stars.
+  // Window spots along the east and west railing, looking out at the stars (on the agents floor the east ones look into the Level Hall).
   for (const dept of departments) {
     const side = dept.minX <= minX + 0.01 ? "west" : dept.maxX >= maxX - 0.01 ? "east" : null;
     if (!side) continue;
@@ -790,6 +848,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     { id: "team", room: "team", x: tcx + 2.2, z: northMaxZ - 1.05, radius: 0.95 },
     { id: "wardrobe", room: "wardrobe", x: wcx, z: tcz + 0.8, radius: 1.5 },
     { id: "lead", room: "lead", x: minX + leadW / 2, z: northMaxZ - 1.5, radius: 1.3 },
+    ...(hall?.checkpoints ?? []),
     breakStop,
     elevatorStop,
   ];
@@ -820,7 +879,7 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
   ];
 
   const floor = {
-    minX: minX - EDGE + RAIL_CLEARANCE, maxX: maxX + EDGE - RAIL_CLEARANCE,
+    minX: minX - EDGE + RAIL_CLEARANCE, maxX: outerMaxX + EDGE - RAIL_CLEARANCE,
     minZ: topZ - EDGE + RAIL_CLEARANCE, maxZ: bottomZ + EDGE - RAIL_CLEARANCE,
   };
   return {
@@ -831,8 +890,54 @@ export function buildOfficeLayout(agents: readonly OfficeAgentInput[], options: 
     spawn: { x: rx0 + 1.4, z: bottomZ - 2.6 },
     arrival,
     floor,
-    bounds: { minX: minX - EDGE, maxX: maxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },
+    bounds: { minX: minX - EDGE, maxX: outerMaxX + EDGE, minZ: topZ - EDGE, maxZ: bottomZ + EDGE },
   };
+}
+
+/**
+ * The Level Hall's fittings, north to south: the Level Wall on the north wall
+ * with the Upgrade Studio's round stage in front of it (its checkpoint is the
+ * stage itself), the Level Road down the middle with a pedestal per reward on
+ * either side — the lowest unlock at the south end, the highest by the stage,
+ * so walking up the road is climbing the levels — and at the road's start the
+ * double-sided level guide with its checkpoint on the road side. Plants frame
+ * the stage, olive trees the guide.
+ */
+function levelHall(room: Room): { furniture: Furniture[]; spots: Spot[]; checkpoints: Checkpoint[] } {
+  const cx = (room.minX + room.maxX) / 2;
+  const piece = (id: string, kind: FurnitureKind, x: number, z: number, rotationY = 0, size?: { w: number; d: number }): Furniture =>
+    ({ id, kind, x, z, rotationY, room: "levels", ...(size ? { size } : {}) });
+  const stageZ = room.minZ + LEVEL_HALL.stageZ;
+  const roadMinZ = room.minZ + LEVEL_HALL.roadNorth, roadMaxZ = room.maxZ - LEVEL_HALL.roadSouth;
+  const guideZ = room.maxZ - LEVEL_HALL.guideZ;
+  // Pedestal n (0 = the lowest unlock) stands on the west side when n is even, the east side when odd, rising northwards.
+  const rows = Math.ceil(REWARD_IDS.length / 2);
+  const pitch = rows > 1 ? (roadMaxZ - roadMinZ - 1.2) / (rows - 1) : 0;
+  const pedestals = REWARD_IDS.map((_, n) => piece(`level-pedestal-${n}`, "rewardPedestal",
+    cx + (n % 2 === 0 ? -PEDESTAL_OFFSET_X : PEDESTAL_OFFSET_X), roadMaxZ - 0.6 - Math.floor(n / 2) * pitch, n % 2 === 0 ? Math.PI / 2 : -Math.PI / 2));
+  const furniture: Furniture[] = [
+    piece("level-wall", "levelWall", cx, room.minZ + 0.08 + FURNITURE_SIZE.levelWall.d / 2),
+    piece("level-stage", "studioStage", cx, stageZ),
+    piece("level-road", "levelRoad", cx, (roadMinZ + roadMaxZ) / 2, 0, { w: 2.2, d: roadMaxZ - roadMinZ }),
+    ...pedestals,
+    // The guide faces up the road; its back shows the same screen to the lobby side.
+    piece("level-guide", "levelGuide", cx, guideZ, Math.PI),
+    piece("level-plant-nw", "designerPlant", room.minX + 0.6, room.minZ + 0.7),
+    piece("level-plant-ne", "designerPlant", room.maxX - 0.6, room.minZ + 0.7),
+    piece("level-olive-sw", "oliveTree", room.minX + 0.85, room.maxZ - 0.85),
+    piece("level-olive-se", "oliveTree", room.maxX - 0.85, room.maxZ - 0.85),
+  ];
+  const spots: Spot[] = [
+    // Agents come to look at the Level Wall and at the top of the road.
+    { id: "level-wall-w", kind: "shelf", pose: "stand", x: cx - 2.6, z: room.minZ + 1.5, facing: Math.PI, room: "levels" },
+    { id: "level-wall-e", kind: "shelf", pose: "stand", x: cx + 2.6, z: room.minZ + 1.5, facing: Math.PI, room: "levels" },
+    { id: "level-road-top", kind: "shelf", pose: "stand", x: cx, z: roadMinZ + 1.4, facing: Math.PI, room: "levels" },
+  ];
+  const checkpoints: Checkpoint[] = [
+    { id: "studio", room: "levels", x: cx, z: stageZ, radius: LEVEL_HALL.stageR, approach: { x: cx, z: stageZ + 0.6 } },
+    { id: "levels", room: "levels", x: cx, z: guideZ - 1.45, radius: 1.1 },
+  ];
+  return { furniture, spots, checkpoints };
 }
 
 /** The lobby lounge's sofa, relative to the reception room's west and north edges. */

@@ -1359,13 +1359,15 @@ Router membership and the prohibition on recursive worker spawning are
 unchanged. Stable workspace/pane IDs and durable request receipts preserve
 project and delivery identity across asynchronous work and retries.
 
-Supervision extends that authorized assignment without introducing a worker
-spawn tool. A durable owner-bound record consumes IDE activity notifications
-and starts an internal turn in the same chat via its existing message receipt
-path. All terminal actions still pass ToolExecutor. Normal owned text follow-ups
-may inherit monitor-tier; approval dialogs retain ask-tier and stale replies are
-refused under the pane lock. Budget, kill-switch, grant and no-progress gates
-apply before automatic turns. No terminal output is treated as user authorization.
+Since 2026-10-06 the capability opens coding threads (agent-chat sessions on
+the IDE's `agent` surface) instead of driving terminal panes; the per-pane
+supervisor was removed. A coordinator observes the stored events of threads an
+agent started and wakes that agent's own chat through the internal message
+receipt path when a turn it started finishes, asks, presents a plan or waits
+for an approval. It is not a worker spawn tool: the thread runs the vendor CLI
+under the person's subscription, every action still passes ToolExecutor, wake-
+ups are capped per thread and held by the kill switch, and thread output is
+never treated as user authorization.
 
 Receiving turns inherit conversation provenance through task-local context;
 new conversations receive fresh traces. Replies retain the trace and parent
@@ -1392,7 +1394,8 @@ ASGI transport as `app-command`.
 ### Pure-Dispatcher spirit is preserved
 
 - Each call's tier comes from `risk_tier_for_args`: the person's per-action
-  mode from Settings > Jarvis actions (`allow` → monitor, `ask`, `block`),
+  mode from the stored action policy (`allow` → monitor, `ask`, `block`;
+  set through `/api/app-actions` since the settings page was retired),
   else the action default (read → safe, change → monitor, dangerous route →
   ask). `ToolExecutor.execute()` still evaluates and confirms (AP-3); a
   blocked action is refused by the evaluator. The same policy applies to the
@@ -1428,3 +1431,26 @@ Mission workers lose the `awareness-recall` grant (ADR-0030).
 - `tests/unit/brain/test_routing.py` (exact router set)
 - `tests/unit/brain/test_evidence_gate.py`, `tests/unit/brain/test_evidence_gate_wiring.py` (honest refusal for the `activity` domain)
 - `tests/missions/test_worker_capability_parity.py` (the worker grant)
+
+## Amendment 2026-10-05 — Marketplace native tool `slack`
+
+The Slack plugin used to execute through Slack's hosted MCP server. Slack
+admits only Marketplace-listed or internal apps to that server; the shared
+publisher app is publicly distributed but unlisted, so every end user would
+be refused. The catalog entry therefore drops its MCP server block and binds
+`"native_tool": "slack"`, a REST tool over the Slack Web API that uses the
+same marketplace user token. With no MCP server block, the virtual
+`mcp-tools`/`plugin-tools` loaders expand to nothing for Slack, so `slack`
+joins `ROUTER_TOOLS` directly, for the same reason as the other marketplace
+native tools.
+
+| Tool | Added | Backing | Risk | Recursion guard? |
+|---|---|---|---|---|
+| `slack` | 2026-10-05 | Slack Web API (`search.messages`, `conversations.*`, `users.*`, `chat.postMessage`) via the marketplace user token with rotation refresh | `ask` statically; every read downgrades to `safe` via `risk_tier_for_args`; `post_message` stays `ask` (echo-confirm) | n/a — a direct REST call, never a spawn; router-tier only (AP-5/AP-14) |
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_slack_rest.py` — `ok: false` mapping without
+  echoing provider text, `token_expired` → one refresh + retry, `Retry-After`
+  handling, cursor pagination, channel/DM resolution, per-action risk tiers.
+- `tests/unit/brain/test_routing.py` (exact router set includes `slack`).

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, 
 
 import type { ComposerChipFieldHandle } from "@/components/agentchat/ComposerChipField";
 import { fetchTypeahead, type AgentChatSurface } from "@/lib/agentChatApi";
+import { searchTools } from "@/components/agentchat/toolChoices";
 import {
   activeToken,
   applyPick,
   filterItems,
   isStaticTrigger,
+  toolTypeaheadItems,
   type ActiveToken,
   type TypeaheadItem,
 } from "@/components/agentchat/typeahead";
@@ -39,6 +41,29 @@ interface Seat {
   provider: string;
   cwd: string;
   triggers: readonly string[];
+  /** The Jarvis chat's model and permission stance — what its tool catalog is read for. */
+  model?: string;
+  stance?: string;
+}
+
+/**
+ * The Jarvis chat's `@` list: the agents the backend names, then the plugins
+ * and tools the Add menu offers. Either half failing leaves the other.
+ */
+async function jarvisMentions(seat: Seat, query: string, signal: AbortSignal): Promise<TypeaheadItem[]> {
+  const [agents, tools] = await Promise.allSettled([
+    fetchTypeahead({ surface: seat.surface, provider: seat.provider, cwd: seat.cwd, trigger: "@", q: query }, signal),
+    searchTools(
+      { provider: seat.provider, model: seat.model ?? "", cwd: seat.cwd, stance: seat.stance ?? "ask", q: query },
+      signal,
+    ),
+  ]);
+  if (signal.aborted) throw new DOMException("aborted", "AbortError");
+  if (agents.status === "rejected" && tools.status === "rejected") throw agents.reason;
+  return [
+    ...(agents.status === "fulfilled" ? agents.value.items : []),
+    ...(tools.status === "fulfilled" ? toolTypeaheadItems(tools.value.items, query) : []),
+  ];
 }
 
 /**
@@ -48,7 +73,8 @@ interface Seat {
  * (`typeahead.ts`), the list for that trigger is shown, filtered by what was
  * typed after it. `/` and `$` lists are read once per seat and folder and
  * filtered here; `@` asks the backend per keystroke, because the folder's
- * file list is too large to ship. Escape dismisses the list for THIS token
+ * file list is too large to ship. On the Jarvis surface `@` also reads the
+ * tool catalog, and picking a tool writes its chip, not a bare word. Escape dismisses the list for THIS token
  * only — a `/` typed on purpose as text must not keep re-opening, and the
  * next token opens as usual.
  */
@@ -97,7 +123,7 @@ export function useComposerTypeahead(
     refresh();
   }, [value, refresh]);
 
-  const seatKey = `${seat.surface}|${seat.provider}|${seat.cwd}`;
+  const seatKey = `${seat.surface}|${seat.provider}|${seat.cwd}|${seat.model ?? ""}|${seat.stance ?? ""}`;
   const trigger = token?.trigger ?? null;
   const query = token?.query ?? "";
 
@@ -123,20 +149,24 @@ export function useComposerTypeahead(
     setLoading(true);
     const timer = window.setTimeout(
       () => {
-        fetchTypeahead(
-          {
-            surface: wanted.surface,
-            provider: wanted.provider,
-            cwd: wanted.cwd,
-            trigger,
-            q: isStaticTrigger(trigger) ? "" : query,
-          },
-          controller.signal,
-        )
-          .then((res) => {
+        const request: Promise<TypeaheadItem[]> =
+          wanted.surface === "jarvis" && trigger === "@"
+            ? jarvisMentions(wanted, query, controller.signal)
+            : fetchTypeahead(
+                {
+                  surface: wanted.surface,
+                  provider: wanted.provider,
+                  cwd: wanted.cwd,
+                  trigger,
+                  q: isStaticTrigger(trigger) ? "" : query,
+                },
+                controller.signal,
+              ).then((res) => res.items);
+        request
+          .then((rows) => {
             if (controller.signal.aborted) return;
-            if (isStaticTrigger(trigger)) staticCache.current.set(key, { at: Date.now(), items: res.items });
-            setRawItems(res.items);
+            if (isStaticTrigger(trigger)) staticCache.current.set(key, { at: Date.now(), items: rows });
+            setRawItems(rows);
             setLoading(false);
           })
           .catch(() => {
@@ -182,7 +212,13 @@ export function useComposerTypeahead(
       if (!token) return;
       const applied = applyPick(field?.getDraft().text ?? box?.value ?? value, token, item);
       setValue(applied.text);
-      if (field) field.hydrate(applied.text, field.getDraft().choices);
+      // A catalog tool joins the draft's choices, so hydrating turns its
+      // `@tag` into the brand chip the turn sends as a selection.
+      if (field) {
+        const choices = field.getDraft().choices;
+        const chosen = item.choice;
+        field.hydrate(applied.text, chosen && !choices.some((c) => c.id === chosen.id) ? [...choices, chosen] : choices);
+      }
       dismissedStart.current = null;
       setToken(null);
       window.requestAnimationFrame(() => {

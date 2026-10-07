@@ -1,7 +1,8 @@
 # Native macOS desktop verification on both supported processor families.
 # TCC dialogs require a signed, foreground GUI app and therefore cannot be
 # approved in CI. This workflow verifies the full dependency install, stable
-# bundle construction, permission fail-closed behavior, and Computer-Use math;
+# bundle construction, permission fail-closed behavior (an ask outside the
+# installed app is refused, never made), and Computer-Use math;
 # the release checklist retains one physical-Mac grant/click sign-off.
 
 name: macOS desktop
@@ -84,10 +85,157 @@ jobs:
       - name: Import native permission frameworks
         run: python -c "import AVFoundation, ApplicationServices, AppKit, Foundation, HIServices, Quartz, ScreenCaptureKit"
 
-      - name: Verify headless TCC requests fail closed
+      # A bare Python on a runner is not the installed app, so the permission
+      # service must not start a native request of its own there (design P6):
+      # the ask is refused with the reason "outside the installed app" and
+      # nothing is requested. The runner's own TCC grants (a pre-granted
+      # responsible process) are read as they are, never refused. Every state the
+      # runner can report (granted, not determined, denied, restricted, no
+      # desktop session) must pass: the step asserts only that nothing was
+      # requested and that nothing but a granted state reads as granted.
+      #
+      # The three native request seams of the real port are replaced by tripwires
+      # BEFORE the call, so "nothing was requested" is proven at the port and not
+      # only through the service's own bookkeeping, and a regression can never
+      # reach a real dialog on the runner.
+      - name: Verify headless permission asks fail closed
         shell: bash
         run: |
-          python -c "from jarvis.platform.permissions import PermissionId, SystemPermissionPort; p=SystemPermissionPort(); s=p.snapshot(); assert s['platform']=='darwin'; op=p.request(PermissionId.MICROPHONE); assert not op.performed"
+          python - <<'PY'
+          from jarvis.platform.permission_service import PermissionOutcome, get_permission_service
+          from jarvis.platform.permissions import (
+              PermissionId,
+              PermissionState,
+              get_system_permission_port,
+          )
+
+          port = get_system_permission_port()
+          assert port.platform == "darwin", port.platform
+          assert port.outside_installed_app is True
+
+          attempts = []
+
+          def forbidden(*_args, **_kwargs):
+              attempts.append(1)
+              raise AssertionError("a native permission request was made outside the installed app")
+
+          port.request_native = forbidden
+          port._iohid_request = forbidden
+          port._automation_consent_runner = forbidden
+
+          result = get_permission_service().ensure(PermissionId.MICROPHONE, feature="voice")
+          print(result.outcome, result.state, result.asked, result.outside_installed_app)
+          assert attempts == [], "the port was asked to make a native request"
+          assert result.asked is False, "a native request was made outside the installed app"
+          if result.state is not PermissionState.GRANTED:
+              assert result.outcome is not PermissionOutcome.GRANTED
+          PY
+
+      # Symbol binding: every framework function the permission port and the
+      # service bind by name must resolve on the runner's macOS. A rename or a
+      # missing symbol fails here instead of silently reading as "unavailable"
+      # on a user's Mac. Only the symbols the port reads without a fallback are
+      # required; the optional ones are reported.
+      - name: Probe the native permission symbols
+        shell: bash
+        run: |
+          python - <<'PY'
+          import importlib
+
+          REQUIRED = {
+              "AVFoundation": ["AVCaptureDevice", "AVMediaTypeAudio"],
+              "ApplicationServices": [
+                  "AXIsProcessTrusted",
+                  "AXIsProcessTrustedWithOptions",
+                  "kAXTrustedCheckOptionPrompt",
+              ],
+              "AppKit": ["NSWorkspace", "NSRunningApplication"],
+              "Foundation": ["NSBundle", "NSURL"],
+              "Quartz": [
+                  "CGPreflightScreenCaptureAccess",
+                  "CGRequestScreenCaptureAccess",
+                  "CGPreflightListenEventAccess",
+                  "CGRequestListenEventAccess",
+                  "CGEventTapCreate",
+              ],
+          }
+          OPTIONAL = {
+              "AVFoundation": [
+                  "AVAuthorizationStatusNotDetermined",
+                  "AVAuthorizationStatusRestricted",
+                  "AVAuthorizationStatusDenied",
+                  "AVAuthorizationStatusAuthorized",
+              ],
+              "Quartz": ["CGPreflightPostEventAccess", "CGRequestPostEventAccess"],
+          }
+
+          missing = []
+          for module_name, names in REQUIRED.items():
+              module = importlib.import_module(module_name)
+              missing += [f"{module_name}.{name}" for name in names if not hasattr(module, name)]
+          for module_name, names in OPTIONAL.items():
+              module = importlib.import_module(module_name)
+              for name in names:
+                  if not hasattr(module, name):
+                      print(f"optional symbol absent: {module_name}.{name}")
+          assert not missing, f"native permission symbols did not bind: {missing}"
+          PY
+
+      # Smoke of the service against the real frameworks, never interactive: every
+      # state read must come back as a PermissionState (types only; the runner's
+      # grants are whatever they are), a background ensure must never ask, and the
+      # non-asking Apple Event probe must return on its own (it runs on a daemon
+      # thread with a deadline: a hang is the failure this step exists to catch).
+      - name: Smoke the permission service without asking
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          python - <<'PY'
+          import threading
+
+          from jarvis.platform.permission_service import PermissionOutcome, get_permission_service
+          from jarvis.platform.permissions import (
+              PermissionId,
+              PermissionState,
+              get_system_permission_port,
+          )
+
+          port = get_system_permission_port()
+          service = get_permission_service()
+
+          attempts = []
+
+          def forbidden(*_args, **_kwargs):
+              attempts.append(1)
+              raise AssertionError("a native permission request was made without a gesture")
+
+          port.request_native = forbidden
+          port._iohid_request = forbidden
+          port._automation_consent_runner = forbidden
+
+          for permission in PermissionId:
+              state = service.check(permission)
+              assert isinstance(state, PermissionState), (permission, state)
+              result = service.ensure(permission, feature="voice", interactive=False)
+              print(permission.value, state.value, result.outcome)
+              assert result.asked is False, permission
+              if result.outcome is PermissionOutcome.GRANTED:
+                  assert result.granted and result.state in (
+                      PermissionState.GRANTED,
+                      PermissionState.NOT_REQUIRED,
+                  ), permission
+          assert attempts == [], "a native request was made without a gesture"
+
+          answer = []
+          probe = threading.Thread(
+              target=lambda: answer.append(port._automation_probe("com.apple.Music", False)),
+              daemon=True,
+          )
+          probe.start()
+          probe.join(30)
+          assert not probe.is_alive(), "the non-asking Automation probe did not return"
+          assert answer[0] is None or isinstance(answer[0], int), answer
+          PY
 
       - name: Build and self-probe the native app identity
         shell: bash
@@ -121,9 +269,23 @@ jobs:
             tests/integration/test_admin_unix_loopback.py \
             tests/unit/admin/test_unix_socket_transport.py \
             tests/unit/platform/test_permissions.py \
+            tests/unit/platform/test_permission_service*.py \
+            tests/unit/platform/test_permission_characterization.py \
+            tests/unit/platform/test_permissions_state_api.py \
+            tests/unit/platform/test_permission_agent_boundary.py \
+            tests/unit/platform/test_fake_tcc.py \
+            tests/unit/platform/test_no_legacy_permission_api.py \
+            tests/unit/core/test_permission_events.py \
+            tests/contract/test_permission_service_contract.py \
             tests/unit/audio/test_capture_permission_gate.py \
             tests/unit/ui/web/test_permissions_routes.py \
+            tests/unit/ui/web/test_permissions_snapshot.py \
+            tests/unit/ui/web/test_keybinds_input_monitoring_ask.py \
             tests/unit/ui/test_desktop_macos_permission_gate.py \
+            tests/unit/ui/test_window_command.py \
+            tests/unit/ui/test_desktop_detached_windows.py \
+            tests/unit/ui/test_desktop_background.py \
+            tests/unit/ui/test_window_fullscreen.py \
             tests/unit/setup/test_macos_app_bundle.py \
             tests/unit/setup/test_desktop_integration.py \
             tests/unit/autostart/test_macos.py \
@@ -144,4 +306,14 @@ jobs:
             tests/unit/vision/test_ax_tree.py \
             tests/unit/vision/test_element_at_point.py \
             tests/unit/vision/test_select_capture_monitor.py \
-            tests/unit/trigger/test_hotkey_backends.py
+            tests/unit/trigger/test_hotkey_backends.py \
+            tests/unit/trigger/test_quartz_jit_permissions.py \
+            tests/unit/platform/test_screen_access.py \
+            tests/unit/audio/test_ducking_permissions.py \
+            tests/unit/dictation/test_insert_permission.py \
+            tests/unit/cu/test_system_dialogs.py \
+            tests/unit/speech/test_voice_permission_jit.py \
+            tests/unit/packaging/test_macos_privacy_strings.py \
+            tests/unit/packaging/test_macos_build_script.py \
+            tests/unit/ci/test_check_frozen_macos_app.py \
+            tests/unit/ci/test_macos_desktop_permission_step.py

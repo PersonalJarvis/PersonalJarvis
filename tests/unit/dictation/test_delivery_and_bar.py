@@ -8,6 +8,7 @@ The bar tests pin the promise made when the mode was added: the four existing
 voice modes behave EXACTLY as before, and a click during dictation cannot start
 a voice session.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -35,9 +36,14 @@ def _pipeline(cfg: DictationConfig | None = None, *, insert: InsertResult | None
         events.append(event)
 
     pipe._publish_event = _publish  # type: ignore[assignment]
-    pipe._insert_dictation = lambda text: insert or InsertResult(  # type: ignore[assignment]
-        status="inserted", detail="", clipboard_holds_text=False,
-        method="clipboard+ctrl_v",
+    pipe._insert_dictation = lambda text: (
+        insert
+        or InsertResult(  # type: ignore[assignment]
+            status="inserted",
+            detail="",
+            clipboard_holds_text=False,
+            method="clipboard+ctrl_v",
+        )
     )
     return pipe, events
 
@@ -74,8 +80,11 @@ async def test_chat_target_never_inserts() -> None:
     pipe._insert_dictation = lambda text: inserted.append(text)  # type: ignore[assignment]
 
     await pipe._finish_dictation(
-        raw_text="hello there", language="en", duration_s=1.0,
-        target="chat", hung_up=False,
+        raw_text="hello there",
+        language="en",
+        duration_s=1.0,
+        target="chat",
+        hung_up=False,
     )
     assert inserted == []
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -91,8 +100,11 @@ async def test_blocked_insertion_surfaces_the_reason() -> None:
     )
     pipe, events = _pipeline(insert=blocked)
     await pipe._finish_dictation(
-        raw_text="hello there", language="en", duration_s=1.0,
-        target="insert", hung_up=False,
+        raw_text="hello there",
+        language="en",
+        duration_s=1.0,
+        target="insert",
+        hung_up=False,
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "clipboard_only"
@@ -106,7 +118,11 @@ async def test_hangup_cancels_without_inserting() -> None:
     pipe._insert_dictation = lambda text: inserted.append(text)  # type: ignore[assignment]
 
     await pipe._finish_dictation(
-        raw_text="", language="", duration_s=0.4, target="insert", hung_up=True,
+        raw_text="",
+        language="",
+        duration_s=0.4,
+        target="insert",
+        hung_up=True,
     )
     assert inserted == []
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -117,7 +133,11 @@ async def test_hangup_cancels_without_inserting() -> None:
 async def test_empty_transcript_is_reported_as_empty() -> None:
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=0.2, target="insert", hung_up=False,
+        raw_text="",
+        language="en",
+        duration_s=0.2,
+        target="insert",
+        hung_up=False,
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "empty"
@@ -125,12 +145,13 @@ async def test_empty_transcript_is_reported_as_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_cleanup_can_be_switched_off() -> None:
-    pipe, _events = _pipeline(
-        DictationConfig(remove_fillers=False, history_enabled=False)
-    )
+    pipe, _events = _pipeline(DictationConfig(remove_fillers=False, history_enabled=False))
     text = await pipe._finish_dictation(
-        raw_text="Um, hello there friend.", language="en", duration_s=1.0,
-        target="chat", hung_up=False,
+        raw_text="Um, hello there friend.",
+        language="en",
+        duration_s=1.0,
+        target="chat",
+        hung_up=False,
     )
     assert text == "Um, hello there friend."
 
@@ -148,22 +169,34 @@ async def test_auto_target_is_resolved_at_DELIVERY_time(
 
     inserted: list[str] = []
     pipe, events = _pipeline()
-    pipe._insert_dictation = lambda text: inserted.append(text) or InsertResult(  # type: ignore[assignment]
-        status="inserted", detail="", clipboard_holds_text=False, method="clipboard+ctrl_v",
+    pipe._insert_dictation = lambda text: (
+        inserted.append(text)
+        or InsertResult(  # type: ignore[assignment]
+            status="inserted",
+            detail="",
+            clipboard_holds_text=False,
+            method="clipboard+ctrl_v",
+        )
     )
 
     monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: False)
     await pipe._finish_dictation(
-        raw_text="into the other app", language="en", duration_s=1.0,
-        target="auto", hung_up=False,
+        raw_text="into the other app",
+        language="en",
+        duration_s=1.0,
+        target="auto",
+        hung_up=False,
     )
     assert inserted == ["into the other app"]
 
     inserted.clear()
     monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: True)
     await pipe._finish_dictation(
-        raw_text="into our own box", language="en", duration_s=1.0,
-        target="auto", hung_up=False,
+        raw_text="into our own box",
+        language="en",
+        duration_s=1.0,
+        target="auto",
+        hung_up=False,
     )
     assert inserted == []
     assert events[-1].outcome == "chat"
@@ -185,25 +218,27 @@ async def test_final_transcript_says_which_route_it_took(
     import jarvis.dictation.insert as insert_mod
 
     def _final(events: list[object]) -> DictationTranscript:
-        return [
-            e
-            for e in events
-            if isinstance(e, DictationTranscript) and e.is_final
-        ][-1]
+        return [e for e in events if isinstance(e, DictationTranscript) and e.is_final][-1]
 
     monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: False)
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="into the other app", language="en", duration_s=1.0,
-        target="auto", hung_up=False,
+        raw_text="into the other app",
+        language="en",
+        duration_s=1.0,
+        target="auto",
+        hung_up=False,
     )
     assert _final(events).target == "insert"
 
     monkeypatch.setattr(insert_mod, "foreground_is_this_app", lambda: True)
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="into our own window", language="en", duration_s=1.0,
-        target="auto", hung_up=False,
+        raw_text="into our own window",
+        language="en",
+        duration_s=1.0,
+        target="auto",
+        hung_up=False,
     )
     assert _final(events).target == "chat"
 
@@ -220,7 +255,11 @@ async def test_a_transcription_failure_is_reported_as_failed_not_empty() -> None
     the app never mentioned."""
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="", language="", duration_s=1.0, target="insert", hung_up=False,
+        raw_text="",
+        language="",
+        duration_s=1.0,
+        target="insert",
+        hung_up=False,
         stt_error="AuthenticationError: 401 invalid api key",
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -238,7 +277,11 @@ async def test_a_transcription_failure_is_reported_as_failed_not_empty() -> None
 async def test_silence_without_an_error_is_still_empty() -> None:
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=0.2, target="insert", hung_up=False,
+        raw_text="",
+        language="en",
+        duration_s=0.2,
+        target="insert",
+        hung_up=False,
         stt_error=None,
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -251,7 +294,11 @@ async def test_a_hangup_outranks_a_late_transcription_error() -> None:
     """The user cancelled; telling them it "failed" would be a lie."""
     pipe, events = _pipeline()
     await pipe._finish_dictation(
-        raw_text="", language="", duration_s=0.4, target="insert", hung_up=True,
+        raw_text="",
+        language="",
+        duration_s=0.4,
+        target="insert",
+        hung_up=True,
         stt_error="TimeoutError: provider timed out",
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -264,13 +311,22 @@ async def test_text_that_did_arrive_is_still_delivered_after_a_flaky_segment() -
     dictation — the words the user got must still reach their text field."""
     inserted: list[str] = []
     pipe, events = _pipeline()
-    pipe._insert_dictation = lambda text: inserted.append(text) or InsertResult(  # type: ignore[assignment]
-        status="inserted", detail="", clipboard_holds_text=False,
-        method="clipboard+ctrl_v",
+    pipe._insert_dictation = lambda text: (
+        inserted.append(text)
+        or InsertResult(  # type: ignore[assignment]
+            status="inserted",
+            detail="",
+            clipboard_holds_text=False,
+            method="clipboard+ctrl_v",
+        )
     )
     await pipe._finish_dictation(
-        raw_text="the part that came through", language="en", duration_s=2.0,
-        target="insert", hung_up=False, stt_error="TimeoutError: one segment",
+        raw_text="the part that came through",
+        language="en",
+        duration_s=2.0,
+        target="insert",
+        hung_up=False,
+        stt_error="TimeoutError: one segment",
     )
     assert inserted == ["the part that came through"]
     completed = next(e for e in events if isinstance(e, DictationCompleted))
@@ -286,9 +342,7 @@ async def test_text_that_did_arrive_is_still_delivered_after_a_flaky_segment() -
 async def test_a_pinned_language_outranks_the_provider_guess() -> None:
     """A provider that reports nothing (or the wrong thing) leaves the cleanup
     with reason="no_rules" — no cleanup at all — despite an explicit pin."""
-    pipe, events = _pipeline(
-        DictationConfig(language="de", history_enabled=False)
-    )
+    pipe, events = _pipeline(DictationConfig(language="de", history_enabled=False))
     text = await pipe._finish_dictation(
         raw_text="Ähm, das ist äh wirklich gut.",  # i18n-allow: fixture (§1 #4)
         language="",  # the provider could not tell
@@ -305,8 +359,11 @@ async def test_a_pinned_language_outranks_the_provider_guess() -> None:
 async def test_auto_leaves_the_detected_language_alone() -> None:
     pipe, events = _pipeline(DictationConfig(history_enabled=False))
     await pipe._finish_dictation(
-        raw_text="hello there", language="en", duration_s=1.0,
-        target="chat", hung_up=False,
+        raw_text="hello there",
+        language="en",
+        duration_s=1.0,
+        target="chat",
+        hung_up=False,
     )
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.language == "en"
@@ -356,13 +413,9 @@ def audio_spy(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         audio_mod,
         "save_dictation_audio",
-        lambda entry_id, pcm, **kw: (
-            saved.append((entry_id, len(pcm))) or Path("saved.wav")
-        ),
+        lambda entry_id, pcm, **kw: saved.append((entry_id, len(pcm))) or Path("saved.wav"),
     )
-    monkeypatch.setattr(
-        audio_mod, "prune_audio", lambda **kw: pruned.append(kw) or 0
-    )
+    monkeypatch.setattr(audio_mod, "prune_audio", lambda **kw: pruned.append(kw) or 0)
     return SimpleNamespace(saved=saved, pruned=pruned)
 
 
@@ -370,8 +423,13 @@ def audio_spy(monkeypatch: pytest.MonkeyPatch):
 async def test_failed_audio_is_kept_and_linked_to_its_entry(audio_spy) -> None:
     pipe, _events = _pipeline(DictationConfig(keep_failed_audio=True))
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
-        stt_error="AuthenticationError: 401", audio=b"\x01\x02" * 100,
+        raw_text="",
+        language="en",
+        duration_s=2.0,
+        target="insert",
+        hung_up=False,
+        stt_error="AuthenticationError: 401",
+        audio=b"\x01\x02" * 100,
     )
     assert audio_spy.saved == [("entry-1", 200)]
     history = _FakeHistory.instances[-1]
@@ -386,8 +444,12 @@ async def test_a_successful_dictation_never_leaves_audio_behind(audio_spy) -> No
     exactly one path: the user lost something AND allowed it."""
     pipe, _events = _pipeline(DictationConfig(keep_failed_audio=True))
     await pipe._finish_dictation(
-        raw_text="this one worked", language="en", duration_s=2.0,
-        target="chat", hung_up=False, audio=b"\x01\x02" * 100,
+        raw_text="this one worked",
+        language="en",
+        duration_s=2.0,
+        target="chat",
+        hung_up=False,
+        audio=b"\x01\x02" * 100,
     )
     assert audio_spy.saved == []
 
@@ -396,8 +458,13 @@ async def test_a_successful_dictation_never_leaves_audio_behind(audio_spy) -> No
 async def test_keep_failed_audio_off_writes_nothing(audio_spy) -> None:
     pipe, _events = _pipeline(DictationConfig(keep_failed_audio=False))
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
-        stt_error="AuthenticationError: 401", audio=b"\x01\x02" * 100,
+        raw_text="",
+        language="en",
+        duration_s=2.0,
+        target="insert",
+        hung_up=False,
+        stt_error="AuthenticationError: 401",
+        audio=b"\x01\x02" * 100,
     )
     assert audio_spy.saved == []
     # The history row is still written — that is what Restore needs a handle on.
@@ -410,7 +477,11 @@ async def test_a_wordless_failure_is_still_recorded(audio_spy) -> None:
     is precisely when the worst failures happen."""
     pipe, _events = _pipeline(DictationConfig())
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
+        raw_text="",
+        language="en",
+        duration_s=2.0,
+        target="insert",
+        hung_up=False,
         stt_error="RuntimeError: engine wedged",
     )
     added = _FakeHistory.instances[-1].added
@@ -424,8 +495,13 @@ async def test_a_wordless_failure_is_still_recorded(audio_spy) -> None:
 async def test_history_disabled_writes_nothing_at_all(audio_spy) -> None:
     pipe, _events = _pipeline(DictationConfig(history_enabled=False))
     await pipe._finish_dictation(
-        raw_text="", language="en", duration_s=2.0, target="insert", hung_up=False,
-        stt_error="RuntimeError: engine wedged", audio=b"\x01\x02" * 100,
+        raw_text="",
+        language="en",
+        duration_s=2.0,
+        target="insert",
+        hung_up=False,
+        stt_error="RuntimeError: engine wedged",
+        audio=b"\x01\x02" * 100,
     )
     assert _FakeHistory.instances == []
     assert audio_spy.saved == []
@@ -444,8 +520,11 @@ async def test_a_broken_history_write_never_costs_the_transcript(
     monkeypatch.setattr(history_mod, "DictationHistory", _BoomHistory)
     pipe, _events = _pipeline(DictationConfig())
     text = await pipe._finish_dictation(
-        raw_text="the words survive", language="en", duration_s=1.0,
-        target="chat", hung_up=False,
+        raw_text="the words survive",
+        language="en",
+        duration_s=1.0,
+        target="chat",
+        hung_up=False,
     )
     assert text == "the words survive"
 
@@ -460,8 +539,11 @@ async def test_a_broken_cleanup_never_loses_the_text(
     monkeypatch.setattr("jarvis.dictation.cleanup.clean_transcript", _boom)
     pipe, _events = _pipeline()
     text = await pipe._finish_dictation(
-        raw_text="the raw words", language="en", duration_s=1.0,
-        target="chat", hung_up=False,
+        raw_text="the raw words",
+        language="en",
+        duration_s=1.0,
+        target="chat",
+        hung_up=False,
     )
     assert text == "the raw words"
 
@@ -561,9 +643,7 @@ async def test_completion_and_history_carry_stt_quality_telemetry(
     monkeypatch.setattr(
         pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
     )
-    pipe, events = _session_pipeline(
-        _MeasuredSTT(), DictationConfig(partial_interval_s=0.0)
-    )
+    pipe, events = _session_pipeline(_MeasuredSTT(), DictationConfig(partial_interval_s=0.0))
 
     await pipe._dictation_session()
 
@@ -680,15 +760,11 @@ async def test_a_provider_that_cleans_its_own_text_cannot_override_the_filler_sw
     )
     pipe, events = _session_pipeline(
         _CleaningSTT(),
-        DictationConfig(
-            language="de", partial_interval_s=0.0, remove_fillers=False
-        ),
+        DictationConfig(language="de", partial_interval_s=0.0, remove_fillers=False),
     )
     await pipe._dictation_session()
 
-    final = [
-        e for e in events if isinstance(e, DictationTranscript) and e.is_final
-    ][-1]
+    final = [e for e in events if isinstance(e, DictationTranscript) and e.is_final][-1]
     assert final.text == "Ähm, das ist gut."  # i18n-allow: German fixture (§1 list #4)
 
 
@@ -715,9 +791,7 @@ async def test_a_provider_without_a_raw_text_field_is_unaffected(
     )
     await pipe._dictation_session()
 
-    final = [
-        e for e in events if isinstance(e, DictationTranscript) and e.is_final
-    ][-1]
+    final = [e for e in events if isinstance(e, DictationTranscript) and e.is_final][-1]
     assert final.text == "Das ist gut."  # i18n-allow: German fixture (§1 list #4)
 
 
@@ -741,9 +815,7 @@ async def test_a_provider_without_the_language_keyword_still_transcribes(
     monkeypatch.setattr(
         pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
     )
-    pipe, events = _session_pipeline(
-        stt, DictationConfig(language="de", partial_interval_s=0.0)
-    )
+    pipe, events = _session_pipeline(stt, DictationConfig(language="de", partial_interval_s=0.0))
     await pipe._dictation_session()
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "chat"
@@ -764,9 +836,7 @@ async def test_a_provider_error_ends_the_session_as_failed(
     monkeypatch.setattr(
         pipeline_mod, "MicrophoneCapture", lambda **_kw: _FakeMic(b"\x00\x01" * 16_000)
     )
-    pipe, events = _session_pipeline(
-        _BrokenSTT(), DictationConfig(partial_interval_s=0.0)
-    )
+    pipe, events = _session_pipeline(_BrokenSTT(), DictationConfig(partial_interval_s=0.0))
     await pipe._dictation_session()
     completed = next(e for e in events if isinstance(e, DictationCompleted))
     assert completed.outcome == "failed"
@@ -889,25 +959,26 @@ def test_existing_visual_modes_are_unchanged(
     mode: str, seconds_since_audible: float, playback: bool, expected: str
 ) -> None:
     assert (
-        renderer.visual_mode(
-            mode, seconds_since_audible, hold_s=0.4, playback_active=playback
-        )
+        renderer.visual_mode(mode, seconds_since_audible, hold_s=0.4, playback_active=playback)
         == expected
     )
 
 
 @pytest.mark.parametrize("x", [10, 100, 400, 700])
 @pytest.mark.parametrize("mode", renderer.DICTATION_MODES)
-def test_clicking_the_bar_during_dictation_does_nothing(x: int, mode: str) -> None:
-    """Without this, a stray click would start a voice session mid-dictation —
-    and on the mute zone it would deafen Jarvis while the user is dictating.
-    Both dictation phases are inert, not just the recording one."""
-    assert interaction.resolve_click(x, 800, mode, hovered=True, pill_w=400) == "none"
-    assert interaction.resolve_click(x, 800, mode, hovered=False) == "none"
+def test_clicking_the_bar_during_dictation_cannot_start_voice(x: int, mode: str) -> None:
+    """Only the visible stop control acts; no call or mute can interrupt dictation."""
+    for hovered in (False, True):
+        assert interaction.resolve_click(x, 800, mode, hovered=hovered) in (
+            "none",
+            "dictation_stop",
+        )
 
 
-def test_existing_click_zones_are_unchanged() -> None:
-    assert interaction.resolve_click(100, 800, "idle") == "talk"
-    assert interaction.resolve_click(700, 800, "idle") == "mute"
-    assert interaction.resolve_click(700, 800, "listen") == "mute"
-    assert interaction.resolve_click(400, 800, "listen", hovered=True, pill_w=400) == "none"
+def test_voice_controls_use_the_shared_strip_geometry() -> None:
+    layout = renderer.controls.pet_strip_layout(renderer.strip_scale())
+    mic = next((left + right) / 2 for action, left, right in layout.slots if action == "mic_mute")
+    assert interaction.resolve_click(layout.call[0], layout.width, "idle") == "talk"
+    assert interaction.resolve_click(layout.call[0], layout.width, "listen") == "hangup"
+    assert interaction.resolve_click(mic, layout.width, "idle") == "mute"
+    assert interaction.resolve_click(mic, layout.width, "listen") == "mute"

@@ -477,7 +477,9 @@ def _current_boot_time() -> float:
         return 0.0
 
 
-def host_is_alive(state: dict[str, Any] | None) -> bool:
+def host_is_alive(
+    state: dict[str, Any] | None, *, module: str = "jarvis.terminal.pty_host"
+) -> bool:
     """Is the host this state file describes still running, in THIS boot?
 
     Three facts, all checked: the process exists, it is a PTY host (a pid is
@@ -485,6 +487,9 @@ def host_is_alive(state: dict[str, Any] | None) -> bool:
     state file from before a reboot therefore reads as dead however its pid
     happens to be reused now — which is what makes "the machine restarted"
     a measurement instead of a guess.
+
+    ``module`` names the host's ``python -m`` module: the turn host
+    (``jarvis.agent_chat.turn_host``) is told apart from this one the same way.
     """
     if not state or not state.get("pid"):
         return False
@@ -497,7 +502,7 @@ def host_is_alive(state: dict[str, Any] | None) -> bool:
     except Exception as exc:  # noqa: BLE001 - gone, not ours, or unreadable: not alive
         logger.debug("PTY host pid {} is not a live host: {}", state.get("pid"), exc)
         return False
-    if "jarvis.terminal.pty_host" not in cmdline:
+    if module not in cmdline:
         return False
     boot = _current_boot_time()
     recorded = float(state.get("boot_time") or 0.0)
@@ -515,17 +520,22 @@ def _read_state(path: Path) -> dict[str, Any] | None:
 
 
 async def _handshake(
-    port: int, token: str, wait_s: float
+    port: int,
+    token: str,
+    wait_s: float,
+    *,
+    proto: int = PROTOCOL_VERSION,
+    limit: int = MAX_FRAME_BYTES,
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, dict[str, Any]] | None:
     try:
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection("127.0.0.1", port, limit=MAX_FRAME_BYTES), timeout=wait_s
+            asyncio.open_connection("127.0.0.1", port, limit=limit), timeout=wait_s
         )
     except (OSError, TimeoutError) as exc:
         logger.debug("PTY host: no answer on port {}: {}", port, exc)
         return None
     try:
-        hello = {"op": "hello", "token": token, "proto": PROTOCOL_VERSION, "rid": 0}
+        hello = {"op": "hello", "token": token, "proto": proto, "rid": 0}
         writer.write((json.dumps(hello) + "\n").encode("utf-8"))
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), timeout=wait_s)
@@ -573,26 +583,43 @@ def host_available() -> bool:
     return bool(detect_capabilities().has_pty)
 
 
-def _start_host(state_path: Path, token: str) -> bool:
+def _start_host(
+    state_path: Path,
+    token: str,
+    *,
+    module: str = "jarvis.terminal.pty_host",
+    token_env: str = TOKEN_ENV,
+    log_path: Path | None = None,
+    extra_args: tuple[str, ...] = (),
+    frozen_flag: str | None = None,
+) -> bool:
+    """Start a detached host process; the turn host reuses this with its own module.
+
+    A frozen build has no ``-m``: with ``frozen_flag`` it re-enters its own
+    executable with that flag instead, which ``jarvis/__main__.py`` routes to
+    the host's ``main``.
+    """
     import jarvis
+    from jarvis.core.frozen import is_frozen
     from jarvis.ui.relauncher import spawn_detached
 
     # The host must import THIS jarvis, whichever interpreter path found it.
     package_root = str(Path(jarvis.__file__).resolve().parent.parent)
     env = dict(os.environ)
-    env[TOKEN_ENV] = token
+    env[token_env] = token
     env["PYTHONPATH"] = os.pathsep.join(
         part for part in (package_root, env.get("PYTHONPATH", "")) if part
     )
     env["PYTHONIOENCODING"] = "utf-8"
+    entry = [frozen_flag] if frozen_flag and is_frozen() else ["-m", module]
     argv = [
         sys.executable,
-        "-m",
-        "jarvis.terminal.pty_host",
+        *entry,
         "--state",
         str(state_path),
         "--log",
-        str(_log_path()),
+        str(log_path or _log_path()),
+        *extra_args,
     ]
     if sys.platform == "win32":
         return _start_host_windows(argv, package_root, env, token, state_path)

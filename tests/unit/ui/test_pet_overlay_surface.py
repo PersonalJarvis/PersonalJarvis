@@ -19,9 +19,22 @@ from jarvis.ui.desktop_app import DesktopApp
 from jarvis.ui.jarvisbar.null_overlay import NullOverlay
 from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessMascotOverlay
 from ui.orb import controls
-from ui.orb.overlay import OrbCommentBubble, OrbOverlay
+from ui.orb.overlay import OrbOverlay
+from ui.orb.pet_renderer import PetRenderer
 
 # --- OrbOverlay (never started: no Tk root under pytest) --------------------------
+
+
+def test_wake_wave_reaches_the_pet_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
+    pet = OrbOverlay(style="pet")
+    pet._renderer = PetRenderer("gigi")
+    pet._renderer.on_mode("listen")
+    calls: list[str] = []
+    monkeypatch.setattr(pet, "_enqueue_ui", lambda fn: fn())
+    monkeypatch.setattr(pet, "_kick_frame", lambda: calls.append("frame"))
+    pet.play_animation("wave")
+    assert pet._renderer._greet_until > 0
+    assert calls == ["frame"]
 
 
 def test_only_the_pet_stays_visible_while_idle_and_wants_status_lines() -> None:
@@ -106,8 +119,8 @@ class _PetSurface:
     def set_pet(self, pet_id: str) -> None:
         self.calls.append(("set_pet", pet_id))
 
-    def set_pet_look(self, scale, bubble) -> None:
-        self.calls.append(("set_pet_look", scale, bubble))
+    def set_pet_look(self, scale, bubble, strip_always=None) -> None:
+        self.calls.append(("set_pet_look", scale, bubble, strip_always))
 
     def set_visible(self, visible: bool) -> None:
         self.pet_user_hidden = not visible
@@ -161,6 +174,25 @@ def test_set_pet_updates_the_config_and_the_live_window() -> None:
     assert app.cfg.ui.pet_id == "none"
 
 
+def test_a_burst_of_look_changes_queues_one_rescale_with_the_newest_size() -> None:
+    pet = OrbOverlay(style="pet")
+    pet._root = object()  # a window exists; the caller is not the Tk thread
+
+    def queued_looks() -> list:
+        items = []
+        while not pet._ui_queue.empty():
+            items.append(pet._ui_queue.get_nowait())
+        return [fn for fn in items if fn == pet._apply_pet_look]
+
+    for scale in (1.1, 1.2, 1.3):
+        pet.set_pet_look(scale=scale)
+    (apply,) = queued_looks()
+    assert pet._pet_scale == 1.3
+    apply()
+    pet.set_pet_look(scale=1.4)
+    assert len(queued_looks()) == 1  # the next change queues again
+
+
 def test_set_pet_look_clamps_and_applies() -> None:
     surface = _PetSurface()
     app = _app(orb=surface)
@@ -168,7 +200,10 @@ def test_set_pet_look_clamps_and_applies() -> None:
     assert result == {"ok": True, "applied_live": True}
     assert app.cfg.ui.pet_scale == 2.0
     assert app.cfg.ui.pet_bubble is False
-    assert surface.calls[-1] == ("set_pet_look", 2.0, False)
+    assert surface.calls[-1] == ("set_pet_look", 2.0, False, None)
+    app.set_pet_look(strip_always=True)
+    assert app.cfg.ui.pet_strip_always is True
+    assert surface.calls[-1] == ("set_pet_look", None, None, True)
 
 
 def test_pet_methods_degrade_without_a_pet_surface() -> None:
@@ -289,168 +324,7 @@ def test_the_macos_speaker_disc_names_its_source(live_pipeline, style: str, sour
     assert pipeline.sources == [source]
 
 
-# --- dragging moves the status bubble without repainting it ---------------------------
-
-
-class _RecordingTop:
-    def __init__(self) -> None:
-        self.geometries: list[str] = []
-
-    def geometry(self, spec: str) -> None:
-        self.geometries.append(spec)
-
-
-def test_a_drag_only_moves_the_painted_status_bubble() -> None:
-    bubble = OrbCommentBubble.__new__(OrbCommentBubble)  # no Tk: geometry only
-    top = _RecordingTop()
-    bubble._top = top  # noqa: SLF001
-    bubble._screen_w = 1920  # noqa: SLF001
-    bubble._status_showing = True  # noqa: SLF001
-    bubble._status_size = (240, 60)  # noqa: SLF001
-    repaints: list[bool] = []
-    bubble._render_status = lambda: repaints.append(True) or True  # type: ignore[method-assign]
-
-    # (center_x, below_y, above_y, limit_bottom): room below the strip.
-    bubble.move_status((500, 300, 100, 1000))
-    # No room below: the bubble sits over the figure instead.
-    bubble.move_status((500, 980, 700, 1000))
-
-    assert top.geometries == ["+380+300", "+380+640"]
-    assert repaints == []
-
-
-# --- the status card: layout, clear and fade, forwarding ----------------------------------
-
-
-def _card() -> OrbCommentBubble:
-    bubble = OrbCommentBubble.__new__(OrbCommentBubble)  # no Tk: geometry only
-    bubble._screen_w = 1920  # noqa: SLF001
-    bubble._ui_scale = 1.0  # noqa: SLF001
-    bubble._status_max_w = None  # noqa: SLF001
-    bubble._status_expanded = False  # noqa: SLF001
-    return bubble
-
-
-def _chars(text: str) -> int:
-    return 7 * len(text)
-
-
-def test_a_short_status_is_a_compact_full_pill() -> None:
-    bubble = _card()
-    width, height, title, detail, radius = bubble.card_layout(
-        "Thinking", "Reading the calendar", _chars, _chars, 18, 16
-    )
-    assert title == ["Thinking"] and detail == ["Reading the calendar"]
-    assert width < 380  # sized to its text, not to a fixed width
-    assert radius == height // 2  # two lines collapsed: fully rounded ends
-
-
-def test_long_text_is_clipped_with_an_ellipsis_and_capped_by_the_strip() -> None:
-    bubble = _card()
-    bubble.set_status_max_width(300)
-    long = "word " * 80
-    width, _height, title, detail, _radius = bubble.card_layout(long, long, _chars, _chars, 18, 16)
-    assert 250 <= width <= 300  # the cap; the ellipsised line sets the rest
-    assert len(title) == 1 and title[0].endswith("…")
-    assert len(detail) == 1 and detail[0].endswith("…")
-
-
-def test_a_click_expands_the_detail_to_three_lines_keeping_the_end_radius() -> None:
-    bubble = _card()
-    long = "word " * 80
-    collapsed = bubble.card_layout("Title", long, _chars, _chars, 18, 16)
-    bubble._status_expanded = True  # noqa: SLF001
-    expanded = bubble.card_layout("Title", long, _chars, _chars, 18, 16)
-    assert len(expanded[3]) == 3
-    assert expanded[1] > collapsed[1]
-    assert expanded[4] == collapsed[4]
-
-
-class _FakeTop:
-    """Just enough of a Toplevel for the clear/fade timers."""
-
-    def __init__(self) -> None:
-        self.pending: dict[str, tuple[int, object]] = {}
-        self.alphas: list[float] = []
-        self.withdrawn = 0
-        self._next = 0
-
-    def after(self, ms: int, fn: object) -> str:
-        self._next += 1
-        key = f"after#{self._next}"
-        self.pending[key] = (ms, fn)
-        return key
-
-    def after_cancel(self, key: str) -> None:
-        self.pending.pop(key, None)
-
-    def wm_attributes(self, name: str, value: float) -> None:
-        assert name == "-alpha"
-        self.alphas.append(value)
-
-    def withdraw(self) -> None:
-        self.withdrawn += 1
-
-    def run_next(self) -> int:
-        key = next(iter(self.pending))
-        ms, fn = self.pending.pop(key)
-        fn()  # type: ignore[operator]
-        return ms
-
-
-def _showing_card() -> tuple[OrbCommentBubble, _FakeTop]:
-    bubble = _card()
-    top = _FakeTop()
-    bubble._top = top  # noqa: SLF001
-    bubble._canvas = object()  # noqa: SLF001
-    bubble._status_showing = True  # noqa: SLF001
-    bubble._status_size = (240, 52)  # noqa: SLF001
-    bubble._status = ("Thinking", "")  # noqa: SLF001
-    bubble._status_anchor = (500, 300, 100, 1000)  # noqa: SLF001
-    bubble._clear_after_id = None  # noqa: SLF001
-    bubble._fade_after_id = None  # noqa: SLF001
-    bubble._status_clear_pending = False  # noqa: SLF001
-    bubble._dismiss_after_id = None  # noqa: SLF001
-    bubble._queue_after_id = None  # noqa: SLF001
-    bubble._queued_text = None  # noqa: SLF001
-    bubble._render_status = lambda: True  # type: ignore[method-assign]
-    return bubble, top
-
-
-def test_clear_lingers_then_fades_then_withdraws() -> None:
-    bubble, top = _showing_card()
-    bubble.clear_status(1.5)
-    assert top.run_next() == 1500  # the linger
-    while top.pending:
-        top.run_next()  # the fade steps
-    fade = top.alphas[:-1]
-    assert fade and all(a > b for a, b in zip(fade, fade[1:], strict=False))
-    assert top.alphas[-1] == 1.0  # opacity restored for the next card
-    assert top.withdrawn == 1
-    assert bubble.status_showing is False
-
-
-def test_a_new_status_cancels_a_pending_clear() -> None:
-    bubble, top = _showing_card()
-    bubble.clear_status(1.5)
-    assert top.pending
-    bubble._cancel_timers = lambda: None  # type: ignore[method-assign]
-    bubble.show_status("Searching the web", "", anchor=(500, 300, 100, 1000))
-    assert not top.pending
-    assert bubble.status_showing is True
-
-
-def test_clear_with_no_linger_hides_at_once() -> None:
-    bubble, top = _showing_card()
-    bubble.clear_status(0)
-    assert top.withdrawn == 1 and not top.pending
-
-
-def test_a_repeated_clear_keeps_the_first_deadline() -> None:
-    bubble, top = _showing_card()
-    bubble.clear_status(1.5)
-    bubble.clear_status(1.5)
-    assert len(top.pending) == 1
+# --- the thinking line: forwarding ------------------------------------------------
 
 
 def test_the_pet_surface_accepts_clear_before_the_window_exists() -> None:
@@ -565,6 +439,35 @@ def test_the_pointer_on_the_strip_keeps_it_up() -> None:
     assert pet._pet_strip_wanted() is True
 
 
+def test_the_always_on_switch_keeps_the_strip_up_at_rest() -> None:
+    pet, strip = _pet_with_strip()
+    pet._mode = "idle"
+    pet.set_pet_look(strip_always=True)
+    assert pet._pet_strip_wanted() is True
+    pet._sync_controls_visibility()
+    assert strip.calls == ["show"]
+    pet.set_pet_look(strip_always=False)
+    assert pet._pet_strip_wanted() is False
+
+
+def test_the_macos_proxy_carries_the_always_on_strip() -> None:
+    from jarvis.ui.jarvisbar import host
+
+    proxy = SubprocessMascotOverlay(style="pet", pet_strip_always=True)
+    assert proxy._init_payload()["pet_strip_always"] is True
+    sent: list[dict] = []
+    proxy._send = sent.append  # type: ignore[method-assign]
+    proxy.set_pet_look(strip_always=False)
+    looks: list[tuple] = []
+
+    class _Look:
+        def set_pet_look(self, scale, bubble, strip_always) -> None:
+            looks.append((scale, bubble, strip_always))
+
+    host.dispatch(_Look(), sent[-1])
+    assert looks == [(None, None, False)]
+
+
 def test_the_figureless_pet_always_keeps_its_strip() -> None:
     pet, strip = _pet_with_strip(pet_id="none")
     pet._mode = "idle"
@@ -578,3 +481,40 @@ def test_a_hidden_pet_hides_its_strip_even_mid_conversation() -> None:
     pet._window_mapped = lambda: False  # type: ignore[method-assign]
     pet._sync_controls_visibility()
     assert strip.calls == ["hide"]
+
+
+# --- Action states reach the pet in-process and through the macOS proxy ------
+
+
+class _ActionSurface:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def set_pet_action(self, kind: str | None) -> None:
+        self.calls.append(("action", kind))
+
+    def set_pet_busy(self, busy: bool) -> None:
+        self.calls.append(("busy", busy))
+
+
+def test_the_macos_proxy_and_host_carry_actions_and_busy() -> None:
+    from jarvis.ui.jarvisbar import host
+
+    proxy = SubprocessMascotOverlay(style="pet")
+    sent: list[dict] = []
+    proxy._send = sent.append  # type: ignore[method-assign]
+    proxy.set_pet_action("searching")
+    proxy.set_pet_action(None)
+    proxy.set_pet_busy(True)
+    surface = _ActionSurface()
+    for message in sent:
+        host.dispatch(surface, message)
+    assert surface.calls == [("action", "searching"), ("action", None), ("busy", True)]
+
+
+def test_pet_action_calls_are_safe_before_the_window_exists() -> None:
+    pet = OrbOverlay(style="pet")
+    pet.set_pet_action("working")
+    pet.set_pet_action("juggling")  # unknown: ignored
+    pet.set_pet_action(None)
+    pet.set_pet_busy(True)

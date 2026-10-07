@@ -4,19 +4,31 @@ import { useEventStore, type ChatMessage, type ConversationKind } from "@/store/
 import { useHomeStore } from "@/store/home";
 import { requestVoiceHangup } from "@/lib/voiceApi";
 import { resetTextConversation } from "@/lib/newChat";
+import { HISTORY_REFRESH_MS, useHistoryPolling } from "@/hooks/useHistoryPolling";
 import {
   deleteTextConversation,
   detailToMessages,
   detailToTraces,
   fetchConversations,
+  invalidateConversations,
   resumeConversation,
   startNewVoiceRun,
 } from "@/lib/chatsApi";
 
 /** How often the history list is re-read while a poller is mounted. */
-export const CONVERSATIONS_REFRESH_MS = 5000;
+export const CONVERSATIONS_REFRESH_MS = HISTORY_REFRESH_MS;
 
 let selectionGeneration = 0;
+let observedVoiceEvent = "";
+
+/** Stable across sidebar/rail mounts: one polling owner writes the shared list. */
+async function refreshConversations(): Promise<void> {
+  try {
+    useEventStore.getState().setConversations(await fetchConversations());
+  } catch {
+    // Offline / restarting: retain the last list until the next bounded read.
+  }
+}
 
 /** Wait for the real session boundary rather than treating an accepted stop as completion. */
 function waitForVoiceIdle(): Promise<void> {
@@ -50,34 +62,48 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
   const conversations = useEventStore((s) => s.conversations);
   const activeThreadId = useEventStore((s) => s.activeThreadId);
   const activeKind = useEventStore((s) => s.activeKind);
-  const setConversations = useEventStore((s) => s.setConversations);
   const setActiveConversation = useEventStore((s) => s.setActiveConversation);
   const setMessages = useEventStore((s) => s.setMessages);
   const seedThinkingTraces = useEventStore((s) => s.seedThinkingTraces);
 
-  const refresh = useCallback(async () => {
-    try {
-      setConversations(await fetchConversations());
-    } catch {
-      /* offline / headless — leave the list as-is */
-    }
-  }, [setConversations]);
-
+  const refresh = refreshConversations;
+  const voiceEvent = useEventStore((s) => s.events.find((event) =>
+    event.name === "VoiceSessionStarted" || event.name === "VoiceSessionEnded")?.id ?? "");
   useEffect(() => {
-    if (!poll) return;
-    void refresh();
-    const id = window.setInterval(() => void refresh(), CONVERSATIONS_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [poll, refresh]);
+    if (!poll || !voiceEvent || voiceEvent === observedVoiceEvent) return;
+    observedVoiceEvent = voiceEvent;
+    invalidateConversations();
+    // The shared visible poll catches up within one interval. Invalidating an
+    // in-flight read also prevents its pre-event snapshot replacing fresh data.
+  }, [poll, voiceEvent]);
+  useHistoryPolling(refresh, poll);
+
+  /** Return to the running call without resuming an archive over its live state. */
+  const reopenLiveConversation = useCallback((id: string): boolean => {
+    const home = useHomeStore.getState();
+    const voiceState = useEventStore.getState().voiceState;
+    if (
+      !home.liveSessionId
+      || home.voiceSwitchStopping
+      || !["listening", "thinking", "speaking", "paused", "connecting"].includes(voiceState)
+      || (id !== home.liveSessionId && id !== home.liveConversationId)
+    ) return false;
+    // A previous archive read must not overwrite the call after this click.
+    ++selectionGeneration;
+    setActiveConversation("voice", id);
+    useHomeStore.setState({ voiceSelectionPending: false, freshVoicePending: false });
+    return true;
+  }, [setActiveConversation]);
 
   /**
    * Make a conversation the active one and resume it on the backend (the
    * brain is seeded with it, so the next typed OR spoken turn continues it).
    * Resolves to the stored messages — empty when the backend had none or
-   * could not be reached — so a caller can show them elsewhere too.
+   * could not be reached — so a caller can show them elsewhere too. A superseded
+   * selection returns null so callers leave the newer transcript alone.
    */
   const openConversation = useCallback(
-    async (kind: ConversationKind, id: string): Promise<ChatMessage[]> => {
+    async (kind: ConversationKind, id: string): Promise<ChatMessage[] | null> => {
       const generation = ++selectionGeneration;
       useHomeStore.setState({ voiceSelectionPending: kind === "voice", freshVoicePending: false });
       setActiveConversation(kind, id);
@@ -94,7 +120,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
           }
         }
         const selected = useEventStore.getState();
-        if (generation !== selectionGeneration || selected.activeKind !== kind || selected.activeThreadId !== id) return [];
+        if (generation !== selectionGeneration || selected.activeKind !== kind || selected.activeThreadId !== id) return null;
         const detail = await resumeConversation(kind, id);
         messages = detailToMessages(detail);
         traces = detailToTraces(detail);
@@ -108,7 +134,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
       // The stored traces replace the previous conversation's, so a reply
       // in the new thread never wears the steps of an old one.
       const active = useEventStore.getState();
-      if (generation !== selectionGeneration || active.activeKind !== kind || active.activeThreadId !== id) return [];
+      if (generation !== selectionGeneration || active.activeKind !== kind || active.activeThreadId !== id) return null;
       seedThinkingTraces(traces);
       setMessages(messages);
       return messages;
@@ -157,6 +183,7 @@ export function useConversations({ poll = false }: { poll?: boolean } = {}) {
     activeThreadId,
     activeKind,
     refresh,
+    reopenLiveConversation,
     openConversation,
     newChat,
     newVoiceRun,

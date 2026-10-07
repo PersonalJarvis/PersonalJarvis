@@ -115,36 +115,94 @@ def _capture_thumb(raw: _RawCapture) -> bytes:
 
 
 def _require_macos_screen_recording_permission() -> None:
-    """Fail closed unless macOS currently permits screen capture.
+    """The SILENT Screen Recording gate: never asks, raises unless live GRANTED.
 
-    The native state is probed before every grab, not only at mission start,
-    because a user can revoke Screen Recording while Jarvis is running.
+    The engine's per-action choke point (a user can revoke the grant while
+    Jarvis runs, and no input may be dispatched against a screen Jarvis may not
+    see) uses this. It reads the state through the permission service, including
+    the window-title oracle, so a grant given mid-session is seen; it never makes
+    macOS show a dialog. Perception does NOT use it: the capture entry
+    (:func:`_ensure_screen_recording_for_perception`) is the one that asks.
+    Off macOS the service reports NOT_REQUIRED and this returns at once.
     """
-    from jarvis.platform import detect_platform  # noqa: PLC0415
+    from jarvis.platform import screen_access  # noqa: PLC0415
 
-    if detect_platform() != "darwin":
-        return
+    state = screen_access.screen_recording_state()
+    if not screen_access.state_allows_capture(state):
+        raise screen_access.refusal_for_state(state)
 
-    from jarvis.platform.permissions import (  # noqa: PLC0415
-        PermissionId,
-        PermissionState,
-        get_system_permission_port,
+
+def _ensure_screen_recording_for_perception() -> None:
+    """Gesture entry of a perception frame: ask macOS if the grant is missing.
+
+    A Computer-Use mission is started by a person, so its first frame is where
+    the Screen Recording question belongs. The granted fast path is one cached
+    read per FRAME (not per stability re-grab); only a missing grant reaches the
+    permission service, which asks at most once per episode and never loops. A
+    refusal raises :class:`~jarvis.platform.screen_access.ScreenCaptureRefused`
+    (a ``RuntimeError``) whose text names the permission.
+    """
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    screen_access.require_screen_recording("computer_use")
+
+
+def _verify_perception_frame(raw: _RawCapture) -> None:
+    """Refuse a blank frame the permission state cannot explain (never a success).
+
+    Once per frame, after the final grab. See
+    :func:`jarvis.platform.screen_access.verify_frame_is_real` for the rule.
+    """
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    screen_access.verify_frame_is_real(
+        _capture_size(raw),
+        raw.data if isinstance(raw, _CapturedPixels) else raw[1],
+        feature="computer_use",
+        bytes_per_pixel=4 if isinstance(raw, _CapturedPixels) else 3,
     )
 
-    port = get_system_permission_port()
-    if not port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
-        state = port.state(PermissionId.SCREEN_RECORDING)
-        detail = (
-            state.value
-            if state is not PermissionState.GRANTED
-            else "grant belongs to an unstable app identity or needs restart"
+
+def _helper_capture_blocked() -> bool:
+    """Silent "may a helper grab pixels now" read for the region/probe helpers.
+
+    Helpers never ask: a blocked state degrades them to "cannot tell".
+    """
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    return screen_access.screen_recording_blocked()
+
+
+def _refuse_if_confirmation_pending(reason: str = "pending_confirmation") -> None:
+    """A native window capture timed out: refuse unless the live grant explains the rect grab.
+
+    When the live state says granted the rect grab is safe and the caller carries
+    on with it (after one warning, so the soft failure is not invisible). When it
+    does not, a rect grab would return the wallpaper, so refuse honestly: a
+    ``pending_confirmation`` (a request is still in flight, macOS may be asking)
+    is reported as pending, never as a denial, and a plain ``timeout`` that the
+    state does not explain reports the state itself. Silent: nothing is asked here.
+
+    The live-grant branch stays a log line on purpose and is NOT reported through
+    ``report_failed_use``: nothing failed for good (the rect grab that follows may
+    well work, and ``verify_frame_is_real`` reports it when that frame is wallpaper),
+    and ``report_failed_use`` only produces a user-origin ``restart_hint`` episode,
+    which would nag a user whose capture works.
+    """
+    from jarvis.platform import screen_access  # noqa: PLC0415
+
+    state = screen_access.screen_recording_state()
+    if screen_access.state_allows_capture(state):
+        logger.warning(
+            "[cu] native window capture timed out (%s) while the Screen Recording grant "
+            "reads as live; macOS may be waiting for a confirmation. Falling back to "
+            "the rect grab.",
+            reason,
         )
-        raise RuntimeError(
-            "Cannot capture the screen on macOS because Screen Recording "
-            f"permission is not ready ({detail}). Open Personal Jarvis "
-            "> Settings > Permissions (or System Settings > Privacy & "
-            "Security > Screen Recording), grant access, then retry."
-        )
+        return
+    if reason == "pending_confirmation":
+        raise screen_access.refusal_pending()
+    raise screen_access.refusal_for_state(state)
 
 
 def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
@@ -196,11 +254,15 @@ def grabber_for(
 
             # Native per-window capture can still include an overlapping
             # topmost overlay on some platforms — same guard as mss_grab.
+            window_capture.clear_grab_failure()
             with indicator_suppressed():
                 raw = window_capture.grab_window(handle, bbox)
             if raw is not None:
                 return raw
             native_alive = False
+            failure = window_capture.last_grab_failure()
+            if failure in ("pending_confirmation", "timeout"):
+                _refuse_if_confirmation_pending(failure)
         return rect_grab(bbox)
 
     return grab
@@ -525,12 +587,14 @@ def capture_stable_frame(
     plus the encoded image size: the one central translation.
     """
     deadline = time.monotonic() + max(0.0, stability_timeout_s)
-    # One permission probe per FRAME, not per re-grab: the stability loop can
+    # One permission read per FRAME, not per re-grab: the stability loop can
     # re-grab repeatedly inside 1.2 s, and a grant cannot plausibly be revoked
-    # and matter within that window — the engine independently re-probes
-    # before every dispatched action, which is the check that prevents blind
-    # input after a revocation.
-    _require_macos_screen_recording_permission()
+    # and matter within that window — the engine independently re-reads it
+    # (silently) before every dispatched action, which is the check that
+    # prevents blind input after a revocation. This is the perception entry of
+    # a mission a person started, so a MISSING grant is asked for here (once per
+    # episode, by the permission service) instead of being refused unasked.
+    _ensure_screen_recording_for_perception()
     stable = False
     with _frame_grabber(monitor, grab) as grabber:
 
@@ -562,6 +626,10 @@ def capture_stable_frame(
                 break
             current = nxt
             current_thumb = nxt_thumb
+
+    # macOS returns the wallpaper, not an error, for a capture it does not
+    # allow: a blank frame while the state claims GRANTED is never a success.
+    _verify_perception_frame(current)
 
     jpeg, iw, ih = _downscale_and_encode(
         current,
@@ -613,14 +681,17 @@ def grab_region(
     """One raw region grab for pre/post verification diffs.
 
     Returns ``None`` on capture failures (headless, transient GDI error, or a
-    revoked macOS grant) so pixel-effect verification can report "cannot
-    tell". The Computer-Use dispatcher independently rechecks Screen Recording
-    immediately before every action, so this degradation cannot permit blind
-    input after a revoked grant.
+    macOS grant that is missing or revoked) so pixel-effect verification can
+    report "cannot tell". A helper never asks: it reads the state silently and
+    degrades. The Computer-Use dispatcher independently rechecks Screen
+    Recording immediately before every action, so this degradation cannot permit
+    blind input after a revoked grant.
     """
     grabber = grab or mss_grab
     try:
-        _require_macos_screen_recording_permission()
+        if _helper_capture_blocked():
+            logger.debug("[cu] region grab skipped: Screen Recording is not granted")
+            return None
         return grabber(bbox)
     except Exception:  # noqa: BLE001
         logger.debug("[cu] region grab failed (non-fatal)", exc_info=True)
@@ -662,7 +733,9 @@ def grab_visual_probe(
     tri-state ``None``; it never becomes proof of success or failure.
     """
     try:
-        _require_macos_screen_recording_permission()
+        if _helper_capture_blocked():
+            logger.debug("[cu] visual probe skipped: Screen Recording is not granted")
+            return None
         import mss  # noqa: PLC0415
 
         from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415

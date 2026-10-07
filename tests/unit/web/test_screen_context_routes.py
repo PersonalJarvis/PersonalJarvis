@@ -141,10 +141,12 @@ def test_status_requires_the_complete_visual_context_path(monkeypatch) -> None:
         "_ocr_capability",
         lambda _enabled: (False, "Optional OCR is switched off."),
     )
-    monkeypatch.setattr(
-        "jarvis.screen_context.ports.capture_permission_error",
-        lambda: None,
-    )
+    probe_kwargs: list[dict] = []
+
+    def capture_probe(**kwargs):
+        probe_kwargs.append(kwargs)
+
+    monkeypatch.setattr("jarvis.screen_context.ports.capture_permission_error", capture_probe)
     monkeypatch.setattr(
         "jarvis.screen_context.ports.accessibility_permission_error",
         lambda: None,
@@ -153,6 +155,7 @@ def test_status_requires_the_complete_visual_context_path(monkeypatch) -> None:
     response = TestClient(_app()).get("/api/screen-context/status")
 
     assert response.status_code == 200
+    assert probe_kwargs == [{"deep": False}]  # a GET never runs the window-title oracle
     payload = response.json()
     assert payload["available"] is False
     assert payload["components"]["capture"]["ready"] is True
@@ -208,3 +211,60 @@ def test_single_capture_discard_never_returns_pixels(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {"ok": True, "discarded": 1}
     assert "image" not in response.text
+
+
+def _status_service() -> SimpleNamespace:
+    return SimpleNamespace(
+        settings=SimpleNamespace(enabled=True, ocr_enabled=False, ttl_s=120.0),
+        displays=SimpleNamespace(monitors=lambda: [{"name": "virtual"}, {"name": "primary"}]),
+        cursor=SimpleNamespace(position=lambda: (10, 10)),
+        held_count=0,
+    )
+
+
+def _status_capabilities(monkeypatch) -> None:
+    monkeypatch.setattr(screen_context_routes, "_get_service", lambda _r: _status_service())
+    monkeypatch.setattr(screen_context_routes, "_capture_backend_capability", lambda: (True, ""))
+    monkeypatch.setattr(screen_context_routes, "_indicator_capability", lambda: (True, ""))
+    monkeypatch.setattr(screen_context_routes, "_vision_capability", lambda: (True, ""))
+    monkeypatch.setattr(screen_context_routes, "_ocr_capability", lambda _e: (False, ""))
+    monkeypatch.setattr("jarvis.screen_context.ports._is_wayland", lambda: False)
+
+
+def test_status_never_prompts_and_describes_the_missing_permission(monkeypatch) -> None:
+    """GET /status reads the permission state; asking is a gesture's job.
+
+    The REAL permission service runs on ``FakeTCC`` (a model of macOS privacy, nothing
+    here ran on a real Mac): the call log proves a status poll made macOS ask nothing.
+    """
+    from tests.fakes.fake_tcc import FakeTCC, install_port
+
+    tcc = FakeTCC()
+    install_port(monkeypatch, tcc.port("darwin"))
+    _status_capabilities(monkeypatch)
+    client = TestClient(_app())
+
+    for _ in range(3):  # polling must not turn into asking
+        payload = client.get("/api/screen-context/status").json()
+
+    assert payload["available"] is False
+    permission = payload["components"]["permission"]
+    assert permission["ready"] is False
+    # The sentence of the issue, not the repr of its dataclass.
+    assert permission["detail"].startswith("Screen Recording access is off for Personal Jarvis")
+    assert "CapturePermissionIssue" not in str(payload)
+    assert payload["blocked_reason"] == permission["detail"]
+    tcc.assert_no_prompts()
+
+
+def test_status_is_ready_and_silent_off_macos(monkeypatch) -> None:
+    from tests.fakes.fake_tcc import install_port, make_non_darwin_port
+
+    port, tcc = make_non_darwin_port("linux")
+    install_port(monkeypatch, port)
+    _status_capabilities(monkeypatch)
+
+    payload = TestClient(_app()).get("/api/screen-context/status").json()
+
+    assert payload["components"]["permission"] == {"ready": True, "detail": ""}
+    tcc.assert_silent()

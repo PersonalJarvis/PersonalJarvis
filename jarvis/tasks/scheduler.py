@@ -39,6 +39,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.misfire import is_missed, late_by_s
 from jarvis.core.protocols import RoutineDeferred, current_trigger_path
+from jarvis.tasks.event_catalog import EXCLUDED_EVENT_NAMES
 from jarvis.tasks.hook_events import RoutineEventReceived
 from jarvis.tasks.schema import PAUSABLE_TRIGGER_TYPES, TERMINAL_STATES, TaskSpec
 
@@ -542,6 +543,14 @@ class TaskScheduler:
         self._wakeup.set()
         return due
 
+    def pending_work(self) -> tuple[int, int]:
+        """``(armed tasks, runs in flight)`` — synchronous and cheap.
+
+        Armed = waiting for a time or an event. The background service reads
+        this to decide whether closing the window leaves anything to keep.
+        """
+        return len(self._known), sum(1 for task in self._runner_tasks if not task.done())
+
     def _remove_from_memory(self, task_id: str) -> None:
         """Drop a task from the heap, the event index and the known set."""
         self.sources.cancel(task_id)
@@ -615,6 +624,10 @@ class TaskScheduler:
                 await self._enqueue_hook_event(event)
             return
         cls_name = type(event).__name__
+        if cls_name in EXCLUDED_EVENT_NAMES:
+            # Permission episodes describe a system dialog on the user's machine:
+            # no routine may react to one, whichever way the task was stored.
+            return
         task_ids = self._on_event_index.get(cls_name)
         if not task_ids:
             return

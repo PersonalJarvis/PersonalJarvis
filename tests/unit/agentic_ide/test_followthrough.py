@@ -1,27 +1,40 @@
 """Only a fresh answer to the tracked prompt can be read back as its report."""
 
-import json
 from types import SimpleNamespace
 
 import pytest
 
-from jarvis.agentic_ide import agent_transcript
 from jarvis.agentic_ide import followthrough as ft
-from jarvis.agentic_ide.agent_transcript import Turn
 from jarvis.core.events import AnnouncementRequested, DelegationResultReady
+
+
+def _finished(prompt, report, *, at=101):
+    return [
+        {"kind": "user_message", "ts_ms": at * 1000, "payload": {"text": prompt}},
+        {"kind": "assistant_text", "ts_ms": (at + 1) * 1000,
+         "payload": {"text": report, "turn_id": "current"}},
+        {"kind": "turn_finished", "ts_ms": (at + 2) * 1000,
+         "payload": {"status": "done", "turn_id": "current"}},
+    ]
 
 
 @pytest.fixture
 def pane(monkeypatch):
-    turns = [Turn("user", "Old task"), Turn("assistant", "Old answer")]
+    monkeypatch.setattr(ft, "time", SimpleNamespace(time=lambda: 100.0))
+    turns = [*_finished("Old task", "Old answer", at=90)]
     term = SimpleNamespace(
-        name="T2", agent="claude", computer_id="", process_generation=1,
-        last_submit_at=100.0, last_prompt="Fix the bug",
+        name="T2", process_generation=1, last_submit_at=100.0, last_prompt="Fix the bug",
         submitted=True, delegation_result=None, exit_code=None,
         last_output_at=100.0, reading=lambda: SimpleNamespace(activity="waiting"),
         transcript=SimpleNamespace(tail=lambda n: ["Which repository should I change?"]),
     )
-    monkeypatch.setattr(ft, "_turns", lambda t: list(turns))
+    monkeypatch.setattr(ft, "_events", lambda t: list(turns))
+    from jarvis.agentic_ide import task_state
+
+    async def completed(_term):
+        return task_state.Evidence("completed")
+
+    monkeypatch.setattr(task_state, "probe", completed)
     return term, turns
 
 
@@ -36,7 +49,7 @@ async def arm(pane, **origin):
 async def test_fresh_correlated_answer_reaches_voice_once(pane):
     pending = await arm(pane)
     term, turns = pane
-    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Fixed login; tests passed.")])
+    turns.extend(_finished("Fix the bug", "Fixed login; tests passed."))
     events = []
     assert await ft.publish_result("completed", term, pending, events.append)
     assert not await ft.publish_result("completed", term, pending, events.append)
@@ -50,19 +63,14 @@ async def test_fresh_correlated_answer_reaches_voice_once(pane):
 async def test_stale_transcript_never_becomes_the_current_answer(pane, stale):
     term, turns = pane
     if stale == "same_prompt":
-        turns[:] = [Turn("user", "Fix the bug"), Turn("assistant", "Old answer")]
+        turns[:] = _finished("Fix the bug", "Old answer", at=90)
     pending = await arm(pane)
     if stale == "unrelated":
-        turns.extend([Turn("user", "Other task"), Turn("assistant", "Unrelated answer")])
+        turns.extend(_finished("Other task", "Unrelated answer"))
     events = []
-    # Held first: the answer may still be on its way into the transcript.
-    assert not await ft.publish_result("completed", term, pending, events.append, now=500.0)
+    assert not await ft.publish_result("completed", term, pending, events.append)
     assert not events
-    await ft.publish_result(
-        "completed", term, pending, events.append, now=500.0 + ft.REPORT_GRACE_S,
-    )
-    assert "Old answer" not in events[0].report and "Unrelated answer" not in events[0].report
-    assert "unverified" in events[0].report
+    assert term.delegation_result is pending
 
 
 @pytest.mark.asyncio
@@ -82,14 +90,17 @@ async def test_later_prompt_or_process_cannot_claim_previous_result(pane, change
 
 
 @pytest.mark.asyncio
-async def test_question_does_not_consume_later_completion(pane):
+async def test_question_does_not_consume_later_completion(pane, monkeypatch):
     pending = await arm(pane)
     term, turns = pane
     events = []
+    from jarvis.agentic_ide import activity
+
+    monkeypatch.setattr(activity, "shows_question", lambda _term: True)
     await ft.publish_result("needs_input", term, pending, events.append)
     assert "Which repository" in events[0].report
     assert term.delegation_result is pending
-    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Resolved.")])
+    turns.extend(_finished("Fix the bug", "Resolved."))
     await ft.publish_result("completed", term, pending, events.append)
     assert len(events) == 2 and "Resolved" in events[1].report
 
@@ -118,192 +129,91 @@ async def test_fast_job_finishing_between_sweeps_still_returns_its_fresh_answer(
     events = []
     await ft.poll_ready(registry, events.append, now=130.0)
     assert not events  # An idle terminal and an old answer are not completion evidence.
-    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Fixed immediately.")])
+    turns.extend(_finished("Fix the bug", "Fixed immediately."))
     await ft.poll_ready(registry, events.append, now=141.0)
     assert len(events) == 1 and "Fixed immediately" in events[0].report
 
 
-def _recorded(*records: str) -> str:
-    """The newest user turn exactly as the transcript reader builds it."""
-    turns: list = []
-    for raw in records:
-        agent_transcript._append(turns, "user", raw)
-    return turns[-1].text
-
-
-def test_codex_first_prompt_behind_its_preamble_is_the_prompt():
-    # A real Codex rollout opens with these user records before the first prompt.
-    recorded = _recorded(
-        "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nBe brief.\n</INSTRUCTIONS>",
-        "<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>",
-        "Fix the bug",
-    )
-    assert recorded != "Fix the bug"
-    assert ft.answers_prompt(recorded, "Fix the bug")
-
-
-def test_tag_shaped_code_in_a_prompt_still_matches():
-    prompt = "Wrap the <div> in a <section> and make List<String> immutable."
-    assert ft.answers_prompt(_recorded(prompt), prompt)
-
-
-def test_long_prompt_matches_by_the_tail_the_reader_kept():
-    prompt = "\n".join(f"Step {i}: change module_{i}.py and run its tests." for i in range(300))
-    recorded = _recorded(prompt)
-    assert len(recorded) < len(prompt)
-    assert ft.answers_prompt(recorded, prompt)
-    assert not ft.answers_prompt(recorded, prompt + "\nStep 300: also touch the docs.")
-
-
-@pytest.mark.parametrize(
-    ("recorded", "prompt"),
-    [("Fix the bugs", "Fix the bug"), ("Prefix the bug", "fix the bug"), ("", "Fix the bug")],
-)
-def test_a_different_prompt_is_not_the_tracked_one(recorded, prompt):
-    assert not ft.answers_prompt(recorded, prompt)
-
-
-def test_codex_rollout_read_through_the_real_reader_matches(tmp_path):
-    session_id = "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0000"
-    folder = tmp_path / "sessions" / "2026" / "10" / "02"
-    folder.mkdir(parents=True)
-
-    def message(role: str, text: str) -> str:
-        payload = {"type": "message", "role": role, "content": [
-            {"type": "input_text" if role == "user" else "output_text", "text": text},
-        ]}
-        return json.dumps({"type": "response_item", "payload": payload})
-
-    rows = [
-        message("user", "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nx\n</INSTRUCTIONS>"),
-        message("user", "<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>"),
-        message("user", "Rename <Button /> to <Action />"),
-        message("assistant", "Renamed it in 3 files."),
-    ]
-    (folder / f"rollout-2026-10-02T09-00-00-{session_id}.jsonl").write_text(
-        "\n".join(rows) + "\n", encoding="utf-8",
-    )
-    turns = agent_transcript.read("codex", session_id, home=tmp_path)
-    assert ft.answers_prompt(turns[0].text, "Rename <Button /> to <Action />")
-
-
 @pytest.mark.asyncio
-async def test_first_codex_prompt_reports_its_real_answer(pane):
+@pytest.mark.parametrize("state", ["working", "asking", "unknown", "stopped"])
+async def test_silence_and_interim_text_do_not_announce_completion(pane, monkeypatch, state):
+    from jarvis.agentic_ide import task_state
+
     pending = await arm(pane)
     term, turns = pane
-    turns.extend([
-        Turn("user", "# AGENTS.md instructions for /repo\n\nFix the bug"),
-        Turn("assistant", "Fixed the null check."),
-    ])
+    turns.extend(_finished("Fix the bug", "Checking the tests now."))
+
+    async def unfinished(_term):
+        return task_state.Evidence(state)
+
+    monkeypatch.setattr(task_state, "probe", unfinished)
     events = []
-    assert await ft.publish_result("completed", term, pending, events.append, now=200.0)
-    assert "Fixed the null check" in events[0].report
-    assert "fresh assistant message" in events[0].report
+    assert not await ft.publish_result("completed", term, pending, events.append)
+    assert not events
+    assert term.delegation_result is pending
 
 
 @pytest.mark.asyncio
-async def test_stop_waits_for_an_answer_that_is_not_recorded_yet(pane):
+async def test_auto_resume_during_report_read_does_not_publish_stale_completion(pane, monkeypatch):
+    from jarvis.agentic_ide import task_state
+
+    pending = await arm(pane)
+    calls = []
+
+    async def resuming(_term):
+        calls.append(None)
+        return task_state.Evidence("completed" if len(calls) == 1 else "working")
+
+    monkeypatch.setattr(task_state, "probe", resuming)
+    events = []
+    assert not await ft.publish_result("completed", pane[0], pending, events.append)
+    assert not events
+
+
+@pytest.mark.asyncio
+async def test_confirmed_stop_has_distinct_wording_and_no_completion_claim(pane, monkeypatch):
+    from jarvis.agentic_ide import task_state
+
+    pending = await arm(pane)
+
+    async def stopped(_term):
+        return task_state.Evidence("stopped")
+
+    monkeypatch.setattr(task_state, "probe", stopped)
+    events = []
+    assert await ft.publish_result("stopped", pane[0], pending, events.append)
+    assert "was interrupted" in events[0].text
+    assert "no completion" in events[0].report
+    assert pane[0].delegation_result is None
+
+
+@pytest.mark.asyncio
+async def test_submission_change_during_final_probe_cannot_consume_result(pane, monkeypatch):
+    from jarvis.agentic_ide import task_state
+
     pending = await arm(pane)
     term, turns = pane
+    turns.extend(_finished("Fix the bug", "Fixed."))
+    calls = []
+
+    async def changing(_term):
+        calls.append(None)
+        if len(calls) == 2:
+            term.last_submit_at += 1
+        return task_state.Evidence("completed")
+
+    monkeypatch.setattr(task_state, "probe", changing)
     events = []
-    # The pane went quiet before its transcript was found or flushed.
-    assert not await ft.publish_result("completed", term, pending, events.append, now=200.0)
-    assert not await ft.publish_result("completed", term, pending, events.append, now=210.0)
-    assert not events and term.delegation_result is pending
-    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "Fixed; 12 tests pass.")])
-    assert await ft.publish_result("completed", term, pending, events.append, now=212.0)
-    assert len(events) == 1 and "12 tests pass" in events[0].report
-    assert term.delegation_result is None
-
-
-@pytest.mark.parametrize("where", ["remote", "unreadable_cli"])
-@pytest.mark.asyncio
-async def test_stop_without_any_transcript_is_reported_at_once(pane, where):
-    pending = await arm(pane)
-    term, _ = pane
-    if where == "remote":
-        term.computer_id = "box-1"
-    else:
-        term.agent = "aider"
-    events = []
-    assert await ft.publish_result("completed", term, pending, events.append, now=200.0)
-    assert "unverified" in events[0].report
+    assert not await ft.publish_result("completed", term, pending, events.append)
+    assert not events
 
 
 @pytest.mark.asyncio
-async def test_a_new_submission_restarts_the_report_grace(pane):
-    pending = await arm(pane)
-    term, _ = pane
-    await ft.publish_result("completed", term, pending, lambda _e: None, now=200.0)
-    assert term.delegation_stopped_at == 200.0
-    ft.submitted(term, pending)
-    assert term.delegation_stopped_at == 0.0
-
-
-@pytest.mark.asyncio
-async def test_a_refused_later_delivery_keeps_the_earlier_job(pane):
-    pending = await arm(pane)
-    term, _ = pane
-    later = await ft.prepare(term, "Also update the docs", "", {"lang": "en"})
-    term.submitted = False  # The text sat in the input box; nothing was handed over.
-    ft.submitted(term, later)
-    assert term.delegation_result is pending and ft.current(term, pending)
-
-
-@pytest.mark.asyncio
-async def test_a_dialog_answer_without_a_followed_job_tracks_the_task_on_record(pane):
-    term, turns = pane
-    turns.append(Turn("user", "Refactor the parser"))
-    answer = await ft.prepare(term, "1", "1", {"lang": "en"}, answering=True)
-    term.last_prompt = "1"
-    ft.submitted(term, answer)
-    tracked = term.delegation_result
-    assert tracked.prompt == "Refactor the parser" and tracked.keeps_prompt
-    turns.append(Turn("assistant", "Parser refactored."))
-    events = []
-    assert await ft.publish_result("completed", term, tracked, events.append, now=200.0)
-    assert "Parser refactored" in events[0].report
-
-
-@pytest.mark.asyncio
-async def test_an_answer_ending_in_a_question_is_reported_in_the_agents_words(pane):
+async def test_late_old_record_for_identical_prompt_is_not_fresh_work(pane):
     pending = await arm(pane)
     term, turns = pane
-    turns.extend([
-        Turn("user", "Fix the bug"),
-        Turn("assistant", "Fixed the login race. Would you like me to commit it?"),
-    ])
+    turns.extend(_finished("Fix the bug", "An older result.", at=90))
     events = []
-    assert await ft.publish_result("needs_input", term, pending, events.append, now=200.0)
-    assert "Fixed the login race" in events[0].report
-    assert "Which repository" not in events[0].report  # not the terminal's bottom rows
-    assert term.delegation_result is pending  # It still asks; a later stop is reported too.
-
-
-@pytest.mark.asyncio
-async def test_a_cli_dialog_is_reported_from_the_screen(pane, monkeypatch):
-    pending = await arm(pane)
-    term, turns = pane
-    turns.extend([Turn("user", "Fix the bug"), Turn("assistant", "I'll edit app.py.")])
-    monkeypatch.setattr(ft, "_shows_dialog", lambda _term: True)
-    events = []
-    await ft.publish_result("needs_input", term, pending, events.append, now=200.0)
-    assert "Which repository" in events[0].report
-    assert "current terminal question" in events[0].report
-
-
-@pytest.mark.asyncio
-async def test_a_pane_that_worked_again_gets_a_fresh_grace(pane):
-    pending = await arm(pane)
-    term, _ = pane
-    events = []
-    assert not await ft.publish_result("completed", term, pending, events.append, now=200.0)
-    term.last_output_at = 500.0  # It resumed on its own and stopped again much later.
-    assert not await ft.publish_result("completed", term, pending, events.append, now=510.0)
-    assert not events and term.delegation_stopped_at == 510.0
-
-
-def test_report_grace_outlasts_the_conversation_lookup():
-    from jarvis.agentic_ide.session import CONVERSATION_DELAYS_S
-
-    assert ft.REPORT_GRACE_S > sum(CONVERSATION_DELAYS_S)
+    assert not await ft.publish_result("completed", term, pending, events.append)
+    assert not events
+    assert term.delegation_result is pending

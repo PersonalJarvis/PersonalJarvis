@@ -12,6 +12,14 @@ from jarvis.tasks.store import TaskStore
 from tests.contract.test_society_continuity import world as world
 
 
+def _beyond_routine_cards(events: list[dict]) -> list[dict]:
+    """The agent's one chat may only show the card that opens a run."""
+    return [
+        e for e in events
+        if not (e["kind"] == "notice" and e["payload"].get("kind") == "routine_run")
+    ]
+
+
 async def test_persisted_run_links_survive_reopening_without_loading_main_chat(world, tmp_path):
     runtime, service, main, _ = world
     store = TaskStore(tmp_path / "tasks.db")
@@ -34,7 +42,11 @@ async def test_persisted_run_links_survive_reopening_without_loading_main_chat(w
                 assert session.provider == main.provider
                 assert session.cwd == main.cwd
                 assert reopened.list_events(sid)[-1]["kind"] == "turn_finished"
-            assert reopened.list_events(main.session_id) == []
+            assert _beyond_routine_cards(reopened.list_events(main.session_id)) == []
+            # The agent's one chat holds a card per run that opens that run.
+            cards = [e["payload"] for e in reopened.list_events(main.session_id)]
+            assert [c["session_id"] for c in cards] == links
+            assert all(c["kind"] == "routine_run" and c["task_id"] == task_id for c in cards)
             assert reopened.get_session(main.session_id).permission_mode == main.permission_mode
         finally:
             reopened.close()
@@ -101,7 +113,7 @@ async def test_failed_run_stays_in_its_chat_and_cannot_fall_back(world, monkeypa
     ]
     assert len(runs) == 1
     assert service.store.list_events(runs[0].session_id)[-1]["payload"]["status"] == "error"
-    assert service.store.list_events(main.session_id) == []
+    assert _beyond_routine_cards(service.store.list_events(main.session_id)) == []
 
 
 @pytest.mark.parametrize("via_chat", [False, True])
@@ -138,7 +150,7 @@ async def test_cancelling_routine_preserves_main_chat(world, monkeypatch, via_ch
         assert len(runs) == 1
         assert not service.is_running(runs[0].session_id)
         assert service.store.list_events(runs[0].session_id)[-1]["payload"]["status"] == "cancelled"
-        assert service.store.list_events(main.session_id) == []
+        assert _beyond_routine_cards(service.store.list_events(main.session_id)) == []
     finally:
         release.set()
         if not routine.done():

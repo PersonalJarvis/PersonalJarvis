@@ -384,17 +384,17 @@ async def test_server_stop_finishes_independent_cleanup_after_mars_timeout(tmp_p
     state.agent_chat = SimpleNamespace(cancel_all=async_cleanup("chat"))
     state.mission_manager = SimpleNamespace(stop=async_cleanup("missions"))
 
-    browser_started = asyncio.Event()
+    transport_started = asyncio.Event()
 
-    async def prepare_browser():
-        browser_started.set()
+    async def warm_transport():
+        transport_started.set()
         try:
             await asyncio.Event().wait()
         finally:
-            cleaned.append("browser-prepare")
+            cleaned.append("realtime-warm")
 
-    server._browser_prepare_task = asyncio.create_task(prepare_browser())
-    await browser_started.wait()
+    server._realtime_warm_task = asyncio.create_task(warm_transport())
+    await transport_started.wait()
     server_exit = asyncio.Event()
 
     class FixtureUvicorn:
@@ -416,7 +416,7 @@ async def test_server_stop_finishes_independent_cleanup_after_mars_timeout(tmp_p
         ):
             await asyncio.wait_for(server.stop(), 2)
         assert {
-            "browser-prepare",
+            "realtime-warm",
             "society-runtime",
             "chat",
             "marketplace-refresh",
@@ -431,7 +431,7 @@ async def test_server_stop_finishes_independent_cleanup_after_mars_timeout(tmp_p
             "uvicorn-exit",
             "codex-servers",
         } <= set(cleaned)
-        assert server._browser_prepare_task is None
+        assert server._realtime_warm_task is None
         assert server._plugin_registry is None
         assert server._server is server._serve_task is None
         assert uvicorn.should_exit and serving.done()

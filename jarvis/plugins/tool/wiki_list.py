@@ -78,6 +78,8 @@ def _first_heading_and_meta(path: Path) -> tuple[str, bool]:
 class WikiListTool:
     """Router-tier ground-truth listing of the long-term Obsidian wiki vault."""
 
+    read_only = True
+
     name: str = "wiki-list"
     description: str = (
         "List what ACTUALLY exists in the user's long-term Obsidian wiki "

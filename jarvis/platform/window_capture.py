@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from jarvis.platform import detect_platform
@@ -45,6 +46,68 @@ log = logging.getLogger(__name__)
 #: perceive loop, whose own observe timeout is 12 s.
 _SCK_TIMEOUT_S = 3.0
 
+#: Why the last :func:`grab_window` on THIS thread returned ``None``, for a
+#: caller that must tell "macOS may be asking" from "no native capture here".
+_PENDING_CONFIRMATION = "pending_confirmation"
+_TIMEOUT = "timeout"
+_failure = threading.local()
+
+
+def last_grab_failure() -> str:
+    """Why the last ``grab_window`` on this thread returned ``None``.
+
+    ``"pending_confirmation"``: the wait timed out while the live Screen Recording
+    read says granted or a request is in flight, so macOS is probably showing a
+    confirmation (the first capture on macOS 15+ may show its own "bypass the
+    system picker" alert; unverified). It is PENDING, never DENIED. ``"timeout"``:
+    it timed out and nothing explains it. ``""``: no reason recorded (no native
+    path on this host, window gone, framework missing).
+    """
+    return str(getattr(_failure, "reason", ""))
+
+
+def clear_grab_failure() -> None:
+    """Forget the recorded reason before a grab (a stale one must not leak in)."""
+    _failure.reason = ""
+
+
+def _timeout_means_pending() -> bool:
+    """Whether a capture timeout is the confirmation dialog rather than a denial.
+
+    True when the live state (preflight plus the window-title oracle) reads
+    granted, or when the permission service has a Screen Recording request in
+    flight (an open episode in the ``os_dialog`` phase). Silent: it never asks.
+    """
+    try:
+        from jarvis.platform import screen_access  # noqa: PLC0415
+
+        gate = screen_access.permission_gate()
+        if screen_access.state_allows_capture(screen_access.screen_recording_state(gate)):
+            return True
+        outstanding = getattr(gate, "outstanding", None)
+        if callable(outstanding):
+            return any(
+                "screen_recording" in episode.permissions and episode.phase == "os_dialog"
+                for episode in outstanding()
+            )
+    except Exception:  # noqa: BLE001 - classifying a timeout must never break the seam
+        log.debug("Could not classify a screen capture timeout.", exc_info=True)
+    return False
+
+
+def _note_timeout(what: str) -> None:
+    """Record a SCK wait timeout as PENDING when the state explains it."""
+    if _timeout_means_pending():
+        _failure.reason = _PENDING_CONFIRMATION
+        log.info(
+            "%s timed out: macOS may be asking you to confirm screen capture. "
+            "Treating it as pending, not as denied.",
+            what,
+        )
+    else:
+        _failure.reason = _TIMEOUT
+        log.debug("%s timed out (no permission state explains it)", what)
+
 
 def grab_window(
     handle: int, bbox: dict[str, int],
@@ -54,7 +117,10 @@ def grab_window(
     ``bbox`` is the window's frame rect in input units (advisory — the
     native backends capture the window's own current bounds). Returns
     ``None`` whenever the host has no native per-window path; never raises.
+    A caller that needs to know WHY a ``None`` came back asks
+    :func:`last_grab_failure` on the same thread.
     """
+    _failure.reason = ""
     try:
         plat = detect_platform()
         if plat == "win32":
@@ -193,7 +259,7 @@ def _grab_window_macos(window_id: int) -> tuple[tuple[int, int], bytes] | None:
         _content_handler,
     )
     if not content_ready.wait(_SCK_TIMEOUT_S):
-        log.debug("SCShareableContent timed out (permission prompt pending?)")
+        _note_timeout("SCShareableContent")
         return None
     content = content_box.get("content")
     if content is None or content_box.get("error") is not None:
@@ -249,7 +315,7 @@ def _grab_window_macos(window_id: int) -> tuple[tuple[int, int], bytes] | None:
         sc_filter, config, _image_handler,
     )
     if not image_ready.wait(_SCK_TIMEOUT_S):
-        log.debug("SCScreenshotManager timed out")
+        _note_timeout("SCScreenshotManager")
         return None
     cg_image = image_box.get("image")
     if cg_image is None or image_box.get("error") is not None:
@@ -267,4 +333,4 @@ def _grab_window_macos(window_id: int) -> tuple[tuple[int, int], bytes] | None:
     return ((img.width, img.height), img.tobytes())
 
 
-__all__ = ["grab_window"]
+__all__ = ["clear_grab_failure", "grab_window", "last_grab_failure"]

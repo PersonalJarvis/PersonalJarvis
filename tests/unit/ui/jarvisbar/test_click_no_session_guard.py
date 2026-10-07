@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from jarvis.ui.jarvisbar import renderer as R
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+from ui.orb.controls import pet_strip_layout
 
 
 class _FakePipeline:
@@ -39,7 +40,7 @@ class _FakePipeline:
 
 def _x_glyph() -> int:
     """The on-screen End-X centre for the deployed pill (mirror renderer)."""
-    return round(R.WIN_W / 2.0 - 0.30 * R.ACTIVE_W)
+    return round(pet_strip_layout(R.strip_scale()).call[0])
 
 
 def _patch_pipeline(monkeypatch, fake) -> None:

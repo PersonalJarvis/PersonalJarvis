@@ -48,9 +48,33 @@ describe("destinations", () => {
 });
 
 describe("ranking", () => {
-  it("lists everything in sidebar order for an empty query", () => {
-    const rows = rankQuickSwitch("", englishLabel);
-    expect(rows.map((r) => r.entry.key)).toEqual(QUICK_SWITCH_ENTRIES.map((e) => e.key));
+  it("lists nothing until something is typed", () => {
+    expect(rankQuickSwitch("", englishLabel)).toEqual([]);
+    expect(rankQuickSwitch("   ", englishLabel)).toEqual([]);
+  });
+
+  it("lists, for one letter, exactly the names starting with it, A to Z", () => {
+    const rows = rankQuickSwitch("a", englishLabel);
+    const labels = rows.map((r) => r.label);
+    expect(labels.length).toBeGreaterThan(3);
+    for (const label of labels) expect(label.toLowerCase().startsWith("a")).toBe(true);
+    const sorted = [...labels].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+    expect(labels).toEqual(sorted);
+    expect(labels).toContain("Agentic IDE");
+    expect(labels).toContain("Artifacts");
+  });
+
+  it("does not reach through synonyms on one or two letters", () => {
+    // "Board" carries the synonym "activity"; "a" must still list only A-names.
+    expect(rankQuickSwitch("a", englishLabel).map((r) => r.entry.key)).not.toContain("board");
+  });
+
+  it("puts names that start with the query before names that only contain it", () => {
+    const rows = rankQuickSwitch("voice", englishLabel);
+    const firstOther = rows.findIndex((r) => !r.prefix);
+    const lastPrefix = rows.map((r) => r.prefix).lastIndexOf(true);
+    expect(rows[0].label).toBe("Voice");
+    if (firstOther !== -1) expect(lastPrefix).toBeLessThan(firstOther);
   });
 
   it.each([
@@ -63,7 +87,6 @@ describe("ranking", () => {
     ["ajustes", "settings"],
     ["skills", "skills"],
     ["api", "apikeys"],
-    ["ollama", "local-models"],
     ["market", "marketplace"],
     ["wiki", "memory"],
   ])("puts the meant destination first for %j", (query, expected) => {

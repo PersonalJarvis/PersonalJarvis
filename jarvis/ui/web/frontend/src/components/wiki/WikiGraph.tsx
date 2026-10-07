@@ -1,9 +1,13 @@
 // Force-directed graph of the Obsidian-vault wikilink network.
 //
-// Owned by Agent C of Phase B3. Pure view component — it fetches
-// `/api/wiki/graph` via React Query and renders nodes/edges with
-// `react-force-graph-2d`. No filter chips, no custom force tweaks; this is the
-// landing view inside the Wiki tab, so it stays minimal and fast.
+// Pure view component — it fetches `/api/wiki/graph` via React Query and
+// renders nodes/edges with `react-force-graph-2d`. This is the landing view
+// inside the Wiki section, so the flat map is drawn in the brand's own terms:
+// neutral ink on the room, a page's kind told apart by SHAPE (the same glyphs
+// the library rail uses), and the one accent reserved for what you are looking
+// at. Hovering a page pulls its neighbourhood forward and lets the rest of the
+// vault recede; repeated wikilinks between the same two pages are drawn as one
+// line whose weight says how often they link.
 //
 // This file owns the DATA and the chrome; the projection is a choice. The flat
 // canvas below is the default and lives here; the 3D scene is `WikiGraph3D`,
@@ -28,7 +32,6 @@ import ForceGraph2D from "react-force-graph-2d";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
 import {
-  BROKEN_EDGE_COLOUR,
   clampCenterToView,
   NODE_COLOUR,
   edgeDetails,
@@ -42,10 +45,26 @@ import {
   type RenderNode,
   type WikiGraphPayload,
 } from "@/lib/wikiGraph";
+import {
+  GROUP_LABEL_KEY,
+  GROUP_SHAPE,
+  WIKI_GROUPS,
+  cleanTitle,
+  degreeOf,
+  groupOfKind,
+  isHollowShape,
+  traceKindShape,
+  uniqueEdges,
+  type WikiGroupId,
+} from "@/lib/wikiModel";
 import { useGraphDimension } from "@/lib/graphDimension";
 import { GraphDimensionToggle } from "@/components/wiki/GraphDimensionToggle";
+import { KindGlyph } from "@/components/wiki/KindGlyph";
+import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import { useT, useUiLanguage } from "@/i18n";
+import { cn } from "@/lib/utils";
+import { LocateFixed } from "lucide-react";
 
 // Three.js and the WebGL renderer are by far the heaviest thing this app can
 // pull in. Keeping them behind `lazy` means the chunk is fetched the first
@@ -93,6 +112,136 @@ export interface WikiGraphProps {
 }
 
 /**
+ * The map's colours, read from the live theme tokens so the canvas follows
+ * light and dark exactly as the DOM around it does. Each entry is an HSL
+ * triplet (`0 0% 98%`) so an alpha can be appended per use.
+ */
+interface GraphPalette {
+  ink: string;
+  muted: string;
+  accent: string;
+  room: string;
+  rim: string;
+  broken: string;
+}
+
+const FALLBACK_PALETTE: Record<"dark" | "light", GraphPalette> = {
+  dark: {
+    ink: "0 0% 98%",
+    muted: "0 0% 63%",
+    accent: "212 100% 62%",
+    room: "0 0% 4%",
+    rim: "0 0% 22%",
+    broken: "0 72% 55%",
+  },
+  light: {
+    ink: "0 0% 9%",
+    muted: "0 0% 33%",
+    accent: "212 92% 45%",
+    room: "0 0% 100%",
+    rim: "0 0% 74%",
+    broken: "0 72% 45%",
+  },
+};
+
+function readPalette(theme: "dark" | "light"): GraphPalette {
+  const fallback = FALLBACK_PALETTE[theme];
+  if (typeof document === "undefined" || !document.body) return fallback;
+  const css = getComputedStyle(document.body);
+  const token = (name: string, otherwise: string) => {
+    const value = css.getPropertyValue(name).trim();
+    return /^\d/.test(value) ? value : otherwise;
+  };
+  return {
+    ink: token("--foreground", fallback.ink),
+    muted: token("--muted-foreground", fallback.muted),
+    accent: token("--accent", fallback.accent),
+    room: token("--background", fallback.room),
+    rim: token("--border-strong", fallback.rim),
+    broken: token("--destructive", fallback.broken),
+  };
+}
+
+function hsl(triplet: string, alpha = 1): string {
+  return alpha >= 1 ? `hsl(${triplet})` : `hsl(${triplet} / ${alpha})`;
+}
+
+/** The page the map is focused on: the one under the pointer, else the open one. */
+function focusOf(hover: string | null, selected: string | undefined): string | null {
+  return hover ?? selected ?? null;
+}
+
+function linkTouches(link: RenderEdge, slug: string): boolean {
+  return endpointId(link.source) === slug || endpointId(link.target) === slug;
+}
+
+/** The canvas face of the brand typeface — the bundle names it "Inter Variable". */
+const CANVAS_FONT = "'Inter Variable', Inter, system-ui, sans-serif";
+
+/** Pull of every page towards the middle; see the gravity force. */
+const GRAVITY = 0.035;
+
+/** A page with no links is pulled in harder, so it orbits instead of drifting off. */
+const ORPHAN_GRAVITY = 0.16;
+
+/** Drawn radius in graph units: big enough to see a leaf at a fitted zoom. */
+function drawRadius(node: RenderNode, isActive: boolean): number {
+  return nodeSizeScore(node.backlinkCount ?? 0, isActive) * 2.6;
+}
+
+/**
+ * The radius a page is actually painted at: its graph size, but never
+ * smaller on screen than a dot you can see and point at.
+ */
+function paintedRadius(node: RenderNode, isActive: boolean, isHub: boolean, globalScale: number): number {
+  const floor = (isHub ? 6 : isActive ? 5 : 3.2) / Math.max(globalScale, 0.01);
+  return Math.max(drawRadius(node, isActive), floor);
+}
+
+/** How many of the best-connected pages keep their label at any zoom. */
+const ALWAYS_LABELLED = 10;
+
+/** From this zoom on, every page is labelled — there is room to read them. */
+const LABEL_ALL_ZOOM = 2.4;
+
+const HIDDEN_KINDS_KEY = "jarvis.wiki.map.hiddenKinds";
+
+/**
+ * System pages (the append-only log, the memory index) link to nearly every
+ * other page; drawn by default they pull the whole vault into one knot. They
+ * start hidden — the legend says so and brings them back in one click.
+ */
+const DEFAULT_HIDDEN: readonly WikiGroupId[] = ["system"];
+
+function readHiddenKinds(): Set<WikiGroupId> {
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_KINDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        return new Set(
+          parsed.filter((value): value is WikiGroupId =>
+            (WIKI_GROUPS as readonly string[]).includes(String(value)),
+          ),
+        );
+      }
+    }
+  } catch {
+    // Storage can be blocked (private window, cleared site data); the
+    // default below is the right answer then.
+  }
+  return new Set(DEFAULT_HIDDEN);
+}
+
+function writeHiddenKinds(hidden: ReadonlySet<WikiGroupId>): void {
+  try {
+    window.localStorage.setItem(HIDDEN_KINDS_KEY, JSON.stringify([...hidden]));
+  } catch {
+    // Best effort only: the filter still applies for this session.
+  }
+}
+
+/**
  * Memory-Map force-graph. Mounts the canvas lazily when the Wiki tab renders
  * (parent owns mounting) and parks the render loop once the layout has
  * settled and the pointer is elsewhere, so an idle Wiki tab stops burning a
@@ -137,9 +286,47 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     staleTime: 30_000,
   });
 
+  const [hiddenKinds, setHiddenKinds] = useState<Set<WikiGroupId>>(readHiddenKinds);
+  const toggleKind = useCallback((group: WikiGroupId) => {
+    setHiddenKinds((prev) => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      writeHiddenKinds(next);
+      return next;
+    });
+  }, []);
+
+  // How many pages of each kind the vault holds, before any filter — the
+  // legend's counts, and the list of kinds it offers at all.
+  const kindCounts = useMemo(() => {
+    const counts = new Map<WikiGroupId, number>();
+    for (const node of data?.ok ? data.nodes : []) {
+      const group = groupOfKind(node.kind);
+      counts.set(group, (counts.get(group) ?? 0) + 1);
+    }
+    return counts;
+  }, [data]);
+
   const graphData = useMemo(() => {
     if (!data?.ok) return { nodes: [] as RenderNode[], links: [] as RenderEdge[] };
-    const out = toGraphData(data);
+    // One edge per linked pair, and only between pages whose kind is shown.
+    const shown = data.nodes.filter((node) => !hiddenKinds.has(groupOfKind(node.kind)));
+    const shownIds = new Set(shown.map((node) => node.id));
+    const edges = uniqueEdges(data.edges).filter(
+      (edge) => shownIds.has(edge.source) && shownIds.has(edge.target),
+    );
+    const weights = new Map(edges.map((edge) => [`${edge.source}\u0000${edge.target}`, edge.weight]));
+    const out = toGraphData({
+      ...data,
+      nodes: shown.map((node) => ({ ...node, title: cleanTitle(node.title, node.id) })),
+      edges,
+      broken: (data.broken ?? []).filter((edge) => shownIds.has(edge.source)),
+    });
+    for (const link of out.links) {
+      (link as RenderEdge & { weight?: number }).weight =
+        weights.get(`${link.source}\u0000${link.target}`) ?? 1;
+    }
     // CRITICAL — pre-spread initial positions on a tight circle so
     // force-graph-2d's simulation has direction vectors from frame 1.
     // Tight radius (60) means the graph fits inside the viewport even
@@ -163,6 +350,58 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     () => new Map(graphData.nodes.map((node) => [node.id, node.title])),
     [graphData.nodes],
   );
+
+  // Who neighbours whom, how connected each page is, and which pages keep a
+  // label at rest. All derived once per data generation; the canvas callbacks
+  // read them through a ref so they stay stable for the library.
+  const structure = useMemo(() => {
+    const neighbours = new Map<string, Set<string>>();
+    const link = (a: string, b: string) => {
+      const set = neighbours.get(a) ?? new Set<string>();
+      set.add(b);
+      neighbours.set(a, set);
+    };
+    for (const edge of graphData.links) {
+      const source = endpointId(edge.source);
+      const target = endpointId(edge.target);
+      link(source, target);
+      link(target, source);
+    }
+    const degree = degreeOf(
+      graphData.links.map((edge) => ({
+        source: endpointId(edge.source),
+        target: endpointId(edge.target),
+      })),
+    );
+    const labelled = new Set(
+      [...degree.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, ALWAYS_LABELLED)
+        .map(([id]) => id),
+    );
+    const groups = new Map(graphData.nodes.map((node) => [node.id, groupOfKind(node.kind)]));
+    const maxDegree = Math.max(1, ...degree.values());
+    return { neighbours, degree, labelled, groups, maxDegree };
+  }, [graphData]);
+  const structureRef = useRef(structure);
+  structureRef.current = structure;
+  const graphDataRef = useRef(graphData);
+  graphDataRef.current = graphData;
+
+  const hubSlug = data?.hub ?? null;
+  const hubRef = useRef(hubSlug);
+  hubRef.current = hubSlug;
+
+  const theme = useThemeValue();
+  const paletteRef = useRef<GraphPalette>(FALLBACK_PALETTE[theme]);
+  useEffect(() => {
+    paletteRef.current = readPalette(theme);
+  }, [theme]);
+
+  // The page under the pointer. State, not only a ref: the travelling lights
+  // along its links are a library prop that has to change when it does.
+  const [hoverSlug, setHoverSlug] = useState<string | null>(null);
+  const hoverRef = useRef<string | null>(null);
 
   const graphRef = useRef<ForceGraphMethods<RenderNode, RenderEdge> | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -340,14 +579,14 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     resumeRender();
   }, [graphData, resumeRender]);
 
-  // A selection change only needs a repaint, not a reheat: run a few frames,
-  // then go back to idle.
+  // A selection or theme change only needs a repaint, not a reheat: run a few
+  // frames, then go back to idle.
   useEffect(() => {
     if (graphData.nodes.length === 0) return;
     resumeRender();
     const timer = window.setTimeout(() => pauseRenderIfIdle(), 400);
     return () => window.clearTimeout(timer);
-  }, [highlightSlug, graphData.nodes.length, resumeRender, pauseRenderIfIdle]);
+  }, [highlightSlug, theme, graphData.nodes.length, resumeRender, pauseRenderIfIdle]);
 
   // Pointer presence drives the idle parking: while the cursor is over the
   // canvas the user can hover, drag and wheel-zoom, all of which need frames.
@@ -525,22 +764,23 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     if (!ref) return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const anyRef = ref as any;
-    // Repulsion: each pair pushes each other away with strength
-    // -180 if closer than 220 px, then falls off. Settled
-    // envelope is ~300x300 px.
+    // Repulsion: every pair pushes apart, reaching far enough (460 graph
+    // units) that the leaves of one hub keep clear of the next hub's, so the
+    // vault settles into readable constellations instead of one knot.
     const chargeForce = anyRef.d3Force?.("charge");
     if (chargeForce && typeof chargeForce.strength === "function") {
-      chargeForce.strength(-180);
+      chargeForce.strength(-210);
       if (typeof chargeForce.distanceMax === "function") {
-        chargeForce.distanceMax(220);
+        chargeForce.distanceMax(460);
       }
     }
-    // Links stay short so labels stay close enough to read.
+    // Links stay short so a page sits beside what it links to, and loose
+    // enough that a hub with ninety links does not crush its leaves together.
     const linkForce = anyRef.d3Force?.("link");
     if (linkForce && typeof linkForce.distance === "function") {
-      linkForce.distance(55);
+      linkForce.distance(56);
       if (typeof linkForce.strength === "function") {
-        linkForce.strength(0.85);
+        linkForce.strength(0.5);
       }
     }
     // Soft centering: every node feels a gentle pull towards (0,0) — this
@@ -553,6 +793,27 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     if (centerForce && typeof centerForce.strength === "function") {
       centerForce.strength(0.08);
     }
+    // Gentle gravity towards the middle. forceCenter only re-centres the
+    // whole cloud; a page with no links feels nothing else, so the charge
+    // alone pushed every orphan to the far edge and the camera had to zoom
+    // out until the real network was a speck.
+    let gravityNodes: Array<{ id?: string | number; x?: number; y?: number; vx?: number; vy?: number }> = [];
+    const gravity = Object.assign(
+      (alpha: number) => {
+        const { degree } = structureRef.current;
+        for (const node of gravityNodes) {
+          const k = (degree.get(String(node.id ?? "")) ?? 0) > 0 ? GRAVITY : ORPHAN_GRAVITY;
+          node.vx = (node.vx ?? 0) - (node.x ?? 0) * k * alpha;
+          node.vy = (node.vy ?? 0) - (node.y ?? 0) * k * alpha;
+        }
+      },
+      {
+        initialize: (nodes: typeof gravityNodes) => {
+          gravityNodes = nodes;
+        },
+      },
+    );
+    anyRef.d3Force?.("gravity", gravity);
     forcesConfiguredRef.current = true;
   }, []);
 
@@ -592,7 +853,25 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     [],
   );
 
-  const nodeCanvasObjectMode = useCallback(() => "after" as const, []);
+  const nodeCanvasObjectMode = useCallback(() => "replace" as const, []);
+
+  // The hit area follows the drawn shape (plus a little slack), so a leaf is
+  // as easy to hover as it is to see.
+  const nodePointerAreaPaint = useCallback(
+    (node: NodeObject<RenderNode>, colour: string, ctx: CanvasRenderingContext2D): void => {
+      ctx.beginPath();
+      ctx.arc(
+        node.x ?? 0,
+        node.y ?? 0,
+        drawRadius(node as RenderNode, node.id === highlightRef.current) + 2.5,
+        0,
+        Math.PI * 2,
+      );
+      ctx.fillStyle = colour;
+      ctx.fill();
+    },
+    [],
+  );
 
   const nodeCanvasObject = useCallback(
     (
@@ -602,52 +881,200 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     ): void => {
       const x = node.x ?? 0;
       const y = node.y ?? 0;
-      const isActive = node.id === highlightRef.current;
-      // Match the nodeVal calculation so label distance stays consistent with
-      // the dot edge across all node sizes.
-      const radius = sizeOf(node as RenderNode, isActive) * 2;
-      if (isActive) {
-        ctx.save();
+      const id = String(node.id ?? "");
+      const palette = paletteRef.current;
+      const { neighbours, degree, groups, maxDegree } = structureRef.current;
+      const isActive = id === highlightRef.current;
+      const isHover = id === hoverRef.current;
+      const isHub = id === hubRef.current;
+      const focus = focusOf(hoverRef.current, highlightRef.current);
+      const isNeighbour = focus !== null && (neighbours.get(focus)?.has(id) ?? false);
+      const inFocus = focus === null || id === focus || isNeighbour;
+      const group = groups.get(id) ?? "other";
+      const isBroken = (node as RenderNode).kind === "broken";
+      const shape = isBroken ? "dot" : GROUP_SHAPE[group];
+      // Match the nodeVal calculation so the hit area and the drawn shape agree.
+      const radius = paintedRadius(node as RenderNode, isActive, isHub, globalScale);
+      // Ink weight follows connectedness: leaves are quiet, hubs read first.
+      const weight = Math.min(1, (degree.get(id) ?? 0) / Math.max(4, maxDegree * 0.35));
+      const alpha = inFocus ? 0.5 + weight * 0.5 : 0.12;
+      const lit = isActive || isHover || (hoverRef.current !== null && isNeighbour);
+
+      ctx.save();
+      // The user's own page wears a faint accent orbit — the map's centre of gravity.
+      if (isHub && inFocus) {
         ctx.beginPath();
-        ctx.arc(x, y, radius + 4, 0, 2 * Math.PI, false);
-        ctx.fillStyle = "rgba(106, 169, 255, 0.18)";
+        ctx.arc(x, y, radius + 2 + 5 / globalScale, 0, Math.PI * 2);
+        ctx.strokeStyle = hsl(palette.accent, 0.4);
+        ctx.lineWidth = 1 / globalScale;
+        ctx.setLineDash([2 / globalScale, 2.5 / globalScale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // The open or hovered page gets a soft accent halo, findable without reading.
+      if (isActive || isHover) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + 4.5, 0, Math.PI * 2);
+        ctx.fillStyle = hsl(palette.accent, isActive ? 0.22 : 0.14);
         ctx.fill();
-        ctx.restore();
       }
-      // Always-visible labels in screen-space (divide font size by
-      // globalScale so labels look ~10 px regardless of zoom).
-      const label = (node as RenderNode).title ?? (node.id as string | undefined) ?? "";
-      if (label) {
-        ctx.save();
-        const fontSize = 10 / globalScale;
-        ctx.font = `${fontSize}px ui-sans-serif, system-ui, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "top";
-        ctx.fillStyle = isActive ? "#e6ecf5" : "#a8b0c0";
-        ctx.shadowColor = "rgba(0,0,0,0.85)";
-        ctx.shadowBlur = 3 / globalScale;
-        ctx.fillText(label, x, y + radius + 3 / globalScale);
-        ctx.restore();
+
+      traceKindShape(ctx, shape, x, y, radius);
+      const colour = isBroken
+        ? hsl(palette.broken, inFocus ? 0.9 : 0.2)
+        : lit || isHub
+          ? hsl(palette.accent, inFocus ? 1 : 0.25)
+          : hsl(palette.ink, alpha);
+      if (isHollowShape(shape)) {
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = Math.max(1.2, radius * 0.45);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = colour;
+        ctx.fill();
+        // A hairline in the room colour keeps touching shapes apart.
+        ctx.strokeStyle = hsl(palette.room, 0.9);
+        ctx.lineWidth = 0.8 / globalScale;
+        ctx.stroke();
       }
+
+      ctx.restore();
     },
     [],
   );
 
-  const linkColor = useCallback(
-    (link: RenderEdge) =>
-      (link as RenderEdge).broken ? BROKEN_EDGE_COLOUR : "rgba(106, 169, 255, 0.45)",
-    [],
-  );
+  /**
+   * Labels are drawn after every shape, once per frame, most important first:
+   * the open and hovered page, the user's own page, the hovered page's
+   * neighbours, then by how connected a page is. A label that would collide
+   * with one already placed is left out — a crowded hub shows the names that
+   * matter instead of a pile of overprinted text. Zooming in makes room, so
+   * more of them appear.
+   */
+  const drawLabels = useCallback((ctx: CanvasRenderingContext2D, globalScale: number): void => {
+    const palette = paletteRef.current;
+    const { neighbours, degree, labelled } = structureRef.current;
+    const hover = hoverRef.current;
+    const selected = highlightRef.current;
+    const focus = focusOf(hover, selected);
+    const focusNeighbours = focus !== null ? neighbours.get(focus) : undefined;
+
+    type Candidate = { node: RenderNode; rank: number; text: string };
+    const candidates: Candidate[] = [];
+    for (const node of graphDataRef.current.nodes) {
+      const id = String(node.id ?? "");
+      const isActive = id === selected;
+      const isHover = id === hover;
+      const isHub = id === hubRef.current;
+      const isNeighbour = focusNeighbours?.has(id) ?? false;
+      const inFocus = focus === null || id === focus || isNeighbour;
+      if (!inFocus) continue;
+      let rank: number;
+      if (isActive || isHover) rank = 0;
+      else if (isHub) rank = 1;
+      else if (isNeighbour) rank = 2;
+      else if (labelled.has(id)) rank = 3;
+      else if (globalScale >= LABEL_ALL_ZOOM) rank = 4;
+      else continue;
+      const text = node.title ?? id;
+      if (text) candidates.push({ node, rank, text });
+    }
+    candidates.sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        (degree.get(String(b.node.id)) ?? 0) - (degree.get(String(a.node.id)) ?? 0),
+    );
+
+    const placed: Array<[number, number, number, number]> = [];
+    const pad = 3 / globalScale;
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.lineJoin = "round";
+    for (const { node, rank, text } of candidates) {
+      const x = node.x ?? 0;
+      const y = node.y ?? 0;
+      const id = String(node.id ?? "");
+      const strong = rank <= 1 || labelled.has(id);
+      const fontSize = (strong ? 12 : 11) / globalScale;
+      ctx.font = `${strong ? 500 : 400} ${fontSize}px ${CANVAS_FONT}`;
+      const radius = paintedRadius(node, id === selected, id === hubRef.current, globalScale);
+      const ty = y + radius + 4 / globalScale;
+      const width = ctx.measureText(text).width;
+      const box: [number, number, number, number] = [
+        x - width / 2 - pad,
+        ty - pad,
+        x + width / 2 + pad,
+        ty + fontSize * 1.2 + pad,
+      ];
+      const collides = placed.some(
+        ([l, t, r, b]) => box[0] < r && box[2] > l && box[1] < b && box[3] > t,
+      );
+      // The open and hovered page always get their name, even over others.
+      if (collides && rank > 0) continue;
+      placed.push(box);
+      // A halo in the room colour instead of a drop shadow: legible over
+      // crossing lines in both themes, and no glow.
+      ctx.lineWidth = 3.5 / globalScale;
+      ctx.strokeStyle = hsl(palette.room, 0.92);
+      ctx.strokeText(text, x, ty);
+      ctx.fillStyle =
+        rank === 0 ? hsl(palette.ink) : strong ? hsl(palette.ink, 0.88) : hsl(palette.muted, 0.95);
+      ctx.fillText(text, x, ty);
+    }
+    ctx.restore();
+  }, []);
+
+  const linkColor = useCallback((link: RenderEdge) => {
+    const palette = paletteRef.current;
+    if ((link as RenderEdge).broken) return hsl(palette.broken, 0.5);
+    const focus = focusOf(hoverRef.current, highlightRef.current);
+    if (focus === null) return hsl(palette.ink, 0.14);
+    return linkTouches(link, focus) ? hsl(palette.accent, 0.75) : hsl(palette.ink, 0.04);
+  }, []);
+
+  const linkWidth = useCallback((link: RenderEdge) => {
+    const weight = (link as RenderEdge & { weight?: number }).weight ?? 1;
+    const base = 0.6 + Math.min(Math.log2(weight), 4) * 0.35;
+    const focus = focusOf(hoverRef.current, highlightRef.current);
+    return focus !== null && linkTouches(link, focus) ? base + 0.6 : base;
+  }, []);
 
   const linkLineDash = useCallback(
     (link: RenderEdge) => ((link as RenderEdge).broken ? [4, 4] : null),
     [],
   );
 
-  const linkArrowColor = useCallback(
-    (link: RenderEdge) =>
-      (link as RenderEdge).broken ? BROKEN_EDGE_COLOUR : "rgba(106, 169, 255, 0.75)",
-    [],
+  // Arrows only where they carry meaning: on the links of the focused page.
+  const linkArrowLength = useCallback((link: RenderEdge) => {
+    const focus = focusOf(hoverRef.current, highlightRef.current);
+    return focus !== null && linkTouches(link, focus) ? 4 : 0;
+  }, []);
+
+  const linkArrowColor = useCallback((link: RenderEdge) => {
+    const palette = paletteRef.current;
+    return (link as RenderEdge).broken ? hsl(palette.broken, 0.7) : hsl(palette.accent, 0.9);
+  }, []);
+
+  // Light travels along the hovered page's links — the map shows which way
+  // a page's knowledge flows. Swapped per hover so the library re-seeds it.
+  const linkParticles = useCallback(
+    (link: RenderEdge) => (hoverSlug !== null && linkTouches(link, hoverSlug) ? 2 : 0),
+    [hoverSlug],
+  );
+
+  const linkParticleColor = useCallback(() => hsl(paletteRef.current.accent), []);
+
+  const handleNodeHover = useCallback(
+    (node: NodeObject<RenderNode> | null): void => {
+      const id = node ? String(node.id ?? "") : null;
+      if (hoverRef.current === id) return;
+      hoverRef.current = id;
+      setHoverSlug(id);
+      if (wrapRef.current) wrapRef.current.style.cursor = id ? "pointer" : "";
+      resumeRender();
+    },
+    [resumeRender],
   );
 
   const handleNodeClick = useCallback(
@@ -735,7 +1162,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     );
   }
 
-  if (graphData.nodes.length === 0) {
+  if ((data.nodes ?? []).length === 0) {
     return (
       <div
         data-testid="wiki-graph-empty"
@@ -748,26 +1175,92 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     );
   }
 
+  const legendGroups = WIKI_GROUPS.filter((group) => (kindCounts.get(group) ?? 0) > 0);
+  const connectionCount = graphData.links.filter((link) => !link.broken).length;
+
   return (
     <div
       ref={wrapRef}
       data-testid="wiki-graph-wrap"
-      className="relative h-full w-full overflow-hidden"
+      className={cn(
+        "relative h-full w-full overflow-hidden",
+        // A faint dot grid: the map reads as a surface you can move across,
+        // not as a void. Drawn from the ink token, so it inverts with the theme.
+        "[background-image:radial-gradient(hsl(var(--foreground)/0.07)_1px,transparent_1px)] [background-size:24px_24px]",
+      )}
       role="group"
       aria-label={t("wiki_graph.relationship_graph")}
+      onPointerLeave={() => handleNodeHover(null)}
     >
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-2">
-        <GraphDimensionToggle />
+      {/* Legend and filter in one: every kind the vault holds, drawn in the
+          shape the map uses for it. A click hides or shows that kind. */}
+      <div
+        className="absolute left-3 top-3 z-10 w-[188px] rounded-lg border border-border bg-popover/85 p-1.5 backdrop-blur"
+        data-testid="wiki-graph-legend"
+        role="group"
+        aria-label={t("wiki_ui.legend_label")}
+      >
+        {legendGroups.map((group) => {
+          const hidden = hiddenKinds.has(group);
+          return (
+            <button
+              key={group}
+              type="button"
+              onClick={() => toggleKind(group)}
+              aria-pressed={!hidden}
+              title={t(hidden ? "wiki_ui.legend_show" : "wiki_ui.legend_hide")}
+              data-testid={`wiki-graph-legend-${group}`}
+              className={cn(
+                "flex h-7 w-full items-center gap-2 rounded-md px-2 text-sm transition-colors hover:bg-secondary",
+                hidden ? "text-foreground-faint" : "text-foreground",
+              )}
+            >
+              <KindGlyph
+                group={group}
+                className={cn("h-2.5 w-2.5", hidden ? "opacity-40" : "text-foreground")}
+              />
+              <span className={cn("min-w-0 flex-1 truncate text-left", hidden && "line-through decoration-foreground-faint/60")}>
+                {t(GROUP_LABEL_KEY[group])}
+              </span>
+              <span className="tabular-nums text-foreground-faint">{kindCounts.get(group) ?? 0}</span>
+            </button>
+          );
+        })}
+        <div className="mt-1 flex items-center gap-2 border-t border-border px-2 pb-0.5 pt-2 text-xs text-foreground-faint">
+          <span className="h-px w-4 bg-foreground/40" aria-hidden />
+          <span className="tabular-nums">
+            {t("wiki_ui.legend_connections").replace("{0}", String(connectionCount))}
+          </span>
+        </div>
+      </div>
+
+      <div className="absolute bottom-3 right-3 z-10 flex items-center gap-2">
+        <GraphDimensionToggle className="h-8 bg-popover/85" />
         <button
           type="button"
           onClick={handleResetView}
           data-testid="wiki-graph-reset-view"
-          className="rounded-md border border-border bg-card/80 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur transition hover:text-foreground hover:bg-card"
+          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-popover/85 px-2.5 text-sm font-medium text-muted-foreground backdrop-blur transition-colors hover:bg-secondary hover:text-foreground"
           title={t("wiki_graph.reset_view_title")}
         >
+          <LocateFixed className="h-3.5 w-3.5" aria-hidden />
           {t("wiki_graph.center")}
         </button>
       </div>
+
+      <p className="pointer-events-none absolute bottom-5 left-4 z-10 hidden whitespace-nowrap text-xs text-foreground-faint 2xl:block">
+        {t("wiki_ui.map_hint")}
+      </p>
+
+      {graphData.nodes.length === 0 && (
+        <div
+          className="absolute inset-0 z-[5] flex items-center justify-center px-8 text-center text-sm text-muted-foreground"
+          data-testid="wiki-graph-all-hidden"
+        >
+          {t("wiki_ui.map_all_hidden")}
+        </div>
+      )}
+
       <ul data-testid="wiki-graph-node-list" className="sr-only">
         {nodeListItems}
       </ul>
@@ -810,8 +1303,9 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         // screen. The settled layout is preserved now; a debounced zoomToFit
         // (see the winSize effect above) just re-frames it after a real resize.
         //
-        // Every accessor below is a STABLE callback. Passing fresh closures
-        // made the library re-ingest its whole accessor set on each of this
+        // Every accessor below is a STABLE callback (the particle count alone
+        // changes with the hovered page). Passing fresh closures made the
+        // library re-ingest its whole accessor set on each of this
         // component's renders, for values that never changed.
         ref={graphRef}
         graphData={graphData}
@@ -833,19 +1327,29 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         onZoomEnd={handleZoomEnd}
         onNodeDrag={handleNodeDrag}
         onBackgroundClick={handleBackgroundClick}
-        // Compact, Obsidian-like node size.
+        onNodeHover={handleNodeHover}
+        // The focus styling reads refs, so the library must paint every
+        // frame while its loop runs; the loop itself is parked when idle
+        // (see pauseRenderIfIdle), which is what keeps an idle map free.
+        autoPauseRedraw={false}
         nodeRelSize={2}
         nodeVal={nodeVal}
         nodeColor={nodeColor}
         nodeCanvasObjectMode={nodeCanvasObjectMode}
         nodeCanvasObject={nodeCanvasObject}
+        nodePointerAreaPaint={nodePointerAreaPaint}
+        onRenderFramePost={drawLabels}
         linkLabel={linkLabel}
         linkColor={linkColor}
-        linkWidth={1.0}
+        linkWidth={linkWidth}
         linkLineDash={linkLineDash}
-        linkDirectionalArrowLength={4}
+        linkDirectionalArrowLength={linkArrowLength}
         linkDirectionalArrowRelPos={0.82}
         linkDirectionalArrowColor={linkArrowColor}
+        linkDirectionalParticles={linkParticles}
+        linkDirectionalParticleSpeed={0.006}
+        linkDirectionalParticleWidth={2.4}
+        linkDirectionalParticleColor={linkParticleColor}
         //  - velocityDecay 0.6: damp oscillation in dense graphs
         //  - alphaDecay 0.04: settle time ~4s
         //  - cooldownTicks 200: matches alphaDecay

@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 50
+page_count: 49
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -190,9 +190,10 @@ pages:
     file: docs/product/everyday-use/tasks-and-reminders.md
     title: Tasks and Reminders
     diataxis: howto
-    summary: Create, review, approve, and complete tasks, including scheduled and recurring work.
+    summary: Schedule recurring and one-off work as routines on your agents, then review, pause or stop each run.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AutomationsView.tsx
+      - jarvis/ui/web/frontend/src/components/society/card/AgentRoutinesList.tsx
+      - jarvis/society/routines.py
       - jarvis/ui/web/tasks_routes.py
       - jarvis/tasks/store.py
       - jarvis/tasks/scheduler.py
@@ -201,7 +202,6 @@ pages:
       - jarvis-agents
       - workflows-and-commands
       - safety-and-approvals
-      - automations
     reader_level: beginner
     maturity: stable
 
@@ -215,7 +215,7 @@ pages:
     summary: See the difference between conversation history and a detailed run trace, then use both to understand an answer.
     authoritative_sources:
       - jarvis/ui/web/frontend/src/views/SessionsView.tsx
-      - jarvis/ui/web/frontend/src/views/RunInspectorView.tsx
+      - jarvis/ui/web/frontend/src/components/agentchat/WorkTrace.tsx
       - jarvis/ui/web/sessions_routes.py
       - jarvis/ui/web/diagnostics_routes.py
       - jarvis/sessions/recorder.py
@@ -405,7 +405,7 @@ pages:
     diataxis: howto
     summary: Shape how Jarvis responds without changing providers, memories, or safety rules.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AgentInstructionsView.tsx
+      - jarvis/ui/web/frontend/src/views/AssistantProfileView.tsx
       - jarvis/brain/agent_instructions.py
       - jarvis/brain/persona_loader.py
       - jarvis/brain/JARVIS_PERSONA.md
@@ -842,11 +842,15 @@ pages:
     file: docs/product/privacy-safety-and-support/permissions.md
     title: App Permissions
     diataxis: howto
-    summary: Grant only the microphone, screen, accessibility, and input permissions needed for voice, global shortcuts, and Computer Use.
+    summary: See when macOS asks for microphone, screen, accessibility, and input access, and how to change an answer later.
     authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/settings/PermissionsPanel.tsx
+      - jarvis/ui/web/frontend/src/lib/permissionToast.ts
+      - jarvis/ui/web/frontend/src/i18n/locales/en.json
+      - jarvis/cli_ctl/commands/permissions.py
+      - jarvis/core/macos_privacy_strings.py
       - jarvis/ui/web/permissions_routes.py
       - jarvis/platform/permissions.py
+      - jarvis/platform/permission_service.py
       - jarvis/platform/capabilities.py
     related:
       - first-run-setup
@@ -1055,26 +1059,6 @@ pages:
 
   - section: Everyday use
     section_order: 2
-    order: 9
-    slug: automations
-    file: docs/product/everyday-use/automations.md
-    title: Automations
-    diataxis: howto
-    summary: Browse automation templates, control recurring work, and inspect schedules and run history.
-    authoritative_sources:
-      - jarvis/ui/web/frontend/src/views/AutomationsView.tsx
-      - jarvis/ui/web/frontend/src/views/automations/TemplateAddDialog.tsx
-      - jarvis/tasks/templates/__init__.py
-    related:
-      - tasks-and-reminders
-      - costs
-      - workflows-and-commands
-      - safety-and-approvals
-    reader_level: beginner
-    maturity: stable
-
-  - section: Everyday use
-    section_order: 2
     order: 10
     slug: costs
     file: docs/product/everyday-use/costs.md
@@ -1086,7 +1070,7 @@ pages:
       - jarvis/ui/web/costs_routes.py
     related:
       - tasks-and-reminders
-      - automations
+      - jarvis-agents
       - providers-and-api-keys
     reader_level: beginner
     maturity: stable

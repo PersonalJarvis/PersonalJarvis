@@ -68,6 +68,14 @@ interface PromptRows {
  */
 function findRows(term: PromptSelectionTerminal, cursorRow: number): PromptRows | null {
   const buffer = term.buffer.active;
+  // xterm's `getLine` does not stop at the end of the buffer: past the last
+  // row it wraps around the scrollback ring and hands back old rows. A pane
+  // whose whole scrollback is one long soft-wrapped line therefore never
+  // yields a non-wrapped row, and an unbounded walk spins forever inside a
+  // render callback — the hung window of 2026-10-02 (captured stack:
+  // findRows <- readPrompt <- onRender). Every walk stops at the real end.
+  const lastRow = buffer.length - 1;
+  const wrappedBelow = (row: number) => row < lastRow && buffer.getLine(row + 1)?.isWrapped;
   // Claude Code draws its marker as "❯" + NO-BREAK SPACE; read it as a space.
   const rowText = (row: number) =>
     buffer.getLine(row)?.translateToString(false, 0, term.cols).replace(/\u00a0/g, " ");
@@ -96,12 +104,12 @@ function findRows(term: PromptSelectionTerminal, cursorRow: number): PromptRows 
     }
     if (anchored) {
       let last = cursorRow;
-      for (let row = cursorRow + 1; row - cursorRow <= MAX_PROMPT_ROWS; row++) {
+      for (let row = cursorRow + 1; row - cursorRow <= MAX_PROMPT_ROWS && row <= lastRow; row++) {
         const line = buffer.getLine(row);
         if (line?.isWrapped || (line && continuation(row))) continue;
         const closing = rowText(row);
         if (closing !== undefined && CLOSING_ROW.test(closing)) last = row - 1;
-        else while (buffer.getLine(last + 1)?.isWrapped) last++;
+        else while (wrappedBelow(last)) last++;
         break;
       }
       const markerWidth = prefix.length;
@@ -115,7 +123,7 @@ function findRows(term: PromptSelectionTerminal, cursorRow: number): PromptRows 
   first = cursorRow;
   while (first > 0 && buffer.getLine(first)?.isWrapped) first--;
   let last = cursorRow;
-  while (buffer.getLine(last + 1)?.isWrapped) last++;
+  while (wrappedBelow(last)) last++;
   const head = buffer.getLine(first);
   if (!head) return null;
   let frame = 0;

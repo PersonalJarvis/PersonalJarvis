@@ -319,8 +319,17 @@ def _tree_script(tmp_path: Path, *, fast_leader: bool = False) -> Path:
     return script
 
 
+# Bounds for event-driven waits below; each returns as soon as its condition
+# holds. On Windows a command runs behind a PowerShell containment launcher,
+# whose start-up alone took 10-20 s per command on the loaded CI runner (this
+# file ran 116-233 s there against ~10 s on a desktop), so a short bound
+# measures the runner, not the containment.
+_TREE_START_TIMEOUT_S = 120.0
+_TREE_REAP_TIMEOUT_S = 30.0
+
+
 async def _wait_for_pid_file(path: Path) -> int:
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + _TREE_START_TIMEOUT_S
     while time.monotonic() < deadline:
         if path.is_file():  # noqa: ASYNC240 - tiny test synchronization probe
             return int(
@@ -332,7 +341,7 @@ async def _wait_for_pid_file(path: Path) -> int:
 
 async def _assert_pid_gone(pid: int) -> None:
     psutil = pytest.importorskip("psutil")
-    deadline = time.monotonic() + 5.0
+    deadline = time.monotonic() + _TREE_REAP_TIMEOUT_S
     while time.monotonic() < deadline:
         if not psutil.pid_exists(pid):
             return
@@ -343,9 +352,48 @@ async def _assert_pid_gone(pid: int) -> None:
             raise AssertionError(f"descendant process {pid} survived command cleanup")
 
 
+class _TimeoutClockStartsWithTree:
+    """Stands in for ``asyncio`` inside ``api_agent_tools`` for one command.
+
+    The command's timeout clock normally starts when the launcher gate opens.
+    On a loaded runner the launcher can take longer than any short timeout to
+    start the target, so the timeout fired before the descendant under test
+    existed. This proxy delays only the FIRST ``wait_for`` — the command's own
+    timeout wait — until the descendant has written its pid file; the real
+    timeout, kill and Job/process-group cleanup then run unchanged. Every other
+    attribute is the real ``asyncio``.
+    """
+
+    def __init__(self, pid_file: Path) -> None:
+        self._pid_file = pid_file
+        self._armed = True
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(asyncio, name)
+
+    async def wait_for(
+        self,
+        aw: object,
+        timeout: float | None,  # noqa: ASYNC109 - mirrors asyncio.wait_for
+    ) -> object:
+        if self._armed:
+            self._armed = False
+            try:
+                await _wait_for_pid_file(self._pid_file)
+            except BaseException:
+                close = getattr(aw, "close", None)
+                if callable(close):
+                    close()
+                raise
+        return await asyncio.wait_for(aw, timeout)  # type: ignore[arg-type]
+
+
 @pytest.mark.asyncio
-async def test_command_timeout_reaps_descendant_tree(tmp_path: Path) -> None:
+async def test_command_timeout_reaps_descendant_tree(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _tree_script(tmp_path)
+    monkeypatch.setattr(aat, "asyncio", _TimeoutClockStartsWithTree(tmp_path / "child.pid"))
     out, err = await execute_worker_tool_async(
         "RunCommand",
         {"program": "python", "args": ["spawn_tree.py"], "timeout_s": 2.0},

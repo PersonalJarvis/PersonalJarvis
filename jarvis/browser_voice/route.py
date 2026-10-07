@@ -47,20 +47,28 @@ _USAGE_FALLBACK_DISABLED_DETAIL = (
     "model settings. Automatic usage-billed API fallback is disabled; "
     "Jarvis did not switch to another provider."
 )
+# The close reason a browser shows the person when the classic chain cannot be
+# built. WebSocket close reasons are capped at 123 bytes.
+_SPEECH_STACK_UNAVAILABLE_REASON = (
+    "Voice could not start: a speech-to-text, brain or text-to-speech "
+    "provider is missing. Check API Keys."
+)
 
 # BCP-47 from the canonical per-turn resolver (de/en/es).
 _LANG_MAP = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
 
 
-def _browser_voice_enabled(cfg: Any) -> bool:
-    """Default OFF. The socket is only served when the user has explicitly
-    enabled a browser voice surface: realtime mode ([voice].mode == "realtime")
-    or the classic browser bridge ([browser_voice].enabled == true).
+def browser_voice_enabled(cfg: Any) -> bool:
+    """Whether ``/ws/audio`` serves a browser-held call under this config.
+
+    Realtime mode always serves it: the socket carries the realtime call and
+    its classic fallback. Pipeline mode serves the classic STT -> brain -> TTS
+    bridge while ``[browser_voice].enabled`` is on, which is the default — a
+    config object without the section behaves like the schema default.
     """
     if getattr(getattr(cfg, "voice", None), "mode", "pipeline") == "realtime":
         return True
-    bv = getattr(cfg, "browser_voice", None)
-    return bool(getattr(bv, "enabled", False)) if bv is not None else False
+    return bool(getattr(getattr(cfg, "browser_voice", None), "enabled", True))
 
 
 def _resolve_language(cfg: Any) -> str:
@@ -441,7 +449,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
         except Exception:  # noqa: BLE001 - Config failure degrades to unavailable voice.
             cfg = None
 
-    if cfg is not None and not _browser_voice_enabled(cfg):
+    if cfg is not None and not browser_voice_enabled(cfg):
         await ws.close(code=1008, reason="browser voice disabled")
         return
 
@@ -464,19 +472,30 @@ async def browser_voice_ws(ws: WebSocket) -> None:
             ws.send_json(msg), timeout=_TRANSPORT_SEND_TIMEOUT_S
         )
 
+    from jarvis.browser_voice.output_control import BrowserOutputControl
+
+    pipeline = getattr(state, "speech_pipeline", None)
+    if pipeline is None:
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+    output = BrowserOutputControl(
+        bus=bus, pipeline=pipeline, send_json=_send_json, send_binary=_send_binary,
+        volume=float(getattr(getattr(cfg, "tts", None), "volume", 1.0)),
+    )
     session = _build_browser_session(
         state=state,
         cfg=cfg,
         bus=bus,
         session_id=session_id,
-        send_binary=_send_binary,
-        send_json=_send_json,
+        send_binary=output.send_binary,
+        send_json=output.send_json,
     )
     if session is None:
         reason = (
             "realtime access unavailable"
             if not _automatic_usage_fallback_allowed(cfg)
-            else "speech stack unavailable"
+            else _SPEECH_STACK_UNAVAILABLE_REASON
         )
         await ws.close(code=1011, reason=reason)
         return
@@ -544,11 +563,11 @@ async def browser_voice_ws(ws: WebSocket) -> None:
             cfg=cfg,
             bus=bus,
             session_id=session_id,
-            send_binary=_send_binary,
-            send_json=_send_json,
+            send_binary=output.send_binary,
+            send_json=output.send_json,
         )
         if fallback is None:
-            await ws.close(code=1011, reason="speech stack unavailable")
+            await ws.close(code=1011, reason=_SPEECH_STACK_UNAVAILABLE_REASON)
             return False
         session = fallback
         await _send_json({"type": "mode_fallback", "mode": "pipeline"})
@@ -600,6 +619,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     )
 
     try:
+        await output.start()
         while True:
             try:
                 msg = await ws.receive()
@@ -658,6 +678,7 @@ async def browser_voice_ws(ws: WebSocket) -> None:
                         if not await _switch_to_classic(str(exc)):
                             break
     finally:
+        output.close()
         try:
             await asyncio.wait_for(
                 audio_queue.join(), timeout=_AUDIO_DRAIN_TIMEOUT_S

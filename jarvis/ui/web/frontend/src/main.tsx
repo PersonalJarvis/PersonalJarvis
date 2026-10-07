@@ -6,7 +6,9 @@ import { ThemeProvider } from "./hooks/useTheme";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
 import { AuthGate } from "./components/AuthGate";
 import { installPreloadRecovery } from "./lib/preloadRecovery";
-import { POLL_MS, installBundleWatch } from "./lib/bundleWatch";
+import { POLL_MS, bundleFingerprint, installBundleWatch } from "./lib/bundleWatch";
+import { reloadHeld, setReloadHold } from "./lib/reloadHold";
+import { useEventStore } from "./store/events";
 import { browserSafeReloadDeps, reloadWhenServable } from "./lib/safeReload";
 import { loadUiLocale, useI18nStore } from "./i18n";
 import "./index.css";
@@ -23,8 +25,9 @@ installPreloadRecovery({
   // Never a bare location.reload(). The chunk went missing because a rebuild
   // is running, which is precisely when the entry document is also briefly
   // unservable — reloading into that leaves the window with no JavaScript and
-  // nothing left to recover with. See lib/safeReload.
-  reload: () => reloadWhenServable(browserSafeReloadDeps()),
+  // nothing left to recover with. See lib/safeReload. It also waits out a live
+  // call or a streaming reply, like every automatic reload (lib/reloadHold).
+  reload: () => reloadWhenServable(browserSafeReloadDeps({ held: reloadHeld })),
   defer: (fn, ms) => {
     window.setTimeout(fn, ms);
   },
@@ -36,6 +39,13 @@ installPreloadRecovery({
 // fresh window would load, and reload when the answer has changed — a rebuild
 // is then something the user watches happen instead of something they operate.
 // See lib/bundleWatch for the two guards that keep this quiet.
+//
+// A typed reply streams into this document the way a call does, so it holds
+// reloads too. `chatThinking` always ends: the reply, an error, or the turn's
+// timeout clears it (lib/chat).
+useEventStore.subscribe((state) =>
+  setReloadHold("typed-chat-reply", state.chatThinking),
+);
 {
   let lastInput: number | null = null;
   const noteInput = () => {
@@ -45,6 +55,8 @@ installPreloadRecovery({
     window.addEventListener(kind, noteInput, { capture: true, passive: true });
   }
   installBundleWatch({
+    // The server may already have changed before our first poll completes.
+    baseline: bundleFingerprint(document.head.innerHTML),
     fetchIndex: () =>
       fetch("/", {
         cache: "no-store",
@@ -56,8 +68,9 @@ installPreloadRecovery({
             ? AbortSignal.timeout(POLL_MS - 500)
             : undefined,
       }).then((response) => (response.ok ? response.text() : "")),
-    reload: () => reloadWhenServable(browserSafeReloadDeps()),
+    reload: () => reloadWhenServable(browserSafeReloadDeps({ held: reloadHeld })),
     idleFor: () => (lastInput === null ? null : Date.now() - lastInput),
+    held: reloadHeld,
     visible: () => document.visibilityState !== "hidden",
     every: (fn, ms) => window.setInterval(fn, ms),
     stop: (handle) => window.clearInterval(handle),
@@ -118,6 +131,13 @@ const queryClient = new QueryClient({
   },
 });
 
+// The appshot editor's own desktop window (a click on the corner card) loads
+// just the editor, not the app around it. Lazy, so the app never carries it.
+const AppshotEditorWindow = React.lazy(() =>
+  import("./views/AppshotEditorWindow").then((m) => ({ default: m.AppshotEditorWindow })),
+);
+const isEditorWindow = new URLSearchParams(window.location.search).get("view") === "appshot-editor";
+
 function renderApp(): void {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -128,8 +148,18 @@ function renderApp(): void {
             resetKey="root"
             onRecover={() => window.location.reload()}
           >
-            <AuthGate>
-              <App />
+            <AuthGate quiet={isEditorWindow}>
+              {isEditorWindow ? (
+                <React.Suspense
+                  fallback={
+                    <div className="fixed inset-0 bg-popover" data-testid="appshot-editor-window" />
+                  }
+                >
+                  <AppshotEditorWindow />
+                </React.Suspense>
+              ) : (
+                <App />
+              )}
             </AuthGate>
           </ViewErrorBoundary>
         </ThemeProvider>

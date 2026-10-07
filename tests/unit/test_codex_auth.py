@@ -415,6 +415,16 @@ def test_guarded_windows_login_closes_job_when_guardian_exits(
     def handoff(*_args: object, **_kwargs: object) -> None:
         events.append("handoff")
 
+    def hold_liveness(path):
+        import os
+
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        captured["liveness_fd"] = descriptor
+        return descriptor
+
+    # This fixture exercises the Windows job wrapper, not an OS lock. The
+    # inherited-file and real guardian tests cover native liveness separately.
+    monkeypatch.setattr(codex_mod, "_hold_parent_liveness_lock", hold_liveness)
     monkeypatch.setattr(codex_mod.sys, "platform", "win32")
     monkeypatch.setattr(codex_mod.subprocess, "Popen", spawn)
     monkeypatch.setattr(

@@ -172,11 +172,32 @@ async def test_mute_still_wins_and_is_reported_first() -> None:
         pipe._dictation_task.cancel()
 
 
-def test_a_closed_capture_gate_is_named_without_guessing() -> None:
+def test_a_closed_background_gate_is_named_without_guessing() -> None:
     pipe = _gate_pipeline()
     pipe._activation_gate = lambda: False
     assert pipe._activation_allowed() is False
-    assert "microphone capture is not permitted" in pipe._activation_block_reason()
+    assert pipe._activation_block_reason() == "microphone access is not granted"
+
+
+def test_a_closed_user_gate_is_named_without_guessing() -> None:
+    pipe = _gate_pipeline()
+    pipe._user_activation_gate = lambda: False
+    assert pipe._gesture_activation_allowed() is False
+    assert (
+        pipe._activation_block_reason(explicit=True)
+        == "microphone access is denied or unavailable"
+    )
+    # The wake word is judged by the background gate, which this test left open.
+    assert pipe._activation_allowed() is True
+
+
+def test_an_undecided_microphone_closes_wake_but_not_a_deliberate_press() -> None:
+    """Wake needs a live grant; a key press only needs the mic not to be refused."""
+    pipe = _gate_pipeline()
+    pipe._activation_gate = lambda: False  # not granted
+    pipe._user_activation_gate = lambda: True  # not refused either
+    assert pipe._activation_allowed() is False
+    assert pipe._gesture_activation_allowed() is True
 
 
 # --------------------------------------------------------------------------

@@ -11,8 +11,26 @@ matching _TTS_DEFAULTS entry, and PASS once the entry is added.
 """
 from __future__ import annotations
 
+import tomllib
+
 from jarvis.core import config_writer
 from jarvis.ui.web.provider_spec import PROVIDERS
+
+
+def test_vertex_switch_replaces_the_previous_providers_model_and_voices(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        config_writer, "_sync_tts_provider_drift_soll", lambda applied: None,  # i18n-allow
+    )
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[tts]\nprovider = "openrouter-tts"\nmodel = "old-model"\n'
+        'voice_de = "old-voice"\nvoice_en = "old-voice"\n', encoding="utf-8",
+    )
+    config_writer.set_tts_provider("vertex-tts", path=path)
+    tts = tomllib.loads(path.read_text(encoding="utf-8"))["tts"]
+    assert tts["provider"] == "vertex-tts"
+    assert tts["model"] == "gemini-3.1-flash-tts-preview"
+    assert tts["voice_de"] == tts["voice_en"] == "Charon"
 
 
 def test_all_tts_providers_have_defaults_entry() -> None:

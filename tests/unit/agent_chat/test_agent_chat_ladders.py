@@ -174,6 +174,25 @@ def test_claude_planner_passes_the_cli_mode_through(monkeypatch, tmp_path: Path)
     }
 
 
+def test_claude_planner_asks_for_thinking_summaries(monkeypatch, tmp_path: Path):
+    """Print mode leaves thinking blocks empty; summaries are the thread's reasoning."""
+    from jarvis import claude_auth
+
+    monkeypatch.setattr(runner_cli, "claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(runner_cli, "_registry_env", lambda _name, env: env)
+    monkeypatch.setitem(claude_auth._THINKING_DISPLAY_CACHE, ("claude",), True)
+    args = dict(
+        prompt="hi", cwd=tmp_path, model="", effort="", permission_mode="default", resume=None
+    )
+    argv = plan_claude(**args).argv
+    assert argv[argv.index("--thinking-display") + 1] == "summarized"
+    # GLM rides Claude Code against another endpoint and is never asked.
+    assert "--thinking-display" not in runner_cli.plan_glm(**args).argv
+    # An older CLI (probe False) gets no flag it would reject.
+    monkeypatch.setitem(claude_auth._THINKING_DISPLAY_CACHE, ("claude",), False)
+    assert "--thinking-display" not in plan_claude(**args).argv
+
+
 def test_claude_planner_opens_the_control_protocol(monkeypatch, tmp_path: Path):
     """The handshake, without which no permission mode can ever ask.
 

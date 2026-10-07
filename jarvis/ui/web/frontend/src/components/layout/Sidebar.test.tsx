@@ -10,6 +10,8 @@ import {
 } from "@/components/layout/Sidebar";
 import { NAV_GROUPS, NAV_FOOTER_ITEMS, SETTINGS_HUB_IDS } from "@/components/layout/navGroups";
 import { isSectionId, useEventStore } from "@/store/events";
+import { useQuickSwitcher } from "@/store/quickSwitcher";
+import { useQuickSwitchSettings } from "@/store/quickSwitchSettings";
 import { useHomeStore } from "@/store/home";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -57,21 +59,20 @@ test("IDE rail keeps workspace options and Jarvis Live reachable", () => {
   expect(options.disabled).toBe(false);
   fireEvent.click(options);
   expect(useIdeProjectsStore.getState().action).toMatchObject({ kind: "workspace-options", workspaceId: "w1" });
-  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
-  expect(useEventStore.getState().activeSection).toBe("chats");
   cleanup();
 });
 
-test("IDE sidebar puts Projects first and returns to the normal chat navigation", () => {
+test("IDE sidebar puts Projects first and returns to the normal chat navigation", async () => {
   act(() => useEventStore.setState({ activeSection: "agentic-ide" }));
   renderSidebar();
-  expect(screen.getByTestId("ide-project-tree")).toBeDefined();
+  expect(await screen.findByTestId("ide-project-tree")).toBeDefined();
   // The agents list lives in the IDE's right-hand side panel now.
   expect(screen.queryByTestId("ide-workspace-agents")).toBeNull();
   expect(screen.queryByTestId("sidebar-new-chat")).toBeNull();
   expect(screen.queryByTestId("nav-row-agentic-ide")).toBeNull();
-  fireEvent.click(screen.getByTestId("ide-back-to-jarvis"));
-  expect(useEventStore.getState().activeSection).toBe("chats");
+  // No "Back to Jarvis" row: the caption's back arrow leaves the IDE.
+  expect(screen.queryByTestId("ide-back-to-jarvis")).toBeNull();
+  act(() => useEventStore.setState({ activeSection: "chats" }));
   expect(screen.getByTestId("sidebar-new-chat")).toBeDefined();
   cleanup();
 });
@@ -222,66 +223,24 @@ describe("Sidebar new-conversation button", () => {
     useEventStore.setState({ conversations: [], messages: [], activeThreadId: null });
   });
 
-  test("offers both kinds and opens typed chat from the voice stage", async () => {
+  test("opens an empty typed chat in one click, even from voice mode", async () => {
     useHomeStore.setState({ surface: "voice", transcript: [] });
     renderSidebar();
     const button = screen.getByTestId("sidebar-new-chat");
     expect(button.textContent).toContain("New chat");
     await act(async () => { button.click(); await Promise.resolve(); });
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
-    expect(screen.getByTestId("new-voice-chat")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("new-text-chat"));
     expect(useHomeStore.getState().surface).toBe("chat");
     expect(useEventStore.getState().activeSection).toBe("chats");
-  });
-
-  test("on the chat surface it still opens an empty chat", async () => {
-    useHomeStore.setState({ surface: "chat", transcript: [] });
-
-    renderSidebar();
-    const button = screen.getByTestId("sidebar-new-chat");
-    expect(button.textContent).toContain("New chat");
-    expect(button.textContent).not.toContain("voice");
-
-    await act(async () => {
-      button.click();
-      await Promise.resolve();
-    });
-    fireEvent.click(screen.getByTestId("new-text-chat"));
-
-    expect(useHomeStore.getState().surface).toBe("chat");
-    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
-    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
-  });
-
-  test("opens a fresh voice chat from the chat surface", async () => {
-    useHomeStore.setState({ surface: "chat", transcript: [], liveReply: "Previous reply" });
-    renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
-    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
-    expect(fetch).toHaveBeenCalledWith("/api/chats/voice/new", { method: "POST" });
-    expect(useHomeStore.getState().surface).toBe("voice");
-    expect(useHomeStore.getState().liveReply).toBe("");
-    expect(useEventStore.getState().activeSection).toBe("chats");
-    expect(useEventStore.getState().activeKind).toBe("voice");
-    expect(useEventStore.getState().activeThreadId).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  test("keeps the current conversation if creating a voice chat fails", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
-      String(url) === "/api/chats/voice/new"
-        ? new Response("", { status: 503 })
-        : new Response(JSON.stringify([]), { status: 200 }),
-    ));
+  test("never starts a voice run — voice is a mode inside the chat now", async () => {
     useHomeStore.setState({ surface: "chat", transcript: [] });
     renderSidebar();
-    fireEvent.click(screen.getByTestId("sidebar-new-chat"));
-    await act(async () => { fireEvent.click(screen.getByTestId("new-voice-chat")); });
+    await act(async () => { screen.getByTestId("sidebar-new-chat").click(); await Promise.resolve(); });
     expect(useHomeStore.getState().surface).toBe("chat");
-    expect(useEventStore.getState().activeThreadId).toBe("old-voice-thread");
-    expect(screen.getByRole("dialog")).toBeTruthy();
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some((c) => String(c[0]) === "/api/chats/voice/new")).toBe(false);
   });
 });
 
@@ -302,18 +261,19 @@ describe("Sidebar header avatar", () => {
     overlayMock.style = "jarvis_bar";
   });
 
-  // The mark is a bundled import, so its URL carries a build hash and there is
-  // nothing stable to assert. What matters is that the avatar shows the mark
-  // and not a stale public/ path a browser would serve from cache.
-  test("renders the Gigi app mark from the bundle, not a public path", () => {
+  // The mark is the user's pet (Gigi by default), drawn by PetMark from the
+  // pets answer — never the old static Gigi image.
+  test("renders the pet mark, not the old Gigi image", () => {
+    // The mark heads the identity row, which returns when the quick
+    // switcher (and with it the search bar) is switched off.
+    useQuickSwitchSettings.setState({ enabled: false });
     const { container } = renderSidebar();
+    useQuickSwitchSettings.setState({ enabled: true });
     const avatar = container.querySelector('[data-testid="sidebar-style-avatar"]');
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
-    const logo = avatar?.querySelector("img") as HTMLImageElement;
-    const src = logo.getAttribute("src") ?? "";
-    expect(src).toContain("jarvis-mark");
-    expect(src.startsWith("/jarvis-")).toBe(false);
+    expect(avatar?.querySelector('[data-testid="pet-mark"]')).toBeTruthy();
+    expect(avatar?.querySelector("img")).toBeNull();
   });
 });
 
@@ -345,7 +305,7 @@ describe("Sidebar settings-hub entry", () => {
   test("the profile button stays lit while any hub section is on screen", () => {
     // It IS the hub's entry point, so it carries "you are here" for all of
     // the hub's sections — including ones only reachable from inside the hub.
-    useEventStore.setState({ activeSection: "local-models" });
+    useEventStore.setState({ activeSection: "appshots" });
     renderSidebar();
 
     expect(screen.getByTestId("sidebar-profile-toggle").className).toMatch(
@@ -393,21 +353,42 @@ describe("Sidebar assistant name header", () => {
 
     renderSidebar();
 
-    expect(screen.getByText("Ruben")).toBeTruthy();
-    expect(screen.queryByText("Jarvis")).toBeNull();
+    // The name lives in the search bar's accessible name now.
+    const bar = screen.getByTestId("sidebar-search");
+    expect(bar.getAttribute("aria-label")).toContain("Ruben");
+    expect(bar.getAttribute("aria-label")).not.toContain("Jarvis");
   });
 
   test("follows a live assistant-name change", () => {
     useEventStore.setState({ assistantName: "Nova" });
     renderSidebar();
-    expect(screen.getByText("Nova")).toBeTruthy();
+    const bar = () => screen.getByTestId("sidebar-search").getAttribute("aria-label") ?? "";
+    expect(bar()).toContain("Nova");
 
     act(() => {
       useEventStore.setState({ assistantName: "Athena" });
     });
 
-    expect(screen.getByText("Athena")).toBeTruthy();
-    expect(screen.queryByText("Nova")).toBeNull();
+    expect(bar()).toContain("Athena");
+    expect(bar()).not.toContain("Nova");
+  });
+
+  test("the search bar is a field you type into, not a door to a window", () => {
+    renderSidebar();
+    const bar = screen.getByTestId("sidebar-search") as HTMLInputElement;
+    fireEvent.change(bar, { target: { value: "agen" } });
+    expect(bar.value).toBe("agen");
+    // Typing here never opens the Spotlight window in the middle.
+    expect(useQuickSwitcher.getState().open).toBe(false);
+  });
+
+  test("switching the quick switcher off brings the name row back", () => {
+    useEventStore.setState({ assistantName: "Ruben" });
+    useQuickSwitchSettings.setState({ enabled: false });
+    renderSidebar();
+    expect(screen.queryByTestId("sidebar-search")).toBeNull();
+    expect(screen.getByText("Ruben")).toBeTruthy();
+    useQuickSwitchSettings.setState({ enabled: true });
   });
 });
 

@@ -54,6 +54,15 @@ def _reset_openers_cache_between_tests():
     outputs_routes._reset_openers_cache()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_editor_installs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Editor detection probes standard install paths first; keep the test
+    machine's own VS Code or Cursor out so only the stubbed resolver decides."""
+    from jarvis.ui.web import outputs_routes
+
+    monkeypatch.setattr(outputs_routes, "_editor_install_candidates", lambda app_id: [])
+
+
 # --- Stubs -------------------------------------------------------------------
 
 
@@ -373,6 +382,26 @@ async def test_list_outputs_mission_dir_running_state(
         r = client.get("/api/outputs")
     sessions = r.json()["sessions"]
     assert sessions[0]["status"] == "running"
+
+
+@pytest.mark.asyncio
+async def test_parked_mission_is_running_and_flags_the_capacity_decision(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A WAITING_CAPACITY mission has not landed (status "running") and tells
+    the Artifacts view to offer wait / approve-paid / cancel for it."""
+    parked = "019e3600-c001-7000-8000-0000000000c1"
+    running = "019e3600-c002-7000-8000-0000000000c2"
+    for mission_id, state in ((parked, "WAITING_CAPACITY"), (running, "RUNNING")):
+        _make_mission_dir(tmp_path, mission_id)
+        await _insert_mission(db_conn, mission_id=mission_id, state=state)
+
+    with TestClient(app) as client:
+        r = client.get("/api/outputs")
+    by_id = {s["mission_id"]: s for s in r.json()["sessions"]}
+    assert by_id[parked]["status"] == "running"
+    assert by_id[parked]["waiting_capacity"] is True
+    assert by_id[running]["waiting_capacity"] is False
 
 
 @pytest.mark.asyncio
@@ -1379,6 +1408,42 @@ def test_artifact_page_allows_inline_scripts_but_no_network(app):
     assert "document.title" in r.text
 
 
+def test_artifact_page_is_sandboxed_even_when_opened_top_level(app):
+    """"Open in browser" loads ``/page`` as a top-level tab, where the app's
+    iframe sandbox does not exist. The header CSP must carry the sandbox itself
+    (scripts only, no same-origin, no popups), or the page runs as the app
+    origin and one ``window.open('/')`` reaches every API route."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(
+        root, "019ed2dfd0fab1234", "escape.html", "<script>window.open('/')</script>"
+    )
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/page")
+    assert r.status_code == 200
+    directives = [d.strip() for d in r.headers["content-security-policy"].split(";")]
+    sandbox = [d for d in directives if d.split(" ")[0] == "sandbox"]
+    assert sandbox == ["sandbox allow-scripts"]
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["view", "download?disposition=inline"],
+)
+def test_worker_html_rendered_inline_is_sandboxed(app, route):
+    """Every inline rendering of a worker file gets an opaque origin, not just
+    a script ban: a top-level tab must never act as the app origin."""
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    name = "notes.md" if route == "view" else "page.html"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", name, "<b>x</b>")
+    client = TestClient(app)
+    r = client.get(f"/api/outputs/{slug}/files/{rel}/{route}")
+    assert r.status_code == 200
+    directives = [d.strip() for d in r.headers["content-security-policy"].split(";")]
+    assert "sandbox" in directives
+
+
 def test_artifact_page_answers_head_probe(app):
     """The frontend probes ``/page`` with HEAD before framing it. A 405 here
     made the probe fail on every backend, so the sandboxed page never got its
@@ -1661,3 +1726,133 @@ def test_graph_page_traversal_slug_is_rejected(app):
     with TestClient(app) as client:
         r = client.get("/api/outputs/..%2F..%2Fetc/graph")
     assert r.status_code in (400, 404)
+
+
+# --- DELETE routes (Artifacts right-click "Delete") ---------------------------
+
+
+def test_delete_artifact_keeps_run_with_other_deliverables(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    page = _make_deliverable(root, "019ed2dfd0fab1234", "page.html", "<p>x</p>")
+    _make_deliverable(root, "019ed2dfd0fab1234", "notes.md", "# notes")
+    client = TestClient(app)
+
+    r = client.delete(f"/api/outputs/{slug}/files/{page}")
+
+    assert r.status_code == 200
+    assert r.json()["deleted"] == "file"
+    assert not (root / slug / page).exists()
+    assert (root / slug / "tasks/019edeadbeef/artifacts/files/notes.md").is_file()
+
+
+def test_delete_last_artifact_removes_the_whole_run(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    page = _make_deliverable(root, "019ed2dfd0fab1234", "page.html", "<p>x</p>")
+    _seed(root / slug / "reflections.md", "scaffolding")
+    client = TestClient(app)
+
+    r = client.delete(f"/api/outputs/{slug}/files/{page}")
+
+    assert r.status_code == 200
+    assert r.json()["deleted"] == "run"
+    assert not (root / slug).exists()
+
+
+def test_delete_artifact_refuses_scaffolding_and_traversal(app):
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    _seed(root / slug / "reflections.md", "secret")
+    outside = _seed(root / "keep.txt", "keep")
+    client = TestClient(app)
+
+    assert client.delete(f"/api/outputs/{slug}/files/reflections.md").status_code == 404
+    assert (
+        client.delete(
+            f"/api/outputs/{slug}/files/tasks/x/artifacts/files/..%2f..%2f..%2f..%2fkeep.txt"
+        ).status_code
+        == 404
+    )
+    assert (root / slug / "reflections.md").is_file()
+    assert outside.is_file()
+
+
+def test_delete_run_removes_folder_from_every_root(app, tmp_path: Path):
+    canonical = tmp_path / "jarvis-agent-outputs"
+    legacy = tmp_path / "sub-agents-outputs"
+    mission_id = "019e3600-a84e-7000-8000-000000000097"
+    for root in (canonical, legacy):
+        _seed(_make_mission_dir(root, mission_id) / "tasks/t/artifacts/files/a.md", "a")
+    app.state.outputs_root = canonical
+    app.state.outputs_roots = (canonical, legacy)
+    slug = f"mission_{mission_id[:13]}"
+    client = TestClient(app)
+
+    r = client.delete(f"/api/outputs/{slug}")
+
+    assert r.status_code == 200
+    assert not (canonical / slug).exists()
+    assert not (legacy / slug).exists()
+
+
+def test_delete_run_removes_read_only_files(app):
+    import os
+    import stat
+
+    root = Path(app.state.outputs_root)
+    slug = "mission_019ed2dfd0fab"
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", "locked.md", "x")
+    os.chmod(root / slug / rel, stat.S_IREAD)
+    client = TestClient(app)
+
+    r = client.delete(f"/api/outputs/{slug}")
+
+    assert r.status_code == 200
+    assert not (root / slug).exists()
+
+
+def test_delete_unknown_or_escaping_slug_is_refused(app):
+    root = Path(app.state.outputs_root)
+    client = TestClient(app)
+
+    assert client.delete("/api/outputs/mission_0000000000000").status_code == 404
+    assert client.delete("/api/outputs/..").status_code in (400, 404, 405)
+    assert root.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_delete_refuses_a_running_mission(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-b000-7000-8000-000000000042"
+    session = _make_mission_dir(tmp_path, mission_id)
+    rel = "tasks/t/artifacts/files/page.html"
+    _seed(session / rel, "<p>x</p>")
+    await _insert_mission(db_conn, mission_id=mission_id, state="RUNNING")
+
+    with TestClient(app) as client:
+        run = client.delete(f"/api/outputs/{session.name}")
+        file = client.delete(f"/api/outputs/{session.name}/files/{rel}")
+
+    assert run.status_code == 409
+    assert file.status_code == 409
+    assert (session / rel).is_file()
+
+
+@pytest.mark.asyncio
+async def test_delete_allows_a_finished_mission(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-b000-7000-8000-000000000043"
+    session = _make_mission_dir(tmp_path, mission_id)
+    _seed(session / "tasks/t/artifacts/files/page.html", "<p>x</p>")
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED")
+
+    with TestClient(app) as client:
+        r = client.delete(f"/api/outputs/{session.name}")
+        listing = client.get("/api/outputs")
+
+    assert r.status_code == 200
+    assert not session.exists()
+    assert listing.json()["sessions"] == []

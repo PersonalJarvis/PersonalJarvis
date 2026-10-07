@@ -435,6 +435,7 @@ async def test_submit_passes_endpoint_refusal_through(monkeypatch: pytest.Monkey
 @pytest.mark.asyncio
 async def test_submit_disabled_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(publish, "publish_endpoint", lambda: "")
+    monkeypatch.setattr(publish, "registry_repo", lambda: "")
     value, _ = publish.validate_draft(_skill_draft())
     assert value is not None
     with pytest.raises(publish.SubmitError) as exc:

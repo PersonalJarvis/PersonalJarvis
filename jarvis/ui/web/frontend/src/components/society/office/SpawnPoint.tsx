@@ -44,7 +44,10 @@ interface SpawnLook {
   pad: string; speck: readonly string[]; padEdge: string; padBand: string;
 }
 
-/** Downstairs the agents' Scandinavian oak, sage and bronze; upstairs the coding floor's walnut, plum and amber. */
+/**
+ * Downstairs the agents' Scandinavian oak, sage and bronze; upstairs the coding floor's walnut, plum and amber.
+ * The arcade floor has no spawn point; its entry only keeps the table complete (neon violet and cyan).
+ */
 export const SPAWN_LOOKS: Record<OfficeFloor, SpawnLook> = {
   agents: {
     body: "#dcc49c", plinth: "#a88660", metal: "#c7a15e", bezel: "#23262b", glow: "#b8f0cf",
@@ -55,6 +58,11 @@ export const SPAWN_LOOKS: Record<OfficeFloor, SpawnLook> = {
     body: "#5d3d28", plinth: "#2e1d13", metal: "#d8ae52", bezel: "#1d1b1a", glow: "#ffc27a",
     screenTop: "#271b40", screenBottom: "#0f0a1d", text: "#fff1de", accent: "#f3b16b", accentDeep: "#241a3b",
     pad: "#2e2638", speck: ["#3b3246", "#251f2e", "#c9a24a"], padEdge: "#c9a24a", padBand: "#f3b16b",
+  },
+  arcade: {
+    body: "#2a2348", plinth: "#15112a", metal: "#9b8cff", bezel: "#0e0c1f", glow: "#7df9ff",
+    screenTop: "#1c1540", screenBottom: "#0b0918", text: "#f4f1ff", accent: "#ff5fa2", accentDeep: "#1a1236",
+    pad: "#1a1430", speck: ["#2a1f4a", "#151027", "#7df9ff"], padEdge: "#9b8cff", padBand: "#ff5fa2",
   },
 };
 

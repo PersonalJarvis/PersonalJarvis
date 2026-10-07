@@ -76,3 +76,21 @@ def test_window_focus_endpoint(web_server: WebServer) -> None:
         assert body["ok"] is False
         assert body.get("focused") is False
         assert body.get("reason") == "no_window"
+
+
+@pytest.mark.parametrize("method", ["POST", "DELETE"])
+@pytest.mark.parametrize("body", [{"fact": 123}, {"category": "general"}, ["a fact"]])
+def test_memory_fact_body_is_validated_at_the_boundary(
+    web_server: WebServer, method: str, body: object
+) -> None:
+    # A non-string fact used to reach ``.strip()`` and answer 500.
+    with TestClient(web_server.app) as client:
+        resp = client.request(method, "/api/memory/facts", json=body)
+        assert resp.status_code == 422
+
+
+def test_memory_fact_blank_text_is_refused_without_a_write(web_server: WebServer) -> None:
+    with TestClient(web_server.app) as client:
+        resp = client.post("/api/memory/facts", json={"fact": "   "})
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": False, "error": "fact is missing"}

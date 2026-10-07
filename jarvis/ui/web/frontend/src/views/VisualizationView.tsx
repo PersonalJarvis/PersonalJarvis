@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Code2,
   Download,
   ExternalLink,
   Eye,
-  FileImage,
-  FileText,
   Files,
   FolderOpen,
-  Globe,
   Loader2,
   RefreshCw,
   Shapes,
@@ -18,7 +18,6 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { OutputPreview } from "@/components/visualization/OutputPreview";
 import { RunGraphPanel } from "@/components/visualization/RunGraphPanel";
 import {
@@ -27,15 +26,34 @@ import {
   RunStatusBadge,
   deliverableFiles,
 } from "@/components/visualization/RunPanels";
+import {
+  ArtifactGallery,
+  GalleryCategoryRail,
+  GalleryControls,
+} from "@/components/visualization/ArtifactGallery";
+import {
+  buildRailRows,
+  countByFilter,
+  filterRailRows,
+  groupRailRows,
+  parseArtifactUtterance,
+  runTitle,
+  runWhen,
+  searchRailRows,
+  sortRailRows,
+  type GallerySort,
+  type RailFilter,
+  type RailRow,
+} from "@/components/visualization/galleryModel";
 import { ViewHeader } from "@/views/ChatsView";
 import { useT } from "@/i18n";
 import { useThemeValue } from "@/hooks/useTheme";
 import { cn } from "@/lib/utils";
 import { artifactKind, isTextKind } from "@/lib/artifactKind";
-import { cleanRequest, requestHeadline } from "@/lib/runRequest";
+import { CapacityDecisionPanel } from "@/components/missions/CapacityDecisionPanel";
+import { cleanRequest } from "@/lib/runRequest";
 import { useEventStore } from "@/store/events";
 import { openExternalUrl } from "@/lib/openExternal";
-import { endMissionDrag, startMissionDrag } from "@/lib/missionDnd";
 import {
   artifactDownloadUrl,
   artifactOpenUrl,
@@ -45,7 +63,6 @@ import {
   useOutputsCapabilities,
   useOutputsList,
   type ArtifactSummary,
-  type OutputStatus,
   type OutputSummary,
 } from "@/hooks/useOutputs";
 import {
@@ -55,76 +72,49 @@ import {
   useVisualArtifacts,
   visualId,
   type VisualArtifact,
-  type VisualKind,
 } from "@/hooks/useVisualArtifacts";
 
+export { buildRailRows, filterRailRows, parseArtifactUtterance };
+export type { RailFilter };
+
 /**
- * The Artifacts section — everything a run produced, with the artifact itself
- * on stage.
+ * The Artifacts section — everything a run produced, as a library first and
+ * a stage second.
  *
  * An artifact is the thing the user asked to LOOK AT: the dashboard, the
  * report, the diagram a background agent wrote as one self-contained HTML
- * file (`create_artifact`), or any image/PDF a worker left behind. It is
- * shown the way Claude shows an artifact: the page fills the stage, its own
- * scripts run inside a sandbox, the source is one tab away, every file of
- * the run is behind "Files", and "how did this come to be" — the n8n-style
- * run graph — behind "Run".
+ * file (`create_artifact`), or any image/PDF a worker left behind. Since
+ * 2026-10-01 the section opens on a GALLERY: every artifact as a card with
+ * the artifact itself drawn on it (a live, scaled page; the picture; a PDF's
+ * first page), grouped by day, narrowed by category (pages, images,
+ * documents, outputs) and by search, sorted newest, oldest or by name. A
+ * click opens the STAGE: the page full-size in its sandbox, the source one
+ * tab away, every file of the run behind "Files", and the n8n-style run
+ * graph behind "Run"; back, previous and next walk the same list.
  *
- * Since 2026-08-23 this section is ALSO where every other run lands. The
- * Outputs section that used to list them is gone: a run that produced no
- * page or picture — a research answer, a refactor, a failed build — shows as
- * a run row in the same rail, with its status, its summary or the reason it
- * ended, its files, and the controls it always had (hold-to-abort, Continue,
- * Restart, the GitHub link). One place for what Jarvis and its agents made,
- * not two.
- *
- * Since 2026-08-25 the artifact treatment IS the standard for every run:
- * the stage always offers Preview / Code / Files / Run, and a run without a
- * page gets its Preview composed from what it left behind (`OutputPreview`
- * — the answer and every file rendered in place, in the artifact design
- * standard) instead of a bare file list. The rail can be narrowed to
- * artifacts (pages and pictures a worker drew) or outputs (every other
- * run); "all" is the default.
+ * Every other run lands here too (the Outputs section folded in on
+ * 2026-08-23): a run that drew no page or picture is an "Output" card with
+ * its own answer as the cover, and its stage composes a page from what it
+ * left behind (`OutputPreview`).
  *
  * It owns no data: runs come from `/api/outputs`, files from the artifact
  * listing (`useVisualArtifacts`, `useArtifactsForOutput`), a page's source
  * from `/raw`. A run that is still building its artifact shows as a
- * "building…" row the rail follows until the page lands — the listings of
- * running runs poll, nothing else does.
+ * "building…" card the gallery follows until the page lands — the listings
+ * of running runs poll, nothing else does.
  *
  * Detachable (`DETACHABLE_VIEWS` in jarvis/ui/desktop_app.py): an artifact is
  * the thing people put on a second monitor.
  */
 
-/** What a row's status dot means — the run vocabulary, one language. */
-const RUN_DOT: Record<OutputStatus, string> = {
-  success: "bg-success",
-  error: "bg-destructive",
-  running: "bg-success animate-pulse",
-  cancelled: "bg-warning",
-  unknown: "bg-muted-foreground",
-};
-
-const KIND_ICON: Record<VisualKind, typeof Globe> = {
-  page: Globe,
-  image: FileImage,
-  vector: FileImage,
-  document: FileText,
-};
-
 type StageMode = "preview" | "code" | "files" | "run";
 
-/** The rail's pick: an artifact (`path`) or a whole run (`null`). */
-interface Selection {
-  slug: string;
-  path: string | null;
-}
-
-/** One rail row — a build in progress, an artifact, or a run without one. */
-type RailRow =
-  | { kind: "build"; run: OutputSummary; key: string }
-  | { kind: "visual"; run: OutputSummary | null; visual: VisualArtifact; key: string }
-  | { kind: "run"; run: OutputSummary; key: string };
+/**
+ * What is open: an artifact (`path`) or a whole run (`null`), "latest" for
+ * whatever leads the library (another surface asked for the newest), or
+ * nothing — the gallery.
+ */
+type Selection = { slug: string; path: string | null } | "latest" | null;
 
 /** What the stage shows: a run (always), and its artifact when it has one. */
 interface StageTarget {
@@ -134,65 +124,31 @@ interface StageTarget {
   building: boolean;
 }
 
-/**
- * A `create_artifact` mission's prompt leads with `Artifact: <title>` and the
- * user's request right after (jarvis/artifacts/brief.py). The run list
- * already strips the quality lead, so the run's `utterance` starts with that
- * line — which is how a running build is recognised and labelled here.
- */
-export function parseArtifactUtterance(
-  utterance: string | undefined,
-): { title: string; request: string } | null {
-  const text = (utterance ?? "").trim();
-  const match = /^Artifact:[ \t]*([^\n]+)/.exec(text);
-  if (!match) return null;
-  const rest = text.slice(match[0].length).trim();
-  const request = rest.split(/\n\s*\n/)[0]?.trim() ?? "";
-  return { title: match[1].trim(), request };
-}
+const FILTER_KEY = "jarvis.artifacts.rail-filter";
+const SORT_KEY = "jarvis.artifacts.sort";
 
-/** What a run is called when it has no page title of its own. */
-function runTitle(run: OutputSummary): string {
-  return (
-    parseArtifactUtterance(run.utterance)?.title || requestHeadline(run.utterance ?? "") || run.slug
-  );
-}
-
-/** The rail's narrowing: everything, the pages and pictures, or the rest. */
-export type RailFilter = "all" | "artifacts" | "outputs";
-
-const RAIL_FILTER_KEY = "jarvis.artifacts.rail-filter";
-
-function readRailFilter(): RailFilter {
+function readStored<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
-    const stored = window.localStorage.getItem(RAIL_FILTER_KEY);
-    if (stored === "artifacts" || stored === "outputs") return stored;
+    const stored = window.localStorage.getItem(key);
+    if (stored !== null && (allowed as readonly string[]).includes(stored)) return stored as T;
   } catch {
-    // Storage can be unavailable (private window, blocked site data) — "all" then.
+    // Storage can be unavailable (private window, blocked site data) — the default then.
   }
-  return "all";
+  return fallback;
 }
 
-function storeRailFilter(filter: RailFilter): void {
+function store(key: string, value: string): void {
   try {
-    window.localStorage.setItem(RAIL_FILTER_KEY, filter);
+    window.localStorage.setItem(key, value);
   } catch {
-    // A remembered filter is a convenience, never a requirement.
+    // A remembered category or order is a convenience, never a requirement.
   }
 }
 
-/** An artifact row is a page or picture (or one being built); the rest are outputs. */
-function isArtifactRow(row: RailRow): boolean {
-  return row.kind === "visual" || row.kind === "build";
-}
+const FILTERS: readonly RailFilter[] = ["all", "pages", "images", "documents", "outputs"];
+const SORTS: readonly GallerySort[] = ["newest", "oldest", "name"];
 
-/** The rows the filter lets through. */
-export function filterRailRows(rows: RailRow[], filter: RailFilter): RailRow[] {
-  if (filter === "all") return rows;
-  return rows.filter((row) => (filter === "artifacts" ? isArtifactRow(row) : !isArtifactRow(row)));
-}
-
-/** The rail row's timestamp — what tells two same-named artifacts apart. */
+/** The stage's timestamp — what tells two same-named artifacts apart. */
 function formatWhen(seconds: number): string {
   if (!seconds) return "";
   return new Date(seconds * 1000).toLocaleString(undefined, {
@@ -209,48 +165,29 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The run's moment for ordering — when it ended, else when it began. */
-function runWhen(run: OutputSummary): number {
-  return run.completed_at ?? run.started_at ?? 0;
+/** The card's key for what the stage shows. */
+function stageKey(target: StageTarget): string | null {
+  if (target.building && target.run) return `build:${target.run.slug}`;
+  if (target.visual) return visualId(target.visual);
+  if (target.run) return `run:${target.run.slug}`;
+  return null;
 }
 
-/**
- * The rail, in order: builds in progress, then running runs, then every
- * artifact and every artifact-less run newest first. A run with at least one
- * artifact is reached through its artifact rows (its other files sit behind
- * the stage's Files tab), so it gets no row of its own.
- */
-export function buildRailRows(
-  runs: OutputSummary[],
-  visuals: VisualArtifact[],
-  building: OutputSummary[],
-): RailRow[] {
-  const bySlug = new Map(runs.map((run) => [run.slug, run]));
-  const visualSlugs = new Set(visuals.map((v) => v.slug));
-  const buildSlugs = new Set(building.map((r) => r.slug));
+function selectionOf(row: RailRow): { slug: string; path: string | null } {
+  return row.kind === "visual"
+    ? { slug: row.visual.slug, path: row.visual.path }
+    : { slug: row.run.slug, path: null };
+}
 
-  const rest: Array<{ row: RailRow; running: boolean; when: number }> = [];
-  for (const visual of visuals) {
-    rest.push({
-      row: { kind: "visual", run: bySlug.get(visual.slug) ?? null, visual, key: visualId(visual) },
-      running: visual.status === "running",
-      when: visual.mtime,
-    });
-  }
-  for (const run of runs) {
-    if (visualSlugs.has(run.slug) || buildSlugs.has(run.slug)) continue;
-    rest.push({
-      row: { kind: "run", run, key: `run:${run.slug}` },
-      running: run.status === "running",
-      when: runWhen(run),
-    });
-  }
-  rest.sort((a, b) => Number(b.running) - Number(a.running) || b.when - a.when);
-
-  return [
-    ...building.map((run): RailRow => ({ kind: "build", run, key: `build:${run.slug}` })),
-    ...rest.map((entry) => entry.row),
-  ];
+/** A key press that belongs to a text field, not to the gallery's navigation. */
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  );
 }
 
 export function VisualizationView() {
@@ -271,33 +208,38 @@ export function VisualizationView() {
   );
 
   const allRows = useMemo(() => buildRailRows(runs, visuals, building), [runs, visuals, building]);
-  const [filter, setFilterState] = useState<RailFilter>(readRailFilter);
+  const counts = useMemo(() => countByFilter(allRows), [allRows]);
+
+  const [filter, setFilterState] = useState<RailFilter>(() => readStored(FILTER_KEY, FILTERS, "all"));
   const setFilter = useCallback((next: RailFilter) => {
     setFilterState(next);
-    storeRailFilter(next);
+    store(FILTER_KEY, next);
   }, []);
-  const rows = useMemo(() => filterRailRows(allRows, filter), [allRows, filter]);
-  const counts = useMemo(
-    () => ({
-      all: allRows.length,
-      artifacts: allRows.filter(isArtifactRow).length,
-      outputs: allRows.filter((row) => !isArtifactRow(row)).length,
-    }),
-    [allRows],
-  );
+  const [sort, setSortState] = useState<GallerySort>(() => readStored(SORT_KEY, SORTS, "newest"));
+  const setSort = useCallback((next: GallerySort) => {
+    setSortState(next);
+    store(SORT_KEY, next);
+  }, []);
+  const [query, setQuery] = useState("");
 
-  /* A `?run=<slug>` in the URL pre-selects that run's newest artifact — what
-   * makes a detached window or a pasted link open on the page it talks about.
-   * Read once at mount; clicks own it after. */
-  const [selection, setSelection] = useState<Selection | null>(() => {
+  /* The library as shown: category, then search, then order. The stage's
+   * previous / next walk exactly this list. */
+  const rows = useMemo(
+    () => sortRailRows(searchRailRows(filterRailRows(allRows, filter), query), sort),
+    [allRows, filter, query, sort],
+  );
+  const groups = useMemo(() => groupRailRows(rows, sort, Date.now()), [rows, sort]);
+  /* The order the cards appear in on screen — groups pull work in progress
+   * to the top, so this is not always `rows`. */
+  const ordered = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
+
+  /* A `?run=<slug>` in the URL opens that run's newest artifact — what makes a
+   * detached window or a pasted link open on the page it talks about. Read
+   * once at mount; clicks own it after. */
+  const [selection, setSelection] = useState<Selection>(() => {
     const slug = new URLSearchParams(window.location.search).get("run");
     return slug ? { slug, path: null } : null;
   });
-  /* Once the user picked a row, the newest artifact landing must not steal the
-   * stage — an explicit choice is never fought (the selection stays until the
-   * next click). A pick of a BUILDING run is the exception it resolves itself:
-   * its page replaces the spinner when it lands. */
-  const pick = useCallback((next: Selection) => setSelection(next), []);
 
   /*
    * Another surface asked for something to be staged ("show visuals" on the
@@ -308,7 +250,7 @@ export function VisualizationView() {
   useEffect(() => {
     if (visualStage === null) return;
     if (visualStage.target === "latest") {
-      setSelection(null);
+      setSelection("latest");
       return;
     }
     const separator = visualStage.target.indexOf("::");
@@ -321,65 +263,117 @@ export function VisualizationView() {
   }, [visualStage]);
 
   /*
-   * What the stage shows. The row the user picked — an artifact, or a run
-   * (its newest artifact once it has one, the run itself otherwise). While
-   * nothing was picked, the first rail row: the newest build in progress,
-   * else the newest thing there is.
+   * What the stage shows. The card the user opened — an artifact, or a run
+   * (its newest artifact once it has one, the run itself otherwise). For
+   * "latest", whatever leads the whole library: the newest build in
+   * progress, else the newest thing there is.
    */
-  const target: StageTarget = useMemo(() => {
+  const target: StageTarget | null = useMemo(() => {
+    if (selection === null) return null;
     const bySlug = (slug: string) => runs.find((r) => r.slug === slug) ?? null;
-    const resolveRun = (slug: string): StageTarget | null => {
-      const run = bySlug(slug);
-      const visual = visuals.find((v) => v.slug === slug) ?? null;
-      if (run === null && visual === null) return null;
-      const isBuilding = run !== null && building.includes(run) && visual === null;
-      return { run, visual, building: isBuilding };
-    };
-    if (selection !== null) {
-      if (selection.path !== null) {
-        const visual = visuals.find(
-          (v) => v.slug === selection.slug && v.path === selection.path,
-        );
-        if (visual) return { run: bySlug(visual.slug), visual, building: false };
-      }
-      const resolved = resolveRun(selection.slug);
-      if (resolved) return resolved;
+    if (selection === "latest") {
+      const first = allRows[0];
+      if (!first) return { run: null, visual: null, building: false };
+      if (first.kind === "build") return { run: first.run, visual: null, building: true };
+      if (first.kind === "visual") return { run: first.run, visual: first.visual, building: false };
+      return { run: first.run, visual: null, building: false };
     }
-    const first = rows[0];
-    if (!first) return { run: null, visual: null, building: false };
-    if (first.kind === "build") return { run: first.run, visual: null, building: true };
-    if (first.kind === "visual") return { run: first.run, visual: first.visual, building: false };
-    return { run: first.run, visual: null, building: false };
-  }, [selection, runs, visuals, building, rows]);
+    if (selection.path !== null) {
+      const visual = visuals.find((v) => v.slug === selection.slug && v.path === selection.path);
+      if (visual) return { run: bySlug(visual.slug), visual, building: false };
+    }
+    const run = bySlug(selection.slug);
+    const visual = visuals.find((v) => v.slug === selection.slug) ?? null;
+    if (run === null && visual === null) return { run: null, visual: null, building: false };
+    const isBuilding = run !== null && building.includes(run) && visual === null;
+    return { run, visual, building: isBuilding };
+  }, [selection, runs, visuals, building, allRows]);
 
   const refetch = useCallback(() => {
     void outputs.refetch();
     gallery.refetch();
   }, [outputs, gallery]);
 
-  /* Narrowing the rail to a group the picked row is not in would leave the
-   * stage on something the rail no longer lists; the pick is dropped and the
-   * first visible row takes the stage. Nothing happens while the rail is
-   * still filling (a pick may simply not have loaded yet). */
+  const open = useCallback((row: RailRow) => setSelection(selectionOf(row)), []);
+  const back = useCallback(() => setSelection(null), []);
+
+  /* Previous / next: the stage's place in the library as currently shown.
+   * Opened from elsewhere (a link, "latest") and not in the current view,
+   * the stage simply has no neighbours. */
+  const activeKey = target ? stageKey(target) : null;
+  const position = activeKey ? ordered.findIndex((row) => row.key === activeKey) : -1;
+  const step = useCallback(
+    (delta: number) => {
+      if (position < 0) return;
+      const next = ordered[position + delta];
+      if (next) setSelection(selectionOf(next));
+    },
+    [ordered, position],
+  );
+
+  /* Escape goes back to the library, ←/→ walk it — unless a text field has
+   * the keys. A framed page keeps its own keys (its events never reach us). */
+  const staged = target !== null;
   useEffect(() => {
-    if (selection === null || filter === "all" || allRows.length === 0) return;
-    const visible = rows.some(
-      (row) =>
-        (row.kind === "visual" && row.visual.slug === selection.slug) ||
-        (row.kind !== "visual" && row.run.slug === selection.slug),
-    );
-    if (!visible) setSelection(null);
-  }, [filter, rows, allRows.length, selection]);
+    if (!staged) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isTypingTarget(event.target)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "Escape") back();
+      else if (event.key === "ArrowLeft") step(-1);
+      else if (event.key === "ArrowRight") step(1);
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [staged, back, step]);
 
   const loading = outputs.isLoading || gallery.isLoading;
-  const activeKey =
-    target.building && target.run
-      ? `build:${target.run.slug}`
-      : target.visual
-        ? visualId(target.visual)
-        : target.run
-          ? `run:${target.run.slug}`
-          : null;
+  const error = outputs.isError || gallery.isError;
+
+  if (target !== null) {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {target.building && target.run !== null ? (
+            <>
+              <StageNav
+                onBack={back}
+                position={position}
+                total={ordered.length}
+                onStep={step}
+              />
+              <RunCapacityDecision run={target.run} />
+              <BuildingStage run={target.run} />
+            </>
+          ) : target.run === null && target.visual === null ? (
+            <>
+              <StageNav onBack={back} position={-1} total={0} onStep={step} />
+              <EmptyStage loading={loading} error={error} />
+            </>
+          ) : (
+            <Stage
+              key={target.run?.slug ?? target.visual?.slug}
+              run={target.run}
+              visual={target.visual}
+              onJumpToRun={(slug) => setSelection({ slug, path: null })}
+              nav={
+                <StageNav
+                  onBack={back}
+                  position={position}
+                  total={ordered.length}
+                  onStep={step}
+                />
+              }
+            />
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  const nothingAtAll = !loading && allRows.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -388,63 +382,54 @@ export function VisualizationView() {
         title={t("visualization.title")}
         subtitle={t("visualization.subtitle")}
         right={
-          <Button
-            variant="outline"
-            onClick={refetch}
-            disabled={loading}
-            data-testid="visualization-refresh"
-          >
-            {loading ? (
-              <Loader2 className="animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw aria-hidden />
+          <div className="flex items-center gap-2">
+            {!nothingAtAll && (
+              <GalleryControls query={query} onQuery={setQuery} sort={sort} onSort={setSort} />
             )}
-            {t("visualization.refresh")}
-          </Button>
+            <Button
+              variant="outline"
+              onClick={refetch}
+              disabled={loading}
+              title={t("visualization.refresh")}
+              aria-label={t("visualization.refresh")}
+              data-testid="visualization-refresh"
+            >
+              {loading ? (
+                <Loader2 className="animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw aria-hidden />
+              )}
+            </Button>
+          </div>
         }
       />
 
       <div className="flex min-h-0 flex-1">
-        {/* Rail — builds in progress first, then every artifact and run, newest first. */}
-        <aside className="flex w-80 shrink-0 flex-col border-r border-border bg-sidebar">
-          <div className="flex flex-col gap-2 px-3 pt-1">
-            <RailFilterControl filter={filter} counts={counts} onChange={setFilter} />
-          </div>
-          <ScrollArea className="min-h-0 flex-1">
-            <ul className="space-y-0.5 p-2" data-testid="visualization-artifacts">
-              {rows.map((row) => (
-                <li key={row.key}>
-                  <RailRowButton
-                    row={row}
-                    active={activeKey === row.key}
-                    onPick={pick}
-                  />
-                </li>
-              ))}
-            </ul>
-            {gallery.skippedRuns > 0 && (
-              <p className="px-3 pb-3 text-sm text-foreground-faint">
-                {t("visualization.older_not_scanned").replace(
-                  "{0}",
-                  String(gallery.scannedRuns),
-                )}
-              </p>
-            )}
-          </ScrollArea>
-        </aside>
-
-        {/* Stage — the artifact itself, full-size; the run around it. */}
+        <GalleryCategoryRail
+          filter={filter}
+          counts={counts}
+          loading={loading && allRows.length === 0}
+          onChange={setFilter}
+        />
         <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {target.building && target.run !== null ? (
-            <BuildingStage run={target.run} />
-          ) : target.run === null && target.visual === null ? (
-            <EmptyStage loading={loading} error={outputs.isError || gallery.isError} />
+          {nothingAtAll ? (
+            <EmptyStage loading={false} error={error} />
           ) : (
-            <Stage
-              key={target.run?.slug ?? target.visual?.slug}
-              run={target.run}
-              visual={target.visual}
-              onJumpToRun={(slug) => pick({ slug, path: null })}
+            <ArtifactGallery
+              groups={groups}
+              loading={loading}
+              searching={query.trim().length > 0}
+              onOpen={open}
+              footer={
+                gallery.skippedRuns > 0 ? (
+                  <p className="pt-8 text-sm text-foreground-faint">
+                    {t("visualization.older_not_scanned").replace(
+                      "{0}",
+                      String(gallery.scannedRuns),
+                    )}
+                  </p>
+                ) : null
+              }
             />
           )}
         </section>
@@ -455,181 +440,58 @@ export function VisualizationView() {
 
 /* ------------------------------------------------------------------------- */
 
-/**
- * All · Artifacts · Outputs — one segmented control, the count beside each
- * word so an empty group reads as "none" rather than "broken".
- */
-function RailFilterControl({
-  filter,
-  counts,
-  onChange,
+/** Back to the library, and the stage's place in it with previous / next. */
+function StageNav({
+  onBack,
+  position,
+  total,
+  onStep,
 }: {
-  filter: RailFilter;
-  counts: Record<RailFilter, number>;
-  onChange: (next: RailFilter) => void;
+  onBack: () => void;
+  /** Index in the library as shown, or -1 when the open item is not in it. */
+  position: number;
+  total: number;
+  onStep: (delta: number) => void;
 }) {
   const t = useT();
-  const options: Array<{ id: RailFilter; label: string }> = [
-    { id: "all", label: t("visualization.filter_all") },
-    { id: "artifacts", label: t("visualization.filter_artifacts") },
-    { id: "outputs", label: t("visualization.filter_outputs") },
-  ];
   return (
-    // Underline tabs (v4), never pill segments.
-    <div
-      role="radiogroup"
-      aria-label={t("visualization.rail_filter")}
-      className="flex items-center gap-5 border-b border-border"
-      data-testid="visualization-filter"
-    >
-      {options.map(({ id, label }) => (
-        <button
-          key={id}
-          type="button"
-          role="radio"
-          aria-checked={filter === id}
-          onClick={() => onChange(id)}
-          data-testid={`visualization-filter-${id}`}
-          className={cn(
-            "relative -mb-px inline-flex h-10 items-center gap-1.5 border-b-2 text-base font-medium transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            filter === id
-              ? "border-accent text-foreground-strong"
-              : "border-transparent text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {label}
-          <span className="text-sm tabular-nums text-foreground-faint">{counts[id]}</span>
-        </button>
-      ))}
+    <div className="flex shrink-0 items-center gap-1 px-4 pt-3">
+      <Button variant="ghost" size="sm" onClick={onBack} data-testid="visualization-back">
+        <ArrowLeft className="mr-1.5 h-4 w-4" aria-hidden />
+        {t("visualization.back")}
+      </Button>
+      {position >= 0 && total > 1 && (
+        <div className="ml-auto flex items-center gap-1">
+          <span className="px-2 text-sm tabular-nums text-foreground-faint">
+            {t("visualization.position")
+              .replace("{0}", String(position + 1))
+              .replace("{1}", String(total))}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onStep(-1)}
+            disabled={position === 0}
+            title={t("visualization.previous")}
+            aria-label={t("visualization.previous")}
+            data-testid="visualization-previous"
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onStep(1)}
+            disabled={position >= total - 1}
+            title={t("visualization.next")}
+            aria-label={t("visualization.next")}
+            data-testid="visualization-next"
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </Button>
+        </div>
+      )}
     </div>
-  );
-}
-
-function RailRowButton({
-  row,
-  active,
-  onPick,
-}: {
-  row: RailRow;
-  active: boolean;
-  onPick: (next: Selection) => void;
-}) {
-  const t = useT();
-  const base = cn(
-    "flex w-full items-start gap-2.5 rounded-md px-3 py-3 text-left text-sm transition-colors",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-    active
-      ? "bg-secondary text-foreground"
-      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-  );
-  // Every row can be dragged onto the Jarvis dock — the run is what the dock
-  // takes, whichever of its artifacts the row happens to show.
-  const dragRun = row.run;
-  const dragProps = dragRun
-    ? {
-        draggable: true,
-        onDragStart: (e: DragEvent) => startMissionDrag(e, dragRun),
-        onDragEnd: endMissionDrag,
-      }
-    : {};
-
-  if (row.kind === "build") {
-    const parsed = parseArtifactUtterance(row.run.utterance);
-    return (
-      <button
-        type="button"
-        onClick={() => onPick({ slug: row.run.slug, path: null })}
-        aria-current={active}
-        data-testid="visualization-building-row"
-        className={base}
-        {...dragProps}
-      >
-        <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-hidden />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-base font-medium text-foreground">
-            {parsed?.title || t("visualization.building")}
-          </span>
-          <span className="block truncate">{t("visualization.building")}</span>
-        </span>
-      </button>
-    );
-  }
-
-  if (row.kind === "visual") {
-    const { visual } = row;
-    const Icon = KIND_ICON[visual.kind];
-    const parsed = parseArtifactUtterance(visual.utterance);
-    return (
-      <button
-        type="button"
-        onClick={() => onPick({ slug: visual.slug, path: visual.path })}
-        aria-current={active}
-        data-testid="visualization-artifact-row"
-        data-kind={visual.kind}
-        className={base}
-        {...dragProps}
-      >
-        <span className="relative mt-0.5 shrink-0">
-          <Icon className="h-3.5 w-3.5" aria-hidden />
-          <span
-            className={cn(
-              "absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full",
-              RUN_DOT[visual.status ?? "unknown"],
-            )}
-            aria-hidden
-          />
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-base font-medium text-foreground">{visual.title}</span>
-          <span className="block truncate">
-            {[
-              formatWhen(visual.mtime),
-              parsed?.request || cleanRequest(visual.utterance) || visual.name,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        </span>
-      </button>
-    );
-  }
-
-  // A run without a page or picture: the answer, the refactor, the failure.
-  const { run } = row;
-  const status = run.status ?? "unknown";
-  const Icon = status === "running" ? Loader2 : (run.artifact_count ?? 0) > 0 ? FileText : Workflow;
-  return (
-    <button
-      type="button"
-      onClick={() => onPick({ slug: run.slug, path: null })}
-      aria-current={active}
-      data-testid="visualization-run-row"
-      data-status={status}
-      className={base}
-      {...dragProps}
-    >
-      <span className="relative mt-0.5 shrink-0">
-        <Icon
-          className={cn("h-3.5 w-3.5", status === "running" && "animate-spin text-primary")}
-          aria-hidden
-        />
-        {status !== "running" && (
-          <span
-            className={cn("absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full", RUN_DOT[status])}
-            aria-hidden
-          />
-        )}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-base font-medium text-foreground">{runTitle(run)}</span>
-        <span className="block truncate">
-          {[formatWhen(runWhen(run)), run.summary?.trim() || run.terminal_reason || status]
-            .filter(Boolean)
-            .join(" · ")}
-        </span>
-      </span>
-    </button>
   );
 }
 
@@ -650,10 +512,13 @@ function Stage({
   run,
   visual: pickedVisual,
   onJumpToRun,
+  nav,
 }: {
   run: OutputSummary | null;
   visual: VisualArtifact | null;
   onJumpToRun: (slug: string) => void;
+  /** Back to the library and previous / next, above the toolbar. */
+  nav: ReactNode;
 }) {
   const slug = run?.slug ?? pickedVisual?.slug ?? null;
   const listing = useArtifactsForOutput(run !== null ? slug : null);
@@ -687,6 +552,8 @@ function Stage({
 
   return (
     <>
+      {nav}
+      {run && <RunCapacityDecision run={run} />}
       <ArtifactToolbar
         run={run}
         visual={visual}
@@ -802,7 +669,7 @@ function ArtifactToolbar({
   ];
 
   return (
-    <div className="flex shrink-0 items-end gap-4 border-b border-border px-6 pt-4">
+    <div className="flex shrink-0 items-end gap-4 border-b border-border px-6 pt-1">
       <div className="min-w-0 flex-1 pb-3">
         <div className="flex min-w-0 items-center gap-3">
           <p
@@ -1021,6 +888,16 @@ function ArtifactSource({ slug, path }: { slug: string; path: string }) {
 }
 
 /* ------------------------------------------------------------------------- */
+
+/**
+ * A mission parked in WAITING_CAPACITY asks here: wait for its own
+ * subscription, approve paid API use for this one mission, or cancel. Nothing
+ * is billed without that explicit approval.
+ */
+function RunCapacityDecision({ run }: { run: OutputSummary }) {
+  if (!run.waiting_capacity || !run.mission_id) return null;
+  return <CapacityDecisionPanel missionId={run.mission_id} state="WAITING_CAPACITY" />;
+}
 
 function BuildingStage({ run }: { run: OutputSummary }) {
   const t = useT();

@@ -32,3 +32,10 @@ export function* bodiesExcept(selfId: string | null, player: Point | null): Gene
   for (const [id, p] of extraBodies) if (id !== selfId) yield p;
   if (player) yield player;
 }
+
+/**
+ * The person's pet (Jarvis) as drawn right now: ground position, the height
+ * of its body centre and of its top, and its size. Written by `GigiFlyer`
+ * each frame; the level system's cosmetics and celebrations follow it.
+ */
+export const petBody = { x: 0, z: 0, y: 0, top: 0.5, sizeM: 0.5, active: false };

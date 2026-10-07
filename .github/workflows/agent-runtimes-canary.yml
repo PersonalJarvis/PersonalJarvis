@@ -1,0 +1,65 @@
+name: Agent runtimes canary
+# Installs the LATEST Hermes and OpenClaw with their own official installers and
+# drives two turns through Jarvis' runtime drivers against a scripted fake model
+# (scripts/spikes/agent_runtimes_e2e.py, tests/fakes/fake_openai_server.py).
+# Not part of the CI gate: an upstream release that breaks the integration
+# opens an issue here before a person runs into it. See docs/agent-runtimes.md.
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  canary:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        runtime: [hermes, openclaw]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Install the base app
+        run: python scripts/pip_install.py -e "."
+      - name: Install Hermes (official installer, Linux/macOS)
+        if: matrix.runtime == 'hermes' && runner.os != 'Windows'
+        run: |
+          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --non-interactive --skip-browser
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install Hermes (official installer, Windows)
+        if: matrix.runtime == 'hermes' && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -SkipSetup -NonInteractive
+          "$env:LOCALAPPDATA\hermes\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.runtime == 'openclaw'
+        with:
+          node-version: '24'
+      - name: Install OpenClaw (latest)
+        if: matrix.runtime == 'openclaw'
+        run: npm install -g openclaw@latest
+      - name: Drive two turns through the Jarvis driver
+        run: python scripts/spikes/agent_runtimes_e2e.py ${{ matrix.runtime }}
+  report:
+    needs: canary
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue for the broken runtime integration
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Agent runtimes canary failed" \
+            --body "The weekly canary could not drive the latest Hermes or OpenClaw release through Jarvis' runtime drivers. Run: $RUN_URL (see docs/agent-runtimes.md)."

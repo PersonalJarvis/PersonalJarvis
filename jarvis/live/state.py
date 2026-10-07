@@ -47,7 +47,8 @@ class LiveLedger:
             """)
 
     def claim(
-        self, session: str, call: str, tool: str, arguments: dict, revision: int
+        self, session: str, call: str, tool: str, arguments: dict, revision: int,
+        *, deduplicate_unconfirmed: bool = False,
     ) -> dict | None:
         encoded = json.dumps(arguments, sort_keys=True)
         with self._lock, self._db:
@@ -68,11 +69,38 @@ class LiveLedger:
                         "error": "Earlier execution unconfirmed. Reconcile before retrying.",
                     }
                 )
+            if deduplicate_unconfirmed:
+                earlier = self._db.execute(
+                    "SELECT result FROM live_operations WHERE session_id=? AND tool=? "
+                    "AND arguments=? ORDER BY updated DESC",
+                    (session, tool, encoded),
+                ).fetchall()
+                for (raw,) in earlier:
+                    receipt = json.loads(raw) if raw else None
+                    if receipt is None or receipt.get("status") == "uncertain":
+                        return receipt or {
+                            "success": False, "status": "uncertain",
+                            "error": "Earlier delivery is unconfirmed; do not resend or reassign.",
+                        }
             self._db.execute(
                 "INSERT INTO live_operations VALUES (?, ?, ?, ?, ?, 'running', NULL, ?)",
                 (session, call, tool, encoded, revision, time.time()),
             )
         return None
+
+    def operation(self, session: str, call: str) -> dict | None:
+        """Read a durable claim without executing or repairing any action."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT result FROM live_operations WHERE session_id=? AND call_id=?",
+                (session, call),
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row[0]) if row[0] else {
+            "status": "uncertain", "success": False,
+            "reason": "Creation or delivery is still unconfirmed. Do not recreate or reassign.",
+        }
 
     def finish(self, session: str, call: str, result: dict) -> None:
         with self._lock, self._db:
@@ -106,6 +134,17 @@ class LiveLedger:
                 "seconds=MAX(seconds, excluded.seconds), "
                 "finalized=MAX(finalized, excluded.finalized)",
                 (session, max(0, seconds), int(finalized)),
+            )
+
+    def transcript_snapshot(self, fragment: TranscriptFragment) -> None:
+        """Replace one provider-owned caption segment, including final corrections."""
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO live_transcripts VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(session_id,event_id) DO UPDATE SET "
+                "delta=excluded.delta, end_ms=excluded.end_ms",
+                (fragment.session_id, fragment.event_id, fragment.role, fragment.delta,
+                 fragment.start_ms, fragment.end_ms),
             )
 
     def close(self) -> None:
@@ -143,6 +182,10 @@ class LiveLedger:
                 return False, []
             result = json.loads(raw)
             if result.get("confirmation_required") or result.get("blocked"):
+                continue
+            # A refusal that ran nothing (schema error, unapproved yes, refused
+            # hang-up) leaves nothing half-done; it must not end the call.
+            if result.get("executed") is False:
                 continue
             if result.get("status") in {
                 "superseded",

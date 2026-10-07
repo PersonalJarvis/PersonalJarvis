@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "datadog": {
+      "type": "streamable-http",
+      "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    }
+  }
+}

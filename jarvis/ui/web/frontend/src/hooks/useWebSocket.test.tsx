@@ -95,6 +95,8 @@ describe("useWebSocket VoiceBootStatus handling", () => {
       host: "localhost:5173",
     };
     useEventStore.setState({ voiceReady: false, toasts: [] });
+    useEventStore.setState({ activeSection: "chats" });
+    useHomeStore.setState({ surface: "chat", agentChatId: null });
     useI18nStore.getState().setUi("en", { push: false });
     setBrowserVoiceInputOwnership(false);
     queryClient.clear();
@@ -115,6 +117,33 @@ describe("useWebSocket VoiceBootStatus handling", () => {
 
     expect(useEventStore.getState().voiceReady).toBe(true);
   });
+
+  it("switches the open Jarvis chat to voice on a session-start frame without sending a call", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+    const socket = MockWebSocket.last!;
+    const sentBeforeStart = socket.send.mock.calls.length;
+
+    socket.deliver(envelope("WakeWordDetected", { keyword: "jarvis" }));
+    expect(useHomeStore.getState().surface).toBe("chat");
+    socket.deliver(envelope("VoiceSessionStarted", { session_id: "wake-call", wake_keyword: "jarvis" }));
+    expect(useHomeStore.getState().surface).toBe("voice");
+    expect(useHomeStore.getState().liveSessionId).toBe("wake-call");
+    expect(socket.send.mock.calls.length).toBe(sentBeforeStart);
+  });
+
+  it.each(["settings", "agentic-ide", "dictation"] as const)(
+    "keeps the current view and chat mode when a call starts in %s",
+    async (activeSection) => {
+      useEventStore.setState({ activeSection });
+      render(<Harness />);
+      await Promise.resolve();
+
+      MockWebSocket.last!.deliver(envelope("VoiceSessionStarted", { session_id: "call" }));
+      expect(useEventStore.getState().activeSection).toBe(activeSection);
+      expect(useHomeStore.getState().surface).toBe("chat");
+    },
+  );
 
   it("flips voiceReady back to false on a VoiceBootStatus { ready: false } frame", async () => {
     useEventStore.setState({ voiceReady: true });

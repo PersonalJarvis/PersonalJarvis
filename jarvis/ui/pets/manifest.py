@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from jarvis.ui.pets.states import (
@@ -36,6 +36,12 @@ USER_ID_RE = re.compile(r"^u[0-9a-f]{16}$")
 
 #: A sheet is a plain PNG file name inside the pet folder, never a path.
 _SHEET_NAME_RE = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}\.png$")
+
+#: Name of an idle act: a short lowercase slug (``"fire"``, ``"yawn"``).
+ACT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,23}$")
+
+#: Most idle acts one pet may declare.
+MAX_ACTS = 12
 
 MAX_NAME_CHARS = 40
 MAX_DESCRIPTION_CHARS = 140
@@ -89,6 +95,11 @@ class PetManifest:
     sheet: str
     animations: Mapping[str, AnimationSpec]
     builtin: bool = False
+    #: Idle acts: short one-shot animations the pet plays now and then while
+    #: nothing happens (a yawn, a stretch, a puff of fire), each a row of
+    #: ``acts_sheet``. Optional; without them the pet just idles.
+    acts: Mapping[str, AnimationSpec] = field(default_factory=lambda: MappingProxyType({}))
+    acts_sheet: str | None = None
 
     def spec_for(self, state: str) -> tuple[str, AnimationSpec]:
         """Return ``(resolved_state, spec)`` for ``state``.
@@ -111,7 +122,7 @@ class PetManifest:
 
     def to_json(self) -> dict:
         """The ``pet.json`` shape (``builtin`` is not part of the file)."""
-        return {
+        out = {
             "format": PET_FORMAT,
             "id": self.id,
             "name": self.name,
@@ -124,6 +135,10 @@ class PetManifest:
                 if (spec := self.animations.get(state)) is not None
             },
         }
+        if self.acts and self.acts_sheet is not None:
+            out["acts_sheet"] = self.acts_sheet
+            out["acts"] = {name: spec_json(spec) for name, spec in self.acts.items()}
+        return out
 
 
 def spec_json(spec: AnimationSpec) -> dict:
@@ -250,6 +265,8 @@ def parse_manifest(data: object, *, builtin: bool) -> PetManifest:
         if state in raw_animations
     }
 
+    acts, acts_sheet = _parse_acts(data, sheet)
+
     return PetManifest(
         id=pet_id,
         name=name,
@@ -258,7 +275,41 @@ def parse_manifest(data: object, *, builtin: bool) -> PetManifest:
         sheet=sheet,
         animations=MappingProxyType(animations),
         builtin=builtin,
+        acts=MappingProxyType(acts),
+        acts_sheet=acts_sheet,
     )
+
+
+def _parse_acts(data: Mapping, sheet: str) -> tuple[dict[str, AnimationSpec], str | None]:
+    """The optional idle acts and their sheet; both keys or neither."""
+    raw_acts = data.get("acts")
+    acts_sheet = data.get("acts_sheet")
+    if raw_acts is None and acts_sheet is None:
+        return {}, None
+    if not isinstance(raw_acts, Mapping) or not raw_acts:
+        raise PetManifestError("'acts' must be an object with at least one act.")
+    if (
+        not isinstance(acts_sheet, str)
+        or not _SHEET_NAME_RE.match(acts_sheet)
+        or ".." in acts_sheet
+        or acts_sheet == sheet
+    ):
+        raise PetManifestError("'acts_sheet' must be its own PNG file name inside the pet folder.")
+    if len(raw_acts) > MAX_ACTS:
+        raise PetManifestError(f"A pet can have at most {MAX_ACTS} idle acts.")
+    acts: dict[str, AnimationSpec] = {}
+    for name, raw in raw_acts.items():
+        if not isinstance(name, str) or not ACT_NAME_RE.match(name):
+            raise PetManifestError(
+                "An act name uses 1-24 lowercase letters, digits and underscores."
+            )
+        if isinstance(raw, Mapping) and "loop" not in raw:
+            raw = {**raw, "loop": False}  # an act plays once unless it says otherwise
+        spec = _parse_animation(f"act {name}", raw)
+        if spec.loop or spec.accent_frames:
+            raise PetManifestError(f"Act '{name}' plays once: 'loop' must be false.")
+        acts[name] = spec
+    return acts, acts_sheet
 
 
 def check_sheet_size(width: int, height: int) -> None:
@@ -278,3 +329,12 @@ def check_cells(manifest: PetManifest, width: int, height: int) -> None:
     for state, spec in manifest.animations.items():
         if (spec.row + 1) * size > height or spec.frames * size > width:
             raise PetManifestError(f"Animation '{state}' reaches outside the sprite sheet.")
+
+
+def check_act_cells(manifest: PetManifest, width: int, height: int) -> None:
+    """Reject idle acts that reach outside a ``width x height`` acts sheet."""
+    check_sheet_size(width, height)
+    size = manifest.frame_size
+    for name, spec in manifest.acts.items():
+        if (spec.row + 1) * size > height or spec.frames * size > width:
+            raise PetManifestError(f"Act '{name}' reaches outside the acts sheet.")

@@ -1213,3 +1213,17 @@ def test_serp_footer_is_still_deleted_whole_not_placeholdered() -> None:
     assert "weitere ergebnisse" not in low
     assert "website" not in low
     assert "removed_source_artifacts" in result.actions
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Your OpenClaw agent replied.",
+        "Dein OpenClaw-Agent ist bereit.",  # i18n-allow
+        "I moved Scout to OpenClaw.",
+        "Scout läuft jetzt auf OpenClaw.",  # i18n-allow
+    ],
+)
+def test_the_openclaw_runtime_name_survives(text: str) -> None:
+    """OpenClaw as a society agent runtime is real and may be named (2026-10-06)."""
+    assert "OpenClaw" in scrub_for_voice(text).cleaned

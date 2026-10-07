@@ -1,13 +1,16 @@
-import { Fragment, memo } from "react";
+import { Fragment, memo, useMemo } from "react";
 import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/ChatMarkdown";
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
+import { CodingThreadActivity } from "@/components/agentic/threads/CodingThreadLink";
+import { codingThreadOf, foldRepeatedThreadStatus } from "@/components/agentic/threads/openCodingThread";
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
-import { GigiMark } from "@/components/GigiMark";
 import { effortLabel } from "./AgentComposer";
-import { TurnTrace, type Decide } from "./WorkTrace";
+import { TurnTrace, type Decide, type TraceLook } from "./WorkTrace";
 import type { TimelineItem, TurnItem, TextBlock } from "./reduce";
+import { TraceMessageLine } from "./TraceTimeline";
+import { attachTurnMessages, type TraceMessage } from "./turnMessages";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +23,8 @@ export function AgentTimeline({
   recipientName,
   agentsById,
   bubbles = false,
+  traceLook = "rail",
+  traceCompanion = false,
 }: {
   items: TimelineItem[];
   assistantName: string;
@@ -30,18 +35,30 @@ export function AgentTimeline({
   /** Sender faces by agent id, where the caller has a roster. */
   agentsById?: Record<string, InternalParticipant>;
   /**
-   * The front page's messenger look (2026-10-01): your words in a signal-blue
-   * bubble on the right, the assistant's answers in card bubbles on the left
-   * under a small face, and a centred time stamp wherever the conversation
-   * paused. The Agentic IDE keeps the document look (the default).
+   * The front page's conversation look (2026-10-01, after the Claude app):
+   * your words in a soft rounded bubble on the right, the assistant's answer
+   * as plain text with no name-and-model header above it, and a quiet
+   * centred time stamp wherever the conversation paused. The Agentic IDE
+   * keeps the labelled document look (the default).
    */
   bubbles?: boolean;
+  /** How turns draw their work; the Agentic IDE keeps the classic rows. */
+  traceLook?: TraceLook;
+  /** Jarvis's own chat: live traces show the user's pet at work. */
+  traceCompanion?: boolean;
 }) {
   const t = useT();
-  const stamps = bubbles ? timeStamps(items) : null;
+  // On the rail look an agent's answer to a working turn is a quiet line in
+  // that turn's trace, so the reply stays the last thing in the chat.
+  const { items: shown, messagesByTurn } = useMemo(() => {
+    // A coding thread's unchanged status is one row, however often it arrived.
+    const folded = foldRepeatedThreadStatus(items);
+    return traceLook === "rail" ? attachTurnMessages(folded) : { items: folded, messagesByTurn: NO_MESSAGES };
+  }, [items, traceLook]);
+  const stamps = bubbles ? timeStamps(shown) : null;
   return (
     <>
-      {items.map((item) => {
+      {shown.map((item) => {
         const stamp = stamps?.get(item.id);
         const node = renderItem(item);
         return stamp ? (
@@ -57,6 +74,10 @@ export function AgentTimeline({
   );
 
   function renderItem(item: TimelineItem) {
+    if (item.type === "internal" && codingThreadOf(item.message.sender_id)) {
+      return <CodingThreadActivity key={item.id} label={item.message.text}
+        threadId={codingThreadOf(item.message.sender_id)} failed={item.message.status === "failed"} />;
+    }
     if (item.type === "internal") {
       return (
         <InternalMessageBubble
@@ -78,9 +99,9 @@ export function AgentTimeline({
         >
           <div
             className={cn(
-              "text-reading",
+              "text-[15px] leading-[23px]",
               bubbles
-                ? "jarvis-chat-out max-w-[78%] rounded-3xl rounded-br-lg px-4 py-2.5"
+                ? "jarvis-user-bubble max-w-[80%] rounded-[20px] px-4 py-2.5"
                 : "jarvis-user-bubble max-w-[85%] rounded-lg px-4 py-3",
             )}
           >
@@ -163,6 +184,11 @@ export function AgentTimeline({
     }
     if (item.type === "notice") {
       if (item.kind === "native_goal_verdict") return <p key={item.id} className="text-xs text-muted-foreground">{t("slash.verifying")}</p>;
+      if (item.kind === "coding_thread") {
+        const started = t("society.chat.coding_thread_started").replace("{0}", String(item.data.agent ?? ""));
+        return <CodingThreadActivity key={item.id} label={`${started} · ${String(item.data.title ?? "")}`}
+          threadId={String(item.data.thread_id ?? "")} />;
+      }
       // The society reporting back on a task Jarvis handed out: the
       // agent's name as the headline, its summary underneath. Muted and
       // centred like a stamp — it is not Jarvis speaking.
@@ -192,6 +218,9 @@ export function AgentTimeline({
         providerLabel={providerLabel(item.provider)}
         onDecide={onDecide}
         bubbles={bubbles}
+        traceLook={traceLook}
+        traceCompanion={traceCompanion}
+        messages={messagesByTurn.get(item.id)}
       />
     );
   }
@@ -232,33 +261,28 @@ function stampLabel(at: Date, now: Date): string {
   return `${date}, ${time}`;
 }
 
-const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false }: {
-  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean;
+const NO_MESSAGES = new Map<string, TraceMessage[]>();
+
+const Turn = memo(function Turn({ turn, assistantName, providerLabel, onDecide, bubbles = false, traceLook, traceCompanion = false, messages }: {
+  turn: TurnItem; assistantName: string; providerLabel: string; onDecide: Decide; bubbles?: boolean; traceLook: TraceLook; traceCompanion?: boolean;
+  /** Agent messages that arrived while this turn worked. */
+  messages?: TraceMessage[];
 }) {
   const t = useT();
+  const extras = useMemo(
+    () => messages?.map((message) => ({ key: message.id, node: <TraceMessageLine message={message} /> })),
+    [messages],
+  );
   return <div className="flex min-w-0 flex-col gap-3" data-testid="agent-turn" data-message-id={turn.id} data-status={turn.status}>
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-      {bubbles ? <GigiMark size={20} className="rounded-full" /> : null}
-      <span className="font-medium text-foreground">{assistantName}</span>
-      <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
-      <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
-      {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
-    </div>
-    <TurnTrace
-      turn={turn}
-      onDecide={onDecide}
-      renderText={(text, id) =>
-        bubbles ? (
-          text.trim() ? (
-            <div className="w-fit max-w-full rounded-3xl rounded-tl-lg bg-card px-5 py-1.5" data-testid="agent-bubble">
-              <Prose block={{ kind: "text", text, id }} />
-            </div>
-          ) : null
-        ) : (
-          <Prose block={{ kind: "text", text, id }} />
-        )
-      }
-    />
+    {!bubbles && (
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{assistantName}</span>
+        <ProviderLogo providerId={turn.provider} label={providerLabel} size="sm" />
+        <span>{providerLabel}{turn.model ? ` · ${turn.model}` : ""}</span>
+        {turn.effort ? <span>{effortLabel(turn.effort, t)}</span> : null}
+      </div>
+    )}
+    <TurnTrace turn={turn} look={traceLook} companion={traceCompanion} extras={extras} onDecide={onDecide} renderText={(text, id) => <Prose block={{ kind: "text", text, id }} />} />
   </div>;
 });
 
@@ -268,14 +292,19 @@ function Prose({ block }: { block: TextBlock }) {
     <div
       data-testid="agent-text"
       className={cn(
-        "prose prose-neutral max-w-none text-[17px] leading-[30px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
-        "prose-p:my-2 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
-        "prose-headings:font-display prose-headings:tracking-tight prose-headings:text-foreground-strong prose-h1:text-xl prose-h2:text-lg prose-h3:text-base",
+        // Compact reading size, like the Claude app: headings stay close to body
+        // size and set apart by weight and spacing, not by scale.
+        "prose prose-neutral max-w-none text-[15px] leading-[25px] text-foreground dark:prose-invert dark:text-foreground [overflow-wrap:anywhere]",
+        "[&>div>:first-child]:mt-0 [&>div>:last-child]:mb-0",
+        "prose-p:my-2.5 prose-p:text-foreground prose-li:text-foreground prose-strong:text-foreground-strong",
+        "prose-headings:mb-1.5 prose-headings:mt-5 prose-headings:font-semibold prose-headings:tracking-normal prose-headings:text-foreground-strong",
+        "prose-h1:text-[17px] prose-h1:leading-[25px] prose-h2:text-[16px] prose-h2:leading-[25px] prose-h3:text-[15px] prose-h3:leading-[25px] prose-h4:text-[15px]",
         "prose-a:text-foreground-strong prose-a:underline prose-a:decoration-border-strong prose-a:underline-offset-2",
         "prose-code:rounded prose-code:bg-secondary prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-[0.85em] prose-code:font-normal prose-code:before:hidden prose-code:after:hidden",
-        "prose-pre:my-2 prose-pre:bg-card prose-pre:text-[14px] prose-pre:leading-[22px]",
-        "prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2",
-        "prose-table:my-3 prose-table:text-[15px] prose-table:leading-[22px]",
+        "prose-pre:my-2.5 prose-pre:bg-card prose-pre:text-[13px] prose-pre:leading-[20px]",
+        "prose-li:my-1 prose-ul:my-2.5 prose-ol:my-2.5 prose-ul:pl-5 prose-ol:pl-5 prose-li:pl-1",
+        "prose-hr:my-5",
+        "prose-table:my-3 prose-table:text-[14px] prose-table:leading-[21px]",
         "prose-thead:text-foreground-strong prose-th:text-foreground-strong prose-td:text-foreground",
       )}
     >

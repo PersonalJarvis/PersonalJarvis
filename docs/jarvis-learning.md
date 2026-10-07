@@ -22,11 +22,22 @@ Jarvis itself, tuned for a voice assistant.
    states a preference, corrects Jarvis, or names a plan, goal or deadline.
    Requests and questions ("play some music", "what's the weather") are not
    marked. A conversation with no marked turn never reaches a model.
-3. **Explicit requests (free, immediate).** "Remember that X" / "merk dir X"
-   is saved at once in the user's own words with the date, without a model,
-   so it cannot be lost to a provider failure. Only a bare "remember that",
-   which points at something said before, is reviewed right away with the
-   turn before it.
+3. **Explicit requests (immediate, always MEMORY.md).** The conversation
+   model saves "remember X" / "merk dir X" itself, while the conversation
+   runs, through the `remember` tool (`jarvis/plugins/tool/remember.py`):
+   one self-contained sentence, dated, into `society/jarvis/MEMORY.md` with
+   `origin: user` and importance 10. On GPT-Live the tool sits in the voice
+   tool set (`BrainSupervisorToolGateway._voice_tools`; the router stays a
+   pure dispatcher, ADR-0011) and the session instructions carry
+   `REMEMBER_DIRECTIVE` plus the learned snapshot, so a call both sees what
+   earlier conversations saved and saves a new request before it ends. As a
+   free fallback the loop finds the request in the user's own words, without
+   a model: at the start of a turn ("remember that X") or after what it
+   points at ("I want short reports. Remember that."), where the sentence
+   before it becomes the entry. A request the tool already saved is not
+   filed twice (the turn named the tool, or a tool save in the last six
+   hours covers it). Only a bare "remember that" with nothing before it in
+   the turn is reviewed right away with the turn before it.
 4. **Review (one small call per conversation).** When a call ends
    (`VoiceSessionEnded`), the conversation has been quiet for
    `idle_review_seconds` (default 300), or after `review_every_turns`
@@ -89,6 +100,41 @@ The prompt path never waits on a writer and never creates files: it reads the
 notebooks under a 50 ms lock attempt and otherwise serves the last good text.
 Typed chat turns contribute only what the person typed, never attachments.
 
+## SOUL.md: the assistant's own character
+
+The third target, `soul`, is the assistant itself. It lives in
+`data/workspace/SOUL.md` (`jarvis/memory/soul.py`), not in the vault:
+
+| Part of SOUL.md | Maintained by |
+| --- | --- |
+| `- **Name:**` line under `## Who I am` | the loop at start (`JarvisNotebook.warm`), mirrored from the wake word; the wake word stays the only control for the name |
+| `## Calibration` between the `curator:calibration` markers | the live conversation model, during the call, through the `update_soul` tool: id-tagged entries in the Society notebook format, under a file lock, ledgered like the other two |
+| role, vibe, `## Tone rules`, `## Limits` | the user, by hand; nothing rewrites them |
+
+The writer is the model that already heard the correction, not the review.
+`update_soul` (`jarvis/plugins/tool/update_soul.py`) sits in the live voice
+tool set only (`BrainSupervisorToolGateway._voice_tools`, ADR-0011 stays a
+pure dispatcher), so on GPT-Live the thinking model calls it through
+`call_tool`; the identity block it receives carries one extra sentence
+(`SOUL_UPDATE_DIRECTIVE`) telling it to. Every note passes `guard.refusal`,
+the notebook budget and the ledger. The review neither shows nor accepts the
+`soul` target: no review call and no reviewer tokens are spent on the
+assistant's character. The name itself is never stored as an entry.
+
+SOUL.md is not part of the learned snapshot below. `jarvis/brain/identity.py`
+renders it, after a name directive ("YOUR NAME IS GEORGE ... Personal Jarvis
+is the name of the app you run inside, not your name"), at the very top of
+every surface: the classic brain prompt (and with it the CLI chat seats), the
+realtime voice instructions and the GPT-Live session, both its voice model
+and its thinking model. The render is cached on the file's modification time,
+so a tool write or a hand edit applies on the next call. It costs about 350
+prompt tokens (name directive about 90, character about 260 with an empty
+learned section), at the start of every prompt, so provider prompt caches
+cover it after the first request. Regression this fixes: a
+GPT-Live call answered "I'm Personal Jarvis" although the wake word named the
+assistant George (2026-10-02); the live instructions hardcoded the product
+name and never read SOUL.md.
+
 ## Size and compaction
 
 The notebooks ride along on every brain turn and every realtime instruction
@@ -96,7 +142,10 @@ update, so they stay small: `user_budget_chars` 1,500 and `memory_budget_chars`
 1,000 by default (about 650 tokens together at most; the compact realtime
 profile for small local models uses half). One entry is one short sentence,
 at most 300 characters. Entries beyond the prompt budget stay on disk; the most
-important and most recent ones reach the prompt.
+important and most recent ones reach the prompt. Explicit entries (`origin:
+user`) do not count against `memory_budget_chars`: they render first, under
+"What the user asked you to remember", within their own 2,000-character
+allowance (`EXPLICIT_PROMPT_CHARS`, half in the compact profile).
 
 Compaction (`compact.py`) keeps the files themselves small:
 
@@ -108,7 +157,9 @@ Compaction (`compact.py`) keeps the files themselves small:
    sources and invents nothing: every number and link, every capitalised name
    and at least 60 percent of its words come from the sources. An entry is
    dropped as outdated only when it names a date that has passed; lasting
-   facts such as birthdays are kept. The cooldown survives restarts
+   facts such as birthdays are kept. Explicit entries are never shown to the
+   merging model: they are the user's, and their date prefix would otherwise
+   read as a passed deadline. The cooldown survives restarts
    (`.learning-state.json`).
 3. **Hard ceiling.** A review may not grow a notebook past 125 percent of its
    budget (a replace that does not grow it is fine). Only an explicit
@@ -147,6 +198,10 @@ engines. No upstream code was copied.
 `tests/unit/memory/learning/test_jarvis_learning.py` covers the evidence and
 safety rules, ledger and budgets, every trigger, the dead-reviewer fallbacks,
 the voice and chat inputs, and both prompt integrations;
+`test_soul_learning.py` covers the `soul` target end to end;
+`tests/unit/plugins/tool/test_update_soul.py` covers the live tool;
+`tests/unit/memory/test_soul.py` and `tests/unit/brain/test_identity.py` cover
+the file format and the identity block on every surface;
 `test_compaction.py` covers deduplication, safe and refused merges, the
 outdated rule, the cooldown, the hard ceiling and the bounded ledger. The loop uses only
 `pathlib`, JSON, asyncio and the existing `filelock` dependency, so it runs

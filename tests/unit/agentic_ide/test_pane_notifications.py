@@ -1025,7 +1025,9 @@ async def test_a_new_pane_never_inherits_the_closed_ones_entries(
     itself instead of leaving it to the next sweep.
     """
     watcher = notifications.watcher()
-    await registry.start(str(tmp_path), [{"agent": "claude", "name": "T1"}])
+    await registry.start(
+        str(tmp_path), [{"agent": "claude", "name": "T1"}, {"agent": "claude", "name": "T2"}]
+    )
     first = await registry.attach("T1", 100, 30, _noop, _noop_exit)
     await _file_one(watcher, registry, first, start=100.0)
 

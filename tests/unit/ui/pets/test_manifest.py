@@ -11,6 +11,7 @@ from jarvis.ui.pets.manifest import (
     MAX_NAME_CHARS,
     AnimationSpec,
     PetManifestError,
+    check_act_cells,
     check_cells,
     check_sheet_size,
     parse_manifest,
@@ -210,3 +211,58 @@ def test_an_accent_needs_a_looping_row() -> None:
     animations["success"].update({"accent_frames": 1, "accent_every": 2})
     with pytest.raises(PetManifestError):
         parse_manifest(_data(animations=animations), builtin=True)
+
+
+# --- Idle acts -------------------------------------------------------------------
+
+
+def _acts(**overrides: object) -> dict:
+    acts: dict = {
+        "fire": {"row": 0, "frames": 6, "fps": 8},
+        "yawn": {"row": 1, "frames": 4, "fps": 6},
+    }
+    acts.update(overrides)
+    return acts
+
+
+def test_idle_acts_are_optional_one_shots_on_their_own_sheet() -> None:
+    manifest = parse_manifest(_data(acts=_acts(), acts_sheet="acts.png"), builtin=True)
+    assert list(manifest.acts) == ["fire", "yawn"]
+    assert manifest.acts["fire"] == AnimationSpec(row=0, frames=6, fps=8, loop=False)
+    assert manifest.acts_sheet == "acts.png"
+    again = parse_manifest(manifest.to_json(), builtin=True)
+    assert again.acts == manifest.acts and again.acts_sheet == "acts.png"
+    plain = parse_manifest(_data(), builtin=True)
+    assert not plain.acts and plain.acts_sheet is None
+    assert "acts" not in plain.to_json()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"acts": _acts()},  # no sheet
+        {"acts_sheet": "acts.png"},  # no acts
+        {"acts": {}, "acts_sheet": "acts.png"},
+        {"acts": _acts(), "acts_sheet": "sheet.png"},  # the state sheet
+        {"acts": _acts(), "acts_sheet": "../acts.png"},
+        {"acts": {"Fire!": {"row": 0, "frames": 2, "fps": 8}}, "acts_sheet": "acts.png"},
+        {"acts": {"fire": {"row": 0, "frames": 2, "fps": 8, "loop": True}}, "acts_sheet": "a.png"},
+        {"acts": {"fire": {"row": 0, "frames": 9, "fps": 8}}, "acts_sheet": "acts.png"},
+        {
+            "acts": {f"a{k}": {"row": k, "frames": 2, "fps": 8} for k in range(13)},
+            "acts_sheet": "a.png",
+        },
+    ],
+)
+def test_broken_idle_acts_are_rejected(overrides: dict) -> None:
+    with pytest.raises(PetManifestError):
+        parse_manifest(_data(**overrides), builtin=True)
+
+
+def test_an_act_must_fit_its_sheet() -> None:
+    manifest = parse_manifest(_data(acts=_acts(), acts_sheet="acts.png"), builtin=True)
+    check_act_cells(manifest, 48 * 6, 48 * 2)
+    with pytest.raises(PetManifestError):
+        check_act_cells(manifest, 48 * 5, 48 * 2)
+    with pytest.raises(PetManifestError):
+        check_act_cells(manifest, 48 * 6, 48)

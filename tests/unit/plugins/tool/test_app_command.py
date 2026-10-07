@@ -433,3 +433,14 @@ async def test_installing_a_skill_by_name_reports_what_landed() -> None:
     # verdict, not just an `ok: true` the model would have to interpret.
     assert response["state"] == "installed"
     assert response["ready"] is True
+
+
+def test_an_ordered_routine_runs_without_a_second_yes_but_delete_still_asks() -> None:
+    # Live 2026-10-01: "create the routine" and "test-run it" each needed a
+    # second spoken yes although the user had just asked for exactly that.
+    tools = _tools()
+    assert tools["society-create-routine"].risk_tier == "monitor"
+    operation = tools["society-routine-operation"]
+    for safe in ("pause", "resume", "run"):
+        assert operation.risk_tier_for_args({"operation": safe}) == "monitor"
+    assert operation.risk_tier_for_args({"operation": "delete"}) == "ask"

@@ -7,6 +7,7 @@ import { balancedLayout } from "@/components/agentic/workspaceDocking";
 
 const api = vi.hoisted(() => ({
   fetchIdeState: vi.fn(), fetchIdeProjects: vi.fn(), fetchIdeAgents: vi.fn(),
+  fetchFolders: vi.fn(async () => ({ path: "/code/app", parent: "/code", entries: [], error: null })),
   startIdeSession: vi.fn(), activateWorkspace: vi.fn(), restoreIdeWorkspace: vi.fn(),
   addTerminal: vi.fn(), closeTerminal: vi.fn(), closeWorkspace: vi.fn(), renameWorkspace: vi.fn(), reorderIdeTerminals: vi.fn(), pushToast: vi.fn(),
   syncAgenticIdeSurface: vi.fn(() => Promise.resolve()),
@@ -21,7 +22,13 @@ const git = vi.hoisted(() => ({ inspectGit: vi.fn(), prepareGit: vi.fn() }));
 vi.mock("@/lib/gitApi", async (importOriginal) => ({ ...(await importOriginal<object>()), ...git }));
 vi.mock("@/lib/agenticIdeApi", () => api);
 vi.mock("@/lib/chatLibraryApi", () => ({ openProject }));
-vi.mock("@/store/events", () => ({ useEventStore: (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }) }));
+vi.mock("@/store/events", () => ({
+  // The code editor's shortcuts read the store imperatively via getState().
+  useEventStore: Object.assign(
+    (select: (value: unknown) => unknown) => select({ pushToast: api.pushToast }),
+    { getState: () => ({ pushToast: api.pushToast }) },
+  ),
+}));
 vi.mock("@/components/agentic/FolderPicker", () => ({ FolderPicker: ({ onSelect }: { onSelect: (path: string) => void }) => <button onClick={() => onSelect("/code/app")}>Pick folder</button> }));
 vi.mock("@/components/agentic/VoiceBubble", () => ({ VoiceBubble: () => null, storedVoiceBubbleOpen: () => false, storeVoiceBubbleOpen: vi.fn() }));
 vi.mock("@/components/agentic/WorkspaceTerminalGrid", () => ({ WorkspaceTerminalGrid: ({ session, onAdd }: { session: { id: string }; onAdd: () => void }) => <><div data-testid="live-grid">{session.id}</div><button onClick={onAdd}>Pane add</button></> }));
@@ -58,10 +65,16 @@ describe("Agentic IDE project flow", () => {
     render(<AgenticIdeView />);
     fireEvent.click(await screen.findByRole("button", { name: "Connect folder" }));
     expect(api.fetchIdeAgents).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
     fireEvent.click(screen.getByRole("button", { name: "Pick folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use this folder" }));
+    await screen.findByRole("button", { name: "Change" });
     fireEvent.click(screen.getByRole("button", { name: "Connect project" }));
     await waitFor(() => expect(openProject).toHaveBeenCalledWith("/code/app", undefined));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Connect project" })).toBeNull());
+    const setup = await screen.findByRole("dialog", { name: "New workspace" });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(setup.contains(document.activeElement)).toBe(true);
     expect(api.startIdeSession).not.toHaveBeenCalled();
   });
 
@@ -156,6 +169,21 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", direction: "down" }, { onMessage: expect.any(Function) }));
   });
 
+  it("offers adding a custom command from the add-agent dialog", async () => {
+    const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
+      focus_mode: false, project: { name: "App" }, terminals: [] };
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
+    api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
+    render(<AgenticIdeView />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
+    const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
+    fireEvent.click(within(dialog).getByTestId("add-agent-custom-cli"));
+    expect(await screen.findByTestId("custom-cli-dialog")).toBeTruthy();
+    // The picker stays underneath (hidden from assistive tech while the form is
+    // modal), so a saved command can be picked right away.
+    expect(screen.getByRole("dialog", { name: "Add coding agent", hidden: true })).toBeTruthy();
+  });
+
   it("splits with a plain terminal even when no coding CLI is installed", async () => {
     api.fetchIdeAgents.mockResolvedValue({ agents: [
       { ...agent, installed: false },
@@ -220,18 +248,18 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.addTerminal).toHaveBeenCalledWith({ workspace_id: "w1", agent: "codex", anchor: "T1", direction: "right" }, { onMessage: expect.any(Function) }));
   });
 
-  it("shows the pane count and refuses a new agent once the workspace is full", async () => {
-    const terminals = Array.from({ length: 16 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
+  it("shows the pane count and never refuses a new agent, however many are open", async () => {
+    const terminals = Array.from({ length: 20 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}`, display_name: "Codex" }));
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "App work", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals, layout: balancedLayout(terminals.map((terminal) => terminal.key)) };
-    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session, max_terminals: 16 });
+    api.fetchIdeState.mockResolvedValue({ ...emptyState, active: true, active_id: "w1", session });
     api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
     render(<AgenticIdeView />);
     fireEvent.click(await screen.findByRole("button", { name: "Pane add" }));
     const dialog = screen.getByRole("dialog", { name: "Add coding agent" });
-    expect(within(dialog).getByText(/16 of 16 agents/)).toBeTruthy();
-    expect(within(dialog).getByRole("status").textContent).toContain("This workspace is full");
-    expect((within(dialog).getByRole("button", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(dialog).getByText(/20 agents/)).toBeTruthy();
+    expect(within(dialog).queryByText(/is full/)).toBeNull();
+    expect((within(dialog).getByRole("button", { name: "Codex" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("exposes compact workspace rename and close actions", async () => {
@@ -270,18 +298,16 @@ describe("Agentic IDE project flow", () => {
     await waitFor(() => expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id)));
   });
 
-  it("persists a balanced correction for an oversized restored layout", async () => {
+  it("keeps a wide restored layout as it was arranged", async () => {
     const terminals = Array.from({ length: 6 }, (_, index) => ({ key: `t${index}`, history_id: `id${index}`, name: `T${index}` }));
     const session = { id: "w1", project_id: "p1", folder: "/code/app", name: "Restored", created_at: 0,
       focus_mode: false, project: { name: "App" }, terminals, layout: { direction: "row", children: terminals.map((terminal) => ({ pane: terminal.key })), weights: terminals.map(() => 1) } };
     const current = { ...emptyState, active: true, active_id: "w1", session };
     api.fetchIdeState.mockResolvedValue(current);
     api.fetchIdeProjects.mockResolvedValue({ projects: [project], active_workspace_id: "w1" });
-    api.reorderIdeTerminals.mockResolvedValue({ ...current, session: { ...session, layout: balancedLayout(terminals.map((terminal) => terminal.key)) } });
     render(<AgenticIdeView onScreen={false} />);
     await screen.findByTestId("live-grid");
-    expect(api.reorderIdeTerminals).toHaveBeenCalledOnce();
-    expect(api.reorderIdeTerminals).toHaveBeenCalledWith("w1", terminals.map((terminal) => terminal.history_id));
+    expect(api.reorderIdeTerminals).not.toHaveBeenCalled();
   });
 
   it("never rebalances a different workspace returned by a delayed add", async () => {

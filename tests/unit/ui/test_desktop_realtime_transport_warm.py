@@ -261,11 +261,15 @@ def test_warm_is_not_scheduled_from_the_heavy_backend(monkeypatch):
     before the transport it triggers.
     """
     import inspect
+    import ast
+    import textwrap
 
     source = inspect.getsource(DesktopApp._run_backend)
-    heavy_start = source.index("async def _heavy_backend_bg()")
-    heavy_end = source.index('loop.create_task(_heavy_backend_bg()')
-    heavy_body = source[heavy_start:heavy_end]
+    parsed_source = textwrap.dedent(source)
+    heavy = next(node for node in ast.walk(ast.parse(parsed_source))
+                 if isinstance(node, ast.AsyncFunctionDef) and node.name == "_heavy_backend_bg")
+    heavy_body = ast.get_source_segment(parsed_source, heavy)
+    assert heavy_body is not None
 
     assert "realtime-transport-warm" in source
     assert "realtime-transport-warm" not in heavy_body

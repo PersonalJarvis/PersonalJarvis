@@ -89,7 +89,7 @@ describe("AppSettingsGroup", () => {
 
     // Once GET resolves, the switch reflects the enabled config and is enabled.
     await waitFor(() => {
-      const sw = screen.getByRole("switch");
+      const sw = screen.getByRole("switch", { name: "Launch app at login" });
       expect(sw.getAttribute("aria-checked")).toBe("true");
       expect(sw.hasAttribute("disabled")).toBe(false);
     });
@@ -103,7 +103,7 @@ describe("AppSettingsGroup", () => {
     render(<AppSettingsGroup />);
 
     await waitFor(() => {
-      const sw = screen.getByRole("switch");
+      const sw = screen.getByRole("switch", { name: "Launch app at login" });
       expect(sw.hasAttribute("disabled")).toBe(true);
     });
     expect(
@@ -165,7 +165,7 @@ describe("AppSettingsGroup", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<AppSettingsGroup />);
 
-    const sw = await waitFor(() => screen.getByRole("switch"));
+    const sw = await waitFor(() => screen.getByRole("switch", { name: "Launch app at login" }));
     fireEvent.click(sw);
 
     await waitFor(() => {

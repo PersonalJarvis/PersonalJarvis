@@ -85,7 +85,7 @@ def _make_icon(state: JarvisState, size: int = 64) -> Any:
 @dataclass(slots=True)
 class TrayCommand:
     """Action sent from the tray → Jarvis core."""
-    action: str  # "quit" | "pause" | "resume" | "reload_config" | "open_settings"
+    action: str  # "quit" | "quit_all" | "pause" | "resume" | "reload_config" | "open_settings"
     payload: dict[str, Any] | None = None
 
 
@@ -192,7 +192,7 @@ class JarvisTray:
                 cmd = TrayCommand(action=action)
                 self._command_queue.put(cmd)
                 self._on_command(cmd)
-                if action == "quit":
+                if action in ("quit", "quit_all"):
                     self.stop()
             return _handler
 
@@ -218,6 +218,9 @@ class JarvisTray:
             MenuItem("Emergency stop", _emit("kill")),
             Menu.SEPARATOR,
             MenuItem("Quit", _emit("quit")),
+            # Quit without handing routines and channels to the background
+            # service (jarvis/core/background_service.py).
+            MenuItem("Quit and stop background agents", _emit("quit_all")),
         )
 
     def _run(self) -> None:
@@ -413,7 +416,7 @@ class JarvisTray:
                         break
                     continue
                 asyncio.run_coroutine_threadsafe(aq.put(cmd), loop)
-                if cmd.action == "quit":
+                if cmd.action in ("quit", "quit_all"):
                     break
 
         threading.Thread(target=_forwarder, name="jarvis-tray-bridge", daemon=True).start()
