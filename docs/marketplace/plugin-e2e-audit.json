@@ -2225,7 +2225,7 @@
     {
       "plugin_id": "figma",
       "result": "BLOCKED",
-      "config_fingerprint": "30ec7b013f5808fa4e1bd2450da3bc16480d892e30ed80acd0138c0329c04c60",
+      "config_fingerprint": "d8ff5ecdffad01389f6e9c216fa2d77082cc6d6233ecdd70fc3d02c69f7a078e",
       "initial_state": "connect_attempt",
       "evidence": {
         "ui": {
@@ -2265,9 +2265,9 @@
         }
       },
       "blocker": {
-        "reason": "Publisher OAuth client is not provisioned. A draft Figma OAuth app \"Personal Jarvis\" exists (observed 2026-10-07) but has no redirect URL, no allowed scopes and no stored client secret; Figma's token endpoint requires the secret (HTTP Basic), so a shipped public client also needs a token broker.",
+        "reason": "Publisher OAuth client is not provisioned. The draft Figma OAuth app \"Personal Jarvis\" (client id RkG83E4jPtFsiRQZBku3SD) has the loopback redirect URL and the four read scopes since 2026-10-07, but its client secret is not stored anywhere; Figma's token endpoint requires the secret (HTTP Basic), so a shipped public client also needs a token broker.",
         "owner": "Project publisher",
-        "next_action": "In the Figma developer console add the redirect URL http://127.0.0.1:3127/oauth/callback and the scopes current_user:read, projects:read, file_content:read, file_comments:read, regenerate the client secret, add a figma route to the token broker and ship the client id, submit the app for public review, then repeat the full clean browser journey with a real read-only action.",
+        "next_action": "Regenerate the client secret in the Figma developer console, add a figma route to the token broker and ship the client id, submit the app for public review, then repeat the full clean browser journey with a real read-only action.",
         "evidence": "Connect Figma\n\nBrowser sign-in is not available yet.\n\nBrowser sign-in is pending publisher setup. No developer account or client registration is required from you.\n\nUse your own OAuth client (advanced)\nExpert token alternative\nCancel\nContinue"
       }
     },

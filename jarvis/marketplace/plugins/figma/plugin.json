@@ -24,7 +24,7 @@
         "callback_path": "/oauth/callback",
         "scopes": [
           "current_user:read",
-          "projects:read",
+          "folders:read",
           "file_content:read",
           "file_comments:read"
         ],
@@ -36,7 +36,7 @@
         "token_creation_url": "https://www.figma.com/settings",
         "token_prefix": "",
         "validation_endpoint": "https://api.figma.com/v1/me",
-        "instruction_md": "Generate a Figma personal access token with current_user:read, projects:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
+        "instruction_md": "Generate a Figma personal access token with current_user:read, folders:read, file_content:read and file_comments:read. Paste it here. Team IDs and file keys can be copied from Figma URLs.",
         "auth_scheme": "figma"
       },
       "mcp_server": {
