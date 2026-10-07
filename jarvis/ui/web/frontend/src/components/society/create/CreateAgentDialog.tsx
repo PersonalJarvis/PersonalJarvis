@@ -13,6 +13,7 @@ import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BrandedSelect } from "@/components/ui/select";
+import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import type { AgentRuntime } from "@/lib/societyApi";
@@ -176,7 +177,10 @@ function CreateAgentDialog() {
                     options={choices.map((choice) => ({
                       value: choice.id,
                       label: choice.label,
-                      icon: <ProviderLogo providerId={choice.logo} label={choice.label} size="sm" />,
+                      // A coding CLI wears its own mark: a letter in a box is not a logo.
+                      icon: choice.mark
+                        ? <AgentMark agent={choice.mark} label={choice.label} logoUrl={choice.logoUrl} variant="plain" size="sm" />
+                        : <ProviderLogo providerId={choice.logo} label={choice.label} size="sm" />,
                     }))}
                   />
                 ) : (

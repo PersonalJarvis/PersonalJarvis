@@ -5796,7 +5796,7 @@
       "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
-      "jarvis_hint": "El bucle de agente propio de Jarvis, con el modelo que elijas en su chat.",
+      "jarvis_hint": "El bucle de agente propio de Jarvis, con la memoria, las habilidades y las herramientas de este agente.",
       "hermes_hint": "El agente Hermes con sus propias herramientas, más la memoria, las habilidades y las herramientas de Jarvis.",
       "openclaw_hint": "El agente OpenClaw con sus propias herramientas, más la memoria, las habilidades y las herramientas de Jarvis.",
       "setting_up_hint": "{0} se está configurando en este equipo. Ya puedes crear el agente; responderá en cuanto termine la configuración.",

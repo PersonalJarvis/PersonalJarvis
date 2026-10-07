@@ -5796,7 +5796,7 @@
       "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
-      "jarvis_hint": "Jarvis' own agent loop, on the model you pick in its chat.",
+      "jarvis_hint": "Jarvis' own agent loop, with this agent's memory, skills and tools.",
       "hermes_hint": "The Hermes agent with its own tools — plus this agent's Jarvis memory, skills and tools.",
       "openclaw_hint": "The OpenClaw agent with its own tools — plus this agent's Jarvis memory, skills and tools.",
       "setting_up_hint": "{0} is being set up on this computer. You can create the agent now; it answers as soon as the setup is done.",

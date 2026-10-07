@@ -42,6 +42,9 @@ export interface ProviderChoice {
   label: string;
   /** The provider id whose logo stands for this brand. */
   logo: string;
+  /** A coding CLI's own mark (`AgentMark`) when the brand is that CLI. */
+  mark?: string;
+  logoUrl?: string;
   /** Subscription first, then API key, then local. */
   options: AccessOption[];
 }
@@ -101,7 +104,15 @@ export function providerChoices(
     const id = brandOf(seat);
     let choice = byBrand.get(id);
     if (!choice) {
-      choice = { id, label: BRANDS[id]?.label ?? seat.provider.label, logo: BRANDS[id]?.logo ?? seat.provider.id, options: [] };
+      const brand = BRANDS[id];
+      choice = {
+        id,
+        label: brand?.label ?? seat.provider.label,
+        logo: brand?.logo ?? seat.provider.id,
+        mark: brand ? undefined : seat.provider.agentMark || undefined,
+        logoUrl: brand ? undefined : seat.provider.logoUrl,
+        options: [],
+      };
       byBrand.set(id, choice);
     }
     for (const option of optionsFor(seat, access[seat.provider.id], external)) {

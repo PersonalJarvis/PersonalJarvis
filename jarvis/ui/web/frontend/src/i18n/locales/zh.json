@@ -5794,7 +5794,7 @@
       "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
-      "jarvis_hint": "Jarvis 自己的智能体循环，使用你在聊天中选择的模型。",
+      "jarvis_hint": "Jarvis 自己的智能体循环，使用该智能体的记忆、技能和工具。",
       "hermes_hint": "带有自身工具的 Hermes 智能体，并配有该智能体在 Jarvis 中的记忆、技能和工具。",
       "openclaw_hint": "带有自身工具的 OpenClaw 智能体，并配有该智能体在 Jarvis 中的记忆、技能和工具。",
       "setting_up_hint": "正在这台电脑上安装 {0}。你现在就可以创建智能体，安装完成后它就会回复。",

@@ -5796,7 +5796,7 @@
       "jarvis": "Jarvis Agent",
       "hermes": "Hermes",
       "openclaw": "OpenClaw",
-      "jarvis_hint": "Jarvis' eigene Agenten-Schleife, auf dem Modell, das du im Chat wählst.",
+      "jarvis_hint": "Jarvis' eigene Agenten-Schleife, mit dem Gedächtnis, den Skills und Tools dieses Agenten.",
       "hermes_hint": "Der Hermes-Agent mit seinen eigenen Werkzeugen – dazu Gedächtnis, Skills und Werkzeuge aus Jarvis.",
       "openclaw_hint": "Der OpenClaw-Agent mit seinen eigenen Werkzeugen – dazu Gedächtnis, Skills und Werkzeuge aus Jarvis.",
       "setting_up_hint": "{0} wird gerade auf diesem Computer eingerichtet. Du kannst den Agenten schon anlegen; er antwortet, sobald die Einrichtung fertig ist.",
