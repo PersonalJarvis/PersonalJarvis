@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -42,9 +41,14 @@ from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 FACT_SENTENCE = "Remember that my friend Lena moved to Hamburg last month."
 
 
+# Hang guard for background work, never a measured latency: a loaded CI runner
+# runs this file several times slower than a laptop.
+_HANG_GUARD_S = 30.0
+
+
 class FakeBrain:
-    def __init__(self, *, sleep_s: float = 0.0) -> None:
-        self.sleep_s = sleep_s
+    def __init__(self, *, gate: asyncio.Event | None = None) -> None:
+        self.gate = gate
         self.call_count = 0
         self.completed = asyncio.Event()
 
@@ -55,8 +59,8 @@ class FakeBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.call_count += 1
-        if self.sleep_s:
-            await asyncio.sleep(self.sleep_s)
+        if self.gate is not None:
+            await self.gate.wait()
         prompt = req.messages[-1].content
         assert isinstance(prompt, str)
         focus_match = re.search(r"FOCUS USER TURN \[([^\]]+)]", prompt)
@@ -104,10 +108,10 @@ def _config() -> JarvisConfig:
     )
 
 
-def _stack(tmp_path: Path, *, brain_sleep_s: float = 0.0):
+def _stack(tmp_path: Path, *, brain_gate: asyncio.Event | None = None):
     bus = EventBus()
     journal = CandidateJournal(tmp_path / "jarvis.db")
-    brain = FakeBrain(sleep_s=brain_sleep_s)
+    brain = FakeBrain(gate=brain_gate)
     extractor = ConversationFactExtractor(
         config=_config(), journal=journal, registry=FakeRegistry(brain),
     )
@@ -116,17 +120,11 @@ def _stack(tmp_path: Path, *, brain_sleep_s: float = 0.0):
     return bus, journal, None, bridge, brain
 
 
-async def _drain(
-    journal: CandidateJournal,
-    *,
-    timeout_s: float = 2.0,
-    min_count: int = 1,
-) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if journal.backlog_count() >= min_count:
-            return
-        await asyncio.sleep(0.02)
+async def _drain(bridge: VoiceFactBridge) -> None:
+    """Wait for every review the bridge started, however slow the host is."""
+    async with asyncio.timeout(_HANG_GUARD_S):
+        while bridge._inflight:  # noqa: SLF001 - test seam: the bridge's own task set
+            await asyncio.gather(*bridge._inflight, return_exceptions=True)  # noqa: SLF001
 
 
 @pytest.mark.asyncio
@@ -137,7 +135,7 @@ async def test_voice_turn_feeds_journal_not_direct_ingest(tmp_path: Path) -> Non
             transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
         ))
         await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        await _drain(journal)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -152,7 +150,7 @@ async def test_chat_turn_feeds_same_journal(tmp_path: Path) -> None:
     try:
         await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE))
         await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        await _drain(journal)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -174,7 +172,7 @@ async def test_same_text_via_both_paths_journaled_once(tmp_path: Path) -> None:
         ))
         await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE))
         await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        await _drain(journal)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -193,8 +191,9 @@ async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> No
                 MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE)
             )
             await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-            await asyncio.wait_for(brain.completed.wait(), timeout=2.0)
-            await _drain(journal, min_count=index + 1)
+            await asyncio.wait_for(brain.completed.wait(), timeout=_HANG_GUARD_S)
+            await _drain(bridge)
+            assert journal.backlog_count() == index + 1
             assert brain.call_count == index + 1
     finally:
         bridge.stop()
@@ -206,19 +205,22 @@ async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_ap9_handlers_return_before_extraction_completes(tmp_path: Path) -> None:
     """AP-9: publishing the turn never blocks on the LLM extraction."""
-    bus, journal, _curator, bridge, _brain = _stack(tmp_path, brain_sleep_s=0.5)
+    # The extraction blocks until the test releases it, so a handler that
+    # awaited it would never return: the publishes below would hit the guard.
+    release = asyncio.Event()
+    bus, journal, _curator, bridge, brain = _stack(tmp_path, brain_gate=release)
     try:
-        started = time.monotonic()
-        await bus.publish(TranscriptFinal(
-            transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
-        ))
-        await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        elapsed = time.monotonic() - started
-        assert elapsed < 0.1, f"voice path blocked for {elapsed:.3f}s on extraction"
+        async with asyncio.timeout(_HANG_GUARD_S):
+            await bus.publish(TranscriptFinal(
+                transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
+            ))
+            await bus.publish(ResponseGenerated(text="Noted.", language="en"))
         # Extraction has not finished yet — the journal is still empty.
+        assert not brain.completed.is_set()
         assert journal.backlog_count() == 0
         # ... and completes later in the background.
-        await _drain(journal, timeout_s=3.0)
+        release.set()
+        await _drain(bridge)
         assert journal.backlog_count() == 1
     finally:
         bridge.stop()
@@ -235,7 +237,9 @@ async def test_unacknowledged_turns_are_never_reviewed(tmp_path: Path) -> None:
         await bus.publish(ResponseGenerated(text="Hamburg is lovely.", language="en"))
         await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE * 2))
         await bus.publish(ResponseGenerated(text="Tell me more!", language="en"))
-        await asyncio.sleep(0.3)
+        # Any review the handlers started is awaited, so a wrong dispatch is
+        # caught however slowly it would have run.
+        await _drain(bridge)
     finally:
         bridge.stop()
 

@@ -1089,6 +1089,20 @@ def set_jarvisx_settings(
         _atomic_write(path, out)
 
 
+def set_missions_paid_api_fallback(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[missions] paid_api_fallback`` (the paid-API fallback switch).
+
+    The only writer of this key. Called from the Settings route
+    (``PUT /api/mission-billing``) — the self-mod / voice path refuses the key
+    (``jarvis/core/self_mod/forbidden.py``). Read fresh by
+    ``jarvis.missions.capacity.paid_api_fallback_enabled``, so the change
+    applies to the very next mission decision without a restart.
+    """
+    if not isinstance(enabled, bool):
+        raise TypeError("paid_api_fallback must be a bool")
+    _patch_table(path, "missions", "paid_api_fallback", enabled)
+
+
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the user-facing reply-language pin in ``[brain] reply_language``.
 

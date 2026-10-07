@@ -1059,6 +1059,7 @@
       "attempts_timed_out": "Todos los intentos agotaron el tiempo",
       "budget_exceeded": "Se superó el presupuesto de coste",
       "worktree_setup_failed": "No se pudo preparar el espacio de trabajo",
+      "checkpoint_missing": "Faltaba el progreso guardado, así que no se pudo continuar",
       "critic_unavailable": "No había revisor disponible para comprobar el resultado",
       "critic_rejected": "El revisor rechazó el resultado",
       "review_time_budget_exhausted": "La revisión agotó su tiempo",
@@ -4181,7 +4182,23 @@
     "timeline_label": "Cronología de eventos",
     "no_events": "Aún no hay eventos para esta misión.",
     "no_critic_verdicts": "Aún no hay veredictos del crítico para esta misión.",
-    "no_missions_yet": "Aún no hay misiones. Jarvis principal enviará una en breve…"
+    "no_missions_yet": "Aún no hay misiones. Jarvis principal enviará una en breve…",
+    "capacity_wait": {
+      "provider_quota": "La capacidad de {provider} está agotada por ahora.",
+      "provider_auth": "El inicio de sesión de {provider} ha caducado.",
+      "provider_unavailable": "{provider} no se puede usar ahora mismo.",
+      "provider_fallback": "proveedor de IA",
+      "saved": "El progreso hasta ahora se ha guardado.",
+      "progress": "{done} de {total} pasos hechos, {open} pendientes.",
+      "progress_single": "La tarea en sí sigue pendiente.",
+      "files": "Archivos guardados: {files}.",
+      "wait": "La misión espera hasta que vuelva a haber capacidad.",
+      "wait_auth": "La misión espera hasta que vuelvas a iniciar sesión.",
+      "paid": "Uso de API de pago solo con tu aprobación en Artefactos o si lo permites en Ajustes → Claves API.",
+      "paid_cap_reached": "Se alcanzó el límite de coste aprobado para {provider}.",
+      "paid_daily_cap_reached": "El uso de pago automático de {provider} alcanzó su límite diario.",
+      "paid_consent_revoked": "Se desactivó el uso de pago automático de {provider}."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Aprobaciones",
@@ -4272,7 +4289,8 @@
     "approved": "listo",
     "failed": "error",
     "cancelled": "cancelado",
-    "timed_out": "tiempo agotado"
+    "timed_out": "tiempo agotado",
+    "waiting_capacity": "esperando capacidad"
   },
   "mascot_gigi": {
     "aria_label": "Mascota Gigi de {name}",
@@ -7056,5 +7074,46 @@
       "create": "Crear mascota",
       "creating": "Creando…"
     }
+  },
+  "capacity_decision": {
+    "title": "La misión espera capacidad – tu decisión",
+    "loading": "Buscando una alternativa de pago …",
+    "provider": "Proveedor",
+    "model": "Modelo",
+    "estimate": "Coste estimado",
+    "estimate_value": "aprox. {cost} para {steps} pasos pendientes",
+    "cap": "Límite de coste estricto",
+    "spent": "Ya gastado",
+    "reason": "Motivo",
+    "reasons": {
+      "provider_quota": "Capacidad de la suscripción agotada",
+      "provider_auth": "Sesión de la suscripción caducada",
+      "provider_unavailable": "La suscripción no se puede usar ahora",
+      "paid_cap_reached": "Límite de coste aprobado alcanzado",
+      "paid_daily_cap_reached": "Límite diario de uso de pago automático alcanzado",
+      "paid_consent_revoked": "Se desactivó el uso de pago automático"
+    },
+    "no_offer": "No hay acceso de pago a la API con precio conocido. La misión espera a su suscripción.",
+    "over_cap": "La estimación supera el límite de coste. La misión se pausa al alcanzarlo; el progreso queda guardado.",
+    "scope": "Una aprobación vale solo para esta misión y esta ejecución, nunca para misiones posteriores.",
+    "covers_review": "La aprobación también cubre la revisión del resultado.",
+    "settings_hint": "Permitirlo siempre en Ajustes → Claves API",
+    "wait": "Esperar",
+    "approve": "Aprobar API de pago para esta misión",
+    "cancel": "Cancelar misión",
+    "confirm_approve": "¿Usar {provider} / {model} para esta misión, como máximo {cap}?",
+    "confirm_cancel": "¿Cancelar la misión? El progreso guardado se conserva.",
+    "confirm": "Confirmar",
+    "back": "Atrás",
+    "error": "Decisión no aplicada: {detail}",
+    "waiting_ack": "La misión sigue esperando a su suscripción.",
+    "logged": {
+      "wait": "Decisión: esperar.",
+      "approve_paid": "Decisión: API de pago aprobada.",
+      "cancel": "Decisión: cancelada."
+    },
+    "logged_offer": "{provider} / {model}, estimado {cost}, límite {cap}.",
+    "paid_usage": "Ejecución de pago en {provider} / {model}: real {cost} (estimado {estimate}, límite {cap}).",
+    "paid_usage_automatic": "Ejecución de pago automática en {provider} / {model}: real {cost} (estimado {estimate}, límite {cap})."
   }
 }

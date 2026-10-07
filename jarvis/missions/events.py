@@ -155,6 +155,78 @@ class MissionFailed(_PayloadBase):
     failed_provider: str | None = None
 
 
+# Why a mission is parked in WAITING_CAPACITY. Closed vocabulary, mirrored in
+# frontend/src/types/missions.ts (CapacityWaitReason) and the voice phrase
+# table (CAPACITY_WAIT_PHRASES) — guarded by
+# tests/missions/test_capacity_wait_parity.py (AP-4).
+CAPACITY_WAIT_REASONS: Final[frozenset[str]] = frozenset({
+    "provider_quota",        # usage/session window or credit spent
+    "provider_auth",         # subscription login expired
+    "provider_unavailable",  # the worker cannot run without a paid fallback
+    "paid_cap_reached",      # the mission's paid spend reached its ceiling
+    "paid_daily_cap_reached",  # automatic paid use hit the rolling 24 h ceiling
+    "paid_consent_revoked",  # paid fallback switched off mid-run, no approval
+})
+
+
+class MissionWaitingCapacity(_PayloadBase):
+    """The mission is parked: its worker has no usable capacity right now.
+
+    Every field is a runtime fact (counts, paths, the provider slug), never
+    worker text, so the voice layer can render it as a static phrase.
+    """
+
+    event_type: Literal["MissionWaitingCapacity"] = "MissionWaitingCapacity"
+    reason: Literal[
+        "provider_quota",
+        "provider_auth",
+        "provider_unavailable",
+        "paid_cap_reached",
+        "paid_daily_cap_reached",
+        "paid_consent_revoked",
+    ]
+    provider: str | None = None
+    steps_done: int = 0
+    steps_total: int = 0
+    files_saved: int = 0
+    checkpoint_path: str = ""
+    error_detail: str | None = None
+    # 0 for the first pause; N after the Nth automatic resume parked again.
+    resume_attempt: int = 0
+    # True when a resume attempt parked again without finishing another step:
+    # nothing new to tell, so the voice layer stays silent.
+    repeat: bool = False
+
+
+class MissionCapacityDecision(_PayloadBase):
+    """The user's answer to a parked mission's paid-API offer — the audit
+    record of exactly what was shown and decided. An approval covers this one
+    mission and this one run, never anything else."""
+
+    event_type: Literal["MissionCapacityDecision"] = "MissionCapacityDecision"
+    decision: Literal["wait", "approve_paid", "cancel"]
+    provider: str | None = None
+    model: str | None = None
+    estimated_cost_usd: float | None = None
+    cost_cap_usd: float | None = None
+    reason: str = ""
+
+
+class MissionPaidUsage(_PayloadBase):
+    """What paid API use actually cost in one mission run, logged when the
+    run ends — one event per provider/model and consent kind."""
+
+    event_type: Literal["MissionPaidUsage"] = "MissionPaidUsage"
+    provider: str
+    model: str
+    cost_usd: float
+    cost_cap_usd: float
+    estimated_cost_usd: float
+    # True: the [missions] paid_api_fallback setting allowed it; False: a
+    # manual per-mission approval.
+    automatic: bool = False
+
+
 class MissionCancelled(_PayloadBase):
     event_type: Literal["MissionCancelled"] = "MissionCancelled"
     cascade: bool = False
@@ -194,7 +266,24 @@ class MissionBudgetWarning(_PayloadBase):
 
 
 Payload = Annotated[
-    MissionDispatched | MissionPlanReady | WorkerSpawned | WorkerProgress | WorkerDraftReady | CriticVerdictReady | WorkerCorrectionRequired | WorkerKilled | MissionApproved | MissionFailed | MissionCancelled | MissionTimedOut | MissionStateChanged | BusStats | MissionBudgetWarning,
+    MissionDispatched
+    | MissionPlanReady
+    | WorkerSpawned
+    | WorkerProgress
+    | WorkerDraftReady
+    | CriticVerdictReady
+    | WorkerCorrectionRequired
+    | WorkerKilled
+    | MissionApproved
+    | MissionFailed
+    | MissionCancelled
+    | MissionTimedOut
+    | MissionStateChanged
+    | BusStats
+    | MissionBudgetWarning
+    | MissionWaitingCapacity
+    | MissionCapacityDecision
+    | MissionPaidUsage,
     Field(discriminator="event_type"),
 ]
 

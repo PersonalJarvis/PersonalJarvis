@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, FlaskConical, Loader2, LogIn, LogOut } from "lucide-react";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
@@ -45,6 +45,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/store/events";
 import { KeyField } from "./KeyField";
+import { MissionBilling, type ProviderNamer } from "./MissionBilling";
 import { SubscriptionAccounts } from "./SubscriptionAccounts";
 import { accessPatch, familyAccess, nextDefault, onPatch, withPatch, type Access, type FamilyAccess } from "./agentAccess";
 import { familyState, type FamilyState } from "./providers/familyState";
@@ -194,6 +195,15 @@ export function AgentsTab({
     setSelectedId((primary ?? entries.find((fa) => fa.on) ?? entries[0]).family.id);
   }, [entries, selectedId]);
   const selected = entries.find((fa) => fa.family.id === selectedId) ?? null;
+  const providerName = useCallback<ProviderNamer>(
+    (provider) => {
+      const family = (families ?? []).find(
+        (f) => f.id === provider || f.agent_ids.includes(provider) || f.provider_ids.includes(provider),
+      );
+      return family ? { label: displayName(family), logoId: logoOf(family) } : null;
+    },
+    [families],
+  );
 
   return (
     <div className="flex flex-col gap-10" data-testid="apikeys-agents">
@@ -223,6 +233,7 @@ export function AgentsTab({
           }
         />
       </SettingsSection>
+      <MissionBilling providerName={providerName} />
     </div>
   );
 }
