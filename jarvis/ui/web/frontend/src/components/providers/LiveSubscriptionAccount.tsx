@@ -225,10 +225,23 @@ export function LiveSubscriptionAccount({
   }
 
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-3">
-      <label className="block space-y-2 text-sm">
-        <span>{t("live.subscription_account")}</span>
+    <div className="space-y-3">
+      {/* One settings row: the account and its state on the left, the
+          picker on the right. Only an unavailable voice says more. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-8">
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm font-medium text-foreground">{t("live.subscription_account")}</div>
+          <p role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span aria-hidden="true" className={connected ? "h-1.5 w-1.5 rounded-full bg-success" : "h-1.5 w-1.5 rounded-full bg-border-strong"} />
+            {loading ? t("live.loading") : connected
+              ? t("live.subscription_connected") : t("live.subscription_sign_in_required")}
+          </p>
+          {connected && voiceStatus === "unavailable" ? (
+            <p className="text-xs text-warning">{t("live.subscription_voice_unavailable")}</p>
+          ) : null}
+        </div>
         <BrandedSelect
+          className="w-60"
           value={accountId}
           disabled={disabled || loading || busy || installing}
           ariaLabel={t("live.subscription_account")}
@@ -238,18 +251,7 @@ export function LiveSubscriptionAccount({
             ...(group?.accounts ?? []).map((entry) => ({ value: entry.id, label: entry.label })),
           ]}
         />
-      </label>
-      <p role="status" className="text-xs leading-relaxed text-muted-foreground">
-        {loading ? t("live.loading") : connected
-          ? t("live.subscription_connected") : t("live.subscription_sign_in_required")}
-      </p>
-      {connected ? (
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          {t(voiceStatus === "ready" ? "live.subscription_voice_ready"
-            : voiceStatus === "unavailable" ? "live.subscription_voice_unavailable"
-              : "live.subscription_voice_unverified")}
-        </p>
-      ) : null}
+      </div>
       {(!flow || flow.finished) && !connected ? (
         cliMissing ? <div className="space-y-2">
           <p role="status" className="text-xs leading-relaxed text-muted-foreground">

@@ -2,8 +2,8 @@
 
 Root cause of mission_019e7abd (2026-05-30, live voice failure): the worker
 wrote the requested HTML file to an absolute path OUTSIDE its git worktree
-(`C:\\Users\\Administrator\\Desktop\\M\\hello.html`, exactly as the task
-demanded). `_capture_diff` is worktree-scoped, so the captured diff was empty;
+(an explicitly requested external output directory). `_capture_diff` is
+worktree-scoped, so the captured diff was empty;
 the Critic's GROUND-TRUTH-RULE then deterministically failed the mission 3×
 with `critic_loop_exhausted` even though the file existed and was correct.
 
@@ -20,8 +20,8 @@ These tests use a real on-disk git worktree plus a sibling external directory
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-import uuid
 from pathlib import Path
 
 import pytest
@@ -30,9 +30,17 @@ from jarvis.missions.kontrollierer.orchestrator import (
     Kontrollierer,
     _real_diff_is_empty,
 )
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# The fixture's git calls ignore the developer's or runner's global and system
+# config (commit signing, hooks, templates), which could otherwise prompt, fail
+# or slow the fixture commit down.
+_FIXTURE_GIT_ENV = {
+    **os.environ,
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
 
 
 def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -42,23 +50,34 @@ def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str
         check=False,
         capture_output=True,
         text=True,
-        timeout=15.0,
+        encoding="utf-8",
+        env=_FIXTURE_GIT_ENV,
+        creationflags=NO_WINDOW_CREATIONFLAGS,
+        # Generous ceiling for a loaded CI runner; each call on this one-file
+        # repository normally returns in milliseconds.
+        timeout=120.0,
     )
 
 
 @pytest.fixture
 def worktree(tmp_path: Path):
-    """A fresh git worktree branched off `main`, cleaned up after the test."""
-    branch = f"test/external-write-{uuid.uuid4().hex[:8]}"
+    """A real worktree of a tiny repository owned entirely by this test."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert _git("init", "-b", "main", cwd=repo).returncode == 0
+    (repo / "seed.txt").write_text("Fixture repository\n", encoding="utf-8")
+    assert _git("add", "seed.txt", cwd=repo).returncode == 0
+    committed = _git(
+        "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+        "commit", "-m", "Create fixture", cwd=repo,
+    )
+    assert committed.returncode == 0, committed.stderr
     wt = tmp_path / "wt"
-    add = _git("worktree", "add", "-b", branch, str(wt), "main", cwd=PROJECT_ROOT)
-    if add.returncode != 0:
-        pytest.skip(f"git worktree add failed: {add.stderr.strip()[:200]}")
-    try:
-        yield wt
-    finally:
-        _git("worktree", "remove", "--force", str(wt), cwd=PROJECT_ROOT)
-        _git("branch", "-D", branch, cwd=PROJECT_ROOT)
+    added = _git("worktree", "add", "--detach", str(wt), "HEAD", cwd=repo)
+    assert added.returncode == 0, added.stderr
+    # pytest owns both directories and their metadata; no shared refs or
+    # repository-sized checkout is needed to prove the containment boundary.
+    yield wt
 
 
 @pytest.fixture

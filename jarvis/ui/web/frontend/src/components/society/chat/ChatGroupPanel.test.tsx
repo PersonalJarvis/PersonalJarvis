@@ -19,6 +19,7 @@ vi.mock("./AgentChatPanel", () => ({
     </div>;
   },
 }));
+vi.mock("./MeetingChat", () => ({ MeetingChat: () => <div data-testid="meeting" /> }));
 
 afterEach(() => { cleanup(); groupApi.remove.mockClear(); });
 
@@ -33,6 +34,13 @@ it("opens two existing agent chats in separate stores and keeps each pane indepe
     onGroupAgents={() => undefined} onAddAgentToGroup={() => undefined}
   /></QueryClientProvider>);
 
+  expect(screen.getByTestId("meeting")).toBeTruthy();
+  const meetingView = screen.getByRole("button", { name: "society.meeting.title" });
+  const individualView = screen.getByRole("button", { name: "society.meeting.individual" });
+  expect(meetingView.getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(individualView);
+  expect(individualView.getAttribute("aria-pressed")).toBe("true");
+  expect(meetingView.getAttribute("aria-pressed")).toBe("false");
   const left = screen.getByTestId("society-group-pane-left");
   const right = screen.getByTestId("society-group-pane-right");
   expect(within(left).getByTestId("society-group-avatar-left")).toBeTruthy();

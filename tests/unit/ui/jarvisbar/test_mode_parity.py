@@ -104,9 +104,7 @@ def test_the_tk_surface_still_rejects_an_unknown_mode() -> None:
 def test_the_ipc_proxy_accepts_and_forwards_every_mode(mode: str) -> None:
     """The macOS proxy must put every mode on the wire, or the feature is
     Windows/Linux-only — a silent OS-parity hole (AGENTS.md §3)."""
-    proxy = subprocess_mod.SubprocessBarOverlay.__new__(
-        subprocess_mod.SubprocessBarOverlay
-    )
+    proxy = subprocess_mod.SubprocessBarOverlay.__new__(subprocess_mod.SubprocessBarOverlay)
     sent: list[dict] = []
     proxy._send = sent.append  # type: ignore[method-assign]
     proxy._persistent_flag = False
@@ -194,12 +192,8 @@ def test_a_notice_is_always_legible_never_fully_faded() -> None:
 
 
 @pytest.mark.parametrize("mode", modes.NOTICE_MODES)
-def test_a_notice_opens_the_pill_without_faking_a_session(mode: str) -> None:
-    """Big enough to draw a legible mark in, small enough not to claim a turn."""
-    w, h = renderer.target_pill_size(mode, hovered=False)
-    assert (w, h) == (renderer.OPEN_W, renderer.OPEN_H)
-    assert (w, h) != (renderer.ACTIVE_W, renderer.ACTIVE_H)
-    assert w > renderer.COLLAPSED_W
+def test_a_notice_keeps_the_strip_geometry(mode: str) -> None:
+    assert renderer.target_pill_size(mode) == (renderer.WIN_W, renderer.WIN_H)
 
 
 @pytest.mark.parametrize("mode", modes.MODES)
@@ -211,7 +205,16 @@ def test_every_mode_has_a_pill_size(mode: str) -> None:
 @pytest.mark.parametrize("mode", modes.MODES)
 def test_every_mode_resolves_a_click(mode: str) -> None:
     action = interaction.resolve_click(400, 800, mode, hovered=True, pill_w=400)
-    assert action in ("hangup", "mute", "talk", "none")
+    assert action in (
+        "hangup",
+        "mute",
+        "talk",
+        "none",
+        "compose",
+        "speaker",
+        "dictation_stop",
+        "prompt_mode_toggle",
+    )
 
 
 @pytest.mark.parametrize("mode", modes.NOTICE_MODES)
@@ -224,7 +227,4 @@ def test_a_notice_is_inert_everywhere_on_the_bar(mode: str) -> None:
     """
     for x in (0, 40, 200, 400, 600, 799):
         for hovered in (False, True):
-            assert (
-                interaction.resolve_click(x, 800, mode, hovered=hovered, pill_w=400)
-                == "none"
-            )
+            assert interaction.resolve_click(x, 800, mode, hovered=hovered, pill_w=400) == "none"

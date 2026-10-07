@@ -1,0 +1,31 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "zapier",
+  "version": "1.0.0",
+  "description": "Run actions in thousands of apps through your Zapier MCP",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Zapier",
+      "category": "Developer",
+      "logo_slug": "zapier",
+      "logo_color": "FF4F00",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.zapier.com/api/mcp/mcp",
+        "discovery_url": "https://mcp.zapier.com/.well-known/oauth-protected-resource/api/mcp/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.zapier.com/api/mcp/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_zapier_access_token}",
+        "risk_tier": "ask"
+      },
+      "post_install_hint_md": "Sign in with Zapier. Jarvis sees only the actions you enabled in your Zapier MCP settings; each one asks for approval first."
+    }
+  }
+}

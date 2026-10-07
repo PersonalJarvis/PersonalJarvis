@@ -327,3 +327,59 @@ async def test_refresh_bound_public_client_ignores_later_configured_secret(
 
     assert captured["data"]["client_id"] == "issuing-public-client"
     assert "client_secret" not in captured["data"]
+
+
+@pytest.mark.asyncio
+async def test_figma_exchanges_at_token_url_and_refreshes_at_refresh_url(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Figma takes the code at /v1/oauth/token and the refresh grant at
+    /v1/oauth/refresh, both with the client in an HTTP Basic header."""
+    from jarvis.marketplace.catalog import OAuthPkceLoopbackAuth
+
+    manifest_path = (
+        Path(__file__).resolve().parents[3] / "jarvis/marketplace/plugins/figma/plugin.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    auth = OAuthPkceLoopbackAuth.model_validate(
+        manifest["extensions"]["io.github.personaljarvis"]["auth"]
+    )
+    calls: list[dict] = []
+
+    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append({"url": url, "data": kwargs["data"], "headers": kwargs["headers"]})
+        return httpx.Response(
+            200, json={"access_token": "access", "refresh_token": "refresh", "expires_in": 3600}
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
+    cfg = PkceLoopbackConfig(
+        plugin_id="figma",
+        authorization_url=auth.authorization_url,
+        token_url=auth.token_url,
+        refresh_url=auth.refresh_url,
+        client_id="cid",
+        client_secret=TEST_CLIENT_SECRET,
+        callback_port=auth.callback_port,
+        scopes=auth.scopes,
+        scope_separator=auth.scope_separator,
+        client_auth_method=auth.client_auth_method,
+    )
+    handler = PkceLoopbackHandler(cfg)
+    pending = _PendingPkceFlow(
+        config=cfg,
+        callback_server=None,
+        code_verifier="verifier",
+        redirect_uri="http://127.0.0.1:3127/oauth/callback",
+    )
+
+    tokens = await handler._exchange(pending, code="code")  # noqa: SLF001
+    await handler.refresh(tokens)
+
+    exchange, refresh = calls
+    assert exchange["url"] == "https://api.figma.com/v1/oauth/token"
+    assert refresh["url"] == "https://api.figma.com/v1/oauth/refresh"
+    for call in calls:
+        assert call["headers"]["Authorization"].startswith("Basic ")
+        assert "client_secret" not in call["data"]
+    assert refresh["data"]["refresh_token"] == "refresh"

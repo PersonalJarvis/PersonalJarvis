@@ -12,6 +12,9 @@
  * never open on it. They are deliberately NOT handed to the recorder: its
  * overlap caution ("pressing the longer one triggers both") is true for global
  * hotkeys but false here, because the switcher fires on its exact chord only.
+ *
+ * `part` splits the block for the shortcuts page, which shows the on/off switch
+ * among its options and the recorder under the quick switcher's list row.
  */
 import { Switch } from "@/components/ui/switch";
 import { useT } from "@/i18n";
@@ -42,7 +45,13 @@ function chordKey(combo: string): string {
   return [...[...mods].sort(), ...[...keys].sort()].join("+");
 }
 
-export function QuickSwitchKeybind({ voiceConfig }: { voiceConfig: KeybindsConfig | null }) {
+export function QuickSwitchKeybind({
+  voiceConfig,
+  part = "all",
+}: {
+  voiceConfig: KeybindsConfig | null;
+  part?: "all" | "toggle" | "editor";
+}) {
   const t = useT();
   const enabled = useQuickSwitchSettings((s) => s.enabled);
   const combo = useQuickSwitchSettings((s) => s.combo);
@@ -75,31 +84,32 @@ export function QuickSwitchKeybind({ voiceConfig }: { voiceConfig: KeybindsConfi
 
   return (
     <div className="space-y-stack" data-testid="quick-switch-settings">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-base font-medium text-foreground">{label}</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {t("settings_view.quick_switch.description")}
-          </p>
+      {part !== "editor" && (
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-base font-medium text-foreground">{label}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t("settings_view.quick_switch.description")}
+            </p>
+          </div>
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            aria-label={label}
+            data-testid="quick-switch-enabled"
+          />
         </div>
-        <Switch
-          checked={enabled}
-          onCheckedChange={setEnabled}
-          aria-label={label}
-          data-testid="quick-switch-enabled"
-        />
-      </div>
-      {enabled && (
+      )}
+      {enabled && part !== "toggle" && (
         <KeybindRow
           action={ACTION}
           label={t("settings_view.quick_switch.shortcut_label")}
           config={config}
           loading={false}
           onSave={save}
-          actionLabel={(action) => (action === (ACTION as string) ? label : undefined)}
         />
       )}
-      {enabled && mac && (
+      {enabled && mac && part !== "toggle" && (
         <p className="text-sm text-muted-foreground" data-testid="quick-switch-mac-note">
           {t("settings_view.quick_switch.mac_note")}
         </p>

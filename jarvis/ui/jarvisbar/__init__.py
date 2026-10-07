@@ -1,4 +1,4 @@
-"""Whisper-bar overlay package — the slim default on-screen representation.
+"""Native hosts for the canonical Jarvis Bar control strip.
 
 ``JarvisBarOverlay`` is imported lazily so this package stays importable on a
 headless host (no tkinter) for capability probing and tests.

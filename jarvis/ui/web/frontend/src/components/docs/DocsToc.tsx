@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { AlignLeft } from "lucide-react";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import type { DocHeading } from "@/hooks/useDocs";
 import { useT } from "@/i18n";
@@ -13,7 +13,7 @@ interface Props {
 
 /**
  * Right-sidebar table of contents with active-heading tracking via
- * IntersectionObserver — Anthropic/Mintlify style.
+ * IntersectionObserver.
  *
  * Reacts to H2 + H3. H4-H6 are rare in our docs but could be added here if
  * needed. The active-heading trigger is shifted by the heading height via
@@ -40,6 +40,7 @@ export function DocsToc({ headings, contentRef }: Props) {
       if (el) observed.push(el);
     }
     if (!observed.length) return;
+    setActiveSlug(observed[0].id);
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -64,46 +65,60 @@ export function DocsToc({ headings, contentRef }: Props) {
     );
 
     for (const el of observed) observer.observe(el);
-    return () => observer.disconnect();
+
+    // The last sections of a page can be too short to ever reach the top
+    // band; once the reader hits the bottom, the final heading is current.
+    const onScroll = () => {
+      const atBottom =
+        container.scrollTop + container.clientHeight >= container.scrollHeight - 4;
+      if (atBottom) setActiveSlug(observed[observed.length - 1].id);
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      container.removeEventListener("scroll", onScroll);
+    };
   }, [tocHeadings, contentRef]);
 
   if (!tocHeadings.length) {
     return null;
   }
 
+  // Sticky inside the docs scroller, so it travels beside the article
+  // instead of hugging the window edge.
   return (
-    <aside
-      className="hidden h-full w-64 shrink-0 border-l border-border xl:block"
+    <nav
+      className="sticky top-0 hidden max-h-screen w-56 shrink-0 self-start overflow-y-auto pb-10 pt-12 xl:block"
       aria-label={t("docs_content.on_this_page")}
     >
-      <ScrollArea className="h-full">
-        <div className="px-4 py-6">
-          <h3 className="mb-3 text-micro font-semibold uppercase tracking-wider text-muted-foreground">
-            {t("docs_content.on_this_page")}
-          </h3>
-          <ul className="space-y-1 text-xs">
-            {tocHeadings.map((h) => (
-              <li key={h.slug}>
-                <a
-                  href={`#${h.slug}`}
-                  onClick={(e) => handleClick(e, h.slug)}
-                  aria-current={activeSlug === h.slug ? "location" : undefined}
-                  className={cn(
-                    "block rounded py-0.5 transition",
-                    "text-muted-foreground hover:text-foreground",
-                    h.level === 3 && "ml-3",
-                    activeSlug === h.slug &&
-                      "border-l-2 border-primary pl-2 -ml-px font-medium text-foreground",
-                  )}
-                >
-                  {h.text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </ScrollArea>
-    </aside>
+      <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-strong">
+        <AlignLeft className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        {t("docs_content.on_this_page")}
+      </p>
+      <ul className="border-l border-border text-sm">
+        {tocHeadings.map((h) => {
+          const active = activeSlug === h.slug;
+          return (
+            <li key={h.slug}>
+              <a
+                href={`#${h.slug}`}
+                onClick={(e) => handleClick(e, h.slug)}
+                aria-current={active ? "location" : undefined}
+                className={cn(
+                  "-ml-px block border-l py-1 pr-2 transition-colors",
+                  h.level === 3 ? "pl-7" : "pl-4",
+                  active
+                    ? "border-accent font-medium text-accent"
+                    : "border-transparent text-muted-foreground hover:border-border-strong hover:text-foreground",
+                )}
+              >
+                {h.text}
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 

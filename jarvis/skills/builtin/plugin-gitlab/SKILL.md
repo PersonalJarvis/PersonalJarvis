@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-gitlab
 description: Find repositories, read and create issues, inspect and comment on merge requests
-when_to_use: Use for explicit operations on the connected GitLab account.
+when_to_use: Use when the user requests operations on the connected GitLab account.
 category: integrations
 plugin_id: gitlab
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

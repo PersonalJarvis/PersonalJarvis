@@ -611,7 +611,7 @@ class UiLanguageChanged(Event):
     Emitted by the settings endpoint and (indirectly, via ``ConfigReloaded``) by
     a voice command / the Control API. Distinct from the reply language.
     """
-    language: str = ""  # "en" | "de" | "es"
+    language: str = ""  # "en" | "de" | "es" | "zh"
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +774,22 @@ class MemoryUpdated(Event):
     namespace: str = ""
     key: str = ""
     operation: str = "put"   # "put" | "forget"
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryFileWrite(Event):
+    """An agent's persistent memory file is being written, or the write settled.
+
+    Published by ``jarvis.memory.write_feedback`` around the real write:
+    ``pending`` first, then ``saved`` only after the file was replaced on
+    disk, ``unchanged`` for a no-op, ``failed`` when the write raised. Both
+    steps share ``update_id``. Carries no path, entry text or error detail.
+    """
+    update_id: str = ""
+    agent_id: str = ""
+    file: str = ""           # bare name, e.g. "MEMORY.md"; "" when not known yet
+    phase: str = "pending"   # pending | saved | unchanged | failed
+    operation: str = "edit"  # add | replace | remove | edit
 
 
 @dataclass(frozen=True, slots=True)
@@ -1290,15 +1306,14 @@ class VoiceInputHeld(Event):
 class VoiceSpeakerMuteChanged(Event):
     """Authoritative broadcast that the assistant's voice went silent or audible.
 
-    Speaker mute is TTS volume 0 for the running session (nothing is written
-    to ``jarvis.toml`` by a mute). Every writer — the orb/pet speaker disc, the
-    in-app speaker button through ``PUT /api/settings/tts-volume`` — ends in
-    ``SpeechPipeline.set_tts_volume``, and that one choke point publishes this
-    event whenever the muted-ness flips. Surfaces mirror it; none of them keeps
-    its own truth.
+    Session-only speaker mute is independent of microphone and volume. The
+    pipeline publishes a complete snapshot after either output setting changes.
+    Revision orders updates across UI threads and reconnecting playback sinks.
     """
     muted: bool = False
     source: str = ""
+    volume: float = 1.0
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1494,6 +1509,48 @@ class AppshotEditRequested(Event):
     """
 
     appshot_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemCreated(Event):
+    """Jarvis X saved a new screenshot or recording to its library.
+
+    Metadata only; the file is served by ``/api/jarvisx/items/<id>/file``.
+    """
+
+    id: str = ""
+    #: ``image`` | ``video``.
+    kind: str = ""
+    #: ``region`` | ``window`` | ``fullscreen``.
+    mode: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemUpdated(Event):
+    """A library item changed (an annotated copy was saved)."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXItemDeleted(Event):
+    """A library item and its files were deleted."""
+
+    id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class JarvisXRecordingChanged(Event):
+    """A Jarvis X screen recording started or stopped.
+
+    Published on start and on stop only (not per second); a UI that shows a
+    running timer counts ``elapsed_s`` forward itself.
+    """
+
+    recording: bool = False
+    #: ``region`` | ``fullscreen`` while recording, ``""`` once stopped.
+    mode: str = ""
+    elapsed_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -2460,6 +2517,50 @@ class SocietyMessageSent(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class SocietyResultPosted(Event):
+    """An agent finished (or gave up on) a piece of work: a RESULT on the board.
+
+    Published by :class:`jarvis.society.world_feed.WorldFeed` after the
+    envelope is stored. Carries no text — the result itself stays behind
+    ``GET /api/society/events``. The level system pays the agent for it
+    (``jarvis/progression``); the Verse may celebrate it.
+    """
+
+    #: The board envelope's uuid7, stable for dedupe.
+    event_id: str = ""
+    agent_id: str = ""
+    #: ``done`` or ``blocked`` (the RESULT payload's own status).
+    status: str = ""
+    society_trace: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressionAwarded(Event):
+    """A subject of the Jarvis Verse level system earned XP.
+
+    Published by :class:`jarvis.progression.service.ProgressionService`
+    after the award is stored. ``level > previous_level`` is a level-up;
+    ``unlocked`` names the cosmetics that level-up opened
+    (``jarvis/progression/rules.py`` REWARDS). The Verse animates it.
+    """
+
+    seq: int = 0
+    #: ``person``, ``agent:<agent_id>`` or ``pet:<pet_id>``.
+    subject_id: str = ""
+    subject_kind: str = ""
+    #: The rule that paid (``RULES`` source id).
+    xp_source: str = ""
+    xp: int = 0
+    total_xp: int = 0
+    level: int = 1
+    previous_level: int = 1
+    title: str = ""
+    unlocked: tuple[str, ...] = ()
+    #: Agent looks (``LOOK_UNLOCKS``) this level-up opened; agents only.
+    unlocked_looks: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SocietyRoomChanged(Event):
     """A bounded group discussion opened or settled (``jarvis/society/rooms.py``).
 
@@ -2557,7 +2658,7 @@ class MarketplaceItemInstalled(Event):
     usable right now (a skill that validated), False when it
     still needs the user (a plugin waiting to be connected).
     """
-    kind: str = ""  # "skill" | "plugin"
+    kind: str = ""  # "skill" | "plugin" | "agent"
     item_id: str = ""
     title: str = ""
     ready: bool = False

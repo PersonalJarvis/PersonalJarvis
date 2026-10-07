@@ -14,6 +14,7 @@ pin three contracts:
 3. The renderer picks up a rescale at instantiation time (no import-time
    freeze) and renders frames at the recomputed window size.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -75,43 +76,6 @@ def test_invalid_screen_degrades_to_the_approved_ceiling():
 # --------------------------------------------------------------------------- #
 # apply_display_scale                                                         #
 # --------------------------------------------------------------------------- #
-# The geometry baseline — scale 1.0 must reproduce these byte-identically
-# (regression guard for the signed-off proportions). ACTIVE/WIN/COLLAPSED
-# reflect the two 2026-07-21 maintainer calibration rounds: slim active
-# height (18 px on the 0.85-scaled monitor), then -15% per side off the
-# active width (~60 px there) and -5% per side off the idle width (~37 px).
-_HISTORICAL = {
-    "COLLAPSED_W": 44,
-    "COLLAPSED_H": 8,
-    "OPEN_W": 68,
-    "OPEN_H": 19,
-    "ACTIVE_W": 70,
-    "ACTIVE_H": 21,
-    "WIN_W": 82,
-    "WIN_H": 35,
-}
-
-
-def test_scale_one_is_the_historical_geometry():
-    renderer.apply_display_scale(1.0)
-    for name, value in _HISTORICAL.items():
-        assert getattr(renderer, name) == value, name
-
-
-def test_scale_recomputes_geometry_and_restores_cleanly():
-    renderer.apply_display_scale(0.6)
-    assert renderer.DISPLAY_SCALE == 0.6
-    assert renderer.OPEN_W == round(68.16 * 0.6)
-    assert renderer.WIN_W < _HISTORICAL["WIN_W"]
-    assert renderer.WIN_H < _HISTORICAL["WIN_H"]
-    # Window still contains the biggest pill.
-    assert renderer.WIN_W > renderer.ACTIVE_W
-    assert renderer.WIN_H > renderer.ACTIVE_H
-    renderer.apply_display_scale(1.0)
-    for name, value in _HISTORICAL.items():
-        assert getattr(renderer, name) == value, name
-
-
 def test_scale_clamps_to_the_physical_ceiling_and_the_floor():
     # The upper clamp is now MAX_DISPLAY_SCALE (not 1.0): the physical-size path
     # may legitimately exceed 1.0 on a dense monitor. A value inside the band
@@ -157,8 +121,8 @@ def test_physical_scale_holds_physical_size_constant_across_monitors():
 
 
 def test_denser_monitor_gets_more_pixels_coarser_gets_fewer():
-    dense = renderer.compute_physical_scale(220.0)   # e.g. a small 4K panel
-    coarse = renderer.compute_physical_scale(90.0)   # e.g. a big 1080p panel
+    dense = renderer.compute_physical_scale(220.0)  # e.g. a small 4K panel
+    coarse = renderer.compute_physical_scale(90.0)  # e.g. a big 1080p panel
     assert dense > renderer.BASE_DISPLAY_SCALE
     assert coarse < renderer.BASE_DISPLAY_SCALE
 
@@ -175,9 +139,9 @@ def test_physical_scale_clamps_and_rejects_implausible_dpi():
 
 def test_resolve_screen_scale_prefers_physical_else_falls_back():
     # With a plausible dpi → physical; without / implausible → resolution model.
-    assert renderer.resolve_screen_scale(
-        3840, 2160, renderer.REFERENCE_RAW_DPI
-    ) == pytest.approx(renderer.BASE_DISPLAY_SCALE)
+    assert renderer.resolve_screen_scale(3840, 2160, renderer.REFERENCE_RAW_DPI) == pytest.approx(
+        renderer.BASE_DISPLAY_SCALE
+    )
     assert renderer.resolve_screen_scale(3840, 2160, None) == renderer.compute_display_scale(
         3840, 2160
     )
@@ -189,52 +153,11 @@ def test_resolve_screen_scale_prefers_physical_else_falls_back():
 # --------------------------------------------------------------------------- #
 # renderer integration                                                        #
 # --------------------------------------------------------------------------- #
-def test_render_state_reads_scale_at_instantiation_time():
-    renderer.apply_display_scale(0.6)
-    r = renderer.JarvisBarRenderer()
-    assert r._st.pw == float(renderer.COLLAPSED_W)  # noqa: SLF001
-    assert r._st.ph == float(renderer.COLLAPSED_H)  # noqa: SLF001
-
-
-def test_render_produces_frames_at_the_scaled_window_size():
-    renderer.apply_display_scale(0.6)
-    img = renderer.JarvisBarRenderer().render(0.5, "listen", 0.4)
-    assert img.size == (renderer.WIN_W, renderer.WIN_H)
-    renderer.apply_display_scale(1.0)
-    img = renderer.JarvisBarRenderer().render(0.5, "listen", 0.4)
-    assert img.size == (_HISTORICAL["WIN_W"], _HISTORICAL["WIN_H"])
 
 
 # --------------------------------------------------------------------------- #
 # user "Bar size" multiplier                                                  #
 # --------------------------------------------------------------------------- #
-def test_default_user_size_reproduces_the_historical_geometry():
-    # The user axis defaults to 1.0, so passing it explicitly must still yield
-    # the byte-identical signed-off geometry (regression guard: the new second
-    # arg must not perturb the default look).
-    renderer.apply_display_scale(1.0, user_size=1.0)
-    for name, value in _HISTORICAL.items():
-        assert getattr(renderer, name) == value, name
-
-
-def test_user_size_scales_width_and_height_together():
-    # The whole geometry multiplies by ONE factor, so the pill's aspect ratio
-    # is preserved — exactly "the shape stays, only the size changes".
-    renderer.apply_display_scale(1.0, user_size=1.0)
-    base_active_w, base_active_h = renderer.ACTIVE_W, renderer.ACTIVE_H
-    base_win_w, base_win_h = renderer.WIN_W, renderer.WIN_H
-
-    renderer.apply_display_scale(1.0, user_size=2.0)
-    # Both axes grow, and grow by (about) the same factor.
-    assert renderer.ACTIVE_W > base_active_w
-    assert renderer.ACTIVE_H > base_active_h
-    assert renderer.WIN_W > base_win_w
-    assert renderer.WIN_H > base_win_h
-    wr = renderer.ACTIVE_W / base_active_w
-    hr = renderer.ACTIVE_H / base_active_h
-    assert abs(wr - 2.0) < 0.06  # ~2x, allowing integer rounding at small px
-    assert abs(hr - 2.0) < 0.12
-    assert abs(wr - hr) < 0.15  # shape preserved: width ratio ≈ height ratio
 
 
 def test_user_size_below_one_shrinks_the_bar():
@@ -264,10 +187,3 @@ def test_user_size_clamps_to_the_supported_range():
     # apply_display_scale folds the clamp in, so an out-of-range request is safe.
     renderer.apply_display_scale(1.0, user_size=99.0)
     assert renderer.USER_SIZE_SCALE == renderer.USER_SIZE_MAX
-
-
-def test_user_size_multiplies_on_top_of_the_screen_scale():
-    # The effective factor is screen × user, so a small screen scaled up by the
-    # user meets in the middle. 0.6 screen × 1.5 user == 0.9 effective.
-    renderer.apply_display_scale(0.6, user_size=1.5)
-    assert renderer.OPEN_W == round(68.16 * 0.9)

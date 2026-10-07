@@ -45,19 +45,14 @@ function classify(status: ObsidianStatusType | null, errored: boolean): Visual {
   return "unclear";
 }
 
-// Tailwind colour classes mirroring the codebase conventions
-// (cf. PageHeader's TYPE_COLOR map and ObsidianButton's outline style).
-// Hex fallbacks from the task brief: ok=#5bd4a4 register=#ffb84d install=#facc15 unclear=#8d94a8
 const VISUAL_STYLE: Record<Visual, string> = {
-  loading:
-    "border-border bg-secondary/40 text-muted-foreground cursor-default",
-  ok: "border-[#5bd4a4]/40 bg-[#5bd4a4]/10 text-[#5bd4a4] cursor-default",
-  register:
-    "border-[#ffb84d]/40 bg-[#ffb84d]/10 text-[#ffb84d] cursor-pointer hover:bg-[#ffb84d]/20",
-  install:
-    "border-[#facc15]/40 bg-[#facc15]/10 text-[#facc15] cursor-pointer hover:bg-[#facc15]/20",
-  unclear:
-    "border-[#8d94a8]/40 bg-[#8d94a8]/10 text-[#8d94a8] cursor-pointer hover:bg-[#8d94a8]/20",
+  // Theme tokens only: status hues for status, neutral ink otherwise. The
+  // connected state is quiet — a green icon, not a green slab.
+  loading: "text-muted-foreground cursor-default",
+  ok: "text-muted-foreground cursor-default [&>svg]:text-success",
+  register: "text-warning cursor-pointer hover:bg-warning/10",
+  install: "text-warning cursor-pointer hover:bg-warning/10",
+  unclear: "text-muted-foreground cursor-pointer hover:bg-secondary hover:text-foreground",
 };
 
 function visualLabels(t: (key: string) => string): Record<Visual, string> {
@@ -196,7 +191,7 @@ export function ObsidianStatus({
       data-visual={visual}
       aria-label={label}
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+        "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium transition-colors",
         "disabled:opacity-100",
         VISUAL_STYLE[visual],
       )}

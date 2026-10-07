@@ -150,7 +150,7 @@ def add_profile_block(path: Path) -> bool:
     """Append the PATH block to ``path``. Returns False when already present."""
     try:
         existing = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except FileNotFoundError:  # A missing shell profile is created with the managed PATH block.
         existing = ""
     if PROFILE_MARKER in existing:
         return False
@@ -168,6 +168,7 @@ def remove_profile_block(path: Path) -> bool:
         with path.open(encoding="utf-8", newline="") as handle:
             lines = handle.read().splitlines(keepends=True)
     except (FileNotFoundError, UnicodeDecodeError):
+        # An absent or unreadable profile cannot contain a removable managed block.
         return False
     kept: list[str] = []
     skip_next = False
@@ -215,6 +216,7 @@ class UserPathStore:
             try:
                 value, kind = winreg.QueryValueEx(key, "Path")
             except FileNotFoundError:
+                # No per-user Path value yet: it is created with the bin folder.
                 return "", None
         return str(value), int(kind)
 
@@ -285,7 +287,7 @@ def _copy_launcher(source: Path, target: Path) -> bool:
     try:
         if target.read_bytes() == data:
             return False
-    except FileNotFoundError:
+    except FileNotFoundError:  # no launcher copy yet: it is written below
         pass
     try:
         target.write_bytes(data)
@@ -314,7 +316,7 @@ def _sweep_stale_launchers(directory: Path) -> None:
 def _link_points_into(link: Path, root: Path) -> bool:
     try:
         return link.is_symlink() and root.resolve() in link.resolve().parents
-    except OSError:
+    except OSError:  # an unreadable link is treated as not ours, so it is kept
         return False
 
 

@@ -1,16 +1,24 @@
 """In-app publishing: sign in with GitHub, validate, submit, watch it go live.
 
-The desktop half of the marketplace's publish path
-(docs/marketplace/github-signin-implementation.md §7): the app must never
-hold the website's cookie or any client secret, so identity comes from the
-GitHub **device flow** on the marketplace App (public client id), the token
-lands in the keyring ``TokenStore``, and the submission is POSTed to the
-storefront endpoint as ``Authorization: Bearer``. The endpoint proves the
-token belongs to OUR App (confused-deputy check), derives the publisher from
-it, and opens the registry PR as the bot — one publishing implementation for
-web and app.
+The desktop half of the marketplace's publish path. Identity comes from the
+GitHub **device flow** on the marketplace App (public client id, no secret
+in the binary), and the token lands in the keyring ``TokenStore``.
 
-A package (plugin or skill) travels as JSON to ``/submit`` and ends up in
+Where the submission goes:
+
+* **The registry's issue intake (default, no server).** The app opens an
+  issue on the registry repository AS the signed-in user, its body carrying
+  the submission as one fenced JSON block. The registry's ``intake``
+  workflow takes the publisher from the issue's author — GitHub
+  authenticated that account — runs the same validator every pull request
+  meets, and publishes (docs/marketplace/agent-templates.md). The App needs
+  the Issues permission on the registry for its user tokens to do this.
+* **A hosted endpoint (``publish_endpoint``), when configured.** The token
+  goes as ``Authorization: Bearer``; the endpoint derives the publisher and
+  opens the registry PR as the bot. The original storefront that served this
+  was retired, so this path is for forks running their own.
+
+A package (plugin, skill or agent template) travels as JSON and ends up in
 the same feed the store reads back.
 
 Validation here MIRRORS the endpoint's rules (``_lib/validate.ts``, itself a
@@ -58,6 +66,14 @@ _GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"  # noqa: S105 
 _GITHUB_USER_URL = "https://api.github.com/user"
 
 _HTTP_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=30.0)
+_GITHUB_API = "https://api.github.com"
+_REPO_RE = re.compile(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$")
+#: GitHub keeps at most this many characters of an issue body.
+_MAX_ISSUE_BODY = 65_536
+#: The registry intake picks up issues with this title tag or body marker
+#: (scripts/intake.py in PersonalJarvis/marketplace — keep them identical).
+INTAKE_TITLE_TAG = "[publish]"
+INTAKE_BODY_MARKER = "<!-- jarvis-marketplace-submission -->"
 _UA = {"User-Agent": "Personal-Jarvis/1.0"}
 
 # ---------------------------------------------------------------------------
@@ -116,8 +132,8 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
     """
     errors: list[FieldError] = []
     kind = draft.get("kind")
-    if kind not in ("plugin", "skill"):
-        return None, [FieldError('kind must be "plugin" or "skill"', "kind")]
+    if kind not in ("plugin", "skill", "agent"):
+        return None, [FieldError('kind must be "plugin", "skill" or "agent"', "kind")]
 
     name = str(draft.get("name") or "").strip()
     name_is_valid = _is_valid_name(name)
@@ -135,7 +151,9 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
 
     value: dict[str, Any] = {"kind": kind, "name": name, "version": version}
 
-    if kind == "skill":
+    if kind == "agent":
+        _validate_agent_draft(draft, value, errors)
+    elif kind == "skill":
         title = str(draft.get("title") or "").strip()
         description = str(draft.get("description") or "").strip()
         raw_skill_md = draft.get("skill_md")
@@ -230,6 +248,46 @@ def validate_draft(draft: dict[str, Any]) -> tuple[dict[str, Any] | None, list[F
     if errors:
         return None, errors
     return value, []
+
+
+def _validate_agent_draft(
+    draft: dict[str, Any], value: dict[str, Any], errors: list[FieldError]
+) -> None:
+    """An agent template submission: the listing fields plus the template.
+
+    The template rules live in ``jarvis/society/agent_template.py`` — the
+    module that builds and installs templates — so the check here is the
+    same judgment the installer will make, not a second copy.
+    """
+    from jarvis.society.agent_template import validate_template
+
+    template = draft.get("agent")
+    listing = {
+        "name": value["name"],
+        "version": value["version"],
+        "description": str(draft.get("description") or "").strip(),
+    }
+    for problem in validate_template(template, listing):
+        # The listing name and version carry their own field errors above.
+        if problem.startswith(("the marketplace name", "the version")):
+            continue
+        field = "description" if "summary" in problem else "agent"
+        errors.append(FieldError(problem, field))
+    title = str(draft.get("title") or "").strip()
+    if not title:
+        errors.append(FieldError("title is required for an agent", "title"))
+    raw_categories = draft.get("categories")
+    categories = (
+        [c for c in raw_categories if isinstance(c, str)][:10]
+        if isinstance(raw_categories, list)
+        else []
+    )
+    value.update(
+        title=title,
+        description=listing["description"],
+        categories=categories,
+        agent=template if isinstance(template, dict) else {},
+    )
 
 
 def _validate_bundled_skills(
@@ -341,6 +399,25 @@ def publish_endpoint() -> str:
         return MarketplaceConfig().publish_endpoint
 
 
+def registry_repo() -> str:
+    """``owner/name`` of the registry whose issue intake takes submissions."""
+    from jarvis.core.config import load_config
+
+    try:
+        value = str(load_config().marketplace.publish_registry_repo).strip()
+    except Exception:  # noqa: BLE001 - config trouble must not kill the view
+        log.warning("publish: could not read config for the registry repo")
+        from jarvis.core.config import MarketplaceConfig
+
+        value = MarketplaceConfig().publish_registry_repo
+    return value if _REPO_RE.fullmatch(value) else ""
+
+
+def publishing_enabled() -> bool:
+    """Whether this install can publish at all (issue intake or an endpoint)."""
+    return bool(publish_endpoint() or registry_repo())
+
+
 def make_device_handler() -> DeviceFlowHandler:
     """A device-flow handler for the marketplace GitHub App.
 
@@ -439,19 +516,23 @@ async def submit(
     store: TokenStore | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, Any]:
-    """POST an already-validated submission; returns ``{pr_url, submission_path}``.
+    """Submit an already-validated submission as the signed-in user.
 
-    The token goes as ``Authorization: Bearer`` — the endpoint verifies it
-    belongs to the marketplace App and derives the publisher from it, so
-    nothing identity-shaped travels in the body.
+    Returns ``{issue_url, issue_number, submission_path}`` on the issue
+    intake, or ``{pr_url, submission_path}`` from a hosted endpoint. Nothing
+    identity-shaped travels in the body: the intake takes the publisher from
+    the issue's author, an endpoint from the token.
     """
     endpoint = publish_endpoint()
-    if not endpoint:
+    repo = registry_repo()
+    if not endpoint and not repo:
         raise SubmitError(503, "publishing is disabled in this deployment")
     store = store or TokenStore()
     tokens = await asyncio.to_thread(store.load, PUBLISHER_TOKEN_ID)
     if tokens is None:
         raise SubmitError(401, "sign in with GitHub first")
+    if not endpoint:
+        return await submit_issue(normalized, tokens, repo, transport=transport)
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, transport=transport) as client:
             r = await client.post(
@@ -475,6 +556,94 @@ async def submit(
     raise SubmitError(r.status_code, error, field if isinstance(field, str) else None)
 
 
+def issue_title(normalized: dict[str, Any]) -> str:
+    return (
+        f"{INTAKE_TITLE_TAG} {normalized['kind']}: {normalized['name']} "
+        f"{normalized['version']}"
+    )
+
+
+def issue_body(normalized: dict[str, Any]) -> str:
+    """The submission as the registry intake reads it: one fenced JSON block.
+
+    The prose above the block is for people browsing the issue list; the
+    intake reads only the code block.
+    """
+    label = str(normalized.get("title") or normalized["name"])
+    summary = " ".join(str(normalized.get("description") or "").split())
+    lines = [
+        INTAKE_BODY_MARKER,
+        f"**{label}** — {normalized['kind']} `{normalized['name']}` {normalized['version']}",
+    ]
+    if summary:
+        lines += ["", f"> {summary}"]
+    lines += [
+        "",
+        "Published from Personal Jarvis. The automated checks run now; this issue "
+        "closes itself once the entry is live.",
+        "",
+        "### Submission",
+        "",
+        "```json",
+        json.dumps(normalized, indent=2, ensure_ascii=False),
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def issue_form_url(repo: str) -> str:
+    """The browser fallback: the registry's issue form, for a paste by hand."""
+    return f"https://github.com/{repo}/issues/new?template=publish.yml"
+
+
+async def submit_issue(
+    normalized: dict[str, Any],
+    tokens: Tokens,
+    repo: str,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """Open the intake issue on ``repo`` as the token's user."""
+    body = issue_body(normalized)
+    if len(body) > _MAX_ISSUE_BODY:
+        raise SubmitError(413, "the submission is too large for a GitHub issue — shorten it")
+    try:
+        async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT, transport=transport) as client:
+            r = await client.post(
+                f"{_GITHUB_API}/repos/{repo}/issues",
+                json={"title": issue_title(normalized), "body": body},
+                headers={
+                    **_UA,
+                    "Authorization": f"Bearer {tokens.access}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise SubmitError(502, f"GitHub is unreachable: {exc}") from exc
+    if r.status_code == 201:
+        data = r.json()
+        return {
+            "issue_url": data.get("html_url"),
+            "issue_number": data.get("number"),
+            "submission_path": f"submissions/{normalized['name']}.json",
+        }
+    if r.status_code == 401:
+        raise SubmitError(401, "your GitHub sign-in expired — sign in again")
+    # 403/404: the App's user token cannot open issues there (the App lacks
+    # the Issues permission or is not installed on the registry), or issues
+    # are off. GitHub's body stays out of the message (AP-34); the view gets a
+    # sentence and the browser route instead.
+    log.warning("publish: GitHub refused the intake issue (HTTP %s)", r.status_code)
+    raise SubmitError(
+        502,
+        "GitHub did not accept the submission from the app. Copy it and file it "
+        f"in the browser instead: {issue_form_url(repo)}",
+        "browser_fallback",
+    )
+
+
 async def live_status(name: str, version: str, *, force: bool = False) -> dict[str, Any]:
     """Whether ``name`` at ``version`` is in the community index yet.
 
@@ -486,7 +655,7 @@ async def live_status(name: str, version: str, *, force: bool = False) -> dict[s
     index, status = await community_source.get_index(force=force)
     live = False
     if index is not None:
-        entries: list[Any] = [*index.plugins, *index.skills]
+        entries: list[Any] = [*index.plugins, *index.skills, *index.agents]
         for entry in entries:
             if entry.name == name and (entry.version or "") == version:
                 live = True

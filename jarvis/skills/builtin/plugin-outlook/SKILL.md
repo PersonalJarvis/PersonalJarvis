@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-outlook
 description: Read, send and reply to Outlook mail; read and manage Microsoft 365 calendar events
-when_to_use: Use for explicit operations on the connected Outlook Mail & Calendar account.
+when_to_use: Use when the user requests operations on the connected Outlook Mail & Calendar account.
 category: integrations
 plugin_id: outlook
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

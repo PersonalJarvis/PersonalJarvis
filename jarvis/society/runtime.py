@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import Any, Final
 from uuid import uuid4
 
-from jarvis.core.protocols import CodingSessionGateway
-
 from .approvals import Approvals
 from .bridge import MissionBridge
 from .browser.session import BrowserJobs
@@ -37,7 +35,7 @@ from .checkpoints import CheckpointEngine
 from .communication import reply_policy, should_report
 from .conversation import ConversationArchive
 from .delivery import IncomingMessage, incoming_context
-from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier
+from .events import MsgType, QuestState, RoomState, SocietyEnvelope, Tier, now_ms
 from .focus import derive_approval_rules, derive_focus
 from .learning import AgentSkills, LearningPass, TurnDigest, default_creator_factory
 from .memory import SocietyMemory
@@ -134,12 +132,10 @@ class SocietyRuntime:
     ) -> None:
         self._data_dir = Path(data_dir)
         self._plugin_state = plugin_state
-        self.coding_request_lock = asyncio.Lock()
-        self._coding_sessions: CodingSessionGateway | None = None
         self._usable_cache: _UsablePlugins | None = None
-        from .coding_supervision import CodingSupervision
+        from .coding_threads import CodingThreads
 
-        self.coding_supervision = CodingSupervision(self, app_bus)
+        self.coding_threads = CodingThreads(self)
         self._get_manager = mission_manager or (lambda: None)
         self._get_mission_bus = mission_bus or (lambda: None)
         self._get_budget = budget_tracker or (lambda: None)
@@ -154,6 +150,9 @@ class SocietyRuntime:
         self.store = SocietyStore(self._data_dir / _DB_NAME)
         self.roster = Roster(self.store)
         self.rooms = Rooms(self.store)
+        from .meetings import Meetings
+
+        self.meetings = Meetings(self)
         self.approvals = Approvals(self.store)
         self.browser = BrowserJobs(self._data_dir)
         self.scheduler = SocietyScheduler(
@@ -194,6 +193,9 @@ class SocietyRuntime:
         )
         self._start_lock = asyncio.Lock()
         self._delivery_task: asyncio.Task[None] | None = None
+        # Runs for the whole session, so it is not one of ``_watchers``
+        # (finite background work that callers may wait for).
+        self._runtime_updates_task: asyncio.Task[None] | None = None
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
@@ -283,11 +285,23 @@ class SocietyRuntime:
         self._started = True
         self._delivery_task = asyncio.create_task(self._deliver_pending())
         set_current_runtime(self)
-        await self.coding_supervision.start()
+        await self.coding_threads.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
+        self._runtime_updates_task = asyncio.create_task(self._keep_agent_runtimes_current())
         log.info("society runtime started (%s)", self.store.path)
         return self
+
+    async def _keep_agent_runtimes_current(self) -> None:
+        """Daily Hermes / OpenClaw updates for the runtimes agents use
+        (``agent_runtimes.manager.keep_current``; first round after 10 min)."""
+        from jarvis.agent_runtimes import manager
+
+        async def in_use() -> set[str]:
+            agents = await self.roster.list()
+            return {str(agent.runtime) for agent in agents} - {"", "jarvis"}
+
+        await manager.keep_current(in_use)
 
     async def _delivery_failed(self, env: SocietyEnvelope) -> None:
         """Project a terminal scheduler veto onto an already-visible chat receipt."""
@@ -451,15 +465,25 @@ class SocietyRuntime:
             ):
                 cleanup.callback(release)
             cleanup.push_async_callback(self.browser.close)
+            cleanup.push_async_callback(self.meetings.close)
             for attribute in ("_delivery_unsubscribe", "_lead_incoming_unsubscribe"):
                 unsubscribe = getattr(self, attribute)
                 if unsubscribe is not None:
                     cleanup.callback(unsubscribe)
                     setattr(self, attribute, None)
-            cleanup.push_async_callback(self.coding_supervision.close)
+            cleanup.push_async_callback(self.coding_threads.close)
+            # Hermes / OpenClaw agents: their Gateways must not outlive the app.
+            from jarvis.agent_runtimes import stop_all as stop_agent_runtimes
+
+            cleanup.push_async_callback(stop_agent_runtimes)
 
             tasks: set[asyncio.Task[Any]] = set(self._watchers)
-            for task in (self._starting_task, self._context_start_task, self._delivery_task):
+            for task in (
+                self._starting_task,
+                self._context_start_task,
+                self._delivery_task,
+                self._runtime_updates_task,
+            ):
                 if task is not None:
                     tasks.add(task)
             for task in tasks:
@@ -477,6 +501,8 @@ class SocietyRuntime:
                     self._context_start_task = None
                 if self._delivery_task is not None and self._delivery_task.done():
                     self._delivery_task = None
+                if self._runtime_updates_task is not None and self._runtime_updates_task.done():
+                    self._runtime_updates_task = None
                 self._watchers.difference_update(task for task in tasks if task.done())
 
     def skills_for(self, agent_id: str) -> AgentSkills:
@@ -516,14 +542,62 @@ class SocietyRuntime:
             # Reviewing them again wastes a model call and can
             # duplicate a standing instruction as a conflicting memory.
             return
-        if await asyncio.to_thread(
+        if self.meetings.is_contributing(session.session_id):
+            # A meeting contribution is a read-only reply in a shared round,
+            # often a silent pass; reviewing each one would add a model call
+            # per member to every message the person sends.
+            return
+        window_key = ""
+        if completion.turn.direct_user:
+            # The person's turns are reviewed per window, not per answer.
+            windowed = await self._review_window(session, events)
+            if windowed is None:
+                return
+            events, window_key = windowed
+        queued = await asyncio.to_thread(
             self.conversations.queue_review,
             session.session_id,
             completion.turn.turn_id,
             events,
             direct_user=completion.turn.direct_user,
-        ):
+        )
+        if window_key:
+            # Cleared only once the review holds the window's evidence durably.
+            await self.store.set_meta(window_key, "")
+        if queued:
             self.background(self.recover_reviews())
+
+    async def _review_window(
+        self, session: Any, events: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], str] | None:
+        """Add a person's turn to its chat's review window (``review_cadence``).
+
+        Returns the whole window's events and its meta key when it is due for
+        review, else ``None``. Without a chat store to read the window back,
+        every turn is reviewed on its own, as before.
+        """
+        from .review_cadence import ReviewWindow, window_events
+
+        svc = self._get_chat()
+        store = getattr(svc, "store", None)
+        if store is None or not callable(getattr(store, "list_events", None)):
+            return events, ""
+        key = ReviewWindow.key(session.session_id)
+        window = ReviewWindow.parse(await self.store.get_meta(key, ""))
+        now = now_ms()
+        window.add_turn(events, now)
+        users = [
+            str((e.get("payload") or {}).get("text") or "")
+            for e in window_events(events)
+            if e.get("kind") == "user_message"
+        ]
+        if not window.due(users, now):
+            await self.store.set_meta(key, window.dump())
+            return None
+        history = await asyncio.to_thread(
+            store.list_events, session.session_id, after_seq=max(0, window.since_seq - 1)
+        )
+        return (window_events(history) or events), key
 
     async def _complete_message_reply(
         self, session: Any, completion: Any, events: list[dict[str, Any]]
@@ -656,22 +730,13 @@ class SocietyRuntime:
 
     # ------------------------------------------------------------ catalog
 
-    def coding_sessions(self) -> CodingSessionGateway:
-        """Lazy composition root for the scoped IDE protocol."""
-        if self._coding_sessions is None:
-            from jarvis.agentic_ide.control import CodingSessionControl
-            from jarvis.agentic_ide.session import get_registry
-
-            self._coding_sessions = CodingSessionControl(get_registry())
-        return self._coding_sessions
-
     def catalog(self) -> list[CapabilityRow]:
         from .browser.tool import BrowserTool
-        from .coding_tool import CodingSessionTool
+        from .coding_threads import CodingThreadTool
 
         tools = dict(self._get_tools() or {})
         tools[BrowserTool.name] = BrowserTool(self, "", self.browser)
-        tools[CodingSessionTool.name] = CodingSessionTool(self, "")
+        tools[CodingThreadTool.name] = CodingThreadTool(self, "")
         try:
             skills = list(self._get_skills() or [])
         except Exception:  # noqa: BLE001 — a broken skill registry costs the skill rows only
@@ -745,16 +810,9 @@ class SocietyRuntime:
             raise RuntimeError("agent chat service unavailable: the society cannot start work")
         from .chat_binding import ensure_session, frame_assignment
 
-        sender = await self.roster.get(env.from_agent) if env.from_agent != "user" else None
-        # Work Jarvis or a teammate hands out runs in the target's own
-        # conversation with that sender, never in the person's chat with it.
-        session = ensure_session(
-            svc,
-            self._get_cfg(),
-            target,
-            counterpart=env.from_agent,
-            counterpart_name=sender.name if sender is not None else env.from_agent,
-        )
+        # Work Jarvis or a teammate hands out runs in the agent's one chat; the
+        # chat shows the framed assignment as a delegation card from its sender.
+        session = ensure_session(svc, self._get_cfg(), target)
         if svc.is_running(session.session_id):
             raise RuntimeError(f"target busy: {target.name} is running a turn")
         queue = svc.subscribe(session.session_id)
@@ -861,6 +919,8 @@ class SocietyRuntime:
                     if payload.get("turn_id") not in (None, turn_id):
                         continue
                     if kind == "assistant_text":
+                        if payload.get("media_only"):
+                            continue  # A picture row does not replace the result report.
                         final_text = str(payload.get("text") or final_text)
                         if quest_trace:
                             await self.quests.note_progress(env.trace_id, "", live=final_text)
@@ -874,6 +934,16 @@ class SocietyRuntime:
                         if name == "society_browser":
                             used_browser = True
                     elif kind == "error":
+                        if payload.get("display_only"):
+                            # A picture that could not be shown does not undo
+                            # the work (live 2026-10-02: a finished research
+                            # turn was reported as blocked over two missing
+                            # screenshots).
+                            log.info(
+                                "society: %s turn had a display-only error: %s",
+                                target.name, str(payload.get("message") or "")[:200],
+                            )
+                            continue
                         status, error = "blocked", str(payload.get("message") or "error")
                     elif kind == "turn_finished":
                         if payload.get("status") not in (None, "ok", "done", "completed"):

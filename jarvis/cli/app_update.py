@@ -92,7 +92,7 @@ def _probe(mode: str) -> dict[str, Any]:
     try:
         root = asyncio.run(update_routes.managed_checkout_root())
         staged = dict(asyncio.run(update_routes.stage_managed_update()))
-    except HTTPException as exc:
+    except HTTPException as exc:  # The exception detail is returned through the CLI error result.
         detail = exc.detail
         if isinstance(detail, dict):
             detail = detail.get("message") or detail.get("error") or json.dumps(detail)
@@ -165,6 +165,7 @@ def _run_child(args: list[str], timeout: float | None, detached: bool) -> tuple[
                 flush=True,
             )
         except subprocess.TimeoutExpired:
+            # Kill and reap the timed-out probe, then return a failure result.
             proc.kill()
             proc.communicate()
             return -1, ""
@@ -177,7 +178,7 @@ def _last_json(stdout: str) -> dict[str, Any] | None:
         if line.startswith("{"):
             try:
                 value = json.loads(line)
-            except ValueError:
+            except ValueError:  # Malformed probe output is treated as unavailable.
                 return None
             return value if isinstance(value, dict) else None
     return None
@@ -252,6 +253,7 @@ def _read_result(root: Path) -> dict[str, Any]:
     try:
         payload = json.loads((root / UPDATE_RESULT_FILENAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        # An absent or incomplete update receipt represents no available result.
         return {}
     return payload if isinstance(payload, dict) else {}
 

@@ -36,7 +36,7 @@ import { useT } from "@/i18n";
  */
 
 // ----------------------------------------------------------------------
-// Runs — the run inspector's list, newest first
+// Runs — recent telemetry, newest first
 // ----------------------------------------------------------------------
 
 function outcomeTone(outcome: string): string {
@@ -54,7 +54,6 @@ function fmtClock(ms: number): string {
 
 export function RunsCard({ className }: { className?: string }) {
   const t = useT();
-  const setActiveSection = useEventStore((s) => s.setActiveSection);
   const runs = useRuns();
   const items: RunListItem[] = (runs.data ?? []).slice(0, 6);
   const live = items.some((r) => r.ended_ms === null);
@@ -66,8 +65,6 @@ export function RunsCard({ className }: { className?: string }) {
       meta={runs.data ? runs.data.length : undefined}
       live={live}
       variant="chamfer"
-      onOpen={() => setActiveSection("run_inspector")}
-      openLabel={t("deck.open_section")}
       className={className}
       bodyClassName="overflow-y-auto"
     >

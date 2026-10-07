@@ -305,3 +305,9 @@ def test_service_persists_and_streams_media_for_any_provider(tmp_path, monkeypat
     assert queue.get_nowait() == persisted[1]
     assert "[video]" in persisted[1]["payload"]["text"]
     store.close()
+
+
+def test_display_errors_are_marked_so_they_never_fail_the_turn(tmp_path):
+    result = normalize(tmp_path, {"path": "../missing.png"})
+    assert result[-1]["kind"] == "error"
+    assert result[-1]["payload"]["display_only"] is True

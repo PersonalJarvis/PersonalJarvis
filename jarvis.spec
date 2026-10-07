@@ -89,6 +89,8 @@ def _macos_privacy_strings():
 datas = []
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/live_runner.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/native_window.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/manual_chrome.py"), "jarvis/society/browser"))
+datas.append((str(PROJECT_ROOT / "jarvis/society/browser/window_actions.py"), "jarvis/society/browser"))
 datas.append((str(PROJECT_ROOT / "jarvis/society/browser/pointer.py"), "jarvis/society/browser"))
 
 # The local voice engine runs in its OWN Python environment, so a frozen build
@@ -157,6 +159,12 @@ for entry in _package_root.rglob("*"):
         continue
     rel = entry.relative_to(PROJECT_ROOT).parent
     datas.append((str(entry), str(rel)))
+
+# The Conductor jobs engine reads its SQL schema and seed jobs beside its own
+# modules; analysis finds the modules, not these files.
+for entry in (PROJECT_ROOT / "conductor").rglob("*"):
+    if entry.is_file() and entry.suffix.lower() in {".sql", ".yaml"}:
+        datas.append((str(entry), str(entry.relative_to(PROJECT_ROOT).parent)))
 
 # Configuration profiles live beside the checkout root, and jarvis.core.config
 # resolves them relative to it.

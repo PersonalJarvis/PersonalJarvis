@@ -41,6 +41,7 @@ import argparse
 import json
 import os
 import platform
+import shlex
 import shutil
 import stat
 import subprocess
@@ -981,8 +982,15 @@ def main(argv: list[str] | None = None) -> int:
 
     step_models(full_profile=with_desktop, dry_run=args.dry_run)
 
+    browser_cmd = [str(venv_python()), "-m", "jarvis.society.browser.install"]
+    if sys.platform.startswith("linux"):
+        browser_cmd.append("--system-deps")
     if not with_desktop or args.headless:
-        note("Agent browser setup skipped (headless).")
+        note("Agent browser skipped (headless profile). Core installation is unaffected.")
+        note("Optional browser setup (system libraries may require administrator access):")
+        console.print(shlex.join(browser_cmd), markup=False, highlight=False, soft_wrap=True)
+    elif args.dry_run:
+        note("managed browser: install and verify on first full installation")
     else:
         browser_cmd = [str(venv_python()), "-m", "jarvis.society.browser.install"]
         if sys.platform.startswith("linux"):

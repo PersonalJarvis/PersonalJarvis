@@ -1,45 +1,50 @@
 import {
   Eye,
-  FilePen,
+  FilePenLine,
+  Hand,
   NotebookPen,
-  ShieldCheck,
-  ShieldOff,
-  ShieldQuestion,
-  ShieldX,
-  Sparkles,
+  Shield,
+  ShieldAlert,
+  ShieldBan,
+  WandSparkles,
 } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
-import { permissionModeIcon } from "./permissionIcons";
+import { isUnguardedPermissionMode, permissionModeIcon } from "./permissionIcons";
 
 describe("permissionModeIcon", () => {
   it("maps every vendor spelling of a stance onto the stance's one glyph", () => {
     // Ask before acting — the unified ladder, Claude Code, and agy.
-    expect(permissionModeIcon("ask")).toBe(ShieldQuestion);
-    expect(permissionModeIcon("default")).toBe(ShieldQuestion);
-    expect(permissionModeIcon("approve-for-me")).toBe(ShieldQuestion);
+    expect(permissionModeIcon("ask")).toBe(Hand);
+    expect(permissionModeIcon("default")).toBe(Hand);
+    expect(permissionModeIcon("approve-for-me")).toBe(Hand);
     // Edits go through.
-    expect(permissionModeIcon("accept-edits")).toBe(FilePen);
-    expect(permissionModeIcon("acceptEdits")).toBe(FilePen);
+    expect(permissionModeIcon("accept-edits")).toBe(FilePenLine);
+    expect(permissionModeIcon("acceptEdits")).toBe(FilePenLine);
     // Nothing asks.
-    expect(permissionModeIcon("bypass")).toBe(ShieldOff);
-    expect(permissionModeIcon("bypassPermissions")).toBe(ShieldOff);
-    expect(permissionModeIcon("full-access")).toBe(ShieldOff);
-    expect(permissionModeIcon("skip-permissions")).toBe(ShieldOff);
+    expect(permissionModeIcon("bypass")).toBe(ShieldAlert);
+    expect(permissionModeIcon("bypassPermissions")).toBe(ShieldAlert);
+    expect(permissionModeIcon("full-access")).toBe(ShieldAlert);
+    expect(permissionModeIcon("skip-permissions")).toBe(ShieldAlert);
     // The reading stances and the runner's own judgement.
     expect(permissionModeIcon("plan")).toBe(NotebookPen);
     expect(permissionModeIcon("read-only")).toBe(Eye);
-    expect(permissionModeIcon("auto")).toBe(Sparkles);
-    expect(permissionModeIcon("dontAsk")).toBe(ShieldX);
+    expect(permissionModeIcon("auto")).toBe(WandSparkles);
+    expect(permissionModeIcon("dontAsk")).toBe(ShieldBan);
   });
 
-  it("gives an id it has never seen the column's shield, never nothing", () => {
-    expect(permissionModeIcon("something-new")).toBe(ShieldCheck);
-    expect(permissionModeIcon("")).toBe(ShieldCheck);
+  it("gives an id it has never seen a plain shield, never nothing", () => {
+    expect(permissionModeIcon("something-new")).toBe(Shield);
+    expect(permissionModeIcon("")).toBe(Shield);
   });
 
   it("keeps the four stances of the unified ladder visually distinct", () => {
     const glyphs = ["ask", "accept-edits", "plan", "bypass"].map(permissionModeIcon);
     expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+
+  it("flags only the stances in which nothing asks", () => {
+    expect(["bypass", "bypassPermissions", "full-access", "skip-permissions"].every(isUnguardedPermissionMode)).toBe(true);
+    expect(["ask", "default", "acceptEdits", "plan", "auto", "dontAsk"].some(isUnguardedPermissionMode)).toBe(false);
   });
 });

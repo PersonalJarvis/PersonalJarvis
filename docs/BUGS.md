@@ -2527,6 +2527,17 @@ unifying both overlays under a SINGLE long-lived Tk root and swapping rendered
 content (canvas / widgets) instead of the root — a larger refactor, never the
 per-style-root approach.
 
+**Update 2026-10-06:** waiting for a restart left the old surface on screen
+(the pet stayed beside a freshly picked bar until the app restarted). A style
+the app has not built yet now starts in its own host process
+(`DesktopApp._build_hosted_surface`, the `jarvis.ui.jarvisbar.host` used on
+macOS since BUG-057), so the switch applies live on every OS without a second
+in-process root; the surface being left is hidden (in-process) or stopped
+(hosted) at once. `restart_required` remains only for a host that fails to
+start. The same change reads "what is on screen" from the app instead of
+`cfg.ui.orb_style`, which the settings route had already overwritten — an idle
+pet switched to the mascot now leaves the screen as it should.
+
 ### Regression test
 
 `tests/unit/ui/test_desktop_swap_overlay.py` pins the contract: `none` +
@@ -16019,3 +16030,58 @@ real Tk root and Toplevel: 0x11 after the first map and after withdraw/show.
 Side effect: the overlays also vanish from other capture tools (ShareX, OBS),
 which is the documented intent of the module. Guard:
 `tests/unit/platform/test_capture_exclusion.py`.
+
+## BUG-231: browser voice could not start on a headless host, in any voice mode (HIGH, FIXED 2026-10-05)
+
+**Symptom.** On `jarvis serve` (a VPS, `JARVIS_VOICE=0`) typed chat worked,
+but the documented browser-voice path never opened `/ws/audio`. Every Start
+button answered "Voice is not running on this computer", and in pipeline mode
+a `[browser_voice] enabled = true` table changed nothing (GitHub issue #399).
+
+**Cause.** Three links were missing. (1) `[browser_voice]` was never a
+`JarvisConfig` field, so `load_config` dropped the table; the connect gate,
+inverted to default-off on 2026-07-08 (`0a4d541b4`), therefore kept
+`/ws/audio` closed in pipeline mode for everyone. (2) Every Start button posts
+`/api/voice/call`, which needs the desktop speech pipeline a headless host
+never has; the only browser-side start was the desktop's realtime hand-over
+(`BrowserVoiceRequested`). (3) The visible browser-microphone card that could
+start a call itself left the sidebar on 2026-09-12 (`51b4d4015`). The issue's
+note that Gemini Live lacks browser audio is not the cause: the provider
+declares it; `browser_audio` in `/api/settings/voice-mode` read only an
+explicitly pinned realtime provider (fixed separately as BUG-232).
+
+**Fix.** `BrowserVoiceConfig(enabled=True)` is now `JarvisConfig.browser_voice`;
+`browser_voice_enabled(cfg)` serves the classic bridge in pipeline mode by
+default and realtime mode always. `GET /api/voice/state` reports
+`browser_call` when no speech pipeline and no desktop shell exist. On a 503
+from `/api/voice/call`, `useVoiceCall` reads that flag and lets
+`BrowserRealtimeControl` hold the call in this browser
+(`lib/browserVoiceCall.ts`); the voice-state resync leaves such a call alone.
+Guards: `tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/browser_voice/test_route.py`,
+`tests/unit/ui/test_voice_call_routes.py`, `useVoiceCall.test.tsx`,
+`BrowserRealtimeControl.test.tsx`.
+
+## BUG-232: an unpinned browser-audio engine ran on the desktop's half-duplex path and was reported as "no browser audio" (MEDIUM, FIXED 2026-10-05)
+
+**Symptom.** With no `[brain.realtime].provider` pinned, a Gemini-only install
+showed `active_provider: gemini-live` next to `browser_audio: false` in
+`GET /api/settings/voice-mode` (seen in GitHub issue #399). On the desktop the
+same call ran on the native half-duplex path instead of the browser hand-over
+that a pinned Gemini Live call takes.
+
+**Cause.** `realtime_browser_audio(cfg)` read only the explicitly pinned
+primary. Without a pin, the session builder opens on the first
+credential-ready provider in effective order, so the transport decision and
+the provider the call actually used disagreed for every unpinned install.
+
+**Fix.** Without a pin, `realtime_browser_audio` reads the capability of the
+first credential-ready provider (`_identified_provider_candidates(...,
+limit=1)`: the same order and the same refusal rules as
+`build_realtime_session`); a pinned primary still answers for itself without
+reading credentials. The settings route and both pipeline call sites now read
+it off their loops. Speech-suite tests pick the transport as a keyless host
+does (`tests/unit/speech/conftest.py`), so a developer's real key no longer
+flips desktop-path tests. Guards: `tests/unit/realtime/test_factory.py`,
+`tests/unit/web/test_voice_mode_route.py`,
+`tests/unit/speech/test_realtime_mode.py`.

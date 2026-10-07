@@ -256,7 +256,16 @@ async def get_asset(request: Request, slug: str, asset_path: str) -> FileRespons
         ) from exc
     if not target.is_file():
         raise HTTPException(status_code=404, detail="asset does not exist")
-    return FileResponse(target)
+    # Served from the app's own origin: an HTML or SVG sibling opened in a tab
+    # would otherwise run its script with the app's session. ``sandbox`` gives
+    # it an opaque origin, ``nosniff`` stops a browser re-typing a misnamed file.
+    return FileResponse(
+        target,
+        headers={
+            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ----------------------------------------------------------------------

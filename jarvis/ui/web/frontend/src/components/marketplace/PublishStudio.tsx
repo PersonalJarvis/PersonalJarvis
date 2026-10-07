@@ -76,6 +76,8 @@ interface SubmitResultWire {
   name: string;
   version: string;
   pr_url?: string | null;
+  /** The intake issue the submission was filed as (the default, server-less path). */
+  issue_url?: string | null;
   submission_path?: string | null;
   /** The three commands other people will run to install this — computed
    *  server-side by install_standard.py, never derived here. */
@@ -1579,11 +1581,11 @@ function PublishedCard({
           {t("marketplace.studio_done_body")}
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          {result.pr_url && (
+          {(result.issue_url ?? result.pr_url) && (
             <Button
               size="sm"
               variant="outline"
-              onClick={() => openExternalUrl(result.pr_url ?? "")}
+              onClick={() => openExternalUrl(result.issue_url ?? result.pr_url ?? "")}
             >
               <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
               {t("marketplace.studio_done_view_pr")}

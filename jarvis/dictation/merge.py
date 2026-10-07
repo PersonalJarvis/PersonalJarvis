@@ -140,20 +140,41 @@ def _drop_leading_words(text: str, count: int) -> str:
     """
     if count <= 0:
         return text
-    seen = 0
-    index = 0
-    length = len(text)
-    while index < length and seen < count:
-        while index < length and text[index].isspace():
-            index += 1
-        start = index
-        while index < length and not text[index].isspace():
-            index += 1
-        if index > start and _normalize(text[start:index]):
-            # A run of pure punctuation is not a word; the normalised token
-            # list did not count it either, so it must not consume a step.
-            seen += 1
-    return text[index:].lstrip()
+    prefix = " ".join(_normalize(text).split()[:count])
+    return _drop_normalized_prefix(text, prefix)
+
+
+def _drop_normalized_prefix(text: str, prefix: str) -> str:
+    """Map an overlap back to an exact source boundary, or keep the text.
+
+    A space-delimited source token can represent several comparison tokens
+    (``read-only``, ``it's``, ``2.5``). Counting source words would discard
+    unrelated words after the seam, including negations. Normalize prefixes
+    with the SAME function used for matching instead. Whole-prefix Unicode
+    normalization also keeps composed characters and compatibility expansions
+    intact; normalizing one character at a time cannot do that.
+
+    Only the matched prefix and its trailing separators are scanned. If the
+    seam falls inside an indivisible expansion, retain the original text:
+    repeating part of a word is preferable to deleting the rest of it.
+    """
+    if not prefix:
+        return text
+    if prefix == _normalize(text):
+        return ""
+    end: int | None = None
+    for index in range(1, len(text) + 1):
+        normalized = _normalize(text[:index])
+        if normalized == prefix and (
+            end is None or all(unicodedata.category(c).startswith("M") for c in text[end:index])
+        ):
+            end = index
+        elif len(normalized) > len(prefix):
+            break
+    # Remove punctuation attached to the matched word, then whitespace. Do
+    # not skip every non-word character: a following "-5" or "--verbose"
+    # belongs to the continuation, including its sign/prefix.
+    return text[end:].lstrip(",.;:!?、。，；：！？").lstrip() if end is not None else text
 
 
 def merge_transcripts(parts: Sequence[str]) -> str:
@@ -236,19 +257,13 @@ def transcript_token_count(text: str) -> int:
 def _drop_leading_chars(text: str, count: int) -> str:
     """``text`` without the first ``count`` characters OF ITS NORMALISED view.
 
-    The original and the normalised string do not line up character for
-    character (punctuation disappears, NFKC can merge a pair), so this consumes
-    the original one character at a time and stops when the normalised budget
-    is spent.
+    Use the same source-boundary mapping as the word search: punctuation adds
+    separators and NFKC can combine or expand characters, so per-character
+    counts are not offsets in the normalized whole string.
     """
     if count <= 0:
         return text
-    spent = 0
-    index = 0
-    while index < len(text) and spent < count:
-        spent += len(_normalize(text[index]))
-        index += 1
-    return text[index:].lstrip()
+    return _drop_normalized_prefix(text, _normalize(text)[:count])
 
 
 __all__ = [

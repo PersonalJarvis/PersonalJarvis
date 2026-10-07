@@ -19,6 +19,7 @@ import {
 import { useHomeStore } from "@/store/home";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
+import { apiKeysHealthError } from "@/lib/apiKeysTab";
 import { dockSlotAt, layoutDock } from "@/lib/dockMagnify";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -101,10 +102,7 @@ export function DockRail({ className }: { className?: string }) {
   // A provider that is set up but failing — surfaced app-wide as a red pip on
   // API Keys. The amber "needs setup" state is deliberately NOT shown: on a
   // fresh install every unconfigured section would light up.
-  const apikeysError = useMemo(
-    () => Object.values(health).some((h) => h?.status === "error"),
-    [health],
-  );
+  const apikeysError = useMemo(() => apiKeysHealthError(health), [health]);
   const pluginsNeedReconnect = pluginAttention.count > 0;
   const pluginWarnHint = pluginAttention.names.length
     ? `${t("sidebar.plugins_reconnect_alert")}: ${pluginAttention.names.join(", ")}`

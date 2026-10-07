@@ -20,6 +20,8 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import DictationRefused, DictationStarted, VoiceInputHeld
 from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
 
+pytestmark = pytest.mark.usefixtures("granted_microphone")
+
 
 class _StubSTT:
     async def transcribe_pcm(self, pcm: bytes):  # pragma: no cover - never called

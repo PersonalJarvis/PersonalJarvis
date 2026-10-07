@@ -274,7 +274,7 @@ async def test_unknown_delegation_and_api_commands_cannot_reach_provider():
     assert conn.socket.sent == []
 
 
-async def test_audio_stays_on_webrtc_and_provider_error_is_fatal_but_safe():
+async def test_reflected_audio_is_retained_and_provider_error_is_fatal_but_safe():
     conn = connection(
         [
             {"type": "output_audio.delta", "audio": "AAAA"},
@@ -284,7 +284,7 @@ async def test_audio_stays_on_webrtc_and_provider_error_is_fatal_but_safe():
             },
         ]
     )
-    assert (await conn.receive())["type"] == "subscription.ignored"
+    assert (await conn.receive())["type"] == "session.output_audio.delta"
     event = await conn.receive()
     assert event["fatal"] is True
     assert event["error"]["code"] == "quota_exhausted"

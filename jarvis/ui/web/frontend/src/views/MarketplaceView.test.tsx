@@ -298,10 +298,10 @@ describe("MarketplaceView", () => {
     // The German strings resolve from the locale file, including the count
     // template whose {count} token this view fills itself.
     expect(await screen.findByText(/2 veröffentlichte Einträge/)).toBeTruthy(); // i18n-allow
-    expect(screen.getByLabelText(/Plugins und Skills durchsuchen/)).toBeTruthy(); // i18n-allow
+    expect(screen.getByLabelText(/Plugins, Skills und Agenten durchsuchen/)).toBeTruthy(); // i18n-allow
 
     setUiLanguage("es");
-    expect(await screen.findByLabelText(/Buscar plugins y skills/)).toBeTruthy(); // i18n-allow
+    expect(await screen.findByLabelText(/Buscar plugins, skills y agentes/)).toBeTruthy(); // i18n-allow
   });
 
   it("opens the public storefront in a real browser", async () => {
@@ -333,6 +333,129 @@ describe("MarketplaceView", () => {
     expect(await screen.findByTestId("github-signin-dialog")).toBeTruthy();
     expect(await screen.findByTestId("device-code")).toBeTruthy();
     expect(screen.getByText("WXYZ")).toBeTruthy();
+  });
+
+  it("never prints a leaked YAML marker as a description", async () => {
+    installFetchMock({
+      skills: [{ ...INDEX.skills[0], name: "humanizer", title: "Humanizer", description: "|" }],
+    });
+    renderView();
+
+    expect(await screen.findByText("Humanizer")).toBeTruthy();
+    expect(screen.queryByText("|")).toBeNull();
+    expect(screen.getByText("No description yet.")).toBeTruthy();
+  });
+
+  it("counts what the search leaves, not the whole index", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.change(screen.getByLabelText(/Search plugins/i), {
+      target: { value: "crisp bullets" },
+    });
+
+    expect(screen.getByRole("button", { name: /Plugins 0/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Skills 1/ })).toBeTruthy();
+  });
+
+  it("points an empty search at the built-in catalog", async () => {
+    installFetchMock();
+    renderView();
+    await screen.findByText("Sentry");
+
+    fireEvent.change(screen.getByLabelText(/Search plugins/i), {
+      target: { value: "notion" },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Browse built-in plugins" }));
+
+    await waitFor(() => {
+      expect(useEventStore.getState().activeSection).toBe("plugins");
+    });
+  });
+
+  it("offers the update when the installed plugin is older than the published one", async () => {
+    installFetchMock({
+      plugins: [
+        { ...INDEX.plugins[0], installed: true, installed_version: "0.9.0", version: "1.0.0" },
+      ],
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Sentry"));
+
+    expect(await screen.findByRole("button", { name: "Update to v1.0.0" })).toBeTruthy();
+    expect(screen.getByText("You have v0.9.0")).toBeTruthy();
+  });
+
+  it("opens an installed entry's home section from its sheet", async () => {
+    installFetchMock({
+      skills: [{ ...INDEX.skills[0], installed: true }],
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Three Bullet Brief"));
+    expect(screen.queryByRole("button", { name: "Install" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /Open in Skills/ }));
+
+    await waitFor(() => {
+      expect(useEventStore.getState().activeSection).toBe("skills");
+    });
+  });
+
+  it("hides the publish promise when publishing is switched off", async () => {
+    identity = { enabled: false, signed_in: false };
+    installFetchMock();
+    renderView();
+
+    // The identity answers after the index; wait for the hero to settle on it.
+    await waitFor(() => {
+      expect(screen.getByTestId("marketplace-hero").textContent).not.toMatch(/sign in with GitHub/i);
+    });
+    expect(screen.queryByTestId("hero-publish")).toBeNull();
+  });
+
+  it("says the index is switched off instead of calling the shelves empty", async () => {
+    installFetchMock({ status: "disabled", plugins: [], skills: [] });
+    renderView();
+
+    expect(await screen.findAllByText(/switched off in this install/i)).toBeTruthy();
+    expect(screen.queryByText(/Nothing is published in this category/i)).toBeNull();
+    // No invitation onto shelves that do not exist.
+    expect(screen.queryByTestId("marketplace-hero")).toBeNull();
+    expect(screen.queryByText(/Share what you built/i)).toBeNull();
+  });
+
+  it("says a package could not be read instead of claiming it has no files", async () => {
+    const fetchMock = installFetchMock();
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/contents")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ...CONTENTS, files: [], error: "The download timed out." }),
+        } as Response;
+      }
+      return base!(input, init);
+    });
+    renderView();
+
+    fireEvent.click(await screen.findByText("Three Bullet Brief"));
+
+    expect(await screen.findByText("The download timed out.")).toBeTruthy();
+    expect(screen.queryByText(/publishes no readable text files/i)).toBeNull();
+  });
+
+  it("keeps the search shortcut away from the page while the sheet is open", async () => {
+    installFetchMock();
+    renderView();
+    fireEvent.click(await screen.findByText("Sentry"));
+    await screen.findByRole("dialog");
+
+    fireEvent.keyDown(window, { key: "/" });
+
+    expect(document.activeElement).not.toBe(screen.getByLabelText(/Search plugins/i));
   });
 
   it("filters to the signed-in account's own publications", async () => {

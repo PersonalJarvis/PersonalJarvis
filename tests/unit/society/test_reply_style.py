@@ -1,5 +1,7 @@
 """Agent-specific API and CLI briefings retain conversational reply guidance."""
 
+import pytest
+
 from jarvis.agent_chat.jarvis_harness import Identity, compact_identity, identity_prompt
 from jarvis.agent_chat.runner_cli import _with_identity
 from jarvis.core.response_style import (
@@ -60,3 +62,19 @@ async def test_reply_policy_survives_long_instructions_in_a_compact_cli_identity
     assert len(compact) < len(identity)
     assert CONVERSATIONAL_RESPONSE_STYLE in compact
     assert KEEP_GOING_ON_TOOL_FAILURE in compact
+
+
+@pytest.mark.parametrize("resume", [None, "existing-vendor-session"])
+@pytest.mark.parametrize("compact", [False, True])
+async def test_cli_keeps_explicit_detail_requests_with_the_shared_default(resume, compact) -> None:
+    request = "Explain each step in detail, include the full code, and answer in Spanish."
+    prompt = await identity_prompt(
+        user_text=request, history=[], resume=resume, prompt_override=_briefing()
+    )
+    seat = Identity(
+        session_id="society:reply-style-test", text=prompt, compact=compact_identity(prompt)
+    )
+    delivered = _with_identity(request, seat, resume, compact=compact)
+    assert CONVERSATIONAL_TURN_REMINDER in delivered
+    assert delivered.endswith(request)
+    assert "think longer and go deeper" not in delivered

@@ -16,6 +16,7 @@ from jarvis.marketplace.connect_helpers import (
     is_placeholder_client_id,
     resolve_pkce_client,
 )
+from jarvis.marketplace.publisher_clients import SHIPPED_PUBLIC_CLIENT_IDS
 from jarvis.marketplace.token_store import InMemoryBackend, Tokens, TokenStore
 
 
@@ -136,14 +137,35 @@ def test_gmail_handler_uses_google_secret_over_catalog_placeholder(
     assert handler._config.client_secret == "GOCSPX-realsecret"
 
 
-def test_gmail_handler_falls_back_to_catalog_when_no_secret(
+def test_gmail_handler_uses_shipped_client_and_broker_when_no_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # No secret configured -> catalog value is used unchanged. A real client_id
-    # in the catalog still works; the placeholder still builds a handler (it is
-    # NOT dropped to None, so a refresh attempt happens and the scheduler can
-    # flag needs_reauth — never a silent green "connected").
+    # No secret configured -> the shipped Google client wins over the catalog
+    # value, carries no secret, and routes its token calls through the broker.
+    monkeypatch.setattr(
+        "jarvis.marketplace.catalog_data.load_catalog",
+        lambda: _Catalog([_Spec("gmail", auth=_gmail_auth())]),
+    )
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret", lambda key, env_fallback=None: None
+    )
+
+    handler = build_handler_from_catalog("gmail")
+    assert isinstance(handler, PkceLoopbackHandler)
+    assert handler._config.client_id == SHIPPED_PUBLIC_CLIENT_IDS["google"]
+    assert handler._config.client_secret is None
+    assert handler._config.token_broker == "google"  # noqa: S105 - a family name
+
+
+def test_gmail_handler_falls_back_to_catalog_without_a_shipped_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A family with no shipped client uses the catalog value unchanged. A real
+    # client_id in the catalog still works; the placeholder still builds a
+    # handler (it is NOT dropped to None, so a refresh attempt happens and the
+    # scheduler can flag needs_reauth — never a silent green "connected").
     real_in_catalog = "catalog-456.apps.googleusercontent.com"
+    monkeypatch.delitem(SHIPPED_PUBLIC_CLIENT_IDS, "google")
     monkeypatch.setattr(
         "jarvis.marketplace.catalog_data.load_catalog",
         lambda: _Catalog([_Spec("gmail", auth=_gmail_auth(client_id=real_in_catalog))]),
@@ -155,13 +177,15 @@ def test_gmail_handler_falls_back_to_catalog_when_no_secret(
     handler = build_handler_from_catalog("gmail")
     assert isinstance(handler, PkceLoopbackHandler)
     assert handler._config.client_id == real_in_catalog
+    assert handler._config.token_broker is None
 
 
 def test_non_google_pkce_ignores_google_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A non-Google PKCE plugin (e.g. Slack) keeps its own real catalog client_id
-    # and must NOT be hijacked by the shared google_oauth secret.
+    # A non-Google PKCE plugin (e.g. Slack) keeps its own client and must NOT
+    # be hijacked by the shared google_oauth secret. Without a shipped Slack
+    # client the real catalog client_id is used.
     slack_auth = OAuthPkceLoopbackAuth(
         mode="oauth_pkce_loopback",
         authorization_url="https://slack.com/oauth/v2/authorize",
@@ -169,6 +193,7 @@ def test_non_google_pkce_ignores_google_secret(
         client_id="slack-real.id",
         scopes=["chat:write"],
     )
+    monkeypatch.delitem(SHIPPED_PUBLIC_CLIENT_IDS, "slack")
     monkeypatch.setattr(
         "jarvis.marketplace.catalog_data.load_catalog",
         lambda: _Catalog([_Spec("slack", auth=slack_auth)]),
@@ -250,10 +275,23 @@ def test_resolve_pkce_client_asana_prefers_secret(
     assert csec == "asana-sec"
 
 
-def test_resolve_pkce_client_slack_falls_back_to_catalog_when_no_secret(
+def test_resolve_pkce_client_slack_uses_shipped_client_when_no_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # No slack_oauth secret set -> the real catalog client_id is used unchanged.
+    # No slack_oauth secret set -> the shipped Slack app, with no secret (its
+    # broker holds it), beats the catalog value.
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret", lambda key, env_fallback=None: None
+    )
+    cid, csec = resolve_pkce_client("slack", "slack.real.id", "slack.real.secret")
+    assert cid == SHIPPED_PUBLIC_CLIENT_IDS["slack"]
+    assert csec is None
+
+
+def test_resolve_pkce_client_slack_falls_back_to_catalog_without_shipped_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delitem(SHIPPED_PUBLIC_CLIENT_IDS, "slack")
     monkeypatch.setattr(
         "jarvis.core.config.get_secret", lambda key, env_fallback=None: None
     )

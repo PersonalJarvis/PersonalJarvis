@@ -99,7 +99,7 @@ def test_a_self_hosted_card_says_where_its_server_lives() -> None:
         )
 
 
-def test_the_dictation_card_follows_the_server_the_user_configured() -> None:
+def test_the_dictation_card_follows_the_server_the_user_configured(monkeypatch) -> None:
     """The concrete case behind the rule above: a user who moved their Ollama
     to another box used to keep a second, invisible copy of the address here,
     pinned to localhost, and dictation polish silently talked to nothing."""
@@ -107,22 +107,17 @@ def test_the_dictation_card_follows_the_server_the_user_configured() -> None:
     from jarvis.dictation.polish_client import POLISH_FAMILIES
 
     family = next(f for f in POLISH_FAMILIES if f.endpoint_provider)
-    import jarvis.core.config as cfg
+    from tests.fakes.provider_config import install_provider_config
 
     conf = JarvisConfig(
         brain=BrainConfig(
             providers={"ollama": BrainProviderConfig(base_url="http://gpu.lan:11434")}
         )
     )
-    original = cfg.load_config
-    cfg.load_config = lambda: conf  # type: ignore[assignment]
-    try:
-        assert family.effective_base_url == "http://gpu.lan:11434/v1"
-        # And a server on another machine is keyless but NOT on-device — the
-        # privacy promise has to follow the address, not the billing model.
-        assert family.runs_on_device is False
-    finally:
-        cfg.load_config = original  # type: ignore[assignment]
+    install_provider_config(monkeypatch, conf)
+    assert family.effective_base_url == "http://gpu.lan:11434/v1"
+    # A server on another machine is keyless but not on-device.
+    assert family.runs_on_device is False
 
 
 def test_the_realtime_tier_keeps_a_self_hosted_option() -> None:

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 from uuid import uuid4
 
 from .chat_binding import SURFACE, _workspace, pair_for
 from .routines import agent_id_from_tags, routine_seat
+
+log = logging.getLogger(__name__)
 
 #: Marks a per-execution routine chat: ``society:<agent>:routine:<task>:<run>``.
 ROUTINE_SESSION_MARKER = ":routine:"
@@ -123,6 +126,28 @@ async def _seat_for_run(runtime: Any, agent: Any, task_id: str) -> tuple[str, st
     return provider, model, effort, account_id
 
 
+def _run_runtime(agent: Any, provider: str) -> str:
+    """Which runtime a routine run uses.
+
+    The run keeps its owner's Hermes / OpenClaw runtime on the owner's own
+    model — the seat the person chose for that agent. A run pinned to another
+    seat keeps the runtime only when that seat is an API key or local server:
+    a subscription seat (Claude Code's dual row included) runs on Jarvis' own
+    runtime, so a scheduled run never quietly moves onto an API key.
+    """
+    runtime = str(getattr(agent, "runtime", "") or "jarvis")
+    if runtime == "jarvis":
+        return ""
+    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_runtimes.model_map import supports
+
+    if not supports(provider):
+        return ""
+    if provider == str(getattr(agent, "provider", "") or ""):
+        return runtime
+    return "" if resolve_runner(provider, surface=SURFACE).endswith("-cli") else runtime
+
+
 async def run_owned_routine(
     runtime: Any,
     task_id: str,
@@ -150,6 +175,7 @@ async def run_owned_routine(
         cwd=_workspace(cfg, agent),
         permission_mode="bypass",
         title=f"{agent.name} · Routine {task_id}",
+        runtime=_run_runtime(agent, provider),
     )
     # Persist the link before starting work, including runs that fail or are cancelled.
     task_store, _ = runtime.task_services()
@@ -160,6 +186,23 @@ async def run_owned_routine(
     # Legacy tasks contain an identity snapshot. The live briefing owns identity now.
     _, separator, original = prompt.partition("\nRoutine:\n")
     task = original if separator else prompt
+    # The run keeps its own seat and chat; the agent's one chat shows a card
+    # that opens it (MASTERPLAN §2.10).
+    title = next((line.strip() for line in task.splitlines() if line.strip()), task_id)
+    try:
+        await runtime.post_chat_notice(
+            agent,
+            {
+                "kind": "routine_run",
+                "task_id": task_id,
+                "session_id": session.session_id,
+                "agent_id": agent.agent_id,
+                "agent_name": agent.name,
+                "text": title[:200],
+            },
+        )
+    except Exception:  # noqa: BLE001 — the card is a projection; the run itself goes on
+        log.warning("society: routine card not posted for %s", agent.agent_id, exc_info=True)
     task = (
         f"Scheduled routine {task_id}. Follow your CURRENT standing instructions.\n"
         "This execution has its own background chat with bypass permissions.\n"

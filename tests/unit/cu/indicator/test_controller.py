@@ -215,8 +215,9 @@ async def test_screen_capture_waits_for_real_show_ack_and_hides_afterward(
     ctl = CUIndicatorController(bus)
     calls: list[str] = []
 
-    async def fake_show(*, hint: str, required: bool) -> bool:
+    async def fake_show(*, hint: str, required: bool, pointer: bool = False) -> bool:
         assert required is True
+        assert pointer is False  # a screen look never takes over the pointer
         calls.append(f"show:{hint}")
         return True
 

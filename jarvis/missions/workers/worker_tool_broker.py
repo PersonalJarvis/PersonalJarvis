@@ -782,6 +782,9 @@ class WorkerToolBroker:
         if not scope.specs:
             return None
         server = self._ensure_server()
+        # A cold loopback server must not consume the worker's grant lifetime
+        # before the capability is handed to it. This scope is not published yet.
+        scope.expires_at = time.monotonic() + max(1.0, float(ttl_s))
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._reap_locked()

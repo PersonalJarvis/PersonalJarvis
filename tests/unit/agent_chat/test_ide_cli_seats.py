@@ -360,7 +360,9 @@ def test_plan_kimi_prints_json_and_finds_its_session_afterwards(stubbed: None) -
     )
     assert plan.argv[:3] == ["kimi", "--output-format", "stream-json"]
     assert plan.argv[plan.argv.index("--model") + 1] == "k2"
-    assert "--auto" in plan.argv
+    # Kimi Code refuses --auto / --yolo / --plan next to --prompt; print mode
+    # is autonomous on its own.
+    assert not {"--auto", "--yolo", "--plan"} & set(plan.argv)
     assert plan.argv[-2:] == ["--prompt", "hi"]
     assert plan.shape == "kimi" and plan.env["AGENT"] == "kimi"
     # Fresh conversation: the id is looked up in Kimi's store afterwards.

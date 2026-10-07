@@ -75,6 +75,15 @@ class PkceLoopbackConfig:
     # authorize request carries `access_type=offline` + `prompt=consent`.
     offline_access: bool = False
     client_auth_method: Literal["client_secret_post", "client_secret_basic"] = "client_secret_post"
+    # Family key of a ``publisher_clients.SHIPPED_TOKEN_BROKERS`` entry. Set
+    # only for the shipped public client of a provider that demands a client
+    # secret: the code exchange then goes to that broker (and, when the broker
+    # has one, the browser redirect to its https callback) instead of
+    # ``token_url``, with no secret. ``None`` means the provider directly.
+    token_broker: str | None = None
+    # Provider endpoint for the refresh_token grant when it is not
+    # ``token_url`` (Figma). ``None`` refreshes at ``token_url``.
+    refresh_url: str | None = None
 
     def token_auth_method(self, secret: str | None) -> str:
         """Honor X's endpoint contract, including legacy installed catalogs."""
@@ -99,6 +108,24 @@ def _basic_token_header(client_id: str, secret: str | None, method: str) -> dict
     return {"Authorization": "Basic " + base64.b64encode(credentials).decode("ascii")}
 
 
+def _broker(family: str | None):
+    """Resolve a token-broker family, failing loudly when it vanished.
+
+    A grant issued through a broker can only be exchanged or refreshed there:
+    the provider refuses it without the secret the app does not hold.
+    """
+    if not family:
+        return None
+    from jarvis.marketplace.publisher_clients import token_broker
+
+    broker = token_broker(family)
+    if broker is None:
+        raise RuntimeError(
+            f"the {family} token broker is no longer available; reconnect the plugin"
+        )
+    return broker
+
+
 def _refresh_expires_at(payload: dict) -> datetime | None:
     """When the provider caps the refresh grant itself, return when it ends.
 
@@ -118,6 +145,46 @@ def _refresh_expires_at(payload: dict) -> datetime | None:
     if seconds <= 0:
         return None
     return datetime.now(UTC) + timedelta(seconds=seconds)
+
+
+@dataclass(frozen=True)
+class _GrantFields:
+    access: str | None
+    refresh: str | None
+    expires_at: datetime | None
+    scope: str | None
+
+
+def _grant_fields(payload: dict) -> _GrantFields:
+    """Read one token set from a token-endpoint answer, never mixing sources.
+
+    Slack's user-scope code exchange nests the user token under
+    ``authed_user`` (``access_token``, ``refresh_token``, ``expires_in``,
+    ``scope``); the top level then belongs to a bot token, if any. A Slack
+    refresh of a user token answers at the top level instead, as every other
+    provider does. Taking all four fields from the same object keeps a bot's
+    refresh token from ever being paired with a user's access token.
+    """
+    nested = payload.get("authed_user")
+    source = nested if isinstance(nested, dict) and nested.get("access_token") else payload
+    expires_at: datetime | None = None
+    try:
+        expires_in = source.get("expires_in")
+        if expires_in is not None:
+            expires_at = datetime.now(UTC) + timedelta(seconds=int(expires_in))
+    except (TypeError, ValueError):
+        # An unreadable lifetime is not fatal: the token works until the
+        # provider says otherwise, and the tool refreshes on that answer.
+        log.debug("token response carried an unreadable expires_in; treating as unknown")
+    access = source.get("access_token")
+    refresh = source.get("refresh_token")
+    scope = source.get("scope")
+    return _GrantFields(
+        access=str(access) if access else None,
+        refresh=str(refresh) if refresh else None,
+        expires_at=expires_at,
+        scope=str(scope) if scope else None,
+    )
 
 
 @dataclass
@@ -173,7 +240,7 @@ class PkceLoopbackHandler:
                 "in use, or the hosted callback base URL is unreachable)"
             ) from exc
 
-        redirect_uri = callback_server.redirect_uri
+        redirect_uri = self._redirect_uri(callback_server.redirect_uri)
         verifier, challenge = pkce_pair()
         sid = session_id()
 
@@ -194,6 +261,18 @@ class PkceLoopbackHandler:
             redirect_uri=redirect_uri,
             expires_at_ms=int((datetime.now(UTC) + timedelta(minutes=5)).timestamp() * 1000),
         )
+
+    def _redirect_uri(self, listener_uri: str) -> str:
+        """The redirect_uri sent to the provider.
+
+        Normally the local listener's own address. A token broker with an
+        https callback (Slack) replaces it: the provider redirects the browser
+        there, and the broker bounces the request on to the same listener.
+        """
+        broker = _broker(self._config.token_broker)
+        if broker is not None and broker.redirect_uri:
+            return broker.redirect_uri
+        return listener_uri
 
     def _authorize_params(self, *, redirect_uri: str, state: str, challenge: str) -> dict[str, str]:
         """Build the authorize query params. Extracted so the optional
@@ -272,61 +351,59 @@ class PkceLoopbackHandler:
             "grant_type": "authorization_code",
             "redirect_uri": pending.redirect_uri,
         }
-        if (
-            pending.config.client_secret
-            and pending.config.token_auth_method(pending.config.client_secret)
-            == "client_secret_post"
-        ):
-            body["client_secret"] = pending.config.client_secret
-        if pending.config.resource:
-            body["resource"] = pending.config.resource
+        broker = _broker(pending.config.token_broker)
+        if broker is not None:
+            # The broker adds the shipped client's secret itself and refuses
+            # any field beyond the grant, so no secret and no extras go out.
+            token_url = broker.token_url
+            client_secret = None
+            auth_method = "none"
+        else:
+            token_url = pending.config.token_url
+            client_secret = pending.config.client_secret
+            auth_method = pending.config.token_auth_method(client_secret)
+            if client_secret and auth_method == "client_secret_post":
+                body["client_secret"] = client_secret
+            if pending.config.resource:
+                body["resource"] = pending.config.resource
         timeout = httpx.Timeout(pending.config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
-                pending.config.token_url,
+                token_url,
                 data=body,
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/x-www-form-urlencoded",
                     "User-Agent": "Personal-Jarvis/1.0",
-                    **_basic_token_header(
-                        pending.config.client_id,
-                        pending.config.client_secret,
-                        pending.config.token_auth_method(pending.config.client_secret),
-                    ),
+                    **_basic_token_header(pending.config.client_id, client_secret, auth_method),
                 },
             )
         if r.status_code != 200:
             detail = sanitize_provider_error(r.text)
             raise RuntimeError(f"token exchange HTTP {r.status_code}: {detail}")
         payload = r.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("token response was not a JSON object")
         # Slack wraps success/failure in "ok" plus error codes; many other
         # providers return error inline. Handle both shapes.
         if payload.get("ok") is False:
             err = sanitize_provider_error(str(payload.get("error", "unknown")))
             raise RuntimeError(f"token exchange failed: {err}")
         # Slack's response nests the user token under `authed_user`.
-        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
+        grant = _grant_fields(payload)
+        access = grant.access
         if not access:
             raise RuntimeError("token response missing access_token")
-        refresh = payload.get("authed_user", {}).get("refresh_token") or payload.get(
-            "refresh_token"
-        )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
-        expires_at = (
-            datetime.now(UTC) + timedelta(seconds=int(expires_in))
-            if expires_in is not None
-            else None
-        )
+        refresh = grant.refresh
+        expires_at = grant.expires_at
         extra: dict[str, str] = {}
         team = payload.get("team", {})
         if isinstance(team, dict) and team.get("id"):
             extra["team_id"] = team["id"]
         if isinstance(team, dict) and team.get("name"):
             extra["team_name"] = team["name"]
-        scope = payload.get("authed_user", {}).get("scope") or payload.get("scope")
-        if scope:
-            extra["scope"] = scope
+        if grant.scope:
+            extra["scope"] = grant.scope
         grant_ends = _refresh_expires_at(payload)
         if grant_ends is not None:
             extra["refresh_expires_at"] = grant_ends.isoformat()
@@ -344,11 +421,12 @@ class PkceLoopbackHandler:
         # remain bound to their issuing client. Keeping the pair inside the same
         # protected token blob makes refresh independent of that drift.
         extra["client_id"] = pending.config.client_id
-        extra["token_endpoint_auth_method"] = pending.config.token_auth_method(
-            pending.config.client_secret
-        )
-        if pending.config.client_secret:
-            extra["client_secret"] = pending.config.client_secret
+        extra["token_endpoint_auth_method"] = auth_method
+        if client_secret:
+            extra["client_secret"] = client_secret
+        if broker is not None:
+            # A brokered grant can only ever be refreshed through the broker.
+            extra["token_broker"] = pending.config.token_broker
         return Tokens(access=access, refresh=refresh, expires_at=expires_at, extra=extra)
 
     async def refresh(self, current: Tokens) -> Tokens:
@@ -363,25 +441,43 @@ class PkceLoopbackHandler:
         if bound_client_id:
             client_id = bound_client_id
             client_secret = current.extra.get("client_secret")
+            # The grant's own broker marker decides, never today's config: an
+            # expert override added later must not reroute a brokered grant,
+            # and a brokered client must not reroute an expert's grant. A
+            # secret-less grant of a shipped broker client without the marker
+            # can likewise only be refreshed through that broker.
+            broker_family = current.extra.get("token_broker")
+            if not broker_family and not client_secret:
+                from jarvis.marketplace.publisher_clients import broker_family_for_client
+
+                broker_family = broker_family_for_client(client_id)
         else:
             client_id = self._config.client_id
             client_secret = self._config.client_secret
+            broker_family = self._config.token_broker
+        broker = _broker(broker_family)
         refresh_body = {
             "grant_type": "refresh_token",
             "refresh_token": current.refresh,
             "client_id": client_id,
         }
-        auth_method = current.extra.get(
-            "token_endpoint_auth_method"
-        ) or self._config.token_auth_method(client_secret)
-        if client_secret and auth_method == "client_secret_post":
-            refresh_body["client_secret"] = client_secret
-        if self._config.resource:
-            refresh_body["resource"] = self._config.resource
+        if broker is not None:
+            token_url = broker.token_url
+            client_secret = None
+            auth_method = "none"
+        else:
+            token_url = self._config.refresh_url or self._config.token_url
+            auth_method = current.extra.get(
+                "token_endpoint_auth_method"
+            ) or self._config.token_auth_method(client_secret)
+            if client_secret and auth_method == "client_secret_post":
+                refresh_body["client_secret"] = client_secret
+            if self._config.resource:
+                refresh_body["resource"] = self._config.resource
         timeout = httpx.Timeout(self._config.timeout_seconds)
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
-                self._config.token_url,
+                token_url,
                 data=refresh_body,
                 headers={
                     "Accept": "application/json",
@@ -393,26 +489,34 @@ class PkceLoopbackHandler:
             detail = sanitize_provider_error(r.text)
             raise RuntimeError(f"refresh HTTP {r.status_code}: {detail}")
         payload = r.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("refresh response was not a JSON object")
         if payload.get("ok") is False:
             err = payload.get("error", "unknown")
-            if err in ("invalid_grant", "token_revoked", "invalid_refresh_token"):
+            # Slack answers an expired or rotated-away refresh token (PKCE
+            # refresh tokens end after 30 days) with these codes; only a new
+            # sign-in heals them.
+            if err in (
+                "invalid_grant",
+                "token_revoked",
+                "invalid_refresh_token",
+                "token_expired",
+            ):
                 raise RuntimeError("revoked")
             raise RuntimeError(f"refresh failed: {sanitize_provider_error(str(err))}")
-        access = payload.get("authed_user", {}).get("access_token") or payload.get("access_token")
+        # A Slack user-token refresh answers at the top level; the code
+        # exchange nested it under `authed_user`. `_grant_fields` reads either.
+        grant = _grant_fields(payload)
+        access = grant.access
         if not access:
             raise RuntimeError("refresh missing access_token")
-        new_refresh = (
-            payload.get("authed_user", {}).get("refresh_token")
-            or payload.get("refresh_token")
-            or current.refresh
-        )
-        expires_in = payload.get("authed_user", {}).get("expires_in") or payload.get("expires_in")
-        expires_at = (
-            datetime.now(UTC) + timedelta(seconds=int(expires_in))
-            if expires_in is not None
-            else None
-        )
+        # Rotation hands out a new refresh token on every refresh; keep the old
+        # one only when the provider does not rotate.
+        new_refresh = grant.refresh or current.refresh
+        expires_at = grant.expires_at
         extra = dict(current.extra)
+        if grant.scope:
+            extra["scope"] = grant.scope
         extra["token_endpoint_auth_method"] = auth_method
         grant_ends = _refresh_expires_at(payload)
         if grant_ends is not None:
@@ -427,6 +531,8 @@ class PkceLoopbackHandler:
                 extra["client_secret"] = client_secret
             else:
                 extra.pop("client_secret", None)
+        if broker is not None:
+            extra["token_broker"] = broker_family
         return Tokens(
             access=access,
             refresh=new_refresh,

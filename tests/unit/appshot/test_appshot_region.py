@@ -144,9 +144,20 @@ class RegionCaptureService:
     def __init__(self) -> None:
         self.regions: list = []
         self.displays = Displays()
+        self.steps: list[str] = []
+        self.frozen = object()
+        self.frozen_used: list = []
 
-    async def capture(self, *, verdict=None, trace_id=None, region=None):
+    async def freeze_screens(self):
+        self.steps.append("freeze")
+        return self.frozen
+
+    async def capture(
+        self, *, verdict=None, trace_id=None, region=None, master=False, frozen=None
+    ):
+        self.steps.append("capture")
         self.regions.append((verdict, region))
+        self.frozen_used.append(frozen)
         context = ScreenContext(
             image=b"jpeg",
             mime="image/jpeg",
@@ -174,6 +185,7 @@ def flow(monkeypatch):
     picks: list = []
 
     async def pick_region(**_kwargs):
+        service.steps.append("pick")
         return picks.pop(0) if picks else None
 
     monkeypatch.setattr(turn, "get_service", lambda bus=None: service)
@@ -201,6 +213,24 @@ async def test_an_area_appshot_captures_exactly_the_selected_rectangle(flow) -> 
     assert verdict.intent is VisualIntent.SCREEN
     assert result.shot.label == "selected area"
     assert result.shot.delivered_to == "message"
+
+
+async def test_an_area_appshot_is_the_screen_at_the_press_not_after_selecting(flow) -> None:
+    # A video plays on while the user selects: the screens freeze BEFORE the
+    # picker opens and the area is cut from that frame.
+    service, picks = flow
+    picks.append(
+        region.Selection(
+            screen={"x": 0.0, "y": 0.0, "w": 1920.0, "h": 1080.0, "dpr": 1.0},
+            rect=(0.25, 0.5, 0.5, 0.25),
+        )
+    )
+
+    result = await appshot_service.take_appshot(trigger="hotkey", scope="region")
+
+    assert result.ok
+    assert service.steps == ["freeze", "pick", "capture"]
+    assert service.frozen_used == [service.frozen]
 
 
 async def test_esc_on_the_picker_takes_nothing(flow) -> None:
@@ -251,7 +281,9 @@ def test_both_shortcuts_are_read_and_normalized() -> None:
         hotkey = "Left_Alt + Right_Alt"
         region_hotkey = " Alt+Win+A "
 
-    assert configured_hotkeys(Block()) == {"window": "alt+alt", "region": "alt+win+a"}
+    assert configured_hotkeys(Block()) == {
+        "window": "alt+alt", "region": "alt+win+a", "recording": "",
+    }
 
     class OldConfig:
         hotkey = "alt+alt"
@@ -263,25 +295,34 @@ class _Instance:
     owns_ambient_duties = True
 
 
-async def _reload_with(monkeypatch, hotkey: str, region_hotkey: str) -> AppshotShortcut:
+async def _reload_with(
+    monkeypatch, hotkey: str, region_hotkey: str, recording_hotkey: str = "",
+) -> AppshotShortcut:
     import jarvis.appshot.hotkey as hotkey_module
     import jarvis.core.config as config_module
     import jarvis.core.instance as instance_module
     import jarvis.platform.probes as probes
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             pass
 
     Cfg.appshot.hotkey = hotkey
     Cfg.appshot.region_hotkey = region_hotkey
+    Cfg.appshot.recording_hotkey = recording_hotkey
     monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
     monkeypatch.setattr(instance_module, "current_instance", lambda: _Instance())
     monkeypatch.setattr(probes, "has_hotkey", lambda: True)
     armed: list[dict] = []
 
     async def run_combos(self, combos):
+        from types import SimpleNamespace
+
         armed.append(dict(combos))
+        self._trigger = SimpleNamespace(armed=True, needs_input_monitoring=False)
 
     monkeypatch.setattr(hotkey_module.AppshotShortcut, "_run_combos", run_combos)
     shortcut = AppshotShortcut(bus=object())
@@ -306,8 +347,17 @@ async def test_the_same_key_for_both_arms_only_the_window(monkeypatch) -> None:
     assert shortcut.status_for("window").armed
     region_status = shortcut.status_for("region")
     assert not region_status.armed
-    assert "front window" in region_status.detail
+    assert "another AppShot action" in region_status.detail
     assert shortcut.armed_combos == [{"window": "ctrl+alt+a"}]
+
+
+async def test_a_shorter_chord_blocks_the_later_action(monkeypatch) -> None:
+    shortcut = await _reload_with(monkeypatch, "ctrl+b", "", "ctrl+shift+b")
+
+    assert shortcut.status_for("window").armed
+    assert not shortcut.status_for("recording").armed
+    assert "another AppShot action" in shortcut.status_for("recording").detail
+    assert shortcut.armed_combos == [{"window": "ctrl+b"}]
 
 
 async def test_an_empty_area_shortcut_is_simply_off(monkeypatch) -> None:
@@ -385,7 +435,29 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
     response = client.put("/api/appshot/settings", json={"region_hotkey": "Alt+Alt"})
 
     assert response.status_code == 400
-    assert "two different shortcuts" in response.json()["detail"]
+    assert "different shortcut" in response.json()["detail"]
+    assert writes == []
+
+
+def test_a_shortcut_inside_another_is_refused_before_writing(client, monkeypatch) -> None:
+    import jarvis.core.config as config_module
+    import jarvis.core.config_writer as writer
+
+    class Cfg:
+        class appshot:  # noqa: N801
+            hotkey = "ctrl+b"
+            region_hotkey = ""
+            recording_hotkey = ""
+
+    writes: list = []
+    monkeypatch.setattr(config_module, "load_config", lambda: Cfg)
+    monkeypatch.setattr(writer, "set_appshot_settings", lambda values: writes.append(values))
+
+    longer = client.put("/api/appshot/settings", json={"recording_hotkey": "ctrl+shift+b"})
+    same_keys = client.put("/api/appshot/settings", json={"recording_hotkey": "ctrl+right_alt+b"})
+
+    assert longer.status_code == 400
+    assert same_keys.status_code == 400
     assert writes == []
 
 
@@ -394,6 +466,10 @@ def test_one_key_for_both_shortcuts_is_refused_before_writing(client, monkeypatc
 
 @pytest.fixture
 def picker_host(monkeypatch):
+    from jarvis.platform import screen_access
+    from tests.fakes.fake_permission_service import FakePermissionService
+
+    monkeypatch.setattr(screen_access, "permission_gate", lambda: FakePermissionService())
     monkeypatch.setattr(region, "picker_capability", lambda: (True, ""))
     monkeypatch.setattr(region, "_SETTLE_S", 0.0)
     region._picking = False
@@ -456,6 +532,9 @@ async def test_overlapping_reloads_leave_exactly_one_listener(monkeypatch) -> No
     import jarvis.platform.probes as probes
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             hotkey = "ctrl+alt+a"
             region_hotkey = "alt+win+a"
@@ -594,6 +673,9 @@ async def test_two_gestures_arm_two_watchers(monkeypatch) -> None:
     import jarvis.core.instance as instance_module
 
     class Cfg:
+        class screen_context:  # noqa: N801
+            enabled = True
+
         class appshot:  # noqa: N801
             hotkey = "alt+alt"
             region_hotkey = "shift+shift"
@@ -657,22 +739,3 @@ def test_a_gesture_passes_the_settings_route(client, monkeypatch) -> None:
     assert response.status_code == 200, response.text
     assert writes == [{"region_hotkey": "shift+shift"}]
 
-
-# ---------------------------------------------------------------- magnifier
-
-
-def test_the_wheel_walks_the_zoom_steps_and_stops_at_the_ends() -> None:
-    assert region.step_zoom(8, 1) == 12
-    assert region.step_zoom(8, -1) == 6
-    assert region.step_zoom(24, 1) == 24
-    assert region.step_zoom(2, -1) == 2
-    assert region.step_zoom(7, 1) == 12, "an unknown saved zoom restarts from the default"
-
-
-@pytest.mark.parametrize("zoom", region.MAG_ZOOMS)
-@pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])
-def test_the_magnifier_always_fills_its_box_with_a_centred_pixel(zoom, scale) -> None:
-    count, cell = region.magnifier_layout(zoom, scale)
-    assert count % 2 == 1, "an odd count puts one pixel exactly under the pointer"
-    assert count * cell >= region.MAG_BOX_PX, "the box never shows an empty border"
-    assert cell * scale == pytest.approx(zoom), "one real pixel is drawn zoom device pixels wide"

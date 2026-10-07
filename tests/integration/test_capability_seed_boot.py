@@ -68,7 +68,7 @@ def test_build_default_brain_seeds_capability_registry(empty_registry) -> None:
     )
 
     resolved = empty_registry.resolve_intent(
-        "Kannst du mir einen Subagent spawnen, der eine Datei macht"  # i18n-allow
+        "Kannst du mir einen Subagent spawnen"  # i18n-allow
     )
     assert resolved is not None, (
         "a sub-agent spawn request must resolve to a registered capability"

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Check, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
+import { Check, ChevronDown, Copy, RotateCcw, Trash2, Volume2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import {
@@ -10,13 +10,16 @@ import {
   type DictationEntry,
 } from "@/hooks/useDictation";
 import { useT } from "@/i18n";
+import { cn } from "@/lib/utils";
 
 /**
- * One day's worth of dictations — a date header plus its rows.
+ * One day's worth of dictations — a small date label and one framed list.
  *
  * Grouping by day is what turns a flat list into something you can actually
  * read back: "what did I dictate this morning" is a question about a day, not
- * about entry number 34.
+ * about entry number 34. Each day is one bordered surface with hairlines
+ * between its rows, so a day reads as a single page of a journal rather than
+ * as a pile of separate cards.
  */
 export interface DictationHistoryGroupProps {
   /** Already-localized day label — "Today", "Yesterday", or a formatted date. */
@@ -43,21 +46,14 @@ export function DictationHistoryGroup({
   copiedId,
 }: DictationHistoryGroupProps) {
   return (
-    <section className="mt-group first:mt-0" data-testid="dictation-history-group">
-      {/* A quiet date divider, not a heading. It used to be an 11px uppercase
-          label with letter-spacing — the one construction that makes a screen
-          read as an admin panel, and it competed with the card title two lines
-          above it for no reason. */}
+    <section data-testid="dictation-history-group">
       <h5
-        className="text-meta text-muted-foreground"
+        className="px-1 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground"
         data-testid="dictation-history-group-label"
       >
         {label}
       </h5>
-      {/* No dividers. Separation between rows is the hover fill and the
-          padding, the way both reference apps do it; a rule under every row
-          drew a table over what is meant to read as a transcript. */}
-      <ul className="mt-1">
+      <ul className="mt-2 divide-y divide-border overflow-hidden rounded-xl border border-border bg-card shadow-rim">
         {entries.map((entry) => (
           <HistoryRow
             key={entry.id}
@@ -85,12 +81,12 @@ export function DictationHistoryGroup({
  * to go. "Cancelled" in particular stays quiet: a bright chip on the one
  * outcome the user caused themselves inverts the whole ramp.
  */
-function outcomeVariant(outcome: string): "fault" | "degraded" | "secondary" {
+function outcomeVariant(outcome: string): "fault" | "degraded" | null {
   if (outcome === "failed") return "fault";
   if (outcome === "unavailable" || outcome === "partial" || outcome === "empty") {
     return "degraded";
   }
-  return "secondary";
+  return null;
 }
 
 function HistoryRow({
@@ -115,24 +111,30 @@ function HistoryRow({
   // discards, and this flag is what turns the discarded row's follow-up button
   // into the one that really removes the entry and its audio.
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // What the recognizer actually heard stays one click away instead of being
+  // printed under every row — it is there to check a cleanup, not to be read
+  // twice.
+  const [showRaw, setShowRaw] = useState(false);
 
   const cleaned = Boolean(entry.raw_text) && entry.text !== entry.raw_text;
-  // Both badges are computed here rather than inline so the render stays a
-  // list of chips. A row from before either field existed carries neither.
+  // A row from before either field existed carries neither badge. "off" is the
+  // one polish value worth hiding — the feature being switched off is not an
+  // event; everything else is either "a model rewrote this" or "it did not,
+  // and here is why", and the person who spoke deserves to see both.
   const polishBadge =
-    entry.polish_status && entry.polish_status !== "off"
-      ? entry.polish_status
-      : "";
+    entry.polish_status && entry.polish_status !== "off" ? entry.polish_status : "";
   const polishTitle = [
     entry.polish_provider || "",
     entry.polish_latency_ms ? `${Math.round(entry.polish_latency_ms)} ms` : "",
   ]
     .filter(Boolean)
     .join(" · ");
+  // The filler cleanup's own verdict: outside its rule languages the cleanup
+  // is a silent no-op, so a user dictating in Japanese or Polish saw the switch
+  // sitting ON while nothing happened. "disabled" is skipped — that one the
+  // user did themselves.
   const cleanupBadge =
-    entry.cleanup_reason && entry.cleanup_reason !== "disabled"
-      ? entry.cleanup_reason
-      : "";
+    entry.cleanup_reason && entry.cleanup_reason !== "disabled" ? entry.cleanup_reason : "";
   // Restore is offered whenever there is something to win back: a soft-deleted
   // entry, a transcription that failed or only partly arrived, or kept audio
   // that can be run again. The two outcomes are named as well as the audio
@@ -143,93 +145,97 @@ function HistoryRow({
     entry.audio_available ||
     entry.outcome === "failed" ||
     entry.outcome === "partial";
+  const variant = entry.outcome ? outcomeVariant(entry.outcome) : null;
 
   return (
     <li
-      // The hover fill is drawn on the WHOLE row, inset from the card's own
-      // padding rather than on any one control inside it.
-      className="group -mx-2 flex items-start gap-2 rounded-md px-3 py-3 transition-colors hover:bg-secondary"
+      className="group grid grid-cols-[64px_minmax(0,1fr)_auto] gap-x-4 px-5 py-4 transition-colors hover:bg-secondary/60 focus-within:bg-secondary/60 sm:grid-cols-[84px_minmax(0,1fr)_auto]"
       data-testid="dictation-history-row"
       data-entry-id={entry.id}
     >
-      <div className="min-w-0 flex-1">
+      <time
+        dateTime={entry.created_at}
+        className="pt-0.5 text-sm tabular-nums text-muted-foreground"
+      >
+        {formatTime(entry.created_at)}
+      </time>
+
+      <div className="min-w-0">
         {/* The transcript is the reason this screen exists, so it is set as
-            prose — 15/1.6 in body ink — instead of as another 14px interface
-            label. Its measure is bounded by the column, not by the window. */}
+            prose in body ink; everything else on the row is smaller and
+            quieter than it. */}
         <p
-          className={`break-words text-reading ${
-            entry.discarded
-              ? "text-muted-foreground line-through"
-              : "text-foreground"
-          }`}
+          className={cn(
+            "whitespace-pre-wrap break-words text-base leading-6",
+            entry.discarded ? "text-muted-foreground line-through" : "text-foreground",
+          )}
         >
           {entry.text || entry.raw_text}
         </p>
-        {cleaned && (
-          <p className="mt-1 break-words text-meta text-muted-foreground">
-            {t("dictation.raw_prefix")} {entry.raw_text}
-          </p>
-        )}
         {entry.error && (
           <p
-            className="mt-1 break-words text-meta text-destructive"
+            className="mt-1 break-words text-sm text-destructive"
             data-testid="dictation-failure-reason"
           >
             {failureLabel(t, entry.error)}
           </p>
         )}
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
-          <span>{new Date(entry.created_at).toLocaleTimeString()}</span>
-          {entry.outcome && (
-            <Badge
-              variant={outcomeVariant(entry.outcome)}
-              data-testid="dictation-outcome-badge"
-            >
-              {outcomeLabel(t, entry.outcome)}
-            </Badge>
-          )}
+        {cleaned && showRaw && (
+          <p
+            className="mt-2 break-words border-l-2 border-border-strong pl-3 text-sm text-muted-foreground"
+            data-testid="dictation-raw-text"
+          >
+            {t("dictation.raw_prefix")} {entry.raw_text}
+          </p>
+        )}
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {entry.outcome &&
+            (variant ? (
+              <Badge variant={variant} data-testid="dictation-outcome-badge">
+                {outcomeLabel(t, entry.outcome)}
+              </Badge>
+            ) : (
+              <span data-testid="dictation-outcome-badge">{outcomeLabel(t, entry.outcome)}</span>
+            ))}
           {entry.discarded && (
             <Badge variant="secondary" data-testid="dictation-discarded-badge">
               {t("dictation.discarded_badge")}
             </Badge>
           )}
+          {polishBadge && (
+            <MetaItem testId="dictation-polish-badge" title={polishTitle || undefined}>
+              {polishStatusLabel(t, polishBadge)}
+            </MetaItem>
+          )}
+          {cleanupBadge && (
+            <MetaItem testId="dictation-cleanup-reason-badge">
+              {cleanupReasonLabel(t, cleanupBadge)}
+            </MetaItem>
+          )}
           {entry.audio_available && (
-            <Badge variant="secondary" className="gap-1">
+            <MetaItem>
               <Volume2 aria-hidden="true" className="h-3 w-3" />
               {t("dictation.audio_kept")}
-            </Badge>
+            </MetaItem>
           )}
-          {/* What the wording pass did to this row. "off" is the one value
-              worth hiding — the feature being switched off is not an event,
-              and a badge on every single row would be noise. Everything else
-              is either "a model rewrote this" or "it did not, and here is
-              why", and both are things the person who spoke deserves to see
-              next to their own words. */}
-          {polishBadge && (
-            <Badge
-              variant="secondary"
-              data-testid="dictation-polish-badge"
-              title={polishTitle || undefined}
+          {cleaned && (
+            <button
+              type="button"
+              onClick={() => setShowRaw((v) => !v)}
+              aria-expanded={showRaw}
+              data-testid="dictation-toggle-raw"
+              className="inline-flex items-center gap-0.5 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong"
             >
-              {polishStatusLabel(t, polishBadge)}
-            </Badge>
+              <Dot />
+              {showRaw ? t("dictation.hide_original") : t("dictation.show_original")}
+              <ChevronDown
+                aria-hidden="true"
+                className={cn("h-3 w-3 transition-transform", showRaw && "rotate-180")}
+              />
+            </button>
           )}
-          {/* The filler cleanup's own verdict, and the reason this badge
-              exists at all: outside its three rule languages the cleanup is a
-              silent no-op, so a user dictating in Japanese or Polish saw the
-              switch sitting ON while nothing ever happened. "disabled" is
-              skipped — that one the user did themselves. */}
-          {cleanupBadge && (
-            <Badge
-              variant="secondary"
-              data-testid="dictation-cleanup-reason-badge"
-            >
-              {cleanupReasonLabel(t, cleanupBadge)}
-            </Badge>
-          )}
-        </div>
-        {entry.discarded && (
-          <div className="mt-2">
+          {entry.discarded && (
             <button
               type="button"
               disabled={busy}
@@ -241,28 +247,32 @@ function HistoryRow({
                 onDelete();
               }}
               data-testid="dictation-delete-permanently"
-              className="rounded-md text-meta text-muted-foreground transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50"
+              className={cn(
+                "rounded-sm text-xs transition-colors hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50",
+                confirmDelete ? "font-medium text-destructive" : "text-muted-foreground",
+              )}
             >
               {confirmDelete
                 ? `${t("dictation.delete_permanently")} ?`
                 : t("dictation.delete_permanently")}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-      {/* Row actions appear when the row does. They are still in the document
-          and still reachable by keyboard — focus inside the row reveals them
-          the same way the pointer does. */}
-      <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+
+      {/* Row actions appear with the row's hover. They stay in the document
+          and reachable by keyboard — focus inside the row reveals them the
+          same way the pointer does. */}
+      <div className="-my-1 flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
         <RowAction
           onClick={onCopy}
           label={copied ? t("dictation.copied") : t("dictation.copy")}
           testId="dictation-copy-entry"
         >
           {copied ? (
-            <Check aria-hidden="true" className="h-3.5 w-3.5" />
+            <Check aria-hidden="true" className="h-4 w-4" />
           ) : (
-            <Copy aria-hidden="true" className="h-3.5 w-3.5" />
+            <Copy aria-hidden="true" className="h-4 w-4" />
           )}
         </RowAction>
         {canRestore && (
@@ -273,7 +283,7 @@ function HistoryRow({
             title={t("dictation.restore_hint")}
             testId="dictation-restore-entry"
           >
-            <RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />
+            <RotateCcw aria-hidden="true" className="h-4 w-4" />
           </RowAction>
         )}
         {!entry.discarded && (
@@ -284,7 +294,7 @@ function HistoryRow({
             testId="dictation-discard-entry"
             destructive
           >
-            <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+            <Trash2 aria-hidden="true" className="h-4 w-4" />
           </RowAction>
         )}
       </div>
@@ -292,13 +302,38 @@ function HistoryRow({
   );
 }
 
+/** A quiet "· label" in the row's meta line. */
+function MetaItem({
+  children,
+  testId,
+  title,
+}: {
+  children: ReactNode;
+  testId?: string;
+  title?: string;
+}) {
+  return (
+    <span className="inline-flex items-center">
+      <Dot />
+      <span className="inline-flex items-center gap-1" data-testid={testId} title={title}>
+        {children}
+      </span>
+    </span>
+  );
+}
+
+function Dot() {
+  return (
+    <span aria-hidden="true" className="mr-1 text-faint-foreground">
+      ·
+    </span>
+  );
+}
+
 /**
- * One icon button in a row's action strip.
- *
- * The three used to hover to three different inks — foreground, --primary and
- * --destructive — which made the same gesture mean three things. Now they all
- * answer the pointer the way every other control in the app does: one step up
- * the surface ladder. Only discarding, which changes something, keeps a hue.
+ * One icon button in a row's action strip. All three answer the pointer the
+ * same way — one step up the surface ladder; only discarding, which changes
+ * something, keeps a hue.
  */
 function RowAction({
   children,
@@ -325,13 +360,21 @@ function RowAction({
       aria-label={label}
       title={title ?? label}
       data-testid={testId}
-      className={`rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-popover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50 ${
-        destructive ? "hover:text-destructive" : "hover:text-foreground"
-      }`}
+      className={cn(
+        "rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-border-strong disabled:opacity-50",
+        destructive ? "hover:text-destructive" : "hover:text-foreground",
+      )}
     >
       {children}
     </button>
   );
+}
+
+/** "4:12 PM" / "16:12" — the viewer's own clock format, no seconds. */
+function formatTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 const KNOWN_OUTCOMES: ReadonlySet<string> = new Set(DICTATION_OUTCOMES);
@@ -353,10 +396,9 @@ function outcomeLabel(t: (key: string) => string, outcome: string): string {
  * Unlike `outcomeLabel`, an unknown value does NOT fall through to the raw
  * string. This line exists to tell a person why their words did not arrive, and
  * the raw value here is either a stack-trace fragment stored by an older
- * version — the exact thing this replaced — or a reason code from a newer
- * backend, which is an identifier and explains nothing either. Both are better
- * served by the honest generic sentence; the technical detail is in the log,
- * where whoever needs it is already looking.
+ * version or a reason code from a newer backend — an identifier that explains
+ * nothing. Both are better served by the honest generic sentence; the
+ * technical detail is in the log.
  */
 function failureLabel(t: (key: string) => string, reason: string): string {
   return KNOWN_FAILURES.has(reason)

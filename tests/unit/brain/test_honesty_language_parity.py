@@ -33,7 +33,10 @@ def test_no_output_language_call_pins_its_own_default() -> None:
     source = _MANAGER.read_text(encoding="utf-8")
     offenders = [
         call for call in _RESOLVE_CALL_RE.findall(source)
-        if "default=" in call and "default=DEFAULT_LOCALE" not in call
+        if "default=" in call
+        and "default=DEFAULT_LOCALE" not in call
+        # Detection may defer the choice without choosing a competing locale.
+        and 'default="unknown"' not in call
     ]
     assert not offenders, (
         "resolve_output_language must use the shared DEFAULT_LOCALE: "

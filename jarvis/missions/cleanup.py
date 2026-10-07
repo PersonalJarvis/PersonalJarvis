@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Final
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+from jarvis.missions.capacity import CHECKPOINT_NAME
 from jarvis.missions.standalone_run import MARKER_NAME
 
 logger = logging.getLogger(__name__)
@@ -128,6 +129,8 @@ def _holds_deliverables(entry: Path) -> bool:
     """
     if (entry / MARKER_NAME).is_file():
         return True
+    if (entry / CHECKPOINT_NAME).is_file():
+        return True  # a mission parked for capacity resumes from here
     tasks_dir = entry / "tasks"
     try:
         task_dirs = [child for child in tasks_dir.iterdir() if child.is_dir()]

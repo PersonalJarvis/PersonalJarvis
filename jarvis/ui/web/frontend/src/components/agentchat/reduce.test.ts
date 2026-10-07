@@ -17,6 +17,29 @@ function ev(kind: string, payload: Record<string, unknown>, persisted = true): A
 }
 
 describe("agent-chat reduce", () => {
+  it.each(["done", "error", "cancelled"])("preserves the first %s completion through live delivery and replay", (status) => {
+    const start = ev("turn_started", { turn_id: "settled" });
+    const answer = ev("assistant_text", { turn_id: "settled", text: "Fix committed locally." });
+    const finish = ev("turn_finished", { turn_id: "settled", status, duration_ms: 1993344, usage: { output_tokens: 12 }, cost_usd: 0.01 });
+    const late = ev("turn_finished", { turn_id: "settled", status: "error", duration_ms: 3604992, usage: {}, error: "claude-cli did not finish within 3600 s." });
+    const events = [start, answer, finish, late];
+    const live = events.reduce(reduceEvent, EMPTY_TIMELINE);
+    const replay = reduceEvents(EMPTY_TIMELINE, events);
+    expect(live).toEqual(replay);
+    expect(live.items[0]).toMatchObject({ status, error: null, durationMs: 1993344, usage: { output_tokens: 12 }, costUsd: 0.01 });
+    expect(live.lastSeq).toBe(late.seq);
+  });
+
+  it("shows a real timeout even when partial text sounds final", () => {
+    const partial = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "partial" }),
+      ev("assistant_text", { turn_id: "partial", text: "Fix committed locally." }),
+    ]);
+    expect(runningTurn(partial)?.id).toBe("partial");
+    const failed = reduceEvent(partial, ev("turn_finished", { turn_id: "partial", status: "error", error: "claude-cli did not finish within 3600 s." }));
+    expect(failed.items[0]).toMatchObject({ status: "error", error: "claude-cli did not finish within 3600 s." });
+  });
+
   it("folds a full turn: user line, deltas into one text block, tool call + result, finish", () => {
     const tl = reduceEvents(EMPTY_TIMELINE, [
       ev("user_message", { text: "hi" }),
@@ -96,6 +119,21 @@ describe("agent-chat reduce", () => {
     // ...but one with neither text nor time is nothing.
     tl = reduceEvent(tl, ev("reasoning", { turn_id: "t5", text: "", duration_ms: 0 }));
     expect((tl.items[0] as TurnItem).blocks).toHaveLength(2);
+  });
+
+  it("grows one thought when a message's thinking arrives in several blocks", () => {
+    // The CLI sends each thinking block of one message as its own event,
+    // carrying everything the message thought so far (2026-10-05 thread).
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("turn_started", { turn_id: "t7" }),
+      ev("reasoning", { turn_id: "t7", message_id: "m1", text: "first", duration_ms: 7595 }),
+      ev("reasoning", { turn_id: "t7", message_id: "m1", text: "first\n\nsecond", duration_ms: 7597 }),
+      ev("reasoning", { turn_id: "t7", message_id: "m2", text: "other message" }),
+    ]);
+    const turn = tl.items[0] as TurnItem;
+    expect(turn.blocks).toHaveLength(2);
+    expect(turn.blocks[0]).toMatchObject({ kind: "reasoning", text: "first\n\nsecond", durationMs: 7597 });
+    expect(turn.blocks[1]).toMatchObject({ kind: "reasoning", text: "other message" });
   });
 
   it("ends a live thought when text or a tool call follows, and times tool calls from the log", () => {
@@ -246,5 +284,19 @@ describe("agent-chat reduce: notices", () => {
       ev("notice", { kind: "proposal_resolved", proposal_id: "p9", status: "rejected", text: "Rejected." }),
     );
     expect(orphan.items).toHaveLength(1);
+  });
+
+  it("keeps what an identity undo restores on the resolved card", () => {
+    const previous = { name: "Nova", title: "", description: "", focus: [] };
+    const tl = reduceEvents(EMPTY_TIMELINE, [
+      ev("notice", { kind: "proposal", proposal_id: "p2", proposal_kind: "identity",
+        summary: "Become Mail Desk", payload: { name: "Mail Desk" }, status: "pending" }),
+      ev("notice", { kind: "proposal_resolved", proposal_id: "p2", proposal_kind: "identity",
+        status: "applied", text: "I am now Mail Desk.", previous }),
+    ]);
+    const card = tl.items[0];
+    if (card.type !== "notice") throw new Error("unreachable");
+    expect(card.resolved).toBe("applied");
+    expect(card.data.previous).toEqual(previous);
   });
 });

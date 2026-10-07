@@ -43,7 +43,7 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 CredentialValidator = Callable[[str], bool]
-AuthKind = Literal["control", "session", "open", "mcp"]
+AuthKind = Literal["control", "session", "open", "mcp", "gateway"]
 Origin = tuple[str, str, int | None]
 
 _BOOTSTRAP_TOKEN_LOCK = threading.Lock()
@@ -493,6 +493,44 @@ def _relay_indicator_present(scope: Scope) -> bool:
     return False
 
 
+def foreign_site_initiated(scope: Scope) -> bool:
+    """True when a browser says another site started this request.
+
+    Browsers stamp ``Sec-Fetch-Site`` on every request, including the ones
+    that carry no ``Origin``: an ``<img>``, a ``<script>``, a ``no-cors``
+    fetch, or a navigation another site triggered. Those requests ride the
+    session cookie and loopback open access exactly like the app's own, so
+    the header is the only signal that tells them apart. ``same-site`` counts
+    as foreign too: ports do not separate sites, so any other server on
+    ``127.0.0.1`` (a preview server, another local app) is "same-site" here.
+    Clients that send no fetch metadata (CLIs, older browsers) are unaffected.
+    """
+    return any(
+        value.strip().lower() in {"cross-site", "same-site"}
+        for value in _headers(scope, "sec-fetch-site")
+    )
+
+
+def chrome_transport_allowed(scope: Scope) -> bool:
+    """Only the two extension transport endpoints have independent pairing auth."""
+    kind = scope.get("type")
+    path = scope.get("path")
+    method = str(scope.get("method", "GET")).upper()
+    if not (
+        (kind == "http" and path == "/api/society/browser/chrome/pair" and method == "POST")
+        or (kind == "websocket" and path == "/api/society/browser/chrome/connect")
+    ):
+        return False
+    if not is_loopback_request(scope) or _relay_indicator_present(scope):
+        return False
+    origins = _headers(scope, "origin")
+    # An extension's privileged fetch may omit Origin; ordinary webpages must
+    # never use this path. The route still requires a one-time code or token.
+    return not origins or (
+        len(origins) == 1 and bool(re.fullmatch(r"chrome-extension://[a-p]{32}", origins[0]))
+    )
+
+
 def open_access_granted(scope: Scope) -> bool:
     """True when the optional browser lock is OFF and the request is local.
 
@@ -851,6 +889,22 @@ class SurfaceSecurity:
             log.debug("surface security: MCP token check failed", exc_info=True)
             return False
 
+    #: Where a runtime gateway token counts as a credential (and nowhere else):
+    #: the model endpoint Hermes / OpenClaw agents on a subscription call.
+    _RUNTIME_GATEWAY_PREFIX: ClassVar[str] = "/api/runtime-gateway/"
+
+    def _gateway_token_accepted(self, scope: Scope, bearer: str) -> bool:
+        """Whether ``bearer`` is a token Jarvis minted for an agent runtime AND
+        this is a gateway path. It grants one agent's model turns, never the
+        Control API or the UI routes."""
+        if not str(scope.get("path", "") or "").startswith(self._RUNTIME_GATEWAY_PREFIX):
+            return False
+        try:
+            from jarvis.agent_runtimes import gateway
+        except Exception:  # noqa: BLE001 — no gateway module → no such credential
+            return False
+        return gateway.verify(bearer) is not None
+
     def _authenticate(self, scope: Scope) -> AuthKind | None:
         bearer_present, bearer = _presented_bearer(scope)
         if bearer_present:
@@ -865,6 +919,8 @@ class SurfaceSecurity:
                 return None
             if self._mcp_token_accepted(scope, bearer):
                 return "mcp"
+            if self._gateway_token_accepted(scope, bearer):
+                return "gateway"
             try:
                 return "session" if self._session_validator(bearer) else None
             except Exception:
@@ -878,6 +934,15 @@ class SurfaceSecurity:
             return "session" if self._session_validator(token) else None
         except Exception:
             return None
+
+    def issued_session_presented(self, scope: Scope) -> bool:
+        """Whether ``scope`` carries a session cookie THIS boundary issued.
+
+        A set lookup only — no credential store is imported — so the fast-boot
+        warming surface can ask it on the boot critical path (AP-26).
+        """
+        token = _presented_session_cookie(scope)
+        return token is not None and token in self._local_session_tokens
 
     def _register_local_tokens_if_available(self) -> None:
         """Mirror bootstrap-issued tokens once the normal token store is loaded.
@@ -1091,6 +1156,11 @@ class SurfaceSecurity:
 
         # A supplied Origin is never advisory: malformed, null, or foreign
         # values fail even on otherwise-public static and health requests.
+        if chrome_transport_allowed(scope):
+            # These exact local transports authenticate their first payload;
+            # the extension never receives the general app control credential.
+            await self.app(scope, receive, send)
+            return
         if not self.origin_is_trusted(scope):
             await reject_origin(scope, send, receive)
             return
@@ -1139,6 +1209,17 @@ class SurfaceSecurity:
                 if not self.origin_is_trusted(scope, required=True):
                     await reject_origin(scope, send, receive)
                     return
+            # The same browser-shaped credentials on a SAFE method: a GET that
+            # another site started (an <img>, a link, a no-cors fetch) carries
+            # no Origin, so only fetch metadata can refuse it. A configured
+            # trusted Origin (the Vite dev server) still passes.
+            if (
+                auth_kind in ("session", "open")
+                and foreign_site_initiated(scope)
+                and not self.origin_is_trusted(scope, required=True)
+            ):
+                await reject_origin(scope, send, receive)
+                return
             await self.app(scope, receive, send)
             return
 
@@ -1199,6 +1280,7 @@ __all__ = [
     "browser_login_required",
     "build_set_cookie_header",
     "credentials_valid",
+    "foreign_site_initiated",
     "is_loopback_request",
     "is_secure_or_loopback",
     "open_access_granted",

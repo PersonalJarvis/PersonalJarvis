@@ -59,6 +59,7 @@ _ALL_ZERO_RE = re.compile(r"^0+$")
 _PUBLIC_CATALOG_MCP_URLS = {
     "agentmail": "https://mcp.agentmail.to/mcp",
     "apollo": "https://mcp.apollo.io/mcp",
+    "atlassian": "https://mcp.atlassian.com/v1/mcp",
     "aws": "https://aws-mcp.eu-central-1.api.aws/mcp",
     "github": "https://api.githubcopilot.com/mcp/",
     "granola": "https://mcp.granola.ai/mcp",

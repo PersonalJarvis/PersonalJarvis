@@ -3,7 +3,7 @@
 # keyproxy — a small vendor-aware LLM key reverse proxy.
 # Single-stage slim image: no compiler toolchain is needed (pure-Python deps).
 
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:a2bc8c35469b6fe37735f7c4dae39049470b2ce068e73f799c02452de31d24c6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

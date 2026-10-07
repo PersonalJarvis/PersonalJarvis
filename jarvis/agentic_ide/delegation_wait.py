@@ -41,16 +41,23 @@ def _read(term: Any, identity: tuple) -> dict[str, Any] | None:
         )
         or []
     )
+    expected = " ".join(
+        agent_transcript._clip(agent_transcript._spoken(term.last_prompt)).split()
+    )
+    since = int(float(identity[1] or 0) * 1000)
+    # The newest record of THIS submission. A note typed into the running turn
+    # after it is part of the same work, not a reason to stop waiting.
     start = next(
-        (i for i in range(len(events) - 1, -1, -1) if events[i]["kind"] == "user_message"), None
+        (
+            i
+            for i in range(len(events) - 1, -1, -1)
+            if events[i]["kind"] == "user_message"
+            and int(events[i].get("ts_ms") or 0) >= since
+            and " ".join(events[i]["payload"].get("text", "").split()) == expected
+        ),
+        None,
     )
     if start is None:
-        return None
-    user = events[start]
-    expected = agent_transcript._clip(agent_transcript._spoken(term.last_prompt))
-    if int(user.get("ts_ms") or 0) < int(float(identity[1] or 0) * 1000) or " ".join(
-        user["payload"].get("text", "").split()
-    ) != " ".join(expected.split()):
         return None
     own = events[start + 1 :]
     calls = {e["payload"].get("call_id"): e["payload"] for e in own if e["kind"] == "tool_call"}

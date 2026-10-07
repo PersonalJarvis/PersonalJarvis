@@ -79,12 +79,28 @@ def _validated_chat_runner(
     *,
     approval_mode: str | None = None,
     permission_ceiling: str | None = None,
+    account_id: str | None = None,
 ) -> str:
     """Reject a runner change that cannot honor the effective chat approval."""
     from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
-    runner = resolve_runner(provider, surface="society")
+    chosen_runtime = str(agent.runtime)
+    if chosen_runtime not in ("", "jarvis"):
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent.",
+            )
+    runner = resolve_runner(
+        provider,
+        surface="society",
+        runtime=chosen_runtime,
+        account_id=agent.account_id if account_id is None else account_id,
+    )
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
@@ -110,7 +126,9 @@ def _validated_chat_runner(
 
 
 class CreateAgentBody(BaseModel):
-    name: str = Field(min_length=1, max_length=40)
+    #: Empty = one-click creation: placeholder name, random look, and the agent
+    #: proposes its own identity in its first conversation.
+    name: str | None = Field(default=None, max_length=40)
     title: str = ""
     description: str = ""
     tier: str = "specialist"
@@ -134,6 +152,9 @@ class CreateAgentBody(BaseModel):
     browser_allowed_domains: list[str] | None = None
     #: Where the agent runs: "" = this computer, else a connected computer id.
     computer_id: str | None = None
+    #: The agent loop, chosen once here and fixed for the agent's life:
+    #: "jarvis" (default), "hermes" or "openclaw".
+    runtime: str | None = None
     #: Structured brief (jarvis.society.brief); rendered into ``description``.
     mission: str | None = Field(default=None, max_length=2_000)
     responsibilities: list[str] | None = None
@@ -191,6 +212,10 @@ class MessageBody(BaseModel):
 class ChatGroupBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     members: list[str] = Field(min_length=2, max_length=50)
+
+
+class MeetingMessageBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8_000)
 
 
 class AssignBody(BaseModel):
@@ -314,11 +339,26 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         fields = inherit_creator_fields(fields, creator)
     requested_mode = str(fields.get("approval_mode") or "bypass")
     provider = str(fields.get("provider") or body.provider)
+    if str(fields.get("runtime") or "jarvis") != "jarvis":
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent first.",
+            )
     if provider:
         from jarvis.agent_chat.permissions import society_mode_supported
         from jarvis.agent_chat.service import resolve_runner
 
-        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+        runner = resolve_runner(
+            provider,
+            surface="society",
+            runtime=str(fields.get("runtime") or ""),
+            account_id=str(fields.get("account_id") or ""),
+        )
+        if not society_mode_supported(runner, requested_mode):
             raise HTTPException(
                 422, "This runner cannot provide an actionable approval for that mode."
             )
@@ -341,6 +381,19 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         )
     except RosterError as exc:
         raise _typed_error(exc) from exc
+    progression = getattr(request.app.state, "progression", None)
+    if created and progression is not None:
+        # Growing the team levels the person up (jarvis/progression).
+        await progression.note_agent_hired(agent.agent_id)
+    if created and str(agent.runtime) not in ("", "jarvis"):
+        # Hermes / OpenClaw install or update themselves in the background;
+        # the agent's first turn waits for that (runner_acp._ready).
+        from jarvis.agent_runtimes import manager
+
+        try:
+            await manager.ensure(str(agent.runtime))
+        except Exception:  # noqa: BLE001 — the agent exists; its first turn retries the setup
+            log.warning("society: %s setup could not start", agent.runtime, exc_info=True)
     return {
         "agent": agent.to_dict(),
         "created": created,
@@ -382,6 +435,7 @@ async def patch_agent(agent_id: str, body: PatchAgentBody, request: Request) -> 
             body.provider or agent.provider,
             approval_mode=body.approval_mode,
             permission_ceiling=fields.get("permission_ceiling"),
+            account_id=body.account_id,
         )
     if ("title" in fields or "description" in fields) and "focus" not in fields:
         # A prose edit must not wipe what the agent earned in its chat: the
@@ -439,6 +493,9 @@ async def bind_agent_chat(agent_id: str, request: Request) -> dict[str, Any]:
 
     try:
         session = ensure_session(svc, rt.config(), agent)
+        from jarvis.agent_chat.send_queue import close_orphans
+
+        await close_orphans(svc, session.session_id)
     except PermissionError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"session": session.to_dict(), "agent_id": agent.agent_id}
@@ -509,7 +566,7 @@ async def _valid_group_members(rt: SocietyRuntime, members: list[str]) -> list[s
         raise HTTPException(422, "group members must be unique")
     for member_id in members:
         agent = await rt.roster.get(member_id)
-        if agent is None or agent.tier == "lead" or agent.state == "archived":
+        if agent is None or agent.state == "archived":
             raise HTTPException(422, f"agent {member_id} is unavailable for a group")
     return members
 
@@ -519,6 +576,39 @@ async def list_chat_groups(request: Request) -> dict[str, Any]:
     """List persistent Society group chats and their members."""
     rt = await _runtime(request)
     return {"groups": await rt.store.list_chat_groups()}
+
+
+@router.get("/chat-groups/{group_id}/meeting")
+async def get_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Read the shared meeting transcript without starting an agent turn."""
+    rt = await _runtime(request)
+    if await rt.store.get_chat_group(group_id) is None:
+        raise HTTPException(404, "chat group not found")
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting", openapi_extra={"x-jarvis-dangerous": True})
+async def send_group_meeting(
+    group_id: str, body: MeetingMessageBody, request: Request,
+) -> dict[str, Any]:
+    """Ask each group member for one contribution in the shared meeting."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.start(group_id, body.text)
+    except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
+
+
+@router.post("/chat-groups/{group_id}/meeting/stop", openapi_extra={"x-jarvis-dangerous": True})
+async def stop_group_meeting(group_id: str, request: Request) -> dict[str, Any]:
+    """Stop the group's meeting without interrupting unrelated agent work."""
+    rt = await _runtime(request)
+    try:
+        await rt.meetings.stop(group_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await rt.meetings.snapshot(group_id)
 
 
 @router.post("/chat-groups")
@@ -541,7 +631,10 @@ async def update_chat_group(group_id: str, body: ChatGroupBody, request: Request
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
     members = await _valid_group_members(rt, body.members)
-    return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
+    async with rt.meetings.group_mutation():
+        if rt.meetings.is_running(group_id):
+            raise HTTPException(409, "Stop the meeting before changing its members.")
+        return {"group": await rt.store.update_chat_group(group_id, body.name.strip(), members)}
 
 
 @router.delete("/chat-groups/{group_id}", openapi_extra={"x-jarvis-dangerous": True})
@@ -550,7 +643,12 @@ async def delete_chat_group(group_id: str, request: Request) -> dict[str, bool]:
     rt = await _runtime(request)
     if await rt.store.get_chat_group(group_id) is None:
         raise HTTPException(404, "chat group not found")
-    await rt.store.delete_chat_group(group_id)
+    async with rt.meetings.group_mutation():
+        try:
+            await rt.meetings.stop(group_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        await rt.store.delete_chat_group(group_id)
     return {"deleted": True}
 
 
@@ -761,6 +859,40 @@ async def apply_seed_proposals(body: ApplySeedsBody, request: Request) -> dict[s
 # --------------------------------------------------------------- providers
 
 
+class ProviderPrefsBody(BaseModel):
+    """The agents' provider choices from the API Keys page (any field may be left out)."""
+
+    disabled: list[str] | None = Field(default=None, max_length=256)
+    api_only: list[str] | None = Field(default=None, max_length=256)
+    hidden_models: dict[str, list[str]] | None = None
+
+
+@router.get("/provider-prefs", summary="Which providers and models the agents may run on")
+def get_provider_prefs() -> dict[str, Any]:
+    from jarvis.agent_chat import agent_provider_prefs
+
+    return agent_provider_prefs.load().to_dict()
+
+
+@router.put("/provider-prefs", summary="Turn providers and models on or off for the agents")
+def put_provider_prefs(body: ProviderPrefsBody) -> dict[str, Any]:
+    """Merge the given fields into the saved choices; ids outside the
+    agents' catalog are refused so a typo cannot hide a seat for good."""
+    from jarvis.agent_chat import agent_provider_prefs
+    from jarvis.agent_chat.catalog import offers
+
+    current = agent_provider_prefs.load().to_dict()
+    patch = body.model_dump(exclude_none=True)
+    ids = set(patch.get("disabled", [])) | set(patch.get("api_only", [])) | set(
+        patch.get("hidden_models", {})
+    )
+    unknown = sorted(i for i in ids if not offers(agent_provider_prefs.AGENT_SURFACE, i))
+    if unknown:
+        raise HTTPException(422, f"Not an agent provider: {', '.join(unknown)}")
+    saved = agent_provider_prefs.save(agent_provider_prefs.parse({**current, **patch}))
+    return saved.to_dict()
+
+
 class ModelBody(BaseModel):
     provider: str = Field(min_length=1)
     model: str = ""
@@ -826,7 +958,9 @@ async def switch_agent_model(agent_id: str, body: ModelBody, request: Request) -
             422,
             {"reason": str(FailureReason.BLOCKED_BY_POLICY), "detail": "provider not offered"},
         )
-    target_runner = _validated_chat_runner(rt, agent, body.provider)
+    target_runner = _validated_chat_runner(
+        rt, agent, body.provider, account_id=body.account_id.strip()
+    )
     chat = rt._get_chat()
     fields = {
         "provider": body.provider.strip().lower(),
@@ -971,13 +1105,12 @@ async def agent_browser_status(agent_id: str, request: Request) -> dict[str, Any
     agent = await rt.roster.resolve(agent_id)
     if agent is None:
         raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
-    return rt.browser.status_for(agent)
+    return await asyncio.to_thread(rt.browser.status_for, agent)
 
 
 @router.post("/agents/{agent_id}/browser/login", openapi_extra={"x-jarvis-dangerous": True})
 async def agent_browser_login(agent_id: str, body: LoginBody, request: Request) -> dict[str, Any]:
-    """Open the agent's browser profile headed so the person can sign in once.
-    Returns when the window is closed, /login/done is called, or 15 minutes pass."""
+    """Take manual control of the same live browser for website sign-in."""
     from jarvis.society.browser.session import BrowserUnavailable
 
     rt = await _runtime(request)
@@ -1632,6 +1765,185 @@ async def memory_file(request: Request, path: str = "") -> dict[str, Any]:
         "content": content,
         "updated_ms": updated_ms,
     }
+
+
+# ---------------------------------------------------------------- templates
+#
+# Share an agent as a template, and install one somebody else shared
+# (docs/marketplace/agent-templates.md). The template is always BUILT here from
+# the roster row plus the person's public-version edits — the view never sends
+# a template of its own to publish, so what leaves the machine is exactly what
+# the scrubber in jarvis/society/agent_template.py let through.
+
+
+class ShareDraftBody(BaseModel):
+    """Edits to the public version. ``None`` keeps a field; ``reset`` drops all."""
+
+    summary: str | None = Field(default=None, max_length=500)
+    instructions: str | None = Field(default=None, max_length=20_000)
+    title: str | None = Field(default=None, max_length=120)
+    categories: list[str] | None = Field(default=None, max_length=10)
+    listing_name: str | None = Field(default=None, max_length=64)
+    version: str | None = Field(default=None, max_length=32)
+    reset: bool = False
+
+
+class InstallTemplateBody(BaseModel):
+    template: dict[str, Any]
+
+
+async def _share_draft(rt: SocietyRuntime, agent_id: str) -> tuple[AgentRecord, Any]:
+    from jarvis.society.agent_template import TemplateError, build_draft, load_overlay
+
+    agent = await rt.roster.resolve(agent_id)
+    if agent is None:
+        raise HTTPException(404, {"reason": str(FailureReason.TARGET_UNKNOWN)})
+    try:
+        return agent, build_draft(agent, load_overlay(rt.data_dir, agent.agent_id))
+    except TemplateError as exc:
+        raise HTTPException(409, {"reason": "not_shareable", "detail": str(exc)}) from exc
+
+
+def _draft_payload(draft: Any) -> dict[str, Any]:
+    from jarvis.society.agent_template import validate_template
+
+    payload: dict[str, Any] = draft.to_dict()
+    payload["errors"] = validate_template(draft.template, draft.listing)
+    return payload
+
+
+@router.get("/agents/{agent_id}/template", openapi_extra={"x-jarvis-readonly": True})
+async def get_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """The agent's shareable template: what would be published, and what was cut."""
+    rt = await _runtime(request)
+    _, draft = await _share_draft(rt, agent_id)
+    return _draft_payload(draft)
+
+
+@router.put("/agents/{agent_id}/template")
+async def save_share_template(
+    agent_id: str, body: ShareDraftBody, request: Request
+) -> dict[str, Any]:
+    """Save edits to the public version (never touches the agent itself)."""
+    from jarvis.society.agent_template import load_overlay, save_overlay
+
+    rt = await _runtime(request)
+    agent, _ = await _share_draft(rt, agent_id)
+    if body.reset:
+        # Back to the agent's own text; what was published stays on record.
+        current = load_overlay(rt.data_dir, agent.agent_id)
+        changes: dict[str, Any] = {k: None for k in current if k != "published"}
+    else:
+        changes = body.model_dump(exclude_none=True, exclude={"reset"})
+        # A person editing the text takes it over from the agent's polish.
+        if changes:
+            changes["polished_by"] = None
+    save_overlay(rt.data_dir, agent.agent_id, changes)
+    _, draft = await _share_draft(rt, agent.agent_id)
+    return _draft_payload(draft)
+
+
+# Dangerous: publishes the agent's design publicly under the user's GitHub name.
+@router.post("/agents/{agent_id}/template/publish", openapi_extra={"x-jarvis-dangerous": True})
+async def publish_share_template(agent_id: str, request: Request) -> dict[str, Any]:
+    """Publish the current draft to the community marketplace as the signed-in user."""
+    from jarvis.marketplace.install_standard import install_block
+    from jarvis.marketplace.publish import SubmitError, submit, validate_draft
+    from jarvis.society.agent_template import save_overlay, submission
+
+    rt = await _runtime(request)
+    agent, draft = await _share_draft(rt, agent_id)
+    normalized, errors = validate_draft(submission(draft.template, draft.listing))
+    if normalized is None:
+        first = errors[0]
+        raise HTTPException(
+            422, {"error": first["error"], "field": first["field"], "errors": errors}
+        )
+    try:
+        result = await submit(normalized)
+    except SubmitError as exc:
+        raise HTTPException(exc.status, {"error": exc.error, "field": exc.field}) from exc
+    published = {
+        "name": normalized["name"],
+        "version": normalized["version"],
+        "url": result.get("issue_url") or result.get("pr_url"),
+    }
+    # The next share starts from the next version; the summary/text edits stay.
+    save_overlay(rt.data_dir, agent.agent_id, {"published": published, "version": None})
+    return {
+        "ok": True,
+        **published,
+        "install": install_block(normalized["name"], "agent"),
+        **result,
+    }
+
+
+async def _free_agent_name(rt: SocietyRuntime, wanted: str) -> str:
+    """``wanted``, or ``wanted 2``, ``wanted 3`` … — the first name not taken.
+
+    The roster ADOPTS an existing name instead of minting a second agent, so
+    installing "Inbox Butler" twice would silently hand back the first one.
+    """
+    base = wanted.strip()[:37].rstrip() or "Agent"
+    candidate = wanted.strip()[:40]
+    for number in range(2, 100):
+        if await rt.roster.resolve(candidate) is None:
+            return candidate
+        candidate = f"{base} {number}"
+    raise HTTPException(409, {"reason": "name_taken", "detail": "pick another name"})
+
+
+async def install_template(template: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Create a NEW agent from a template on this install's own model.
+
+    Shared by the import route below and the marketplace's install-by-name.
+    The agent asks before it acts where its runner can (``approval_mode=ask``):
+    its instructions were written by somebody else, so the person sees its
+    first moves before trusting it with more.
+    """
+    from jarvis.society.agent_template import TemplateError, create_fields
+
+    try:
+        fields = create_fields(template)
+    except TemplateError as exc:
+        raise HTTPException(422, {"reason": "invalid_template", "detail": str(exc)}) from exc
+    rt = await _runtime(request)
+    wanted = fields.pop("name")
+    name = await _free_agent_name(rt, wanted)
+    scope = template.get("knowledge_scope", "shared")
+    body = CreateAgentBody(name=name, approval_mode="ask", **fields)
+    try:
+        created = await create_agent(body, request)
+    except HTTPException as exc:
+        if exc.status_code != 422:
+            raise
+        # This runner cannot hold an approval prompt: the app's default applies.
+        body = CreateAgentBody(name=name, **fields)
+        created = await create_agent(body, request)
+    agent_row = created["agent"]
+    if scope == "own" and agent_row.get("knowledge_scope") != "own":
+        try:
+            updated = await rt.roster.update(agent_row["agent_id"], {"knowledge_scope": "own"})
+        except RosterError as exc:
+            raise _typed_error(exc) from exc
+        agent_row = updated.to_dict()
+    return {
+        "agent": agent_row,
+        "created": bool(created.get("created")),
+        "renamed_from": wanted if name != wanted else None,
+        "readback": created.get("readback", {}),
+    }
+
+
+@router.post("/templates/install")
+async def install_template_route(body: InstallTemplateBody, request: Request) -> dict[str, Any]:
+    """Create a new agent from an agent template (an exported file, pasted JSON)."""
+    template = body.template
+    # Accept a whole marketplace submission as well as the bare template: a
+    # person importing what somebody posted will paste either.
+    if template.get("kind") == "agent" and isinstance(template.get("agent"), dict):
+        template = template["agent"]
+    return await install_template(template, request)
 
 
 # ----------------------------------------------------------------- controls

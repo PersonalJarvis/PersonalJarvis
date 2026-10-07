@@ -2,7 +2,7 @@
 schema_version: "1"
 name: plugin-sharepoint
 description: Search company sites, document libraries and list items
-when_to_use: Use for explicit operations on the connected SharePoint account.
+when_to_use: Use when the user requests operations on the connected SharePoint account.
 category: integrations
 plugin_id: sharepoint
 intent_verbs: [read, list, search, find, show, get, create, send, reply, update, upload, publish, sync, inspect, zeig, lies, suche, sende, antworte, actualiza, busca, muestra] # i18n-allow: speech input

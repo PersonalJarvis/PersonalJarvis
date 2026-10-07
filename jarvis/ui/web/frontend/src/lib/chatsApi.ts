@@ -7,6 +7,7 @@ import {
   type ThinkingTraceSnapshot,
 } from "@/lib/thinkingSteps";
 import type { MessageRole } from "@/types/messages";
+import { createHistoryRequests } from "@/lib/historyRequests";
 
 export interface ChatTurn {
   role: string;
@@ -44,12 +45,18 @@ function changeContext<T>(request: () => Promise<T>): Promise<T> {
  * a handful, but the "All chats" archive promises everything, and a cap that
  * quietly hides old conversations reads as data loss.
  */
-export async function fetchConversations(days = 0, limit = 500): Promise<ConversationSummary[]> {
+const conversationRequests = createHistoryRequests<ConversationSummary[]>();
+export const invalidateConversations = () => conversationRequests.invalidate();
+
+export function fetchConversations(days = 0, limit = 500): Promise<ConversationSummary[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (days > 0) params.set("days", String(days));
-  const res = await fetch(`/api/chats?${params.toString()}`);
-  if (!res.ok) throw new ChatsApiError("list-failed", res.status);
-  return (await res.json()) as ConversationSummary[];
+  const url = `/api/chats?${params.toString()}`;
+  return conversationRequests.read(url, async (signal) => {
+    const res = await fetch(url, { signal });
+    if (!res.ok) throw new ChatsApiError("list-failed", res.status);
+    return (await res.json()) as ConversationSummary[];
+  });
 }
 
 export async function resumeConversation(
@@ -96,6 +103,7 @@ export async function startNewVoiceRun(): Promise<{
   return changeContext(async () => {
     const res = await fetch("/api/chats/voice/new", { method: "POST" });
     if (!res.ok) throw new ChatsApiError("new-voice-run-failed", res.status);
+    invalidateConversations();
     return (await res.json()) as { cleared: boolean; ended: boolean };
   });
 }
@@ -105,6 +113,7 @@ export async function deleteTextConversation(id: string): Promise<void> {
     method: "DELETE",
   });
   if (!res.ok) throw new ChatsApiError("delete-failed", res.status);
+  invalidateConversations();
 }
 
 /** The stable id of the i-th message of a loaded conversation. */

@@ -93,7 +93,10 @@ async def test_new_request_after_confirmation_can_ask_again():
     ],
 )
 def test_acoustically_grounded_answer_is_not_discarded_as_text_echo(language, text):
+    from jarvis.speech.hangup import HangupConfirmation
+
     session = object.__new__(RealtimeVoiceSession)
+    session._hangup_confirmation = HangupConfirmation()
     now = time.monotonic()
     session._tool_bridge = SimpleNamespace(has_pending_confirmation=True)
     session._language = language

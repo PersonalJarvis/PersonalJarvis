@@ -136,22 +136,28 @@ async def test_not_installed_and_attach_mode(rt, tmp_path, fake_runner):
     jobs = _jobs(tmp_path, fake_runner)
     status = jobs.status_for(attached)
     assert status["mode"] == "attach" and status["cdp_url"]
-    assert (await jobs.login(attached))["skipped"]
+    from tests.fakes.fake_browser_profiles import LoginLive
+
+    jobs.live = LoginLive()
+    assert (await jobs.login(attached))["manual"]
 
 
 async def test_login_session_closes_on_done(rt, tmp_path, fake_runner):
-    import asyncio
+    from tests.fakes.fake_browser_profiles import LoginLive
 
     jobs = _jobs(tmp_path, fake_runner)
+    jobs.live = LoginLive()
     scout = await rt.roster.get("scout")
-    task = asyncio.create_task(jobs.login(scout, start_url="https://example.com/login"))
-    for _ in range(50):
-        await asyncio.sleep(0.05)
-        if jobs.running_for("scout"):
-            break
+    result = await jobs.login(scout, start_url="https://example.com/login")
+    assert jobs.live.calls[:3] == [
+        ("ensure", "scout", {"window_view": True}),
+        ("takeover", {"enabled": True}),
+        ("navigate", {"url": "https://example.com/login"}),
+    ]
     assert await jobs.end_login("scout") is True
-    result = await asyncio.wait_for(task, timeout=10)
     assert result["ok"] is True
+    assert result["logged_in_profile"] is None
+    assert not jobs._procs
     assert profile_has_logins(tmp_path, "scout") is False
 
 

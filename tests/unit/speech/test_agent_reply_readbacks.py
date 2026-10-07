@@ -137,6 +137,7 @@ async def test_classic_playback_failure_keeps_the_agent_reply():
     pipe, _, _, _ = _pipeline(accepted=False)
     pipe._active_voice_mode = "pipeline"
     pipe._active_realtime_handle = None
+    pipe._current_voice_session_id = "classic-session"
 
     class Player:
         async def play_chunks(self, chunks, **kwargs):

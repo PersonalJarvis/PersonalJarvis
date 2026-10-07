@@ -293,3 +293,30 @@ def test_cli_catalog_reloads_on_account_and_config_change(monkeypatch, tmp_path,
     (Path(seat[0]) / "auth.json").write_text("changed", encoding="utf-8")
     read()
     assert len(calls) == 3
+
+
+async def test_claude_effort_is_folded_onto_the_models_own_ladder(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(rc, "warm_claude_capabilities", lambda: None)
+
+    def planner(**kwargs):
+        seen.append((kwargs["effort"], kwargs["prompt"]))
+        raise rc.CliUnavailable("stop before process launch")
+
+    monkeypatch.setitem(rc._PLANNERS, "claude-cli", planner)
+    handle = SimpleNamespace(
+        session=SimpleNamespace(
+            session_id="test",
+            cwd=str(tmp_path),
+            provider="claude-api",
+            model="claude-opus-4-6",
+            effort="xhigh",
+            permission_mode="default",
+        )
+    )
+    await rc._run_cli_once(handle, "hello", "claude-cli", None)
+    # Claude Code itself would send "high" for xhigh on Opus 4.6; the flag and
+    # the note must name that level, not the pick.
+    [(sent, prompt)] = seen
+    assert sent == "high"
+    assert "Reasoning effort for this turn: high" in prompt

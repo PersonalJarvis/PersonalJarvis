@@ -32,6 +32,7 @@ from jarvis.core.events import (
 )
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
+from tests.fakes.voice_session import open_classic_voice_session
 
 # Every "still on it" heartbeat phrase across de/en/es — the watchdog now picks
 # a varied, language-resolved reassurance instead of the old fixed
@@ -84,7 +85,7 @@ def _pipeline(bus: EventBus, *, watchdog_delay_s: float) -> SpeechPipeline:
     pipe._player = FakePlayer()  # type: ignore[assignment]
     pipe._spawn_watchdog_delay_s = watchdog_delay_s
     pipe._heartbeat_max_count = 1
-    return pipe
+    return open_classic_voice_session(pipe)
 
 
 @pytest.mark.asyncio

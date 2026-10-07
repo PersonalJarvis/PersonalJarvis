@@ -72,9 +72,22 @@ from typing import Any, Final
 from jarvis.agent_chat import jarvis_harness
 from jarvis.agent_chat.approval_bridge import approval_ref
 from jarvis.agent_chat.cli_catalog import CatalogCache, catalog_key, discover_codex_models
-from jarvis.agent_chat.effort import ORDER, normalize_effort, snap_to_ladder
+from jarvis.agent_chat.effort import (
+    ORDER,
+    effort_for_model,
+    effort_note,
+    normalize_effort,
+    snap_to_ladder,
+)
 from jarvis.agent_chat.events import make_event
-from jarvis.agent_chat.permissions import normalize_permission
+from jarvis.agent_chat.permissions import default_permission, normalize_permission
+from jarvis.agent_chat.questions import (
+    CANCELLED,
+    UNATTENDED,
+    TooManyQuestions,
+    parse_questions,
+    recommended_answer,
+)
 from jarvis.agent_chat.runner_api import TurnHandle
 from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
@@ -162,6 +175,17 @@ def claude_argv_prefix() -> list[str]:
     return claude_cli_argv_prefix(binary)
 
 
+def warm_claude_capabilities() -> None:
+    """Run the Claude CLI's flag probes (blocking, cached) so planning only reads them."""
+    from jarvis.claude_auth import claude_cli_supports_thinking_display
+
+    try:
+        prefix = claude_argv_prefix()
+    except CliUnavailable:
+        return  # planning reports the missing CLI itself
+    claude_cli_supports_thinking_display(prefix)
+
+
 def codex_argv_prefix() -> list[str]:
     try:
         from jarvis.missions.workers.codex_direct_worker import _resolve_codex_argv_prefix
@@ -199,25 +223,64 @@ def grok_argv_prefix() -> list[str]:
     return [binary]
 
 
+def _is_batch(binary: str) -> bool:
+    return binary.lower().endswith((".cmd", ".bat"))
+
+
+def _behind_shim(binary: str, agent: str) -> list[str]:
+    """``binary``, or what its Windows ``.cmd`` shim would have launched.
+
+    These CLIs take the prompt on argv, and through an npm shim argv passes
+    ``cmd.exe``: a line break ends the command there, so a multi-line message
+    reached the agent cut after its first line. The package layout the
+    workspace registry declares (``WinShim``) launches the real program
+    instead; an install laid out differently keeps the shim, and
+    :func:`_argv_prompt` keeps the whole message on one line for it.
+    """
+    if not _is_batch(binary):
+        return [binary]
+    try:
+        from jarvis.workspace import agents as workspace_agents
+
+        spec = workspace_agents.get_agent(agent)
+        direct = workspace_agents.behind_win_shim(spec, binary) if spec is not None else None
+    except Exception:  # noqa: BLE001 — the shim still runs; only line breaks are at risk
+        log.warning("agent chat: could not look behind the %s shim", agent, exc_info=True)
+        direct = None
+    return list(direct) if direct else [binary]
+
+
+def _argv_prompt(prefix: list[str], prompt: str) -> str:
+    """The prompt as one argv value that survives ``prefix``.
+
+    A batch file still in front (an unknown install layout) would drop every
+    line after the first, so the lines are joined with spaces instead: the
+    agent loses the layout, never the words.
+    """
+    if prefix and _is_batch(prefix[0]):
+        return " ".join(line.strip() for line in prompt.splitlines() if line.strip())
+    return prompt
+
+
 def opencode_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["opencode-cli"])
     if not binary:
         raise CliUnavailable("OpenCode (opencode) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "opencode")
 
 
 def kimi_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["kimi-cli"])
     if not binary:
         raise CliUnavailable("Kimi Code (kimi) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "kimi")
 
 
 def dsh_argv_prefix() -> list[str]:
     binary = _which(*CLI_BINARIES["dsh-cli"])
     if not binary:
         raise CliUnavailable("DeepSeek Harness (dsh) is not installed or not on PATH.")
-    return [binary]
+    return _behind_shim(binary, "deepseek-harness")
 
 
 def cursor_argv_prefix() -> list[str]:
@@ -280,6 +343,14 @@ def _remember_models(runner: str, rows: list[dict[str, Any]] | None) -> None:
         prepared[runner] = rows
 
 
+def _login_id(account_id: str) -> str:
+    """The login an account id names; ``""`` (the active one) for a reserved
+    access value (``catalog.ACCESS_ACCOUNTS``), which names no login."""
+    from jarvis.agent_chat.catalog import ACCESS_ACCOUNTS
+
+    return "" if account_id in ACCESS_ACCOUNTS else account_id
+
+
 def _account_env(platform: str) -> dict[str, str]:
     """The child environment for the subscription seat of ``platform`` — the
     turn's pinned account when its session names one, else the active one."""
@@ -290,7 +361,7 @@ def _account_env(platform: str) -> dict[str, str]:
     try:
         from jarvis import agent_accounts
 
-        requested = ACCOUNT_OVERRIDE.get()
+        requested = _login_id(ACCOUNT_OVERRIDE.get())
         pinned = agent_accounts.resolve(requested or None)
         if requested and pinned is None:
             raise CliUnavailable(
@@ -305,7 +376,7 @@ def _account_env(platform: str) -> dict[str, str]:
     except CliUnavailable:
         raise
     except Exception as exc:  # noqa: BLE001 — unsupported platforms use native credentials
-        if ACCOUNT_OVERRIDE.get() and pinned_platform in (None, platform):
+        if _login_id(ACCOUNT_OVERRIDE.get()) and pinned_platform in (None, platform):
             raise CliUnavailable("The selected subscription account could not be loaded.") from exc
         log.debug("CLI account layer unavailable for %s (%s)", platform, type(exc).__name__)
         env = dict(os.environ)
@@ -386,6 +457,12 @@ class CliPlan:
     #: is over with the working folder and the wall-clock start, and answers
     #: the id the CLI's own store gave the conversation (or None).
     discover: Callable[[Path, float], str | None] | None = None
+    #: An Agent Client Protocol turn (Hermes, OpenClaw — ``runner_acp``): the
+    #: pump hands every stdout object to it instead of a ``_SHAPES`` translator,
+    #: and it writes its own requests on stdin.
+    acp: Any | None = None
+    #: Called once the process is gone (a runtime releasing its Gateway).
+    after_turn: Callable[[], None] | None = None
 
 
 def claude_control_init() -> str:
@@ -445,6 +522,7 @@ def plan_claude(
         resume=resume,
         identity=identity,
         env=jarvis_harness.apply_env(_account_env("claude")),
+        thinking_summaries=True,
     )
 
 
@@ -491,10 +569,12 @@ def _plan_claude_code(
     resume: str | None,
     identity: jarvis_harness.Identity | None,
     env: dict[str, str],
+    thinking_summaries: bool = False,
 ) -> CliPlan:
     mode = normalize_permission("claude-cli", permission_mode)
+    prefix = claude_argv_prefix()
     argv = [
-        *claude_argv_prefix(),
+        *prefix,
         "--print",
         "--output-format",
         "stream-json",
@@ -514,6 +594,15 @@ def _plan_claude_code(
         argv += ["--model", model]
     if effort:
         argv += ["--effort", effort]
+    # Without this the stream carries empty thinking blocks and the chat shows
+    # no reasoning. The probe ran off the event loop before planning
+    # (``warm_claude_capabilities``); an older CLI without the flag skips it.
+    # Anthropic's endpoint only — GLM's compatible one is not asked for a
+    # thinking setting it never documented.
+    from jarvis.claude_auth import claude_cli_thinking_display_known
+
+    if thinking_summaries and claude_cli_thinking_display_known(prefix):
+        argv += ["--thinking-display", "summarized"]
     # Jarvis' own tools, and the identity that says when to use them. Both are
     # skipped when the app cannot offer them (no control key, server not bound
     # yet) — the session then behaves exactly as it did before. On the Jarvis
@@ -592,7 +681,7 @@ def plan_grok(
     else:
         sid = str(uuid.uuid4())
         argv += ["--session-id", sid]
-    argv += ["-p", prompt]
+    argv += ["-p", _argv_prompt(argv, prompt)]
     env = jarvis_harness.apply_env(_account_env("grok-build"))
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return CliPlan(argv, env, None, "claude", sid)
@@ -1100,7 +1189,7 @@ def plan_opencode(
         argv += ["--variant", effort]
     if resume:
         argv += ["--session", resume]
-    argv += ["--", prompt]
+    argv += ["--", _argv_prompt(argv, prompt)]
     env = _registry_env("opencode", _account_env("opencode"))
     return CliPlan(argv, env, None, "opencode", resume)
 
@@ -1140,16 +1229,15 @@ def plan_kimi(
     if model:
         argv += ["--model", model]
     # Print mode is autonomous by Kimi's own design (a headless run has nobody
-    # to ask); the flag only says so out loud. Plan is an instruction, not a
-    # sandbox — the ladder's sentence says as much.
-    if mode == "auto":
-        argv += ["--auto"]
+    # to ask), and Kimi Code refuses ``--auto``, ``--yolo`` and ``--plan`` next
+    # to ``--prompt`` ("Cannot combine --prompt with --auto", 0.29). Plan is
+    # therefore an instruction, not a sandbox — the ladder's sentence says so.
     if resume:
         # Long form on purpose: the two Kimi generations disagree on the short
         # flag (``agent_sessions``).
         argv += ["--session", resume]
     text = _PLAN_PREAMBLE + prompt if mode == "plan" else prompt
-    argv += ["--prompt", text]
+    argv += ["--prompt", _argv_prompt(argv, text)]
     env = _registry_env("kimi", _account_env("kimi"))
     return CliPlan(
         argv, env, None, "kimi", resume, discover=None if resume else _kimi_session_after
@@ -1173,7 +1261,8 @@ def plan_dsh(
     back is text, and the chat shows it as the answer.
     """
     prompt = _with_identity(prompt, identity, None, compact=True)
-    argv = [*dsh_argv_prefix(), "--profile", "headless", prompt]
+    prefix = dsh_argv_prefix()
+    argv = [*prefix, "--profile", "headless", _argv_prompt(prefix, prompt)]
     env = _registry_env("deepseek-harness", _account_env("deepseek-harness"))
     return CliPlan(argv, env, None, "text", None)
 
@@ -1214,7 +1303,7 @@ def plan_cursor(
         argv += ["--force"]
     if resume:
         argv += ["--resume", resume]
-    argv.append(prompt)
+    argv.append(_argv_prompt(argv, prompt))
     env = _registry_env("cursor", _account_env("cursor"))
     return CliPlan(argv, env, None, "cursor", resume)
 
@@ -1290,8 +1379,22 @@ CLI_RUNNERS: Final[frozenset[str]] = frozenset(_PLANNERS)
 _CLAUDE_CODE_RUNNERS: Final[frozenset[str]] = frozenset({"claude-cli", "glm-cli"})
 
 
+#: How long an ACP runtime may keep running after it answered the prompt.
+_ACP_EXIT_GRACE_S: Final[float] = 10.0
+
+
+def _release_plan(plan: CliPlan | None) -> None:
+    """Run a plan's ``after_turn`` once (an external runtime's turn slot)."""
+    if plan is None or plan.after_turn is None:
+        return
+    release, plan.after_turn = plan.after_turn, None
+    release()
+
+
 def supports_cli_runner(runner: str) -> bool:
-    return runner in _PLANNERS
+    from jarvis.agent_chat.runner_acp import supports_runner
+
+    return runner in _PLANNERS or supports_runner(runner)
 
 
 # ------------------------------------------------------------ translation
@@ -1320,6 +1423,10 @@ class _ClaudeState:
     thinking_announced: set[str] = field(default_factory=set)
     #: Per-message usage as the CLI reports it — summed into the live counter.
     usage_by_message: dict[str, dict[str, int]] = field(default_factory=dict)
+    #: Characters streamed per message so far; a live floor for its output.
+    stream_chars: dict[str, int] = field(default_factory=dict)
+    #: The usage totals last sent, so an unchanged count sends nothing.
+    usage_sent: dict[str, int] = field(default_factory=dict)
     emitted_tool_ids: set[str] = field(default_factory=set)
     emitted_text: bool = False
     status: str = "done"
@@ -1332,6 +1439,68 @@ class _ClaudeState:
     #: Last tool_result that came back as an error — used when the CLI then
     #: aborts the turn instead of thinking again (Grok print-mode cancel).
     last_tool_error: str | None = None
+    #: A sub-agent's own translator state, by the call that spawned it — its
+    #: messages carry ``parent_tool_use_id`` and must never read as the main
+    #: agent's words.
+    agents: dict[str, _ClaudeState] = field(default_factory=dict)
+    #: The CLI's task id -> the spawning call, for task updates that name only the task.
+    agent_tasks: dict[str, str] = field(default_factory=dict)
+
+
+#: Streamed characters per estimated output token (English and code average).
+_CHARS_PER_TOKEN: Final = 4
+#: A streamed estimate is sent once it has grown by this many output tokens,
+#: so a long answer does not send one counter update per text fragment.
+_LIVE_OUTPUT_STEP: Final = 20
+
+
+def _claude_merge_usage(st: _ClaudeState, mid: str, usage: dict[str, Any]) -> bool:
+    """Fold one usage report of message ``mid`` in; True when it changed.
+
+    A message's first report is the ``message_start`` snapshot: the input side
+    is final, ``output_tokens`` a placeholder that only becomes true at the
+    message's end (``message_delta``). Keep the largest value seen so a
+    placeholder can never walk a real count back down (BUG-173).
+    """
+    counted = {
+        k: int(usage[k]) for k in _CLAUDE_USAGE_KEYS if isinstance(usage.get(k), int | float)
+    }
+    previous = st.usage_by_message.get(mid)
+    if previous:
+        counted = {k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)}
+    if not counted or counted == previous:
+        return False
+    st.usage_by_message[mid] = counted
+    return True
+
+
+def _claude_usage_totals(st: _ClaudeState) -> dict[str, int]:
+    """The turn so far: reported usage, with streamed text as a floor for output."""
+    totals: dict[str, int] = {}
+    streamed_only = (m for m in st.stream_chars if m not in st.usage_by_message)
+    for mid in (*st.usage_by_message, *streamed_only):
+        per_message = dict(st.usage_by_message.get(mid, {}))
+        estimate = st.stream_chars.get(mid, 0) // _CHARS_PER_TOKEN
+        if estimate > per_message.get("output_tokens", 0):
+            per_message["output_tokens"] = estimate
+        for k, v in per_message.items():
+            totals[k] = totals.get(k, 0) + v
+    return totals
+
+
+def _claude_usage_event(st: _ClaudeState, *, min_output_step: int = 0) -> dict[str, Any] | None:
+    """A ``usage_delta`` when the totals moved (by ``min_output_step`` output tokens)."""
+    totals = _claude_usage_totals(st)
+    if not totals or totals == st.usage_sent:
+        return None
+    grown = totals.get("output_tokens", 0) - st.usage_sent.get("output_tokens", 0)
+    only_output_moved = {k: v for k, v in totals.items() if k != "output_tokens"} == {
+        k: v for k, v in st.usage_sent.items() if k != "output_tokens"
+    }
+    if min_output_step and only_output_moved and grown < min_output_step:
+        return None
+    st.usage_sent = totals
+    return make_event("usage_delta", {"turn_id": st.turn_id, "usage": totals})
 
 
 def _claude_request_summary(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -1389,6 +1558,134 @@ def _content_text(content: Any) -> str:
     return "" if content is None else str(content)
 
 
+#: Claude Code's background-task lines; the agent ones become a sub-agent's card.
+_CLAUDE_TASK_SUBTYPES: Final = frozenset(
+    {"task_started", "task_progress", "task_updated", "task_notification"}
+)
+
+
+def subagent_status(raw: str) -> str:
+    """A vendor's word for how a sub-agent ended, as ``done`` | ``failed`` | ``stopped``."""
+    word = raw.strip().lower()
+    if word in {"completed", "complete", "done", "success", "succeeded"}:
+        return "done"
+    if word in {"failed", "error", "errored"}:
+        return "failed"
+    return "stopped"
+
+
+def _task_usage(obj: dict[str, Any]) -> dict[str, int]:
+    usage = obj.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    keys = {"total_tokens": "tokens", "tool_uses": "tool_uses", "duration_ms": "duration_ms"}
+    return {
+        ours: int(usage[theirs])
+        for theirs, ours in keys.items()
+        if isinstance(usage.get(theirs), int | float)
+    }
+
+
+def _claude_subagent_line(
+    obj: dict[str, Any], st: _ClaudeState, parent: str
+) -> list[dict[str, Any]]:
+    """A sub-agent's own message, filed under the call that spawned it.
+
+    The CLI streams a sub-agent's turns on the parent's stdout, marked only by
+    ``parent_tool_use_id``. Each sub-agent gets a translator state of its own,
+    so its text, thoughts and calls never merge into the main agent's answer,
+    and every event it yields names the agent (``agent_id``). Its partial
+    stream and token counts stay out: the finished messages carry the words,
+    and the live counter is the main agent's.
+    """
+    if str(obj.get("type") or "") not in {"assistant", "user"}:
+        return []
+    child = st.agents.get(parent)
+    if child is None:
+        child = st.agents[parent] = _ClaudeState(turn_id=st.turn_id)
+    out: list[dict[str, Any]] = []
+    for event in translate_claude_line({**obj, "parent_tool_use_id": None}, child):
+        if event["kind"] == "usage_delta":
+            continue
+        event["payload"]["agent_id"] = parent
+        out.append(event)
+    return out
+
+
+def _claude_task_events(obj: dict[str, Any], st: _ClaudeState) -> list[dict[str, Any]]:
+    """A sub-agent's life from Claude Code's task lines: started, working, finished.
+
+    Background shell commands are tasks too; only agent tasks get a card.
+    """
+    subtype = str(obj.get("subtype") or "")
+    if subtype not in _CLAUDE_TASK_SUBTYPES:
+        return []
+    task_id = str(obj.get("task_id") or "")
+    if subtype == "task_started":
+        call_id = str(obj.get("tool_use_id") or "")
+        task_type = str(obj.get("task_type") or "")
+        if not call_id or not (obj.get("subagent_type") or "agent" in task_type):
+            return []
+        if task_id:
+            st.agent_tasks[task_id] = call_id
+        return [
+            make_event(
+                "subagent_started",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": call_id,
+                    "task_id": task_id,
+                    "description": str(obj.get("description") or ""),
+                    "agent_type": str(obj.get("subagent_type") or ""),
+                    "prompt": str(obj.get("prompt") or ""),
+                    "background": bool(obj.get("is_backgrounded")),
+                },
+            )
+        ]
+    call_id = st.agent_tasks.get(task_id) or ""
+    if not call_id:
+        named = str(obj.get("tool_use_id") or "")
+        call_id = named if named in st.agents else ""
+    if not call_id:
+        return []
+    if subtype == "task_progress":
+        return [
+            make_event(
+                "subagent_progress",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": call_id,
+                    "activity": str(obj.get("description") or ""),
+                    "last_tool": str(obj.get("last_tool_name") or ""),
+                    **_task_usage(obj),
+                },
+            )
+        ]
+    if subtype == "task_updated":
+        patch = obj.get("patch") if isinstance(obj.get("patch"), dict) else {}
+        status = str(patch.get("status") or "")
+        if status in {"", "running", "pending"}:
+            return []
+        return [
+            make_event(
+                "subagent_finished",
+                {"turn_id": st.turn_id, "agent_id": call_id, "status": subagent_status(status)},
+            )
+        ]
+    return [
+        make_event(
+            "subagent_finished",
+            {
+                "turn_id": st.turn_id,
+                "agent_id": call_id,
+                "status": subagent_status(str(obj.get("status") or "completed")),
+                "summary": str(obj.get("summary") or ""),
+                **_task_usage(obj),
+            },
+        )
+    ]
+
+
 def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[str, Any]]:
     """One Claude-shaped NDJSON object -> zero or more agent-chat events."""
     out: list[dict[str, Any]] = []
@@ -1397,8 +1694,14 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
     if sid and not st.vendor_session:
         st.vendor_session = str(sid)
 
+    parent = obj.get("parent_tool_use_id")
+    if parent:
+        return _claude_subagent_line(obj, st, str(parent))
+
     if kind == "system":
-        return out  # init / hooks / status — nothing the timeline shows
+        # init / hooks / status are nothing the timeline shows; a sub-agent's
+        # life (started, working, finished) is.
+        return _claude_task_events(obj, st)
 
     if kind == "stream_event":
         ev = obj.get("event") or {}
@@ -1449,6 +1752,26 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
                         {"turn_id": st.turn_id, "message_id": mid, "text": delta["thinking"]},
                     )
                 )
+            # Count what streams as it streams: text, a tool call's input and
+            # readable thinking are all output. The CLI reports a message's
+            # true output count only once the message ends, so between those
+            # reports the counter would otherwise sit on the start-of-message
+            # placeholder ("Working 28s · 39 tokens" on a turn that ended at
+            # 11k). The estimate never overrides a real report.
+            streamed = delta.get("text") or delta.get("partial_json") or delta.get("thinking")
+            if isinstance(streamed, str) and streamed:
+                st.stream_chars[mid] = st.stream_chars.get(mid, 0) + len(streamed)
+                event = _claude_usage_event(st, min_output_step=_LIVE_OUTPUT_STEP)
+                if event is not None:
+                    out.append(event)
+        elif et == "message_delta":
+            # The end of a message: its usage carries the true output count.
+            usage_end = ev.get("usage")
+            mid = st.current_message_id
+            if mid and isinstance(usage_end, dict) and _claude_merge_usage(st, mid, usage_end):
+                event = _claude_usage_event(st)
+                if event is not None:
+                    out.append(event)
         return out
 
     if kind == "assistant":
@@ -1456,33 +1779,10 @@ def translate_claude_line(obj: dict[str, Any], st: _ClaudeState) -> list[dict[st
         mid = str(message.get("id") or st.current_message_id or uuid.uuid4().hex)
         st.current_message_id = mid
         usage_now = message.get("usage")
-        if isinstance(usage_now, dict):
-            counted = {
-                k: int(usage_now[k])
-                for k in _CLAUDE_USAGE_KEYS
-                if isinstance(usage_now.get(k), int | float)
-            }
-            # A message's first usage report is the ``message_start`` snapshot:
-            # the input side is already final, ``output_tokens`` is a placeholder
-            # that only becomes true later. Keep the largest value seen so a
-            # placeholder can never walk a real count back down (BUG-173).
-            previous = st.usage_by_message.get(mid)
-            if previous:
-                counted = {
-                    k: max(counted.get(k, 0), previous.get(k, 0)) for k in (*counted, *previous)
-                }
-            if counted and counted != previous:
-                st.usage_by_message[mid] = counted
-                totals: dict[str, int] = {}
-                for per_message in st.usage_by_message.values():
-                    for k, v in per_message.items():
-                        totals[k] = totals.get(k, 0) + v
-                out.append(
-                    make_event(
-                        "usage_delta",
-                        {"turn_id": st.turn_id, "usage": totals},
-                    )
-                )
+        if isinstance(usage_now, dict) and _claude_merge_usage(st, mid, usage_now):
+            event = _claude_usage_event(st)
+            if event is not None:
+                out.append(event)
         content = message.get("content") or []
         if not isinstance(content, list):
             content = [{"type": "text", "text": str(content)}]
@@ -1664,6 +1964,105 @@ class _CodexState:
     #: The last top-level ``error`` notification (retryable until turn.failed).
     last_error: str | None = None
     failed_tools: set[str] = field(default_factory=set)
+    #: A sub-agent's thread id -> the ``spawn_agent`` call that started it.
+    agents: dict[str, str] = field(default_factory=dict)
+    #: Sub-agents whose end was already told, so a later ``close_agent`` that
+    #: reports them shut down does not turn a finished agent into a stopped one.
+    agents_ended: set[str] = field(default_factory=set)
+
+
+#: Codex's word for a sub-agent that is still working.
+_CODEX_AGENT_LIVE: Final = frozenset({"pending_init", "running"})
+
+
+def _codex_collab_events(item: dict[str, Any], phase: str, st: _CodexState) -> list[dict[str, Any]]:
+    """Codex's multi-agent calls (``collab_tool_call``) as sub-agent cards.
+
+    ``spawn_agent`` becomes the card's call; the agent's thread id is
+    remembered, so every later call that reports ``agents_states`` (``wait``,
+    ``send_input``, ``close_agent``) updates that card. ``codex exec`` does not
+    stream a sub-agent's own steps — the card carries its task and its answer.
+    """
+    out: list[dict[str, Any]] = []
+    item_id = str(item.get("id") or uuid.uuid4().hex)
+    tool = str(item.get("tool") or "agent")
+    prompt = str(item.get("prompt") or "")
+    receivers = [str(t) for t in item.get("receiver_thread_ids") or [] if t]
+    states = item.get("agents_states") if isinstance(item.get("agents_states"), dict) else {}
+    if item_id not in st.items:
+        st.items[item_id] = (item_id, tool)
+        st.started_at[item_id] = time.perf_counter()
+        summary = prompt.strip().splitlines()[0][:200] if prompt.strip() else ""
+        args: dict[str, Any] = {"prompt": prompt} if prompt else {}
+        if tool != "spawn_agent" and receivers:
+            args["agents"] = receivers
+        out.append(
+            make_event(
+                "tool_call",
+                {
+                    "turn_id": st.turn_id,
+                    "call_id": item_id,
+                    "name": tool,
+                    "input": args,
+                    "summary": summary,
+                },
+            )
+        )
+    if tool == "spawn_agent":
+        for thread_id in receivers:
+            if thread_id in st.agents:
+                continue
+            st.agents[thread_id] = item_id
+            out.append(
+                make_event(
+                    "subagent_started",
+                    {
+                        "turn_id": st.turn_id,
+                        "agent_id": item_id,
+                        "thread_id": thread_id,
+                        "description": prompt.strip().splitlines()[0][:120] if prompt else "",
+                        "agent_type": "",
+                        "prompt": prompt,
+                        "background": True,
+                    },
+                )
+            )
+    for thread_id, raw in states.items():
+        agent_id = st.agents.get(str(thread_id))
+        state = raw if isinstance(raw, dict) else {}
+        status = str(state.get("status") or "")
+        if not agent_id or not status or status in _CODEX_AGENT_LIVE:
+            continue
+        if status in {"shutdown", "not_found"} and agent_id in st.agents_ended:
+            continue
+        st.agents_ended.add(agent_id)
+        out.append(
+            make_event(
+                "subagent_finished",
+                {
+                    "turn_id": st.turn_id,
+                    "agent_id": agent_id,
+                    "status": subagent_status(status),
+                    "summary": str(state.get("message") or ""),
+                },
+            )
+        )
+    if phase == "completed":
+        started = st.started_at.get(item_id)
+        failed = str(item.get("status") or "") == "failed"
+        out.append(
+            make_event(
+                "tool_result",
+                {
+                    "turn_id": st.turn_id,
+                    "call_id": item_id,
+                    "output": ", ".join(receivers) if tool == "spawn_agent" else "done",
+                    "is_error": failed,
+                    "duration_ms": int((time.perf_counter() - started) * 1000) if started else None,
+                },
+            )
+        )
+    return out
 
 
 def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str, Any]]:
@@ -1746,6 +2145,8 @@ def translate_codex_line(obj: dict[str, Any], st: _CodexState) -> list[dict[str,
                 )
             )
         return out
+    if itype == "collab_tool_call":
+        return _codex_collab_events(item, phase, st)
     if itype in {"command_execution", "file_change", "mcp_tool_call", "web_search"}:
         if itype == "command_execution":
             name, args = "RunCommand", {"command": str(item.get("command") or "")}
@@ -2548,7 +2949,15 @@ _RESUME_LOST_MARKERS: Final[tuple[str, ...]] = (
 )
 
 
-def _resume_was_lost(error: str | None) -> bool:
+def _resume_was_lost(error: str | None, runner: str = "") -> bool:
+    from jarvis.agent_chat.runner_acp import supports_runner
+
+    if supports_runner(runner):
+        # An ACP runtime says so explicitly; "model does not exist" from the
+        # prompt itself must not buy a second, fresh (and paid) turn.
+        from jarvis.agent_runtimes.acp import RESUME_LOST_ERROR
+
+        return (error or "").startswith(RESUME_LOST_ERROR)
     low = (error or "").lower()
     return any(m in low for m in _RESUME_LOST_MARKERS)
 
@@ -2652,6 +3061,24 @@ async def run_cli_turn(
     t0 = time.perf_counter()
     session = handle.session
     resume = session.vendor_session
+    if (
+        resume
+        and identity
+        and session.surface == "society"
+        and jarvis_harness.society_rollover_due(handle.history)
+    ):
+        # One endless chat, bounded CLI conversations: start fresh from the
+        # briefing, memory and recent transcript, and mark where it began.
+        resume = None
+        await handle.emit(
+            make_event(
+                "notice",
+                {
+                    "kind": jarvis_harness.ROLLOVER_NOTICE_KIND,
+                    "text": "Started a fresh working context from memory and recent messages.",
+                },
+            )
+        )
     from jarvis.agent_chat.task_recovery import ToolRecovery, blocks_automatic_recovery
 
     recovery = ToolRecovery()
@@ -2718,6 +3145,17 @@ async def run_cli_turn(
                     else lambda _name, _args: False,
                 ),
             )
+    from jarvis.agent_chat.surface_kits import kit_for
+    from jarvis.agent_chat.turn_prompts import ASK_PROTOCOL
+
+    if (
+        runner not in _CLAUDE_CODE_RUNNERS
+        and kit_for(session.surface).turn_prompts
+        and not user_text.lstrip().startswith("/")
+    ):
+        # No mid-turn channel to ask on: the agent asks at the end of its turn
+        # and the chat shows the block as a question card (turn_prompts).
+        user_text = ASK_PROTOCOL + user_text
     tool_context = register_turn(session.session_id) if identity else None
     try:
         outcome = await _run_cli_once(
@@ -2729,7 +3167,7 @@ async def run_cli_turn(
             outcome.status == "error"
             and resume
             and not recovery.had_tool_calls
-            and _resume_was_lost(outcome.error)
+            and _resume_was_lost(outcome.error, runner)
             and not handle.cancel.is_set()
         ):
             log.info(
@@ -2802,6 +3240,89 @@ async def run_cli_turn(
     return outcome.vendor_session
 
 
+async def resume_hosted_cli_turn(handle: TurnHandle, proc: Any) -> str | None:
+    """Carry on a thread turn whose CLI kept running in the turn host.
+
+    The app restarted while the turn ran; the CLI did not. ``proc`` is the
+    reattached :class:`~jarvis.agent_chat.turn_host_client.HostedCli` (or a
+    spooled one that ended meanwhile). Its ``meta`` holds what the plan said
+    at spawn; the lines the old app already handled rebuild the translator,
+    every later one is emitted, and the turn ends with its real outcome.
+    Returns the vendor session id to persist, like :func:`run_cli_turn`.
+    """
+    meta = dict(getattr(proc, "meta", {}) or {})
+    runner = str(meta.get("runner") or "")
+    shape = str(meta.get("shape") or "text")
+    started_at = float(meta.get("started_at") or time.time())
+    codex_home = str(meta.get("codex_home") or "")
+    plan = CliPlan(
+        argv=[],
+        env={"CODEX_HOME": codex_home} if codex_home else {},
+        stdin_text=None,
+        shape=shape if shape in _SHAPES else "text",
+        vendor_session=str(meta.get("vendor_session") or "") or None,
+        keep_stdin=bool(meta.get("keep_stdin")),
+        # Only its presence matters from here on: control requests are answered.
+        control_init="" if meta.get("control") else None,
+        discover=_kimi_session_after if meta.get("discover") else None,
+    )
+    elapsed = max(0.0, time.time() - started_at)
+    log.info(
+        "agent chat %s: carrying on a %s turn the turn host kept running (%.0f s old)",
+        handle.turn_id,
+        runner,
+        elapsed,
+    )
+    outcome = await _drive_cli(
+        handle,
+        proc,
+        plan,
+        runner,
+        cwd=Path(str(meta.get("cwd") or handle.session.cwd or Path.home())),
+        started_at=started_at,
+        placement=None,
+        tree=None,
+        bridge=None,
+        timeout_s=max(60.0, _TURN_TIMEOUT_S - elapsed),
+    )
+    await handle.emit(
+        make_event(
+            "turn_finished",
+            {
+                "turn_id": handle.turn_id,
+                "status": outcome.status,
+                "duration_ms": int((time.time() - started_at) * 1000),
+                "usage": outcome.usage,
+                "error": outcome.error,
+                "cost_usd": outcome.cost_usd,
+            },
+        )
+    )
+    return outcome.vendor_session
+
+
+def _agy_model_ladder(model: str) -> list[str] | None:
+    """agy's effort levels for ``model`` from the cached catalog (``None`` = unknown)."""
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        return None
+    for row in rows or []:
+        if row.get("id") == model and "efforts" in row:
+            return list(row["efforts"])
+    return None
+
+
+def _agy_effective_effort(model: str, effort: str) -> str:
+    """The ``--effort`` value agy is launched with for ``model`` + ``effort``."""
+    try:
+        rows = _agy_catalog_cached()
+    except CliUnavailable:  # agy is missing: the planner reports that right after this
+        rows = None
+    args = agy_model_args(model, effort, rows)
+    return args[args.index("--effort") + 1] if "--effort" in args else ""
+
+
 async def _run_cli_once(
     handle: TurnHandle,
     user_text: str,
@@ -2812,14 +3333,13 @@ async def _run_cli_once(
     bridge: Any | None = None,
 ) -> _Outcome:
     session = handle.session
-    chat_ref = approval_ref(session.session_id)
     cwd = _resolved_cwd(session.cwd or Path.home())
     effort = normalize_effort(session.provider, session.effort)
-    planner = _PLANNERS[runner]
-    status = "done"
-    error_text: str | None = None
-    usage: dict[str, int] = {}
-    cost_usd: float | None = None
+    # The picked model's own levels when the catalog knows them (``None`` =
+    # the provider ladder applies); see ``effort_for_model``.
+    model_ladder: list[str] | tuple[str, ...] | None = None
+    # ``None`` = an external agent runtime, planned asynchronously (runner_acp).
+    planner = _PLANNERS.get(runner)
     vendor_session: str | None = None
     from jarvis.society.remote import placement_for_session
 
@@ -2827,6 +3347,8 @@ async def _run_cli_once(
     placement = await placement_for_session(session)
     remote_token = _REMOTE_PLANNING.set(placement is not None)
     planned_prompt = user_text
+    # Set once planning succeeded; an external runtime's plan holds a turn slot.
+    plan: CliPlan | None = None
     if placement is not None and not getattr(handle, "tools_disabled", False):
         # Also refresh resumed conversations which remember the old missing bridge.
         planned_prompt = (
@@ -2857,22 +3379,53 @@ async def _run_cli_once(
                     )
                 for row in models or []:
                     if row["id"] == session.model:
-                        effort = snap_to_ladder(session.effort, list(row.get("efforts", [])))
+                        model_ladder = list(row.get("efforts", []))
                         break
+            if runner == "claude-cli":
+                from jarvis.agent_chat.catalog import claude_model_efforts
+
+                # Claude Code folds a level the model lacks on its own (Opus
+                # 4.6 runs ``--effort xhigh`` as high); fold it here first so
+                # the flag, the note below and the composer name one level.
+                model_ladder = claude_model_efforts(session.model)
             if runner == "agy-cli" and placement is None:
                 # A chat can start before the model picker has loaded its catalog.
                 # Resolve the installed CLI's effort ladder off the event loop so
                 # newly available models keep the required model/effort pairing.
                 await asyncio.to_thread(read_agy_models, required_model=session.model)
-            plan: CliPlan = planner(
-                prompt=planned_prompt,
-                cwd=cwd,
-                model=session.model,
-                effort=effort,
-                permission_mode=session.permission_mode,
-                resume=resume,
-                identity=identity,
-            )
+            plan: CliPlan
+            if planner is None:
+                from jarvis.agent_chat.runner_acp import plan_runtime_turn
+
+                plan = await plan_runtime_turn(
+                    handle,
+                    runner,
+                    prompt=planned_prompt,
+                    cwd=cwd,
+                    resume=resume,
+                    identity=identity,
+                )
+            else:
+                if runner == "agy-cli":
+                    model_ladder = _agy_model_ladder(session.model)
+                effort = effort_for_model(session.provider, session.effort, model_ladder)
+                told_effort = (
+                    _agy_effective_effort(session.model, effort) if runner == "agy-cli" else effort
+                )
+                planned_prompt = (
+                    effort_note(session.provider, told_effort, model_ladder) + planned_prompt
+                )
+                if runner == "claude-cli":
+                    await asyncio.to_thread(warm_claude_capabilities)
+                plan = planner(
+                    prompt=planned_prompt,
+                    cwd=cwd,
+                    model=session.model,
+                    effort=effort,
+                    permission_mode=session.permission_mode,
+                    resume=resume,
+                    identity=identity,
+                )
             if getattr(handle, "tools_disabled", False):
                 from .native_control import disable_cli_tools
 
@@ -2900,6 +3453,7 @@ async def _run_cli_once(
                 else:
                     raise CliUnavailable("The selected runner cannot isolate task tools.")
     except CliUnavailable as exc:
+        _release_plan(plan)
         return _Outcome("error", str(exc), {}, None, None)
     finally:
         _REMOTE_PLANNING.reset(remote_token)
@@ -2919,6 +3473,7 @@ async def _run_cli_once(
     if placement is None and (
         getattr(handle, "goal_turn", False)
         or (session.surface == "society" and session.permission_mode == "plan")
+        or plan.acp is not None
     ):
         from jarvis.core.process_tree import make_process_tree
 
@@ -2951,29 +3506,145 @@ async def _run_cli_once(
         except RemoteCliUnavailable as exc:
             return _Outcome("error", str(exc), {}, None, None)
     else:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *plan.argv,
+        hosted = None
+        if tree is None and plan.acp is None and _survives_restart(handle, identity):
+            from jarvis.agent_chat import turn_host_client
+
+            hosted = await turn_host_client.spawn(
+                plan.argv,
                 cwd=str(cwd),
                 env=plan.env,
-                stdin=asyncio.subprocess.PIPE
-                if plan.stdin_text is not None
-                else asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-                start_new_session=tree is not None and os.name != "nt",
-                limit=_READLINE_LIMIT,
+                # The host writes the handshake and the prompt itself, so a
+                # restart between spawn and feed cannot leave the CLI waiting.
+                stdin=(
+                    (plan.control_init or "") + plan.stdin_text
+                    if plan.stdin_text is not None
+                    else None
+                ),
+                keep_stdin=plan.keep_stdin,
+                meta=_hosted_meta(handle, runner, plan, cwd, started_at),
+                # Claude Code keeps reading stdin after its result line; the
+                # host closes it there so the CLI ends with no app attached.
+                close_stdin_on="result" if plan.keep_stdin and plan.shape == "claude" else "",
             )
-            if tree is not None:
-                tree.assign(proc.pid)
-        except (OSError, ValueError) as exc:
-            if tree is not None:
-                tree.close()
-            return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
+        if hosted is not None:
+            proc = hosted
+        else:
+            proc = await _spawn_child(plan, cwd, tree, runner)
+            if isinstance(proc, _Outcome):
+                return proc
+    return await _drive_cli(
+        handle,
+        proc,
+        plan,
+        runner,
+        cwd=cwd,
+        started_at=started_at,
+        placement=placement,
+        tree=tree,
+        bridge=bridge,
+    )
 
-    make_state, translate = _SHAPES[plan.shape]
-    state: Any = make_state(handle.turn_id, vendor_session)
+
+def _survives_restart(handle: TurnHandle, identity: Any) -> bool:
+    """Whether this turn's CLI runs in the turn host and outlives an app restart.
+
+    Threads in the Agentic IDE (surface ``agent``) only: their CLI is a plain
+    coding agent whose whole turn is its own process. A turn running AS
+    Jarvis (``identity``), a goal or a tool-less helper turn depends on state
+    that lives in this process (MCP tool context, approval bridge, goal
+    control) and would lose it across a restart, so it stays a child here.
+    """
+    session = handle.session
+    return (
+        getattr(session, "surface", "") == "agent"
+        and identity is None
+        and not getattr(handle, "goal_turn", False)
+        and not getattr(handle, "tools_disabled", False)
+        and not getattr(handle, "gateway_only", False)
+    )
+
+
+def _hosted_meta(
+    handle: TurnHandle, runner: str, plan: CliPlan, cwd: Path, started_at: float
+) -> dict[str, Any]:
+    """What a hosted turn needs to be carried on after an app restart."""
+    return {
+        "session_id": handle.session.session_id,
+        "turn_id": handle.turn_id,
+        "runner": runner,
+        "shape": plan.shape,
+        "keep_stdin": plan.keep_stdin,
+        "control": plan.control_init is not None,
+        "vendor_session": plan.vendor_session,
+        "discover": plan.discover is not None,
+        "codex_home": plan.env.get("CODEX_HOME", ""),
+        "cwd": str(cwd),
+        "started_at": started_at,
+    }
+
+
+async def _spawn_child(
+    plan: CliPlan, cwd: Path, tree: Any, runner: str
+) -> asyncio.subprocess.Process | _Outcome:
+    """Start the CLI as this process's own child (no turn host)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *plan.argv,
+            cwd=str(cwd),
+            env=plan.env,
+            stdin=asyncio.subprocess.PIPE
+            if plan.stdin_text is not None or plan.acp is not None
+            else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+            start_new_session=tree is not None and os.name != "nt",
+            limit=_READLINE_LIMIT,
+        )
+        if tree is not None:
+            tree.assign(proc.pid)
+    except (OSError, ValueError) as exc:
+        if tree is not None:
+            tree.close()
+        _release_plan(plan)
+        return _Outcome("error", f"Could not start {runner}: {exc}", {}, None, None)
+    return proc
+
+
+async def _drive_cli(
+    handle: TurnHandle,
+    proc: Any,
+    plan: CliPlan,
+    runner: str,
+    *,
+    cwd: Path,
+    started_at: float,
+    placement: Any,
+    tree: Any,
+    bridge: Any | None,
+    timeout_s: float = _TURN_TIMEOUT_S,
+) -> _Outcome:
+    """Read a started CLI to its end: translate, answer, and judge the outcome.
+
+    ``proc`` is a child process, a remote one, or a CLI in the turn host
+    (``turn_host_client.HostedCli``). A hosted CLI reattached after an app
+    restart replays the lines this turn already handled first
+    (``stdout.replaying``): they rebuild the translator's state and emit
+    nothing, so the timeline carries on from the first line it has not seen.
+    """
+    session = handle.session
+    chat_ref = approval_ref(session.session_id)
+    status = "done"
+    error_text: str | None = None
+    vendor_session = plan.vendor_session
+    hosted = bool(getattr(proc, "hosted", False))
+    if plan.acp is not None:
+        state: Any = plan.acp
+        translate: Any = None
+    else:
+        make_state, translate = _SHAPES[plan.shape]
+        state = make_state(handle.turn_id, vendor_session)
     # Lines that are not the CLI's JSON — a banner, a warning, the whole
     # answer of a plain-text CLI — shown as they come, and kept as the answer
     # of last resort when the stream said nothing else.
@@ -2992,8 +3663,10 @@ async def _run_cli_once(
                 stderr_tail.append(text)
                 del stderr_tail[:-40]
 
-    async def _say_plain(line: str) -> None:
+    async def _say_plain(line: str, *, replay: bool = False) -> None:
         plain.append(line + "\n")
+        if replay:
+            return
         await handle.emit(
             make_event(
                 "text_delta",
@@ -3002,23 +3675,47 @@ async def _run_cli_once(
         )
 
     async def _pump_stdout() -> None:
+        nonlocal grace_kill
         assert proc.stdout is not None
         while True:
             raw = await proc.stdout.readline()
+            if hosted and getattr(proc, "handed_over", False):
+                return
             if not raw:
                 return
+            # A line this turn handled before an app restart: rebuild state only.
+            replay = hosted and bool(getattr(proc.stdout, "replaying", False))
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
             if plan.shape == "text":
-                await _say_plain(line)
+                await _say_plain(line, replay=replay)
                 continue
             try:
                 obj = json.loads(line)
             except ValueError:
-                await _say_plain(line)
+                if plan.acp is None:
+                    await _say_plain(line, replay=replay)
+                else:
+                    log.debug("agent chat %s: non-ACP stdout line skipped", handle.turn_id)
                 continue
             if not isinstance(obj, dict):
+                continue
+            if replay:
+                if obj.get("type") not in ("control_request", "control_response"):
+                    translate(obj, state)
+                continue
+            if plan.acp is not None:
+                await plan.acp.on_message(obj, acp_io)
+                if plan.acp.saw_result:
+                    # The prompt answered; closing stdin lets the runtime exit.
+                    # One that keeps running anyway (a child holding the pipe)
+                    # is ended so the chat is not held busy by a finished turn.
+                    _close_stdin()
+                    if grace_kill is None:
+                        grace_kill = asyncio.get_running_loop().call_later(
+                            _ACP_EXIT_GRACE_S, _kill, proc
+                        )
                 continue
             if plan.control_init is not None:
                 if obj.get("type") == "control_request":
@@ -3060,10 +3757,14 @@ async def _run_cli_once(
         subtype = str(req.get("subtype") or "")
         decision = "deny"
         message = "Not supported by this chat."
+        tool_name = ""
         if subtype == "can_use_tool":
             tool_name = str(req.get("tool_name") or req.get("display_name") or "tool")
             tool_input = req.get("input") if isinstance(req.get("input"), dict) else {}
             call_id = str(req.get("tool_use_id") or uuid.uuid4().hex)
+            if tool_name == "AskUserQuestion":
+                await _respond(request_id, await _claude_question(tool_input))
+                return
             summary = str(req.get("description") or "") or _claude_request_summary(
                 tool_name, tool_input
             )
@@ -3097,16 +3798,79 @@ async def _run_cli_once(
                 # A Jarvis tool the CLI just asked about will hit the executor's
                 # own gate over MCP in a moment; the person has answered once.
                 bridge.note_cli_approval(chat_ref, tool_name)
+            if tool_name == "ExitPlanMode":
+                build = await _leave_plan_mode()
+                if build:
+                    body["updatedPermissions"] = [
+                        {"type": "setMode", "mode": build, "destination": "session"}
+                    ]
         else:
             body = {"behavior": "deny", "message": message}
+        await _respond(request_id, body)
+
+    async def _respond(request_id: str, body: dict[str, Any]) -> None:
         frame = {
             "type": "control_response",
             "response": {"subtype": "success", "request_id": request_id, "response": body},
         }
         await _write_stdin(json.dumps(frame, ensure_ascii=False) + "\n")
 
+    async def _claude_question(tool_input: dict[str, Any]) -> dict[str, Any]:
+        """Claude Code's own ``AskUserQuestion``, answered on the chat's question card.
+
+        The answers go back the way the CLI reads them: ``updatedInput`` keeps
+        the questions and adds ``answers`` keyed by each question's text.
+        """
+        raw = tool_input.get("questions")
+        rows = raw if isinstance(raw, list) else []
+        try:
+            specs = parse_questions({"questions": rows})
+        except ValueError as exc:  # the error text goes back to the model in the deny message
+            return {
+                "behavior": "deny",
+                "message": f"Invalid questions ({exc}). Ask 1-4 questions with 2-4 options each.",
+            }
+        ask = getattr(handle.control_service, "ask_questions", None)
+        if not callable(ask):
+            return {
+                "behavior": "deny",
+                "message": "Nobody can answer here. Decide yourself and state your assumptions.",
+            }
+        try:
+            answers = await ask(session.session_id, specs)
+        except (TooManyQuestions, RuntimeError) as exc:
+            # The turn already used its cards (or has none to show): the
+            # agent's own first options stand, exactly as on an unanswered card.
+            log.info("agent chat %s: question not shown (%s)", handle.turn_id, exc)
+            answers = [recommended_answer(spec, UNATTENDED) for spec in specs]
+        if any(a.source == CANCELLED for a in answers):
+            return {"behavior": "deny", "message": "The turn was stopped."}
+        picked = {
+            str(row.get("question") or ""): a.answer for row, a in zip(rows, answers, strict=True)
+        }
+        return {"behavior": "allow", "updatedInput": {**tool_input, "answers": picked}}
+
+    async def _leave_plan_mode() -> str:
+        """The build mode an approved plan continues in, or "" to leave it to the CLI.
+
+        Coding threads only (``turn_prompts``): the session leaves plan mode
+        for the runner's default, so the next message builds too and the
+        composer's access pick shows it.
+        """
+        from jarvis.agent_chat.surface_kits import kit_for
+
+        if not kit_for(session.surface).turn_prompts:
+            return ""
+        build = default_permission(runner)
+        store = getattr(handle.control_service, "store", None)
+        if store is not None and build != session.permission_mode:
+            store.update_session(session.session_id, permission_mode=build)
+            await handle.emit(make_event("session_updated", {"permission_mode": build}))
+        return build
+
     async def _feed_stdin() -> None:
-        if proc.stdin is None:
+        if proc.stdin is None or hosted:
+            # The turn host wrote the handshake and the prompt at spawn.
             return
         try:
             # The control-protocol handshake goes FIRST, on the same stdin, so
@@ -3116,6 +3880,9 @@ async def _run_cli_once(
             # add a round-trip to every turn for no gain.
             if plan.control_init is not None:
                 proc.stdin.write(plan.control_init.encode("utf-8"))
+                await proc.stdin.drain()
+            if plan.acp is not None:
+                proc.stdin.write(plan.acp.opening_frame().encode("utf-8"))
                 await proc.stdin.drain()
             if plan.stdin_text is not None:
                 proc.stdin.write(plan.stdin_text.encode("utf-8"))
@@ -3131,22 +3898,58 @@ async def _run_cli_once(
         await handle.cancel.wait()
         _kill(proc)
 
+    class _AcpIO:
+        """What an ACP turn needs from this process: stdin, the chat, the card."""
+
+        async def write(self, frame: dict[str, Any]) -> None:
+            from jarvis.agent_runtimes.acp import frame_line
+
+            await _write_stdin(frame_line(frame))
+
+        async def emit(self, event: dict[str, Any]) -> None:
+            await handle.emit(event)
+
+        async def ask(self, call_id: str, name: str, args: dict[str, Any], summary: str) -> str:
+            decision = await handle.request_approval(call_id, name, args, summary)
+            if decision in {"allow", "allow_always"} and bridge is not None:
+                # A Jarvis tool the runtime just asked about reaches the
+                # executor's own gate over MCP next; the person answered once.
+                bridge.note_cli_approval(chat_ref, name)
+            return str(decision)
+
+    acp_io = _AcpIO()
+    grace_kill: asyncio.TimerHandle | None = None
+
     pump = asyncio.create_task(_pump_stdout())
     drain = asyncio.create_task(_drain_stderr())
     feeder = asyncio.create_task(_feed_stdin())
     watcher = asyncio.create_task(_watch_cancel())
     try:
-        if getattr(handle, "goal_turn", False):
+        # EOF is not process exit: a CLI may close both pipes and keep
+        # running. The deadline must also cover waiting for the process.
+        deadline = None if getattr(handle, "goal_turn", False) else timeout_s
+        async with asyncio.timeout(deadline):
             await asyncio.gather(pump, drain, feeder)
-        else:
-            await asyncio.wait_for(asyncio.gather(pump, drain, feeder), timeout=_TURN_TIMEOUT_S)
-        await proc.wait()
+            await proc.wait()
     except TimeoutError:
+        log.warning(
+            "agent chat %s: %s timed out (result=%s, returncode=%s, stdout_done=%s)",
+            handle.turn_id,
+            runner,
+            getattr(state, "saw_result", False),
+            proc.returncode,
+            pump.done(),
+        )
         _kill(proc)
         status = "error"
         error_text = f"{runner} did not finish within {int(_TURN_TIMEOUT_S)} s."
     except asyncio.CancelledError:
-        _kill(proc)
+        if hosted and not handle.cancel.is_set():
+            # The app is going away, nobody pressed Stop: the CLI keeps working
+            # in the turn host and the next app start carries the turn on.
+            proc.detach()
+        else:
+            _kill(proc)
         raise
     finally:
         watcher.cancel()
@@ -3156,13 +3959,26 @@ async def _run_cli_once(
         await asyncio.gather(watcher, pump, drain, feeder, return_exceptions=True)
         if tree is not None:
             tree.close()
-        if proc.returncode is None:
+        if proc.returncode is None and not getattr(proc, "detached", False):
             _kill(proc)
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except TimeoutError:
                 log.warning("Agent CLI did not reap after cancellation")
+        if grace_kill is not None:
+            grace_kill.cancel()
+        _release_plan(plan)
 
+    if hosted and getattr(proc, "handed_over", False):
+        from jarvis.agent_chat.turn_host_client import TurnHandedOver
+
+        raise TurnHandedOver(handle.turn_id)
+    if hosted:
+        # Handled to the end: the host (or its spool file) may drop the lines.
+        proc.release()
+        if getattr(proc, "host_lost", False) and not handle.cancel.is_set():
+            status = "error"
+            error_text = "The process that ran this agent stopped unexpectedly."
     if handle.cancel.is_set():
         status = "cancelled"
     elif status == "done":
@@ -3171,7 +3987,10 @@ async def _run_cli_once(
                 "error",
                 state.error or getattr(state, "last_tool_error", None),
             )
-        elif proc.returncode not in (0, None):
+        elif proc.returncode not in (0, None) and not (
+            # An ACP turn that answered and was then ended by the grace timer.
+            plan.acp is not None and plan.acp.saw_result
+        ):
             status = "error"
             error_text = (
                 state.error
@@ -3183,6 +4002,9 @@ async def _run_cli_once(
         elif plan.shape == "codex" and state.failed_tools:
             status = "error"
             error_text = "Unresolved tool failure: " + ", ".join(sorted(state.failed_tools))
+        elif runner in {"claude-cli", "glm-cli"} and not state.saw_result:
+            status = "error"
+            error_text = f"{runner} exited without a terminal result; its output may be incomplete."
 
     usage = dict(state.usage)
     cost_usd = getattr(state, "cost_usd", None)

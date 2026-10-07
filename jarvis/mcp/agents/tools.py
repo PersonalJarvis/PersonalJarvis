@@ -283,11 +283,15 @@ async def _await_turn(queue: Any, turn_id: str, wait_s: float) -> dict[str, Any]
             continue
         kind = event.get("kind")
         if kind == "assistant_text":
+            if payload.get("media_only"):
+                continue
             text = str(payload.get("text") or text)
         elif kind == "tool_call":
             name = str(payload.get("name") or payload.get("tool") or "tool")
             tools.append(name)
         elif kind == "error":
+            if payload.get("display_only"):
+                continue  # A picture that could not be shown is not a failed turn.
             return {
                 "status": "blocked",
                 "reply": text,

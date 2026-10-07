@@ -1,11 +1,11 @@
 /**
  * The agents floor's lobby as the arrival at a startup HQ: a brand wall of
- * pale oak slats with the Jarvis ghost standing off a sage plaster panel in a
- * ring of warm light, a waiting lounge (boucle sofa, oak-and-cognac armchairs,
- * a travertine coffee table with magazines, a marble side table and a tripod
- * lamp on a wool rug), the Agent board as a standing touch-screen totem, an
- * entrance mat at the elevator, olive trees in stone planters and a lit
- * vitrine of awards.
+ * pale oak slats with the Jarvis ghost standing off a sage plaster panel,
+ * halo-lit from behind, over the wordmark; a waiting lounge (boucle sofa,
+ * oak-and-cognac armchairs, a travertine coffee table with magazines, a marble
+ * side table and a tripod lamp on a wool rug), the Agent board as a standing
+ * touch-screen totem, an entrance mat at the elevator, olive trees in stone
+ * planters and a lit vitrine of awards.
  *
  * Its own identity next to the coding floor's walnut and amber: light
  * Scandinavian oak, sage, linen and brass. Same rules as OfficeProps: every
@@ -15,11 +15,11 @@
  */
 import { memo } from "react";
 import {
-  AdditiveBlending, BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Euler, ExtrudeGeometry, Matrix4,
+  BoxGeometry, BufferGeometry, ConeGeometry, CylinderGeometry, DoubleSide, Euler, ExtrudeGeometry, Matrix4,
   MeshStandardMaterial, Path, Quaternion, Shape, SphereGeometry, TorusGeometry, Vector3,
 } from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { cachedCanvasTexture, canvasMaterial } from "./canvasMaterials";
+import { cachedCanvasTexture, canvasMaterial, redrawWhenFontsLoad } from "./canvasMaterials";
 import { Box, GEO, matte, Rounded } from "./OfficeFurniture";
 import { FURNITURE_SIZE, type Furniture, type FurnitureKind } from "./officeLayout";
 
@@ -58,6 +58,11 @@ const LM = {
   boucle: matte(C.boucle, { roughness: 1 }),
   cognac: matte(C.cognac, { roughness: 0.55 }),
   ink: matte(C.ink, { roughness: 0.35, metalness: 0.15 }),
+  // The mascot's satin black: dark enough to read as the logo, glossy enough that the bevel catches the light.
+  ghost: matte("#1f2124", { roughness: 0.3, metalness: 0.3 }),
+  pupil: matte("#050505", { roughness: 0.6 }),
+  // The brand panel's fins: satin brass that stays golden without an environment map to reflect.
+  fin: matte("#c9a462", { roughness: 0.4, metalness: 0.35 }),
   stone: matte(C.stone, { roughness: 0.9 }),
   travertine: matte(C.travertine, { roughness: 0.45 }),
   marble: matte(C.marble, { roughness: 0.25 }),
@@ -88,6 +93,8 @@ const GHOST_SVG = { cx: 128, hem: 208, height: 172 };
 /** Eye centres in the ghost's local space (hem at y = 0, 1 unit tall). */
 const GHOST_EYES = [102, 154].map((x) => ({ x: (x - GHOST_SVG.cx) / GHOST_SVG.height, y: (GHOST_SVG.hem - 108) / GHOST_SVG.height }));
 const GHOST_EYE = { rx: 10 / GHOST_SVG.height, ry: 14 / GHOST_SVG.height };
+/** The mascot's pupils (MascotGigi), in SVG units: a little right of and below each eye's centre. */
+const GHOST_PUPIL = { xs: [104, 156], y: 112, rx: 4, ry: 6 };
 
 function ghostPoint(x: number, y: number): [number, number] {
   return [(x - GHOST_SVG.cx) / GHOST_SVG.height, (GHOST_SVG.hem - y) / GHOST_SVG.height];
@@ -132,18 +139,25 @@ function traceGhost(ctx: Ctx, cx: number, top: number, height: number): void {
   ctx.closePath();
 }
 
-/** The ghost, `height` px tall with its top at `top`, centred on `cx`: a filled body with filled eyes. */
-export function drawGhost(ctx: Ctx, cx: number, top: number, height: number, body: string, eyes: string): void {
+/**
+ * The ghost, `height` px tall with its top at `top`, centred on `cx`: a filled
+ * body with filled eyes, and the mascot's pupils when a `pupils` colour is given.
+ */
+export function drawGhost(ctx: Ctx, cx: number, top: number, height: number, body: string, eyes: string, pupils?: string): void {
   traceGhost(ctx, cx, top, height);
   ctx.fillStyle = body;
   ctx.fill();
   const s = height / GHOST_SVG.height;
-  ctx.fillStyle = eyes;
-  for (const x of [102, 154]) {
+  const oval = (x: number, y: number, rx: number, ry: number) => {
     ctx.beginPath();
-    ctx.ellipse(cx + (x - GHOST_SVG.cx) * s, top + (108 - 36) * s, 10 * s, 14 * s, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + (x - GHOST_SVG.cx) * s, top + (y - 36) * s, rx * s, ry * s, 0, 0, Math.PI * 2);
     ctx.fill();
-  }
+  };
+  ctx.fillStyle = eyes;
+  for (const x of [102, 154]) oval(x, 108, 10, 14);
+  if (!pupils) return;
+  ctx.fillStyle = pupils;
+  for (const x of GHOST_PUPIL.xs) oval(x, GHOST_PUPIL.y, GHOST_PUPIL.rx, GHOST_PUPIL.ry);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,36 +183,106 @@ function roundRect(ctx: Ctx, x: number, y: number, w: number, h: number, r: numb
   ctx.closePath();
 }
 
+/**
+ * The app's interface face. The bundle ships it as "Inter Variable"; a canvas
+ * asking for plain "Inter" silently gets the system fallback instead.
+ */
+const FONT = "'Inter Variable', Inter, 'Segoe UI', system-ui, sans-serif";
+
 /** Letter spacing where the canvas supports it (Chromium does; older engines just ignore it). */
 function spaced(ctx: Ctx, px: number): void {
   (ctx as Ctx & { letterSpacing?: string }).letterSpacing = `${px}px`;
 }
 
-/** The brand wall's wordmark and strapline, white on transparent: backlit cream letters on the sage panel. */
-function drawWordmark(ctx: Ctx, w: number, h: number): void {
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = "#ffffff";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  spaced(ctx, 6);
-  ctx.font = "700 100px Inter, 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("PERSONAL JARVIS", w / 2 + 3, h * 0.36, w - 24);
-  spaced(ctx, 10);
-  ctx.font = "500 34px Inter, 'Segoe UI', system-ui, sans-serif";
-  ctx.fillText("AGENT HEADQUARTERS", w / 2 + 5, h * 0.8, w * 0.44);
-  ctx.fillRect(w * 0.12, h * 0.8 - 2, w * 0.14, 4);
-  ctx.fillRect(w * 0.74, h * 0.8 - 2, w * 0.14, 4);
+/**
+ * The brand wall's sage panel, in metres on the wall: the plaster face, the
+ * ghost standing off it and the two lines of type. The canvas faces are drawn
+ * from the same numbers, so the halo always sits exactly behind the ghost.
+ */
+const BRAND_PANEL = { w: 1.9, h: 2.3, y: 1.52, z: 0.05, d: 0.06 };
+const BRAND_FACE = { w: 1.86, h: 2.26, px: 1024 };
+const BRAND_GHOST = { hem: 1.3, size: 0.84, z: 0.09 };
+const BRAND_TYPE = { wordmark: 1.02, strapline: 0.85 };
+const BRAND_FONTS = [`700 120px ${FONT}`, `600 40px ${FONT}`];
+
+/** Wall height (m) → canvas row on a brand face `h` px tall. */
+function brandRow(y: number, h: number): number {
+  return ((BRAND_PANEL.y + BRAND_FACE.h / 2 - y) / BRAND_FACE.h) * h;
 }
 
-/** A soft round glow, bright in the middle and gone at the rim (drawn additively behind the ghost). */
-function drawGlow(ctx: Ctx, w: number, h: number): void {
-  const g = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
-  g.addColorStop(0, "rgba(255,226,180,0.55)");
-  g.addColorStop(0.55, "rgba(255,214,160,0.18)");
-  g.addColorStop(1, "rgba(255,214,160,0)");
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = g;
+/** The halo behind the ghost: its silhouette, blurred out in warm light (the ghost itself covers the middle). */
+function drawGhostHalo(ctx: Ctx, w: number, h: number, colour: string, blur: number): void {
+  const height = (BRAND_GHOST.size / BRAND_FACE.h) * h;
+  ctx.save();
+  ctx.shadowColor = colour;
+  ctx.shadowBlur = blur;
+  ctx.fillStyle = colour;
+  for (let pass = 0; pass < 2; pass += 1) {
+    traceGhost(ctx, w / 2, brandRow(BRAND_GHOST.hem + BRAND_GHOST.size, h), height);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * The sage panel's face: limestone-smooth plaster washed lighter at the top
+ * by the cove light, a warm halo where the ghost stands off it, and the
+ * wordmark and strapline in ink between brass rules.
+ */
+function drawBrandFace(ctx: Ctx, w: number, h: number): void {
+  const wash = ctx.createLinearGradient(0, 0, 0, h);
+  wash.addColorStop(0, "#b7c4ad");
+  wash.addColorStop(0.45, "#a9b89e");
+  wash.addColorStop(1, "#9aab90");
+  ctx.fillStyle = wash;
   ctx.fillRect(0, 0, w, h);
+  // Fine plaster grain, too faint to muddy the colour when the texture is minified.
+  const rand = lcg(2718);
+  for (let i = 0; i < 14000; i += 1) {
+    ctx.fillStyle = rand() > 0.5 ? "rgba(255,255,255,0.05)" : "rgba(60,74,56,0.05)";
+    ctx.fillRect(rand() * w, rand() * h, 1.5, 1.5);
+  }
+  const edge = ctx.createRadialGradient(w / 2, h * 0.45, h * 0.3, w / 2, h * 0.45, h * 0.75);
+  edge.addColorStop(0, "rgba(40,52,38,0)");
+  edge.addColorStop(1, "rgba(40,52,38,0.14)");
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, w, h);
+  drawGhostHalo(ctx, w, h, "rgba(255,232,192,0.95)", w * 0.065);
+
+  // The wordmark: ink letters fitted to the panel, with a hairline shadow for their stand-off.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  spaced(ctx, w * 0.012);
+  ctx.font = BRAND_FONTS[0];
+  const fit = Math.min(1, (w * 0.74) / ctx.measureText("PERSONAL JARVIS").width);
+  ctx.font = `700 ${Math.round(120 * fit)}px ${FONT}`;
+  ctx.save();
+  ctx.shadowColor = "rgba(24,32,26,0.35)";
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 3;
+  ctx.fillStyle = "#1b211e";
+  ctx.fillText("PERSONAL JARVIS", w / 2 + w * 0.006, brandRow(BRAND_TYPE.wordmark, h));
+  ctx.restore();
+
+  // The strapline between two brass rules.
+  const strap = brandRow(BRAND_TYPE.strapline, h);
+  spaced(ctx, w * 0.011);
+  ctx.font = BRAND_FONTS[1];
+  ctx.fillStyle = "rgba(27,33,30,0.82)";
+  ctx.fillText("AGENT HEADQUARTERS", w / 2 + w * 0.008, strap);
+  const half = ctx.measureText("AGENT HEADQUARTERS").width / 2;
+  const rule = w * 0.07, gap = w * 0.03;
+  ctx.fillStyle = "#9c7a43";
+  ctx.fillRect(w / 2 - half - gap - rule, strap - 1.5, rule, 3);
+  ctx.fillRect(w / 2 + half + gap, strap - 1.5, rule, 3);
+  spaced(ctx, 0);
+}
+
+/** The brand face's light: only the halo, black elsewhere (the emissive map, so the halo glows in any scene light). */
+function drawBrandGlow(ctx: Ctx, w: number, h: number): void {
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, w, h);
+  drawGhostHalo(ctx, w, h, "rgba(255,214,160,0.9)", w * 0.065);
 }
 
 /** The Agent board totem's portrait screen: the ghost header, team counts, agent cards and the add button. */
@@ -212,10 +296,10 @@ function drawTotem(ctx: Ctx, w: number, h: number): void {
   drawGhost(ctx, 78, 46, 70, "#f1ebe1", "#1f2925");
   ctx.fillStyle = "#f1ebe1";
   ctx.textBaseline = "middle";
-  ctx.font = "700 44px Inter, 'Segoe UI', system-ui, sans-serif";
+  ctx.font = `700 44px ${FONT}`;
   ctx.fillText("Agent board", 138, 72);
   ctx.fillStyle = "rgba(241,235,225,0.55)";
-  ctx.font = "500 24px Inter, 'Segoe UI', system-ui, sans-serif";
+  ctx.font = `500 24px ${FONT}`;
   ctx.fillText("Tap to manage your team", 138, 110);
   ctx.fillStyle = C.sage;
   ctx.fillRect(40, 148, w - 80, 3);
@@ -229,7 +313,7 @@ function drawTotem(ctx: Ctx, w: number, h: number): void {
     ctx.fillStyle = colour;
     ctx.beginPath(); ctx.arc(x + 34, 214, 9, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = "#f1ebe1";
-    ctx.font = "700 40px Inter, 'Segoe UI', system-ui, sans-serif";
+    ctx.font = `700 40px ${FONT}`;
     ctx.fillText(n, x + 56, 216);
   });
   // Agent cards: avatar, name, role, status.
@@ -254,25 +338,37 @@ function drawTotem(ctx: Ctx, w: number, h: number): void {
   roundRect(ctx, 40, h - 108, w - 80, 68, 34);
   ctx.fill();
   ctx.fillStyle = "#16201b";
-  ctx.font = "700 32px Inter, 'Segoe UI', system-ui, sans-serif";
+  ctx.font = `700 32px ${FONT}`;
   ctx.textAlign = "center";
   ctx.fillText("+  New agent", w / 2, h - 73);
   ctx.textAlign = "left";
 }
 
-/** Charcoal coir mat: a bristly weave, an oat border band and the ghost in the middle. */
+/**
+ * Charcoal coir mat: a ribbed weave, an oat border band with a fine inner
+ * line, and the mascot in oat with its yellow eyes and pupils in the middle.
+ */
 function drawMat(ctx: Ctx, w: number, h: number): void {
-  const rand = lcg(4242);
-  ctx.fillStyle = "#3b3a37";
+  ctx.fillStyle = "#353430";
   ctx.fillRect(0, 0, w, h);
-  for (let i = 0; i < 5000; i += 1) {
-    ctx.fillStyle = rand() > 0.5 ? "rgba(255,240,215,0.07)" : "rgba(0,0,0,0.16)";
-    ctx.fillRect(rand() * w, rand() * h, 2, 3);
+  // Woven ribs across the mat, then sparse lighter fibres along them.
+  for (let y = 0; y < h; y += 6) {
+    ctx.fillStyle = (y / 6) % 2 ? "rgba(0,0,0,0.12)" : "rgba(255,240,215,0.035)";
+    ctx.fillRect(0, y, w, 3);
   }
+  const rand = lcg(4242);
+  for (let i = 0; i < 2600; i += 1) {
+    ctx.fillStyle = "rgba(255,240,215,0.05)";
+    ctx.fillRect(rand() * w, rand() * h, 5, 1.5);
+  }
+  const band = w * 0.045;
   ctx.strokeStyle = "#cdbb98";
-  ctx.lineWidth = 10;
-  ctx.strokeRect(18, 18, w - 36, h - 36);
-  drawGhost(ctx, w / 2, h / 2 - w * 0.2, w * 0.4, "#cdbb98", "#3b3a37");
+  ctx.lineWidth = band;
+  ctx.strokeRect(band * 1.1, band * 1.1, w - band * 2.2, h - band * 2.2);
+  ctx.lineWidth = band * 0.18;
+  ctx.strokeRect(band * 2.6, band * 2.6, w - band * 5.2, h - band * 5.2);
+  const height = w * 0.46;
+  drawGhost(ctx, w / 2, h / 2 - height / 2, height, "#d9c9a6", C.eye, "#2a2926");
 }
 
 /** Oat wool rug: a soft weave, a sage band and a fine clay line near the edge. */
@@ -308,25 +404,49 @@ function drawCertificate(ctx: Ctx, w: number, h: number): void {
   ctx.beginPath(); ctx.arc(w * 0.5, h * 0.8, 14, 0, Math.PI * 2); ctx.fill();
 }
 
-/** A see-through canvas material (alpha from the texture); invisible where no canvas exists. */
-const alphaCache = new Map<string, MeshStandardMaterial>();
-function alphaMaterial(key: string, w: number, h: number, draw: (ctx: Ctx, w: number, h: number) => void,
-  extra: Partial<ConstructorParameters<typeof MeshStandardMaterial>[0]>): MeshStandardMaterial {
-  let material = alphaCache.get(key);
-  if (!material) {
-    const map = cachedCanvasTexture(key, w, h, draw);
-    material = new MeshStandardMaterial({ map, transparent: true, depthWrite: false, opacity: map ? 1 : 0, ...extra });
-    alphaCache.set(key, material);
-  }
+/** Sharp at a glance: the high camera sees the brand wall and the mat at a steep angle (three clamps it to the GPU's limit). */
+const OBLIQUE_ANISOTROPY = 16;
+
+/**
+ * The brand panel's face: the plaster-and-type canvas lit by the scene, plus
+ * the halo as its emissive map so the light behind the ghost glows in any
+ * scene lighting. Sage where no canvas exists.
+ */
+let brandFace: MeshStandardMaterial | null = null;
+function brandFaceMaterial(): MeshStandardMaterial {
+  if (brandFace) return brandFace;
+  const w = BRAND_FACE.px, h = Math.round((BRAND_FACE.px * BRAND_FACE.h) / BRAND_FACE.w);
+  const map = cachedCanvasTexture("lobby:brand-face", w, h, drawBrandFace);
+  const glow = cachedCanvasTexture("lobby:brand-glow", w / 4, h / 4, drawBrandGlow);
+  if (map) map.anisotropy = OBLIQUE_ANISOTROPY;
+  redrawWhenFontsLoad("lobby:brand-face", map, BRAND_FONTS, drawBrandFace);
+  brandFace = new MeshStandardMaterial({
+    color: map ? "#ffffff" : C.sage, map, roughness: 0.92,
+    emissive: glow ? "#ffffff" : "#000000", emissiveMap: glow, emissiveIntensity: 0.7,
+  });
+  return brandFace;
+}
+
+/** A canvas material whose text waits for the interface face (see `FONT`). */
+function typedCanvasMaterial(key: string, w: number, h: number, draw: (ctx: Ctx, w: number, h: number) => void,
+  fonts: readonly string[], options: Parameters<typeof canvasMaterial>[4]): MeshStandardMaterial {
+  const material = canvasMaterial(key, w, h, draw, options);
+  redrawWhenFontsLoad(key, material.map, fonts, draw);
+  return material;
+}
+
+/** The entrance mat: high enough resolution that the ghost stays crisp at the camera's grazing angle. */
+function matMaterial(): MeshStandardMaterial {
+  const material = canvasMaterial("lobby:mat", 512, 884, drawMat, { fallback: "#353430", roughness: 1 });
+  if (material.map) material.map.anisotropy = OBLIQUE_ANISOTROPY;
   return material;
 }
 
 const faces = {
-  wordmark: () => alphaMaterial("lobby:wordmark", 1024, 256, drawWordmark,
-    { color: "#fbf6ec", roughness: 0.5, emissive: "#fff0d4", emissiveIntensity: 0.55 }),
-  glow: () => alphaMaterial("lobby:glow", 256, 256, drawGlow, { color: "#ffffff", blending: AdditiveBlending, toneMapped: false }),
-  totem: () => canvasMaterial("lobby:totem", 512, 1024, drawTotem, { glow: 0.9, fallback: "#1a2320", roughness: 0.3 }),
-  mat: () => canvasMaterial("lobby:mat", 256, 384, drawMat, { fallback: "#3b3a37", roughness: 1 }),
+  brand: brandFaceMaterial,
+  totem: () => typedCanvasMaterial("lobby:totem", 512, 1024, drawTotem, [`700 44px ${FONT}`, `500 24px ${FONT}`],
+    { glow: 0.9, fallback: "#1a2320", roughness: 0.3 }),
+  mat: matMaterial,
   rug: () => canvasMaterial("lobby:rug", 512, 320, drawLobbyRug, { fallback: "#e8dfcf", roughness: 1 }),
   certificate: () => canvasMaterial("lobby:certificate", 128, 160, drawCertificate, { fallback: "#f6f1e7", roughness: 0.8 }),
 };
@@ -344,7 +464,6 @@ const LGEO = {
   cup: new CylinderGeometry(0.075, 0.03, 0.13, 24),
   handle: new TorusGeometry(0.035, 0.008, 8, 16, Math.PI),
   crystal: new ConeGeometry(0.06, 0.22, 4),
-  ring: new TorusGeometry(0.62, 0.012, 6, 72),
 };
 
 function Cyl({ radius, height, position, material, rotation, cast = true }: {
@@ -406,13 +525,14 @@ const OLIVE_GEOMETRIES: BufferGeometry[] = (() => {
 /**
  * The brand wall: pale oak slats on a linen backing between an oak plinth and
  * a cap with a warm cove light; in front a sage plaster panel between brass
- * fins carrying the ghost (ink, its eyes lit from behind) in a ring of light,
- * and the backlit wordmark under it.
+ * fins. On it the mascot stands off on brass pins in satin black, halo-lit
+ * from behind, its yellow eyes and dark pupils showing through the cut-outs,
+ * over the wordmark and strapline printed on the plaster face.
  */
 function BrandWall() {
   const w = BRAND.w;
-  const ghost = { y: 1.34, size: 0.92, z: 0.09 };
-  const halo = ghost.y + ghost.size * 0.52;
+  const ghost = { y: BRAND_GHOST.hem, size: BRAND_GHOST.size, z: BRAND_GHOST.z };
+  const front = BRAND_PANEL.z + BRAND_PANEL.d / 2;
   return (
     <group>
       <Box size={[w, 2.84, 0.15]} position={[0, 1.42, -0.1]} material={LM.linen} />
@@ -420,24 +540,31 @@ function BrandWall() {
       <Box size={[w, 0.1, 0.3]} position={[0, 0.05, -0.03]} material={LM.oakDark} />
       <Box size={[w, 0.06, 0.32]} position={[0, 2.87, -0.02]} material={LM.oakDark} />
       <Box size={[w - 0.1, 0.008, 0.02]} position={[0, 2.836, 0.12]} material={LM.led} cast={false} />
-      {/* The sage panel and its brass fins. */}
-      <Rounded size={[1.9, 2.3, 0.06]} radius={0.02} position={[0, 1.52, 0.05]} material={LM.sage} />
-      {[-0.99, 0.99].map((x) => <Box key={x} size={[0.025, 2.36, 0.07]} position={[x, 1.52, 0.055]} material={LM.brass} />)}
-      {/* The glow and the lit ring behind the ghost. */}
-      <Panel size={[1.7, 1.7]} position={[0, halo, 0.081]} material={faces.glow()} />
-      <mesh geometry={LGEO.ring} material={LM.led} position={[0, halo, 0.085]} />
+      {/* The sage panel, its plaster face with the type, and its brass fins. */}
+      <Rounded size={[BRAND_PANEL.w, BRAND_PANEL.h, BRAND_PANEL.d]} radius={0.02} position={[0, BRAND_PANEL.y, BRAND_PANEL.z]} material={LM.sage} />
+      <mesh position={[0, BRAND_PANEL.y, front + 0.0006]} material={faces.brand()} receiveShadow>
+        <planeGeometry args={[BRAND_FACE.w, BRAND_FACE.h]} />
+      </mesh>
+      {[-0.99, 0.99].map((x) => <Box key={x} size={[0.025, 2.36, 0.07]} position={[x, BRAND_PANEL.y, 0.055]} material={LM.fin} />)}
+      {/* The eyes behind the ghost's cut-outs: lit yellow, with the mascot's pupils. */}
       {GHOST_EYES.map((eye) => (
-        <mesh key={eye.x} position={[eye.x * ghost.size, ghost.y + eye.y * ghost.size, 0.083]} material={LM.eye}
+        <mesh key={eye.x} position={[eye.x * ghost.size, ghost.y + eye.y * ghost.size, front + 0.003]} material={LM.eye}
           scale={[GHOST_EYE.rx * ghost.size * 1.3, GHOST_EYE.ry * ghost.size * 1.2, 1]}>
-          <circleGeometry args={[1, 20]} />
+          <circleGeometry args={[1, 24]} />
+        </mesh>
+      ))}
+      {GHOST_PUPIL.xs.map((x) => (
+        <mesh key={x} material={LM.pupil} position={[ghostPoint(x, 0)[0] * ghost.size, ghostPoint(0, GHOST_PUPIL.y)[1] * ghost.size + ghost.y, front + 0.005]}
+          scale={[(GHOST_PUPIL.rx / GHOST_SVG.height) * ghost.size, (GHOST_PUPIL.ry / GHOST_SVG.height) * ghost.size, 1]}>
+          <circleGeometry args={[1, 16]} />
         </mesh>
       ))}
       {/* Four brass stand-off pins hold the ghost off the panel. */}
       {[[-0.2, 0.35], [0.2, 0.35], [-0.2, 0.8], [0.2, 0.8]].map(([x, y]) => (
-        <Cyl key={`${x}:${y}`} radius={0.01} height={0.02} position={[x * ghost.size, ghost.y + y * ghost.size, 0.09]} rotation={[Math.PI / 2, 0, 0]} material={LM.brass} cast={false} />
+        <Cyl key={`${x}:${y}`} radius={0.01} height={ghost.z - front + 0.01} position={[x * ghost.size, ghost.y + y * ghost.size, (front + ghost.z + 0.01) / 2]}
+          rotation={[Math.PI / 2, 0, 0]} material={LM.brass} cast={false} />
       ))}
-      <mesh geometry={GHOST_GEOMETRY} material={LM.ink} position={[0, ghost.y, ghost.z]} scale={[ghost.size, ghost.size, 0.9]} castShadow receiveShadow />
-      <Panel size={[1.72, 0.43]} position={[0, 0.74, 0.082]} material={faces.wordmark()} />
+      <mesh geometry={GHOST_GEOMETRY} material={LM.ghost} position={[0, ghost.y, ghost.z]} scale={[ghost.size, ghost.size, 0.9]} castShadow receiveShadow />
     </group>
   );
 }

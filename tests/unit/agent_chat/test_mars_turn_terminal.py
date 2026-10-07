@@ -51,9 +51,9 @@ def test_terminal_lookup_is_exactly_session_and_turn_scoped(store):
     assert store.turn_terminal("society:one", "missing-turn") is None
 
 
-def test_latest_durable_terminal_wins_without_reading_other_event_kinds(store):
-    _terminal(store, "society:one", "target", "done")
-    latest = _terminal(store, "society:one", "target", "cancelled")
+def test_stale_cancellation_cannot_replace_a_durable_completion(store):
+    first = _terminal(store, "society:one", "target", "done")
+    _terminal(store, "society:one", "target", "cancelled")
     store.append_event(
         "society:one",
         make_event(
@@ -62,9 +62,9 @@ def test_latest_durable_terminal_wins_without_reading_other_event_kinds(store):
         ),
     )
     record = store.turn_terminal("society:one", "target")
-    assert record["seq"] == latest["seq"]
+    assert record["seq"] == first["seq"]
     assert record["kind"] == "turn_finished"
-    assert record["payload"]["status"] == "cancelled"
+    assert record["payload"]["status"] == "done"
 
 
 def test_turn_reference_is_a_bound_sql_value(store):

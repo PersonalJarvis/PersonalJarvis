@@ -113,7 +113,7 @@ async def test_a_picture_that_may_not_be_kept_is_never_handed_to_the_card(monkey
 
     sent: list[bytes] = []
 
-    async def attach(image: bytes) -> None:
+    async def attach(image: bytes, shot_id: str = "") -> None:
         sent.append(image)
 
     monkeypatch.setattr(effect, "attach_card_image", attach)
@@ -143,4 +143,4 @@ def test_the_card_hint_follows_the_app_language() -> None:
     assert card_hint(Cfg) == _CARD_HINTS["de"]
     Cfg.ui.language = "auto"
     assert card_hint(Cfg) == _CARD_HINTS["en"]
-    assert set(_CARD_HINTS) == {"de", "en", "es"}
+    assert set(_CARD_HINTS) == {"de", "en", "es", "zh"}

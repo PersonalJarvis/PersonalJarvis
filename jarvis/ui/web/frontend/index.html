@@ -45,6 +45,11 @@
         var root = document.documentElement;
         root.classList.toggle("dark", mode === "dark");
         root.style.colorScheme = mode;
+        // The appshot editor window shows no boot splash: it is the editor or
+        // nothing, never the app's start-up screen in front of a picture.
+        if (new URLSearchParams(location.search).get("view") === "appshot-editor") {
+          root.classList.add("jarvis-quiet-boot");
+        }
         window.__JARVIS_BOOT_STARTED_AT = performance.now();
       })();
     </script>
@@ -98,6 +103,16 @@
         --jbs-sub: #7a7a7a;
       }
       html, body { margin: 0; height: 100%; background: var(--jbs-bg); }
+      /* The editor window is created hidden. Laid out that way, `100vh` can
+         stay 0 after the window is shown, and a shell sized with it collapses
+         to nothing — the window is only this ground colour, with no toolbar.
+         The editor fills the viewport with `fixed inset-0`. `#root` is a real
+         box too, so anything still sized in percent has a height to fill. */
+      html.jarvis-quiet-boot, html.jarvis-quiet-boot body, html.jarvis-quiet-boot #root {
+        height: 100%;
+        min-height: 100%;
+      }
+      .jarvis-quiet-boot #jarvis-boot-splash { display: none !important; }
       #jarvis-boot-splash {
         position: fixed; inset: 0; z-index: 2147483000;
         display: flex; flex-direction: column;
@@ -477,6 +492,15 @@
               unknown: "Kein Grund gemeldet.", // i18n-allow
               hint: "Das passiert, wenn ein Bereich beim Öffnen abstürzt oder die Oberfläche neu gebaut wird, während das Fenster offen ist.", // i18n-allow
               button: "Neu laden", // i18n-allow
+            };
+          }
+          if (lang === "zh") {
+            return {
+              title: "界面没有加载出来。", // i18n-allow
+              why: "原因：", // i18n-allow
+              unknown: "没有报告原因。", // i18n-allow
+              hint: "当某个区域打开时崩溃，或在窗口打开期间界面被重新构建时，就会出现这种情况。", // i18n-allow
+              button: "重新加载", // i18n-allow
             };
           }
           if (lang === "es") {

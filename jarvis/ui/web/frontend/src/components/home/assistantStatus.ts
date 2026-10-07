@@ -79,12 +79,13 @@ export function useVoiceModeSwitch() {
   const exit = useCallback(() => {
     if (active && !busy) void toggleCall();
     setSurface("chat");
+    if (useHomeStore.getState().freshVoicePending) return;
     if (useAgentChatStore.getState().activeSessionId) return;
     // A call from a blank page opened its chat on the backend: show it.
     void fetchVoiceChat()
       .then(({ session_id: sessionId }) => {
         const chat = useAgentChatStore.getState();
-        if (!sessionId || chat.activeSessionId) return;
+        if (!sessionId || chat.activeSessionId || useHomeStore.getState().freshVoicePending) return;
         chat.openSession(sessionId);
         void chat.loadSessions();
       })

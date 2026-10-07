@@ -1,9 +1,12 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TopBar, TopBarActions } from "./TopBar";
-import { ThemeProvider } from "@/hooks/useTheme";
+import { TopBar } from "./TopBar";
 import { useEventStore } from "@/store/events";
 import { resetSectionHistory } from "@/hooks/useSectionHistory";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { useThreadTerminalsStore } from "@/store/threadTerminals";
+import { useWorkspacePanesStore } from "@/store/workspacePanes";
 
 vi.mock("@/hooks/useUpdate", () => ({
   useUpdate: () => ({ status: { managed: false, update_available: false } }),
@@ -13,141 +16,78 @@ vi.mock("@/components/MascotGigi", () => ({
 }));
 
 // The caption is on every screen. Tests still name the section so a later
-// change cannot quietly hide Restart on one of them.
+// change cannot quietly drop back/forward on one of them.
 beforeEach(() => {
   useEventStore.setState({
     activeSection: "dictation",
     solo: false,
     detachedViews: [],
   });
+  // The shut side panel's toggle counts waiting agents; no poll leaves the test.
+  useWorkspacePanesStore.setState({ panes: [], load: async () => {} });
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("TopBar detach button", () => {
-  it("offers the sidebar toggle with its current state", () => {
-    const onToggle = vi.fn();
-    const { rerender } = render(<TopBar navToggle={{ collapsed: true, onToggle }} />);
-    const toggle = screen.getByTestId("section-nav-sidebar");
-    expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledOnce();
-    rerender(<TopBar navToggle={{ collapsed: false, onToggle }} />);
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("offers 'own window' on the detachable sections only", () => {
+describe("TopBar caption buttons", () => {
+  it("carries no theme, restart or own-window toggles", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
     render(<TopBar />);
-    expect(screen.getByTestId("detach-view-button")).toBeTruthy();
-
-    cleanup();
-    useEventStore.setState({ activeSection: "settings" });
-    render(<TopBar />);
+    expect(screen.queryByTestId("theme-toggle")).toBeNull();
     expect(screen.queryByTestId("detach-view-button")).toBeNull();
-  });
-
-  it("never renders inside a solo window (no detaching a detached view)", () => {
-    useEventStore.setState({ solo: true });
-    render(<TopBarActions />);
-    expect(screen.queryByTestId("detach-view-button")).toBeNull();
+    expect(screen.queryByTestId("section-nav-sidebar")).toBeNull();
+    expect(screen.queryByRole("button", { name: /restart/i })).toBeNull();
   });
 });
 
-describe("TopBar restart button", () => {
-  it("renders a restart button labelled in the active locale", () => {
+describe("TopBar side panel toggle", () => {
+  it("opens and closes the IDE side panel from the caption", () => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeSidePanelStore.setState({ open: false, maximized: false });
     render(<TopBar />);
-    expect(
-      screen.getByRole("button", { name: /restart/i }),
-    ).toBeTruthy();
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(useIdeSidePanelStore.getState().open).toBe(true);
+    fireEvent.click(screen.getByTestId("ide-side-panel-toggle"));
+    expect(useIdeSidePanelStore.getState().open).toBe(false);
   });
 
-  it("requires a confirming second click before it calls the backend", () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("stays out of every other section", () => {
     render(<TopBar />);
-    // First click only arms the confirmation — no network call yet.
-    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    // The button now asks for confirmation.
-    expect(
-      screen.getByRole("button", { name: /confirm restart/i }),
-    ).toBeTruthy();
+    expect(screen.queryByTestId("ide-side-panel-toggle")).toBeNull();
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+  });
+});
+
+describe("TopBar terminal drawer toggle", () => {
+  beforeEach(() => {
+    useEventStore.setState({ activeSection: "agentic-ide" });
+    useIdeSidePanelStore.setState({ open: false, maximized: false });
+    useThreadTerminalsStore.setState({ folder: "/code/app", open: false, shells: [], active: {} });
+  });
+  afterEach(() => useIdeThreadsStore.setState({ layout: "grid" }));
+
+  it("sits before the side panel toggle in the thread layout and starts a shell", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    render(<TopBar />);
+    const terminal = screen.getByTestId("thread-terminal-toggle");
+    const panel = screen.getByTestId("ide-side-panel-toggle");
+    expect(terminal.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(terminal);
+    expect(useThreadTerminalsStore.getState()).toMatchObject({ open: true });
+    expect(useThreadTerminalsStore.getState().shells).toHaveLength(1);
   });
 
-  it("POSTs to /api/settings/restart-app on the confirming click", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("is not offered in the terminal grid", () => {
+    useIdeThreadsStore.setState({ layout: "grid" });
     render(<TopBar />);
-    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /confirm restart/i }));
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
-    const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/settings/restart-app");
-    expect(opts?.method).toBe("POST");
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
+    expect(screen.getByTestId("ide-side-panel-toggle")).toBeTruthy();
   });
 
-  it("on 409 surfaces running missions and the next click forces the restart", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        json: async () => ({
-          detail: {
-            error: "missions_running",
-            missions: [{ id: "a", title: "research" }],
-          },
-        }),
-      })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true }) });
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("steps aside while a maximized side panel covers the thread", () => {
+    useIdeThreadsStore.setState({ layout: "threads" });
+    useIdeSidePanelStore.setState({ open: true, maximized: true });
     render(<TopBar />);
-    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /confirm restart/i }));
-
-    // The guard refused: the button now offers a force restart instead.
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /restart anyway/i }),
-      ).toBeTruthy();
-    });
-
-    // The first POST carried NO force flag (the mission was not killed).
-    expect(fetchMock.mock.calls[0][0]).not.toContain("force");
-
-    // Forcing it sends force=true.
-    fireEvent.click(screen.getByRole("button", { name: /restart anyway/i }));
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-    });
-    expect(fetchMock.mock.calls[1][0]).toContain("force=true");
-  });
-
-  it("surfaces a failed restart instead of leaving the button stuck", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: false, status: 503 });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<TopBar />);
-    fireEvent.click(screen.getByRole("button", { name: /^restart$/i }));
-    fireEvent.click(screen.getByRole("button", { name: /confirm restart/i }));
-
-    // After the failure the button returns to its idle, re-clickable state.
-    await waitFor(() => {
-      expect(
-        screen.getByRole("button", { name: /^restart$/i }),
-      ).toBeTruthy();
-    });
+    expect(screen.queryByTestId("thread-terminal-toggle")).toBeNull();
   });
 });
 
@@ -168,16 +108,6 @@ describe("TopBar section navigation", () => {
       cleanup();
     },
   );
-
-  it("offers the sidebar toggle from the caption and hands the click to the shell", () => {
-    const onToggle = vi.fn();
-    render(<TopBar navToggle={{ collapsed: false, onToggle }} />);
-
-    const toggle = screen.getByTestId("section-nav-sidebar");
-    expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    fireEvent.click(toggle);
-    expect(onToggle).toHaveBeenCalledOnce();
-  });
 
   it("stays out of a detached solo window", () => {
     useEventStore.setState({ solo: true });
@@ -202,26 +132,24 @@ describe("TopBar caption on every section", () => {
       expect(screen.queryByTestId("window-controls")).toBeNull();
       fireEvent.doubleClick(screen.getByTestId("window-caption").querySelector(".pywebview-drag-region")!);
       expect(fetchMock.mock.calls.some(([url]) => url === "/api/window/command")).toBe(false);
-      expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
     } finally {
       delete (window as unknown as { pywebview?: unknown }).pywebview;
     }
   });
 
   it.each(["chats", "agents", "agentic-ide-classic", "dictation"] as const)(
-    "keeps restart on %s",
+    "renders the caption on %s",
     (section) => {
       useEventStore.setState({ activeSection: section });
       render(<TopBar />);
       const caption = screen.getByTestId("window-caption");
       expect(caption.className).not.toContain("jarvis-shell-surface");
       expect(caption).toBeTruthy();
-      expect(screen.getByRole("button", { name: /^restart$/i })).toBeTruthy();
       expect(screen.queryByTestId("window-close")).toBeNull();
     },
   );
 
-  it("places theme and restart immediately before the window buttons", async () => {
+  it("keeps the window buttons at the right end of the caption", async () => {
     (window as unknown as { pywebview?: { api: object } }).pywebview = { api: {} };
     vi.stubGlobal(
       "fetch",
@@ -231,17 +159,9 @@ describe("TopBar caption on every section", () => {
       }),
     );
 
-    render(
-      <ThemeProvider>
-        <TopBar />
-      </ThemeProvider>,
-    );
+    render(<TopBar />);
 
     const minimize = await screen.findByTestId("window-minimize");
-    const restart = screen.getByRole("button", { name: /^restart$/i });
-    const theme = screen.getByTestId("theme-toggle");
-    expect(theme.compareDocumentPosition(restart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(restart.compareDocumentPosition(minimize) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(minimize.compareDocumentPosition(screen.getByTestId("window-close")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     delete (window as unknown as { pywebview?: unknown }).pywebview;

@@ -107,11 +107,13 @@ The following ADs are **refined** by empirical findings from `docs/spike-results
   | `openrouter` | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` |
   | `grok` | `xai` | `XAI_API_KEY` (fallback `GROK_API_KEY`) | (Grok key) |
   | `nvidia` | `nvidia` | `NVIDIA_API_KEY` | `nvidia_api_key` |
+  | `vertex` | `vertex` | `VERTEX_API_KEY` (fallback `GOOGLE_VERTEX_API_KEY`; ADC may be keyless) | Vertex key / Google Cloud ADC |
   | `ollama` | `ollama` | — (keyless) | — |
   | `local-openai` | `local-openai` | — (keyless) | — |
 
-  The last three rows do not run on the external CLI worker: they are
-  OpenAI-compatible API brains served by the in-process `ApiAgentWorker`. Their
+  The last four rows do not run on the external CLI worker: they are
+  API brains served by the in-process `ApiAgentWorker`. Vertex may authenticate
+  through a stored key or Google Cloud Application Default Credentials. Their
   rows exist so each is selectable as a Jarvis-Agent in the API-Keys view —
   without a row, a user running a local model could not pick it at all.
   `ollama` and `local-openai` are keyless by design: no Agent key slot exists,

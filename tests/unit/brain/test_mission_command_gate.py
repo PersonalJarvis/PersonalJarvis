@@ -150,6 +150,12 @@ def test_cancel_en_positive(phrase: str) -> None:
         "Open my browser",                             # generic action
         "Schreib eine E-Mail an Anna",                 # action verb, no status  # i18n-allow
         "What's the weather?",                         # status-like, but not 'the status'
+        # An OpenClaw society agent is not the retired mission worker.
+        "Stop the OpenClaw agent",
+        "Stoppe den OpenClaw-Agenten",  # i18n-allow
+        "Is the openclaw agent still running?",
+        "Status vom OpenClaw Agent",  # i18n-allow
+        "Cancel openclaw-agent",
     ],
 )
 def test_negative_no_match(phrase: str) -> None:

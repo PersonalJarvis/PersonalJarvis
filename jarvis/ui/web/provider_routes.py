@@ -1328,6 +1328,18 @@ async def list_providers(request: Request) -> dict[str, Any]:
     return {"providers": await asyncio.to_thread(_build)}
 
 
+@router.get("/providers/families")
+async def list_provider_families() -> dict[str, Any]:
+    """The catalog folded into one entry per company (see ``provider_families``).
+
+    Presence only — never a key value. Built off the event loop: every family
+    reads its key slots from the OS keyring.
+    """
+    from .provider_families import build_families
+
+    return {"families": await asyncio.to_thread(build_families)}
+
+
 # Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
 # timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
 # individual probe; this outer bound guarantees the HTTP response itself. Local
@@ -3326,7 +3338,10 @@ async def managed_server_setup(request: Request) -> dict[str, Any]:
         body = await request.json()
     except Exception as exc:  # noqa: BLE001 - malformed JSON is a client error
         raise HTTPException(status_code=400, detail="a JSON request body is required") from exc
-    brain_model = str((body or {}).get("brain_model", "") or "").strip()
+    if not isinstance(body, dict):
+        # A JSON array or scalar used to reach ``.get`` and answer 500.
+        raise HTTPException(status_code=400, detail="the request body must be a JSON object")
+    brain_model = str(body.get("brain_model", "") or "").strip()
     voice_model = str((body or {}).get("voice_model", "") or "").strip()
     if not brain_model or not voice_model:
         raise HTTPException(

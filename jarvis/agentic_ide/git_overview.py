@@ -33,6 +33,7 @@ import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +43,13 @@ from jarvis.agentic_ide import github_link
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 _GIT_TIMEOUT_S = 8.0
-#: Most local branches listed; the newest by commit date win.
-MAX_BRANCHES = 60
+#: Most local branches listed; the newest by commit date win. High enough that
+#: a busy repository shows every branch; the cap only guards a pathological one.
+MAX_BRANCHES = 1000
 #: Most GitHub-only branches listed beside the local ones.
-MAX_REMOTE_ONLY = 30
+MAX_REMOTE_ONLY = 1000
+#: GitHub branch pages (100 names each) read beyond the first CI-bearing page.
+MAX_REF_PAGES = 10
 #: Most target branches a "merged into" check runs against (one git call each).
 MAX_MERGE_TARGETS = 4
 #: Pull requests kept per branch (the most relevant first).
@@ -93,6 +97,19 @@ fragment Rollup on StatusCheckRollup {
         checkSuite { workflowRun { url } }
       }
       ... on StatusContext { context state targetUrl }
+    }
+  }
+}
+"""
+
+# Every branch name on GitHub, without CI: the main query carries CI for the
+# newest branches only, so older ones would otherwise never show up.
+_REFS_QUERY = """
+query($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    refs(refPrefix: "refs/heads/", first: 100, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes { name target { ... on Commit { oid committedDate } } }
     }
   }
 }
@@ -341,6 +358,8 @@ class _GitHubSnapshot:
     prs: list[PullRequest] = field(default_factory=list)
     #: Branch name → (tip oid, CI of that tip).
     refs: dict[str, tuple[str, CiStatus]] = field(default_factory=dict)
+    #: Branch name → its tip's commit time (unix seconds), for remote-only rows.
+    ref_dates: dict[str, int] = field(default_factory=dict)
 
     @property
     def busy(self) -> bool:
@@ -387,7 +406,21 @@ def parse_github(payload: dict[str, Any], fetched_at: float = 0.0) -> _GitHubSna
             oid[:12],
             ci_from_rollup(target.get("statusCheckRollup"), oid),
         )
+        stamp = _iso_to_unix(str(target.get("committedDate") or ""))
+        if stamp:
+            snap.ref_dates[str(node["name"])] = stamp
     return snap
+
+
+def _iso_to_unix(value: str) -> int:
+    """GitHub's ISO-8601 timestamp as unix seconds; 0 when it is missing or malformed."""
+    if not value:
+        return 0
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        # An unreadable date only hides the row's date; the row itself stays.
+        return 0
 
 
 def _fetch_github(repo: str, token: str) -> _GitHubSnapshot:
@@ -397,7 +430,40 @@ def _fetch_github(repo: str, token: str) -> _GitHubSnapshot:
         payload = github_link.graphql(token, _QUERY, {"owner": owner, "name": name})
     except github_link.GitHubError as exc:  # shown in the tab as github.reason/code
         return _GitHubSnapshot(ok=False, reason=str(exc), code=exc.code, fetched_at=now)
-    return parse_github(payload, fetched_at=now)
+    snap = parse_github(payload, fetched_at=now)
+    if snap.ok:
+        _add_all_refs(snap, token, owner, name)
+    return snap
+
+
+def _add_all_refs(snap: _GitHubSnapshot, token: str, owner: str, name: str) -> None:
+    """Add every other GitHub branch (without CI) to ``snap``, page by page."""
+    after: str | None = None
+    for _ in range(MAX_REF_PAGES):
+        try:
+            payload = github_link.graphql(
+                token, _REFS_QUERY, {"owner": owner, "name": name, "after": after}
+            )
+        except github_link.GitHubError as exc:
+            # The CI-bearing first page already landed; older branches just stay hidden.
+            logger.debug("Git overview: branch list page failed: {}", exc.code)
+            return
+        repo = ((payload or {}).get("data") or {}).get("repository") or {}
+        refs = repo.get("refs") or {}
+        for node in refs.get("nodes") or []:
+            if not isinstance(node, dict) or not node.get("name"):
+                continue
+            ref_name = str(node["name"])
+            target = node.get("target") or {}
+            if ref_name not in snap.refs:
+                snap.refs[ref_name] = (str(target.get("oid") or "")[:12], CiStatus())
+            stamp = _iso_to_unix(str(target.get("committedDate") or ""))
+            if stamp:
+                snap.ref_dates.setdefault(ref_name, stamp)
+        page = refs.get("pageInfo") or {}
+        after = page.get("endCursor")
+        if not page.get("hasNextPage") or not after:
+            return
 
 
 class _GitHubCache:
@@ -427,13 +493,29 @@ class _GitHubCache:
             self._entries[key] = snap
             return snap
 
-    def get(self, key: str, token: str, *, force: bool = False) -> _GitHubSnapshot:
-        """``key`` is the repository (``owner/name``)."""
+    def get(
+        self, key: str, token: str, *, force: bool = False, wait: bool = True
+    ) -> _GitHubSnapshot | None:
+        """``key`` is the repository (``owner/name``).
+
+        With ``wait=False`` a repository read for the first time answers None at
+        once and loads in the background: the first GitHub read takes seconds,
+        and the local branches should not wait for it.
+        """
         with self._guard:
             lock = self._locks.setdefault(key, threading.Lock())
             snap = self._entries.get(key)
-        if snap is None or force:
+        if force or (snap is None and wait):
             return self._load(key, token, lock, force)
+        if snap is None:
+            if not lock.locked():
+                threading.Thread(
+                    target=self._load,
+                    args=(key, token, lock, False),
+                    name="git-overview-github",
+                    daemon=True,
+                ).start()
+            return None
         if not self._fresh(snap, time.time(), False) and not lock.locked():
             # Stale-while-revalidate: a poll never waits seconds for GitHub;
             # it gets the last answer now and the new one on its next tick.
@@ -576,7 +658,9 @@ def _attach_github(row: BranchRow, remote: str, snap: _GitHubSnapshot) -> None:
             )
 
 
-def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapshot | None:
+def _github_for(
+    root: Path, info: RepoOverview, refresh: bool, wait: bool = True
+) -> _GitHubSnapshot | None:
     """GitHub's answer for the repository picked for ``root``, or None with
     ``info.github`` saying what is missing (a connection, or the choice)."""
     state = info.github
@@ -592,7 +676,12 @@ def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapsho
         state.reason = "Pick which GitHub repository this folder is."
         state.suggested_repo = github_link.remote_repository(root)
         return None
-    snap = _CACHE.get(state.repo, cred.token, force=refresh)
+    snap = _CACHE.get(state.repo, cred.token, force=refresh, wait=wait)
+    if snap is None:
+        state.code = "loading"
+        state.reason = "Reading pull requests and CI from GitHub…"
+        state.repo_url = f"https://github.com/{state.repo}"
+        return None
     state.available = snap.ok
     state.reason = snap.reason
     state.code = snap.code
@@ -601,8 +690,39 @@ def _github_for(root: Path, info: RepoOverview, refresh: bool) -> _GitHubSnapsho
     return snap if snap.ok else None
 
 
-def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) -> RepoOverview:
-    """Branches of the repository ``folder`` is in, with merge, PR and CI state."""
+def branch_checkout(folder: str | Path, branch: str) -> Path | None:
+    """The folder ``branch`` is checked out in — this one or a linked worktree.
+
+    None when no checkout of that branch exists on this computer (or the folder
+    is gone): the caller then has nothing local to open.
+    """
+    if not branch:
+        return None
+    path = Path(folder).expanduser()
+    text = _out(["worktree", "list", "--porcelain"], path) if path.is_dir() else None
+    tree = ""
+    for line in (text or "").splitlines():
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            tree = value.strip()
+        elif key == "branch" and value.strip() == f"refs/heads/{branch}" and tree:
+            found = Path(tree)
+            return found if found.is_dir() else None
+    return None
+
+
+def overview(
+    folder: str | Path,
+    *,
+    refresh: bool = False,
+    github: bool = True,
+    wait_for_github: bool = True,
+) -> RepoOverview:
+    """Branches of the repository ``folder`` is in, with merge, PR and CI state.
+
+    ``wait_for_github=False`` answers a repository's very first read with the
+    local branches only (``github.code == "loading"``) while GitHub loads.
+    """
     path = Path(folder).expanduser()
     if not path.is_dir():
         return RepoOverview(available=False, reason="The workspace folder is missing.")
@@ -625,7 +745,7 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
 
     snap: _GitHubSnapshot | None = None
     if github:
-        snap = _github_for(root, info, refresh)
+        snap = _github_for(root, info, refresh, wait_for_github)
 
     # Current and default branch always make the list, however old they are.
     keep = {head, info.default_branch}
@@ -650,9 +770,13 @@ def overview(folder: str | Path, *, refresh: bool = False, github: bool = True) 
         for name, (oid, _ci) in snap.refs.items():
             if name in known:
                 continue
-            row = BranchRow(name=name, remote_only=True, head=oid)
+            row = BranchRow(
+                name=name, remote_only=True, head=oid, committed_at=snap.ref_dates.get(name, 0)
+            )
             _attach_github(row, name, snap)
             info.remote_branches.append(row)
             if len(info.remote_branches) >= MAX_REMOTE_ONLY:
                 break
+        # Newest first, like the local list; the later pages arrive in name order.
+        info.remote_branches.sort(key=lambda row: row.committed_at, reverse=True)
     return info

@@ -32,24 +32,26 @@ describe("DocsOverview", () => {
     expect(screen.getByRole("status")).toBeTruthy();
   });
 
-  it("renders local quick links and opens the redesigned online docs", async () => {
+  it("draws the first topic as a reading path and the rest as topic cards", async () => {
+    const doc = (slug: string, title: string, section: string, order: number) => ({
+      title,
+      slug,
+      diataxis: "howto",
+      summary: `About ${title}.`,
+      section,
+      section_order: order,
+      order: 1,
+      tags: [],
+      related: [],
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         new Response(
           JSON.stringify({
-            unclassified: [
-              {
-                title: "Architecture overview",
-                slug: "architecture-overview",
-                diataxis: "unclassified",
-                summary: "See how the main parts work together.",
-                section: "Reference",
-                section_order: 7,
-                order: 1,
-                tags: [],
-                related: [],
-              },
+            howto: [
+              doc("welcome", "Welcome", "Start here", 1),
+              doc("architecture-overview", "Architecture overview", "Reference", 7),
             ],
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -59,17 +61,25 @@ describe("DocsOverview", () => {
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
       .mockResolvedValue(true);
-
-    renderOverview();
-
-    await waitFor(() => {
-      expect(screen.getByText("Architecture overview")).toBeTruthy();
-      expect(screen.getByText("Browse by Topic")).toBeTruthy();
+    const selected: string[] = [];
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    fireEvent.click(
-      screen.getByRole("link", { name: /open redesigned online docs/i }),
+    render(
+      <QueryClientProvider client={client}>
+        <DocsOverview onSelect={(slug) => selected.push(slug)} />
+      </QueryClientProvider>,
     );
 
+    await waitFor(() => {
+      expect(screen.getByText("Get started")).toBeTruthy();
+      expect(screen.getByText("Browse by topic")).toBeTruthy();
+    });
+    expect(screen.getByText("Welcome")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Architecture overview/ }));
+    expect(selected).toEqual(["architecture-overview"]);
+
+    fireEvent.click(screen.getByRole("link", { name: /view on github/i }));
     expect(openSpy).toHaveBeenCalledWith("https://github.com/PersonalJarvis/PersonalJarvis/tree/main/docs");
   });
 });

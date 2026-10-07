@@ -4219,13 +4219,21 @@ class OrbOverlay:
         """Starts a named animation (e.g. 'wave', 'salute', 'think').
 
         Thread-safe: queued via ``root.after(0, ...)`` onto the Tk mainloop.
-        Only works with the MascotRenderer.
+        The pet handles the activation wave as a short listening nod.
 
         Stacking behavior: several animations can run at the same time.
         Calling play_animation('wave') again while a 'wave' is still active
         adds a second instance — this is intentional (multiple waves).
         To "replace" it, call stop_animation('wave') first.
         """
+        if isinstance(self._renderer, PetRenderer):
+            if name == "wave":
+                def _greet() -> None:
+                    if isinstance(self._renderer, PetRenderer):
+                        self._renderer.greet()
+                        self._kick_frame()
+                self._enqueue_ui(_greet)
+            return
         if not isinstance(self._renderer, MascotRenderer):
             return
         if name not in ANIMATION_REGISTRY:

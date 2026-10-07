@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppWindow, Download, RotateCw } from "lucide-react";
+import { Download } from "lucide-react";
 
-import { useEventStore, type SectionId } from "@/store/events";
+import { useEventStore } from "@/store/events";
 import {
   fetchUpdateProgress,
   useUpdate,
@@ -12,29 +12,32 @@ import { fill, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { CodingModeBadge } from "@/components/layout/CodingModeBadge";
 import { SectionNavButtons } from "@/components/layout/SectionNavButtons";
-import { ThemeToggle } from "@/components/layout/ThemeToggle";
+import { IdeLayoutSwitch } from "@/components/agentic/threads/IdeLayoutSwitch";
+import { IDE_SECTIONS } from "@/lib/ideSections";
 import { IdeSidePanelToggle } from "@/components/agentic/sidePanel/IdeSidePanelToggle";
+import { ThreadTerminalToggle } from "@/components/agentic/threads/ThreadTerminalToggle";
+import { useIdeSidePanelStore } from "@/store/ideSidePanel";
+import { useIdeThreadsStore } from "@/store/ideThreads";
+import { WikiInspectorToggle } from "@/components/wiki/WikiInspectorToggle";
 import { useDesktopChrome, WindowControls } from "@/components/layout/WindowControls";
-import { hasEmbeddedDesktopBridge } from "@/components/voice/BrowserRealtimeControl";
-import { openExternalUrl } from "@/lib/openExternal";
 
 /**
  * The window's title strip, on every screen.
  *
- * It is one thin row at the top of the window: drag the empty part to move
- * the window, and the right end holds the app buttons (theme, restart, and
- * an update when one exists) immediately beside minimize, maximize and close.
- * Sections do not grow a second bar for those buttons.
+ * It is one thin row at the top of the window: back/forward at the left, the
+ * empty middle to drag the window, and minimize, maximize and close at the
+ * right. Theme, restart and the sidebar toggles are not caption buttons; the
+ * theme lives in Settings. On the Agentic IDE the caption also carries the
+ * panel toggles beside the window buttons: the thread layout's terminal
+ * drawer, then the side panel.
  *
- * The backend already ships the self-restart machinery: restart and update
- * POST to ``/api/settings/restart-app``, which spawns a detached relauncher
- * (see jarvis/ui/relauncher.py). On a headless host that endpoint returns 503
- * and we recover with an honest toast.
- *
- * A restart tears down the whole app mid-task, so both buttons honor the
- * mission guard (409 → arm a force override) rather than killing live missions
- * silently. We avoid a native ``window.confirm`` on purpose — it blocks the
- * pywebview loop.
+ * The update button below (rendered in the sidebar) restarts through
+ * ``/api/settings/restart-app``, which spawns a detached relauncher (see
+ * jarvis/ui/relauncher.py). On a headless host that endpoint returns 503 and
+ * we recover with an honest toast. A restart tears down the whole app
+ * mid-task, so it honors the mission guard (409 → arm a force override)
+ * rather than killing live missions silently. We avoid a native
+ * ``window.confirm`` on purpose — it blocks the pywebview loop.
  */
 const CONFIRM_TIMEOUT_MS = 4000;
 
@@ -71,15 +74,7 @@ const CHROME_QUIET = "text-muted-foreground hover:bg-secondary hover:text-foregr
  */
 const CHROME_ARMED = "bg-warning text-background";
 
-export function TopBar({ navToggle }: {
-  /**
-   * The sidebar toggle the caption owns. State lives in the shell (App.tsx):
-   * the sidebar header no longer carries its own button — it moved here, next
-   * to back/forward, so the leading controls sit in the empty caption corner
-   * on every section.
-   */
-  navToggle?: { collapsed: boolean; onToggle: () => void };
-} = {}) {
+export function TopBar() {
   const chrome = useDesktopChrome();
   const controls = chrome.frameless ? chrome.controls : "none";
 
@@ -87,24 +82,28 @@ export function TopBar({ navToggle }: {
     // One title strip for the whole window. The empty middle is the drag
     // handle (pywebview only starts a drag on this class, not on a child
     // button — so the buttons sit beside it, never inside it).
+    // `pointer-events-auto` keeps the strip live while a modal dialog has set
+    // `pointer-events: none` on <body>: the full-window Settings hub leaves
+    // the caption visible, and its window controls must still work.
     <div
       data-testid="window-caption"
-      className="fixed inset-x-0 top-0 z-[120] flex h-8 items-stretch bg-transparent"
+      className="pointer-events-auto fixed inset-x-0 top-0 z-[120] flex h-8 items-stretch bg-transparent"
     >
       {controls === "leading" && (
         <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
       )}
-      <SectionNavButtons sidebarToggle={navToggle} />
+      <SectionNavButtons />
       <div
         className="pywebview-drag-region min-w-0 flex-1"
         onDoubleClick={() => {
           if (chrome.frameless) chrome.command("maximize");
         }}
       />
+      <IdeCaptionSwitch />
       <div className="flex shrink-0 items-center">
         <CodingModeBadge />
-        <TopBarActions />
-        <IdeSidePanelToggle />
+        <IdeCaptionPanelToggle />
+        <WikiCaptionPanelToggle />
         {controls === "trailing" && (
           <WindowControls controls={controls} maximized={chrome.maximized} onCommand={chrome.command} />
         )}
@@ -114,223 +113,42 @@ export function TopBar({ navToggle }: {
 }
 
 /**
- * The app-chrome ACTIONS, without the bar around them.
- *
- * Separate from `TopBar` so a view that already has a header row can carry them
- * in it rather than under a second one. They are the same components either
- * way — a screen that had its own copy of "restart the app" would drift from
- * this one within a release.
+ * The Agentic IDE's grid / threads switch, centred in the caption. Only on the
+ * IDE: everywhere else the caption's middle stays the window's drag handle.
+ * It floats over that handle rather than splitting it, so the strip keeps
+ * dragging on both sides of the switch.
  */
-export function TopBarActions() {
+function IdeCaptionSwitch() {
+  const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
+  if (!onIde) return null;
   return (
-    <>
-      <ThemeToggle />
-      <DetachButton />
-      <RestartButton />
-    </>
+    <div className="pointer-events-none absolute inset-y-0 left-1/2 flex -translate-x-1/2 items-center">
+      <IdeLayoutSwitch className="pointer-events-auto" />
+    </div>
   );
 }
 
-/**
- * The views the desktop shell can split off into their own solo window.
- * Mirrors the backend ``DETACHABLE_VIEWS`` registry (jarvis/ui/desktop_app.py)
- * — the server validates again, this set only decides where the button shows.
- */
-const DETACHABLE_SECTIONS = new Set<SectionId>([
-  "agentic-ide",
-  "agentic-ide-classic",
-  "chat-workspace",
-  "chats",
-  "dictation",
-  "dictionary",
-  "voice-shortcuts",
-  "voice-language",
-  "voice-api-keys",
-  "visualization",
-]);
-
-/**
- * "Open this view in its own window" — the detach entry point.
- *
- * Bridge-first like `openExternalUrl`: inside the embedded desktop shell the
- * backend spawns a real second pywebview window (WebView2 silently drops
- * `window.open`, so the frontend cannot do it itself); in a plain browser the
- * solo URL simply opens as a new tab. A shell whose webview backend cannot
- * create runtime windows answers `ok: false` with a fallback URL and the view
- * opens in the user's real browser instead — honest on every host. Idempotent:
- * re-clicking while detached focuses the existing window.
- */
-function DetachButton() {
-  const t = useT();
-  const activeSection = useEventStore((s) => s.activeSection);
-  const solo = useEventStore((s) => s.solo);
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [busy, setBusy] = useState(false);
-
-  // A solo window never detaches further, and most sections have no solo mode.
-  if (solo || !DETACHABLE_SECTIONS.has(activeSection)) return null;
-
-  async function onClick() {
-    if (busy) return;
-    const view = activeSection;
-    const soloPath = `/?view=${view}&solo=1`;
-    if (!hasEmbeddedDesktopBridge()) {
-      // A real browser: a tab of this same browser IS the detached window.
-      window.open(soloPath, "_blank", "noopener,noreferrer");
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch("/api/window/detach", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ view }),
-      });
-      const data = (await res.json().catch(() => null)) as {
-        ok?: boolean;
-        fallback_url?: string;
-      } | null;
-      if (data?.ok) return;
-      // The shell could not create a runtime window — open a browser tab.
-      await openExternalUrl(
-        `${window.location.origin}${data?.fallback_url ?? soloPath}`,
-      );
-    } catch {
-      pushToast("error", t("topbar.detach_failed"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => void onClick()}
-      disabled={busy}
-      title={t("topbar.detach_hint")}
-      data-testid="detach-view-button"
-      aria-label={t("topbar.detach")}
-      className={clsx(CHROME_BUTTON, "w-8 justify-center px-0", CHROME_QUIET)}
-    >
-      <AppWindow aria-hidden className="h-4 w-4" />
-    </button>
-  );
+/** The Wiki inspector's open / close button, only on the Wiki section. */
+function WikiCaptionPanelToggle() {
+  const onWiki = useEventStore((s) => s.activeSection === "memory");
+  return onWiki ? <WikiInspectorToggle /> : null;
 }
 
-function RestartButton() {
-  const t = useT();
-  const pushToast = useEventStore((s) => s.pushToast);
-  const [confirming, setConfirming] = useState(false);
-  const [restarting, setRestarting] = useState(false);
-  // Set when the backend refused the restart (HTTP 409) because missions are
-  // running: the next click resends the POST with ``force=true``.
-  const [forceArmed, setForceArmed] = useState(false);
-  const resetTimer = useRef<number | null>(null);
-
-  const clearResetTimer = useCallback(() => {
-    if (resetTimer.current !== null) {
-      clearTimeout(resetTimer.current);
-      resetTimer.current = null;
-    }
-  }, []);
-
-  // Drop a pending "disarm" timer if the bar is ever unmounted.
-  useEffect(() => clearResetTimer, [clearResetTimer]);
-
-  async function doRestart(force: boolean) {
-    clearResetTimer();
-    setRestarting(true);
-    try {
-      const url = force
-        ? "/api/settings/restart-app?force=true"
-        : "/api/settings/restart-app";
-      const res = await fetch(url, { method: "POST" });
-      if (res.status === 409) {
-        // The mission guard refused: a restart would kill live missions. Don't
-        // kill them silently — surface the count and arm a force-restart so the
-        // next click is the user's explicit override.
-        let count = 0;
-        try {
-          const body = await res.json();
-          count = body?.detail?.missions?.length ?? 0;
-        } catch {
-          /* malformed body — still arm the override */
-        }
-        setRestarting(false);
-        setConfirming(false);
-        setForceArmed(true);
-        clearResetTimer();
-        resetTimer.current = window.setTimeout(() => {
-          setForceArmed(false);
-          resetTimer.current = null;
-        }, CONFIRM_TIMEOUT_MS);
-        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
-        return;
-      }
-      if (!res.ok) throw new Error(`restart-failed:${res.status}`);
-      // On success the window goes away — keep the spinning state; never clear
-      // it, so the user doesn't see the button flip back before the app dies.
-      pushToast("info", t("topbar.restarting"));
-    } catch {
-      // Headless host (503) or a transient failure: recover the control so the
-      // user isn't left with a dead button.
-      setRestarting(false);
-      setConfirming(false);
-      setForceArmed(false);
-      pushToast("error", t("topbar.restart_failed"));
-    }
-  }
-
-  function onClick() {
-    if (restarting) return;
-    if (forceArmed) {
-      // The guard already refused once; this click is the explicit override.
-      void doRestart(true);
-      return;
-    }
-    if (!confirming) {
-      // First click only arms the confirmation; auto-disarm after a few
-      // seconds so a stray click never leaves a primed restart button behind.
-      setConfirming(true);
-      clearResetTimer();
-      resetTimer.current = window.setTimeout(() => {
-        setConfirming(false);
-        resetTimer.current = null;
-      }, CONFIRM_TIMEOUT_MS);
-      return;
-    }
-    void doRestart(false);
-  }
-
-  const label = restarting
-    ? t("topbar.restarting")
-    : forceArmed
-      ? t("topbar.restart_force")
-      : confirming
-        ? t("topbar.restart_confirm")
-        : t("topbar.restart");
-
-  const showLabel = confirming || forceArmed || restarting;
-
+/**
+ * The IDE's panel toggles, only on the IDE: the terminal drawer in the thread
+ * layout (the grid is all terminals already, and a maximized side panel covers
+ * the thread), then the side panel in every layout.
+ */
+function IdeCaptionPanelToggle() {
+  const onIde = useEventStore((s) => IDE_SECTIONS.includes(s.activeSection));
+  const threads = useIdeThreadsStore((s) => s.layout === "threads");
+  const panelCovers = useIdeSidePanelStore((s) => s.open && s.maximized);
+  if (!onIde) return null;
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={restarting}
-      title={t("topbar.restart_hint")}
-      aria-label={label}
-      className={clsx(
-        CHROME_BUTTON,
-        showLabel ? "px-3" : "w-8 justify-center px-0",
-        confirming || forceArmed ? CHROME_ARMED : CHROME_QUIET,
-      )}
-    >
-      <RotateCw
-        aria-hidden
-        className={cn("h-4 w-4", restarting && "animate-spin")}
-      />
-      {showLabel ? label : null}
-    </button>
+    <div className="flex items-center gap-0.5">
+      {threads && !panelCovers && <ThreadTerminalToggle />}
+      <IdeSidePanelToggle />
+    </div>
   );
 }
 

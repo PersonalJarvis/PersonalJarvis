@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentsOverview } from "./AgentsOverview";
 import { useIdeChatStore } from "@/store/ideChat";
 import { useIdeProjectsStore } from "@/store/ideProjects";
@@ -9,6 +9,7 @@ import { markPaneReviewed, usePaneReviewsStore } from "@/store/paneReviews";
 import type { TerminalRecap } from "@/lib/agenticIdeApi";
 import { resetWorkspacePanesPoll, useWorkspacePanesStore } from "@/store/workspacePanes";
 import type { WorkspacePaneRow } from "@/lib/agenticIdeApi";
+import type { AgentSearchRequest, AgentSearchResponse } from "./agentSearch";
 
 function pane(name: string, workspaceId: string, overrides: Partial<WorkspacePaneRow> = {}): WorkspacePaneRow {
   return {
@@ -208,6 +209,108 @@ describe("AgentsOverview", () => {
       .getAllByTestId("ide-workspace-agent-row")
       .find((entry) => entry.getAttribute("data-workspace") === "w2")!;
     fireEvent.click(row);
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w2", pane: "T1" });
+  });
+});
+
+describe("AgentsOverview hybrid search", () => {
+  class SearchWorker {
+    static latest: SearchWorker;
+    messages: AgentSearchRequest[] = [];
+    onmessage: ((event: MessageEvent<AgentSearchResponse>) => void) | null = null;
+    constructor() { SearchWorker.latest = this; }
+    postMessage(message: AgentSearchRequest) { this.messages.push(message); }
+    terminate() {}
+    reply(response: Omit<AgentSearchResponse, "id"> & { matches?: { id: string; score: number }[] }) {
+      this.onmessage?.({ data: { ...response, id: this.messages.at(-1)!.id } } as MessageEvent<AgentSearchResponse>);
+    }
+  }
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("Worker", SearchWorker); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  const search = () => {
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "fix expired sign-ins" } });
+    act(() => vi.advanceTimersByTime(300));
+    return SearchWorker.latest;
+  };
+
+  it("shows keyword and typo hits immediately without waiting for the model", () => {
+    useWorkspacePanesStore.setState({ panes: [
+      pane("T1", "w1", { recap: "OAuth reconnect" }),
+      pane("T2", "w1", { recap: "Security audit" }),
+    ] });
+    render(<AgentsOverview />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "OAuth" } });
+    expect(screen.getByTestId("ide-workspace-agent-row").getAttribute("data-pane")).toBe("T1");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "securty" } });
+    expect(screen.getByTestId("ide-workspace-agent-row").getAttribute("data-pane")).toBe("T2");
+  });
+
+  it("keeps concrete results visible when related tasks are loading or unavailable", () => {
+    useWorkspacePanesStore.setState({ panes: [pane("T1", "w1", { recap: "Renew expired logins" })] });
+    render(<AgentsOverview />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "expired logins" } });
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    act(() => vi.advanceTimersByTime(300));
+    act(() => SearchWorker.latest.reply({ type: "loading" }));
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    act(() => SearchWorker.latest.reply({ type: "error" }));
+    expect(screen.getByTestId("ide-workspace-agent-row")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain("Word search still works");
+    fireEvent.click(screen.getByTestId("ide-workspace-agent-row"));
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T1" });
+  });
+
+  it("searches task text within the chosen scope and ranks across status groups", () => {
+    useWorkspacePanesStore.setState({ panes: [
+      pane("T1", "w1", { recap: "Login", last_prompt: "Renew tokens", activity: "working" }),
+      pane("T2", "w1", { recap: "Plugin auth", activity: "waiting" }),
+      pane("T1", "w2", { recap: "External login" }),
+    ] });
+    render(<AgentsOverview />);
+    const worker = search();
+    expect(worker.messages.at(-1)).toMatchObject({ documents: [
+      { id: "T1@w1", texts: ["Login", "Renew tokens"] },
+      { id: "T2@w1", texts: ["Plugin auth"] },
+    ] });
+    act(() => worker.reply({ type: "result", matches: [{ id: "T1@w1", score: 0.9 }, { id: "T2@w1", score: 0.8 }] }));
+    expect(screen.getAllByTestId("ide-workspace-agent-row").map((row) => row.getAttribute("data-pane"))).toEqual(["T1", "T2"]);
+    fireEvent.click(screen.getAllByTestId("ide-workspace-agent-row")[0]);
+    expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w1", pane: "T1" });
+    expect(screen.queryByTestId("ide-agents-column-done")).toBeNull();
+  });
+
+  it("shows no unrelated cards while loading, on no match, or on a failed search", () => {
+    render(<AgentsOverview />);
+    const worker = search();
+    expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
+    act(() => worker.reply({ type: "loading" }));
+    expect(screen.getByRole("status").textContent).toContain("downloading");
+    act(() => worker.reply({ type: "result", matches: [] }));
+    expect(screen.getByRole("status").textContent).toBe("No matching terminals.");
+    expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
+    act(() => worker.reply({ type: "error" }));
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByTestId("ide-workspace-agent-row")).toBeNull();
+  });
+
+  it("restores the status columns with clear or Escape", () => {
+    render(<AgentsOverview />);
+    search();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(3);
+    search();
+    fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
+    expect(screen.getAllByTestId("ide-workspace-agent-row")).toHaveLength(3);
+  });
+
+  it("updates the search scope and keeps cross-workspace navigation", () => {
+    render(<AgentsOverview />);
+    const worker = search();
+    fireEvent.click(screen.getByTestId("ide-agents-scope-folder"));
+    act(() => vi.advanceTimersByTime(300));
+    expect(worker.messages.at(-1)).toMatchObject({ documents: expect.arrayContaining([expect.objectContaining({ id: "T1@w2" })]) });
+    act(() => worker.reply({ type: "result", matches: [{ id: "T1@w2", score: 0.9 }] }));
+    fireEvent.click(screen.getByTestId("ide-workspace-agent-row"));
     expect(useIdeChatStore.getState().paneRequest).toMatchObject({ workspaceId: "w2", pane: "T1" });
   });
 });

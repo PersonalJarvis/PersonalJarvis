@@ -245,14 +245,15 @@ async def test_closing_a_whole_column_repacks_the_columns(
     assert _layout(registry) == [("T1", 0, 0), ("T3", 1, 0)]
 
 
-async def test_closing_the_last_pane_leaves_an_empty_workspace(
+async def test_closing_the_last_pane_closes_the_workspace(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Allowed on purpose: the grid then offers to open a fresh terminal."""
-    await _open(registry, tmp_path, 1)
+    """Closing the final pane must not leave a blank workspace on screen."""
+    session = await _open(registry, tmp_path, 1)
     await registry.close_terminal("T1")
-    assert registry.session is not None
-    assert registry.session.terminals == []
+    assert registry.session is None
+    assert registry.get(session.id) is None
+    assert registry.active_id is None
 
 
 async def test_closing_an_unknown_pane_names_the_real_ones(
@@ -306,7 +307,7 @@ async def test_a_closed_pane_refuses_further_prompts(registry: Registry, tmp_pat
 
 async def test_a_reopened_call_sign_is_a_fresh_pane(registry: Registry, tmp_path: Path) -> None:
     """Closing T1 and splitting again must not resurrect the old transcript."""
-    await _open(registry, tmp_path, 1)
+    await _open(registry, tmp_path, 2)
     await registry.attach("T1", 80, 24, _noop, _noop_exit)
     registry.session.terminals[0].transcript.feed("old work\r\n")
     await registry.close_terminal("T1")

@@ -292,6 +292,92 @@ class TestClaudeEvents:
         whole = list(agent_transcript._rows(path))
         assert [row["uuid"] for row in whole] == [f"u-{n}" for n in range(5)]
 
+    def test_a_message_typed_mid_turn_shows_where_the_agent_took_it(self, tmp_path: Path) -> None:
+        """A correction steered into a running turn is on record, once.
+
+        Claude Code writes a message typed while it works as a human
+        ``queued_command`` attachment and hands it to the model at its next
+        step; there is no user row for it. Without reading it, a delivered
+        correction was invisible to everyone checking that it arrived. A
+        notice the CLI queues itself is not a person speaking.
+        """
+        queued = {
+            "type": "attachment",
+            "timestamp": _at(3),
+            "attachment": {
+                "type": "queued_command",
+                "prompt": "Only review the save flow",
+                "commandMode": "prompt",
+                "origin": {"kind": "human"},
+            },
+        }
+        notice = {
+            "type": "attachment",
+            "timestamp": _at(4),
+            "attachment": {
+                "type": "queued_command",
+                "prompt": "<task-notification>done</task-notification>",
+                "origin": {"kind": "task-notification"},
+            },
+        }
+        _claude_session(
+            tmp_path,
+            "abc",
+            [
+                _user("Review the folder editor", 0),
+                _assistant({"type": "tool_use", "id": "c1", "name": "Read", "input": {}}, 1),
+                _tool_result("c1", "...", 2),
+                queued,
+                notice,
+                _assistant({"type": "text", "text": "Narrowed to saving."}, 5, mid="m2"),
+            ],
+        )
+        events = agent_transcript.read_events("claude", "abc", home=tmp_path, live=False)
+        assert events is not None
+        users = [ev["payload"]["text"] for ev in events if ev["kind"] == "user_message"]
+        assert users == ["Review the folder editor", "Only review the save flow"]
+        after = events[[ev["kind"] for ev in events].index("user_message", 1) + 1 :]
+        assert [ev["payload"]["text"] for ev in after if ev["kind"] == "assistant_text"] == [
+            "Narrowed to saving."
+        ]
+        assert after[-1]["kind"] == "turn_finished"
+
+    def test_a_queued_message_the_cli_then_submits_is_one_message(self, tmp_path: Path) -> None:
+        _claude_session(
+            tmp_path,
+            "abc",
+            [
+                _user("Review the folder editor", 0),
+                _assistant({"type": "text", "text": "Done."}, 1),
+                {
+                    "type": "attachment",
+                    "timestamp": _at(2),
+                    "attachment": {
+                        "type": "queued_command",
+                        "prompt": "Only review the save flow",
+                        "commandMode": "prompt",
+                        "origin": {"kind": "human"},
+                    },
+                },
+                _user("Only review the save flow", 3),
+                _assistant({"type": "text", "text": "Narrowed."}, 4, mid="m2"),
+            ],
+        )
+        events = agent_transcript.read_events("claude", "abc", home=tmp_path, live=False)
+        assert events is not None
+        users = [ev["payload"]["text"] for ev in events if ev["kind"] == "user_message"]
+        assert users == ["Review the folder editor", "Only review the save flow"]
+
+    def test_a_message_said_twice_by_the_person_stays_twice(self, tmp_path: Path) -> None:
+        # Only the CLI's own resubmission of a mid-turn message is folded.
+        _claude_session(tmp_path, "abc", [_user("continue", 0), _user("continue", 1)])
+        events = agent_transcript.read_events("claude", "abc", home=tmp_path, live=False)
+        assert events is not None
+        assert [ev["payload"]["text"] for ev in events if ev["kind"] == "user_message"] == [
+            "continue",
+            "continue",
+        ]
+
     def test_no_file_is_none_not_an_error(self, tmp_path: Path) -> None:
         assert agent_transcript.read_events("claude", "nope", home=tmp_path) is None
         assert agent_transcript.read_events("shell", "abc", home=tmp_path) is None

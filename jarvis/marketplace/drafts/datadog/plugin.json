@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "datadog",
+  "version": "1.0.0",
+  "description": "Logs, metrics, monitors and incidents",
+  "license": "Apache-2.0",
+  "extensions": {
+    "io.github.personaljarvis": {
+      "display_name": "Datadog",
+      "category": "Developer",
+      "logo_slug": "datadog",
+      "logo_color": "632CA6",
+      "featured": false,
+      "longevity": "self_renewing",
+      "browser_flow": "dcr",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "mcp_url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+        "discovery_url": "https://mcp.datadoghq.com/.well-known/oauth-protected-resource/api/unstable/mcp-server/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_datadog_access_token}"
+      },
+      "post_install_hint_md": "Sign in with Datadog on the US1 site (app.datadoghq.com). Other Datadog sites are not included."
+    }
+  }
+}

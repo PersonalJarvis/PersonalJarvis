@@ -16,6 +16,13 @@
       "source": "source/gigi-reference.blend",
       "collection": "GigiExport",
       "export": "exports/gigi.glb"
+    },
+    {
+      "id": "accessories",
+      "kind": "character",
+      "source": "source/accessories.blend",
+      "collection": "Collection",
+      "export": "exports/accessories.glb"
     }
   ],
   "runtime_evidence": [

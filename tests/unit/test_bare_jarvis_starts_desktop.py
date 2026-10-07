@@ -10,6 +10,7 @@ OS, since nothing about the dispatch is platform-specific.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -134,9 +135,23 @@ def test_readme_still_documents_bare_jarvis_as_the_desktop_entry() -> None:
     if not readme.is_file():
         pytest.skip("README absent (slim checkout)")
     text = readme.read_text(encoding="utf-8")
-    assert "jarvis          # full desktop" in text, (
-        "README no longer advertises bare `jarvis` as the desktop entry — "
-        "if that changed on purpose, update this test and __main__.main()"
+    # Read the documented COMMAND, not the prose around it: a rewrite that
+    # changes the wording or the column of the comment must not fail the
+    # suite, only one that drops bare `jarvis` or sends it somewhere else.
+    blocks = re.findall(r"```(?:bash|sh|shell|console|powershell)?\n(.*?)```", text, re.S)
+    bare = [
+        line.partition("#")[2].strip().lower()
+        for block in blocks
+        for line in block.splitlines()
+        if line.partition("#")[0].strip() == "jarvis"
+    ]
+    assert bare, (
+        "README no longer documents bare `jarvis` as a command — if the desktop "
+        "entry changed on purpose, update this test and __main__.main()"
+    )
+    assert not any("headless" in comment for comment in bare), (
+        "README describes bare `jarvis` as headless, but __main__.main() starts "
+        "the desktop app"
     )
 
 

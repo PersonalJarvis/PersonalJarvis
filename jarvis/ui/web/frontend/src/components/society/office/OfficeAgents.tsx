@@ -37,8 +37,11 @@ import type { DeskChat } from "./useDeskChats";
 import { officeTalkChat, useOfficeTalk } from "./officeTalk";
 import { deliverySpot, ERRAND_SPEED, useErrandFeed, useGigiErrands } from "./gigiErrands";
 import { isPaneAgentId, plateTitle } from "./codingFloor";
-import { promptOpening } from "@/components/agentic/sessionTitle";
 import { agentLogoAsset } from "@/components/agentic/AgentMark";
+import { LevelChip } from "../progression/LevelHud";
+import { agentSubject, petSubject } from "../progression/progressionApi";
+import { useProgression } from "../progression/progressionStore";
+import { useDressedFigure } from "../progression/regalia/dress";
 
 /** The agent's symbol walks behind it as a little pet, about a fifth of its height. */
 export const PET_SIZE_M = 0.26;
@@ -124,6 +127,7 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
           {pane ? <PanePlateText agent={agent} state={state} /> : (
             <>
               <span className="office-plate-name" title={agent.name}>{agent.name}</span>
+              <PlateLevel agent={agent} />
               {state}
             </>
           )}
@@ -131,6 +135,16 @@ function Nameplate({ agent, activity, selected, onSelect, height = OFFICE_FIGURE
       </Html>
     </group>
   );
+}
+
+/** An agent's level on its plate; the lead shows its pet's level, since the lead IS the pet. */
+function PlateLevel({ agent }: { agent: SocietyAgent }) {
+  const lead = agent.tier === "lead";
+  const level = useProgression((s) => {
+    if (!s.snapshot) return null;
+    return s.subjects[lead ? petSubject(s.petId) : agentSubject(agent.agentId)]?.level ?? 1;
+  });
+  return level === null ? null : <LevelChip kind={lead ? "pet" : "agent"} level={level} />;
 }
 
 /**
@@ -150,13 +164,12 @@ function PaneLogo({ url, ground }: { url: string; ground: "ink" | "dark" | "any"
 }
 
 /**
- * A coding pane's plate always shows its whole title (subject, then result and
- * run state), the call-sign that finds the pane in the IDE, and the opening of
- * what it was last asked. Only the prompt preview is clamped, never the title.
+ * A coding pane's plate shows only its whole title (subject, then result) and
+ * run state. The logo in front already names the CLI, so neither its
+ * call-sign nor the opening of the last prompt is repeated here.
  */
 function PanePlateText({ agent, state }: { agent: SocietyAgent; state: ReactNode }) {
   const { subject, result } = plateTitle(agent.name);
-  const asked = promptOpening(agent.description);
   return (
     <span className="office-plate-text">
       <span className="office-plate-name">{subject}</span>
@@ -164,8 +177,6 @@ function PanePlateText({ agent, state }: { agent: SocietyAgent; state: ReactNode
         {result ? <span className="office-plate-result">{result}</span> : null}
         {state}
       </span>
-      <span className="office-plate-sign">{agent.title}</span>
-      {asked && asked !== agent.name ? <span className="office-plate-asked">“{asked}”</span> : null}
     </span>
   );
 }
@@ -214,6 +225,7 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
   const body = useRef<Group>(null);
   const ring = useRef<Mesh>(null);
   const drive = useRef<FigureDrive>({ mode: "idle", speed: 0 });
+  const dressed = useDressedFigure("agent", agentSubject(agent.agentId), look);
   const rng = useMemo(() => createRng(agent.agentId), [agent.agentId]);
   const mover = useRef<Mover>({ ...(arrivesByElevator ? ctx.spawn : { x: 0, z: 0 }), heading: Math.PI, path: [] });
   const plan = useRef<Plan | null>(null);
@@ -415,7 +427,8 @@ function Walker({ agent, desk, ctx, arrivesByElevator, awake, reduced, selected,
         onClick={(event) => { event.stopPropagation(); onSelect(agent.agentId); }}
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = ""; }}>
-        {!isGigi && <ToyFigure look={look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight} />}
+        {!isGigi && <ToyFigure look={dressed.look} drive={drive} paused={!awake} heightM={OFFICE_FIGURE_HEIGHT_M} seatHeight={seatHeight}
+          regalia={dressed.regalia} />}
       </group>
       <Nameplate agent={agent} activity={activity} selected={selected} onSelect={onSelect} height={isGigi ? leadPlate : undefined} />
       <AgentBubble agent={agent} lines={lines} selected={selected} onSelect={onSelect}

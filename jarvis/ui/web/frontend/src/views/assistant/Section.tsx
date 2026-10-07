@@ -54,7 +54,7 @@ export function SpecRow({ label, children }: { label: ReactNode; children: React
   return (
     <div className="grid grid-cols-1 gap-1 py-3.5 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-8">
       <div className="text-base leading-7 text-muted-foreground">{label}</div>
-      <div className="min-w-0 text-base leading-7 text-foreground">{children}</div>
+      <div className="min-w-0 max-w-reading text-base leading-7 text-foreground">{children}</div>
     </div>
   );
 }

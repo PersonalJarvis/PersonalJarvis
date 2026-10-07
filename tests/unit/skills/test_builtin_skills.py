@@ -52,8 +52,13 @@ def test_skill_has_valid_triggers(name: str) -> None:
         return
     # Meta skills (category="meta") may live without an auto trigger — they
     # are pulled by the supervisor via intent dispatch, not by the
-    # TriggerMatcher. All other categories need at least one.
-    if skill.frontmatter.category != "meta":
+    # TriggerMatcher. Paired plugins may instead use the relevance channel's
+    # explicit verb/object vocabulary, without broad brand regexes.
+    if skill.frontmatter.plugin_id and not skill.frontmatter.triggers:
+        assert skill.frontmatter.plugin_id in skill.frontmatter.requires_tools
+        assert skill.frontmatter.intent_verbs and skill.frontmatter.intent_objects
+        assert skill.frontmatter.when_to_use
+    elif skill.frontmatter.category != "meta":
         assert len(skill.frontmatter.triggers) >= 1, (
             f"{name} needs at least one trigger (category={skill.frontmatter.category})"
         )

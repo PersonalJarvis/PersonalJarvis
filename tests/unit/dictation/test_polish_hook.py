@@ -124,6 +124,37 @@ async def test_punctuation_is_repaired_in_a_language_with_no_filler_rules() -> N
     assert "..." not in text
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["chat", "insert"])
+@pytest.mark.parametrize("remove_fillers", [False, True])
+@pytest.mark.parametrize(
+    ("raw", "language"),
+    [
+        ("was ich... hier eingesprochen habe.", "de"),  # i18n-allow: regression
+        ("Please do… not delete these files.", "en"),
+        ("Das sind ... Namen und Zahlen.", "de"),  # i18n-allow: German nouns
+    ],
+)
+async def test_hesitation_is_preserved_through_final_delivery(
+    raw: str, language: str, target: str, remove_fillers: bool,
+) -> None:
+    pipe, events, inserted = _pipeline(
+        DictationConfig(
+            history_enabled=False, polish=False, remove_fillers=remove_fillers,
+        )
+    )
+
+    text = await pipe._finish_dictation(
+        raw_text=raw, language=language, duration_s=6.0,
+        target=target, hung_up=False,
+    )
+
+    assert text == raw
+    assert _final_transcript(events).text == raw
+    assert _completed(events).raw_text == raw
+    assert inserted == ([raw] if target == "insert" else [])
+
+
 # --------------------------------------------------------------------------
 # The polish pass — the happy path and everything the composer sees
 # --------------------------------------------------------------------------

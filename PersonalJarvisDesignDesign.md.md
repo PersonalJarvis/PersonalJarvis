@@ -2,52 +2,11 @@
 version: 3.1
 name: Personal Jarvis
 description: >-
-  The design system for the Personal Jarvis DESKTOP APP — not a marketing site.
-  Graphite, not void: a near-black room whose surfaces have edges you can see,
-  whose ink is bright enough to read at a glance, and whose type ships with the
-  app. Graphite carries the structure; colour carries meaning on top of it —
-  one desaturated signal blue, four semantic tones, coloured diffs, a coloured
-  run graph — on the model of Cursor's own theme, read from its installed
-  build. Version 2.0 (the "black room") was rejected as "dead, like a
-  skeleton"; 3.0 fixed the greys and 3.1 (same evening) gave colour its jobs
-  back after the maintainer pointed at Cursor: same greys, but the diffs,
-  warnings and links are coloured, and that is what makes it look finished.
-  Light mode is the same system with the value scale inverted.
-sources:
-  maintainer-verdict-2026-09-01: >-
-    On the 2.0 build: black-and-white is wanted, but this one looks dead — a
-    skeleton, a funeral. Other black-and-white products (Cursor, Grok, Bolt,
-    the frontier labs) look like the top of the field. The type is not
-    recognisable. Not sloppy — professional.
-  measured-2026-09-01-evening:
-    grok-web: >-
-      Stage #181716 (WARM neutral, r>g>b by one step), rail #131211, composer
-      #201F1D, hairlines white at 6–10 % alpha, radius 12 px and pill, composer
-      24 px. Ink: #FCFCFC primary, #9E9E9E meta, #858585 faint. universalSans
-      14/21, weights 400 / 500 / 550 — nav labels at 500. Smallest type 13 px.
-    chatgpt-web: >-
-      Page #000000, rail #131313, selected row and composer #212121, hairlines
-      white at 15–20 % alpha, radius 8–10 px, composer 28 px. Ink: #FFFFFF
-      primary, #AFAFAF meta. 14/20 throughout, weight 400; 12 px only on one
-      plan label.
-    cursor-app: >-
-      Stage #141414 (70.5 % of pixels), rail #181818, composer #212121, active
-      row #252525, borders #313131–#333333. Ink ceiling #F0F0F0. 90.4 % of the
-      window in two values, 0.19 % bright pixels, 0.06 % saturated.
-    what-we-took: >-
-      From all three: hairlines you can actually see, meta ink at #9E–#AF
-      rather than #94, body ink at #F0–#FC rather than #E6, and a room that is
-      dark without being a hole. From Grok: nav labels at 500 and a composer
-      with both a fill AND a rim. From Cursor: the ink ceiling below pure
-      white, emptiness as composition. From ChatGPT: one type size for almost
-      everything.
-  why-2-0-failed: >-
-    Every 2.0 value was individually defensible and the result was dead
-    anyway, because three of them compounded: a 4 % room, a 14 % hairline
-    (invisible on it) and 58 % meta ink (dim on it). Grey text on invisible
-    boxes on black IS a skeleton. Add a remote font that a WebView often fails
-    to load, and the type is "not recognisable" in the literal sense: a
-    different face, width and rhythm on every cold start.
+  The design system for the Personal Jarvis desktop application. Graphite
+  surfaces provide visible edges and readable text. Bundled typefaces keep
+  the interface consistent offline. One signal blue, four semantic tones,
+  coloured diffs and a coloured run graph communicate actions and state.
+  Light mode preserves those roles with an inverted surface scale.
 
 colors:
   # --- Dark: the product default. Graphite, edged, brightly inked. -----------
@@ -82,7 +41,7 @@ colors:
   light-fill: "#26251E"
   light-on-fill: "#F7F7F4"
 
-  # --- Signal + semantic. Cursor Dark Anysphere / Cursor Light values. -----
+  # --- Signal and semantic roles, with values for each appearance. ---------
   dark-signal: "#81A1C1"
   dark-life: "#3FA266"
   dark-fault: "#E34671"
@@ -368,44 +327,18 @@ components:
 
 ## Overview
 
-This document describes the **Personal Jarvis desktop application**. It is the
-third version in one day, and the reason is worth keeping on record.
+This document specifies the **Personal Jarvis desktop application** through
+surface roles, text hierarchy, semantic colours and interaction states.
 
-Version 2.0 measured two reference products and derived a "black room": a 4 %
-ground, surfaces lifted only when content-sized, rims kept almost invisible,
-ink capped at 90 %. Every number was defensible. The maintainer's verdict on
-the built result was immediate: *dead, like a skeleton; a funeral; the type is
-not recognisable*. The verdict was correct. Three quiet values compounded into
-one loud failure: a near-black page, hairlines the eye cannot find on it, and
-meta ink too dim to read on it. Grey text on invisible boxes on black **is** a
-skeleton — an outline where an object should be.
-
-Version 3.0 keeps 2.0's structure (the surface ladder, the four inks, the three
-status hues, the seven-step scale) and changes what it was wrong about:
-
-- **Graphite, not void.** The room is `#121212`, not `#0A0A0A`. Cursor's stage
-  is `#141414`, Grok's `#181716`; neither product is a hole.
-- **Edges exist.** Every rim is tuned to be visible on the surface it encloses.
-  A card has a fill *and* a hairline. A composer has a fill *and* a strong rim.
-  The 2.0 rule "no border on something that already has a fill" is withdrawn —
-  it was the single largest contributor to the skeleton.
-- **Ink is bright.** Body at `#F0F0F0` (Cursor's ceiling), meta at `#A3A3A3`
-  (between Grok's `#9E` and ChatGPT's `#AF`). Nothing informational sits
-  below 64 %.
-- **Type ships with the app.** Inter Variable, JetBrains Mono and Space
-  Grotesk are bundled. A WebView that starts offline used to render the whole
-  product in Segoe UI — a different face, width and rhythm on every cold
-  start, which is what "not recognisable" meant in the literal sense.
-- **Nothing below 11 px.** The 271 remaining `text-[7–10px]` sites were swept
-  to the `micro` step in the same change.
-
-Still neutral greys (`r = g = b` in dark, warm paper in light) for every
-surface and every rim. **But no longer colourless.** 3.1 — the same evening,
-after the maintainer held the 3.0 build next to Cursor — puts colour back
-where it means something. Cursor's greys are practically ours; what makes
-Cursor look finished is that a removed line is rose, an added one green, a
-warning amber, a link blue, and all of it desaturated to one family. That is
-the whole difference, and it is now ours too (see *Colour has jobs*).
+- **Visible structure.** The dark room uses `#121212`; cards and composers
+  have a fill and a visible rim.
+- **Readable text.** Body text uses `#F0F0F0`, with `#A3A3A3` for secondary
+  information. Placeholder and disabled text have their own role.
+- **Bundled type.** Inter Variable, JetBrains Mono and Space Grotesk provide
+  consistent metrics when the application starts offline.
+- **Type floor.** Use the `micro` step for the smallest labels: 11 px.
+- **Meaningful colour.** Neutral surfaces carry the structure. Colour marks
+  actions, state, identity, diff changes and run-step families.
 
 ## Colors
 
@@ -428,10 +361,7 @@ Steps are 5–7 byte-values apart at the bottom of the ladder, which is the
 smallest distance that survives an uncalibrated monitor. Lift still scales
 inversely with area: a surface wider than ~720 px stays at `room` or `rail`.
 
-The 2.0 `speaker` at `#4D4D4D` read as a tombstone — the loudest rectangle on
-the screen carrying the one thing the reader already knows. ChatGPT's user
-bubble sits a single step above its page. So does ours now; the ink carries
-the emphasis.
+The user's bubble has a quiet surface fill; strong ink carries the emphasis.
 
 ### Rims
 
@@ -443,14 +373,11 @@ the eye cannot find is not restraint; it is a missing edge.
 | `rim` | Card edges, dividers, table rules, the rail's edge. | `#2B2B2B` | `#DFDDD5` | room, rail and object |
 | `rim-strong` | Composer outline, floating layers, focus rings, scrollbar thumbs. | `#404040` | `#BDBAB0` | everything up to `float` |
 
-The references draw hairlines as white at 8–20 % alpha over their ground.
-`#2B2B2B` on `#121212` is white at 10 %; `#404040` is white at 19 %. That is
-the measured band, not a taste.
+`#2B2B2B` on `#121212` is approximately white at 10 %;
+`#404040` is approximately white at 19 %.
 
-**A fill and a rim together are the normal case.** Grok's composer is
-`#201F1D` inside a 10 % white hairline; ChatGPT's is `#212121` inside 15 %.
-An object with a fill and no edge sinks; an outline with no fill is a
-wireframe. Both are what "skeleton" looks like.
+**A fill and a rim together are the normal case.** Keep the object's surface
+distinct and its boundary visible against the surrounding room.
 
 ### Ink
 
@@ -467,18 +394,15 @@ Four steps, each with one job.
 marks, active indicators and focus rings. **It never paints text, a byline, or
 a decorative icon.**
 
-The ceiling stays below white: `#F0F0F0` is what Cursor's brightest text
-measures. But the floor for anything a person is meant to read is now 64 %,
-up from 58 %, and the placeholder step is 48 %, up from 44 %. Small numbers;
-the difference between "meta" and "faded".
+Body ink stays below pure white at `#F0F0F0`. Secondary information uses
+the brighter `ink-meta` role; reserve `ink-faint` for placeholders and
+disabled controls.
 
 ### Colour has jobs
 
-Read from Cursor's installed theme (`cursor-dark-color-theme.json`, 252
-roles) rather than from screenshots. The recipe: neutral greys carry the
-structure; colour appears only where it *means* something; every hue is
-desaturated to about the same chroma so the set reads as one family. One
-signal hue, four semantic tones, coloured diffs. Nothing else.
+Neutral greys carry the structure. Colour communicates meaning through one
+signal hue, four semantic tones and coloured diffs. Keep the hues visually
+balanced across the interface.
 
 | Token | Job | Dark | Light |
 |---|---|---|---|
@@ -488,10 +412,8 @@ signal hue, four semantic tones, coloured diffs. Nothing else.
 | `degraded` (`--warning`) | Stale, modified, partial, needs attention. | `#F1B467` | `#A46700` |
 | `info` (`--info`) | Counts, new items, hints — "note this" without "something is wrong". | `#88C0D0` | `#176C74` |
 
-`--primary` stays the white fill: the primary button, marks and the orb ring
-are still ink-on-ink, as in Grok and ChatGPT. `signal` is a *colour*, not a
-fill for buttons — the exception a Cursor "Install" button makes is not one
-this product needs.
+`--primary` supplies the neutral fill for the primary button, marks and orb
+ring. `signal` identifies links and interactive cues rather than button fills.
 
 Binding rules. A status may **never** be encoded as `ink` or `fill`. A status
 ramp may **never** render "ok" dimmer than "unknown". A success state must
@@ -500,17 +422,14 @@ the colour must be readable as one of the five jobs above.
 
 ### Diffs
 
-Monochrome diffs with strike-through (3.0) are withdrawn. An added line is
-green ink on green at 18 %; a removed line is rose ink on rose at 20 %. That
-is Cursor's `diffEditor.*` / `gitDecoration.*` pair exactly, and it is the
-single most-cited reason the maintainer named for Cursor looking finished.
+An added line uses green ink on green at 18 %; a removed line uses rose ink
+on rose at 20 %. Keep the text readable against both backgrounds.
 
 ### The run graph
 
-Eleven step families on the same palette Cursor paints code in — lavender
-reasoning, cyan shell and web, amber writes and deliverables, sky search,
-mauve integrations, pink sub-agents, blue ignition, green landing, neutral
-unknown. Two values (3.0) were honest but unreadable at a glance.
+Eleven step families use distinct semantic colours: lavender reasoning,
+cyan shell and web, amber writes and deliverables, sky search, mauve
+integrations, pink sub-agents, blue ignition, green landing and neutral unknown.
 
 ### Identity
 
@@ -542,9 +461,8 @@ no remote font request anywhere in the product. Licences are SIL OFL 1.1 and
 are listed in `public/THIRD_PARTY_NOTICES.txt`.
 
 Inter is set with `cv02 cv03 cv04 cv11` (open shapes, single-storey a) and
-**−0.01 em tracking at interface sizes** — Inter's own recommendation, and
-what both Grok (−0.2 px at 14 px) and Cursor set. `reading` and `code` reset
-tracking to 0 through their own declarations.
+**−0.01 em tracking at interface sizes**. `reading` and `code` reset tracking
+to 0 through their own declarations.
 
 ### The scale
 
@@ -558,13 +476,12 @@ nothing below them.
 | `title` | 15 / 600 | 1.4 | Card title, list-row title, group label |
 | `reading` | 15 / 400 | 1.6 | Chat, transcripts, documents, prose |
 | `body` | 14 / 400 | 1.5 | Default interface text, controls |
-| `label` | 14 / 500 | 1.5 | **Navigation rows and buttons.** The weight every reference sets its nav in. |
+| `label` | 14 / 500 | 1.5 | Navigation rows and buttons. |
 | `meta` | 13 / 400 | 1.45 | Timestamps, captions, secondary lines |
 | `micro` | 11 / 500 | 1.4 | Badges and dense table cells. **Hard floor.** |
 
-**11 px is the floor and it is now enforced by the tree, not the document.**
-No `text-[10px]`, `text-[9px]`, `text-[8px]` survives in `src/`. ChatGPT's
-smallest type is 12 px; Grok's is 13 px.
+**11 px is the floor.** Do not use `text-[10px]`, `text-[9px]` or
+`text-[8px]` for interface text.
 
 ### Principles
 
@@ -620,9 +537,7 @@ should have been there.
 | `feature` | 16px | Composers and large feature cards |
 | `pill` | 9999px | Chips, badges, avatars, status dots |
 
-The composer moves up to `feature`: both references round their composer
-more than anything else on screen (Grok 24 px, ChatGPT 28 px), and a 16 px
-radius inside a 720 px measure is the restrained version of that.
+The composer uses `feature`: a 16 px radius within the 720 px reading measure.
 
 **The theme never changes an element's shape** — only its value.
 
@@ -715,8 +630,8 @@ graphite: `rim` down to `#DFDDD5` so it reads on white cards, `ink-meta`
 down to `#66635A` (6.6 : 1 on paper), and the user bubble becomes a quiet
 `lift` fill with strong ink rather than a black slab.
 
-The five colour jobs keep their meaning between themes and take Cursor
-Light's values (`#2778C1`, `#007041`, `#BE1744`, `#A46700`, `#176C74`).
+The five colour jobs keep their meaning between themes. Light mode uses
+`#2778C1`, `#007041`, `#BE1744`, `#A46700` and `#176C74` respectively.
 
 ## The Agentic IDE panes
 
@@ -725,9 +640,8 @@ ladder re-derived per appearance in `terminalThemes.ts`, because a light pane
 inside a dark app is a supported combination and xterm cannot read a CSS
 token. The values there are this document's values: dark shell over `#121212`,
 rims at white 12 %, float `#303030`, ink `#F0F0F0` / `#A3A3A3` / `#7A7A7A`.
-The 16 ANSI slots are Cursor's own terminal set (rose, green, `#D2943E`,
-`#81A1C1`, `#B48EAD`, `#88C0D0`, brights one step lighter) so a CLI's output
-and the app's chrome share one palette; the light pane takes Cursor Light's.
+The 16 ANSI slots coordinate terminal output with the app's semantic palette.
+Each appearance defines its own normal and bright values in `terminalThemes.ts`.
 
 ## Enforcement
 

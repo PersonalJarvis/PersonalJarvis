@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Monitor, Eye, Volume2, Bell, MousePointer, PawPrint } from "lucide-react";
+import { PawPrint } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import {
   useOverlayStyle,
@@ -16,6 +16,8 @@ import { useRestartApp } from "@/hooks/useRestartApp";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { SettingsCard, SettingsRow, SettingsSection } from "@/views/settings/SettingsLayout";
 
 /**
  * "Bar & Overlay" group inside the Settings view — the on-screen overlay
@@ -26,49 +28,35 @@ import { cn } from "@/lib/utils";
  */
 export function OverlayTaskbarGroup() {
   const t = useT();
+  const overlay = useOverlayStyle();
+  const isBar = (overlay.config?.style ?? "jarvis_bar") === "jarvis_bar";
 
   return (
-    <div className="mt-8 space-y-4">
-      <h3 className="text-lg font-semibold text-foreground-strong">
-        {t("settings_view.overlay_taskbar_group_title")}
-      </h3>
-
-      <section>
-        <h4 className="mb-2 text-base font-medium text-foreground-strong">
-          {t("taskbar_view.appearance_title")}
-        </h4>
-        <OverlayStylePanel />
-        <BarSizeGroup />
-      </section>
-
-      <section>
-        <h4 className="mb-2 text-base font-medium text-foreground-strong">
-          {t("taskbar_view.behavior_title")}
-        </h4>
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
+    <SettingsSection title={t("settings_view.overlay_taskbar_group_title")}>
+      <SettingsCard>
+        <OverlayStylePanel overlay={overlay} />
+        {isBar && <BarSizeGroup />}
+      </SettingsCard>
+      <SettingsCard>
+        {isBar && <>
           <BarPersistentRow />
-          <div className="mx-4 border-t border-border" />
           <FollowCursorRow />
-          <div className="mx-4 border-t border-border" />
-          <MuteMusicRow />
-          <div className="mx-4 border-t border-border" />
-          <SoundEffectsRow />
-        </div>
-      </section>
-    </div>
+        </>}
+        <MuteMusicRow />
+        <SoundEffectsRow />
+      </SettingsCard>
+    </SettingsSection>
   );
 }
 
-/** A label + description on the left, a toggle on the right (grouped-card layout). */
+/** A label + description on the left, a toggle on the right. */
 function ToggleRow({
-  icon: Icon,
   title,
   description,
   checked,
   disabled,
   onToggle,
 }: {
-  icon: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;
   checked: boolean;
@@ -76,19 +64,18 @@ function ToggleRow({
   onToggle: (next: boolean) => void;
 }) {
   return (
-    <div className="flex items-start gap-3 p-4">
-      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <div className="font-medium">{title}</div>
-        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-      </div>
-      <Switch
-        checked={checked}
-        disabled={disabled}
-        aria-label={title}
-        onCheckedChange={onToggle}
-      />
-    </div>
+    <SettingsRow
+      title={title}
+      description={description}
+      control={
+        <Switch
+          checked={checked}
+          disabled={disabled}
+          aria-label={title}
+          onCheckedChange={onToggle}
+        />
+      }
+    />
   );
 }
 
@@ -117,7 +104,6 @@ function BarPersistentRow() {
 
   return (
     <ToggleRow
-      icon={Eye}
       title={t("taskbar_view.bar_persistent.title")}
       description={t("taskbar_view.bar_persistent.description")}
       checked={enabled ?? true}
@@ -152,7 +138,6 @@ function FollowCursorRow() {
 
   return (
     <ToggleRow
-      icon={MousePointer}
       title={t("taskbar_view.follow_cursor.title")}
       description={t("taskbar_view.follow_cursor.description")}
       checked={enabled ?? true}
@@ -187,7 +172,6 @@ function MuteMusicRow() {
 
   return (
     <ToggleRow
-      icon={Volume2}
       title={t("taskbar_view.mute_music.title")}
       description={t("taskbar_view.mute_music.description")}
       checked={enabled ?? false}
@@ -222,7 +206,6 @@ function SoundEffectsRow() {
 
   return (
     <ToggleRow
-      icon={Bell}
       title={t("taskbar_view.sound_effects.title")}
       description={t("taskbar_view.sound_effects.description")}
       checked={enabled ?? true}
@@ -238,9 +221,9 @@ function SoundEffectsRow() {
  * an orb-window style cannot apply live (BUG-031: Tcl cross-thread abort), so
  * the app self-restarts to deliver it (`useRestartApp`).
  */
-function OverlayStylePanel() {
+function OverlayStylePanel({ overlay }: { overlay: ReturnType<typeof useOverlayStyle> }) {
   const t = useT();
-  const { config, loading, error, saveStyle } = useOverlayStyle();
+  const { config, loading, error, saveStyle } = overlay;
   const pushToast = useEventStore((s) => s.pushToast);
   const setActiveSection = useEventStore((s) => s.setActiveSection);
   const [style, setStyle] = useState<OverlayStyle>("jarvis_bar");
@@ -268,6 +251,7 @@ function OverlayStylePanel() {
         pushToast("warning", t("settings_view.overlay_style.restart_required"));
       }
     } catch (e) {
+      setStyle(config?.style ?? "jarvis_bar");
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);
@@ -275,81 +259,71 @@ function OverlayStylePanel() {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-start gap-3">
-        <Monitor className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <h4 className="font-display text-sm font-semibold">
-            {t("settings_view.overlay_style.title")}
-          </h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("settings_view.overlay_style.description")}
-          </p>
-
-          {/* Visual preview cards — click to apply (no dropdown). Two columns
-              on a narrow window so a fifth style never squeezes the previews
-              into unreadable slivers. */}
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {options.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => onPick(opt)}
-                disabled={saving || loading}
-                aria-pressed={opt === style}
+    <SettingsRow
+      title={t("settings_view.overlay_style.title")}
+      description={t("settings_view.overlay_style.description")}
+    >
+      {/* Visual preview cards — click to apply (no dropdown). They wrap on a
+          narrow window so a fifth style never squeezes the previews into
+          unreadable slivers. */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(110px,1fr))] gap-2.5 pt-1">
+        {options.map((opt) => {
+          const active = opt === style;
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onPick(opt)}
+              disabled={saving || loading}
+              aria-pressed={active}
+              className={cn(
+                "flex flex-col items-center gap-2 rounded-md border p-2 transition-colors disabled:opacity-60",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                active
+                  ? "border-accent bg-accent-soft"
+                  : "border-border hover:border-border-strong hover:bg-secondary",
+              )}
+            >
+              <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded bg-background">
+                <StylePreview style={opt} />
+              </div>
+              <span
                 className={cn(
-                  "flex flex-col items-center gap-2 rounded-lg border p-3 transition-all disabled:opacity-60",
-                  opt === style
-                    ? "bg-secondary ring-1 ring-primary/50"
-                    : "border-border bg-background hover:border-border-strong",
+                  "text-sm font-medium",
+                  active ? "text-foreground-strong" : "text-muted-foreground",
                 )}
               >
-                <div className="flex h-16 w-full items-center justify-center overflow-hidden rounded-md bg-card">
-                  <StylePreview style={opt} />
-                </div>
-                <span
-                  className={cn(
-                    "text-xs font-medium",
-                    opt === style ? "text-primary" : "text-muted-foreground",
-                  )}
-                >
-                  {t(`settings_view.overlay_style.options.${opt}`)}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          {/* Which pet, its size and its bubble live on their own page. */}
-          {style === "pet" && (
-            <button
-              type="button"
-              data-testid="overlay-style-open-pets"
-              onClick={() => setActiveSection("pets")}
-              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <PawPrint className="h-3.5 w-3.5" aria-hidden />
-              {t("pets.open_settings")}
+                {t(`settings_view.overlay_style.options.${opt}`)}
+              </span>
             </button>
-          )}
-
-          {needsRestart && (
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <p className="text-xs text-foreground">
-                {t("settings_view.overlay_style.restart_required")}
-              </p>
-              <button
-                type="button"
-                onClick={() => void restart()}
-                disabled={restarting}
-                className="rounded-md bg-secondary px-3 py-1.5 text-xs font-medium text-foreground-strong transition-colors hover:bg-popover disabled:opacity-60"
-              >
-                {restartLabel}
-              </button>
-            </div>
-          )}
-          {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-        </div>
+          );
+        })}
       </div>
-    </div>
+
+      {/* Which pet, its size and its bubble live on their own page. */}
+      {style === "pet" && (
+        <button
+          type="button"
+          data-testid="overlay-style-open-pets"
+          onClick={() => setActiveSection("pets")}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <PawPrint className="h-3.5 w-3.5" aria-hidden />
+          {t("pets.open_settings")}
+        </button>
+      )}
+
+      {needsRestart && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-secondary px-3 py-2.5">
+          <p className="text-sm text-foreground">
+            {t("settings_view.overlay_style.restart_required")}
+          </p>
+          <Button size="sm" variant="secondary" onClick={() => void restart()} disabled={restarting}>
+            {restartLabel}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </SettingsRow>
   );
 }

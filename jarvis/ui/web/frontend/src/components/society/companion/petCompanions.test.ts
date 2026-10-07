@@ -20,6 +20,7 @@ describe("companionFor", () => {
     expect(companionFor(pet({ id: "ember", builtin: true })).gait).toBe("fly");
     expect(companionFor(pet({ id: "miso", builtin: true })).gait).toBe("walk");
     expect(companionFor(pet({ id: "shelly", builtin: true })).gait).toBe("crawl");
+    expect(companionFor(pet({ id: "cocoa", builtin: true })).gait).toBe("walk");
     for (const id of Object.keys(BUILTIN_COMPANIONS)) {
       expect(companionFor(pet({ id, builtin: true })).kind).toBe("model");
       expect(petModelUrl(id)).toBeTruthy();

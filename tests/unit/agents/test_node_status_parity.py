@@ -46,11 +46,12 @@ def _ts_node_statuses() -> set[str]:
 def _board_status_labels() -> set[str]:
     text = _BOARD.read_text(encoding="utf-8")
     match = re.search(
-        r"const STATUS_LABEL: Record<[^>]+> = \{(.*?)\n\};",
+        r"const STATUS_TONE: Record<[^>]+> = \{(.*?)\n\};",
         text,
         flags=re.DOTALL,
     )
-    assert match is not None, "DepartureBoard STATUS_LABEL map is missing"
+    assert match is not None, "DepartureBoard STATUS_TONE map is missing"
+    assert 't(`subagents_view.status.${agent.status}`)' in text
     return set(re.findall(r"^\s{2}([a-z_]+):", match.group(1), flags=re.MULTILINE))
 
 

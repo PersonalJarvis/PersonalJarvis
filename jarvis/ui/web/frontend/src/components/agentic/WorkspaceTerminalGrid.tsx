@@ -157,7 +157,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
   // request for another workspace waits for that workspace's own grid.
   const paneRequest = useIdeChatStore((state) => state.paneRequest);
   const settlePaneMaximize = useIdeChatStore((state) => state.settlePaneMaximize);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active || !paneRequest?.maximize || paneRequest.workspaceId !== session.id) return;
     const terminal = session.terminals.find((entry) => entry.name === paneRequest.pane);
     if (!terminal) return;
@@ -507,7 +507,7 @@ export function WorkspaceTerminalGrid({ session, onChanged, onAdd, onClose, onSe
             onRename={(name) => rename(terminal, name)}
             restartToken={restarts[id] ?? 0} onRestart={() => setRestarts((current) => ({ ...current, [id]: (current[id] ?? 0) + 1 }))}
             onSplit={(direction) => onAdd(terminal.name, direction)}
-            branch={terminal.branch || undefined}
+            branch={terminal.branch || undefined} folder={terminal.folder || undefined}
             computerName={computerName(terminal)} placementItems={placementItems(terminal)}
             workspaceItems={transferring || saving || disabled ? [] : movable
               .map((workspace) => ({ label: `Move to ${workspace.name}…`, run: () => askWhere(id, workspace) }))}
