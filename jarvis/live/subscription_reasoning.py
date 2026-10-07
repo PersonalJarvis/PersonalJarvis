@@ -302,6 +302,36 @@ class SubscriptionReasoning:
                 raise _failure() from exc
         raise _failure(401)
 
+    async def snap_effort(self, model: str, requested: str) -> str:
+        """The level ``model`` offers closest to ``requested`` ("" = its default).
+
+        A runtime asks for the level its own settings name; a ChatGPT model
+        offers only some (no ``max`` on one, no ``none`` on another). A level
+        the model lacks becomes the highest one it offers below it, else its
+        lightest, so the request is never refused for the level alone. Unknown
+        capabilities (the catalog is unreachable) keep a known level as is and
+        drop an unknown one to the model's default. One catalog request at
+        most, no inference.
+        """
+        if not requested:
+            return ""
+        if model not in self._model_efforts:
+            try:
+                await self.list_models()
+            except SubscriptionReasoningError:
+                return requested if requested in _KNOWN_EFFORTS else ""
+        supported = self._model_efforts.get(model, ())
+        if not supported:
+            return requested if requested in _KNOWN_EFFORTS else ""
+        if requested in supported:
+            return requested
+        if requested in _LIGHTEST_FIRST:
+            ceiling = _LIGHTEST_FIRST.index(requested)
+            lower = [e for e in _LIGHTEST_FIRST[: ceiling + 1] if e in supported]
+            if lower:
+                return lower[-1]
+        return next((e for e in _LIGHTEST_FIRST if e in supported), "")
+
     async def _lightest_effort(self, model: str, requested: str) -> str:
         """``requested`` when the model offers it, else its lightest level ("" = default)."""
         if model not in self._model_efforts:

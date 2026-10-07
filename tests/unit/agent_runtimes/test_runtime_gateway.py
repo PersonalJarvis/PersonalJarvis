@@ -821,3 +821,27 @@ def test_old_session_grants_are_forgotten_but_never_a_running_turn(monkeypatch) 
     gateway.unwatch_failure(first, running)
     gateway.reset()
 
+
+@pytest.mark.parametrize(
+    ("requested", "offered", "expected"),
+    [
+        ("max", ("low", "medium", "high", "xhigh"), "xhigh"),
+        ("high", ("low", "medium", "high"), "high"),
+        ("none", ("low", "medium"), "low"),
+        ("xhigh", ("medium",), "medium"),
+        ("turbo", ("low", "medium"), "low"),
+    ],
+)
+async def test_a_runtime_thinking_level_snaps_to_one_the_model_offers(requested, offered,
+                                                                      expected) -> None:
+    from jarvis.live.subscription_reasoning import SubscriptionReasoning
+
+    async def credentials(**kwargs):
+        raise AssertionError("no catalog request is needed")
+
+    client = SubscriptionReasoning(credentials)
+    client._model_efforts = {"gpt-x": offered}
+    args = {"model": "gpt-x", "input": [], "instructions": "", "tools": [],
+            "reasoning_effort": requested}
+    assert (await gateway._snapped_effort(client, args))["reasoning_effort"] == expected
+

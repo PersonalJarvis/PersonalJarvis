@@ -487,7 +487,9 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
     started = False
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        async with contextlib.aclosing(_client(grant.account_id).stream(**args)) as upstream:
+        client = _client(grant.account_id)
+        args = await _snapped_effort(client, args)
+        async with contextlib.aclosing(client.stream(**args)) as upstream:
             async for event in upstream:
                 started = True
                 yield _sse(event)
@@ -496,6 +498,15 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
         if not started:
             raise failure from exc
         yield _sse(_failed_event(str(failure), failure.code))
+
+
+async def _snapped_effort(client: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """``args`` with the runtime's thinking level snapped to one the model offers."""
+    effort = str(args.get("reasoning_effort") or "")
+    snap = getattr(client, "snap_effort", None)
+    if not effort or not callable(snap):
+        return args
+    return {**args, "reasoning_effort": await snap(str(args.get("model") or ""), effort)}
 
 
 async def open_response_stream(grant: Grant, args: dict[str, Any]) -> AsyncIterator[bytes]:
@@ -530,7 +541,9 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     try:
         check_cooldown(grant.provider, model, grant.account_id)
         items: list[dict[str, Any]] = []
-        async with contextlib.aclosing(_client(grant.account_id).stream(**args)) as upstream:
+        client = _client(grant.account_id)
+        args = await _snapped_effort(client, args)
+        async with contextlib.aclosing(client.stream(**args)) as upstream:
             async for event in upstream:
                 finished = event.get("response")
                 if event.get("type") == "response.output_item.done" and isinstance(
