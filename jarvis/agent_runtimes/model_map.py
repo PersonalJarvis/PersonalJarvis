@@ -173,6 +173,26 @@ def access_choices() -> dict[str, list[str]]:
     return choices
 
 
+def access_blocked() -> dict[str, dict[str, str]]:
+    """Per provider that can pay two ways, the ways that exist but are refused
+    right now, with the refusal's code: a live Claude Code login whose Extra
+    Usage is off (``extra_usage_off``) or spent (``extra_usage_spent``) — the
+    only way Anthropic serves a subscription to Hermes and OpenClaw. The
+    "New agent" dialog shows such a way disabled with its reason. Blocking
+    (keyring, one cached usage GET, no inference)."""
+    from jarvis.agent_runtimes.provider_errors import login_blocked
+
+    blocked: dict[str, dict[str, str]] = {}
+    for name, endpoint in _ENDPOINTS.items():
+        if not endpoint.claude_login:
+            continue
+        token = claude_login_token()
+        refusal = login_blocked(token, "") if token else None
+        if refusal is not None:
+            blocked[name] = {"subscription": refusal.code}
+    return blocked
+
+
 def supports(provider: str) -> bool:
     return provider in _ENDPOINTS
 
