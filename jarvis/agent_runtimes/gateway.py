@@ -32,13 +32,16 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import secrets
 import threading
 import time
 import uuid
 from collections import OrderedDict
 from collections.abc import AsyncIterator
+from concurrent.futures import Future
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from typing import Any, Final
 
 log = logging.getLogger(__name__)
@@ -55,10 +58,18 @@ SUBSCRIPTION_PROVIDER: Final[str] = "openai-codex"
 class GatewayError(Exception):
     """A request the gateway cannot answer; ``status`` is the HTTP code."""
 
-    def __init__(self, message: str, *, status: int = 400, code: str = "invalid_request") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int = 400,
+        code: str = "invalid_request",
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,12 +80,17 @@ class Grant:
     provider: str
     #: The provider account (``jarvis.agent_accounts``); "" = the active one.
     account_id: str = ""
+    #: The runtime profile: direct chat and serialized scheduled runs differ.
+    scope: str = ""
 
 
 _LOCK = threading.Lock()
 _GRANTS: dict[str, Grant] = {}
 _TOKENS: dict[Grant, str] = {}
 _CLIENTS: dict[str, Any] = {}
+_FAILURES: dict[Grant, Future[str]] = {}
+_COOLDOWNS: OrderedDict[tuple[str, str, str], float] = OrderedDict()
+_DEFAULT_COOLDOWN_S: Final = 30.0
 
 #: Gemini's thought signature per tool call id: the OpenAI wire shape has no
 #: field for it, and the next request must carry it back with the call.
@@ -89,10 +105,10 @@ _EFFORTS: Final[frozenset[str]] = frozenset(
 )
 
 
-def grant_token(agent_id: str, provider: str, account_id: str = "") -> str:
+def grant_token(agent_id: str, provider: str, account_id: str = "", *, scope: str = "") -> str:
     """The token one agent's runtime presents (stable for the app's lifetime,
     so a runtime that keeps a process between turns is not restarted)."""
-    grant = Grant(agent_id, provider, account_id)
+    grant = Grant(agent_id, provider, account_id, scope)
     with _LOCK:
         token = _TOKENS.get(grant)
         if token is None:
@@ -108,6 +124,102 @@ def verify(token: str) -> Grant | None:
         return None
     with _LOCK:
         return _GRANTS.get(token)
+
+
+def watch_failure(token: str) -> Future[str]:
+    """Observe this session's current turn, across the HTTP and runner loops."""
+    with _LOCK:
+        grant = _GRANTS[token]
+        if grant in _FAILURES:
+            raise RuntimeError("A runtime turn already owns this gateway session.")
+        signal: Future[str] = Future()
+        _FAILURES[grant] = signal
+        return signal
+
+
+def unwatch_failure(token: str, signal: Future[str]) -> None:
+    with _LOCK:
+        grant = _GRANTS.get(token)
+        if _FAILURES.get(grant) is signal:
+            del _FAILURES[grant]
+
+
+def _watch_for(grant: Grant) -> Future[str] | None:
+    with _LOCK:
+        return _FAILURES.get(grant)
+
+
+def _retry_after(exc: Exception) -> float | None:
+    """Read only Retry-After, never copy a provider's body or other headers."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or getattr(exc, "headers", None) or {}
+    raw = next(
+        (v for k, v in headers.items() if str(k).lower() == "retry-after"),
+        getattr(exc, "retry_after", None),
+    )
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        try:
+            seconds = parsedate_to_datetime(str(raw)).timestamp() - time.time()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
+
+
+def _limited(provider: str, seconds: float) -> GatewayError:
+    return GatewayError(
+        f"{provider} returned HTTP 429 (rate limit). Try again in {math.ceil(seconds)} s. "
+        "Your message is saved; use /continue after the wait, or choose another "
+        "connected model in the agent's settings. No fallback provider was called.",
+        status=429,
+        code="rate_limited",
+        retry_after=seconds,
+    )
+
+
+def check_cooldown(provider: str, model: str, account_id: str = "") -> None:
+    """Reject early, without spawning a runtime or spending another model call."""
+    key = (provider, account_id, model)
+    with _LOCK:
+        remaining = _COOLDOWNS.get(key, 0.0) - time.monotonic()
+        if remaining <= 0:
+            _COOLDOWNS.pop(key, None)
+    if remaining > 0:
+        raise _limited(provider, remaining)
+
+
+def _report_failure(
+    grant: Grant,
+    model: str,
+    failure: GatewayError,
+    signal: Future[str] | None,
+) -> GatewayError:
+    if failure.status == 429:
+        seconds = failure.retry_after if failure.retry_after is not None else _DEFAULT_COOLDOWN_S
+        key = (grant.provider, grant.account_id, model)
+        with _LOCK:
+            now = time.monotonic()
+            until = max(_COOLDOWNS.get(key, 0.0), now + seconds)
+            seconds = until - now
+            _COOLDOWNS[key] = until
+            _COOLDOWNS.move_to_end(key)
+            while len(_COOLDOWNS) > 512:
+                _COOLDOWNS.popitem(last=False)
+        failure = _limited(grant.provider, seconds)
+    if signal is not None:
+        # A request captures its turn's signal before awaiting the provider.
+        # Late failures therefore cannot stop a later turn on the same session.
+        from concurrent.futures import InvalidStateError
+
+        try:
+            signal.set_result(str(failure))
+        except InvalidStateError:
+            # A previous failure or runner cleanup already settled this signal.
+            pass
+    return failure
 
 
 def base_url() -> str | None:
@@ -211,12 +323,16 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
     from jarvis.live.subscription_auth import SubscriptionAuthError
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
+    model = str(args.get("model") or "")
+    signal = _watch_for(grant)
     try:
+        check_cooldown(grant.provider, model, grant.account_id)
         async for event in _client(grant.account_id).stream(**args):
             yield _sse(event)
-    except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
+    except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
         log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
-        yield _sse(_failed_event(str(exc), getattr(exc, "code", "subscription_unavailable")))
+        failure = _report_failure(grant, model, _subscription_failure(grant, exc), signal)
+        yield _sse(_failed_event(str(failure), failure.code))
 
 
 async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any]:
@@ -224,8 +340,11 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     from jarvis.live.subscription_auth import SubscriptionAuthError
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
+    model = str(args.get("model") or "")
+    signal = _watch_for(grant)
     try:
         items: list[dict[str, Any]] = []
+        check_cooldown(grant.provider, model, grant.account_id)
         async for event in _client(grant.account_id).stream(**args):
             finished = event.get("response")
             if event.get("type") == "response.output_item.done" and isinstance(
@@ -233,12 +352,26 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
             ):
                 items.append(event["item"])
             if event.get("type") == "response.completed" and isinstance(finished, dict):
-                # ChatGPT's backend streams the output items and sends the
-                # completed response with an empty ``output``.
+                # The backend may complete with an empty output after streaming items.
                 return {**finished, "output": finished.get("output") or items}
-    except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
-        raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
-    raise GatewayError("ChatGPT ended without an answer.", status=502, code="incomplete")
+    except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
+        raise _report_failure(grant, model, _subscription_failure(grant, exc), signal) from exc
+    raise _report_failure(
+        grant,
+        model,
+        GatewayError("ChatGPT ended without an answer.", status=502, code="incomplete"),
+        signal,
+    )
+
+
+def _subscription_failure(grant: Grant, exc: Exception) -> GatewayError:
+    if isinstance(exc, GatewayError) or getattr(exc, "status", 0) == 429:
+        return _failure(grant.provider, exc)
+    return GatewayError(
+        str(exc),
+        status=502,
+        code=getattr(exc, "code", "subscription_unavailable"),
+    )
 
 
 async def list_models(grant: Grant) -> list[dict[str, Any]]:
@@ -407,6 +540,8 @@ def chat_request(body: Any) -> tuple[str, Any]:
 def _failure(provider: str, exc: Exception) -> GatewayError:
     """A provider error as a status the runtime can back off on, and a plain
     message — never the provider's own response body."""
+    if isinstance(exc, GatewayError):
+        return exc
     from jarvis.agent_runtimes.provider_errors import classify
 
     if (refusal := classify(provider, exc)) is not None:
@@ -421,9 +556,10 @@ def _failure(provider: str, exc: Exception) -> GatewayError:
         status = getattr(response, "status_code", None)
     if status == 429:
         return GatewayError(
-            f"{provider} is rate-limiting this key; try again shortly.",
+            f"{provider} returned HTTP 429 (rate limit).",
             status=429,
             code="rate_limited",
+            retry_after=_retry_after(exc),
         )
     if status in (401, 403):
         return GatewayError(
@@ -545,25 +681,36 @@ async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncItera
     """
     stream = _deltas(grant, model, request)
     started = time.monotonic()
+    signal = _watch_for(grant)
     try:
+        check_cooldown(grant.provider, model, grant.account_id)
         first = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error, logged below
-        log.info("runtime gateway: %s on %s failed up front (%s)", grant.agent_id,
-                 grant.provider, type(exc).__name__)
-        raise _failure(grant.provider, exc) from exc
-    return _chat_chunks(grant, model, stream, first, started)
+        log.info(
+            "runtime gateway: %s on %s failed up front (%s)",
+            grant.agent_id,
+            grant.provider,
+            type(exc).__name__,
+        )
+        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
+    return _chat_chunks(grant, model, stream, first, started, signal)
 
 
 async def _chat_chunks(
-    grant: Grant, model: str, stream: AsyncIterator[Any], first: Any, started: float
+    grant: Grant,
+    model: str,
+    stream: AsyncIterator[Any],
+    first: Any,
+    started: float,
+    signal: Future[str] | None = None,
 ) -> AsyncIterator[bytes]:
     chat_id = f"chatcmpl-{uuid.uuid4().hex}"
     usage: dict[str, int] = {}
     calls = 0
     finish = "stop"
-    yield _chunk(chat_id, model, {"role": "assistant", "content": ""})
     delta = first
     try:
+        yield _chunk(chat_id, model, {"role": "assistant", "content": ""})
         while delta is not None:
             if delta.content:
                 yield _chunk(chat_id, model, {"content": delta.content})
@@ -577,12 +724,22 @@ async def _chat_chunks(
                 finish = _FINISH.get(delta.finish_reason, "stop")
             delta = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — the stream already began: an error chunk tells the runtime
-        failure = _failure(grant.provider, exc)
-        log.info("runtime gateway: %s on %s failed mid-stream (%s)", grant.agent_id,
-                 grant.provider, type(exc).__name__)
+        failure = _report_failure(grant, model, _failure(grant.provider, exc), signal)
+        log.info(
+            "runtime gateway: %s on %s failed mid-stream (%s)",
+            grant.agent_id,
+            grant.provider,
+            type(exc).__name__,
+        )
         payload = {"error": {"message": str(failure), "type": failure.code, "code": failure.code}}
         yield f"data: {json.dumps(payload)}\n\n".encode()
         return
+    finally:
+        # The runner stops on a provider failure; a closed HTTP client must
+        # also release the plugin task if it was suspended between deltas.
+        close = getattr(stream, "aclose", None)
+        if close is not None:
+            await close()
     yield _chunk(
         chat_id,
         model,
@@ -593,8 +750,13 @@ async def _chat_chunks(
     yield b"data: [DONE]\n\n"
     log.info(
         "runtime gateway: %s on %s/%s answered in %.1f s (%s in, %s out, %d tool calls)",
-        grant.agent_id, grant.provider, model, time.monotonic() - started,
-        usage.get("input_tokens", 0), usage.get("output_tokens", 0), calls,
+        grant.agent_id,
+        grant.provider,
+        model,
+        time.monotonic() - started,
+        usage.get("input_tokens", 0),
+        usage.get("output_tokens", 0),
+        calls,
     )
 
 
@@ -605,7 +767,9 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
     calls: list[dict[str, Any]] = []
     usage: dict[str, int] = {}
     finish = "stop"
+    signal = _watch_for(grant)
     try:
+        check_cooldown(grant.provider, model, grant.account_id)
         async for delta in stream:
             if delta.content:
                 text.append(delta.content)
@@ -617,7 +781,7 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
             if delta.finish_reason:
                 finish = _FINISH.get(delta.finish_reason, "stop")
     except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error
-        raise _failure(grant.provider, exc) from exc
+        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
     if calls:
         message["tool_calls"] = [{k: v for k, v in call.items() if k != "index"} for call in calls]
@@ -640,3 +804,5 @@ def reset() -> None:
         _TOKENS.clear()
         _CLIENTS.clear()
         _SIGNATURES.clear()
+        _FAILURES.clear()
+        _COOLDOWNS.clear()

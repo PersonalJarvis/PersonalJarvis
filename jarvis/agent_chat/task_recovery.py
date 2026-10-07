@@ -37,6 +37,9 @@ _TERMINAL = (
     "not authenticated",
     "quota",
     "credit balance",
+    "http 429",
+    "rate limit",
+    "rate-limited",
 )
 _DISCOVERY = frozenset({"toolsearch", "list_tools", "tools-list", "search_tools"})
 

@@ -87,6 +87,9 @@ def test_empty_discovery_is_not_success_and_does_not_depend_on_reply_language():
         "auth_failed",
         "invalid token",
         "quota exceeded",
+        "HTTP 429",
+        "rate limit",
+        "custom rate-limited every one of 3 attempts",
     ],
 )
 def test_real_blockers_do_not_trigger_automatic_workarounds(reason):
@@ -221,6 +224,24 @@ async def test_user_denial_never_starts_a_second_attempt(turn, monkeypatch):
     monkeypatch.setattr(runner_cli, "_run_cli_once", once)
     await runner_cli.run_cli_turn(handle, origin.user_text, "claude-cli", identity=True)
     assert len(attempts) == 1
+
+
+async def test_rate_limit_after_unfinished_tools_never_starts_automatic_recovery(turn, monkeypatch):
+    handle, events, origin = turn
+    attempts = []
+
+    async def once(handle, *args, **kwargs):
+        attempts.append(1)
+        await handle.emit(make_event("tool_call", {"call_id": "c", "name": "Read"}))
+        await handle.emit(
+            make_event("tool_result", {"call_id": "c", "output": "not found", "is_error": True})
+        )
+        return runner_cli._Outcome("error", "HTTP 429 (rate limit).", {}, None, "existing")
+
+    monkeypatch.setattr(runner_cli, "_run_cli_once", once)
+    await runner_cli.run_cli_turn(handle, origin.user_text, "hermes-cli", identity=True)
+    assert len(attempts) == 1
+    assert events[-1]["payload"]["status"] == "error"
 
 
 async def test_resolved_language_remains_visible_to_the_caller(turn, monkeypatch):

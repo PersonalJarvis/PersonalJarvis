@@ -277,14 +277,25 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
 
 
 def route_for(
-    config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = ""
+    config: Any,
+    provider: str,
+    model: str,
+    *,
+    agent_id: str = "",
+    account_id: str = "",
+    session_id: str = "",
 ) -> ModelRoute:
     """The agent's route through Jarvis' gateway. Blocking (keyring): call it
     in a thread. The token speaks for ``agent_id`` on ``provider`` (and, for
     the subscription, on that Codex ``account_id``)."""
     chosen = _checked_model(config, provider, model, account_id=account_id)
     from jarvis.agent_runtimes import gateway
+    from jarvis.agent_runtimes.base import home_key
 
+    try:
+        gateway.check_cooldown(provider, chosen, account_id)
+    except gateway.GatewayError as exc:
+        raise RouteUnavailable(str(exc)) from exc
     base_url = gateway.base_url()
     if not base_url:
         raise RouteUnavailable("Jarvis' model gateway is not up yet. Try again in a moment.")
@@ -293,5 +304,10 @@ def route_for(
         model=chosen,
         base_url=base_url,
         transport="responses" if _ENDPOINTS[provider].subscription else "chat_completions",
-        api_key=gateway.grant_token(agent_id, provider, account_id),
+        api_key=gateway.grant_token(
+            agent_id,
+            provider,
+            account_id,
+            scope=home_key(agent_id, session_id) if session_id else "",
+        ),
     )

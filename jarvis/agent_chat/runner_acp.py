@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver
+from jarvis.agent_runtimes import RUNNER_RUNTIMES, driver, gateway
 from jarvis.agent_runtimes.acp import AcpTurn
 from jarvis.agent_runtimes.base import RuntimeTurn, RuntimeUnavailable
 from jarvis.agent_runtimes.model_map import RouteUnavailable, route_for
@@ -136,6 +136,7 @@ async def plan_runtime_turn(
                 session.model,
                 agent_id=agent.agent_id,
                 account_id=getattr(session, "account_id", "") or "",
+                session_id=session.session_id,
             )
         )
     except RouteUnavailable as exc:
@@ -160,6 +161,18 @@ async def plan_runtime_turn(
         launch = await runtime.launch(turn)
     except RuntimeUnavailable as exc:
         raise CliUnavailable(str(exc)) from exc
+    try:
+        failure = gateway.watch_failure(route.api_key or "")
+    except Exception:
+        if launch.release is not None:
+            launch.release()
+        raise
+
+    def release() -> None:
+        gateway.unwatch_failure(route.api_key or "", failure)
+        if launch.release is not None:
+            launch.release()
+
     text = _PLAN_PREAMBLE + prompt if plan_mode else prompt
     acp = AcpTurn(
         turn_id=handle.turn_id,
@@ -180,5 +193,6 @@ async def plan_runtime_turn(
         vendor_session=None,
         keep_stdin=True,
         acp=acp,
-        after_turn=launch.release,
+        after_turn=release,
+        provider_failure=failure,
     )
