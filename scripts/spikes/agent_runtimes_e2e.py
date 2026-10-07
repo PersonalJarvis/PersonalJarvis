@@ -115,6 +115,20 @@ async def _run(name: str, turn: RuntimeTurn, text: str) -> tuple[AcpTurn, _IO]:
                 launch.release()
 
 
+def _key_on_disk(root: Path, key: str) -> bool:
+    for path in root.rglob("*") if root.exists() else ():
+        if "installs" in path.parts or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size < 5_000_000 and key in path.read_text(
+                encoding="utf-8", errors="replace"
+            ):
+                return True
+        except OSError:  # locked by a process the runtime left: reported below
+            print("  unreadable:", path.name)
+    return False
+
+
 def keep_user_path() -> None:
     """A spike never edits the machine's PATH: the app's one-time cleanup of
     stale Hermes entries (``path_cleanup``) stays the app's job."""
@@ -181,7 +195,10 @@ async def main(name: str) -> int:
     with FakeOpenAIServer() as server:
         key = "sk-e2e-" + uuid.uuid4().hex
         # The key travels like the gateway token: process environment only.
-        route = ModelRoute("local-openai", MODEL_ID, server.base_url, "chat_completions", key)
+        route = ModelRoute(
+            "local-openai", MODEL_ID, server.base_url, "chat_completions", key,
+            context_window=131_072,  # Hermes refuses models below 64k
+        )
         # JARVIS_E2E_MCP=<url>|<agent id>: hand the runtime a running Jarvis'
         # MCP server (a dev instance) and make the fake model call a real tool.
         mcp = os.environ.get("JARVIS_E2E_MCP", "")
@@ -224,17 +241,11 @@ async def main(name: str) -> int:
         print("turn 2:", second.status, second.error, repr(second.result_text[:80]))
         history = len(server.requests[-1].get("messages", [])) if server.requests else 0
         print("  model saw", history, "messages on turn 2")
-        home = tmp / "agent_runtimes"
-        secret_leak = any(
-            p.is_file()
-            and p.stat().st_size < 5_000_000
-            and key in p.read_text(encoding="utf-8", errors="replace")
-            for p in home.rglob("*")
-            if "installs" not in p.parts
-        )
-        # Only a fixed word is printed: never anything derived from the key.
-        print("  key written to disk:", "YES" if secret_leak else "no")
+    # Stopped first: a running Gateway holds some of its files open.
     await driver(name).stop()
+    secret_leak = _key_on_disk(tmp / "agent_runtimes", key)
+    # Only a fixed word is printed: never anything derived from the key.
+    print("  key written to disk:", "YES" if secret_leak else "no")
     path_kept = user_path_snapshot() == path_before
     print("  user PATH unchanged:", "yes" if path_kept else "NO")
     ok = (
