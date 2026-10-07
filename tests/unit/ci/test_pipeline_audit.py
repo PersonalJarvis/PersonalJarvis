@@ -199,6 +199,15 @@ def test_dependency_review_runs_only_on_pull_requests_and_may_skip_elsewhere():
     assert not required_results.evaluate(needs, pipeline=True)["ok"]
 
 
+def test_live_site_checks_run_only_nightly_and_never_fail_the_run():
+    job = workflows()["ci.yml"]["jobs"]["live-network"]
+    assert job["if"] == "github.event_name == 'schedule'"
+    live = next(s for s in job["steps"] if s.get("id") == "live")
+    assert live["continue-on-error"] is True
+    assert live["env"]["JARVIS_LIVE_NETWORK_TESTS"] == "1"
+    assert all(s.get("continue-on-error") for s in job["steps"] if "pytest" in s.get("run", ""))
+
+
 def test_merge_queue_runs_the_whole_suite_and_is_never_cancelled():
     ci = workflows()["ci.yml"]
     triggers = ci.get("on", ci.get(True))

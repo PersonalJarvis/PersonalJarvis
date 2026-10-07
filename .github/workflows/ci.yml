@@ -286,6 +286,39 @@ jobs:
         with:
           fail-on-severity: high
 
+  # Third-party websites the app parses (ollama.com's model library) change
+  # without notice. Those live checks are opt-in (JARVIS_LIVE_NETWORK_TESTS)
+  # and run only in the nightly: a redesign shows up as a failed step and a
+  # warning there, never as a red pull request, merge queue or nightly gate.
+  live-network:
+    name: live third-party sites (nightly, non-blocking)
+    needs: detect
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Live ollama.com library checks
+        id: live
+        continue-on-error: true
+        env:
+          JARVIS_LIVE_NETWORK_TESTS: "1"
+        run: python -m pytest -m integration tests/integration/test_ollama_library_live.py -v
+      - name: Report a drifted site without failing the run
+        if: steps.live.outcome == 'failure'
+        run: echo "::warning title=Live site check failed::A third-party page the app parses changed (see the 'Live ollama.com library checks' step). Update its parser."
+
   release-qualification:
     name: release qualification
     needs: [detect, gates]
@@ -915,6 +948,7 @@ jobs:
       - gates
       - zizmor
       - dependency-review
+      - live-network
       - python-fast
       - release-qualification
       - tests-linux
