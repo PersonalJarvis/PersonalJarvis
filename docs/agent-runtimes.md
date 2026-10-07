@@ -86,41 +86,78 @@ call with its own provider plugins (`gateway.py`,
   working across Hermes and OpenClaw updates.
 - **Every connected provider works.** The dialog lists what can answer right
   now — a signed-in subscription first, then each provider with a saved key
-  (the Agents-tier key wins, as for Jarvis' own agents) or a local server
-  with an address. A new provider plugin in Jarvis is new to the runtimes too.
+  (the Agents-tier key wins, as for Jarvis' own agents), a local server with
+  an address, or Vertex AI on a Google Cloud project without a key. The
+  runtimes can use the providers listed in `model_map._ENDPOINTS`; a new
+  provider plugin needs an entry there too. A way of paying that exists but
+  is refused right now (a Claude login whose Extra Usage is off or spent) is
+  reported in `access_blocked` on `/api/agent-runtimes` with its reason code,
+  so the dialog shows it disabled.
 - **Keys and logins stay in Jarvis.** The runtime gets a per-agent token
   (`jrg_…`, process environment only); `SurfaceSecurity` accepts it on
   `/api/runtime-gateway/` and nowhere else. Hermes finds it again on session
-  restore through `OPENAI_BASE_URL` = the gateway URL.
+  restore through `OPENAI_BASE_URL` = the gateway URL. A token answers only
+  for the models its route registered, the gateway keeps at most 1024 grants
+  (never dropping one whose turn is running), and `gateway.revoke_agent()`
+  invalidates an agent's tokens when it is deleted or moved to another
+  provider.
 - **Translation.** A Chat Completions request becomes a `BrainRequest`
   (system text, messages with tool calls and results, function tools, max
   tokens, effort); the plugin's stream becomes Chat Completions chunks with
   tool calls and usage. Gemini's thought signature, which the OpenAI shape has
-  no field for, is kept per tool-call id and sent back with the call. The
+  no field for, is kept per tool-call id and sent back with the call; a call
+  without one (a restart in between, the later calls of a parallel step)
+  still replays as a native call with Google's validator sentinel. The
   plugin runs in a task of its own and hands deltas over a queue: its key
-  override and cost caller are context variables, and a streamed response is
-  read by another task.
+  override, cost caller and agent request profile are context variables, and
+  a streamed response is read by another task. `prompt_tokens` counts the
+  whole prompt, cache reads and writes included, because both runtimes
+  compress from it. A provider's "cut off" stop (`max_tokens`, Gemini's
+  `MAX_TOKENS`, Anthropic's `model_context_window_exceeded`) stays `length`
+  even with tool calls, so a truncated call is retried, never run.
+- **Agent request profile.** The plugins were tuned for voice; the gateway
+  runs them with a profile the voice path never sets
+  (`plugins/brain/_agent_profile.py`): a 300 s read timeout for hosted
+  providers and 900 s for local servers (a reasoning model thinks for
+  minutes before its first token), no temperature unless the runtime chose
+  one, and Anthropic prompt-cache breakpoints on system, tools and the
+  latest message. One provider brain, with its HTTP client, is kept per
+  session, model and credential (LRU of 32) instead of one per call.
 - **Failures.** A provider error before the first token becomes an HTTP
-  status the runtime backs off on (429 rate limit, 401 refused key, 502
-  otherwise); after streaming began it is an `error` chunk. Either way the
-  message is Jarvis' own, never the provider's body. Refusals no retry can
-  fix are told apart first (`provider_errors.py`): an empty balance or zero
-  quota is 402 `billing` even when the provider sent 429 (OpenAI does), a
-  provider that cannot be reached (a stopped local server) is 503
-  `provider_unreachable`. Hermes treats 402 as billing and stops instead of
-  retrying.
-- **Costs.** Every call goes through the plugin, so it lands in the cost
-  ledger (caller `agent-runtime`).
+  status and code the runtime acts on; after streaming began it is an `error`
+  chunk (`response.failed` on the subscription). The message is Jarvis' own,
+  never the provider's body; the body goes to the log as one bounded,
+  redacted WARNING line. `provider_errors.py` tells the cases apart: 402
+  `billing` (also when OpenAI sends 429 for an empty balance), 400
+  `context_length_exceeded` (worded "context length exceeded", which both
+  runtimes read as "compress and resend"), 504 `timeout` ("took too long",
+  not "not reachable"), 503 `provider_unreachable` / `provider_overloaded`,
+  404 `model_not_found`, 400 `tools_unsupported` / `invalid_tool_schema` /
+  `invalid_request`, 401 `provider_auth` / `claude_login_expired`, 429
+  `rate_limited` with a cooldown, 502 `provider_error`. Only the codes no
+  runtime can recover from end the Jarvis turn at once
+  (`provider_errors.TERMINAL_CODES`: billing, Extra Usage, refused key or
+  login, unknown model, tool refusals, rate limit); an overflow, a timeout or
+  an overloaded provider goes back to the runtime's own retry and
+  compression.
+- **Costs.** Every gateway call is metered into the cost ledger (caller
+  `agent-runtime`). From the first metered call on, the cost report bills
+  Hermes / OpenClaw turns from those rows and skips the runtime's own turn
+  report, so no call is counted twice.
 - **Model budgets.** The route refreshes catalog metadata with a bounded wait
   before writing the runtime config. Hermes receives `model.context_length`;
   OpenClaw receives `contextWindow` and `maxTokens`. Gateway model discovery
-  includes the selected local model and its limits. Both Chat Completions
-  modes use the declared output maximum when a request omits its limit and
-  preserve smaller explicit request limits. There is no extra 128k output cap
-  or fixed percentage reserved by Jarvis. Ollama uses the full native context
-  unless the user selected a smaller `num_ctx`; its provider prepares an
-  isolated model profile with that actual allocation before inference. An
-  explicit positive `num_predict` remains effective. Unknown output capacity
+  includes the selected local model and its limits. A request that names no
+  output limit gets the declared output maximum, but never more than the
+  context window leaves after a conservative prompt estimate (OpenRouter's
+  upstreams and vLLM refuse `prompt + max_tokens > context`, and many models
+  declare an output maximum as large as the window); an explicit request
+  limit is kept, capped at the model's maximum. Ollama uses the `num_ctx`
+  chosen on the model card (bounded by the native window) and otherwise
+  65,536 tokens, never the whole native window by default: Ollama reserves
+  the KV cache up front, and a 30B model at 256k needs about 45 GB. Its
+  provider prepares an isolated model profile with that allocation before
+  inference. An explicit positive `num_predict` remains effective. Unknown output capacity
   is omitted from runtime metadata rather than invented as an 8k limit; a
   request with neither metadata nor an explicit budget uses the brain's normal
   request default. Unknown context still uses plugin metadata (32k otherwise)
@@ -131,10 +168,15 @@ call with its own provider plugins (`gateway.py`,
   own Codex login. The gateway answers with Jarvis' subscription client on the
   agent's Codex account, whose refresh is coordinated in one place
   (`live/subscription_auth.py`); a failure mid-stream is `response.failed`.
+  A runtime's thinking level is snapped to one the selected ChatGPT model
+  offers (from the account's catalog, no inference), and a `system` or
+  `developer` input message moves into the instructions, which ChatGPT's
+  backend requires.
 - **Claude subscription: billed as extra usage.** Claude runs on an
   Anthropic API key when one is saved. Without one, the gateway answers on
   the person's live Claude Code login (read-only: only the Claude CLI renews
-  it, so an expired login waits until Claude Code runs again). Anthropic bills
+  it, so an expired login fails with `claude_login_expired` and says to open
+  Claude Code once). Anthropic bills
   a subscription used outside Claude Code as extra usage, not from the plan's
   limits, so the model picker labels that seat "billed as extra usage"
   (`login_providers` on `/api/agent-runtimes`). A Claude login (`sk-ant-oat…`)
@@ -158,7 +200,9 @@ event format. Verified 2026-10-06: Hermes and OpenClaw on a local Ollama model
 history carried into the second turn, no error chunk. Against the live
 subscription the account was at its usage limit; that error reached Hermes as
 `response.failed`. API-key providers share the plugin path with Ollama but
-were not called live (no paid test calls).
+were not called live (no paid test calls). Re-run 2026-10-07 with `--replay`
+after the gateway hardening: Hermes and OpenClaw on Chat Completions and
+Hermes on the subscription, two turns each, all passing.
 
 The runtime decides which agent loop, native tools and session store a turn
 uses. Everything that makes a Jarvis agent stays in Jarvis and is identical

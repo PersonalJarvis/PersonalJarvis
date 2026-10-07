@@ -728,3 +728,52 @@ def test_a_session_counts_the_same_whatever_grain_the_report_draws_at(
     assert len(hourly) == 3
     assert len(daily) == len(hourly)
     assert sum(e.tokens_total for e in daily) == sum(e.tokens_total for e in hourly)
+
+
+# ---------------------------------------------------------------------------
+# Hermes / OpenClaw: the model gateway's ledger rows are the bill
+# ---------------------------------------------------------------------------
+
+
+def _runtime_turn(turn_id: str, ts_ms: int, seq: int) -> list[tuple]:
+    return [
+        ("chat-3", seq, ts_ms, "turn_started", json.dumps(
+            {"turn_id": turn_id, "runner": "hermes-cli", "provider": "openai",
+             "model": "gpt-5.5"})),
+        ("chat-3", seq + 1, ts_ms + 500, "turn_finished", json.dumps(
+            {"turn_id": turn_id, "status": "done",
+             "usage": {"input_tokens": 5_000, "output_tokens": 100}})),
+    ]
+
+
+def test_gateway_metered_runtime_turns_are_billed_once(tmp_path: Path) -> None:
+    from jarvis.costs import ledger
+
+    chat = tmp_path / "agent_chat.db"
+    conn = sqlite3.connect(chat)
+    conn.executescript(_AGENT_CHAT_DDL)
+    conn.executemany(
+        "INSERT INTO agent_chat_events (session_id, seq, ts_ms, kind, payload) VALUES (?,?,?,?,?)",
+        # One turn before the gateway metered anything, one after.
+        _runtime_turn("t-old", T0, 1) + _runtime_turn("t-new", T0 + 60_000, 3),
+    )
+    conn.commit()
+    conn.close()
+    usage = tmp_path / "llm_usage.db"
+    ledger.set_ledger_path(usage)
+    try:
+        for offset in (60_100, 60_200):
+            ledger.record_usage(provider="openai", model="gpt-5.5", tokens_in=2_000,
+                                tokens_out=50, caller="agent-runtime", ts_ms=T0 + offset)
+        ledger.flush()
+    finally:
+        ledger.set_ledger_path(None)
+
+    entries = collect_entries(CostSources(agent_chat_db=chat, ledger_db=usage))
+    agent = [e for e in entries if e.surface == "agent-chat"]
+    # The old turn from its own report, the new one only as two gateway calls.
+    assert sorted((e.ts_ms, e.tokens_in) for e in agent) == [
+        (T0 + 500, 5_000), (T0 + 60_100, 2_000), (T0 + 60_200, 2_000)
+    ]
+    assert all(e.role == "agent" for e in agent)
+

@@ -88,7 +88,10 @@ class Grant:
 
 _LOCK = threading.Lock()
 _GRANTS: dict[str, Grant] = {}
-_TOKENS: dict[Grant, str] = {}
+_TOKENS: OrderedDict[Grant, str] = OrderedDict()
+#: Grants kept at once. Each chat session mints its own; the least recently
+#: minted one is forgotten first (its next turn simply mints a new token).
+_GRANTS_MAX: Final[int] = 1024
 _CLIENTS: dict[str, Any] = {}
 _MODEL_LIMITS: dict[Grant, dict[str, ModelLimits]] = {}
 _CATALOG: Any = None
@@ -101,8 +104,33 @@ _DEFAULT_COOLDOWN_S: Final = 30.0
 _SIGNATURES: OrderedDict[str, str] = OrderedDict()
 _SIGNATURES_MAX: Final[int] = 4096
 
-#: The finish reasons a Chat Completions client knows.
-_FINISH: Final[dict[str, str]] = {"max_tokens": "length", "length": "length"}
+#: Provider stop reasons that mean "cut off", in lower case without an enum
+#: prefix (Gemini's ``FinishReason.MAX_TOKENS``, Anthropic's
+#: ``model_context_window_exceeded``), and those that mean "withheld".
+_LENGTH_REASONS: Final[frozenset[str]] = frozenset(
+    {"length", "max_tokens", "model_context_window_exceeded"}
+)
+_FILTER_REASONS: Final[frozenset[str]] = frozenset(
+    {"content_filter", "safety", "refusal", "recitation", "blocklist", "prohibited_content",
+     "spii"}
+)
+
+
+def _finish(raw: Any) -> str:
+    """A provider stop reason as one Chat Completions knows."""
+    name = str(raw).rsplit(".", 1)[-1].strip().lower()
+    if name in _LENGTH_REASONS:
+        return "length"
+    if name in _FILTER_REASONS:
+        return "content_filter"
+    return "stop"
+
+
+def _final_finish(finish: str, calls: int) -> str:
+    """Tool calls end a normal turn, but a cut-off answer stays "length": a
+    tool call truncated by the output limit has broken arguments, and the
+    runtimes retry it with a larger budget instead of running it."""
+    return "tool_calls" if calls and finish == "stop" else finish
 
 _EFFORTS: Final[frozenset[str]] = frozenset(
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -119,7 +147,61 @@ def grant_token(agent_id: str, provider: str, account_id: str = "", *, scope: st
             token = f"jrg_{secrets.token_urlsafe(32)}"
             _TOKENS[grant] = token
             _GRANTS[token] = grant
+        _TOKENS.move_to_end(grant)
+        stale = [
+            old for old in list(_TOKENS)[: max(0, len(_TOKENS) - _GRANTS_MAX)]
+            if old not in _FAILURES  # never a grant whose turn is running
+        ]
+        for old in stale:
+            _forget(old)
         return token
+
+
+def _forget(grant: Grant) -> None:
+    """Drop one grant's token and model registrations. Holds ``_LOCK``."""
+    old_token = _TOKENS.pop(grant, None)
+    if old_token is not None:
+        _GRANTS.pop(old_token, None)
+    _MODEL_LIMITS.pop(grant, None)
+
+
+def revoke_agent(agent_id: str) -> int:
+    """Invalidate every token minted for ``agent_id`` (the agent was deleted
+    or switched to another provider or model): a runtime still holding one
+    gets 401 instead of spending on the old route. Returns how many."""
+    with _LOCK:
+        grants = [grant for grant in _TOKENS if grant.agent_id == agent_id]
+        for grant in grants:
+            _forget(grant)
+        brains = [key for key in _BRAINS if key and key[0] == agent_id]
+        slots = [_BRAINS.pop(key) for key in brains]
+    for slot in slots:
+        slot.retired = True
+        if slot.users == 0:
+            _close_later(slot.brain)
+    return len(grants)
+
+
+def check_model(grant: Grant, model: str) -> None:
+    """Refuse a model the grant was not routed to.
+
+    A token speaks for one agent on the model its route registered; without
+    this check anything holding it could pick a costlier model on the same
+    key. A grant minted without a route has nothing registered and is not
+    restricted.
+    """
+    with _LOCK:
+        allowed = set(_MODEL_LIMITS.get(grant, {}))
+    if not allowed:
+        return
+    if {model, f"{model}:latest", model.removesuffix(":latest")} & allowed:
+        return
+    raise GatewayError(
+        f"This agent runs on {', '.join(sorted(allowed))}; its token cannot use {model}. "
+        "Choose the model in the agent's settings.",
+        status=404,
+        code="model_not_found",
+    )
 
 
 def verify(token: str) -> Grant | None:
@@ -265,7 +347,12 @@ def _report_failure(
             while len(_COOLDOWNS) > 512:
                 _COOLDOWNS.popitem(last=False)
         failure = _limited(grant.provider, seconds)
-    if signal is not None:
+    from jarvis.agent_runtimes.provider_errors import is_terminal
+
+    # Only a failure no runtime can recover from ends the turn here. A
+    # timeout, an overloaded provider or a context overflow goes back to the
+    # runtime, whose own retry and conversation compression handle it.
+    if signal is not None and is_terminal(failure.code):
         # A request captures its turn's signal before awaiting the provider.
         # Late failures therefore cannot stop a later turn on the same session.
         from concurrent.futures import InvalidStateError
@@ -298,11 +385,17 @@ def _client(account_id: str) -> Any:
     with _LOCK:
         found = _CLIENTS.get(account_id)
         if found is None:
+            from jarvis.core.http_pool import HttpClientPool
             from jarvis.live.subscription_auth import SubscriptionAuth
             from jarvis.live.subscription_reasoning import SubscriptionReasoning
 
             auth = SubscriptionAuth(account_id)
-            found = SubscriptionReasoning(credentials=auth.credentials)
+            # Its own client with the agent-scale read timeout: a long
+            # thinking phase sends nothing for minutes.
+            found = SubscriptionReasoning(
+                credentials=auth.credentials,
+                http_pool=HttpClientPool(timeout_s=_HOSTED_READ_TIMEOUT_S),
+            )
             _CLIENTS[account_id] = found
         return found
 
@@ -330,7 +423,11 @@ def _function_tool(tool: Any) -> dict[str, Any] | None:
 
 
 def _is_system(item: dict[str, Any]) -> bool:
-    return item.get("role") == "system" and item.get("type", "message") == "message"
+    # A runtime writes its system prompt as "developer" for a reasoning model;
+    # ChatGPT's backend takes either only as instructions.
+    return item.get("role") in ("system", "developer") and item.get("type", "message") == (
+        "message"
+    )
 
 
 def request_args(body: Any) -> dict[str, Any]:
@@ -394,16 +491,26 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
     started = False
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        async with contextlib.aclosing(_client(grant.account_id).stream(**args)) as upstream:
+        client = _client(grant.account_id)
+        args = await _snapped_effort(client, args)
+        async with contextlib.aclosing(client.stream(**args)) as upstream:
             async for event in upstream:
                 started = True
                 yield _sse(event)
     except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
-        log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
         failure = _report_failure(grant, model, _subscription_failure(grant, exc), signal)
         if not started:
             raise failure from exc
         yield _sse(_failed_event(str(failure), failure.code))
+
+
+async def _snapped_effort(client: Any, args: dict[str, Any]) -> dict[str, Any]:
+    """``args`` with the runtime's thinking level snapped to one the model offers."""
+    effort = str(args.get("reasoning_effort") or "")
+    snap = getattr(client, "snap_effort", None)
+    if not effort or not callable(snap):
+        return args
+    return {**args, "reasoning_effort": await snap(str(args.get("model") or ""), effort)}
 
 
 async def open_response_stream(grant: Grant, args: dict[str, Any]) -> AsyncIterator[bytes]:
@@ -438,16 +545,19 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     try:
         check_cooldown(grant.provider, model, grant.account_id)
         items: list[dict[str, Any]] = []
-        async for event in _client(grant.account_id).stream(**args):
-            finished = event.get("response")
-            if event.get("type") == "response.output_item.done" and isinstance(
-                event.get("item"), dict
-            ):
-                items.append(event["item"])
-            if event.get("type") == "response.completed" and isinstance(finished, dict):
-                # ChatGPT's backend streams the output items and sends the
-                # completed response with an empty ``output``.
-                return {**finished, "output": finished.get("output") or items}
+        client = _client(grant.account_id)
+        args = await _snapped_effort(client, args)
+        async with contextlib.aclosing(client.stream(**args)) as upstream:
+            async for event in upstream:
+                finished = event.get("response")
+                if event.get("type") == "response.output_item.done" and isinstance(
+                    event.get("item"), dict
+                ):
+                    items.append(event["item"])
+                if event.get("type") == "response.completed" and isinstance(finished, dict):
+                    # ChatGPT's backend streams the output items and sends the
+                    # completed response with an empty ``output``.
+                    return {**finished, "output": finished.get("output") or items}
     except (SubscriptionReasoningError, SubscriptionAuthError, GatewayError) as exc:
         raise _report_failure(grant, model, _subscription_failure(grant, exc), signal) from exc
     raise _report_failure(
@@ -458,15 +568,54 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     )
 
 
+#: The subscription client's request-failure codes, as the gateway's codes.
+_SUBSCRIPTION_CODES: Final[dict[str, str]] = {
+    "invalid_function_parameters": "invalid_tool_schema",
+    "invalid_tool_schema": "invalid_tool_schema",
+    "model_not_found": "model_not_found",
+}
+
+
 def _subscription_failure(grant: Grant, exc: Exception) -> GatewayError:
+    """A subscription failure as a status and code the runtime can act on.
+
+    The subscription client already words its errors without provider text,
+    so its message is kept; the code decides whether the turn ends (a
+    terminal code) or the runtime handles it (overflow: compress).
+    """
+    from jarvis.live.subscription_auth import SubscriptionAuthError
+
     if isinstance(exc, GatewayError) or getattr(exc, "status", 0) == 429:
         return _failure(grant.provider, exc)
-    status = getattr(exc, "status", 0)
-    return GatewayError(
-        str(exc),
-        status=status if status in (400, 401, 403, 404, 413, 422) else 502,
-        code=getattr(exc, "code", "subscription_unavailable"),
+    log.warning(
+        "runtime gateway: %s subscription call failed: %s", grant.agent_id, _describe(exc)
     )
+    if isinstance(exc, SubscriptionAuthError):
+        return GatewayError(str(exc), status=401, code="provider_auth")
+    status = getattr(exc, "status", 0)
+    code = str(getattr(exc, "code", "") or "")
+    if code == "context_length_exceeded":
+        return GatewayError(
+            f"Context length exceeded: {exc} Compress or shorten the conversation and "
+            "send it again.",
+            status=400,
+            code="context_length_exceeded",
+        )
+    if status in (401, 403):
+        return GatewayError(str(exc), status=401, code="provider_auth")
+    if status == 404 or code == "model_not_found":
+        return GatewayError(str(exc), status=404, code="model_not_found")
+    if status in (400, 413, 422):
+        return GatewayError(
+            str(exc), status=400, code=_SUBSCRIPTION_CODES.get(code, "invalid_request")
+        )
+    return GatewayError(str(exc), status=502, code="subscription_unavailable")
+
+
+def _describe(exc: BaseException) -> str:
+    from jarvis.agent_runtimes.provider_errors import describe
+
+    return describe(exc)
 
 
 async def list_models(grant: Grant) -> list[dict[str, Any]]:
@@ -566,6 +715,12 @@ def _signature(call_id: str) -> str:
         return _SIGNATURES.get(call_id, "")
 
 
+def temperature_given(body: Any) -> bool:
+    """Whether a Chat Completions body chose a sampling temperature."""
+    value = body.get("temperature") if isinstance(body, dict) else None
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def chat_request(body: Any) -> tuple[str, Any]:
     """``(model, BrainRequest)`` for one Chat Completions request body."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
@@ -651,56 +806,182 @@ def chat_request(body: Any) -> tuple[str, Any]:
     )
 
 
-def _failure(provider: str, exc: Exception) -> GatewayError:
-    """A provider error as a status the runtime can back off on, and a plain
-    message — never the provider's own response body."""
-    from jarvis.agent_runtimes.provider_errors import classify
+def _failure(provider: str, exc: Exception, model: str = "") -> GatewayError:
+    """A provider error as a status and code the runtime acts on, and a plain
+    message — never the provider's own response body (that goes to the log,
+    bounded and redacted)."""
+    from jarvis.agent_runtimes.provider_errors import gateway_refusal
 
-    if (refusal := classify(provider, exc)) is not None:
-        # No credits, provider unreachable, Claude Extra Usage off: a retry
-        # cannot help, so the runtime must not read it as a rate limit.
-        return GatewayError(refusal.message, status=refusal.status, code=refusal.code)
     if isinstance(exc, GatewayError):
         return exc
-    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-    if not isinstance(status, int):
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", None)
-    if status == 429:
-        return GatewayError(
-            f"{provider} returned HTTP 429 (rate limit).",
-            status=429,
-            code="rate_limited",
-            retry_after=_retry_after(exc),
-        )
-    if status in (401, 403):
-        return GatewayError(
-            f"{provider} refused the saved key. Check it in Settings → API keys.",
-            status=401,
-            code="provider_auth",
-        )
+    log.warning("runtime gateway: %s call failed: %s", provider, _describe(exc))
+    refusal = gateway_refusal(provider, exc, model)
     return GatewayError(
-        f"{provider} could not answer ({type(exc).__name__}).",
-        status=502,
-        code="provider_error",
+        refusal.message,
+        status=refusal.status,
+        code=refusal.code,
+        retry_after=_retry_after(exc) if refusal.code == "rate_limited" else None,
     )
 
 
 _DONE: Final = object()
+
+#: How long an agent call may stay silent. A reasoning model can think for
+#: minutes before its first token, and a local server on a CPU prefills a
+#: long agent prompt for longer still; Hermes itself waits 180 s for a hosted
+#: and 900 s for a local endpoint. The voice path keeps its own short limits.
+_HOSTED_READ_TIMEOUT_S: Final = 300.0
+_LOCAL_READ_TIMEOUT_S: Final = 900.0
+
+#: Provider brains kept between calls (one per session, model and credential).
+_BRAINS_MAX: Final = 32
+
+
+@dataclass(slots=True)
+class _BrainSlot:
+    """One cached provider brain, and how many calls are using it."""
+
+    brain: Any
+    users: int = 0
+    retired: bool = False
+
+
+_BRAINS: OrderedDict[tuple[str, ...], _BrainSlot] = OrderedDict()
+_CLOSING: set[asyncio.Task[None]] = set()
+
+
+def _profile(provider: str, *, temperature_given: bool) -> Any:
+    from jarvis.agent_runtimes.model_map import is_local
+    from jarvis.plugins.brain._agent_profile import AgentRequestProfile
+
+    return AgentRequestProfile(
+        read_timeout_s=_LOCAL_READ_TIMEOUT_S if is_local(provider) else _HOSTED_READ_TIMEOUT_S,
+        # A tool loop resends the same prefix every round; caching it is
+        # what makes a long agent turn affordable on Anthropic.
+        prompt_cache=True,
+        omit_temperature=not temperature_given,
+    )
+
+
+def _brain_key(grant: Grant, model: str, login: str | None) -> tuple[str, ...]:
+    """The cache key: the session, the model and the credential in use.
+
+    Blocking (keyring); run in a thread under the key override, so a changed
+    key or server address makes a new brain instead of reusing a stale client.
+    """
+    import hashlib
+
+    if login:
+        material = f"login:{login}"
+    else:
+        from jarvis.core.config import resolve_provider_endpoint
+
+        try:
+            endpoint = resolve_provider_endpoint(grant.provider)
+            material = f"{endpoint.base_url or ''}|{endpoint.credential or ''}"
+        except Exception as exc:  # noqa: BLE001 — no fingerprint just means no reuse
+            log.debug(
+                "runtime gateway: no credential fingerprint for %s (%s)",
+                grant.provider,
+                type(exc).__name__,
+            )
+            material = uuid.uuid4().hex
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+    return (grant.agent_id, grant.scope, grant.provider, grant.account_id, model, digest)
+
+
+def _new_brain(provider: str, model: str, login: str | None) -> Any:
+    from jarvis.agent_chat.runner_api import build_brain
+    from jarvis.brain.usage_meter import meter_brain
+
+    if login:
+        # No API key: the person's Claude Code login answers, which
+        # Anthropic bills as extra usage.
+        from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
+
+        brain = ClaudeAPIBrain(model=model or None, auth_token=login)
+    else:
+        brain = build_brain(provider, model)
+    # Every call the agent makes lands in the cost ledger, under the caller
+    # tag of the call.
+    return meter_brain(brain, provider)
+
+
+def _acquire_brain(key: tuple[str, ...], factory: Any) -> _BrainSlot:
+    """The cached brain for ``key`` (built on first use), marked in use.
+
+    A brain keeps its HTTP client: every round of a tool loop reuses one
+    connection instead of a new TLS handshake and an unclosed client.
+    """
+    retired: list[_BrainSlot] = []
+    with _LOCK:
+        slot = _BRAINS.get(key)
+        if slot is None:
+            slot = _BrainSlot(factory())
+            _BRAINS[key] = slot
+            while len(_BRAINS) > _BRAINS_MAX:
+                _, old = _BRAINS.popitem(last=False)
+                old.retired = True
+                retired.append(old)
+        _BRAINS.move_to_end(key)
+        slot.users += 1
+    for old in retired:
+        if old.users == 0:
+            _close_later(old.brain)
+    return slot
+
+
+def _release_brain(slot: _BrainSlot) -> None:
+    with _LOCK:
+        slot.users -= 1
+        close = slot.retired and slot.users == 0
+    if close:
+        _close_later(slot.brain)
+
+
+def _close_later(brain: Any) -> None:
+    """Close a brain's HTTP client in the background (best effort)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no loop (tests, shutdown): the client goes with the object
+    task = loop.create_task(_close_brain(brain))
+    _CLOSING.add(task)
+    task.add_done_callback(_CLOSING.discard)
+
+
+async def _close_brain(brain: Any) -> None:
+    import inspect
+
+    client = getattr(getattr(brain, "unwrapped", brain), "_client", None)
+    for name in ("aclose", "close"):
+        close = getattr(client, name, None)
+        if not callable(close):
+            continue
+        try:
+            result = close()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:  # noqa: BLE001 — closing an idle client is best effort
+            log.debug("runtime gateway: closing a provider client failed (%s)", exc)
+        return
 
 
 async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     """The provider plugin's stream, with the Agents-tier key and cost caller.
 
     The plugin runs in a task of its own and hands its deltas over a queue:
-    the key override and the cost caller are context variables, and a
-    streamed response is read by a different task than the one that opened
-    it — a context variable set there could not be reset (``ValueError``).
+    the key override, the cost caller and the agent request profile are
+    context variables, and a streamed response is read by a different task
+    than the one that opened it — a context variable set there could not be
+    reset (``ValueError``). The task copies the caller's context, so the
+    profile the caller set (:func:`_with_profile`) reaches the plugin.
     """
-    from jarvis.agent_chat.runner_api import build_brain
-    from jarvis.agent_runtimes.model_map import login_token_for
+    from jarvis.agent_runtimes.model_map import login_route
+    from jarvis.agent_runtimes.provider_errors import login_expired
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
+    from jarvis.costs.model import RUNTIME_CALLER
 
     queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
 
@@ -709,22 +990,26 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
         try:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
-            with override_provider_secrets(overrides), usage_context("agent-runtime"):
-                login = await asyncio.to_thread(login_token_for, grant.provider, grant.account_id)
-                if login:
-                    # No API key: the person's Claude Code login answers,
-                    # which Anthropic bills as extra usage.
-                    from jarvis.plugins.brain.claude_api import ClaudeAPIBrain
-
-                    brain = ClaudeAPIBrain(model=model or None, auth_token=login)
-                else:
-                    brain = build_brain(grant.provider, model)
-                configure_context = getattr(brain, "set_context_window", None)
-                if callable(configure_context):
-                    limits = await asyncio.to_thread(model_limits, grant, model)
-                    configure_context(limits.context_window)
-                async for delta in brain.complete(request):
-                    await queue.put(delta)
+            with override_provider_secrets(overrides), usage_context(RUNTIME_CALLER):
+                on_login, login = await asyncio.to_thread(
+                    login_route, grant.provider, grant.account_id
+                )
+                if on_login and not login:
+                    # Only the Claude CLI renews the login; without it the
+                    # API-key path would only say "no key".
+                    raise login_expired()
+                key = await asyncio.to_thread(_brain_key, grant, model, login)
+                slot = _acquire_brain(key, lambda: _new_brain(grant.provider, model, login))
+                try:
+                    brain = slot.brain
+                    configure_context = getattr(brain, "set_context_window", None)
+                    if callable(configure_context):
+                        limits = await asyncio.to_thread(model_limits, grant, model)
+                        configure_context(limits.context_window)
+                    async for delta in brain.complete(request):
+                        await queue.put(delta)
+                finally:
+                    _release_brain(slot)
             await queue.put(_DONE)
         except Exception as exc:  # noqa: BLE001 — handed to the reader, which reports it
             if login:
@@ -750,6 +1035,18 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
             await task
 
 
+@contextlib.contextmanager
+def _with_profile(provider: str, temperature_given: bool) -> Any:
+    """Set the agent request profile while a call's plugin task is started."""
+    from jarvis.plugins.brain._agent_profile import PROFILE
+
+    token = PROFILE.set(_profile(provider, temperature_given=temperature_given))
+    try:
+        yield
+    finally:
+        PROFILE.reset(token)
+
+
 def _chunk(chat_id: str, model: str, delta: dict[str, Any], **extra: Any) -> bytes:
     body: dict[str, Any] = {
         "id": chat_id,
@@ -762,13 +1059,38 @@ def _chunk(chat_id: str, model: str, delta: dict[str, Any], **extra: Any) -> byt
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n".encode()
 
 
-def _openai_usage(usage: dict[str, int]) -> dict[str, int]:
-    prompt = int(usage.get("input_tokens", 0))
+def _merge_usage(total: dict[str, int], usage: dict[str, Any]) -> None:
+    """Fold one usage block in. A plugin reports a call once, but a split or
+    cumulative report must not count the same tokens twice: keep the highest
+    figure per key."""
+    for key, value in usage.items():
+        try:
+            total[key] = max(total.get(key, 0), int(value or 0))
+        except (TypeError, ValueError):
+            log.debug("runtime gateway: non-numeric usage %r ignored", key)
+
+
+def _openai_usage(usage: dict[str, int]) -> dict[str, Any]:
+    """The plugin's usage in the Chat Completions shape.
+
+    The plugins report ``input_tokens`` as the UNCACHED share
+    (``jarvis.brain.usage_meter``); Chat Completions' ``prompt_tokens``
+    counts the whole prompt, cache reads and writes included. Hermes and
+    OpenClaw size the conversation from it and compress when it nears the
+    context window, so the cached share must be in it.
+    """
+    cached = int(usage.get("cache_hit_tokens", 0))
+    written = int(usage.get("cache_write_tokens", 0))
+    prompt = int(usage.get("input_tokens", 0)) + cached + written
     completion = int(usage.get("output_tokens", 0))
+    details: dict[str, int] = {"cached_tokens": cached}
+    if written:
+        details["cache_write_tokens"] = written
     return {
         "prompt_tokens": prompt,
         "completion_tokens": completion,
         "total_tokens": prompt + completion,
+        "prompt_tokens_details": details,
     }
 
 
@@ -788,12 +1110,15 @@ def _tool_call(index: int, call: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncIterator[bytes]:
+async def open_chat_stream(
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+) -> AsyncIterator[bytes]:
     """The answer as Chat Completions chunks.
 
     The provider's first delta is awaited before this returns, so a failure
     up front (bad key, rate limit) becomes an HTTP status the runtime can act
     on; a failure after streaming began arrives as an ``error`` chunk.
+    ``temperature_given`` is whether the runtime chose a temperature.
     """
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
@@ -802,15 +1127,11 @@ async def open_chat_stream(grant: Grant, model: str, request: Any) -> AsyncItera
     signal = _watch_for(grant)
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        first = await anext(stream, None)
-    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error, logged below
-        log.info(
-            "runtime gateway: %s on %s failed up front (%s)",
-            grant.agent_id,
-            grant.provider,
-            type(exc).__name__,
-        )
-        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
+        # The plugin task starts on the first delta and keeps this profile.
+        with _with_profile(grant.provider, temperature_given):
+            first = await anext(stream, None)
+    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
+        raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     return _chat_chunks(grant, model, stream, first, started, signal)
 
 
@@ -836,19 +1157,12 @@ async def _chat_chunks(
                 yield _chunk(chat_id, model, {"tool_calls": [_tool_call(calls, delta.tool_call)]})
                 calls += 1
             if delta.usage:
-                for key, value in delta.usage.items():
-                    usage[key] = usage.get(key, 0) + int(value or 0)
+                _merge_usage(usage, delta.usage)
             if delta.finish_reason:
-                finish = _FINISH.get(delta.finish_reason, "stop")
+                finish = _finish(delta.finish_reason)
             delta = await anext(stream, None)
     except Exception as exc:  # noqa: BLE001 — the stream already began: an error chunk tells the runtime
-        failure = _report_failure(grant, model, _failure(grant.provider, exc), signal)
-        log.info(
-            "runtime gateway: %s on %s failed mid-stream (%s)",
-            grant.agent_id,
-            grant.provider,
-            type(exc).__name__,
-        )
+        failure = _report_failure(grant, model, _failure(grant.provider, exc, model), signal)
         payload = {"error": {"message": str(failure), "type": failure.code, "code": failure.code}}
         yield f"data: {json.dumps(payload)}\n\n".encode()
         return
@@ -862,7 +1176,7 @@ async def _chat_chunks(
         chat_id,
         model,
         {},
-        finish="tool_calls" if calls else finish,
+        finish=_final_finish(finish, calls),
         usage=_openai_usage(usage),
     )
     yield b"data: [DONE]\n\n"
@@ -878,7 +1192,9 @@ async def _chat_chunks(
     )
 
 
-async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any]:
+async def complete_chat(
+    grant: Grant, model: str, request: Any, *, temperature_given: bool = True
+) -> dict[str, Any]:
     """The finished ``chat.completion`` for a runtime that did not ask to stream."""
     limits = await asyncio.to_thread(model_limits, grant, model)
     request = _with_output_capacity(request, limits)
@@ -890,18 +1206,21 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
     signal = _watch_for(grant)
     try:
         check_cooldown(grant.provider, model, grant.account_id)
-        async for delta in stream:
+        with _with_profile(grant.provider, temperature_given):
+            # The plugin task starts on the first delta and keeps this profile.
+            delta = await anext(stream, None)
+        while delta is not None:
             if delta.content:
                 text.append(delta.content)
             if delta.tool_call:
                 calls.append(_tool_call(len(calls), delta.tool_call))
             if delta.usage:
-                for key, value in delta.usage.items():
-                    usage[key] = usage.get(key, 0) + int(value or 0)
+                _merge_usage(usage, delta.usage)
             if delta.finish_reason:
-                finish = _FINISH.get(delta.finish_reason, "stop")
-    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error
-        raise _report_failure(grant, model, _failure(grant.provider, exc), signal) from exc
+                finish = _finish(delta.finish_reason)
+            delta = await anext(stream, None)
+    except Exception as exc:  # noqa: BLE001 — becomes the runtime's HTTP error; _failure logs it
+        raise _report_failure(grant, model, _failure(grant.provider, exc, model), signal) from exc
     message: dict[str, Any] = {"role": "assistant", "content": "".join(text) or None}
     if calls:
         message["tool_calls"] = [{k: v for k, v in call.items() if k != "index"} for call in calls]
@@ -911,27 +1230,68 @@ async def complete_chat(grant: Grant, model: str, request: Any) -> dict[str, Any
         "created": int(time.time()),
         "model": model,
         "choices": [
-            {"index": 0, "message": message, "finish_reason": "tool_calls" if calls else finish}
+            {"index": 0, "message": message, "finish_reason": _final_finish(finish, len(calls))}
         ],
         "usage": _openai_usage(usage),
     }
 
 
+#: Output budget kept free of the prompt estimate when a request names no
+#: limit, and the smallest budget ever sent (a prompt this close to the
+#: window is refused as a context overflow, which the runtime compresses).
+_BUDGET_MARGIN_TOKENS: Final = 1024
+_MIN_OUTPUT_TOKENS: Final = 1024
+#: A conservative characters-per-token ratio: code and non-English text run
+#: closer to three than to the usual four, and overestimating the prompt only
+#: shortens the budget.
+_CHARS_PER_TOKEN: Final = 3
+_IMAGE_TOKENS: Final = 1600
+
+
+def _prompt_tokens_estimate(request: Any) -> int:
+    """A rough upper estimate of the request's prompt size, in tokens."""
+    chars = len(request.system or "") + len(json.dumps(list(request.tools), default=str))
+    images = 0
+    for message in request.messages:
+        content = message.content
+        chars += len(content) if isinstance(content, str) else len(json.dumps(content, default=str))
+        images += len(message.images)
+    return chars // _CHARS_PER_TOKEN + images * _IMAGE_TOKENS
+
+
 def _with_output_capacity(request: Any, limits: ModelLimits) -> Any:
+    """The request with its output budget settled.
+
+    An explicit runtime limit is kept (capped at the model's maximum). With
+    none, the model's maximum is used, but never more than the context window
+    leaves after the prompt: OpenRouter's upstreams, vLLM and other servers
+    refuse ``prompt + max_tokens > context`` outright, and many models declare
+    an output maximum as large as the whole window.
+    """
     from jarvis.core.protocols import BrainRequest
 
     maximum = limits.max_output_tokens
-    default = BrainRequest.__dataclass_fields__["max_tokens"].default
-    requested = request.max_tokens or maximum or default
-    return replace(
-        request, max_tokens=min(requested, maximum) if maximum is not None else requested
-    )
+    if request.max_tokens:
+        requested = request.max_tokens
+        return replace(
+            request, max_tokens=min(requested, maximum) if maximum is not None else requested
+        )
+    budget = maximum or BrainRequest.__dataclass_fields__["max_tokens"].default
+    room = limits.context_window - _prompt_tokens_estimate(request) - _BUDGET_MARGIN_TOKENS
+    return replace(request, max_tokens=max(min(budget, room), _MIN_OUTPUT_TOKENS))
 
 
 def reset() -> None:
     """Forget every token, client and remembered signature (tests)."""
     global _CATALOG
     _CATALOG = None
+    with _LOCK:
+        brains = list(_BRAINS.values())
+        _BRAINS.clear()
+    for slot in brains:
+        slot.retired = True
+        if slot.users == 0:
+            _close_later(slot.brain)
     with _LOCK:
         _GRANTS.clear()
         _TOKENS.clear()
