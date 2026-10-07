@@ -482,6 +482,13 @@ def _catalog_rows(
     # own: other surfaces keep every seat.
     prefs = agent_provider_prefs.load()
     agents = surface == agent_provider_prefs.AGENT_SURFACE
+    if agents:
+        from jarvis.ui.web.provider_families import managed_agent_ids
+
+        # Only what the Agents tab can switch on is offered to the agents: a
+        # seat with no switch there (a coding CLI such as Cursor) is not one
+        # the person turned on.
+        managed = managed_agent_ids()
     rows: list[dict[str, Any]] = []
     for row in rows_for(surface):
         d = row.to_dict()
@@ -513,7 +520,7 @@ def _catalog_rows(
         # to a seat that would read it as plain text.
         d["typeahead"] = list(typeahead.triggers_for(runner, surface))
         if agents:
-            d["enabled"] = prefs.enabled(row.id)
+            d["enabled"] = prefs.enabled(row.id) and row.id in managed
         d["hidden_models"] = list(prefs.hidden(row.id))
         rows.append(d)
     return rows

@@ -118,3 +118,17 @@ def test_the_page_route_merges_and_refuses_unknown_ids() -> None:
     refused = client.put("/api/society/provider-prefs", json={"disabled": ["no-such-provider"]})
     assert refused.status_code == 422
     assert prefs_mod.load().disabled == frozenset({"grok-build"})
+
+
+def test_agents_are_offered_only_seats_the_agents_tab_can_switch() -> None:
+    from jarvis.ui.web.agent_chat_routes import _catalog_rows
+
+    agents = {row["id"]: row for row in _catalog_rows("society", {})}
+    # Switched on by default on the Agents tab: offered.
+    assert agents["claude-api"]["enabled"] is True and agents["openai-codex"]["enabled"] is True
+    # A coding CLI has no switch there, so nobody turned it on for the agents.
+    for coding_cli in ("cursor", "opencode"):
+        if coding_cli in agents:
+            assert agents[coding_cli]["enabled"] is False, coding_cli
+    # The coding panes keep every seat.
+    assert all("enabled" not in row for row in _catalog_rows("agent", {}))

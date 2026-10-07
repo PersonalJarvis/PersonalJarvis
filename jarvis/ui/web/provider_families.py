@@ -183,6 +183,19 @@ def _slot_label(slot: str) -> str:
     return "other"
 
 
+def managed_agent_ids() -> frozenset[str]:
+    """Every agent catalog id a company on the Agents tab switches on and off.
+
+    A seat outside this set has no switch on the page, so the agents' pickers
+    never offer it: they offer only what the person turned on there. No
+    keyring read.
+    """
+    ids: set[str] = set()
+    for family in _group():
+        ids.update(_AGENT_ID_ALIASES.get(spec.id, spec.id) for spec in family.specs)
+    return frozenset(ids)
+
+
 def build_families(
     *,
     secret_present: Callable[[str], bool] | None = None,
