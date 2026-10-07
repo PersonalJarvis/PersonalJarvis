@@ -2543,7 +2543,7 @@ class WebServer:
                 if registry is None or self._refresh_scheduler_stopping:
                     return
                 task = asyncio.create_task(
-                    registry.refresh_plugin(plugin_id),
+                    registry.refresh_credentials(plugin_id),
                     name=f"plugin-refresh:{plugin_id}",
                 )
                 self._refresh_registry_tasks.add(task)
