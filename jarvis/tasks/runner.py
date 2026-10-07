@@ -46,7 +46,7 @@ from jarvis.core.events import (
     TaskStarted,
     TaskStepRecorded,
 )
-from jarvis.core.protocols import RoutineDeferred
+from jarvis.core.protocols import CapacityDeferred, RoutineDeferred
 
 if TYPE_CHECKING:
     from jarvis.control.cancel import CancelToken
@@ -227,6 +227,16 @@ class TaskRunner:
                 raise
             duration_ms = int((time.perf_counter() - start) * 1000)
             error_msg = readable_error(exc)
+            if isinstance(exc, CapacityDeferred):
+                # Nothing this unattended run may bill was usable: the run is
+                # skipped (no key was used); a recurring task tries again next time.
+                error_msg = str(exc)
+                await self._store.append_step(
+                    task_id,
+                    "log",
+                    {"event": "skipped", "reason": "waiting_capacity", "message": error_msg},
+                )
+                log.warning("Task %s skipped: %s", task_id, error_msg)
             # A recurring automation survives a failed run: it goes back to
             # `scheduled` with the reason in `last_error`, and fires again at
             # its next occurrence. Only one-shot tasks end in `failed`

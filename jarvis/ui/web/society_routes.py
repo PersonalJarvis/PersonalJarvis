@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import HTTPConnection
 
 from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
+from jarvis.core.protocols import started_by_user
 from jarvis.society.events import MsgType
 from jarvis.society.failure_reasons import FailureReason, retry_action
 from jarvis.society.memory import MEMORY_SHARE_CAPABILITY, MemoryRefused
@@ -1389,7 +1390,8 @@ async def operate_agent_routine(
         raise HTTPException(409, "The routine is already running")
     try:
         if body.operation == "run":
-            await scheduler.run_now(task_id)
+            with started_by_user():
+                await scheduler.run_now(task_id)
         else:
             await manage_routine(
                 agent, {"task_id": task_id, "operation": body.operation}, store, scheduler

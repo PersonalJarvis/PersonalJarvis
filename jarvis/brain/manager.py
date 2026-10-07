@@ -13620,6 +13620,13 @@ class BrainManager:
             log.debug("run_task: turn context skipped", exc_info=True)
             turn_context = ""
         attempts = self._task_provider_chain(intent)
+        from jarvis.core.protocols import current_started_by_user
+
+        if not current_started_by_user.get():
+            # Nobody started this turn (a schedule, a trigger, a background
+            # start): it may only bill what background work may bill — a
+            # subscription or a local model, never a per-token key on its own.
+            attempts = await self._unattended_task_chain(attempts, selected)
         failures: list[str] = []
         original: Exception | None = None
         for index, (name, model) in enumerate(attempts):
@@ -13663,6 +13670,64 @@ class BrainManager:
         if len(failures) == 1 and original is not None:
             raise original
         raise RuntimeError("all brain providers failed: " + "; ".join(failures))
+
+    async def _unattended_task_chain(
+        self,
+        attempts: list[tuple[str, str | None]],
+        selected: Any,
+    ) -> list[tuple[str, str | None]]:
+        """Hold an unattended turn's chain to the background policy.
+
+        - An explicit agent selection is the person's own choice and stays —
+          except the Claude slot with the ``claude`` CLI installed: its login is
+          not ready here (a ready one ran on the subscription above), and its
+          per-token API row is never billed on its own (same rule as missions,
+          jarvis/missions/capacity.py).
+        - The automatic chain keeps only subscriptions and local models once a
+          subscription is connected; an install without one keeps its chain,
+          so a single-key download still works.
+
+        Nothing usable raises :class:`BackgroundDeferred` instead of billing a
+        key; the runner records the skipped run.
+        """
+        from jarvis.brain.background_policy import BackgroundDeferred, background_providers
+
+        if selected is not None:
+            provider = str(getattr(selected, "provider", "") or "")
+            if provider == "claude-api" and await asyncio.to_thread(_claude_cli_installed):
+                log.warning(
+                    "run_task (unattended): Claude subscription login not ready; "
+                    "deferring instead of using the per-token Claude API row"
+                )
+                raise BackgroundDeferred(
+                    "The Claude subscription is not available for this unattended run; "
+                    "a paid API key is not used without your approval."
+                )
+            return attempts
+        policy = await asyncio.to_thread(
+            background_providers, [name for name, _model in attempts]
+        )
+        if not policy.subscription_mode:
+            return attempts
+        kept = [(name, model) for name, model in attempts if policy.permits(name)]
+        dropped = [name for name, _model in attempts if not policy.permits(name)]
+        if kept:
+            if dropped:
+                log.info(
+                    "run_task (unattended): skipping per-token providers %s; "
+                    "background work stays on %s",
+                    dropped, [name for name, _model in kept],
+                )
+            return kept
+        log.warning(
+            "run_task (unattended): no subscription or local model can run this "
+            "turn (%s); deferring instead of billing %s",
+            policy.reason, dropped,
+        )
+        raise BackgroundDeferred(
+            "No subscription or local model is available for this unattended run; "
+            "a paid API key is not used without your approval."
+        )
 
     def _task_provider_chain(self, intent: str) -> list[tuple[str, str | None]]:
         """The providers a scheduled turn tries, in order.
@@ -13758,6 +13823,17 @@ def _scheduled_turn_context(turn_context: str, tools: dict[str, Any]) -> str:
     )
     return f"{turn_context}\n\n{block}" if turn_context else block
 
+
+
+def _claude_cli_installed() -> bool:
+    """Whether the ``claude`` CLI is installed — PATH stat probes, no subprocess."""
+    try:
+        from jarvis.claude_auth import ClaudeAuthService
+
+        return ClaudeAuthService().resolve_binary() is not None
+    except Exception:  # noqa: BLE001 - unreadable: assume installed, so no key is billed
+        log.warning("run_task: claude CLI lookup failed", exc_info=True)
+        return True
 
 def _short_provider_error(exc: Exception) -> str:
     """One readable line for ``last_error`` / the fallback summary — the

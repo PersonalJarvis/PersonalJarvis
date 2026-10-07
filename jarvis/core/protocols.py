@@ -19,8 +19,11 @@ from uuid import UUID
 from .chat_turn import ChatCompletion as ChatCompletion
 from .chat_turn import ChatTurn as ChatTurn
 from .chat_turn import current_chat_turn as current_chat_turn
+from .trigger_context import CapacityDeferred as CapacityDeferred
 from .trigger_context import RoutineDeferred as RoutineDeferred
+from .trigger_context import current_started_by_user as current_started_by_user
 from .trigger_context import current_trigger_path as current_trigger_path
+from .trigger_context import started_by_user as started_by_user
 
 if TYPE_CHECKING:  # pragma: no cover - typing only; the contract has no runtime import
     from jarvis.platform.permission_service import EnsureResult
