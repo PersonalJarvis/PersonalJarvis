@@ -18,7 +18,8 @@ const { createAgent, ensureRuntime, runtimes, menu } = vi.hoisted(() => ({
 }));
 vi.mock("../data", async () => {
   class AgentNameTaken extends Error {}
-  return { AgentNameTaken, useCreateSocietyAgent: () => createAgent };
+  class RuntimeProviderUnsupported extends Error {}
+  return { AgentNameTaken, RuntimeProviderUnsupported, useCreateSocietyAgent: () => createAgent };
 });
 vi.mock("../chat/useModelMenuData", () => ({
   useModelMenuData: () => ({
@@ -182,6 +183,17 @@ describe("CreateAgentDialog", () => {
     expect(document.activeElement).toBe(api);
     expect([subscription.tabIndex, api.tabIndex]).toEqual([-1, 0]);
     expect(screen.getByTestId("create-agent-access").getAttribute("aria-describedby")).toBeTruthy();
+  });
+
+  test("a provider Hermes cannot drive is explained in the person's language", async () => {
+    const { RuntimeProviderUnsupported } = await import("../data");
+    createAgent.mockRejectedValue(new RuntimeProviderUnsupported("Hermes and OpenClaw run on ..."));
+    mount();
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
+    fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.hermes" }));
+    await screen.findByTestId("create-agent-provider");
+    fireEvent.click(screen.getByTestId("create-agent-submit"));
+    expect(await screen.findByText("society.runtime.provider_unsupported")).toBeTruthy();
   });
 
   test("a Jarvis agent with nothing connected still starts on the chat's seat", async () => {

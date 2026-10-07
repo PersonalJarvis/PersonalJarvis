@@ -72,6 +72,17 @@ def _typed_error(exc: RosterError | RoomError) -> HTTPException:
     )
 
 
+#: The 422 for a provider Hermes / OpenClaw cannot drive. ``reason`` lets the
+#: UI show its own translated sentence; ``detail`` is for the CLI and logs.
+_RUNTIME_PROVIDER_UNSUPPORTED: dict[str, str] = {
+    "reason": "runtime_provider_unsupported",
+    "detail": (
+        "Hermes and OpenClaw run on an API key, a local model server or the "
+        "ChatGPT subscription. Pick one of those for this agent."
+    ),
+}
+
+
 def _validated_chat_runner(
     rt: SocietyRuntime,
     agent: AgentRecord,
@@ -90,11 +101,7 @@ def _validated_chat_runner(
         from jarvis.agent_runtimes.model_map import supports
 
         if not supports(provider):
-            raise HTTPException(
-                422,
-                "Hermes and OpenClaw run on an API key or a local model. "
-                "Pick one of those for this agent.",
-            )
+            raise HTTPException(422, _RUNTIME_PROVIDER_UNSUPPORTED)
     runner = resolve_runner(
         provider,
         surface="society",
@@ -343,11 +350,7 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         from jarvis.agent_runtimes.model_map import supports
 
         if not supports(provider):
-            raise HTTPException(
-                422,
-                "Hermes and OpenClaw run on an API key or a local model. "
-                "Pick one of those for this agent first.",
-            )
+            raise HTTPException(422, _RUNTIME_PROVIDER_UNSUPPORTED)
     if provider:
         from jarvis.agent_chat.permissions import society_mode_supported
         from jarvis.agent_chat.service import resolve_runner

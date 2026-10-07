@@ -5823,6 +5823,7 @@
       "setting_up_hint": "{0} is being set up on this computer. You can create the agent now; it answers as soon as the setup is done.",
       "auto_setup_hint": "Jarvis installs {0} by itself and keeps it up to date.",
       "setup_failed": "Setup did not finish: {0}",
+      "provider_unsupported": "Hermes and OpenClaw run on an API key, a local model server or the ChatGPT subscription. Pick one of those for this agent.",
       "setting_up_chat": "Setting up {0} on this computer. The first time takes a few minutes; your message is answered as soon as it is ready.",
       "retry": "Try again"
     },

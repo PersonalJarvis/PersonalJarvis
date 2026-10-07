@@ -17,7 +17,7 @@ import { AgentMark } from "@/components/agentic/AgentMark";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import type { AgentRuntime } from "@/lib/societyApi";
-import { AgentNameTaken, useCreateSocietyAgent } from "../data";
+import { AgentNameTaken, RuntimeProviderUnsupported, useCreateSocietyAgent } from "../data";
 import { defaultCompanion, type CompanionAppearance } from "../companion/appearance";
 import { RuntimeChoice, useAgentRuntimes } from "../card/RuntimePicker";
 import { modelSeats, runtimeSeats } from "../chat/modelChoices";
@@ -120,7 +120,9 @@ function CreateAgentDialog() {
       setError(
         exc instanceof AgentNameTaken
           ? t("society.create_agent.name_taken")
-          : exc instanceof Error ? exc.message : String(exc),
+          : exc instanceof RuntimeProviderUnsupported
+            ? t("society.runtime.provider_unsupported")
+            : exc instanceof Error ? exc.message : String(exc),
       );
       setSaving(false);
     }

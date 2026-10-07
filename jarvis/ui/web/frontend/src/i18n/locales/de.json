@@ -5823,6 +5823,7 @@
       "setting_up_hint": "{0} wird gerade auf diesem Computer eingerichtet. Du kannst den Agenten schon anlegen; er antwortet, sobald die Einrichtung fertig ist.",
       "auto_setup_hint": "Jarvis installiert {0} selbst und hält es aktuell.",
       "setup_failed": "Einrichtung nicht abgeschlossen: {0}",
+      "provider_unsupported": "Hermes und OpenClaw laufen mit einem API-Schlüssel, einem lokalen Modellserver oder dem ChatGPT-Abo. Wähle eines davon für diesen Agenten.",
       "setting_up_chat": "{0} wird auf diesem Computer eingerichtet. Beim ersten Mal dauert das ein paar Minuten; deine Nachricht wird beantwortet, sobald alles bereit ist.",
       "retry": "Erneut versuchen"
     },

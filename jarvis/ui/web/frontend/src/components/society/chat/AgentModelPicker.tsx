@@ -9,7 +9,7 @@ import { useT } from "@/i18n";
 import type { CuratedModel } from "@/lib/agentChatApi";
 import { cn } from "@/lib/utils";
 import { effortsFor, type BrainSeat } from "../create/brainPicker";
-import { useUpdateAgentModel, type SocietyAgent } from "../data";
+import { RuntimeProviderUnsupported, useUpdateAgentModel, type SocietyAgent } from "../data";
 import { rankModels } from "@/lib/modelRanking";
 import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, seatBlocked, visibleModels } from "./modelChoices";
@@ -190,7 +190,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       await update(agent.agentId, { provider: seat.provider.id, model: model.id, effort, account_id: currentAccount(seat) });
       setOpen(false); setSubmenu(null); trigger.current?.focus();
     } catch (err) {
-      setError(`${t("society.chat.model_save_failed")} (${err instanceof Error ? err.message : String(err)})`);
+      setError(err instanceof RuntimeProviderUnsupported
+        ? t("society.runtime.provider_unsupported")
+        : `${t("society.chat.model_save_failed")} (${err instanceof Error ? err.message : String(err)})`);
     } finally {
       inFlight.current = false; setSaving(false); onSavingChange(false);
     }
