@@ -696,6 +696,20 @@ def test_apply_enqueues_green_pull_requests_and_reports_the_rest(tmp_path, monke
     assert not any(c[:2] == ("pr", "merge") or c[:2] == ("workflow", "run") for c in fake.calls)
 
 
+def test_apply_reruns_only_the_failed_jobs_of_a_cancelled_run(tmp_path, monkeypatch):
+    fake = _FakeGh()
+    monkeypatch.setattr(agent_integrate, "gh", fake)
+    plan = {
+        "repo": "example/project",
+        "main": "m" * 40,
+        "queue": True,
+        "entries": [{"number": 1, "branch": "claude/a", "head": "a" * 40, "id": "PR_a",
+                     "action": "rerun", "run_id": 77}],
+    }
+    agent_integrate.apply(tmp_path, plan, False, True)
+    assert ("run", "rerun", "77", "--failed", "--repo", "example/project") in fake.calls
+
+
 def test_apply_without_a_queue_merges_directly_and_pins_the_head(tmp_path, monkeypatch):
     fake = _FakeGh()
     monkeypatch.setattr(agent_integrate, "gh", fake)

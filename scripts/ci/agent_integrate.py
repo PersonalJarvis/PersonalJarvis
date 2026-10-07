@@ -972,7 +972,9 @@ def apply(root: Path, data: dict, dry_run: bool, token_is_bot: bool) -> int:
             if action == "approve":
                 code = gh("api", "-X", "POST", f"repos/{repo}/actions/runs/{run_id}/approve")
             else:
-                code = gh("run", "rerun", str(run_id), "--repo", repo)
+                # Only the failed and cancelled jobs: a whole-run rerun of a
+                # full pipeline re-queues ~50 green jobs behind the runner limit.
+                code = gh("run", "rerun", str(run_id), "--failed", "--repo", repo)
             if code == 0:
                 summary.append(f"#{number}: CI run {run_id} {action}d")
             else:
