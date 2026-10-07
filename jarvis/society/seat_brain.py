@@ -111,9 +111,36 @@ def agent_seat(config: Any, agent: Any) -> Seat:
     if not provider:
         raise SeatUnavailable("this agent's chat names no provider")
     account = agent.account_id if provider == agent.provider else ""
+    if str(getattr(agent, "runtime", "") or "jarvis") != "jarvis":
+        return _runtime_seat(provider, model or "", account)
     return Seat(
         provider, model or "", resolve_runner(provider, surface="society", account_id=account)
     )
+
+
+def _runtime_seat(provider: str, model: str, account: str) -> Seat:
+    """The seat of a Hermes / OpenClaw agent: the auth its gateway route uses.
+
+    Jarvis' model gateway answers such an agent on the provider's API key, or
+    on the Claude login when the agent is pinned to it or no key is saved
+    (``model_map.login_token_for``). ``resolve_runner`` alone would prefer
+    Claude Code for an unpinned agent, so its reviews would run on the plan
+    while its chat bills the key. The login is reachable for a review only
+    through Claude Code; without it the seat is unavailable, never a key.
+    """
+    from jarvis.agent_chat.catalog import API_KEY_ACCOUNT, SUBSCRIPTION_ACCOUNT
+    from jarvis.agent_chat.service import resolve_runner
+    from jarvis.agent_runtimes.model_map import login_token_for
+
+    on_login = login_token_for(provider, account) is not None
+    pinned = SUBSCRIPTION_ACCOUNT if on_login else API_KEY_ACCOUNT
+    runner = resolve_runner(provider, surface="society", account_id=pinned)
+    if on_login and runner in _KEYED_RUNNERS:
+        raise SeatUnavailable(
+            "this agent's chat runs on the Claude login, which only Claude Code can "
+            "use for a review, and Claude Code is not installed"
+        )
+    return Seat(provider, model, runner)
 
 
 def jarvis_seat(config: Any) -> Seat:
