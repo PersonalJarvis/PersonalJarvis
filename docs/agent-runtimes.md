@@ -261,6 +261,32 @@ model through Jarvis' own drivers (profile and config writing, process
 environment, the OpenClaw Gateway supervisor): two turns in one conversation,
 no key written into the runtime's folder, no process left behind.
 
+## CI and release gates
+
+A change the `agent_runtimes` lane covers (the runtimes, the chat and society
+code that drives them, their fakes and spikes; the table lives in
+`scripts/ci/agent_runtime_suite.py`) runs three jobs, and `CI gate` waits for
+each of them:
+
+| Job | Where | What it proves |
+|---|---|---|
+| `agent-runtimes-unit` | Linux, Windows, macOS on the portable base install | The runtime drivers, gateway, ACP runner, chat service, send queue, controls, society binding, roster, routines and society routes (`python scripts/ci/agent_runtime_suite.py`). Fakes only. |
+| `agent-runtimes-headless` | `python:3.11-slim` | The runtime package imports and its tests pass on a server with no GPU, audio or desktop stack. |
+| `agent-runtimes-e2e` | Linux, Windows, macOS × Hermes, OpenClaw | The real runtime at the version in `jarvis/agent_runtimes/runtime-versions.json` (latest while no pin exists) runs two turns through Jarvis' model gateway, once over Responses and once over Chat Completions, against scripted providers (`scripts/spikes/agent_runtimes_gateway_e2e.py --replay`). No key and no network to a model. |
+
+The impact selection of the Windows pull-request leg adds the same suite
+whenever the lane is on, so a runtime change also runs the chat and society
+tests, not only the tests that import the changed module.
+
+`agent-runtimes-canary.yml` runs weekly and on dispatch. It installs the
+latest Hermes and OpenClaw with their official installers and runs the same
+two-protocol check on all three OSes. When a runtime passes on every OS, the
+`raise-pin` job records its version (and Hermes' commit; the installers pin
+Hermes by `--commit` / `-Commit`) and opens a pull request that changes
+`runtime-versions.json`. That pull request is the admission of a new upstream
+release: its CI run is the pinned check above. A failed scheduled canary opens
+an issue and leaves the pin where it is.
+
 ## Code map
 
 | Piece | Where |

@@ -91,6 +91,7 @@ jobs:
       macos_desktop: ${{ steps.lanes.outputs.macos_desktop }}
       installer: ${{ steps.lanes.outputs.installer }}
       updater: ${{ steps.lanes.outputs.updater }}
+      agent_runtimes: ${{ steps.lanes.outputs.agent_runtimes }}
       macos: ${{ steps.mode.outputs.macos }}
       base: ${{ steps.mode.outputs.base }}
       pr_mode: ${{ steps.mode.outputs.pr_mode }}
@@ -856,6 +857,125 @@ jobs:
       force: ${{ needs.detect.outputs.full == 'true' }}
       include_macos: ${{ needs.detect.outputs.macos == 'true' }}
 
+  # Hermes / OpenClaw society agents on every OS a person runs them on. The
+  # lane (scripts/ci/agent_runtime_suite.py) covers the runtimes AND the chat
+  # and society code that drives them, so a pull request proves macOS too,
+  # not only the nightly run. Fakes only: no key, no network to a model.
+  agent-runtimes-unit:
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Portable base + focused runner
+        shell: bash
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: Runtimes, chat and society suite
+        run: python scripts/ci/agent_runtime_suite.py
+
+  # A downloader's headless Linux server: no GPU, audio or desktop stack.
+  agent-runtimes-headless:
+    name: agent runtimes on python:3.11-slim
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    runs-on: ubuntu-latest
+    container: python:3.11-slim
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Base install without system audio
+        run: |
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio
+      - name: The runtime package imports without any optional stack
+        run: python -c "import jarvis.agent_runtimes.gateway, jarvis.agent_runtimes.manager, jarvis.agent_chat.runner_acp"
+      - name: Runtime suite
+        run: python scripts/ci/agent_runtime_suite.py --headless
+
+  # The REAL runtimes at the version the app installs
+  # (jarvis/agent_runtimes/runtime-versions.json; latest when no pin exists
+  # yet), driven through Jarvis' model gateway against scripted providers:
+  # Responses (ChatGPT subscription) and Chat Completions. No key, no network
+  # to a model. The weekly canary checks upstream latest and raises the pin.
+  agent-runtimes-e2e:
+    needs: detect
+    if: needs.detect.outputs.agent_runtimes == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        runtime: [hermes, openclaw]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the base app
+        run: python scripts/pip_install.py -e "."
+      - name: Read the pinned runtime version
+        id: pin
+        run: python scripts/ci/agent_runtime_suite.py --pin ${{ matrix.runtime }}
+      - name: Install Hermes at the pin (official installer, Linux/macOS)
+        if: matrix.runtime == 'hermes' && runner.os != 'Windows'
+        shell: bash
+        env:
+          HERMES_COMMIT: ${{ steps.pin.outputs.hermes_commit }}
+        run: |
+          args=(--skip-setup --non-interactive --skip-browser)
+          [ -n "$HERMES_COMMIT" ] && args+=(--commit "$HERMES_COMMIT")
+          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- "${args[@]}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install Hermes at the pin (official installer, Windows)
+        if: matrix.runtime == 'hermes' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          HERMES_COMMIT: ${{ steps.pin.outputs.hermes_commit }}
+        run: |
+          $installer = [scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))
+          if ($env:HERMES_COMMIT) { & $installer -SkipSetup -NonInteractive -Commit $env:HERMES_COMMIT }
+          else { & $installer -SkipSetup -NonInteractive }
+          "$env:LOCALAPPDATA\hermes\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.runtime == 'openclaw'
+        with:
+          node-version: "24"
+      - name: Install OpenClaw at the pin
+        if: matrix.runtime == 'openclaw'
+        shell: bash
+        env:
+          NPM_SPEC: ${{ steps.pin.outputs.npm_spec }}
+        run: npm install -g "$NPM_SPEC"
+      - name: Two turns over Responses (scripted ChatGPT subscription)
+        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} openai-codex --replay
+      - name: Two turns over Chat Completions (scripted local model)
+        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} ollama --replay
+      - name: Keep the runtime log of a failed run
+        if: failure()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: agent-runtimes-e2e-${{ matrix.runtime }}-${{ matrix.os }}
+          path: eval-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # The ONE required check. Branch protection and the merge train read only
   # this; a new job needs nothing but a line in `needs`.
   gate:
@@ -881,6 +1001,9 @@ jobs:
       - macos-desktop
       - installer
       - updater
+      - agent-runtimes-unit
+      - agent-runtimes-headless
+      - agent-runtimes-e2e
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
