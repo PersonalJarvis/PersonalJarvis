@@ -18,10 +18,12 @@ The program itself is the standard install the official installer makes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -115,6 +117,11 @@ class RuntimeStatus:
     problem_kind: str = ""
     #: The official install/update command, for display.
     install_hint: str = ""
+    #: Ready, but newer than the release the canary verified (still runs).
+    untested: bool = False
+    #: The first line of ``--version`` (names the exact build, not just the
+    #: release); internal, never shown.
+    build: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +134,7 @@ class RuntimeStatus:
             "problem": self.problem,
             "problem_kind": self.problem_kind,
             "install_hint": self.install_hint,
+            "untested": self.untested,
         }
 
 
@@ -198,6 +206,9 @@ class AgentRuntimeDriver(Protocol):
 #: How long a turn waits for the agent's previous turn on the same runtime.
 _SLOT_WAIT_S: Final[float] = 15 * 60
 
+#: How long a turn waits for another process to let go of the agent's folder.
+_HOME_LOCK_WAIT_S: Final[float] = 60.0
+
 
 def home_key(agent_id: str, chat_session_id: str) -> str:
     """Which runtime folder a chat's turns use.
@@ -209,16 +220,140 @@ def home_key(agent_id: str, chat_session_id: str) -> str:
     return agent_id if chat_session_id == f"society:{agent_id}" else f"{agent_id}~runs"
 
 
+class RuntimeGate:
+    """Turns share a runtime; its setup jobs (install, update, prepare) take it alone.
+
+    An updater replaces files a running turn holds open (on Windows it cannot)
+    and stops the runtime's background processes, so a setup job waits until
+    no turn runs, and turns that arrive meanwhile wait for the job.
+    """
+
+    def __init__(self) -> None:
+        self.turns = 0
+        self._exclusive = False
+        self._exclusive_waiting = 0
+        self._waiters: list[asyncio.Future[None]] = []
+
+    def _notify(self) -> None:
+        waiters, self._waiters = self._waiters, []
+        for waiter in waiters:
+            if not waiter.done():
+                waiter.set_result(None)
+
+    async def _wait_until(self, ready: Callable[[], bool], timeout_s: float) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while not ready():
+            left = deadline - loop.time()
+            if left <= 0:
+                raise TimeoutError
+            waiter: asyncio.Future[None] = loop.create_future()
+            self._waiters.append(waiter)
+            with contextlib.suppress(TimeoutError):  # re-checked by the loop condition
+                await asyncio.wait_for(waiter, left)
+
+    async def acquire_turn(self, timeout_s: float) -> None:
+        await self._wait_until(
+            lambda: not self._exclusive and not self._exclusive_waiting, timeout_s
+        )
+        self.turns += 1
+
+    def release_turn(self) -> None:
+        self.turns = max(0, self.turns - 1)
+        self._notify()
+
+    @contextlib.asynccontextmanager
+    async def exclusive(self, timeout_s: float) -> Any:
+        """Hold the runtime alone; raises ``TimeoutError`` when turns keep running."""
+        self._exclusive_waiting += 1
+        try:
+            await self._wait_until(lambda: not self._exclusive and self.turns == 0, timeout_s)
+        finally:
+            self._exclusive_waiting -= 1
+            self._notify()
+        self._exclusive = True
+        try:
+            yield
+        finally:
+            self._exclusive = False
+            self._notify()
+
+
+class HomeFileLock:
+    """A cross-process lock on one runtime folder (``msvcrt`` / ``flock``).
+
+    Within one app the asyncio slot already serialises turns; this keeps a
+    second process (a stale app that did not exit, a script) from running the
+    same agent folder at the same time. The OS drops it when the holder dies.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._fd: int | None = None
+
+    def try_acquire(self) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:  # held elsewhere: the caller retries or gives up
+            os.close(fd)
+            return False
+        self._fd = fd
+        return True
+
+    async def acquire(self, timeout_s: float) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while not self.try_acquire():
+            if loop.time() >= deadline:
+                raise TimeoutError
+            await asyncio.sleep(0.25)
+
+    def release(self) -> None:
+        fd, self._fd = self._fd, None
+        if fd is None:
+            return
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError as exc:  # closing the descriptor below releases it anyway
+            log.debug("agent runtimes: unlocking %s failed: %s", self.path, exc)
+        finally:
+            os.close(fd)
+
+
 class TurnSlots:
-    """One turn at a time per runtime folder.
+    """One turn at a time per runtime folder, inside the runtime's shared gate.
 
     The runtime's config is written per turn; two turns sharing one folder
     would read each other's settings. A turn waits for the previous one
     (the agent's chat already queues its own messages), and gives up with a
-    plain message after :data:`_SLOT_WAIT_S`.
+    plain message after :data:`_SLOT_WAIT_S`. With ``lock_dir`` the folder is
+    also locked against other processes (:class:`HomeFileLock`).
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, runtime: str = "runtime", *, lock_dir: Callable[[], Path] | None = None
+    ) -> None:
+        self.runtime = runtime
+        self.gate = RuntimeGate()
+        self._lock_dir = lock_dir
         self._locks: dict[str, asyncio.Lock] = {}
 
     def lock(self, key: str) -> asyncio.Lock:
@@ -226,39 +361,85 @@ class TurnSlots:
 
     def busy(self) -> bool:
         """Whether any turn holds a slot right now."""
-        return any(lock.locked() for lock in self._locks.values())
+        return self.gate.turns > 0 or any(lock.locked() for lock in self._locks.values())
 
     async def acquire(self, key: str) -> Callable[[], None]:
+        try:
+            await self.gate.acquire_turn(_SLOT_WAIT_S)
+        except TimeoutError:
+            raise RuntimeUnavailable(
+                "Jarvis is still setting this runtime up; try again in a few minutes."
+            ) from None
         lock = self.lock(key)
         try:
             await asyncio.wait_for(lock.acquire(), timeout=_SLOT_WAIT_S)
         except TimeoutError:
+            self.gate.release_turn()
             raise RuntimeUnavailable(
                 "This agent is still busy with another task; try again when it is done."
             ) from None
+        home_lock: HomeFileLock | None = None
+        if self._lock_dir is not None:
+            home_lock = HomeFileLock(self._lock_dir() / f"{self.runtime}-{safe_key(key)}.lock")
+            try:
+                await home_lock.acquire(_HOME_LOCK_WAIT_S)
+            except (TimeoutError, OSError):
+                lock.release()
+                self.gate.release_turn()
+                raise RuntimeUnavailable(
+                    "Another Jarvis process is running this agent right now; try again "
+                    "when it is done."
+                ) from None
         released = False
 
         def release() -> None:
             nonlocal released
             if not released:
                 released = True
+                if home_lock is not None:
+                    home_lock.release()
                 lock.release()
+                self.gate.release_turn()
 
         return release
 
 
 def runtimes_root() -> Path:
+    """Every runtime folder of THIS app instance.
+
+    The dev instance keeps its own (``agent_runtimes-dev``): its agents live in
+    their own database, and two apps must never run one agent folder at once.
+    """
+    from jarvis.core.instance import current_instance
+    from jarvis.core.paths import user_data_dir
+
+    identity = current_instance()
+    name = "agent_runtimes" if identity.is_default else f"agent_runtimes-{identity.name}"
+    return user_data_dir() / name
+
+
+def legacy_runtimes_root() -> Path:
+    """Where builds before the per-instance layout kept every runtime folder."""
     from jarvis.core.paths import user_data_dir
 
     return user_data_dir() / "agent_runtimes"
 
 
+def private_dir(path: Path) -> Path:
+    """Create ``path`` readable by this user only (POSIX ``0700``)."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return path
+
+
+def safe_key(key: str) -> str:
+    """A folder name for a runtime home key (``<agent>`` / ``<agent>~runs``)."""
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", key) or "agent"
+
+
 def agent_home(runtime: str, agent_id: str) -> Path:
     """The runtime's own state folder for one agent (created on demand)."""
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", agent_id) or "agent"
-    home = runtimes_root() / runtime / safe
-    home.mkdir(parents=True, exist_ok=True)
-    return home
+    root = private_dir(runtimes_root())
+    return private_dir(root / runtime / safe_key(agent_id))
 
 
 def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
@@ -271,8 +452,12 @@ def child_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def write_if_changed(path: Path, text: str) -> bool:
-    """Write UTF-8 text when it differs; True when the file changed."""
+def write_if_changed(path: Path, text: str, *, private: bool = False) -> bool:
+    """Write UTF-8 text when it differs; True when the file changed.
+
+    ``private`` creates the file readable by this user only (POSIX ``0600``)
+    from its first byte, not after a ``chmod``.
+    """
     try:
         if path.read_text(encoding="utf-8") == text:
             return False
@@ -280,13 +465,75 @@ def write_if_changed(path: Path, text: str) -> bool:
         pass
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    with contextlib.suppress(FileNotFoundError):
+        tmp.unlink()
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if private else 0o666)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
     os.replace(tmp, path)
     return True
 
 
 def write_json_if_changed(path: Path, data: dict[str, Any]) -> bool:
     return write_if_changed(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+#: Exit code of the installer wrapper when a tool it needs is missing.
+SETUP_MISSING_TOOL_EXIT: Final[int] = 90
+
+
+def posix_installer(
+    url: str, args: list[str], *, requires: tuple[str, ...] = ()
+) -> list[str]:
+    """argv that runs an official ``install.sh`` so that its failures fail the job.
+
+    ``curl … | bash`` exits with bash's status: a missing curl, an offline
+    machine or a 404 hands bash an empty script and the "install" succeeds.
+    Here the script is downloaded first (``set -euo pipefail``), the tools it
+    needs are checked with a plain message, and the installer's own exit
+    status is the job's. Arguments travel as positional parameters, never
+    spliced into the script text.
+    """
+    tools = " ".join(shlex.quote(tool) for tool in ("curl", *requires) if tool)
+    script = (
+        "set -euo pipefail\n"
+        f"for tool in {tools}; do\n"
+        '  if ! command -v "$tool" >/dev/null 2>&1; then\n'
+        '    echo "Setup needs $tool. Install it with your system package manager, '
+        'then try again." >&2\n'
+        f"    exit {SETUP_MISSING_TOOL_EXIT}\n"
+        "  fi\n"
+        "done\n"
+        'script="$(mktemp)"\n'
+        "trap 'rm -f \"$script\"' EXIT\n"
+        f'curl -fsSL --proto "=https" --tlsv1.2 -o "$script" {shlex.quote(url)}\n'
+        'bash "$script" "$@"\n'
+    )
+    return ["bash", "-c", script, "jarvis-setup", *args]
+
+
+def ps_quote(value: str) -> str:
+    """A PowerShell single-quoted string literal."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+def windows_installer(body: str) -> list[str]:
+    """argv that runs PowerShell installer ``body`` and fails the job on any error."""
+    script = (
+        "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; "
+        "[Net.ServicePointManager]::SecurityProtocol = "
+        "[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; "
+        + body
+    )
+    return [
+        "powershell",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
 
 
 def parse_version(text: str) -> tuple[int, int, int] | None:
@@ -330,9 +577,33 @@ def first_existing(candidates: list[Path]) -> Path | None:
     return None
 
 
-def which(*names: str) -> str | None:
+def which(
+    *names: str,
+    skip: Callable[[str], bool] | None = None,
+    extra_dirs: tuple[Path, ...] = (),
+) -> str | None:
+    """The first of ``names`` on PATH, then in ``extra_dirs``.
+
+    PATH is first topped up with the well-known install folders a GUI-launched
+    app does not inherit (``path_augment``) — re-checked on every call, so a
+    runtime an in-app setup job just installed is found without a restart.
+    ``skip`` drops PATH entries that must never answer (stale shims).
+    """
+    try:
+        from jarvis.core.path_augment import ensure_cli_paths
+
+        ensure_cli_paths()
+    except Exception as exc:  # noqa: BLE001 — augmentation is best-effort; PATH as is
+        log.debug("agent runtimes: PATH augmentation failed: %s", exc)
+    entries = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and not (skip is not None and skip(entry))
+    ]
+    entries += [str(directory) for directory in extra_dirs]
+    search = os.pathsep.join(entries)
     for name in names:
-        found = shutil.which(name)
+        found = shutil.which(name, path=search)
         if found:
             return found
     return None

@@ -126,7 +126,22 @@ def test_hermes_always_asks_jarvis_and_never_the_guardian(tmp_path):
 
 def test_hermes_denied_shell_disables_its_terminal(tmp_path):
     config = HermesRuntime().config_for(_turn(tmp_path, denied_native=frozenset({"shell"})))
-    assert set(config["agent"]["disabled_toolsets"]) == {"terminal", "code_execution"}
+    assert {"terminal", "code_execution"} <= set(config["agent"]["disabled_toolsets"])
+
+
+def test_hermes_never_gets_a_headless_browser_desktop_control_or_own_scheduler(tmp_path):
+    """Jarvis' visible browser and routines only; never an invisible Chromium."""
+    config = HermesRuntime().config_for(_turn(tmp_path))
+    assert {"browser", "computer_use", "cronjob"} <= set(config["agent"]["disabled_toolsets"])
+    assert "terminal" not in config["agent"]["disabled_toolsets"]
+
+
+def test_hermes_config_never_exposes_the_data_root_and_carries_its_schema(tmp_path):
+    from jarvis.agent_runtimes import versions
+
+    config = HermesRuntime().config_for(_turn(tmp_path))
+    assert config["cli"]["expose_on_path"] is False
+    assert config["_config_version"] == versions.pin("hermes").config_version
 
 
 def test_a_keyless_local_model_writes_no_key_reference(tmp_path):
@@ -173,6 +188,24 @@ def test_openclaw_never_runs_background_turns_or_persona_files(tmp_path):
     assert config["cron"]["enabled"] is False
     assert config["plugins"]["slots"]["memory"] == "none"
     assert config["plugins"]["entries"]["memory-core"]["enabled"] is False
+
+
+def test_openclaw_loads_no_browser_desktop_or_device_plugins(tmp_path):
+    config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    denied = set(config["plugins"]["deny"])
+    assert {"browser", "cua-computer", "device-pair", "file-transfer"} <= denied
+    # The provider adapters stay: Jarvis' gateway speaks their wire formats.
+    assert not denied & {"openai", "anthropic", "ollama"}
+    assert "browser" in config["tools"]["deny"]
+
+
+def test_openclaw_logs_into_the_agents_own_folder(tmp_path, monkeypatch):
+    from jarvis.agent_runtimes import base
+
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path / "rt")
+    config = OpenClawRuntime().config_for(_turn(tmp_path), port=4321, token=_TOKEN)
+    log_file = Path(config["logging"]["file"])
+    assert log_file.is_relative_to(tmp_path / "rt" / "openclaw" / "hermit")
 
 
 def test_openclaw_exec_mode_follows_grants_not_the_stance(tmp_path):

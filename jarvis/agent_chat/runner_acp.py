@@ -85,7 +85,7 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
     current = manager.job(runtime_name)
     setting_up = current is not None and current.state == "running"
     status = await asyncio.to_thread(runtime.detect)
-    if status.ready and not setting_up:
+    if not setting_up and manager.needed(runtime, status) is None:
         return
     await handle.emit(
         make_event(
@@ -101,8 +101,7 @@ async def _ready(handle: Any, runtime_name: str, runtime: Any) -> None:
     )
     status = await manager.wait_ready(runtime_name)
     if not status.ready:
-        current = manager.job(runtime_name)
-        reason = (current.message if current is not None else "") or status.problem
+        reason = manager.failure_reason(runtime_name) or status.problem
         raise CliUnavailable(f"{runtime.label} could not be set up. {reason}".strip())
 
 
