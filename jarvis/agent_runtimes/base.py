@@ -158,6 +158,13 @@ class RuntimeTurn:
     control_key: str | None = None
     #: Native capability groups this agent may not use (``"shell"``, ``"web"``).
     denied_native: frozenset[str] = frozenset()
+    #: The agent's reasoning effort on Jarvis' ladder (``none`` … ``max``);
+    #: ``""`` = the model's own default.
+    effort: str = ""
+    #: What the model catalog DECLARES about the model (``None`` = unknown):
+    #: it reasons / it reads images. Never inferred from a provider or model name.
+    reasoning: bool | None = None
+    vision: bool | None = None
 
 
 @dataclass(slots=True)

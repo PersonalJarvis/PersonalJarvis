@@ -208,6 +208,11 @@ async def main(name: str, provider: str, wanted: str) -> int:
             finally:
                 await driver(name).stop()
                 await asyncio.to_thread(ledger.flush)
+                # Gateway calls are metered: the ledger writer holds usage.db in
+                # this folder open, so it is closed (pointed back) before the
+                # folder is removed — on Windows an open file blocks that.
+                await asyncio.to_thread(ledger.set_ledger_path, previous_ledger)
+                gateway._CATALOG = previous_catalog
                 if result != 0:
                     log = tmp / "runtime-stderr.log"
                     if log.exists():

@@ -127,6 +127,11 @@ _DENIED_PLUGINS: Final[tuple[str, ...]] = (
 
 _CONTROL_KEY_ENV: Final[str] = "JARVIS_CONTROL_API_KEY"
 
+#: ``agents.defaults.thinkingDefault`` levels OpenClaw accepts ("none" -> "off").
+_THINKING_LEVELS: Final[frozenset[str]] = frozenset(
+    {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
 _INSTALL_URL_PS1: Final[str] = "https://openclaw.ai/install.ps1"
 _INSTALL_URL_SH: Final[str] = "https://openclaw.ai/install.sh"
 #: OpenClaw's user-space installer: a private Node.js under ``--prefix``, no sudo.
@@ -463,7 +468,10 @@ class OpenClawRuntime:
                 {
                     "id": route.model,
                     "name": route.model,
-                    "input": ["text"],
+                    # Declared catalog capabilities only; OpenClaw's defaults
+                    # (no reasoning, text only) stand for an unknown model.
+                    "input": ["text", "image"] if turn.vision else ["text"],
+                    **({"reasoning": True} if turn.reasoning else {}),
                     "contextWindow": route.context_window,
                     **({"maxTokens": route.max_output_tokens}
                        if route.max_output_tokens is not None else {}),
@@ -514,6 +522,9 @@ class OpenClawRuntime:
             # temp-folder log every OpenClaw on the machine appends to.
             "logging": {"file": str(home / "state" / "logs" / "openclaw.log")},
         }
+        thinking = "off" if turn.effort == "none" else turn.effort
+        if thinking in _THINKING_LEVELS:
+            config["agents"]["defaults"]["thinkingDefault"] = thinking
         if turn.mcp_url and turn.control_key:
             from jarvis.agent_chat.jarvis_harness import HEADER_NAME
 
