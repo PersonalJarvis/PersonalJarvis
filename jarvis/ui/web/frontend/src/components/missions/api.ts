@@ -4,15 +4,19 @@
  * WS hooks so React Query can cache the list/detail queries.
  */
 import type {
+  CapacityDecision,
+  CapacityDecisionResponse,
   CriticVerdictReady,
   EventEnvelope,
   MissionChanges,
+  MissionBilling,
   MissionDetail,
   MissionResult,
   MissionSummary,
   MissionToolApprovalDecision,
   MissionToolApprovalsResponse,
   JarvisAgentWorkerSnapshot,
+  PaidOfferResponse,
 } from "@/types/missions";
 
 export interface MissionsListResponse {
@@ -93,6 +97,77 @@ export async function denyMissionToolCall(
       body: JSON.stringify({ reason }),
     },
   );
+}
+
+export function paidOfferQueryKey(missionId: string | null) {
+  return ["missions", "paid-offer", missionId] as const;
+}
+
+/** The paid-API alternative for a mission waiting for capacity (read-only). */
+export async function fetchPaidOffer(missionId: string): Promise<PaidOfferResponse> {
+  return requestJson(`${API_BASE}/${encodeURIComponent(missionId)}/paid-offer`);
+}
+
+/**
+ * Wait, approve paid API use for this one mission, or cancel. An approval
+ * echoes the provider and model of the offer the user saw; the server
+ * rejects it (409) if the offer changed in between.
+ */
+export async function decideCapacity(
+  missionId: string,
+  decision: CapacityDecision,
+  offer?: { provider: string; model: string },
+): Promise<CapacityDecisionResponse> {
+  return requestJson(
+    `${API_BASE}/${encodeURIComponent(missionId)}/capacity-decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decision,
+        provider: offer?.provider ?? null,
+        model: offer?.model ?? null,
+      }),
+    },
+  );
+}
+
+export const MISSION_BILLING_KEY = ["mission-billing"] as const;
+
+function isMissionBilling(body: unknown): body is MissionBilling {
+  return (
+    !!body &&
+    typeof body === "object" &&
+    typeof (body as MissionBilling).paid_api_fallback === "boolean" &&
+    typeof (body as MissionBilling).subscription_mode === "boolean"
+  );
+}
+
+/**
+ * Whether missions may continue on a paid API key once every subscription is
+ * used up. `null` when the backend does not offer the setting (an older
+ * server answers 404), so the page leaves the row out instead of guessing.
+ */
+export async function fetchMissionBilling(): Promise<MissionBilling | null> {
+  const res = await fetch("/api/mission-billing", { cache: "no-store" });
+  if (res.status === 404) return null;
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+  }
+  return isMissionBilling(body) ? body : null;
+}
+
+/** Switch the paid fallback; the answer is the state the server now holds. */
+export async function saveMissionBilling(paidApiFallback: boolean): Promise<MissionBilling> {
+  const body = await requestJson<unknown>("/api/mission-billing", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paid_api_fallback: paidApiFallback }),
+  });
+  if (!isMissionBilling(body)) throw new Error("Unexpected answer from the server");
+  return body;
 }
 
 export async function cancelMission(id: string): Promise<void> {

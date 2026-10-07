@@ -20,14 +20,18 @@ What must stay true, and is what these tests pin:
 * the extra time stops at a ceiling the user owns;
 * a user who wants the old fixed behaviour gets it by saying so.
 
-The client is faked, so what is asserted is the deadline the transport was
-handed — not wall-clock timing, which would make this file flaky rather than
-meaningful.
+The client is faked and the pass's clock is frozen, so what is asserted is the
+exact deadline the transport was handed — not wall-clock timing, which would
+make this file flaky rather than meaningful (a loaded CI runner can spend a
+few hundred milliseconds between computing the deadline and calling the
+client, and the client is handed the time REMAINING).
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -36,8 +40,8 @@ from jarvis.dictation import polish
 from jarvis.dictation.polish import polish_transcript
 from jarvis.dictation.polish_client import POLISH_FAMILIES, PolishFamily
 
-# The deadline is a difference of monotonic clock readings, so an exact budget
-# can come back a few ULPs above its ceiling (1.2000000000007 <= 1.2 fails).
+# The deadline is a difference of clock readings, so an exact budget can come
+# back a few ULPs away from its value (1.2000000000007 <= 1.2 fails).
 _FLOAT_SLACK = 1e-9
 
 pytestmark = pytest.mark.asyncio
@@ -89,7 +93,19 @@ class _FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def _fresh_breaker() -> None:
+def _frozen_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop the pass's monotonic clock so the remaining time IS the budget.
+
+    Only the deadline arithmetic reads it; latency logging keeps its real
+    ``perf_counter``.
+    """
+    monkeypatch.setattr(
+        polish, "time", SimpleNamespace(monotonic=lambda: 1_000.0, perf_counter=time.perf_counter)
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_breaker(_frozen_clock: None) -> None:
     polish.reset_polish_state()
 
 
@@ -120,10 +136,9 @@ async def test_a_short_dictation_keeps_the_configured_ceiling(
     """
     deadline = await _deadline_for(monkeypatch, 20, _Cfg(polish_timeout_ms=1200))
 
-    # The walk hands the client the time REMAINING, so a few milliseconds of
-    # our own work are legitimately missing; what must not happen is the
-    # budget growing.
-    assert 1.0 < deadline <= 1.2 + _FLOAT_SLACK
+    # The walk hands the client the time REMAINING; with the clock frozen that
+    # is the whole budget, and what must not happen is the budget growing.
+    assert deadline == pytest.approx(1.2, abs=_FLOAT_SLACK)
 
 
 async def test_a_long_dictation_is_given_more_time_than_a_short_one(
@@ -142,7 +157,7 @@ async def test_a_long_dictation_is_given_more_time_than_a_short_one(
     # 60 words = 35 over the free allowance, 15 ms each on top of 1200 ms, and
     # still short of the 2000 ms cap — so this asserts the RAMP rather than
     # the ceiling the next test owns.
-    assert 1.5 < long <= 1.725 + _FLOAT_SLACK
+    assert long == pytest.approx(1.725, abs=_FLOAT_SLACK)
 
 
 async def test_the_extra_time_stops_at_the_configured_maximum(
@@ -157,7 +172,7 @@ async def test_the_extra_time_stops_at_the_configured_maximum(
         monkeypatch, 5000, _Cfg(polish_timeout_ms=1200, polish_timeout_max_ms=2500)
     )
 
-    assert 2.3 < deadline <= 2.5 + _FLOAT_SLACK
+    assert deadline == pytest.approx(2.5, abs=_FLOAT_SLACK)
 
 
 async def test_a_maximum_at_the_base_switches_the_ramp_off(
@@ -173,7 +188,7 @@ async def test_a_maximum_at_the_base_switches_the_ramp_off(
         monkeypatch, 800, _Cfg(polish_timeout_ms=900, polish_timeout_max_ms=900)
     )
 
-    assert 0.7 < deadline <= 0.9 + _FLOAT_SLACK
+    assert deadline == pytest.approx(0.9, abs=_FLOAT_SLACK)
 
 
 async def test_a_maximum_below_the_base_never_shortens_the_base(
@@ -190,7 +205,7 @@ async def test_a_maximum_below_the_base_never_shortens_the_base(
         monkeypatch, 800, _Cfg(polish_timeout_ms=1500, polish_timeout_max_ms=400)
     )
 
-    assert 1.3 < deadline <= 1.5 + _FLOAT_SLACK
+    assert deadline == pytest.approx(1.5, abs=_FLOAT_SLACK)
 
 
 async def test_an_explicit_override_is_never_ramped(
@@ -206,7 +221,7 @@ async def test_an_explicit_override_is_never_ramped(
 
     await polish_transcript(_words(900), language="en", cfg=_Cfg(), timeout_s=0.5)
 
-    assert client.calls and 0 < client.calls[0] <= 0.5 + _FLOAT_SLACK
+    assert client.calls and client.calls[0] == pytest.approx(0.5, abs=_FLOAT_SLACK)
 
 
 async def test_a_config_that_never_heard_of_the_maximum_still_ramps(

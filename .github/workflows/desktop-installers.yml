@@ -496,6 +496,11 @@ jobs:
       # The ONLY job that may write to the repository, and only to attach the
       # assets it just verified.
       contents: write
+      # Build provenance for the native installers (tag runs only, see the
+      # attestation step): an OIDC identity for Sigstore plus the attestation
+      # store. Users check it with `gh attestation verify`.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -568,6 +573,18 @@ jobs:
           path: installers/installers-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      # SLSA build provenance for every native installer the manifest lists
+      # (.exe, both .dmg, .AppImage, .deb), signed with this workflow's OIDC
+      # identity and stored in GitHub's attestation store. It runs before the
+      # upload so a release can never carry installers without provenance, and
+      # it attests the final (signed) bytes that the OS jobs uploaded.
+      # Verify a download: gh attestation verify <file> -R PersonalJarvis/PersonalJarvis
+      - name: Attest build provenance for the native installers
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: installers/installers-SHA256SUMS.txt
 
       - name: Upload verified installer assets without replacing published files
         if: github.ref_type == 'tag'

@@ -15,6 +15,7 @@
 #      personal-jarvis-src.tar.gz asset the install scripts fall back to. The
 #      in-app updater follows releases/latest, so this is the step that reaches
 #      users.
+#   6. runs release-smoke.yml against the published release (read-only).
 #
 # Tags pushed with GITHUB_TOKEN fire no `push: tags` event, which is why step 4
 # dispatches explicitly; workflow_dispatch is the documented exception.
@@ -205,3 +206,19 @@ jobs:
           python scripts/ci/release_assets.py finalize
           --repo "$GITHUB_REPOSITORY" --tag "v$V"
           --sha "$(git rev-parse HEAD)" --wait-minutes 150
+
+  # Read-only proof that what users now download installs: assets, checksums,
+  # build provenance and the signed wrapper on Linux, Windows and macOS. Called
+  # from here because a release published with GITHUB_TOKEN fires no `release`
+  # event. A red smoke means the release is already public: follow the
+  # rollback runbook in docs/ci-pipeline.md.
+  smoke:
+    name: smoke published release
+    needs: [cut, publish]
+    permissions:
+      contents: read
+      attestations: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      tag: v${{ needs.cut.outputs.version }}
+      require_attestation: true
