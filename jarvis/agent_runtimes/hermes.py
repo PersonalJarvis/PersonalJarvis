@@ -188,6 +188,10 @@ def _adopt_legacy_home(key: str, home: Path) -> None:
     into the profile (so the agent keeps its Hermes context); the old folder,
     everything else in it rebuildable, is removed once that copy succeeded.
     """
+    from jarvis.core.instance import current_instance
+
+    if not current_instance().is_default:
+        return  # the old folders belong to the default app's agents
     legacy = base.legacy_runtimes_root() / NAME / safe_key(key)
     if not legacy.is_dir():
         return

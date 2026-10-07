@@ -182,3 +182,13 @@ def test_a_clean_path_is_never_rewritten():
     store = _Store(r"C:\Windows;C:\Users\Ada\AppData\Local\hermes\bin")
     assert path_cleanup.clean_user_path(store=store, environ={}) == []
     assert store.writes == 0
+
+
+def test_the_dev_instance_never_takes_the_default_apps_old_folders(roots, monkeypatch):
+    monkeypatch.setenv("JARVIS_INSTANCE", "dev")
+    legacy = roots / "legacy_runtimes" / "hermes" / "hermit"
+    legacy.mkdir(parents=True)
+    (legacy / "state.db").write_bytes(b"default app's")
+    home = hermes.profile_home("hermit")
+    assert not (home / "state.db").exists()
+    assert (legacy / "state.db").exists()
