@@ -2,14 +2,14 @@
 
 Measured live 2026-10-07: an empty OpenAI balance answers 429, OpenRouter 402,
 a stopped local server times out, and Anthropic refuses a Claude subscription
-outside Claude Code with a bare 429 while the plan has room (Extra Usage off).
+used by Hermes or OpenClaw with a 400 ("Third-party apps now draw from your
+extra usage, not your plan limits") or a bare 429 while the plan has room.
 All of them used to read as "rate limited, try again in 30 s".
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -101,17 +101,39 @@ def test_a_spent_extra_usage_limit_is_named() -> None:
     assert refusal is not None and refusal.code == "extra_usage_spent"
 
 
-def test_a_used_up_plan_window_waits_until_its_reset() -> None:
-    usage = {
-        "five_hour": {"utilization": 100.0, "resets_at": "2026-10-07T12:00:00+00:00"},
-        "extra_usage": {"is_enabled": False},
+def test_anthropics_third_party_wording_is_extra_usage() -> None:
+    body = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "Third-party apps now draw from your extra usage, not your plan "
+            "limits. Add more at claude.ai/settings/usage and keep going.",
+        },
     }
-    now = datetime(2026, 10, 7, 11, 0, tzinfo=UTC)
-    refusal = login_refusal(usage, "claude-sonnet-5-5", now=now)
+    refusal = classify("claude-api", ProviderStatusError(400, body))
     assert refusal is not None
-    assert refusal.status == 429
-    assert refusal.retry_after == pytest.approx(3600)
-    assert "5-hour" in refusal.message
+    assert (refusal.status, refusal.code) == (402, "extra_usage_off")
+
+
+def test_a_plan_window_says_nothing_about_third_party_use() -> None:
+    usage = {"five_hour": {"utilization": 100.0}, "extra_usage": {"is_enabled": True}}
+    assert login_refusal(usage, "claude-haiku-4-5") is None
+
+
+def test_a_blocked_login_is_known_before_any_model_call(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def usage(token: str) -> dict[str, Any]:
+        calls.append(token)
+        return {**_USAGE_ROOM, "extra_usage": {"is_enabled": False}}
+
+    monkeypatch.setattr(provider_errors, "_claude_usage", usage)
+    monkeypatch.setattr(provider_errors, "_REPORTS", {})
+    first = provider_errors.login_blocked(_BEARER, "claude-haiku-4-5")
+    second = provider_errors.login_blocked(_BEARER, "claude-haiku-4-5")
+    assert first is not None and first.code == "extra_usage_off"
+    assert second == first
+    assert calls == [_BEARER]  # cached: routing asks once, not every turn
 
 
 def test_a_report_without_an_explanation_changes_nothing() -> None:
@@ -182,3 +204,38 @@ async def test_a_non_streaming_subscription_answer_keeps_its_output(monkeypatch)
     finally:
         gateway.reset()
     assert answer["output"] == [item]
+
+
+def test_a_route_refuses_a_blocked_claude_login_before_the_runtime_starts(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+
+    monkeypatch.setattr(model_map, "login_token_for", lambda provider, account: _BEARER)
+    blocked = provider_errors._extra_usage_off
+    monkeypatch.setattr(provider_errors, "login_blocked", lambda token, model: blocked(model))
+    with pytest.raises(model_map.RouteUnavailable, match="Extra Usage"):
+        model_map._check_login_billing("claude-api", "claude-haiku-4-5", "")
+
+
+def test_an_api_key_route_never_reads_the_login(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+
+    monkeypatch.setattr(model_map, "login_token_for", lambda provider, account: None)
+    model_map._check_login_billing("claude-api", "claude-haiku-4-5", "api-key")
+
+
+def test_a_system_message_moves_into_the_instructions() -> None:
+    """ChatGPT's backend refuses system input items (OpenClaw sends one)."""
+    args = gateway.request_args(
+        {
+            "model": "gpt-6.1-sol",
+            "instructions": "",
+            "input": [
+                {"type": "message", "role": "system", "content": "You are Lumen."},
+                {"type": "message", "role": "user", "content": [
+                    {"type": "input_text", "text": "Hi"},
+                ]},
+            ],
+        }
+    )
+    assert args["instructions"] == "You are Lumen."
+    assert [item["role"] for item in args["input"]] == ["user"]

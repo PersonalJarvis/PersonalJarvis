@@ -2,19 +2,21 @@
 
 A provider's HTTP status alone misleads: OpenAI answers an empty credit
 balance with 429, OpenRouter with 402, and Anthropic refuses a Claude
-subscription used outside Claude Code with a bare 429 ``rate_limit_error``
-while the plan still has room. Each of those reads as "rate limited, try
+subscription used by a third-party app with a 400 or a bare 429
+``rate_limit_error`` while the plan still has room. Each of those reads as "rate limited, try
 again in 30 s" — and no retry will ever succeed. This module tells them apart:
 
 * **No credits / no quota** on a key -> 402 ``billing`` (a runtime does not
   retry it; Hermes classifies 402 as billing and stops).
 * **Provider not reachable** (a local model server that is not running, no
   network) -> 503 ``provider_unreachable``.
-* **Claude subscription**: Anthropic serves a subscription outside Claude Code
-  only through the account's Extra Usage for most models. A 429 on the login
-  is explained from the account's own usage report (``/api/oauth/usage``, the
-  endpoint Claude Code reads; it spends no inference): the plan window really
-  is used up, or Extra Usage is turned off / its monthly limit is spent.
+* **Claude subscription**: Anthropic serves a subscription to third-party
+  apps such as Hermes and OpenClaw only from the account's Extra Usage
+  ("Third-party apps now draw from your extra usage, not your plan limits"),
+  answering 400 or a bare 429 otherwise. The account's own usage report
+  (``/api/oauth/usage``, the endpoint Claude Code reads; no inference) says
+  whether Extra Usage is off or its monthly limit is spent, so a turn can
+  fail at once (``login_blocked``) instead of after a runtime start.
 
 Messages never copy the provider's response body; the body is only matched.
 """
@@ -24,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, Final
 
 from jarvis.core.http_pool import SyncHttpClientPool
@@ -67,15 +68,6 @@ _HTTP_POOL: Final = SyncHttpClientPool(timeout_s=8.0)
 _CLAUDE_USAGE_URL: Final[str] = "https://api.anthropic.com/api/oauth/usage"
 _CLAUDE_OAUTH_BETA: Final[str] = "oauth-2025-04-20"
 
-#: The plan windows in the usage report, named the way a person reads them.
-_CLAUDE_WINDOWS: Final[tuple[tuple[str, str], ...]] = (
-    ("five_hour", "5-hour"),
-    ("seven_day", "weekly"),
-    ("seven_day_opus", "weekly Opus"),
-    ("seven_day_sonnet", "weekly Sonnet"),
-)
-
-
 @dataclass(frozen=True, slots=True)
 class Refusal:
     """What the runtime is told: HTTP status, machine code, plain message."""
@@ -83,8 +75,6 @@ class Refusal:
     status: int
     code: str
     message: str
-    #: Seconds until the refusal lifts, when the provider says so.
-    retry_after: float | None = None
 
 
 class ProviderRefusal(Exception):
@@ -150,6 +140,8 @@ def classify(provider: str, exc: BaseException) -> Refusal | None:
         return exc.refusal
     status = _status(exc)
     codes, text = _codes_and_text(exc)
+    if status in (400, 402, 403, 429) and "extra usage" in text:
+        return _extra_usage_off("")
     if status == 402 or (
         status in (400, 403, 429)
         and (codes & _BILLING_CODES or any(phrase in text for phrase in _BILLING_PHRASES))
@@ -177,70 +169,50 @@ def classify(provider: str, exc: BaseException) -> Refusal | None:
 # ------------------------------------------------------------ Claude login
 
 
-def _reset(raw: Any) -> datetime | None:
-    if not isinstance(raw, str) or not raw:
-        return None
-    try:
-        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return when if when.tzinfo else when.replace(tzinfo=UTC)
+def _extra_usage_off(model: str) -> Refusal:
+    return Refusal(
+        402,
+        "extra_usage_off",
+        f"Anthropic bills {model or 'Claude'} used by Hermes or OpenClaw on a Claude "
+        "subscription as Extra Usage, never from the plan's limits, and Extra Usage "
+        "is turned off for this Claude account, so retrying will not help. Turn it "
+        "on at claude.ai under Settings → Usage, connect an Anthropic API key, or "
+        "choose another provider in the agent's settings.",
+    )
 
 
-def login_refusal(usage: Any, model: str, *, now: datetime | None = None) -> Refusal | None:
-    """Why Anthropic refused a Claude-login call, from the account's usage report.
+def _extra_usage_spent(model: str) -> Refusal:
+    return Refusal(
+        402,
+        "extra_usage_spent",
+        "This Claude account's Extra Usage limit for the month is spent, and "
+        f"Anthropic bills {model or 'Claude'} used by Hermes or OpenClaw only as "
+        "Extra Usage. Raise the limit at claude.ai under Settings → Usage, connect "
+        "an Anthropic API key, or choose another provider in the agent's settings.",
+    )
 
-    ``None`` when the report explains nothing (then it was an ordinary rate
-    limit). Pure, so it is tested without the network.
+
+def login_refusal(usage: Any, model: str) -> Refusal | None:
+    """Why Anthropic refuses a Claude-login call from Hermes or OpenClaw.
+
+    Anthropic serves a subscription to third-party apps only from the
+    account's Extra Usage ("Third-party apps now draw from your extra usage,
+    not your plan limits", live 2026-10-07), so the plan's own windows say
+    nothing here. ``None`` when the report explains nothing. Pure.
     """
-    if not isinstance(usage, dict):
-        return None
-    now = now or datetime.now(UTC)
-    for field, name in _CLAUDE_WINDOWS:
-        window = usage.get(field)
-        if not isinstance(window, dict):
-            continue
-        utilization = window.get("utilization")
-        if not isinstance(utilization, int | float) or utilization < 100:
-            continue
-        reset = _reset(window.get("resets_at"))
-        wait = max(0.0, (reset - now).total_seconds()) if reset else None
-        when = ""
-        if reset is not None:
-            local = reset.astimezone()
-            when = f" It resets at {local:%H:%M} on {local:%d.%m.}"
-        return Refusal(
-            429,
-            "rate_limited",
-            f"Your Claude plan's {name} limit is used up.{when}. Choose another "
-            "connected model in the agent's settings to keep working now.",
-            retry_after=wait,
-        )
-    extra = usage.get("extra_usage")
+    extra = usage.get("extra_usage") if isinstance(usage, dict) else None
     if not isinstance(extra, dict):
         return None
-    shown = model or "This Claude model"
     if extra.get("is_enabled") is False:
-        return Refusal(
-            402,
-            "extra_usage_off",
-            f"Anthropic runs {shown} for Hermes and OpenClaw on your Claude "
-            "subscription only as Extra Usage (paid on top of the plan), and Extra "
-            "Usage is turned off for your Claude account, so retrying will not help. "
-            "Turn it on at claude.ai under Settings → Usage, run this agent on a "
-            "Claude Haiku model (covered by your plan), connect an Anthropic API key, "
-            "or choose another provider in the agent's settings.",
-        )
+        return _extra_usage_off(model)
     if extra.get("spend_limit_reached") is True:
-        return Refusal(
-            402,
-            "extra_usage_spent",
-            f"Your Claude Extra Usage limit for this month is spent, and Anthropic runs "
-            f"{shown} for Hermes and OpenClaw only as Extra Usage. Raise the limit at "
-            "claude.ai under Settings → Usage, or choose another provider in the "
-            "agent's settings.",
-        )
+        return _extra_usage_spent(model)
     return None
+
+
+#: The last usage report per login, so routing does not ask on every turn.
+_REPORTS: dict[str, tuple[float, Any]] = {}
+_REPORT_TTL_S: Final = 120.0
 
 
 def _claude_usage(token: str) -> Any:
@@ -267,12 +239,38 @@ def _claude_usage(token: str) -> Any:
         return None
 
 
+def login_blocked(token: str, model: str) -> Refusal | None:
+    """A refusal known before any model call: Extra Usage off or spent.
+
+    Blocking (one cached GET, no inference). Lets a turn fail at once with the
+    reason instead of starting a runtime that can only be refused.
+    """
+    import hashlib
+    import time
+
+    key = hashlib.sha256(token.encode()).hexdigest()
+    cached = _REPORTS.get(key)
+    if cached is not None and time.monotonic() - cached[0] < _REPORT_TTL_S:
+        usage = cached[1]
+    else:
+        usage = _claude_usage(token)
+        if usage is not None:
+            _REPORTS[key] = (time.monotonic(), usage)
+    return login_refusal(usage, model)
+
+
 async def explain_login_refusal(exc: BaseException, token: str, model: str) -> BaseException:
     """``exc`` replaced by a :class:`ProviderRefusal` when the account explains it."""
-    if _status(exc) != 429:
+    status = _status(exc)
+    if status not in (400, 402, 403, 429):
         return exc
+    _codes, text = _codes_and_text(exc)
+    if status in (400, 402, 403) and "extra usage" not in text:
+        return exc  # an ordinary bad request, not a billing refusal
     usage = await asyncio.to_thread(_claude_usage, token)
     refusal = login_refusal(usage, model)
+    if refusal is None and "extra usage" in text:
+        refusal = _extra_usage_off(model)
     if refusal is None:
         return exc
     log.info("runtime gateway: Claude login refused %s (%s)", model, refusal.code)

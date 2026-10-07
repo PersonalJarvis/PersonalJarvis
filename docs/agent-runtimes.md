@@ -93,13 +93,16 @@ call with its own provider plugins (`gateway.py`,
   limits, so the model picker labels that seat "billed as extra usage"
   (`login_providers` on `/api/agent-runtimes`). A Claude login (`sk-ant-oat…`)
   saved in the Anthropic API-key slot is never sent as an API key.
-  Measured 2026-10-07: with Extra Usage turned off on the account, Haiku
-  still answers from the plan, while Sonnet, Opus and Fable get a bare 429
-  `rate_limit_error` although the plan has room. The gateway then reads the
-  account's usage report (`/api/oauth/usage`, no inference) and says why:
-  Extra Usage off or its monthly limit spent (402), or a plan window really
-  used up (429 until its reset). The gateway sends Anthropic the agent's own
-  request; it never presents itself as Claude Code.
+  Measured 2026-10-07: Anthropic serves a subscription to Hermes and
+  OpenClaw only from the account's Extra Usage ("Third-party apps now draw
+  from your extra usage, not your plan limits", HTTP 400; Sonnet, Opus and
+  Fable sometimes answer a bare 429 instead), for every model including
+  Haiku. Before the runtime starts, `route_for` reads the account's usage
+  report (`/api/oauth/usage`, no inference, cached two minutes) and refuses
+  the turn at once when Extra Usage is off or its monthly limit is spent;
+  a refusal that still arrives is reported as 402 with the same reason. The
+  gateway sends Anthropic the agent's own request; it never presents itself
+  as Claude Code.
 
 `scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
 runs two real turns through the gateway (route built by `route_for`, the real

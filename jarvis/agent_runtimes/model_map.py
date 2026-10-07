@@ -276,6 +276,20 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
     return chosen
 
 
+def _check_login_billing(provider: str, model: str, account_id: str) -> None:
+    """Fail before the runtime starts when Anthropic will refuse the Claude
+    login: it bills third-party apps only as Extra Usage (off or spent here).
+    Blocking (keyring, one cached usage GET)."""
+    login = login_token_for(provider, account_id)
+    if not login:
+        return
+    from jarvis.agent_runtimes.provider_errors import login_blocked
+
+    refusal = login_blocked(login, model)
+    if refusal is not None:
+        raise RouteUnavailable(refusal.message)
+
+
 def route_for(
     config: Any, provider: str, model: str, *, agent_id: str = "", account_id: str = ""
 ) -> ModelRoute:
@@ -283,6 +297,7 @@ def route_for(
     in a thread. The token speaks for ``agent_id`` on ``provider`` (and, for
     the subscription, on that Codex ``account_id``)."""
     chosen = _checked_model(config, provider, model, account_id=account_id)
+    _check_login_billing(provider, chosen, account_id)
     from jarvis.agent_runtimes import gateway
 
     base_url = gateway.base_url()

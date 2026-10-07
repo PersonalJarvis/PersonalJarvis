@@ -161,6 +161,10 @@ def _function_tool(tool: Any) -> dict[str, Any] | None:
     return out
 
 
+def _is_system(item: dict[str, Any]) -> bool:
+    return item.get("role") == "system" and item.get("type", "message") == "message"
+
+
 def request_args(body: Any) -> dict[str, Any]:
     """The subscription client's arguments for one Responses request body."""
     if not isinstance(body, dict):
@@ -178,13 +182,19 @@ def request_args(body: Any) -> dict[str, Any]:
     else:
         raise GatewayError("The request input must be text or a list of items.")
     instructions = body.get("instructions")
+    # ChatGPT's backend refuses a system message in the input ("System
+    # messages are not allowed", live 2026-10-07: every OpenClaw turn on the
+    # subscription). Its place is the instructions, which OpenClaw leaves empty.
+    system = [_text(item.get("content")) for item in items if _is_system(item)]
+    items = [item for item in items if not _is_system(item)]
+    parts = [instructions if isinstance(instructions, str) else "", *system]
     tools = [found for tool in body.get("tools") or [] if (found := _function_tool(tool))]
     reasoning = body.get("reasoning") if isinstance(body.get("reasoning"), dict) else {}
     effort = reasoning.get("effort") if isinstance(reasoning.get("effort"), str) else ""
     return {
         "model": model.strip(),
         "input": items,
-        "instructions": instructions if isinstance(instructions, str) else "",
+        "instructions": "\n\n".join(part for part in parts if part.strip()),
         "tools": tools,
         "reasoning_effort": effort,
     }
@@ -412,9 +422,7 @@ def _failure(provider: str, exc: Exception) -> GatewayError:
     if (refusal := classify(provider, exc)) is not None:
         # No credits, provider unreachable, Claude Extra Usage off: a retry
         # cannot help, so the runtime must not read it as a rate limit.
-        failure = GatewayError(refusal.message, status=refusal.status, code=refusal.code)
-        failure.retry_after = refusal.retry_after
-        return failure
+        return GatewayError(refusal.message, status=refusal.status, code=refusal.code)
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if not isinstance(status, int):
         response = getattr(exc, "response", None)
