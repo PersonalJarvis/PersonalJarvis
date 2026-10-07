@@ -47,6 +47,9 @@ export interface AgentRuntimesResponse {
   /** Usable providers that answer on a Claude login instead of an API key;
    *  Anthropic bills that as extra usage. */
   login_providers?: string[];
+  /** Per provider that can pay two ways (Claude: API key or Claude Code
+   *  login), the ways that work right now: "api" and/or "subscription". */
+  access?: Record<string, string[]>;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {

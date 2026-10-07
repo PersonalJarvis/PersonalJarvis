@@ -50,6 +50,39 @@ export function modelSeats(options: ProviderOption[], providers: SocietyProvider
   });
 }
 
+/**
+ * The seats a Hermes / OpenClaw agent can sit on: an API key, a local model or
+ * a subscription Jarvis' model gateway serves (`gateway`); never a
+ * subscription CLI's own loop. A dual row (Claude: subscription CLI or API
+ * key) runs on its API key there — or, without one, on the Claude Code login
+ * (`login`), billed as extra usage — so the CLI's own aliases ("opusplan",
+ * "default") are not models to offer. A gateway subscription keeps its
+ * accounts: the login decides who pays.
+ */
+export function runtimeSeats(
+  all: BrainSeat[],
+  supported: readonly string[],
+  gateway: readonly string[] = [],
+  login: readonly string[] = [],
+): BrainSeat[] {
+  const usable = new Set(supported);
+  const served = new Set(gateway);
+  const onLogin = new Set(login);
+  return all.filter((seat) => usable.has(seat.provider.id))
+    .map((seat) => seat.kind === "subscription" && !served.has(seat.provider.id) ? {
+      ...seat,
+      kind: onLogin.has(seat.provider.id) ? "subscription" as const : "api" as const,
+      accounts: [],
+      extraUsage: onLogin.has(seat.provider.id),
+      provider: { ...seat.provider, curated_models: apiModels(seat.provider.curated_models) },
+    } : seat);
+}
+
+/** A CLI catalog narrowed to real model ids: its aliases mean nothing to an API. */
+export function apiModels(models: CuratedModel[]): CuratedModel[] {
+  return models.filter((model) => /\d/.test(model.id));
+}
+
 /** Display names only; availability and routing always come from the catalog. */
 export function providerTitle(seat: BrainSeat, t: (key: string) => string): string {
   const names: Record<string, string> = {

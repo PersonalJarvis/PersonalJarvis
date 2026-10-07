@@ -12,7 +12,7 @@ import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
 import { rankModels } from "@/lib/modelRanking";
 import { orderBy, useProviderOrder } from "@/lib/providerOrder";
-import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
+import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
 import { RuntimeStatusRow, useAgentRuntimes } from "../card/RuntimePicker";
@@ -69,21 +69,8 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     // Hermes / OpenClaw run on an API key, a local model or a subscription
     // Jarvis' model gateway serves; never a subscription CLI's own loop.
     if (!external || !supportedKey) return all;
-    const supported = new Set(supportedKey.split(","));
-    const gateway = new Set(gatewayKey.split(",").filter(Boolean));
-    const login = new Set(loginKey.split(",").filter(Boolean));
-    // A dual row (Claude: subscription CLI or API key) runs on its API key here,
-    // so the CLI's own aliases ("opusplan", "default") are not models to offer.
-    // A gateway subscription keeps its accounts: the login decides who pays.
-    // Without a key, Claude runs on the Claude Code login, billed as extra usage.
-    return all.filter((seat) => supported.has(seat.provider.id))
-      .map((seat) => seat.kind === "subscription" && !gateway.has(seat.provider.id) ? {
-        ...seat,
-        kind: login.has(seat.provider.id) ? "subscription" as const : "api" as const,
-        accounts: [],
-        extraUsage: login.has(seat.provider.id),
-        provider: { ...seat.provider, curated_models: seat.provider.curated_models.filter((model) => /\d/.test(model.id)) },
-      } : seat);
+    const list = (key: string) => key.split(",").filter(Boolean);
+    return runtimeSeats(all, list(supportedKey), list(gatewayKey), list(loginKey));
   }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);

@@ -1,9 +1,11 @@
 /**
  * "New agent": a name, the runtime it runs on (Jarvis, Hermes or OpenClaw —
- * chosen here once and fixed for the agent's life) and the small companion
- * bot that follows it. Everything is optional except the runtime's needs:
- * Hermes and OpenClaw run on an API key or a local model, so they ask which.
- * Mounted once (App.tsx); every plus opens it through `useCreateAgentDialog`.
+ * chosen here once and fixed for the agent's life), the model it starts on
+ * (provider, how it pays — subscription, API key or local — and the model
+ * itself; all changeable later in its chat) and the small companion bot that
+ * follows it. Only what is connected on this machine is offered
+ * (`seatChoice.ts`). Mounted once (App.tsx); every plus opens it through
+ * `useCreateAgentDialog`.
  */
 import { useEffect, useMemo, useState, Suspense, lazy } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -14,27 +16,26 @@ import { BrandedSelect } from "@/components/ui/select";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
 import type { AgentRuntime } from "@/lib/societyApi";
+import { cn } from "@/lib/utils";
 import { AgentNameTaken, useCreateSocietyAgent } from "../data";
 import { defaultCompanion, type CompanionAppearance } from "../companion/appearance";
 import { RuntimeChoice, useAgentRuntimes } from "../card/RuntimePicker";
+import { modelSeats, runtimeSeats } from "../chat/modelChoices";
+import { useModelMenuData } from "../chat/useModelMenuData";
+import { accountChoice, accountHint } from "./brainPicker";
 import { useCreateAgentDialog } from "./createAgentStore";
+import { accessModels, defaultModel, providerChoices, type AccessOption } from "./seatChoice";
 
 const CompanionEditor = lazy(() =>
   import("../companion/CompanionEditor").then((m) => ({ default: m.CompanionEditor })),
 );
 
-/** Provider ids the runtimes route (`jarvis/agent_runtimes/model_map.py`). */
-const PROVIDER_NAMES: Record<string, string> = {
-  "openai-codex": "OpenAI Codex",
-  "claude-api": "Anthropic Claude",
-  openai: "OpenAI",
-  gemini: "Google Gemini",
-  grok: "xAI Grok",
-  openrouter: "OpenRouter",
-  nvidia: "NVIDIA NIM",
-  ollama: "Ollama",
-  "local-openai": "Local server",
-};
+/** A model list this long gets a search field. */
+const SEARCH_FROM = 12;
+
+function list(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
 
 function randomCompanion(): CompanionAppearance {
   return defaultCompanion(`${Date.now()}:${Math.random()}`);
@@ -51,26 +52,49 @@ function CreateAgentDialog() {
   const { finish, cancel } = useCreateAgentDialog.getState();
   const createAgent = useCreateSocietyAgent();
   const runtimes = useAgentRuntimes();
+  const menu = useModelMenuData();
   const [name, setName] = useState("");
   const [runtime, setRuntime] = useState<AgentRuntime>("jarvis");
-  const [provider, setProvider] = useState("");
+  const [providerId, setProviderId] = useState("");
+  const [kind, setKind] = useState("");
+  const [model, setModel] = useState("");
+  const [account, setAccount] = useState("");
   const [companion, setCompanion] = useState<CompanionAppearance>(randomCompanion);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const providers = useMemo(
-    () => (Array.isArray(runtimes.data?.supported_providers) ? runtimes.data.supported_providers : []),
-    [runtimes.data],
-  );
   const external = runtime !== "jarvis";
+  const defaultModelLabel = t("agent_chat.model_default");
+  const data = runtimes.data;
+  const supportedKey = list(data?.supported_providers).join(",");
+  const gatewayKey = list(data?.subscription_providers).join(",");
+  const loginKey = list(data?.login_providers).join(",");
+  const accessKey = JSON.stringify(data?.access && typeof data.access === "object" ? data.access : {});
+  const choices = useMemo(() => {
+    const all = modelSeats(menu.options, Array.isArray(menu.providers) ? menu.providers : [], menu.live, defaultModelLabel);
+    const split = (key: string) => key.split(",").filter(Boolean);
+    const seats = external ? runtimeSeats(all, split(supportedKey), split(gatewayKey), split(loginKey)) : all;
+    return providerChoices(seats, JSON.parse(accessKey) as Record<string, string[]>, external);
+  }, [menu.options, menu.providers, menu.live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey, accessKey]);
+
+  // The person's picks stay while they are offered; a pick that disappears (a
+  // key removed, another runtime chosen) falls back to the first one left.
+  const chosen = choices.find((choice) => choice.id === providerId) ?? choices[0] ?? null;
+  const option: AccessOption | null = chosen?.options.find((entry) => entry.kind === kind) ?? chosen?.options[0] ?? null;
+  const models = accessModels(option);
+  const accounts = accountChoice(option?.seat ?? null);
+  const modelValue = models.some((entry) => entry.id === model) ? model : defaultModel(option);
+  const accountValue = accounts.some((entry) => entry.id === account) ? account : "";
+  const seatKey = `${chosen?.id ?? ""}|${option?.kind ?? ""}`;
   useEffect(() => {
-    // The first usable provider until the person picks one.
-    if (external && !providers.includes(provider)) setProvider(providers[0] ?? "");
-  }, [external, providers, provider]);
+    // Another provider or access: its own default model, not the last one's id.
+    setModel("");
+  }, [seatKey]);
 
   // A runtime still being set up does not hold creation back: the agent's
-  // first turn waits for the setup (agent_runtimes.manager).
-  const needsProvider = external && !provider;
+  // first turn waits for the setup (agent_runtimes.manager). A Jarvis agent
+  // with nothing connected yet still starts: it takes the last chat seat.
+  const needsProvider = external && !option;
   const canCreate = !saving && !needsProvider;
 
   async function submit() {
@@ -81,7 +105,9 @@ function CreateAgentDialog() {
       const agent = await createAgent({
         name,
         runtime,
-        provider: external ? provider : undefined,
+        provider: option?.seat.provider.id,
+        model: option ? modelValue : undefined,
+        accountId: option ? accountValue || option.accountId : undefined,
         companion,
       });
       finish(agent);
@@ -138,26 +164,97 @@ function CreateAgentDialog() {
                 <p className="text-xs text-muted-foreground">{t("society.create_agent.type_fixed")}</p>
               </div>
 
-              {external ? (
+              <div className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">{t("society.create_agent.provider_label")}</span>
+                {chosen && option ? (
+                  <BrandedSelect
+                    value={chosen.id}
+                    onValueChange={(next) => { setProviderId(next); setKind(""); setAccount(""); }}
+                    ariaLabel={t("society.create_agent.provider_label")}
+                    disabled={saving}
+                    testId="create-agent-provider"
+                    options={choices.map((choice) => ({
+                      value: choice.id,
+                      label: choice.label,
+                      icon: <ProviderLogo providerId={choice.logo} label={choice.label} size="sm" />,
+                    }))}
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {menu.loading
+                      ? t("society.create.catalog_loading")
+                      : t(external ? "society.create_agent.no_provider" : "society.create_agent.no_provider_jarvis")}
+                  </p>
+                )}
+              </div>
+
+              {chosen && option ? (
                 <div className="flex flex-col gap-1.5 text-sm">
-                  <span className="font-medium">{t("society.create_agent.provider_label")}</span>
-                  {providers.length ? (
-                    <BrandedSelect
-                      value={provider}
-                      onValueChange={setProvider}
-                      ariaLabel={t("society.create_agent.provider_label")}
-                      disabled={saving}
-                      testId="create-agent-provider"
-                      options={providers.map((id) => ({
-                        value: id,
-                        label: PROVIDER_NAMES[id] ?? id,
-                        icon: <ProviderLogo providerId={id} label={PROVIDER_NAMES[id] ?? id} size="sm" />,
-                      }))}
-                    />
-                  ) : (
-                    <p className="text-xs text-muted-foreground">{t("society.create_agent.no_provider")}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground">{t("society.create_agent.provider_hint")}</p>
+                  <span className="font-medium">{t("society.create_agent.access_label")}</span>
+                  <div
+                    className="flex gap-1 rounded-lg border border-border p-1"
+                    role="radiogroup"
+                    aria-label={t("society.create_agent.access_label")}
+                    data-testid="create-agent-access"
+                  >
+                    {chosen.options.map((entry) => (
+                      <button
+                        key={entry.kind}
+                        type="button"
+                        role="radio"
+                        aria-checked={entry.kind === option.kind}
+                        disabled={saving}
+                        onClick={() => { setKind(entry.kind); setAccount(""); }}
+                        className={cn(
+                          "min-w-0 flex-1 truncate rounded-md px-3 py-1.5 text-sm transition-colors disabled:opacity-50",
+                          entry.kind === option.kind
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                        )}
+                      >
+                        {t(`society.create.kind_${entry.kind}`)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t(option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`)}
+                  </p>
+                </div>
+              ) : null}
+
+              {chosen && option && accounts.length ? (
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium">{t("society.create_agent.account_label")}</span>
+                  <BrandedSelect
+                    value={accountValue}
+                    onValueChange={setAccount}
+                    ariaLabel={t("society.create_agent.account_label")}
+                    disabled={saving}
+                    testId="create-agent-account"
+                    options={[
+                      { value: "", label: t("society.create_agent.active_account") },
+                      ...accounts.map((entry) => ({ value: entry.id, label: entry.label, hint: accountHint(entry) })),
+                    ]}
+                  />
+                </div>
+              ) : null}
+
+              {chosen && option ? (
+                <div className="flex flex-col gap-1.5 text-sm">
+                  <span className="font-medium">{t("society.create_agent.model_label")}</span>
+                  <BrandedSelect
+                    value={modelValue}
+                    onValueChange={setModel}
+                    ariaLabel={t("society.create_agent.model_label")}
+                    disabled={saving}
+                    testId="create-agent-model"
+                    searchPlaceholder={models.length >= SEARCH_FROM ? t("society.create_agent.model_search") : undefined}
+                    options={(models.length ? models : [{ id: "", label: defaultModelLabel }]).map((entry) => ({
+                      value: entry.id,
+                      label: entry.label || entry.id || defaultModelLabel,
+                    }))}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("society.create_agent.model_hint")}</p>
                 </div>
               ) : null}
 

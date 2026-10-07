@@ -396,8 +396,12 @@ export interface NewAgentChoice {
   name?: string;
   /** Fixed for the agent's life (docs/agent-runtimes.md). */
   runtime?: AgentRuntime;
-  /** Required for Hermes / OpenClaw: an API-key or local provider. */
+  /** Required for Hermes / OpenClaw; empty on Jarvis = the last chat seat. */
   provider?: string;
+  model?: string;
+  /** The subscription login, or a reserved access value on a dual row
+   *  (`create/seatChoice.ts`: API key or subscription). */
+  accountId?: string;
   /** The small companion bot that follows the agent. */
   companion?: CompanionAppearance;
 }
@@ -414,7 +418,11 @@ export function useCreateSocietyAgent() {
     const body: Record<string, unknown> = { tier: "specialist" };
     if (choice.name?.trim()) body.name = choice.name.trim();
     if (choice.runtime && choice.runtime !== "jarvis") body.runtime = choice.runtime;
-    if (choice.provider) body.provider = choice.provider;
+    if (choice.provider) {
+      body.provider = choice.provider;
+      if (choice.model) body.model = choice.model;
+      if (choice.accountId) body.account_id = choice.accountId;
+    }
     if (choice.companion) body.avatar = { companion: choice.companion };
     const res = await fetch("/api/society/agents", {
       method: "POST",
