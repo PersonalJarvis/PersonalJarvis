@@ -7,6 +7,7 @@ import { AgentsTab } from "@/views/apikeys/AgentsTab";
 import { KeyField } from "@/views/apikeys/KeyField";
 import { SettingsGroup } from "@/views/apikeys/settingsUi";
 import { useProviders, useSectionHealth } from "@/hooks/useProviders";
+import { APIKEYS_TAB_EVENT, takeRequestedApiKeysTab } from "@/lib/apiKeysTab";
 import { useProviderFamilies } from "@/lib/providerFamilies";
 import { useLocaleChunk, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
@@ -18,7 +19,23 @@ const TABS = ["agents", "voice"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_STORAGE_KEY = "jarvis.apikeys.tab";
 
+const isTab = (value: string | null): value is Tab => value !== null && (TABS as readonly string[]).includes(value);
+
+function rememberTab(tab: Tab) {
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+  } catch {
+    // Remembering the tab is a convenience; without storage it resets.
+  }
+}
+
 function initialTab(): Tab {
+  // A link from elsewhere in the app (requestApiKeysTab) wins over the last tab.
+  const asked = takeRequestedApiKeysTab();
+  if (isTab(asked)) {
+    rememberTab(asked);
+    return asked;
+  }
   try {
     const saved = localStorage.getItem(TAB_STORAGE_KEY);
     if (saved && (TABS as readonly string[]).includes(saved)) return saved as Tab;
@@ -48,12 +65,20 @@ export function ApiKeysView() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const choose = (next: Tab) => {
     setTab(next);
-    try {
-      localStorage.setItem(TAB_STORAGE_KEY, next);
-    } catch {
-      // Remembering the tab is a convenience; without storage it resets.
-    }
+    rememberTab(next);
   };
+  // A link that arrives while the page is already open moves it too.
+  useEffect(() => {
+    const onRequest = () => {
+      const asked = takeRequestedApiKeysTab();
+      if (isTab(asked)) {
+        setTab(asked);
+        rememberTab(asked);
+      }
+    };
+    window.addEventListener(APIKEYS_TAB_EVENT, onRequest);
+    return () => window.removeEventListener(APIKEYS_TAB_EVENT, onRequest);
+  }, []);
 
   if (!stringsReady) {
     return (

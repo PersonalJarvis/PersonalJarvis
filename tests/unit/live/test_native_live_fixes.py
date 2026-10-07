@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -124,15 +123,23 @@ async def _settle(session) -> None:
 
 # 1. Readiness probe before open_session ---------------------------------------
 
+# Hang guard only, never the measured quantity: a loaded CI runner can stretch
+# the session setup before the probe (data dir, ledger, prompt) past a second.
+_HANG_GUARD_S = 30.0
+
+
+def test_the_refusal_budget_keeps_the_one_second_release_slo():
+    """The SLO is pinned on the budget constant; the tests below prove it is used."""
+    assert 0 < native._DUPLEX_PROBE_BUDGET_S <= 1.0
+
 
 @both_providers
 @pytest.mark.asyncio
 async def test_not_ready_provider_is_refused_in_its_own_words(call, make_provider):
     live = call(make_provider(ready=False))
-    began = time.monotonic()
     with pytest.raises(RealtimeUnavailableError) as refused:
-        await live.start()
-    assert time.monotonic() - began < 1.0
+        await asyncio.wait_for(live.start(), _HANG_GUARD_S)
+    assert live.provider.probes == 1
     assert live.provider.opened_with == []  # nothing opened, nothing billed
     expected = (
         _LOCAL_REASON if live.provider.name == "local-voice" else native._DUPLEX_REFUSAL_FALLBACK
@@ -147,12 +154,16 @@ async def test_not_ready_provider_is_refused_in_its_own_words(call, make_provide
 
 @both_providers
 @pytest.mark.asyncio
-async def test_slow_readiness_probe_is_refused_within_a_second(call, make_provider):
-    live = call(make_provider(probe_delay_s=3.0))
-    began = time.monotonic()
+async def test_slow_readiness_probe_is_refused_within_a_second(call, make_provider, monkeypatch):
+    # A probe that never answers within the test is refused by the budget alone:
+    # without the budget ``start`` would wait the full hour and hit the guard.
+    # The budget is shrunk so the proof does not race a wall clock on a loaded
+    # runner; its production value is pinned by the SLO test above.
+    monkeypatch.setattr(native, "_DUPLEX_PROBE_BUDGET_S", 0.05)
+    live = call(make_provider(probe_delay_s=3600.0))
     with pytest.raises(RealtimeUnavailableError):
-        await live.start()
-    assert time.monotonic() - began < 1.5
+        await asyncio.wait_for(live.start(), _HANG_GUARD_S)
+    assert live.provider.probes == 1
     assert live.provider.opened_with == []
     assert len(live.sent("error_spoken")) == 1
 
@@ -283,7 +294,7 @@ async def test_slow_tool_releases_the_model_with_an_honest_pending_result(
                 tool_args={"name": "search_web", "arguments_json": "{}"},
             )
         )
-        await asyncio.wait_for(connection.tool_result_sent.wait(), 1.0)
+        await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
         _, _, result = connection.tool_results[0]
         assert result["pending"] is True and result["success"] is False
         assert "still running" in result["error"]
@@ -294,7 +305,7 @@ async def test_slow_tool_releases_the_model_with_an_honest_pending_result(
         # receipt lands after the tool body returns, which a loaded Windows CI
         # runner can stretch past half a second.
         await asyncio.wait_for(
-            asyncio.gather(*[job for job in session._jobs if not job.done()]), 5.0
+            asyncio.gather(*[job for job in session._jobs if not job.done()]), _HANG_GUARD_S
         )
         assert gateway.finished == ["search_web"]
         assert not session._has_pending_work()
@@ -305,7 +316,11 @@ async def test_slow_tool_releases_the_model_with_an_honest_pending_result(
 
 @both_providers
 @pytest.mark.asyncio
-async def test_fast_tool_answers_with_its_real_result(tmp_path, make_provider):
+async def test_fast_tool_answers_with_its_real_result(tmp_path, monkeypatch, make_provider):
+    # "Fast" means "finishes before the deadline": the deadline is raised so a
+    # loaded runner, where the receipt write alone can take seconds, cannot
+    # turn the real result into a pending one.
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", _HANG_GUARD_S)
     session, connection, _frames = _in_call(make_provider(), tmp_path)
     try:
         await session._native_event(
@@ -316,7 +331,7 @@ async def test_fast_tool_answers_with_its_real_result(tmp_path, make_provider):
                 tool_args={"name": "search_web", "arguments_json": "{}"},
             )
         )
-        await asyncio.wait_for(connection.tool_result_sent.wait(), 1.0)
+        await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
         _, _, result = connection.tool_results[0]
         assert result["success"] is True and "pending" not in result
     finally:

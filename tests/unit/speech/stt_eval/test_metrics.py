@@ -7,9 +7,11 @@ import pytest
 
 from jarvis.speech.stt_eval import metrics as metrics_module
 from jarvis.speech.stt_eval.metrics import (
+    WordErrors,
     repeatability_error_rate,
     switch_error_rate,
     word_error_rate,
+    word_errors,
 )
 
 
@@ -25,6 +27,23 @@ def test_word_error_rate_is_self_contained_and_normalized() -> None:
 
 def test_word_error_rate_preserves_legacy_contraction_tokenization() -> None:
     assert word_error_rate("can't stop", "can t stop") == 1.0
+
+
+@pytest.mark.parametrize(
+    ("reference", "hypothesis", "expected"),
+    [
+        ("one two three", "one wrong three plus", WordErrors(3, 1, 0, 1)),
+        ("one two three", "one three", WordErrors(3, 0, 1, 0)),
+        ("one two", "", WordErrors(2, 0, 2, 0)),
+        ("", "invented words", WordErrors(0, 0, 0, 2)),
+        ("", "", WordErrors(0)),
+        ("Don't delete 35 files", "Don't delete 35 files.", WordErrors(4)),
+    ],
+)
+def test_word_errors_distinguishes_substitution_deletion_and_insertion(
+    reference: str, hypothesis: str, expected: WordErrors,
+) -> None:
+    assert word_errors(reference, hypothesis) == expected
 
 
 def test_metrics_import_without_private_tts_eval(

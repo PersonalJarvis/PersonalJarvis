@@ -275,15 +275,22 @@ class ClaudeDirectWorker:
     """
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "claude"
+    # Provider family this worker bills (jarvis/missions/capacity.worker_family).
+    family: ClassVar[str] = "claude"
 
     def __init__(
         self,
         mcp_servers: dict[str, Any] | None = None,
         *,
         capability_inventory: WorkerCapabilityInventory | None = None,
+        backend_fallback: bool = True,
     ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
+        # False pins this worker to Claude: on a spent window or a dead login it
+        # surfaces the error instead of finishing the mission on codex, so the
+        # orchestrator can park the mission (jarvis/missions/capacity.py).
+        self.backend_fallback = backend_fallback
         # The legacy mcp_servers argument is folded into the same explicit
         # inventory every backend receives.
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build(
@@ -339,7 +346,7 @@ class ClaudeDirectWorker:
                 timeout_s=timeout_s,
                 first_output_timeout_s=first_output_timeout_s,
                 mission_id=mission_id,
-                allow_backend_fallback=allow_backend_fallback,
+                allow_backend_fallback=allow_backend_fallback and self.backend_fallback,
                 force_default_model=force_default_model,
                 broker_binding=broker_binding,
                 **_unused,
@@ -896,6 +903,19 @@ class ClaudeDirectWorker:
         # discarded, the orchestrator grades it instead), complete the
         # mission on the codex worker. `allow_backend_fallback=False` on the
         # nested spawn prevents claude->codex->claude ping-pong.
+        if final_result.is_error and not timed_out and not any_tool_use:
+            from .codex_direct_worker import _codex_error_is_usage_limited
+
+            if _codex_error_is_usage_limited(final_result.result or ""):
+                # Arm the session quota cooldown — also when the codex fallback
+                # is off: the worker factory reads it to park pinned missions
+                # in WAITING_CAPACITY, and an unpinned factory routes STRAIGHT
+                # to codex (no wasted ~16 s Claude probe) until the window
+                # resets.
+                from jarvis.claude_quota_state import mark_claude_quota_cooldown
+
+                mark_claude_quota_cooldown()
+
         if allow_backend_fallback and final_result.is_error and not timed_out and not any_tool_use:
             from jarvis.codex_auth_state import codex_needs_reauth
             from jarvis.codex_quota_state import codex_in_quota_cooldown
@@ -905,15 +925,6 @@ class ClaudeDirectWorker:
                 _codex_error_is_usage_limited,
                 _codex_oauth_available,
             )
-
-            if _codex_error_is_usage_limited(final_result.result or ""):
-                # Arm the session quota cooldown so the worker factory routes
-                # subsequent missions STRAIGHT to codex (no wasted ~16 s Claude
-                # probe) until the window resets — the proactive complement to
-                # this reactive fallback.
-                from jarvis.claude_quota_state import mark_claude_quota_cooldown
-
-                mark_claude_quota_cooldown()
 
             if (
                 _codex_error_is_usage_limited(final_result.result or "")

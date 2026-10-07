@@ -8,10 +8,17 @@ the cursor AND an element is resolved — otherwise ("", None), so unrelated tur
 
 from __future__ import annotations
 
+import pytest
+
 from jarvis.core.protocols import ImageBlock
 from jarvis.pointer.context import PointerContext
 from jarvis.pointer.turn import resolve_turn_pointer
 from jarvis.vision.pointer_types import PointerElement
+from tests.fakes.fake_capabilities import (
+    fake_linux_capabilities,
+    fake_macos_capabilities,
+    fake_windows_capabilities,
+)
 
 
 def _ctx(available=True, **kw):
@@ -102,7 +109,14 @@ async def test_headless_host_fast_skips_before_thread_dispatch(monkeypatch) -> N
     assert called["resolver"] is False
 
 
-async def test_crop_radius_forwarded_to_default_resolver(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "desktop_capabilities",
+    [fake_windows_capabilities, fake_macos_capabilities, fake_linux_capabilities],
+)
+async def test_crop_radius_forwarded_to_default_resolver(
+    monkeypatch, desktop_capabilities
+) -> None:
+    import jarvis.platform.capabilities as caps_mod
     import jarvis.pointer.turn as turn_mod
 
     seen: dict[str, object] = {}
@@ -112,6 +126,9 @@ async def test_crop_radius_forwarded_to_default_resolver(monkeypatch) -> None:
         seen["crop_radius"] = crop_radius
         return _ctx(element=PointerElement(name="x", role="Button"))
 
+    # Pin a desktop with a cursor: on a headless host (CI runner, VPS) the real
+    # probe fast-skips before the default resolver, which this test is about.
+    monkeypatch.setattr(caps_mod, "detect_capabilities", desktop_capabilities)
     monkeypatch.setattr(turn_mod, "resolve_pointer_context_async", fake_default)
 
     await resolve_turn_pointer(

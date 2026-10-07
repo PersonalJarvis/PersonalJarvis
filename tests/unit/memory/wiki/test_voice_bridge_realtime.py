@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -139,12 +138,21 @@ def _realtime_turn(
     )
 
 
-async def _drain(journal: CandidateJournal, *, timeout_s: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if journal.backlog_count() > 0:
-            return
-        await asyncio.sleep(0.02)
+# Hang guard for background work, never a measured latency: a loaded CI runner
+# runs this file several times slower than a laptop.
+_HANG_GUARD_S = 30.0
+
+
+async def _drain(bridge: VoiceFactBridge) -> None:
+    """Wait for every review the bridge started, however slow the host is.
+
+    Awaiting the bridge's own tasks replaces polling with a short deadline: a
+    review that should run is always seen, and one that must not run is caught
+    whenever it would have finished.
+    """
+    async with asyncio.timeout(_HANG_GUARD_S):
+        while bridge._inflight:  # noqa: SLF001 - test seam: the bridge's own task set
+            await asyncio.gather(*bridge._inflight, return_exceptions=True)  # noqa: SLF001
 
 
 async def _end_session(bus: EventBus, session_id: str = "rt-session") -> None:
@@ -153,18 +161,12 @@ async def _end_session(bus: EventBus, session_id: str = "rt-session") -> None:
     )
 
 
-async def _wait_for_calls(brain: FakeBrain, count: int, *, timeout_s: float = 2.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    while brain.call_count < count and time.monotonic() < deadline:  # noqa: ASYNC110
-        await asyncio.sleep(0.02)
-
-
 @pytest.mark.asyncio
 async def test_acknowledged_realtime_turn_is_reviewed_during_the_call(tmp_path: Path) -> None:
     bus, journal, _registry, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(SHORT_FACT, "Noted."))
-        await _drain(journal)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -182,7 +184,7 @@ async def test_unacknowledged_realtime_turns_are_never_reviewed(tmp_path: Path) 
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay, will do!"))
         await bus.publish(_realtime_turn("I own a yacht.", "", turn_id="rt-turn-2"))
         await _end_session(bus)
-        await asyncio.sleep(0.3)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -197,10 +199,10 @@ async def test_session_end_runs_nothing_after_an_acknowledged_turn(tmp_path: Pat
     bus, journal, _registry, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted.", turn_id="turn-a"))
-        await _wait_for_calls(brain, 1)
+        await _drain(bridge)
         await _end_session(bus)
         await _end_session(bus)
-        await asyncio.sleep(0.3)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -214,7 +216,7 @@ async def test_pipeline_tier_turn_is_ignored(tmp_path: Path) -> None:
     bus, journal, _registry, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted.", tier="flash"))
-        await asyncio.sleep(0.3)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -228,8 +230,7 @@ async def test_same_realtime_turn_delivered_twice_is_reviewed_once(tmp_path: Pat
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted."))
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted."))
-        await _wait_for_calls(brain, 1)
-        await asyncio.sleep(0.2)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -242,7 +243,7 @@ async def test_empty_user_text_is_ignored(tmp_path: Path) -> None:
     bus, journal, _registry, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn("", "Noted."))
-        await asyncio.sleep(0.2)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -268,7 +269,7 @@ async def test_acknowledged_turn_receives_bounded_same_session_context(tmp_path:
                 turn_id="turn-b",
             )
         )
-        await _wait_for_calls(brain, 1)
+        await _drain(bridge)
     finally:
         bridge.stop()
 
@@ -292,9 +293,7 @@ async def test_subscription_wait_holds_the_save_and_never_bills_a_key(
     )
     try:
         await bus.publish(_realtime_turn(SHORT_FACT, "Noted."))
-        deadline = time.monotonic() + 2.0
-        while bridge.waiting_count == 0 and time.monotonic() < deadline:  # noqa: ASYNC110
-            await asyncio.sleep(0.02)
+        await _drain(bridge)
         assert bridge.waiting_count == 1
         assert registry.instantiated == [], "no keyed provider may be touched"
         assert brain.call_count == 0
