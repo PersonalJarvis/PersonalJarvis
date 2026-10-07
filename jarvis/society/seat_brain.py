@@ -110,7 +110,7 @@ def agent_seat(config: Any, agent: Any) -> Seat:
         raise SeatUnavailable(str(exc) or "no provider can run this agent's chat") from None
     if not provider:
         raise SeatUnavailable("this agent's chat names no provider")
-    account = agent.account_id if provider == agent.provider else ""
+    account = getattr(agent, "account_id", "") if provider == agent.provider else ""
     return Seat(
         provider, model or "", resolve_runner(provider, surface="society", account_id=account)
     )
