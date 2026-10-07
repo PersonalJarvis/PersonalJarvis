@@ -1162,15 +1162,49 @@ async def complete_chat(
     }
 
 
+#: Output budget kept free of the prompt estimate when a request names no
+#: limit, and the smallest budget ever sent (a prompt this close to the
+#: window is refused as a context overflow, which the runtime compresses).
+_BUDGET_MARGIN_TOKENS: Final = 1024
+_MIN_OUTPUT_TOKENS: Final = 1024
+#: A conservative characters-per-token ratio: code and non-English text run
+#: closer to three than to the usual four, and overestimating the prompt only
+#: shortens the budget.
+_CHARS_PER_TOKEN: Final = 3
+_IMAGE_TOKENS: Final = 1600
+
+
+def _prompt_tokens_estimate(request: Any) -> int:
+    """A rough upper estimate of the request's prompt size, in tokens."""
+    chars = len(request.system or "") + len(json.dumps(list(request.tools), default=str))
+    images = 0
+    for message in request.messages:
+        content = message.content
+        chars += len(content) if isinstance(content, str) else len(json.dumps(content, default=str))
+        images += len(message.images)
+    return chars // _CHARS_PER_TOKEN + images * _IMAGE_TOKENS
+
+
 def _with_output_capacity(request: Any, limits: ModelLimits) -> Any:
+    """The request with its output budget settled.
+
+    An explicit runtime limit is kept (capped at the model's maximum). With
+    none, the model's maximum is used, but never more than the context window
+    leaves after the prompt: OpenRouter's upstreams, vLLM and other servers
+    refuse ``prompt + max_tokens > context`` outright, and many models declare
+    an output maximum as large as the whole window.
+    """
     from jarvis.core.protocols import BrainRequest
 
     maximum = limits.max_output_tokens
-    default = BrainRequest.__dataclass_fields__["max_tokens"].default
-    requested = request.max_tokens or maximum or default
-    return replace(
-        request, max_tokens=min(requested, maximum) if maximum is not None else requested
-    )
+    if request.max_tokens:
+        requested = request.max_tokens
+        return replace(
+            request, max_tokens=min(requested, maximum) if maximum is not None else requested
+        )
+    budget = maximum or BrainRequest.__dataclass_fields__["max_tokens"].default
+    room = limits.context_window - _prompt_tokens_estimate(request) - _BUDGET_MARGIN_TOKENS
+    return replace(request, max_tokens=max(min(budget, room), _MIN_OUTPUT_TOKENS))
 
 
 def reset() -> None:
