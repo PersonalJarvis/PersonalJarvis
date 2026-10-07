@@ -37,11 +37,19 @@ class _FakeWindow:
         self.title = title
         self.url = url
         self.destroyed = False
+        self.shown = False
+        self.restored = False
         self.evaluated: list[str] = []
         self.events = SimpleNamespace(loaded=_List(), closed=_List(), closing=_List())
 
     def destroy(self) -> None:
         self.destroyed = True
+
+    def show(self) -> None:
+        self.shown = True
+
+    def restore(self) -> None:
+        self.restored = True
 
     def evaluate_js(self, js: str) -> None:
         self.evaluated.append(js)
@@ -111,7 +119,8 @@ def _app(monkeypatch: pytest.MonkeyPatch | None = None) -> DesktopApp:
 
 
 @pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
-def test_open_detached_creates_titled_solo_window(monkeypatch, platform) -> None:
+@pytest.mark.parametrize("view", sorted(DETACHABLE_VIEWS))
+def test_open_detached_creates_titled_solo_window(monkeypatch, platform, view) -> None:
     import sys
 
     app = _app(monkeypatch)
@@ -119,26 +128,27 @@ def test_open_detached_creates_titled_solo_window(monkeypatch, platform) -> None
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
 
-    result = app.open_detached_window("agentic-ide")
+    result = app.open_detached_window(view)
 
-    assert result == {"ok": True, "already_open": False, "view": "agentic-ide"}
+    assert result == {"ok": True, "already_open": False, "view": view}
     assert len(created) == 1
     window = created[0]
     assert window.frameless is (platform != "darwin")
     assert window.resizable is True
     # Distinct title: FindWindowW-exact focus and the icon setter key on it.
-    assert window.title == f"{WINDOW_TITLE} — Agents"
+    assert window.title == app._detached_title(view)
     assert window.title != WINDOW_TITLE
-    assert "?view=agentic-ide&solo=1" in window.url
-    assert app._detached_windows == {"agentic-ide": window}
+    assert f"?view={view}&solo=1" in window.url
+    assert app._detached_windows == {view: window}
     assert len(window.events.loaded) == 1  # injection hook
     assert len(window.events.closed) == 1  # deregistration hook
-    assert app.published == [("agentic-ide", True)]
+    assert app.published == [(view, True)]
 
 
 def test_open_detached_is_idempotent_and_focuses(monkeypatch) -> None:
     import sys
 
+    monkeypatch.setattr(sys, "platform", "win32")
     app = _app(monkeypatch)
     created: list[_FakeWindow] = []
     monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
@@ -162,6 +172,58 @@ def test_open_detached_rejects_unknown_view(monkeypatch) -> None:
         "ok": False,
         "reason": "unknown_view",
     }
+
+
+def test_reopening_a_macos_detached_window_restores_and_shows_it(monkeypatch) -> None:
+    monkeypatch.setattr("jarvis.ui.desktop_app.sys.platform", "darwin")
+    app = _app(monkeypatch)
+    window = _FakeWindow()
+    app._detached_windows["chats"] = window
+
+    result = app.open_detached_window("chats")
+
+    assert result == {"ok": True, "already_open": True, "view": "chats"}
+    assert window.shown and window.restored
+    assert app._detached_windows == {"chats": window}
+
+
+def test_macos_detached_restore_failure_is_reported(monkeypatch) -> None:
+    monkeypatch.setattr("jarvis.ui.desktop_app.sys.platform", "darwin")
+    app = _app(monkeypatch)
+    window = _FakeWindow()
+
+    def failed_restore() -> None:
+        raise RuntimeError("window unavailable")
+
+    window.restore = failed_restore
+    app._detached_windows["chats"] = window
+
+    result = app.open_detached_window("chats")
+
+    assert result["ok"] is False
+    assert result["fallback_url"] == "/?view=chats&solo=1"
+    assert app._detached_windows == {"chats": window}
+
+
+def test_native_close_of_warm_macos_editor_allows_a_fresh_open(monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    app = _app(monkeypatch)
+    created: list[_FakeWindow] = []
+    monkeypatch.setitem(sys.modules, "webview", _fake_webview(created))
+
+    assert app.prewarm_appshot_editor()["ok"] is True
+    closed = created[0]
+    for handler in closed.events.closed:
+        handler()
+
+    assert app.detached_views_snapshot() == []
+    assert app.published == [("appshot-editor", False)]
+    assert app._user_requested_quit is False
+    assert app.prewarm_appshot_editor()["already_open"] is False
+    assert app._detached_windows["appshot-editor"] is created[1]
+    assert created[1].frameless is False
 
 
 def test_open_detached_reports_backend_failure_with_fallback(monkeypatch) -> None:

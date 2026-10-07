@@ -43,6 +43,9 @@ class _Window:
     def show(self) -> None:
         self.calls.append("show")
 
+    def restore(self) -> None:
+        self.calls.append("restore")
+
     def resize(self, width: int, height: int) -> None:
         self.calls.append(f"resize {width}x{height}")
         self.width = width
@@ -66,7 +69,11 @@ def _app(monkeypatch: pytest.MonkeyPatch) -> DesktopApp:
     return app
 
 
-def test_prewarm_creates_the_editor_hidden_once(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
+def test_prewarm_creates_the_editor_hidden_once(
+    monkeypatch: pytest.MonkeyPatch, platform: str,
+) -> None:
+    monkeypatch.setattr(sys, "platform", platform)
     created: list[dict] = []
 
     def create_window(title, url, **kwargs):
@@ -84,6 +91,8 @@ def test_prewarm_creates_the_editor_hidden_once(monkeypatch: pytest.MonkeyPatch)
     assert second == {"ok": True, "already_open": True}
     assert len(created) == 1
     assert created[0]["hidden"] is True
+    assert created[0]["frameless"] is (platform != "darwin")
+    assert created[0]["resizable"] is True
     assert created[0]["url"].endswith("/?view=appshot-editor&solo=1")
 
 
@@ -103,8 +112,42 @@ def test_a_page_still_loading_is_navigated_then_shown(monkeypatch: pytest.Monkey
     # Windows paints a WebView that was created hidden only after a size change.
     if sys.platform == "win32":
         assert window.calls[3:] == ["resize 900x601", "resize 900x600"]
+    elif sys.platform == "darwin":
+        assert window.calls[3:] == ["restore"]
     else:
         assert window.calls[3:] == []
+
+
+def test_reopening_the_editor_on_macos_restores_it_from_the_dock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    app = _app(monkeypatch)
+    window = _Window()
+    app._detached_windows["appshot-editor"] = window
+
+    result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
+
+    assert result["ok"] is True
+    assert window.calls == ["js", "show", "restore"]
+    assert app._detached_windows["appshot-editor"] is window
+
+
+def test_macos_editor_restore_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    app = _app(monkeypatch)
+    window = _Window()
+
+    def failed_restore() -> None:
+        raise RuntimeError("window unavailable")
+
+    window.restore = failed_restore
+    app._detached_windows["appshot-editor"] = window
+
+    result = app.open_detached_window("appshot-editor", query="appshot=a1b2c3d4")
+
+    assert result["ok"] is False
+    assert app._detached_windows["appshot-editor"] is window
 
 
 def test_a_script_result_that_is_not_true_still_loads_the_shot(

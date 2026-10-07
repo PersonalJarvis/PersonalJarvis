@@ -284,6 +284,7 @@ jobs:
             tests/unit/ui/test_desktop_macos_permission_gate.py \
             tests/unit/ui/test_window_command.py \
             tests/unit/ui/test_desktop_detached_windows.py \
+            tests/unit/ui/test_appshot_editor_warm.py \
             tests/unit/ui/test_desktop_background.py \
             tests/unit/ui/test_window_fullscreen.py \
             tests/unit/setup/test_macos_app_bundle.py \

@@ -5387,7 +5387,23 @@ class DesktopApp:
 
                     logger.opt(exception=exc).warning("Detached '{}' could not navigate", view)
                     return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
-            _bring_window_to_front_by_title(self._detached_title(view))
+            if sys.platform == "darwin":
+                try:
+                    # The title-based foreground helper is Windows-only. Cocoa
+                    # needs both show and deminiaturize to reopen a Dock window.
+                    existing.show()
+                    existing.restore()
+                except Exception as exc:  # noqa: BLE001
+                    from loguru import logger
+
+                    logger.opt(exception=exc).warning("Detached '{}' could not be shown", view)
+                    return {
+                        "ok": False,
+                        "reason": f"{type(exc).__name__}: {exc}",
+                        "fallback_url": fallback,
+                    }
+            else:
+                _bring_window_to_front_by_title(self._detached_title(view))
             return {"ok": True, "already_open": True, "view": view}
         if self._window is None and not self._detached_windows:
             # No live window means no running GUI loop to attach to —
@@ -5470,6 +5486,10 @@ class DesktopApp:
                 # The page has not finished loading yet: load it on this shot.
                 window.load_url(f"{self._url()}{fallback}")
             window.show()
+            if sys.platform == "darwin":
+                # show() orders the window forward; restore() brings it out
+                # of the Dock after the native yellow button minimized it.
+                window.restore()
         except Exception as exc:  # noqa: BLE001
             from loguru import logger
 
@@ -5503,7 +5523,8 @@ class DesktopApp:
                 height=height,
                 min_size=_EDITOR_MIN_SIZE,
                 resizable=True,
-                frameless=True,
+                # The warm path needs the same Cocoa controls as a cold open.
+                frameless=sys.platform != "darwin",
                 easy_drag=False,
                 confirm_close=False,
                 hidden=True,

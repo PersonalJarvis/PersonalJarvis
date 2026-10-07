@@ -68,14 +68,25 @@ Cocoa restore operation only deminiaturizes. Existing close/background and
 detached-window lifecycle handling remains attached to the native window events.
 Windows and Linux retain their existing frameless web captions.
 
+The 2026-10-07 follow-up covers the prewarmed Appshot/recording editor too:
+its hidden creation path now retains the same native title bar as a cold open.
+Reopening an existing detached window or warm editor on macOS calls the Cocoa
+show and restore APIs; the Windows title-based foreground helper is a no-op on
+macOS and previously left minimized detached views in the Dock. Native red
+close still destroys and deregisters the detached window, so a later open
+creates a new one. The editor's in-page Done/Close action still keeps it warm.
+
 Regression coverage checks all three platform configurations, reopened and
-detached window creation, the chrome API, and the existing close/background
+all registered detached window creation paths, warm-editor creation and
+restoration, the chrome API, and the existing close/background
 lifecycle. The macOS desktop lane runs these tests on Intel, Apple Silicon,
 and standalone Python alongside its dependency and application-bundle checks.
 These automated checks do not replace a physical Mac acceptance pass: verify
 red close, yellow minimize/Dock restore, green fullscreen/exit and Option-green
 zoom in light and dark appearance, including a detached view and a reopened
-main window. This Windows development host cannot qualify those native clicks.
+main window. Include both a cold and a prewarmed Appshot/recording editor, and
+reopen a minimized editor from its card. This Windows development host cannot
+qualify those native clicks.
 
 ## Current cryptography and SSH channel validation (2026-10-01, T3)
 
