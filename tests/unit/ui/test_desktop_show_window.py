@@ -341,20 +341,24 @@ def test_the_appshot_editor_window_opens_in_compact_proportions() -> None:
     assert detached_window_size("appshot-editor", (800, 500)) == (800, 500)
 
 
+@pytest.mark.parametrize("platform", ["darwin", "win32", "linux"])
 def test_an_open_editor_window_is_pointed_at_the_new_appshot(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, platform: str,
 ) -> None:
     """The appshot card opens the editor through ``open_detached_window`` with
     a query; an editor already open is re-pointed, never duplicated."""
+    monkeypatch.setattr("jarvis.ui.desktop_app.sys.platform", platform)
     app = DesktopApp.__new__(DesktopApp)
     loaded: list[str] = []
     scripts: list[str] = []
     shown: list[bool] = []
+    restored: list[bool] = []
     existing = SimpleNamespace(
         load_url=loaded.append,
         # The warm page answers: it switched to the new appshot in place.
         evaluate_js=lambda js: scripts.append(js) or True,
         show=lambda: shown.append(True),
+        restore=lambda: restored.append(True),
     )
     app._detached_windows = {"appshot-editor": existing}  # noqa: SLF001
     app._url = lambda: "http://127.0.0.1:47821"  # type: ignore[method-assign]  # noqa: SLF001
@@ -369,4 +373,5 @@ def test_an_open_editor_window_is_pointed_at_the_new_appshot(
     assert loaded == [], "a warm editor is re-pointed, not reloaded"
     assert scripts and '"a1b2c3d4"' in scripts[0]
     assert shown == [True]
+    assert restored == ([True] if platform == "darwin" else [])
     assert len(raised) == 1
