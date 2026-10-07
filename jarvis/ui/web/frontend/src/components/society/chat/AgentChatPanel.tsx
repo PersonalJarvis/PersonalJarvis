@@ -60,7 +60,8 @@ import {
   type TurnItem,
   type UserItem,
 } from "@/components/agentchat/reduce";
-import { TurnTrace } from "@/components/agentchat/WorkTrace";
+import { ThreadTurn } from "@/components/agentic/threads/ThreadTimeline";
+import { formatTokens, outputTokens } from "@/components/agentchat/toolView";
 import { VoiceStage } from "@/components/home/VoiceStage";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { useT } from "@/i18n";
@@ -1107,11 +1108,20 @@ function TurnBubble({
   memory?: NoticeItem[];
   onDecide: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
 }) {
+  const t = useT();
   const extras = useMemo(
     () => memory?.map((notice) => ({ key: notice.id, node: <MemoryUpdateNotice item={notice} inTrace /> })),
     [memory],
   );
-  return <TurnTrace turn={item} conversation extras={extras} onDecide={onDecide} renderText={(text) => <Prose text={text} />} />;
+  // What the turn spent: output tokens only (BUG-173), and the cost when billed.
+  const tokens = outputTokens(item.usage ?? item.liveUsage);
+  const spent = [
+    tokens !== null && tokens > 0 ? `${formatTokens(tokens)} ${t("agent_chat.tokens")}` : "",
+    item.costUsd !== null && item.costUsd > 0 ? `$${item.costUsd.toFixed(4)}` : "",
+  ].filter(Boolean).join(" · ");
+  // An agent's turn reads exactly like a coding thread's turn in the Agentic
+  // IDE; only its questions and approvals are answered in place.
+  return <ThreadTurn turn={item} prompts="inline" onDecide={onDecide} extras={extras} receipt={spent || undefined} />;
 }
 
 /**

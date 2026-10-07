@@ -7,8 +7,8 @@ const MemoryFileViewer = lazy(() => import("./MemoryFileViewer").then(module => 
 
 /**
  * The "Memory updated" receipt. Inside a turn (`inTrace`) it is one quiet
- * step of the reasoning trace, drawn like a tool row; standalone (no turn
- * before it) it keeps the centred chip.
+ * step of the turn's work, drawn like a work-log row of a thread; standalone
+ * (no turn before it) it keeps the centred chip.
  */
 export function MemoryUpdateNotice({ item, inTrace = false }: { item: NoticeItem; inTrace?: boolean }) {
   const t = useT();
@@ -21,10 +21,10 @@ export function MemoryUpdateNotice({ item, inTrace = false }: { item: NoticeItem
   const label = `${t("society.chat.memory_updated")} · ${path.split("/").at(-1)}`;
   return <>
     {inTrace ? (
-      <button type="button" onClick={() => setOpen(true)} data-trace-memory={item.id} className="group/trace flex w-full min-w-0 items-start gap-3 rounded-md py-1 text-left text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <span aria-hidden className="trace-node"><FilePenLine className="h-3.5 w-3.5 shrink-0" /></span>
-        <span className="min-w-0 flex-1 truncate text-foreground-secondary">{label}</span>
-        <ChevronRight aria-hidden className="mt-[5px] h-3.5 w-3.5 shrink-0 opacity-40 transition group-hover/trace:opacity-90" />
+      <button type="button" onClick={() => setOpen(true)} data-trace-memory={item.id} className="group/row flex min-h-6 w-full min-w-0 items-center gap-2.5 rounded-md py-1.5 text-left text-base leading-6 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+        <span aria-hidden className="flex h-6 w-4 shrink-0 items-center justify-center"><FilePenLine className="h-4 w-4" strokeWidth={1.75} /></span>
+        <span className="min-w-0 truncate transition-colors group-hover/row:text-foreground">{label}</span>
+        <ChevronRight aria-hidden className="h-3.5 w-3.5 shrink-0 opacity-0 transition duration-200 group-hover/row:opacity-70 group-focus-visible/row:opacity-70" />
       </button>
     ) : (
       <button type="button" onClick={() => setOpen(true)} className="mx-auto my-3 flex max-w-[min(100%,36rem)] select-none items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-left text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
