@@ -6106,6 +6106,24 @@
     "hint": "为下一条消息选择工具。权限规则仍然适用。",
     "done": "完成"
   },
+  "credential_card": {
+    "aria": "安全凭据输入框",
+    "fallback_agent": "你的智能体",
+    "subtitle": "安全保存，并以环境变量 {env} 的形式提供给{agent}。",
+    "placeholder": "在此粘贴{label}",
+    "save": "安全保存",
+    "saving": "正在保存…",
+    "decline": "暂不提供",
+    "footer": "已安全保存，绝不会显示给你的智能体",
+    "replace_note": "{agent}表示已保存的值不再有效。",
+    "saved": "{label}已保存 · 可通过 {env} 使用",
+    "declined": "未提供{label}",
+    "timeout": "{label}未及时输入",
+    "cancelled": "未提供{label}，本轮已结束",
+    "invalid": "无法保存此值。请将凭据粘贴为单行。",
+    "expired": "此输入框已过期。如果智能体仍需要，它会再次询问。",
+    "failed": "无法保存凭据。"
+  },
   "question_card": {
     "aria": "来自智能体的问题",
     "title_one": "{agent} 有一个问题",

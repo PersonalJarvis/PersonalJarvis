@@ -46,6 +46,7 @@ from .capabilities import CapabilityKind, CapabilityRow, capability_id_for_tool,
 from .coding_threads import CodingThreadTool
 from .communication import COMMUNICATION_GUIDANCE
 from .conversation_tool import ConversationRecallTool, RoutineInvokeTool, RoutineListTool
+from .credential_tool import CREDENTIAL_TOOL_NAME, RequestCredentialTool
 from .learning import RunLearnedSkillTool
 from .memory import resolve_society_vault
 from .roster import PAIR_SESSION_MARKER, AgentRecord, canonical_session_id, is_fresh
@@ -116,6 +117,10 @@ recommendation first with its reason. Unanswered questions take your recommendat
 minutes. Never ask what you can infer or look up; decide everything else yourself.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
+- Credentials: when a task needs a token, key or password, ask with society_request_credential; \
+the user pastes it into a secure field and it is set only as the environment variable you \
+named in society_shell commands. Never ask for a secret in the chat, and never print or write \
+its value.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
 - Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
@@ -406,6 +411,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
     # A routine runs unattended: it never gets a way to ask the user.
     if not is_routine_session(session_id):
         tools[ASK_USER_TOOL_NAME] = cast(Tool, AskUserTool(rt, agent_id, session_id=session_id))
+        tools[CREDENTIAL_TOOL_NAME] = cast(
+            Tool, RequestCredentialTool(rt, agent_id, session_id=session_id)
+        )
     if rt.browser.is_installed() or rt.browser.live.model_resolver is not None:
         from .browser.tool import BrowserTool
 
@@ -420,6 +428,9 @@ def society_tools(cfg: Any, brain: Any, session: Any) -> dict[str, Tool]:
         )
     return tools
 
+
+#: Tools that ask the person themselves: a gate card in front of them would ask twice.
+_UNGATED: Final[tuple[str, ...]] = (ASK_USER_TOOL_NAME, CREDENTIAL_TOOL_NAME)
 
 #: Argument keys that name WHAT a mixed-action tool does (``gmail: send``).
 _VERB_KEYS: Final[tuple[str, ...]] = ("action", "operation", "method", "command", "mode")
@@ -789,11 +800,12 @@ def society_tool_filter(session: Any) -> Callable[[dict[str, Tool]], dict[str, T
                 for name, tool in own.items()
                 # A legacy row still needs a live gate if its permissions change
                 # mid-turn. Asking the user is never gated behind its own card.
-                if name != ASK_USER_TOOL_NAME
+                if name not in _UNGATED
             }
         )
-        if ASK_USER_TOOL_NAME in own:
-            ordered[ASK_USER_TOOL_NAME] = own[ASK_USER_TOOL_NAME]
+        for name in _UNGATED:
+            if name in own:
+                ordered[name] = own[name]
         ordered.update(picked)
         return ordered
 
@@ -850,9 +862,28 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
 
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
+    context += await _credential_line(rt, agent.agent_id)
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
+    )
+
+
+async def _credential_line(rt: Any, agent_id: str) -> str:
+    """The names of the agent's stored credentials, so it does not ask twice."""
+    from .credentials import vault_for
+
+    try:
+        rows = await asyncio.to_thread(vault_for(rt.data_dir).list, agent_id)
+    except Exception:  # noqa: BLE001 — an unreadable index costs this line, not the turn
+        log.warning("society: credential index unavailable for %s", agent_id, exc_info=True)
+        return ""
+    if not rows:
+        return ""
+    names = ", ".join(f"{row.env} ({row.label})" if row.label else row.env for row in rows)
+    return (
+        "\nStored credentials, set as environment variables in society_shell (values are "
+        f"never shown to you): {names}."
     )
 
 

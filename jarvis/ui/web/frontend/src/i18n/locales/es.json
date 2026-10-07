@@ -6121,6 +6121,24 @@
     "hint": "Elige herramientas para el próximo mensaje. Se siguen aplicando los permisos.",
     "done": "Listo"
   },
+  "credential_card": {
+    "aria": "Campo seguro para credenciales",
+    "fallback_agent": "tu agente",
+    "subtitle": "Se guarda de forma segura y {agent} lo recibe como la variable de entorno {env}.",
+    "placeholder": "Pega {label} aquí",
+    "save": "Guardar de forma segura",
+    "saving": "Guardando…",
+    "decline": "Ahora no",
+    "footer": "Guardado de forma segura, tu agente nunca lo ve",
+    "replace_note": "{agent} indica que el valor guardado ya no funciona.",
+    "saved": "{label} guardado · disponible como {env}",
+    "declined": "{label} no proporcionado",
+    "timeout": "{label} no se introdujo a tiempo",
+    "cancelled": "{label} no proporcionado, el turno terminó",
+    "invalid": "Este valor no se puede guardar. Pega la credencial en una sola línea.",
+    "expired": "Este campo ha caducado. El agente volverá a pedirlo si aún lo necesita.",
+    "failed": "No se pudo guardar la credencial."
+  },
   "question_card": {
     "aria": "Pregunta del agente",
     "title_one": "{agent} tiene una pregunta",

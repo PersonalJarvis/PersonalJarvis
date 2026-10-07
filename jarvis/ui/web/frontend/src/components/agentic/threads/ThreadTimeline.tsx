@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, Bot, Brain, Check, ChevronDown, ChevronRight, Copy, Diff, FileText, Hammer, MessageCircleQuestion, ShieldAlert, X } from "lucide-react";
 import { ChatMarkdown } from "@/components/agentchat/ChatMarkdown";
+import { CredentialCard } from "@/components/agentchat/CredentialCard";
 import { QuestionCard } from "@/components/agentchat/QuestionCard";
-import type { TextBlock, TimelineItem, ToolBlock, TurnBlock, TurnItem, UserItem } from "@/components/agentchat/reduce";
+import { waitsOnCard, type TextBlock, type TimelineItem, type ToolBlock, type TurnBlock, type TurnItem, type UserItem } from "@/components/agentchat/reduce";
 import { toolDiff, type DiffFile } from "@/components/agentchat/toolDiff";
 import { CallMark, StretchMark } from "@/components/agentchat/TraceTimeline";
 import { plural, readableOutput, traceDuration, type Call } from "@/components/agentchat/traceEntries";
@@ -545,7 +546,7 @@ export type Decide = (id: string, decision: ApprovalDecision) => void | Promise<
 
 /** A call still waiting for the person: an open question or an undecided approval. */
 function waitsForPerson(block: ToolBlock): boolean {
-  return Boolean(block.question && !block.question.closed) || Boolean(block.approval && block.approval.decision === null);
+  return waitsOnCard(block) || Boolean(block.approval && block.approval.decision === null);
 }
 
 function pendingLabel(block: ToolBlock, t: (key: string) => string): { icon: ReactNode; text: string } | null {
@@ -672,6 +673,8 @@ export const ThreadTurn = memo(function ThreadTurn({ turn, prompts = "composer",
     if (row.kind === "thought") return <ThoughtView key={row.id} text={row.text} />;
     if (row.kind === "text") return <div key={row.id} className={cn(PROSE, THREAD_MEDIA)}><ChatMarkdown text={row.text} /></div>;
     if (row.kind === "agent") return <SubagentCard key={row.id} block={row.block} turn={turn} />;
+    // A secret is pasted where it is asked for, never into a composer.
+    if (row.block.credential) return <CredentialCard key={row.id} credential={row.block.credential} />;
     if (inline) {
       if (row.block.question) return <QuestionCard key={row.id} question={row.block.question} />;
       if (row.block.approval && row.block.approval.decision === null) return <ApprovalPrompt key={row.id} block={row.block} onDecide={onDecide} />;

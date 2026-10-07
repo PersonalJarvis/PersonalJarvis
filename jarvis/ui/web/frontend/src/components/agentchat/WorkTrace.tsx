@@ -7,8 +7,9 @@ import { PetMark } from "@/components/pets/PetMark";
 import type { PetState } from "@/lib/petStates";
 import { cn } from "@/lib/utils";
 import type { ApprovalDecision } from "@/lib/agentChatApi";
-import { isQuestionTool, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
+import { hasPersonCard, isCredentialTool, isQuestionTool, waitsOnCard, type ReasoningBlock, type TextBlock, type ToolBlock, type TurnBlock, type TurnItem, type TurnStatus } from "./reduce";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { CredentialCard } from "./CredentialCard";
 import { QuestionCard } from "./QuestionCard";
 import { toolDiff } from "./toolDiff";
 import { formatTokens, outputTokens } from "./toolView";
@@ -57,12 +58,12 @@ function operation(name: string): string | null {
 }
 
 function attention(block: ToolBlock) {
-  return block.isError || Boolean(block.approval) || Boolean(block.question);
+  return block.isError || Boolean(block.approval) || hasPersonCard(block);
 }
 
 /** An agent's question still waiting for the person — it never folds away. */
 function isOpenQuestion(block: TurnBlock): block is ToolBlock {
-  return block.kind === "tool" && Boolean(block.question && !block.question.closed);
+  return block.kind === "tool" && waitsOnCard(block);
 }
 
 /** Only adjacent, successful, read-only operations may lose individual rows. */
@@ -401,6 +402,7 @@ function Detail({ label, text }: { label: string; text: string }) {
 
 export const TraceTool = memo(function TraceTool({ block, status, onDecide }: { block: ToolBlock; status: TurnStatus; onDecide?: Decide }) {
   if (block.question) return <QuestionCard question={block.question} />;
+  if (block.credential) return <CredentialCard credential={block.credential} />;
   return <TraceToolRow block={block} status={status} onDecide={onDecide} />;
 });
 
@@ -554,7 +556,7 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
         {rail ? <Rail items={group.blocks.map((block, i) => ({
           key: block.kind === "tool" ? block.callId : block.id,
           node: inner[i],
-          rail: !(block.kind === "tool" && block.question),
+          rail: !(block.kind === "tool" && hasPersonCard(block)),
         }))} /> : inner}
       </Disclosure>;
       items.push({ key: group.id, rail: true, node: rail ? <div data-trace-summary>{disclosure}</div>
@@ -574,7 +576,7 @@ function traceGroupItems({ groups, live, status, onDecide, renderText, conversat
     }
     if (first.kind === "tool") {
       const tool = <TraceTool block={first} status={status} onDecide={onDecide} />;
-      items.push({ key: group.id, rail: !first.question, node: rail ? tool
+      items.push({ key: group.id, rail: !hasPersonCard(first), node: rail ? tool
         : <div className={conversation ? "w-full py-1 text-xs [&_button]:text-xs" : undefined}>{tool}</div> });
       continue;
     }
@@ -602,7 +604,8 @@ function replyNode(block: TextBlock, conversation: boolean, renderText?: (text: 
  * and draw nothing.
  */
 function withoutQuestionPolls(blocks: TurnBlock[]): TurnBlock[] {
-  const kept = blocks.filter((block) => !(block.kind === "tool" && isQuestionTool(block.name) && !block.question && !block.isError));
+  const kept = blocks.filter((block) => !(block.kind === "tool" && !block.isError
+    && ((isQuestionTool(block.name) && !block.question) || (isCredentialTool(block.name) && !block.credential))));
   return kept.length === blocks.length ? blocks : kept;
 }
 
@@ -705,7 +708,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       renderLive: (block) => block.kind === "tool" ? <TraceTool block={block} status={status} onDecide={onDecide} />
         : block.kind === "reasoning" ? <ReasoningTrace block={block} turnLive={live} compact={conversation} />
         : replyNode(block, conversation, renderText),
-      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !block.question),
+      liveOnRail: (block) => block.kind === "reasoning" || (block.kind === "tool" && !hasPersonCard(block)),
       renderNarration: (text, id) => renderText ? renderText(text, id)
         : <div className="prose prose-sm max-w-none text-foreground dark:prose-invert [overflow-wrap:anywhere]"><ChatMarkdown text={text} /></div>,
       renderDetails: (block) => <ToolDetails block={block} />,
@@ -739,7 +742,7 @@ function WorkTraceBody({ blocks: rawBlocks, status, startedMs, durationMs, error
       return <div className={cn("min-w-0", conversation && "w-full max-w-[44rem] self-start", className)} data-testid="work-trace" data-look="rail" data-state={status} {...(conversation ? { "data-conversation": "" } : {})}>
         <ConversationWorkFold durationMs={durationMs} expandInner={false}
           failureCount={waiting.filter((block) => block.isError).length} attention={waiting.length ? <Rail items={waiting.map((block) => ({
-          key: block.callId, rail: !block.question, node: <TraceTool block={block} status={status} onDecide={onDecide} />,
+          key: block.callId, rail: !hasPersonCard(block), node: <TraceTool block={block} status={status} onDecide={onDecide} />,
         }))} /> : undefined}>
           <Rail items={workItems} />
         </ConversationWorkFold>

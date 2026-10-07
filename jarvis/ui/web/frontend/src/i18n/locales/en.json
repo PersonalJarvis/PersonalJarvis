@@ -6121,6 +6121,24 @@
     "hint": "Pick tools for your next message. Permissions still apply.",
     "done": "Done"
   },
+  "credential_card": {
+    "aria": "Secure credential field",
+    "fallback_agent": "your agent",
+    "subtitle": "Stored securely and available to {agent} as the environment variable {env}.",
+    "placeholder": "Paste {label} here",
+    "save": "Save securely",
+    "saving": "Saving…",
+    "decline": "Not now",
+    "footer": "Stored securely, never shown to your agent",
+    "replace_note": "{agent} says the stored value no longer works.",
+    "saved": "{label} saved · available as {env}",
+    "declined": "{label} not provided",
+    "timeout": "{label} was not entered in time",
+    "cancelled": "{label} not provided, the turn ended",
+    "invalid": "This value cannot be stored. Paste the credential as a single line.",
+    "expired": "This field has expired. The agent asks again if it still needs it.",
+    "failed": "The credential could not be stored."
+  },
   "question_card": {
     "aria": "Question from the agent",
     "title_one": "{agent} has a question",

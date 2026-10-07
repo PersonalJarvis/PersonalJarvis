@@ -20,6 +20,7 @@ folder.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -753,9 +754,17 @@ class ShellTool:
         from .remote import backend_for
 
         backend = self._backend or backend_for(caller, self._workspace)
-        result = await backend.run(command, cwd=cwd, timeout_s=timeout)
+        from .credentials import current_vault
+
+        vault = current_vault()
+        secrets = await asyncio.to_thread(vault.shell_env, caller.agent_id) if vault else {}
+        if secrets and getattr(backend, "accepts_env", False):
+            result = await backend.run(command, cwd=cwd, timeout_s=timeout, extra_env=secrets)
+        else:
+            result = await backend.run(command, cwd=cwd, timeout_s=timeout)
+        output = vault.redact(caller.agent_id, result.output) if vault else result.output
         body = {
-            "output": result.output,
+            "output": output,
             "exit_code": result.exit_code,
             "seconds": round(result.seconds, 2),
             "folder": str(cwd),
@@ -765,9 +774,14 @@ class ShellTool:
         if runs_on:
             # A remote command did not run in the local ``folder`` above; say where.
             body["runs_on"] = runs_on
+        if secrets and not getattr(backend, "accepts_env", False):
+            body["credentials"] = (
+                "Your stored credentials are only set for commands on this computer, "
+                "not on the computer this command ran on."
+            )
         if result.timed_out:
             return ToolResult(success=False, output=body, error="command timed out")
         if result.failed_to_start:
-            return ToolResult(success=False, output=body, error=result.output)
+            return ToolResult(success=False, output=body, error=output)
         error = None if result.ok else f"exit {result.exit_code}"
         return ToolResult(success=result.ok, output=body, error=error)

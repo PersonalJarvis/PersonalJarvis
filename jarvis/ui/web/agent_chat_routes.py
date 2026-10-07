@@ -264,6 +264,14 @@ class ApprovalBody(BaseModel):
     decision: str
 
 
+class CredentialBody(BaseModel):
+    #: The secret the person pasted. It goes to the agent's vault and nowhere
+    #: else: never logged, never echoed, never part of a chat event. No length
+    #: constraint here on purpose: a validation error would echo the value in
+    #: its 422 body; the vault refuses a bad value with a 400 that names none.
+    value: str = Field(repr=False)
+
+
 class QuestionAnswerBody(BaseModel):
     #: Which question of the card's series this answers.
     index: int = 0
@@ -1290,6 +1298,44 @@ async def skip_question(session_id: str, question_id: str, request: Request) -> 
     if not ok:
         raise HTTPException(status_code=404, detail="no such open question")
     return {"ok": True, "question_id": question_id}
+
+
+@router.post(
+    "/sessions/{session_id}/credentials/{request_id}",
+    summary="Save the secret an agent asked for in its secure credential field",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def submit_credential(
+    session_id: str, request_id: str, body: CredentialBody, request: Request
+) -> dict[str, Any]:
+    svc = _service(request)
+    try:
+        ok = await svc.submit_credential(session_id, request_id, body.value)
+    except ValueError as exc:
+        # The vault's reason names the problem, never the value.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("agent chat: saving a credential for %s failed", session_id)
+        raise HTTPException(
+            status_code=500, detail="The credential could not be stored."
+        ) from exc
+    if not ok:
+        raise HTTPException(
+            status_code=410,
+            detail="This field is closed; the agent asks again if it still needs the credential.",
+        )
+    return {"ok": True, "request_id": request_id}
+
+
+@router.post(
+    "/sessions/{session_id}/credentials/{request_id}/decline",
+    summary="Close an agent's credential field without providing the secret",
+)
+async def decline_credential(session_id: str, request_id: str, request: Request) -> dict[str, Any]:
+    svc = _service(request)
+    if not await svc.decline_credential(session_id, request_id):
+        raise HTTPException(status_code=404, detail="no such open credential field")
+    return {"ok": True, "request_id": request_id}
 
 
 @router.post(

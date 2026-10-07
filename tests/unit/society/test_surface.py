@@ -168,6 +168,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_request_credential",
         "society_share_template",
         *FOLDER,
     }
@@ -190,6 +191,7 @@ async def test_tools_and_filter_follow_the_roster_row(rt: SocietyRuntime, tmp_pa
         "society_routines",
         "society_invoke_routine",
         "society_ask_user",
+        "society_request_credential",
         "society_share_template",
         *FOLDER,
     }

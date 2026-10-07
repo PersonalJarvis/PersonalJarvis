@@ -6121,6 +6121,24 @@
     "hint": "Wähle Tools für die nächste Nachricht. Berechtigungen gelten weiterhin.",
     "done": "Fertig"
   },
+  "credential_card": {
+    "aria": "Sicheres Feld für Zugangsdaten",
+    "fallback_agent": "deinem Agenten",
+    "subtitle": "Wird sicher gespeichert und steht {agent} als Umgebungsvariable {env} zur Verfügung.",
+    "placeholder": "{label} hier einfügen",
+    "save": "Sicher speichern",
+    "saving": "Wird gespeichert…",
+    "decline": "Nicht jetzt",
+    "footer": "Sicher hinterlegt, wird deinem Agenten nie angezeigt",
+    "replace_note": "{agent} meldet, dass der gespeicherte Wert nicht mehr funktioniert.",
+    "saved": "{label} gespeichert · verfügbar als {env}",
+    "declined": "{label} nicht angegeben",
+    "timeout": "{label} wurde nicht rechtzeitig eingegeben",
+    "cancelled": "{label} nicht angegeben, der Durchlauf wurde beendet",
+    "invalid": "Dieser Wert kann nicht gespeichert werden. Füge die Zugangsdaten als eine einzige Zeile ein.",
+    "expired": "Dieses Feld ist abgelaufen. Der Agent fragt erneut, falls er die Zugangsdaten noch braucht.",
+    "failed": "Die Zugangsdaten konnten nicht gespeichert werden."
+  },
   "question_card": {
     "aria": "Rückfrage des Agenten",
     "title_one": "{agent} hat eine Frage",

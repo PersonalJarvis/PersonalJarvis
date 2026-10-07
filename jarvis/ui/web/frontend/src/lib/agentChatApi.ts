@@ -609,6 +609,30 @@ export async function skipAgentChatQuestion(sessionId: string, questionId: strin
   );
 }
 
+function credentialUrl(sessionId: string, requestId: string): string {
+  return `/api/agent-chat/sessions/${encodeURIComponent(sessionId)}/credentials/${encodeURIComponent(requestId)}`;
+}
+
+/**
+ * Save the secret an agent asked for. The value goes to the agent's vault and
+ * nowhere else; the response never echoes it.
+ */
+export async function submitAgentChatCredential(sessionId: string, requestId: string, value: string): Promise<void> {
+  await json(
+    await fetch(credentialUrl(sessionId, requestId), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    }),
+    "credential-failed",
+  );
+}
+
+/** Close an agent's credential field without providing the secret. */
+export async function declineAgentChatCredential(sessionId: string, requestId: string): Promise<void> {
+  await json(await fetch(`${credentialUrl(sessionId, requestId)}/decline`, { method: "POST" }), "credential-failed");
+}
+
 /** A coding agent's plan card: `build` switches to building and sends the go-ahead. */
 export type PlanDecision = "build" | "keep";
 

@@ -32,6 +32,11 @@ Kinds (``payload`` keys in brackets):
                         whose answers go to the agent as the next message
 ``question_progress``  [turn_id, question_id, answers]
 ``question_resolved``  [turn_id, question_id, answers]
+``credential_required`` [turn_id, request_id, asker, env, label, description, placeholder,
+                        replace, expires_ms] — a secure field for a secret the agent
+                        needs (credential_requests.py); the value never appears in any event
+``credential_resolved`` [turn_id, request_id, env, status]   status: saved | declined |
+                        timeout | cancelled
 ``plan_ready``         [turn_id, build_mode]           — a coding agent's plan card
 ``plan_resolved``      [turn_id, decision]             decision: build | keep
 ``subagent_started``   [turn_id, agent_id, description, agent_type, prompt, background,

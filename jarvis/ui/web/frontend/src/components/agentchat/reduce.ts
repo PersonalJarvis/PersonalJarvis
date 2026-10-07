@@ -107,6 +107,41 @@ export function isQuestionTool(name: string): boolean {
 }
 
 /**
+ * An agent's secure credential field (jarvis/agent_chat/credential_requests.py).
+ * The person pastes a secret that goes straight to the agent's vault; no event
+ * ever carries the value. `status` is `null` while the field is open, else
+ * `saved`, `declined`, `timeout` or `cancelled`.
+ */
+export interface CredentialState {
+  requestId: string;
+  asker: string;
+  env: string;
+  label: string;
+  description: string;
+  placeholder: string;
+  replace: boolean;
+  expiresMs: number | null;
+  status: string | null;
+}
+
+/** The tool an agent asks for a credential with — bare or behind an MCP prefix. */
+export const CREDENTIAL_TOOL = "society_request_credential";
+
+export function isCredentialTool(name: string): boolean {
+  return name === CREDENTIAL_TOOL || name.endsWith(`__${CREDENTIAL_TOOL}`);
+}
+
+/** The call shows a card the person answers: a question or a credential field. */
+export function hasPersonCard(block: ToolBlock): boolean {
+  return Boolean(block.question || block.credential);
+}
+
+/** The call's card still waits for the person. */
+export function waitsOnCard(block: ToolBlock): boolean {
+  return Boolean((block.question && !block.question.closed) || (block.credential && block.credential.status === null));
+}
+
+/**
  * A coding agent's plan card (jarvis/agent_chat/turn_prompts.py): the turn
  * finished in plan mode. `decision` is `build`, `keep`, `superseded` (the
  * person started another turn instead) or `null` while it waits.
@@ -127,6 +162,8 @@ export interface ToolBlock {
   approval: ApprovalState | null;
   /** The question card this call shows, when the call is an agent's question. */
   question?: QuestionState;
+  /** The secure credential field this call shows, when the agent asked for a secret. */
+  credential?: CredentialState;
   /** When the call was made; a result without its own duration is timed from here. */
   startedMs: number;
   /** The sub-agent this call spawned, when the runner reported one (`subagent_*` events). */
@@ -444,6 +481,57 @@ function settleWaitingCards(items: TimelineItem[]): TimelineItem[] {
     };
   });
   return changed ? next : items;
+}
+
+function updateCredential(
+  tl: Timeline,
+  turnId: string,
+  requestId: string,
+  fn: (c: CredentialState) => CredentialState,
+): Timeline {
+  return updateTurn(tl, turnId, (turn) => {
+    const i = turn.blocks.findIndex((b) => b.kind === "tool" && b.credential?.requestId === requestId);
+    if (i < 0) return turn;
+    const block = turn.blocks[i] as ToolBlock;
+    return { ...turn, blocks: replaceAt(turn.blocks, i, { ...block, credential: fn(block.credential!) }) };
+  });
+}
+
+/** Attach a credential field to its tool row: the open request call, else a row of its own. */
+function withCredential(turn: TurnItem, credential: CredentialState, tsMs: number): TurnItem {
+  let index = -1;
+  for (let i = turn.blocks.length - 1; i >= 0; i -= 1) {
+    const b = turn.blocks[i];
+    if (b.kind !== "tool") continue;
+    if (b.credential?.requestId === credential.requestId) return turn;
+    if (isCredentialTool(b.name) && !b.credential) {
+      index = i;
+      break;
+    }
+  }
+  if (index >= 0) {
+    const block = turn.blocks[index] as ToolBlock;
+    return { ...turn, blocks: replaceAt(turn.blocks, index, { ...block, credential }) };
+  }
+  const closed = closeLiveReasoning(turn, tsMs);
+  return {
+    ...closed,
+    blocks: [
+      ...closed.blocks,
+      {
+        kind: "tool",
+        callId: `cred-${credential.requestId}`,
+        name: CREDENTIAL_TOOL,
+        input: null,
+        output: null,
+        isError: false,
+        durationMs: null,
+        approval: null,
+        credential,
+        startedMs: tsMs,
+      },
+    ],
+  };
 }
 
 function withQuestion(turn: TurnItem, question: QuestionState, tsMs: number): TurnItem {
@@ -860,6 +948,7 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
           (b) => b.kind === "tool" && b.callId === callId,
           (ex) => ({
             ...(ex?.question ? { question: ex.question } : {}),
+            ...(ex?.credential ? { credential: ex.credential } : {}),
             ...(ex?.subagent ? { subagent: ex.subagent } : {}),
             kind: "tool",
             callId,
@@ -1046,6 +1135,28 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
       }));
     }
 
+    case "credential_required": {
+      const requestId = str(p.request_id);
+      const env = str(p.env);
+      if (!requestId || !env) return base;
+      const credential: CredentialState = {
+        requestId,
+        asker: str(p.asker),
+        env,
+        label: str(p.label) || env,
+        description: str(p.description),
+        placeholder: str(p.placeholder),
+        replace: Boolean(p.replace),
+        expiresMs: num(p.expires_ms),
+        status: null,
+      };
+      return updateTurn(base, turnId, (turn) => withCredential(turn, credential, ev.ts_ms));
+    }
+
+    case "credential_resolved": {
+      return updateCredential(base, turnId, str(p.request_id), (c) => ({ ...c, status: str(p.status, "cancelled") }));
+    }
+
     case "turn_finished": {
       // Older event logs can contain a stale reader's timeout after the real
       // process completed. Only a terminal event settles a turn, and it does
@@ -1074,7 +1185,9 @@ export function reduceEvent(tl: Timeline, ev: AgentChatEvent): Timeline {
                     answers: b.question.answers.map((a) => a ?? { text: "", optionIndex: null, source: "closed" }),
                   },
                 }
-              : b,
+              : b.kind === "tool" && b.credential && b.credential.status === null
+                ? { ...b, credential: { ...b.credential, status: "cancelled" } }
+                : b,
         ),
         durationMs: num(p.duration_ms) ?? Math.max(0, ev.ts_ms - turn.startedMs),
         usage:
