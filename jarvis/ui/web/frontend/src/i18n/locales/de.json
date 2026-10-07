@@ -5809,6 +5809,8 @@
       "xai_expired": "Der Code ist abgelaufen. Verbinde erneut.",
       "xai_failed": "Der Grok-Login hat nicht geklappt. Versuche es gleich noch einmal.",
       "access_cli_subscription": "Läuft über deinen eigenen Claude-Code-Login, über OpenClaw. Anthropic entscheidet, wie das abgerechnet wird und ob es erlaubt ist; die Nutzung erfolgt auf eigenes Risiko.",
+      "use_openclaw": "Stattdessen als OpenClaw-Agent erstellen",
+      "use_openclaw_hint": "OpenClaw kann dieses Abo über deinen eigenen Claude-Code-Login nutzen (eigenes Risiko; Anthropic entscheidet über die Abrechnung).",
       "account_label": "Konto",
       "active_account": "Aktives Konto",
       "model_label": "Modell",

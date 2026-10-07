@@ -78,6 +78,9 @@ function CreateAgentDialog() {
   const blockedKey = JSON.stringify(external && data?.access_blocked && typeof data.access_blocked === "object" ? data.access_blocked : {});
   // OpenClaw runs a Claude subscription through the person's own Claude Code.
   const cliKey = runtime === "openclaw" ? list(data?.cli_subscriptions?.[runtime]).join(",") : "";
+  // Hermes has no Claude Code backend: a refused Claude subscription there
+  // offers OpenClaw, which runs it through the person's own Claude Code.
+  const openClawRuns = runtime === "hermes" ? list(data?.cli_subscriptions?.openclaw) : [];
   const choices = useMemo(() => {
     const all = modelSeats(menu.options, Array.isArray(menu.providers) ? menu.providers : [], menu.live, defaultModelLabel);
     const split = (key: string) => key.split(",").filter(Boolean);
@@ -215,6 +218,9 @@ function CreateAgentDialog() {
                     : option.extraUsage ? "society.create_agent.access_extra_usage" : `society.create_agent.access_hint_${option.kind}`) : ""}
                   disabled={saving}
                   onChange={(next) => { setKind(next); setAccount(""); }}
+                  onUseOpenClaw={chosen.options.some((entry) => openClawRuns.includes(entry.seat.provider.id))
+                    ? () => { setRuntime("openclaw"); setKind("subscription"); setAccount(""); }
+                    : undefined}
                 />
               ) : null}
 
