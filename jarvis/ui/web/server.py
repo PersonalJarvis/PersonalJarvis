@@ -568,6 +568,7 @@ class WebServer:
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
+        from .ops_routes import router as ops_router
         from .workspace_clis_routes import router as workspace_clis_router
         from .workspace_routes import router as workspace_router
 
@@ -716,6 +717,8 @@ class WebServer:
         # The voice orb's click — call / hangup without speaking the wake word.
         app.include_router(voice_call_router)
         app.include_router(workflows_router)
+        # Read-only work overview across missions, tasks, quests, workflows.
+        app.include_router(ops_router)
         if conductor_router is not None:
             app.include_router(conductor_router)
         app.include_router(preview_router)
