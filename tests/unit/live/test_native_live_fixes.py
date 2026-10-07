@@ -360,6 +360,29 @@ def _screen_call():
 
 
 @both_providers
+@pytest.mark.parametrize("entry", ["speech", "text"])
+@pytest.mark.asyncio
+async def test_new_user_input_does_not_open_a_report_pause_during_reasoning(
+    tmp_path, make_provider, entry,
+):
+    session, _, _ = _in_call(make_provider(), tmp_path)
+    try:
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        if entry == "speech":
+            await session._native_event(RealtimeEvent(
+                type="input_transcript", text="Check the current screen", is_final=True,
+            ))
+        else:
+            await session.handle_control({"type": "text_input", "text": "Check the screen"})
+        await session._note_thinking()
+        session._notify_pause()
+        assert not session.ready_for_report
+        await _settle(session)
+    finally:
+        session._ledger.close()
+
+
+@both_providers
 @pytest.mark.parametrize("success", [True, False])
 @pytest.mark.asyncio
 async def test_late_computer_receipt_and_image_reach_the_model_at_a_pause(

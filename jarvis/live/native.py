@@ -433,7 +433,9 @@ class NativeLiveVoiceSession(LiveVoiceSession):
 
     async def _native_event(self, event: Any) -> None:
         assert self._tools is not None and self._ledger is not None
-        if event.type in {"audio_delta", "output_transcript_delta", "tool_call"}:
+        if event.type in {
+            "audio_delta", "input_transcript", "output_transcript_delta", "tool_call",
+        }:
             self._native_turn_complete = False
         if event.type == "audio_delta" and event.audio is not None:
             self._report_started()
@@ -732,6 +734,7 @@ class NativeLiveVoiceSession(LiveVoiceSession):
         if self._closing:
             return
         if message.get("type") == "text_input" and self._connection is not None:
+            self._native_turn_complete = False
             if self._tools is not None:
                 self._tools.user_text = str(message.get("text", ""))
                 self._tools.revision += 1
