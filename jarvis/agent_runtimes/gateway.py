@@ -423,7 +423,11 @@ def _function_tool(tool: Any) -> dict[str, Any] | None:
 
 
 def _is_system(item: dict[str, Any]) -> bool:
-    return item.get("role") == "system" and item.get("type", "message") == "message"
+    # A runtime writes its system prompt as "developer" for a reasoning model;
+    # ChatGPT's backend takes either only as instructions.
+    return item.get("role") in ("system", "developer") and item.get("type", "message") == (
+        "message"
+    )
 
 
 def request_args(body: Any) -> dict[str, Any]:

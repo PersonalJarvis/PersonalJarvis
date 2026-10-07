@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -844,4 +845,34 @@ async def test_a_runtime_thinking_level_snaps_to_one_the_model_offers(requested,
     args = {"model": "gpt-x", "input": [], "instructions": "", "tools": [],
             "reasoning_effort": requested}
     assert (await gateway._snapped_effort(client, args))["reasoning_effort"] == expected
+
+
+def test_a_developer_message_also_moves_into_the_instructions() -> None:
+    args = gateway.request_args(
+        {
+            "model": "m",
+            "instructions": "",
+            "input": [
+                {"type": "message", "role": "developer", "content": "You are Probe."},
+                {"role": "user", "content": [{"type": "input_text", "text": "Hi"}]},
+            ],
+        }
+    )
+    assert args["instructions"] == "You are Probe."
+    assert [item["role"] for item in args["input"]] == ["user"]
+
+
+def test_vertex_runs_on_a_cloud_project_without_a_key(monkeypatch) -> None:
+    import jarvis.agent_runtimes.model_map as model_map
+    import jarvis.core.config as config
+    from jarvis.core.config import override_provider_secrets
+
+    cfg = SimpleNamespace(brain=SimpleNamespace(providers={}))
+    assert "vertex" in model_map.supported_providers()
+    with override_provider_secrets({"vertex": None}):
+        monkeypatch.setattr(config, "vertex_credential_configured", lambda *a: False)
+        with pytest.raises(model_map.RouteUnavailable, match="No API key"):
+            model_map._checked_model(cfg, "vertex", "gemini-3-pro")
+        monkeypatch.setattr(config, "vertex_credential_configured", lambda *a: True)
+        assert model_map._checked_model(cfg, "vertex", "gemini-3-pro") == "gemini-3-pro"
 

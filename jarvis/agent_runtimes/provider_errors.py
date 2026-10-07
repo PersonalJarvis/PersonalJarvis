@@ -225,6 +225,7 @@ _LABELS: Final[dict[str, str]] = {
     "openrouter": "OpenRouter",
     "nvidia": "NVIDIA",
     "gemini": "Google Gemini",
+    "vertex": "Google Vertex AI",
     "ollama": "Ollama",
     "local-openai": "The local model server",
 }

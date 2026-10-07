@@ -48,6 +48,9 @@ class _Endpoint:
     #: Without an API key, the person's Claude Code login answers instead
     #: (billed by Anthropic as extra usage, not from the plan's limits).
     claude_login: bool = False
+    #: May authenticate without a key: Google Cloud Application Default
+    #: Credentials for a configured project (Vertex AI).
+    cloud_project: bool = False
 
 
 #: Jarvis provider id (``agent_chat.catalog`` / ``core.config``) -> endpoint.
@@ -58,6 +61,7 @@ _ENDPOINTS: Final[dict[str, _Endpoint]] = {
     "openrouter": _Endpoint("https://openrouter.ai/api/v1"),
     "nvidia": _Endpoint("https://integrate.api.nvidia.com/v1"),
     "gemini": _Endpoint("https://generativelanguage.googleapis.com/v1beta/openai"),
+    "vertex": _Endpoint("https://aiplatform.googleapis.com", cloud_project=True),
     "ollama": _Endpoint(None, keyless=True, local_server=True),
     "local-openai": _Endpoint(None, keyless=True, local_server=True),
     "openai-codex": _Endpoint(None, subscription=True),
@@ -302,6 +306,11 @@ def _checked_model(config: Any, provider: str, model: str, *, account_id: str = 
             "Claude needs an Anthropic API key or a live Claude Code login. Connect "
             "one in Settings → API keys, or open Claude Code once to renew its login."
         )
+    if key is None and endpoint.cloud_project:
+        from jarvis.core.config import vertex_credential_configured
+
+        if vertex_credential_configured():
+            key = ""  # the Cloud project signs the requests (no key)
     if key is None and not endpoint.keyless and not endpoint.claude_login:
         raise RouteUnavailable(
             f"No API key is saved for {provider}. Connect it in Settings → API keys."
