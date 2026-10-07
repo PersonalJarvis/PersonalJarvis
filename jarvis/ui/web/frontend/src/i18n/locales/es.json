@@ -6378,6 +6378,18 @@
     "add_terminal": "Plain Terminal",
     "terminal_label": "Terminal",
     "terminal_workspace_required": "Selecciona un espacio de trabajo para abrir una terminal.",
+    "terminal_limit": "Ya están abiertas todas las pestañas de terminal de este espacio de trabajo.",
+    "launcher": {
+      "title": "Abrir una superficie"
+    },
+    "browser": {
+      "reload": "Recargar",
+      "placeholder": "Dirección, p. ej. localhost:5173",
+      "address": "Dirección",
+      "open_external": "Abrir en tu navegador",
+      "empty_title": "Escribe una dirección arriba",
+      "empty_hint": "Pensado para vistas previas locales, como un servidor de desarrollo. Muchos sitios públicos no permiten mostrarse dentro de otra app; ábrelos en tu navegador."
+    },
     "all_open": "Todas las pestañas ya están abiertas",
     "close_tab": "Cerrar pestaña",
     "rail_aria": "Pestañas del panel lateral",
@@ -6447,6 +6459,7 @@
       "skipped_other": "{count} archivos no se pudieron cambiar."
     },
     "tabs": {
+      "browser": "Navegador",
       "git": "Git",
       "skills": "Skills",
       "agents": "Agentes",

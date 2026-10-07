@@ -6378,6 +6378,18 @@
     "add_terminal": "Plain Terminal",
     "terminal_label": "Terminal",
     "terminal_workspace_required": "Select a workspace to open a terminal.",
+    "terminal_limit": "Every terminal tab for this workspace is already open.",
+    "launcher": {
+      "title": "Open a surface"
+    },
+    "browser": {
+      "reload": "Reload",
+      "placeholder": "Address, e.g. localhost:5173",
+      "address": "Address",
+      "open_external": "Open in your browser",
+      "empty_title": "Enter an address above",
+      "empty_hint": "Made for local previews such as a dev server. Many public sites do not allow being shown inside another app; open those in your browser."
+    },
     "all_open": "Every tab is already open",
     "close_tab": "Close tab",
     "rail_aria": "Side panel tabs",
@@ -6447,6 +6459,7 @@
       "skipped_other": "{count} files could not be changed."
     },
     "tabs": {
+      "browser": "Browser",
       "git": "Git",
       "skills": "Skills",
       "agents": "Agents",

@@ -6378,6 +6378,18 @@
     "add_terminal": "Plain Terminal",
     "terminal_label": "Terminal",
     "terminal_workspace_required": "Wähle einen Workspace, um ein Terminal zu öffnen.",
+    "terminal_limit": "Für diesen Workspace sind schon alle Terminal-Tabs offen.",
+    "launcher": {
+      "title": "Fläche öffnen"
+    },
+    "browser": {
+      "reload": "Neu laden",
+      "placeholder": "Adresse, z. B. localhost:5173",
+      "address": "Adresse",
+      "open_external": "Im Browser öffnen",
+      "empty_title": "Gib oben eine Adresse ein",
+      "empty_hint": "Gedacht für lokale Vorschauen wie einen Dev-Server. Viele öffentliche Seiten erlauben keine Anzeige in einer anderen App; öffne sie in deinem Browser."
+    },
     "all_open": "Alle Tabs sind bereits offen",
     "close_tab": "Tab schließen",
     "rail_aria": "Tabs der Seitenleiste",
@@ -6447,6 +6459,7 @@
       "skipped_other": "{count} Dateien ließen sich nicht ändern."
     },
     "tabs": {
+      "browser": "Browser",
       "git": "Git",
       "skills": "Skills",
       "agents": "Agents",

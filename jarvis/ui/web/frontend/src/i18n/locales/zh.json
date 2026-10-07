@@ -6363,6 +6363,18 @@
     "add_terminal": "普通终端",
     "terminal_label": "终端",
     "terminal_workspace_required": "选择一个工作区以打开终端。",
+    "terminal_limit": "此工作区的终端标签页已全部打开。",
+    "launcher": {
+      "title": "打开一个界面"
+    },
+    "browser": {
+      "reload": "重新加载",
+      "placeholder": "地址，例如 localhost:5173",
+      "address": "地址",
+      "open_external": "在浏览器中打开",
+      "empty_title": "在上方输入地址",
+      "empty_hint": "适用于本地预览，例如开发服务器。许多公共网站不允许在其他应用中显示；请在浏览器中打开它们。"
+    },
     "all_open": "所有标签页都已打开",
     "close_tab": "关闭标签页",
     "rail_aria": "侧边面板标签页",
@@ -6432,6 +6444,7 @@
       "skipped_other": "有 {count} 个文件无法修改。"
     },
     "tabs": {
+      "browser": "浏览器",
       "git": "Git",
       "skills": "技能",
       "agents": "智能体",
