@@ -271,18 +271,19 @@ each of them:
 | Job | Where | What it proves |
 |---|---|---|
 | `agent-runtimes-unit` | Linux, Windows, macOS on the portable base install | The runtime drivers, gateway, ACP runner, chat service, send queue, controls, society binding, roster, routines and society routes (`python scripts/ci/agent_runtime_suite.py`). Fakes only. |
-| `agent-runtimes-headless` | `python:3.11-slim` | The runtime package imports and its tests pass on a server with no GPU, audio or desktop stack. |
-| `agent-runtimes-e2e` | Linux, Windows, macOS × Hermes, OpenClaw | The real runtime at the version in `jarvis/agent_runtimes/runtime-versions.json` (latest while no pin exists) runs two turns through Jarvis' model gateway, once over Responses and once over Chat Completions, against scripted providers (`scripts/spikes/agent_runtimes_gateway_e2e.py --replay`). No key and no network to a model. |
+| `agent-runtimes-headless` | `python:3.11-slim` | The runtime package imports and its tests pass on a server with no GPU, audio or desktop stack, and the app's Hermes setup without curl stops with "Setup needs curl". |
+| `agent-runtimes-e2e` | Linux, Windows, macOS × Hermes, OpenClaw | `scripts/ci/agent_runtime_e2e.py`: the app's own setup job (`manager.wait_ready`) installs the release pinned in `jarvis/agent_runtimes/runtime-versions.json` with a desktop app's PATH, never npm or a manual installer. Then two turns per model-gateway protocol against scripted providers (`--replay`), the fake-model driver check with turn-1 budgets (Hermes 30 s, OpenClaw 90 s), `pytest tests/unit/agent_runtimes`, and proof that the Windows user PATH gained no `agent_runtimes` entry and OpenClaw edited no shell profile. No key and no network to a model. |
 
 The impact selection of the Windows pull-request leg adds the same suite
 whenever the lane is on, so a runtime change also runs the chat and society
 tests, not only the tests that import the changed module.
 
-`agent-runtimes-canary.yml` runs weekly and on dispatch. It installs the
-latest Hermes and OpenClaw with their official installers and runs the same
-two-protocol check on all three OSes. When a runtime passes on every OS, the
-`raise-pin` job records its version (and Hermes' commit; the installers pin
-Hermes by `--commit` / `-Commit`) and opens a pull request that changes
+`agent-runtimes-canary.yml` runs weekly and on dispatch. In its own checkout
+it points the pin at upstream latest (`agent_runtime_suite.py
+--point-at-latest`) and runs the same app-setup check on all three OSes. When a runtime passes on every OS, the
+`raise-pin` job records its version (and Hermes' upstream commit from
+`hermes --version`, never a local checkout's HEAD; the installers pin Hermes
+by `--commit` / `-Commit`) and opens a pull request that changes
 `runtime-versions.json`. That pull request is the admission of a new upstream
 release: its CI run is the pinned check above. A failed scheduled canary opens
 an issue and leaves the pin where it is.
@@ -296,6 +297,10 @@ an issue and leaves the pin where it is.
 | Jarvis provider → runtime endpoint and key | `jarvis/agent_runtimes/model_map.py` |
 | Hermes driver | `jarvis/agent_runtimes/hermes.py` |
 | OpenClaw driver and Gateway supervisor | `jarvis/agent_runtimes/openclaw.py` |
+| Pinned releases (minimum, tested, Hermes commit) and their reader | `jarvis/agent_runtimes/runtime-versions.json`, `jarvis/agent_runtimes/versions.py` |
+| One-time cleanup of PATH entries older setups left behind | `jarvis/agent_runtimes/path_cleanup.py` |
+| Every process a runtime starts, tracked for shutdown | `jarvis/core/process_tree.py` (`DescendantTracker`) |
+| CI: lane table, pins for CI, canary pin raise; setup-through-the-app check | `scripts/ci/agent_runtime_suite.py`, `scripts/ci/agent_runtime_e2e.py` |
 | Turn planning for the chat | `jarvis/agent_chat/runner_acp.py` |
 | Process, pump, rollover, approvals (shared with every CLI seat) | `jarvis/agent_chat/runner_cli.py` |
 | The agent's `runtime` field | `jarvis/society/roster.py`, `society_schema.sql` |
