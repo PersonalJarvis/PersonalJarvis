@@ -16,10 +16,9 @@ rules:
       - flaky-tests.yml
   artipacked:
     ignore:
-      # These jobs push commits or tags with git after checkout, so the
-      # checkout must keep its credential. Neither uploads the workspace.
+      # This job pushes commits with git after checkout, so the checkout must
+      # keep its credential. It does not upload the workspace.
       - merge-train.yml
-      - release-cut.yml
   unpinned-uses:
     config:
       policies:

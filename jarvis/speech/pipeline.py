@@ -2524,11 +2524,9 @@ class SpeechPipeline:
                 from jarvis.plugins.stt import build_stt_from_config
 
                 resolved = build_stt_from_config(config.stt)
-                # Swap in the resolved provider when it differs from the local
-                # instance — or whenever there is no local instance at all.
-                if resolved is not self._stt and (
-                    self._stt is None or type(resolved) is not type(self._stt)
-                ):
+                # The configured final recognizer owns its model and settings,
+                # even when the wake recognizer uses the same provider class.
+                if resolved is not None and resolved is not self._stt:
                     self._utterance_stt = resolved
                     log.info(
                         "Utterance-STT provider resolved: %s (wake stays local)",
@@ -2575,7 +2573,7 @@ class SpeechPipeline:
         # In lightweight mode there is no local Whisper, but the post-wake
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
-        self._probe_stt: Any = self._stt or self._utterance_stt
+        self._probe_stt: Any = self._select_probe_stt(self._utterance_stt)
         # User STT dictionary (dictation-tool-style custom vocabulary): wrap the
         # utterance + preview handles so EVERY provider's transcript gets the
         # user's corrections — brain turns, chat dictation, and the live
@@ -3374,10 +3372,7 @@ class SpeechPipeline:
         # A lightweight/cloud-first pipeline has no local preview recognizer,
         # so its preview must follow the selected provider. A heavy wake path
         # keeps its dedicated local probe.
-        if getattr(self, "_stt", None) is None or getattr(
-            self, "_probe_stt", None
-        ) is previous:
-            self._probe_stt = rebuilt
+        self._probe_stt = self._select_probe_stt(rebuilt)
         try:
             cfg_stt.provider = normalized
             if model is not None:
@@ -3439,16 +3434,12 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 — corrections are not load-bearing here
             log.debug("STT dictionary wrapper unavailable on live switch: %s", exc)
 
-        previous = self._utterance_stt
         # Same rule as ``set_stt_provider``: the meter wraps the new instance.
         self._utterance_stt = meter_stt(
             rebuilt, getattr(self, "_speech_spend", None), trace_id=self._speech_trace
         )
-        # The preview probe follows only when it was the SAME object — in the
-        # local-Whisper path it is the wake model, which must keep its own
-        # language (AP-27: the wake never rides on the utterance setting).
-        if previous is not None and self._probe_stt is previous:
-            self._probe_stt = rebuilt
+        # Re-select after wrapping: wrapper identity is not provider identity.
+        self._probe_stt = self._select_probe_stt(rebuilt)
         # The dictation lane holds its OWN instance (no voice bias prompt), so a
         # switch that only rebuilt the voice one would leave dictation
         # transcribing in the previous recognition language for the rest of the
@@ -4188,6 +4179,20 @@ class SpeechPipeline:
             if getattr(self, "_probe_task", None) is task:
                 self._probe_task = None
             self._probe_in_flight = False
+
+    def _select_probe_stt(self, utterance: Any) -> Any:
+        """Use a separate wake engine or a concurrency-safe final provider."""
+        wake = getattr(self, "_stt", None)
+        candidate = wake if wake is not None else utterance
+        if candidate is utterance and not getattr(
+            candidate, "supports_concurrent_transcription", True
+        ):
+            # Cancelling an async preview does not stop its native worker.
+            # A local final decode must never compete with that same engine.
+            return None
+        from jarvis.speech.stt_dictionary import wrap_stt_with_dictionary
+
+        return wrap_stt_with_dictionary(candidate)
 
     def _on_vad_probe(self, pcm: bytes, tail_loud: bool = True) -> None:
         """Sync callback from SileroEndpointer; spawns the async STT probe task.
@@ -17607,16 +17612,15 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001
             log.warning("Brain-unavailable fallback speak failed: %s", exc)
 
-    async def _speak_stt_unavailable(self, lang: str = "de") -> None:
+    async def _speak_stt_unavailable(self, lang: str | None = None) -> None:
         """Zero-silent-drop (AD-OE6) for STT: say we couldn't transcribe the
         utterance instead of dropping back to LISTENING mute when
         ``_transcribe_final`` exhausted its retries (sustained cloud rate-limit
         / outage). Mirrors ``_speak_brain_unavailable``. No transcript exists
-        yet, so there is no detected language — default to German (the user's
-        primary; runtime TTS auto-detects anyway). Failures here are swallowed:
+        yet, so use the shared output-language resolver. Failures are logged:
         the fallback must never itself crash the turn.
         """
-        picker_lang = _phrase_lang(lang)
+        picker_lang = _phrase_lang(lang or self._output_language(None, ""))
         phrase = _STT_UNAVAILABLE_PHRASE[picker_lang]
         try:
             await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -18374,8 +18378,10 @@ class SpeechPipeline:
         # running conversation language instead of flipping ack/phrases/TTS
         # (forensic 2026-06-18). The brain owns the sticky conversation language.
         conv = getattr(brain, "conversation_language", "")
+        ui = getattr(getattr(self, "_config", None), "ui", None)
         return resolve_output_language(
-            pin, stt_language, text, conversation_language=conv
+            pin, stt_language, text, conversation_language=conv,
+            default=_phrase_lang(getattr(ui, "language", None)),
         )
 
     async def _speak(
