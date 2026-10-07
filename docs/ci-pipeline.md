@@ -230,7 +230,10 @@ A release happens **only** when the maintainer asks for one.
   `install-verify.ps1` in dry-run, no-launch mode on Linux, Windows and
   macOS (`release-wrapper-smoke.yml`, which `installer-smoke.yml` also runs on
   Linux). Release cut calls it after publishing and requires attestations; a
-  release published with `GITHUB_TOKEN` fires no `release` event. Re-check any
+  release published with `GITHUB_TOKEN` fires no `release` event. An
+  attestation lookup that keeps getting a server error (HTTP 5xx, retried
+  twice) fails only when attestations are required; otherwise it is a
+  warning, like a missing attestation on an older release. Re-check any
   tag with `gh workflow run release-smoke.yml -f tag=vX.Y.Z`.
 
 ### When a release is bad: roll forward
@@ -275,6 +278,28 @@ Steps:
    tag, and never re-tag. Installs pinned with `JARVIS_INSTALL_TAG`, the
    signed manifests and the attestations all point at them. Add a short note
    to the release body instead.
+
+**Release approval.** Two GitHub environments guard the irreversible steps:
+`pypi` (the PyPI upload in `release.yml`) and `release-signing` (the `sign`
+job of `sign-installer.yml`, the only job that reads the offline Ed25519 and
+ML-DSA-65 private keys, `WAVE2_OFFLINE_KEY_B64` and `WAVE4_MLDSA65_KEY_B64`).
+Both admit deployments from `v*` tags only, never from a branch, and both
+require the maintainer's approval; administrators cannot bypass it. A
+release therefore pauses twice after tag admission: open the two waiting runs
+("Release to PyPI" and "Sign installer (Sigstore keyless)") in the Actions
+tab, choose **Review deployments**, tick the environment and approve. The
+desktop installers do not wait. Approve within the release-cut publisher's
+150-minute window; a later approval still finishes the release, because
+`release-finalize.yml` runs when the last publisher completes. Rejecting a
+deployment leaves the release a draft.
+
+**Release tags.** The `release tags` repository ruleset protects
+`refs/tags/v*` against update and deletion; only the repository admin role
+may bypass it. Creation stays open because `release-cut.yml` pushes the tag
+with `GITHUB_TOKEN`, and GitHub does not accept the GitHub Actions
+integration as a bypass actor on this repository's rulesets. A stray `v*` tag
+still publishes nothing on its own: release admission and both environment
+approvals stand between it and a published release.
 
 PyPI publishing retains a separate OIDC-only job and can run only after tag
 admission. Manual branch runs build packages without publishing or signing.
