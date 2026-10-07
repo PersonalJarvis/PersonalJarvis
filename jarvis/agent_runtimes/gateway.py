@@ -752,8 +752,10 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     from jarvis.agent_chat.runner_api import build_brain
     from jarvis.agent_runtimes.model_map import login_route
     from jarvis.agent_runtimes.provider_errors import login_expired
+    from jarvis.brain.usage_meter import meter_brain
     from jarvis.core.config import get_jarvis_agent_secret, override_provider_secrets
     from jarvis.costs.ledger import usage_context
+    from jarvis.costs.model import RUNTIME_CALLER
 
     queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
 
@@ -762,7 +764,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
         try:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
-            with override_provider_secrets(overrides), usage_context("agent-runtime"):
+            with override_provider_secrets(overrides), usage_context(RUNTIME_CALLER):
                 on_login, login = await asyncio.to_thread(
                     login_route, grant.provider, grant.account_id
                 )
@@ -778,6 +780,9 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     brain = ClaudeAPIBrain(model=model or None, auth_token=login)
                 else:
                     brain = build_brain(grant.provider, model)
+                # Every call the agent makes lands in the cost ledger, under
+                # the caller tag set above.
+                brain = meter_brain(brain, grant.provider)
                 configure_context = getattr(brain, "set_context_window", None)
                 if callable(configure_context):
                     limits = await asyncio.to_thread(model_limits, grant, model)

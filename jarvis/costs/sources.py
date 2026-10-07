@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from .ledger import DB_NAME as LEDGER_DB_NAME
-from .ledger import read_usage
+from .ledger import first_call_ms, read_usage
 from .model import (
     MISSION_SUBSCRIPTION_CLIS,
     OPENAI_CONVENTION_RUNNERS,
@@ -31,6 +31,8 @@ from .model import (
     ROLE_TOOL,
     ROLE_TTS,
     ROLE_WORKER,
+    RUNTIME_CALLER,
+    RUNTIME_RUNNERS,
     SUBSCRIPTION_RUNNERS,
     SURFACE_AGENT_CHAT,
     SURFACE_AGENTIC_IDE,
@@ -328,8 +330,14 @@ _AGENT_CACHED_KEYS = (
 )
 
 
-def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator[CostEntry]:
-    """One entry per finished agent-chat turn (Claude Code, Codex, …)."""
+def _agent_chat_entries(
+    path: Path | None, since_ms: int, until_ms: int, runtime_metered_from: int | None = None
+) -> Iterator[CostEntry]:
+    """One entry per finished agent-chat turn (Claude Code, Codex, …).
+
+    A Hermes / OpenClaw turn from ``runtime_metered_from`` on is skipped: the
+    model gateway wrote each of its calls to the ledger, which bills it.
+    """
     conn = _connect(path)
     if conn is None:
         return
@@ -394,6 +402,12 @@ def _agent_chat_entries(path: Path | None, since_ms: int, until_ms: int) -> Iter
                 continue
             session = sessions.get(str(row["session_id"] or ""))
             start = starts.get(str(payload.get("turn_id") or ""), {})
+            if (
+                runtime_metered_from is not None
+                and start.get("runner", "") in RUNTIME_RUNNERS
+                and _int(row["ts_ms"]) >= runtime_metered_from
+            ):
+                continue
             if start.get("runner", "") in OPENAI_CONVENTION_RUNNERS:
                 # Same asymmetry the CLI index documents: the OpenAI usage
                 # object counts cache hits INSIDE input_tokens. Summing both
@@ -716,10 +730,12 @@ def _ledger_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator
             recorded_usd=row.cost_usd,
             tokens_cached=row.tokens_cached,
         )
+        # A Hermes / OpenClaw agent's model call is agent work, not background.
+        runtime = row.caller == RUNTIME_CALLER
         yield CostEntry(
             ts_ms=row.ts_ms,
-            surface=SURFACE_BACKGROUND,
-            role=ROLE_BACKGROUND,
+            surface=SURFACE_AGENT_CHAT if runtime else SURFACE_BACKGROUND,
+            role=ROLE_AGENT if runtime else ROLE_BACKGROUND,
             provider=row.provider or "unknown",
             model=row.model,
             tokens_in=row.tokens_in,
@@ -728,7 +744,10 @@ def _ledger_entries(path: Path | None, since_ms: int, until_ms: int) -> Iterator
             cost_usd=cost,
             price_source=source,
             ref_id="",
-            label=_clip(row.label or row.caller or "background"),
+            label=_clip(
+                row.label or ("Hermes / OpenClaw agent" if runtime else row.caller)
+                or "background"
+            ),
         )
 
 
@@ -742,7 +761,12 @@ def collect_entries(
     """Every priced line item across all sources, newest last."""
     entries: list[CostEntry] = []
     entries.extend(_voice_entries(sources.sessions_db, since_ms, until_ms))
-    entries.extend(_agent_chat_entries(sources.agent_chat_db, since_ms, until_ms))
+    runtime_metered_from = (
+        first_call_ms(sources.ledger_db, RUNTIME_CALLER) if sources.ledger_db else None
+    )
+    entries.extend(
+        _agent_chat_entries(sources.agent_chat_db, since_ms, until_ms, runtime_metered_from)
+    )
     entries.extend(_mission_entries(sources.missions_db, since_ms, until_ms))
     entries.extend(_speech_entries(sources.sessions_db, since_ms, until_ms))
     entries.extend(

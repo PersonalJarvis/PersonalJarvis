@@ -738,3 +738,39 @@ def test_a_tool_call_cut_off_by_the_output_limit_stays_length(
 )
 def test_provider_stop_reasons_become_chat_completions_ones(raw, expected) -> None:
     assert gateway._finish(raw) == expected
+
+
+def test_every_gateway_call_lands_in_the_cost_ledger(monkeypatch, guarded, tmp_path) -> None:
+    import jarvis.agent_chat.runner_api as runner_api
+    import jarvis.core.config as config
+    from jarvis.agent_runtimes.model_limits import ModelLimits
+    from jarvis.core.protocols import BrainDelta
+    from jarvis.costs import ledger
+
+    class Brain:
+        _model = "gpt-5.2"
+
+        async def complete(self, request: Any) -> AsyncIterator[BrainDelta]:
+            yield BrainDelta(content="OK", finish_reason="stop")
+            yield BrainDelta(usage={"input_tokens": 200, "output_tokens": 9,
+                                    "cache_hit_tokens": 1_800})
+
+    monkeypatch.setattr(runner_api, "build_brain", lambda provider, model: Brain())
+    monkeypatch.setattr(config, "get_jarvis_agent_secret", lambda provider: None)
+    ledger.set_ledger_path(tmp_path / "llm_usage.db")
+    gateway.reset()
+    try:
+        token = gateway.grant_token("agent-1", "openai")
+        gateway.register_model(token, "gpt-5.2", ModelLimits(400_000, 128_000))
+        assert _chat(guarded, token, {**_CHAT, "stream": True}).status_code == 200
+        assert _chat(guarded, token, _CHAT).status_code == 200
+        ledger.flush()
+        rows = list(ledger.read_usage(tmp_path / "llm_usage.db", 0, 2**62))
+    finally:
+        ledger.set_ledger_path(None)
+        gateway.reset()
+    assert [(r.provider, r.model, r.caller) for r in rows] == [
+        ("openai", "gpt-5.2", "agent-runtime")
+    ] * 2
+    assert (rows[0].tokens_in, rows[0].tokens_out, rows[0].tokens_cached) == (200, 9, 1_800)
+
