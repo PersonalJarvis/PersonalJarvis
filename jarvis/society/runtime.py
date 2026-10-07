@@ -193,6 +193,9 @@ class SocietyRuntime:
         )
         self._start_lock = asyncio.Lock()
         self._delivery_task: asyncio.Task[None] | None = None
+        # Runs for the whole session, so it is not one of ``_watchers``
+        # (finite background work that callers may wait for).
+        self._runtime_updates_task: asyncio.Task[None] | None = None
         self._delivery_unsubscribe: Callable[[], None] | None = None
         self._lead_incoming_unsubscribe: Callable[[], None] | None = None
         self._started = False
@@ -285,7 +288,7 @@ class SocietyRuntime:
         await self.coding_threads.start()
         self._require_open_owner()
         self.background(self.recover_reviews())
-        self.background(self._keep_agent_runtimes_current())
+        self._runtime_updates_task = asyncio.create_task(self._keep_agent_runtimes_current())
         log.info("society runtime started (%s)", self.store.path)
         return self
 
@@ -475,7 +478,12 @@ class SocietyRuntime:
             cleanup.push_async_callback(stop_agent_runtimes)
 
             tasks: set[asyncio.Task[Any]] = set(self._watchers)
-            for task in (self._starting_task, self._context_start_task, self._delivery_task):
+            for task in (
+                self._starting_task,
+                self._context_start_task,
+                self._delivery_task,
+                self._runtime_updates_task,
+            ):
                 if task is not None:
                     tasks.add(task)
             for task in tasks:
@@ -493,6 +501,8 @@ class SocietyRuntime:
                     self._context_start_task = None
                 if self._delivery_task is not None and self._delivery_task.done():
                     self._delivery_task = None
+                if self._runtime_updates_task is not None and self._runtime_updates_task.done():
+                    self._runtime_updates_task = None
                 self._watchers.difference_update(task for task in tasks if task.done())
 
     def skills_for(self, agent_id: str) -> AgentSkills:
