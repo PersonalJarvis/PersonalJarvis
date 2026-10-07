@@ -68,11 +68,8 @@ function OpenCard({ credential }: { credential: CredentialState }) {
         <div className="min-w-0 flex-1">
           <h3 className="text-base font-semibold leading-6 [overflow-wrap:anywhere]">{credential.label}</h3>
           <p className="mt-1 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">
-            {fill(t("credential_card.subtitle"), { agent, env: credential.env })}
+            {credential.description || fill(t("credential_card.subtitle"), { agent, env: credential.env })}
           </p>
-          {credential.description ? (
-            <p className="mt-1 text-sm leading-6 text-muted-foreground [overflow-wrap:anywhere]">{credential.description}</p>
-          ) : null}
           {credential.replace ? (
             <p className="mt-1 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
               {fill(t("credential_card.replace_note"), { agent })}

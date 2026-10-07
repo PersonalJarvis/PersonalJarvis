@@ -76,7 +76,6 @@ describe("CredentialCard", () => {
     draw(asking());
     const card = screen.getByTestId("credential-card");
     expect(card.textContent).toContain("GitHub token");
-    expect(card.textContent).toContain("GITHUB_TOKEN");
     expect(card.textContent).toContain("To open the pull request.");
     const input = screen.getByLabelText("GitHub token") as HTMLInputElement;
     expect(input.type).toBe("password");
