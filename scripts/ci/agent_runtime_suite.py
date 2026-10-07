@@ -34,6 +34,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +70,7 @@ FILES: frozenset[str] = frozenset(
         "tests/fakes/fake_acp_agent.py",
         "tests/fakes/fake_runtime_brain.py",
         "scripts/ci/agent_runtime_suite.py",
+        "scripts/ci/agent_runtime_e2e.py",
     }
 )
 
@@ -175,8 +177,23 @@ def bump_from(folder: Path, path: Path = MANIFEST, *, expected_reports: int = 3)
     return changed
 
 
-def _hermes_commit() -> str:
-    """The commit of the Hermes checkout its official installer made."""
+def _git(*args: str) -> str:
+    return subprocess.run(  # noqa: S603 — fixed git query
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    ).stdout.strip()
+
+
+def _hermes_commit(upstream: str = "") -> str:
+    """The full UPSTREAM commit of the installed Hermes.
+
+    ``upstream`` is the short sha from ``hermes --version`` ("upstream
+    ed2dd0b3"); a checkout's HEAD may carry local commits no other machine
+    can install, so it is used only on a clean checkout without that line.
+    """
     home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
     local = os.environ.get("LOCALAPPDATA")
     candidates = [home / "hermes-agent"]
@@ -185,13 +202,7 @@ def _hermes_commit() -> str:
     for checkout in candidates:
         if not (checkout / ".git").exists():
             continue
-        found = subprocess.run(  # noqa: S603 — fixed git query
-            ["git", "-C", str(checkout), "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        ).stdout.strip()
+        found = _git("-C", str(checkout), "rev-parse", f"{upstream or 'HEAD'}^{{commit}}")
         if _COMMIT.fullmatch(found):
             return found
     return ""
@@ -202,14 +213,48 @@ def report(runtime: str) -> dict[str, str]:
     sys.path.insert(0, str(REPO_ROOT))
     from jarvis.agent_runtimes import driver
 
-    status = driver(runtime).detect(refresh=True)
+    target = driver(runtime)
+    status = target.detect(refresh=True)
     if not status.ready or not _VERSION.fullmatch(status.version or ""):
         raise SystemExit(f"{runtime} is not ready to report ({status.problem or 'no version'})")
-    commit = _hermes_commit() if runtime == "hermes" else ""
-    if runtime == "hermes" and not commit:
-        # Without a commit the pin cannot select this release; record nothing.
-        raise SystemExit("the Hermes checkout's commit could not be read")
+    commit = ""
+    if runtime == "hermes":
+        revision = getattr(target, "revision", None)
+        upstream = revision(status) if callable(revision) else ""
+        commit = _hermes_commit(upstream if re.fullmatch(r"[0-9a-f]{7,40}", upstream) else "")
+        if not commit:
+            # Without an upstream commit the pin cannot select this release.
+            raise SystemExit("the installed Hermes' upstream commit could not be read")
     return {"runtime": runtime, "version": status.version, "commit": commit}
+
+
+def point_at_latest(runtime: str, path: Path = MANIFEST) -> dict[str, str]:
+    """Aim the app's own setup at upstream latest (the canary's checkout only).
+
+    OpenClaw: ``tested`` = the newest npm release. Hermes: ``commit`` = the
+    head of its default branch; ``tested`` stays, so the install reports as
+    untested until the canary's pull request raises it.
+    """
+    data = _manifest(path)
+    entry = data.get(runtime) if isinstance(data.get(runtime), dict) else {}
+    if runtime == "openclaw":
+        npm = shutil.which("npm") or shutil.which("npm.cmd")
+        latest = subprocess.run(  # noqa: S603 — fixed registry query
+            [npm or "npm", "view", "openclaw", "version"],
+            capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout.strip()
+        if not _VERSION.fullmatch(latest):
+            raise SystemExit(f"npm named no OpenClaw release ({latest!r})")
+        entry = {**entry, "tested": latest}
+    else:
+        head = _git("ls-remote", "https://github.com/NousResearch/hermes-agent", "HEAD").split()
+        if not head or not _COMMIT.fullmatch(head[0]):
+            raise SystemExit("the Hermes repository named no head commit")
+        entry = {**entry, "commit": head[0]}
+    data[runtime] = entry
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return {key: str(value) for key, value in entry.items()}
 
 
 def _emit(values: dict[str, str]) -> None:
@@ -230,11 +275,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", default="", help="With --bump: the version that passed.")
     parser.add_argument("--commit", default="", help="With --bump hermes: its commit.")
     parser.add_argument("--report", choices=RUNTIMES, help="Write the installed version as JSON.")
+    parser.add_argument(
+        "--point-at-latest", choices=RUNTIMES, help="Canary: set the pin to upstream latest."
+    )
     parser.add_argument("--out", type=Path, help="With --report: the JSON file to write.")
     parser.add_argument(
         "--bump-from", type=Path, help="Record every report JSON in this folder that agrees."
     )
     args, extra = parser.parse_known_args(argv)
+    if args.point_at_latest:
+        _emit(point_at_latest(args.point_at_latest))
+        return 0
     if args.report:
         found = report(args.report)
         if args.out:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -160,3 +162,42 @@ def test_disagreeing_oses_keep_the_pin(tmp_path):
     _report(reports, "c", "openclaw", "2026.10.2")
     assert agent_runtime_suite.bump_from(reports, manifest) is False
     assert not manifest.exists()
+
+
+def test_the_pins_file_of_the_runtimes_keeps_its_comment_and_extra_keys(tmp_path):
+    manifest = tmp_path / "runtime-versions.json"
+    manifest.write_text(
+        json.dumps({
+            "_comment": "Raised by the canary.",
+            "hermes": {"minimum": "0.20.6", "tested": "0.21.5", "commit": "c" * 40,
+                       "config_version": 50},
+        }),
+        encoding="utf-8",
+    )
+    assert agent_runtime_suite.pin("hermes", manifest)["hermes_commit"] == "c" * 40
+    reports = tmp_path / "reports"
+    for os_name in ("ubuntu", "windows", "macos"):
+        _report(reports, os_name, "hermes", "0.22.0", "d" * 40)
+    assert agent_runtime_suite.bump_from(reports, manifest) is True
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["_comment"] == "Raised by the canary."
+    assert data["hermes"] == {
+        "minimum": "0.20.6", "tested": "0.22.0", "commit": "d" * 40, "config_version": 50,
+    }
+
+
+def test_the_e2e_check_runs_with_a_desktop_apps_path(monkeypatch):
+    from scripts.ci import agent_runtime_e2e
+
+    monkeypatch.setenv("PATH", "/home/dev/.local/bin")
+    entries = agent_runtime_e2e.desktop_path().split(os.pathsep)
+    assert "/home/dev/.local/bin" not in entries
+    assert str(Path(sys.executable).resolve().parent) == entries[-1]
+
+
+def test_the_e2e_check_reads_every_turn_budget_line():
+    from scripts.ci import agent_runtime_e2e
+
+    output = "prepare: exit 0 in 41.0 s\nturn 1 took 12.5 s\n...\nturn 1 took 31.0 s\n"
+    assert [float(v) for v in agent_runtime_e2e._TURN.findall(output)] == [12.5, 31.0]
+    assert agent_runtime_e2e.TURN_BUDGET_S == {"hermes": 30.0, "openclaw": 90.0}

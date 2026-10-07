@@ -1,10 +1,11 @@
 name: Agent runtimes canary
-# Installs the LATEST Hermes and OpenClaw with their own official installers and
-# drives two turns per model-gateway protocol through Jarvis' model gateway
-# against scripted providers (scripts/spikes/agent_runtimes_gateway_e2e.py
-# --replay; no key, no network to a model). Every pull request already proves
-# the PINNED versions (ci.yml, agent-runtimes-e2e); this checks what upstream
-# ships next:
+# Installs the LATEST Hermes and OpenClaw through the app's own setup job (the
+# pin is pointed at upstream latest in the canary's checkout only) and runs
+# scripts/ci/agent_runtime_e2e.py: two turns per model-gateway protocol against
+# scripted providers, the fake-model driver check, the runtime unit tests and
+# the PATH / shell-profile checks. No key, no network to a model. Every pull
+# request already proves the PINNED versions (ci.yml, agent-runtimes-e2e); this
+# checks what upstream ships next:
 #   * green on every OS -> a pull request raises the pin in
 #     jarvis/agent_runtimes/runtime-versions.json (scripts/ci/agent_runtime_suite.py);
 #   * red on a schedule -> an issue, and the pin stays where it is.
@@ -33,28 +34,13 @@ jobs:
           python-version: '3.12'
       - name: Install the base app
         run: python scripts/pip_install.py -e "."
-      - name: Install Hermes (official installer, Linux/macOS)
-        if: matrix.runtime == 'hermes' && runner.os != 'Windows'
-        run: |
-          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-setup --non-interactive --skip-browser
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Install Hermes (official installer, Windows)
-        if: matrix.runtime == 'hermes' && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & ([scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))) -SkipSetup -NonInteractive
-          "$env:LOCALAPPDATA\hermes\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: matrix.runtime == 'openclaw'
-        with:
-          node-version: '24'
-      - name: Install OpenClaw (latest)
-        if: matrix.runtime == 'openclaw'
-        run: npm install -g openclaw@latest
-      - name: Two turns over Responses (scripted ChatGPT subscription)
-        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} openai-codex --replay
-      - name: Two turns over Chat Completions (scripted local model)
-        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} ollama --replay
+      # The app's own setup installs whatever the pin names; in this checkout
+      # only, the pin points at upstream latest (newest OpenClaw on npm, the
+      # head of Hermes' default branch).
+      - name: Aim the app's setup at upstream latest
+        run: python scripts/ci/agent_runtime_suite.py --point-at-latest ${{ matrix.runtime }}
+      - name: Set up through the app, drive it, prove nothing else changed
+        run: python scripts/ci/agent_runtime_e2e.py ${{ matrix.runtime }} --allow-untested
       - name: Record the version that passed
         run: python scripts/ci/agent_runtime_suite.py --report ${{ matrix.runtime }} --out canary-report.json
       - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3

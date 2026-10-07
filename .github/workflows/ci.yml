@@ -892,7 +892,7 @@ jobs:
     if: needs.detect.outputs.agent_runtimes == 'true'
     runs-on: ubuntu-latest
     container: python:3.11-slim
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -905,12 +905,20 @@ jobs:
         run: python -c "import jarvis.agent_runtimes.gateway, jarvis.agent_runtimes.manager, jarvis.agent_chat.runner_acp"
       - name: Runtime suite
         run: python scripts/ci/agent_runtime_suite.py --headless
+      # The container has no curl: the app's own Hermes setup must stop with a
+      # plain reason instead of "succeeding" on an empty download.
+      - name: Setup without curl fails with a plain reason
+        run: python scripts/ci/agent_runtime_e2e.py hermes --timeout 600 --expect-setup-failure "Setup needs curl"
 
-  # The REAL runtimes at the version the app installs
-  # (jarvis/agent_runtimes/runtime-versions.json; latest when no pin exists
-  # yet), driven through Jarvis' model gateway against scripted providers:
-  # Responses (ChatGPT subscription) and Chat Completions. No key, no network
-  # to a model. The weekly canary checks upstream latest and raises the pin.
+  # The REAL runtimes, installed the way the desktop app installs them: the
+  # app's own setup job (manager.wait_ready) at the pinned release from
+  # jarvis/agent_runtimes/runtime-versions.json, with a desktop app's PATH,
+  # never npm or a manual installer. Then two turns per model-gateway protocol
+  # against scripted providers, the fake-model driver check with turn-1
+  # budgets, the runtime unit tests on the same machine, and proof that the
+  # user PATH and shell profiles stayed put (scripts/ci/agent_runtime_e2e.py).
+  # No key, no network to a model. The weekly canary does the same at
+  # upstream latest and raises the pin.
   agent-runtimes-e2e:
     needs: detect
     if: needs.detect.outputs.agent_runtimes == 'true'
@@ -920,7 +928,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         runtime: [hermes, openclaw]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -930,44 +938,21 @@ jobs:
           python-version: "3.12"
       - name: Install the base app
         run: python scripts/pip_install.py -e "."
-      - name: Read the pinned runtime version
-        id: pin
-        run: python scripts/ci/agent_runtime_suite.py --pin ${{ matrix.runtime }}
-      - name: Install Hermes at the pin (official installer, Linux/macOS)
-        if: matrix.runtime == 'hermes' && runner.os != 'Windows'
-        shell: bash
-        env:
-          HERMES_COMMIT: ${{ steps.pin.outputs.hermes_commit }}
-        run: |
-          args=(--skip-setup --non-interactive --skip-browser)
-          [ -n "$HERMES_COMMIT" ] && args+=(--commit "$HERMES_COMMIT")
-          curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- "${args[@]}"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Install Hermes at the pin (official installer, Windows)
-        if: matrix.runtime == 'hermes' && runner.os == 'Windows'
-        shell: pwsh
-        env:
-          HERMES_COMMIT: ${{ steps.pin.outputs.hermes_commit }}
-        run: |
-          $installer = [scriptblock]::Create((irm https://hermes-agent.nousresearch.com/install.ps1))
-          if ($env:HERMES_COMMIT) { & $installer -SkipSetup -NonInteractive -Commit $env:HERMES_COMMIT }
-          else { & $installer -SkipSetup -NonInteractive }
-          "$env:LOCALAPPDATA\hermes\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        if: matrix.runtime == 'openclaw'
+      # Downloads only: the private OpenClaw copy and uv's cache. Never Hermes'
+      # own home, so its install and prepare run for real on every pin.
+      - name: Reuse the pinned runtime downloads
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          node-version: "24"
-      - name: Install OpenClaw at the pin
-        if: matrix.runtime == 'openclaw'
-        shell: bash
-        env:
-          NPM_SPEC: ${{ steps.pin.outputs.npm_spec }}
-        run: npm install -g "$NPM_SPEC"
-      - name: Two turns over Responses (scripted ChatGPT subscription)
-        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} openai-codex --replay
-      - name: Two turns over Chat Completions (scripted local model)
-        run: python scripts/spikes/agent_runtimes_gateway_e2e.py ${{ matrix.runtime }} ollama --replay
-      - name: Keep the runtime log of a failed run
+          path: |
+            ~/.jarvis/agent_runtimes/openclaw-cli
+            ~/AppData/Local/Jarvis/agent_runtimes/openclaw-cli
+            ~/.cache/uv
+            ~/Library/Caches/uv
+            ~/AppData/Local/uv/cache
+          key: agent-runtimes-${{ matrix.runtime }}-${{ runner.os }}-${{ hashFiles('jarvis/agent_runtimes/runtime-versions.json') }}
+      - name: Set up through the app, drive it, prove nothing else changed
+        run: python scripts/ci/agent_runtime_e2e.py ${{ matrix.runtime }}
+      - name: Keep the setup and runtime logs of a failed run
         if: failure()
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
