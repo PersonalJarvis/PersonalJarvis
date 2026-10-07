@@ -165,6 +165,7 @@ def _retry_after(exc: Exception) -> float | None:
         try:
             seconds = parsedate_to_datetime(str(raw)).timestamp() - time.time()
         except (TypeError, ValueError, OverflowError):
+            log.debug("runtime gateway: invalid Retry-After ignored; using the default cooldown")
             return None
     return max(0.0, seconds) if math.isfinite(seconds) else None
 
@@ -218,7 +219,7 @@ def _report_failure(
             signal.set_result(str(failure))
         except InvalidStateError:
             # A previous failure or runner cleanup already settled this signal.
-            pass
+            log.debug("runtime gateway: failure signal was already settled")
     return failure
 
 
