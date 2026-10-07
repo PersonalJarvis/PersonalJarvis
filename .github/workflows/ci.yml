@@ -14,9 +14,9 @@
 #   * Every PR ran every job (~20 runners, three 45-min macOS jobs on most),
 #     and pushes to main cancelled each other, so main was never proven.
 #     -> `detect` classifies the diff into lanes (scripts/ci/classify_changes.py,
-#        fail-open); only affected lanes run. Every push to main runs the whole
-#        test suite and is never cancelled; the nightly run and manual
-#        dispatches run every lane.
+#        fail-open); only affected lanes run. Every merge-queue group and every
+#        push to main runs the whole test suite and is never cancelled; the
+#        nightly run and manual dispatches run every lane.
 #   * Branch protection listed five job names; renaming a job meant a settings
 #     change. -> `CI gate` aggregates every job (scripts/ci/required_results.py)
 #     and is the ONLY required check, for humans and for the merge train.
@@ -24,8 +24,14 @@
 #     runs them in one job, all of them report, and agents run the same command
 #     locally.
 #
-# Windows: the full sharded suite on main / nightly / dispatch; on a pull
-# request only the tests the diff can reach (scripts/ci/select_tests.py).
+# Merge queue: main requires a merge queue. A pull request's own run is the
+# admission ticket; the `merge_group` run tests the exact tree main will get
+# (the PR on top of main plus every entry ahead of it) with the whole Linux +
+# Windows suite, and only a green `CI gate` there lands it. This is what keeps
+# main green when PRs that pass alone break together.
+#
+# Windows: the full sharded suite on merge groups / main / nightly / dispatch;
+# on a pull request only the tests the diff can reach (scripts/ci/select_tests.py).
 # macOS (~10x runner cost): nightly and manual dispatch, plus the path-gated
 # realtime contract and macOS desktop lanes.
 #
@@ -35,6 +41,8 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
   schedule:
@@ -59,9 +67,12 @@ on:
 # share one group: GitHub keeps a single PENDING run and drops older pending
 # ones, so a burst of agent pushes cannot stack a backlog behind the
 # organisation's concurrent-job limit — the newest run covers every commit
-# before it. The nightly run and manual dispatches get their own group.
+# before it. Every merge-queue entry gets its own group and is never
+# cancelled: the queue itself drops entries it no longer needs, and a dropped
+# pending run would leave `CI gate` unreported until the queue times out. The
+# nightly run and manual dispatches get their own group.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'merge_group' && format('merge-group-{0}', github.event.merge_group.head_ref)) || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main' && format('branch-{0}', github.ref)) || (github.event_name == 'push' && 'main-push') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main') }}
 
 permissions:
@@ -114,15 +125,17 @@ jobs:
           EVENT: ${{ github.event_name }}
           IN_FULL: ${{ inputs.full }}
           IN_MACOS: ${{ inputs.include_macos }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          # A push to main classifies its lanes like a pull request (the
-          # concurrent-job limit is shared by every agent's PR), but always
-          # runs the WHOLE test suite on Linux and Windows: post-merge proof
-          # is never narrowed. Nightly and manual full runs force everything.
+          # A merge-queue group and a push to main classify their lanes like a
+          # pull request (the concurrent-job limit is shared by every agent's
+          # PR), but always run the WHOLE test suite on Linux and Windows: the
+          # proof that lands on main is never narrowed. A merge group's lanes
+          # are classified against the queue base (main or the entry ahead).
+          # Nightly and manual full runs force everything.
           full=false; macos=false; pr_mode=false; tests_full=false
           case "$EVENT" in
-            push) tests_full=true ;;
+            push|merge_group) tests_full=true ;;
             schedule) full=true; macos=true; tests_full=true ;;
             workflow_dispatch)
               [ "$IN_FULL" = "true" ] && full=true && tests_full=true

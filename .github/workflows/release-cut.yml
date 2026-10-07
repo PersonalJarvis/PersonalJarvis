@@ -7,7 +7,8 @@
 #   2. bumps pyproject.toml + jarvis/__init__.py and writes the CHANGELOG
 #      section (scripts/ci/cut_release.py: [Unreleased] notes, or the
 #      Conventional Commits since the last tag),
-#   3. checks the version commit through a candidate PR, then merges it normally,
+#   3. checks the version commit through a candidate PR, then lands it through
+#      main's merge queue and waits for the landed commit,
 #   4. pushes the annotated tag and dispatches the three publishing workflows
 #      on it (PyPI, desktop installers, signed installer). Each of them starts
 #      with release-gate.yml, which waits for CI on the release commit.
@@ -131,8 +132,16 @@ jobs:
           state="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?check_name=CI%20gate" \
             --jq '(.check_runs | max_by(.id)) | if .status == "completed" then .conclusion else (.status // "missing") end')"
           [ "$state" = "success" ] || { echo "::error::Candidate CI gate is $state."; exit 1; }
+          # main requires a merge queue: this adds the candidate to it (the
+          # queue squash-merges after its own CI run), or merges directly
+          # when the queue is off. Either way, wait for the landed commit.
           gh pr merge "$candidate" --merge --match-head-commit "$sha"
-          merged="$(gh pr view "$candidate" --json mergeCommit --jq '.mergeCommit.oid')"
+          merged=""
+          for attempt in {1..150}; do
+            merged="$(gh pr view "$candidate" --json mergeCommit --jq '.mergeCommit.oid // empty')"
+            [ -n "$merged" ] && break
+            sleep 30
+          done
           [[ "$merged" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Missing merge commit."; exit 1; }
           git fetch --no-tags origin main:refs/remotes/origin/main
           git checkout --detach "$merged"
