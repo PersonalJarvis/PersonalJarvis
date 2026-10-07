@@ -302,7 +302,9 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
             )
 
     async def agent(_agent_id):
-        return SimpleNamespace(agent_id="hermit", name="Hermit", denies=[])
+        return SimpleNamespace(
+            agent_id="hermit", name="Hermit", denies=[], grants=[], grant_mode="all",
+        )
 
     def route(_cfg, provider, model, *, agent_id, account_id, session_id):
         return ModelRoute(

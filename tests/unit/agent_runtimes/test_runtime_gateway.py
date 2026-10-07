@@ -456,7 +456,8 @@ async def test_a_closed_stream_releases_the_provider_generator(monkeypatch):
 
     gateway.reset()
     monkeypatch.setattr(gateway, "_deltas", deltas)
-    stream = await gateway.open_chat_stream(gateway.Grant("a", "openai"), "m", None)
+    model, request = gateway.chat_request(_CHAT)
+    stream = await gateway.open_chat_stream(gateway.Grant("a", "openai"), model, request)
     await anext(stream)
     await stream.aclose()
     assert closed == [True]
