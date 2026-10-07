@@ -40,6 +40,10 @@ FORBIDDEN_PATTERNS: tuple[str, ...] = (
     # vector. These change by file-edit + code-review only, never voice/chat/
     # self-mod or the Control API. Guarded by tests/review/test_self_mod_excludes_review.py.
     "review.*",
+    # Paid API fallback for missions — spends the user's money. Only the
+    # Settings route (x-jarvis-dangerous) or an explicit CLI call may flip it,
+    # never voice, chat, self-mod or an agent (jarvis/missions/capacity.py).
+    "missions.paid_api_fallback",
     "*_api_key",
     "*_token",
     "*_secret",

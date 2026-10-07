@@ -1059,6 +1059,7 @@
       "attempts_timed_out": "Jeder Versuch hat die Zeit überschritten",
       "budget_exceeded": "Das Kostenbudget wurde überschritten",
       "worktree_setup_failed": "Der Arbeitsbereich konnte nicht eingerichtet werden",
+      "checkpoint_missing": "Der gesicherte Zwischenstand fehlte, Fortsetzen war nicht möglich",
       "critic_unavailable": "Kein Prüfer verfügbar, um das Ergebnis zu prüfen",
       "critic_rejected": "Der Prüfer hat das Ergebnis abgelehnt",
       "review_time_budget_exhausted": "Die Prüfung hat ihre Zeit überschritten",
@@ -4181,7 +4182,23 @@
     "timeline_label": "Event-Timeline",
     "no_events": "Noch keine Events für diese Mission.",
     "no_critic_verdicts": "Noch keine Critic-Verdicts für diese Mission.",
-    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…"
+    "no_missions_yet": "Noch keine Missions. Hauptjarvis dispatched gleich…",
+    "capacity_wait": {
+      "provider_quota": "{provider}-Kapazität momentan ausgeschöpft.",
+      "provider_auth": "Die {provider}-Anmeldung ist abgelaufen.",
+      "provider_unavailable": "{provider} ist momentan nicht nutzbar.",
+      "provider_fallback": "KI-Anbieter",
+      "saved": "Der bisherige Stand wurde gesichert.",
+      "progress": "{done} von {total} Teilschritten erledigt, {open} offen.",
+      "progress_single": "Die Aufgabe selbst ist noch offen.",
+      "files": "Gespeicherte Dateien: {files}.",
+      "wait": "Die Mission wartet, bis wieder Kapazität verfügbar ist.",
+      "wait_auth": "Die Mission wartet, bis du dich wieder anmeldest.",
+      "paid": "Kostenpflichtige API-Nutzung nur mit deiner Freigabe unter „Artefakte“ oder wenn du sie unter Einstellungen → API-Keys erlaubst.",
+      "paid_cap_reached": "Die freigegebene Kostengrenze für {provider} ist erreicht.",
+      "paid_daily_cap_reached": "Die automatische kostenpflichtige Nutzung von {provider} hat ihr Tageslimit erreicht.",
+      "paid_consent_revoked": "Die automatische kostenpflichtige Nutzung von {provider} wurde ausgeschaltet."
+    }
   },
   "mission_tool_approvals": {
     "tab_label": "Freigaben",
@@ -4272,7 +4289,8 @@
     "approved": "fertig",
     "failed": "Fehler",
     "cancelled": "abgebrochen",
-    "timed_out": "Timeout"
+    "timed_out": "Timeout",
+    "waiting_capacity": "wartet auf Kapazität"
   },
   "mascot_gigi": {
     "aria_label": "{name}-Maskottchen Gigi",
@@ -7021,5 +7039,46 @@
       "create": "Pet erstellen",
       "creating": "Wird erstellt…"
     }
+  },
+  "capacity_decision": {
+    "title": "Mission wartet auf Kapazität – deine Entscheidung",
+    "loading": "Kostenpflichtige Alternative wird geprüft …",
+    "provider": "Anbieter",
+    "model": "Modell",
+    "estimate": "Geschätzte Kosten",
+    "estimate_value": "ca. {cost} für {steps} offene Teilschritte",
+    "cap": "Harte Kostengrenze",
+    "spent": "Bereits ausgegeben",
+    "reason": "Grund",
+    "reasons": {
+      "provider_quota": "Abo-Kapazität ausgeschöpft",
+      "provider_auth": "Abo-Anmeldung abgelaufen",
+      "provider_unavailable": "Abo momentan nicht nutzbar",
+      "paid_cap_reached": "Freigegebene Kostengrenze erreicht",
+      "paid_daily_cap_reached": "Tageslimit für automatische kostenpflichtige Nutzung erreicht",
+      "paid_consent_revoked": "Automatische kostenpflichtige Nutzung wurde ausgeschaltet"
+    },
+    "no_offer": "Kein kostenpflichtiger API-Zugang mit bekanntem Preis verfügbar. Die Mission wartet auf ihr Abo.",
+    "over_cap": "Die Schätzung liegt über der Kostengrenze. Die Mission pausiert, sobald die Grenze erreicht ist; der Stand bleibt gesichert.",
+    "scope": "Eine Freigabe gilt nur für diese Mission und diesen einen Lauf, nie für spätere Missionen.",
+    "covers_review": "Die Freigabe deckt auch die Prüfung des Ergebnisses ab.",
+    "settings_hint": "Immer erlauben unter Einstellungen → API-Keys",
+    "wait": "Warten",
+    "approve": "Kostenpflichtige API für diese Mission freigeben",
+    "cancel": "Mission abbrechen",
+    "confirm_approve": "{provider} / {model} für diese Mission nutzen, höchstens {cap}?",
+    "confirm_cancel": "Mission abbrechen? Der gesicherte Stand bleibt erhalten.",
+    "confirm": "Bestätigen",
+    "back": "Zurück",
+    "error": "Entscheidung nicht übernommen: {detail}",
+    "waiting_ack": "Die Mission wartet weiter auf ihr Abo.",
+    "logged": {
+      "wait": "Entscheidung: warten.",
+      "approve_paid": "Entscheidung: kostenpflichtige API freigegeben.",
+      "cancel": "Entscheidung: abgebrochen."
+    },
+    "logged_offer": "{provider} / {model}, geschätzt {cost}, Grenze {cap}.",
+    "paid_usage": "Kostenpflichtiger Lauf auf {provider} / {model}: tatsächlich {cost} (geschätzt {estimate}, Grenze {cap}).",
+    "paid_usage_automatic": "Automatischer kostenpflichtiger Lauf auf {provider} / {model}: tatsächlich {cost} (geschätzt {estimate}, Grenze {cap})."
   }
 }

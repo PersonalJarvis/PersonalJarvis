@@ -104,6 +104,10 @@ class OutputSummary(BaseModel):
     needs_review: bool = False
     active_child_id: str | None = None
     active_child_slug: str | None = None
+    # Parked for capacity (MissionState.WAITING_CAPACITY): ``status`` stays
+    # "running" (not landed yet); this tells the UI to offer the decision
+    # between waiting, a per-mission paid approval, and cancelling.
+    waiting_capacity: bool = False
 
 
 class OutputsResponse(BaseModel):
@@ -406,6 +410,8 @@ _STATE_TO_STATUS: dict[str, str] = {
     # MissionState (state_machine.py) — real DB labels
     "CRITIQUING": "running",
     "LOOPING": "running",
+    # Parked for capacity: not landed yet, resumes from its checkpoint.
+    "WAITING_CAPACITY": "running",
     # Legacy aliases kept for back-compat with older missions on disk
     "CRITIC_REVIEW": "running",
     "AWAITING_CORRECTION": "running",
@@ -617,6 +623,9 @@ async def list_outputs(request: Request) -> OutputsResponse:
         if mission_row is not None:
             status = _STATE_TO_STATUS.get(str(mission_row["state"]), "unknown")
             summary["status"] = status
+            summary["waiting_capacity"] = (
+                str(mission_row["state"]) == MissionState.WAITING_CAPACITY.value
+            )
             summary["mission_id"] = mission_row.get("full_id")
             full_id = mission_row.get("full_id")
             child_id = continuation.get(str(full_id)) if full_id else None

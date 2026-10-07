@@ -90,6 +90,9 @@ export interface OutputSummary {
    *  redundant Continue/Restart button. */
   active_child_id?: string | null;
   active_child_slug?: string | null;
+  /** Parked for capacity (WAITING_CAPACITY): status stays "running"; the run
+   *  offers the wait / approve-paid / cancel decision. */
+  waiting_capacity?: boolean;
 }
 
 export function useOutputsList() {

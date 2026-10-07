@@ -34,6 +34,13 @@ from typing import Any, Final
 from pydantic import ValidationError
 
 from jarvis.costs.ledger import usage_context
+from jarvis.missions.capacity import (
+    CapacityWaitReason,
+    CriticCapacityUnavailable,
+    PaidCallGate,
+    PaidCallRefused,
+    PaidReservation,
+)
 
 from ..stream_evidence import (
     capability_refusal_answer,
@@ -832,6 +839,7 @@ class CriticRunner:
         security_tag: bool = False,
         prior_confidence: float | None = None,
         _capability_check: bool = True,
+        paid_gate: PaidCallGate | None = None,
     ) -> CriticVerdict:
         """Execute one Critic iteration and return the validated verdict.
 
@@ -845,6 +853,9 @@ class CriticRunner:
             env: env dict from build_worker_env (allowlist only).
             security_tag: True when the mission touches auth/crypto/db -> Opus forced.
             prior_confidence: From the previous iteration; <0.4 -> Opus forced.
+            paid_gate: Consent + caps for a paid critic call on a subscription
+                install whose subscriptions all have no capacity
+                (jarvis/missions/capacity.py). None = no paid critic.
 
         Returns:
             Validated `CriticVerdict`.
@@ -1118,6 +1129,7 @@ class CriticRunner:
             schema_json=schema_json,
             use_bare=use_bare,
             adversarial_reframe=False,
+            paid_gate=paid_gate,
         )
 
         # Aggregation check FIRST (deterministic):
@@ -1168,6 +1180,7 @@ class CriticRunner:
                 schema_json=schema_json,
                 use_bare=use_bare,
                 adversarial_reframe=True,
+                paid_gate=paid_gate,
             )
 
             # After retry: check aggregation downgrade again (deterministic).
@@ -1464,6 +1477,7 @@ class CriticRunner:
         schema_json: str,
         use_bare: bool,
         adversarial_reframe: bool,
+        paid_gate: PaidCallGate | None = None,
     ) -> CriticVerdict | None:
         """Spawns the critic subprocess once; returns the verdict or None on JSON error.
 
@@ -1513,6 +1527,24 @@ class CriticRunner:
         )
 
         primary_provider, primary_model = _resolve_critic_provider_model()
+        # Capacity policy (jarvis/missions/capacity.py): on a subscription
+        # install the critic grades on a subscription (the configured one, else
+        # another connected one — free), and on a per-token key only through a
+        # consented paid gate. The cross-family walk below would bill a key
+        # nobody approved exactly when the subscription is spent.
+        if _critic_subscription_only(primary_provider):
+            return await self._invoke_pinned_critic(
+                primary_provider=primary_provider,
+                primary_model=primary_model,
+                model=model,
+                prompt=prompt_for_subprocess,
+                codex_prompt=codex_prompt_for_subprocess,
+                worktree=worktree,
+                env=env,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+                paid_gate=paid_gate,
+            )
         # Auth-viability gate (2026-07-07, mission 019f3d18 / BUG-042 defect 5):
         # this branch used to spawn `claude --print` UNCONDITIONALLY — with a
         # dead Claude CLI auth both critic attempts exited 1, the mission died
@@ -1682,6 +1714,157 @@ class CriticRunner:
         )
         return None
 
+    # --- Internal: subscription-pinned critic (jarvis/missions/capacity.py) ---
+
+    def critic_family(self) -> str:
+        """The provider family that grades this install's missions."""
+        primary, _model = _resolve_critic_provider_model()
+        return _critic_family(primary)
+
+    def capacity_available(self) -> bool:
+        """Whether a critic can grade right now without paid use (offline:
+        login files, quota/auth flags, key viability — never a provider
+        call). The resume loop asks this for steps whose review is pending."""
+        primary, _model = _resolve_critic_provider_model()
+        if not _critic_subscription_only(primary):
+            return True
+        family = _critic_family(primary)
+        return any(
+            _critic_family_unavailable(fam) is None
+            for fam in dict.fromkeys((family, *_CRITIC_SUBSCRIPTION_FALLBACK))
+        )
+
+    async def _invoke_pinned_critic(
+        self,
+        *,
+        primary_provider: str | None,
+        primary_model: str | None,
+        model: str,
+        prompt: str,
+        codex_prompt: str,
+        worktree: Path,
+        env: dict[str, str],
+        iteration: int,
+        adversarial_reframe: bool,
+        paid_gate: PaidCallGate | None = None,
+    ) -> CriticVerdict | None:
+        """Grade on the configured subscription, else on another connected
+        subscription (free), else on a consented paid key — or nowhere.
+
+        A family that is out of capacity (offline probe, or the CLI said so)
+        hands over to the next one. When none can grade and no ``paid_gate``
+        permits a paid call, :class:`CriticCapacityUnavailable` parks the
+        mission. Any other failure returns None as before.
+        """
+        configured = _critic_family(primary_provider)
+        first: tuple[CapacityWaitReason, str, str] | None = None
+        for family in dict.fromkeys((configured, *_CRITIC_SUBSCRIPTION_FALLBACK)):
+            reason = _critic_family_unavailable(family)
+            if reason is not None:
+                if first is None:
+                    first = (reason, family, "")
+                continue
+            if first is not None:
+                logger.warning(
+                    "CriticRunner: %s critic has no capacity (%s) — grading on the "
+                    "%s subscription instead (no extra cost).",
+                    first[1], first[0], family,
+                )
+            signals: list[tuple[CapacityWaitReason, str]] = []
+            verdict = await self._grade_on_family(
+                family,
+                configured=configured,
+                primary_provider=primary_provider,
+                primary_model=primary_model,
+                model=model,
+                prompt=prompt,
+                codex_prompt=codex_prompt,
+                worktree=worktree,
+                env=env,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+                capacity_signals=signals,
+            )
+            if verdict is not None:
+                return verdict
+            if not signals:
+                return None  # not a capacity problem: the caller's retry handles it
+            if first is None:
+                first = (signals[0][0], family, signals[0][1])
+        if paid_gate is not None:
+            logger.warning(
+                "CriticRunner: no subscription critic has capacity — grading on "
+                "%s/%s within the mission's paid-use consent and caps.",
+                paid_gate.provider, paid_gate.model,
+            )
+            try:
+                return await self._invoke_via_api_critic(
+                    prompt=prompt,
+                    model=paid_gate.model,
+                    provider=paid_gate.provider,
+                    iteration=iteration,
+                    adversarial_reframe=adversarial_reframe,
+                    paid_gate=paid_gate,
+                )
+            except PaidCallRefused as exc:
+                raise CriticCapacityUnavailable(exc.reason, exc.provider) from None
+        reason, family, detail = first or ("provider_unavailable", configured, "")
+        raise CriticCapacityUnavailable(reason, family, detail)
+
+    async def _grade_on_family(
+        self,
+        family: str,
+        *,
+        configured: str,
+        primary_provider: str | None,
+        primary_model: str | None,
+        model: str,
+        prompt: str,
+        codex_prompt: str,
+        worktree: Path,
+        env: dict[str, str],
+        iteration: int,
+        adversarial_reframe: bool,
+        capacity_signals: list[tuple[CapacityWaitReason, str]],
+    ) -> CriticVerdict | None:
+        """One critic call on ``family`` (claude, codex, or the configured
+        API provider's own key)."""
+        if family == "codex":
+            from jarvis.missions.workers.codex_direct_worker import (
+                _normalize_model_for_codex,
+            )
+
+            # A fallback from another family runs codex on its CLI default:
+            # a foreign model id would be rejected.
+            codex_model = (primary_model or model) if configured == "codex" else ""
+            return await self._invoke_via_codex_direct(
+                prompt=codex_prompt,
+                worktree=worktree,
+                env=env,
+                model=_normalize_model_for_codex(codex_model),
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+                capacity_signals=capacity_signals,
+            )
+        if family == "claude":
+            return await self._invoke_via_claude_direct(
+                prompt=prompt,
+                worktree=worktree,
+                env=env,
+                model=(primary_model or model) if primary_provider == "claude-api" else model,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+                capacity_signals=capacity_signals,
+            )
+        # The API provider the user chose for this install, on its own key.
+        return await self._invoke_via_api_critic(
+            prompt=prompt,
+            model=primary_model,
+            provider=family,
+            iteration=iteration,
+            adversarial_reframe=adversarial_reframe,
+        )
+
     # --- Internal: direct claude --print path (CRIT-1, 2026-05-17) ---
 
     async def _invoke_via_claude_direct(
@@ -1693,8 +1876,12 @@ class CriticRunner:
         model: str,
         iteration: int,
         adversarial_reframe: bool,
+        capacity_signals: list[tuple[CapacityWaitReason, str]] | None = None,
     ) -> CriticVerdict | None:
         """Spawn ``claude --print`` directly with the prompt on stdin.
+
+        ``capacity_signals`` (per call, never shared) collects a "no capacity"
+        notice the CLI printed instead of a review.
 
         Mirrors ``ClaudeDirectWorker`` semantics minus the writes:
           * ``--permission-mode plan`` — Critic is read-only by design.
@@ -1852,10 +2039,14 @@ class CriticRunner:
                     model="",
                     iteration=iteration,
                     adversarial_reframe=adversarial_reframe,
+                    capacity_signals=capacity_signals,
                 )
             logger.warning(
                 "CriticRunner: claude-direct returncode=%d wall_ms=%d stderr=%r",
                 proc.returncode, wall_ms, stderr_text,
+            )
+            _note_capacity_signal(
+                "claude", stderr_text + " " + stdout_text[:1000], capacity_signals
             )
             return None
 
@@ -1882,6 +2073,11 @@ class CriticRunner:
             "object in output) iter=%d adv=%s output[:300]=%r",
             iteration, adversarial_reframe, stdout_text[:300],
         )
+        # A spent window can exit 0 with just the limit notice on stdout. Only
+        # a short output counts: a long one is a review that merely mentions
+        # quotas or rate limits.
+        if len(stdout_text.strip()) <= _CAPACITY_NOTICE_MAX_CHARS:
+            _note_capacity_signal("claude", stdout_text, capacity_signals)
         return None
 
     # --- Internal: direct codex exec path (Welle 6, 2026-05-18) ---
@@ -1894,6 +2090,7 @@ class CriticRunner:
         provider: str,
         iteration: int,
         adversarial_reframe: bool,
+        paid_gate: PaidCallGate | None = None,
     ) -> CriticVerdict | None:
         """Grade the mission IN-PROCESS via the provider's own BrainProvider.
 
@@ -1901,7 +2098,14 @@ class CriticRunner:
         backend so a mission's review never requires the absent `claude` binary
         (open-source AP-22, B2). Returns ``None`` on any failure so the caller's
         claude-direct fallback / adversarial retry still runs.
+
+        With ``paid_gate`` (a consented paid fallback) the call reserves its
+        maximum cost first — :class:`PaidCallRefused` propagates when consent
+        is gone or a cap is reached — and books its actual cost after; a call
+        without usage data counts its whole reservation.
         """
+        reservation: PaidReservation | None = None
+        call_usd: float | None = None
         try:
             from jarvis.brain.provider_registry import BrainProviderRegistry
             from jarvis.core.config import (
@@ -1929,17 +2133,35 @@ class CriticRunner:
                 max_tokens=2048,
             )
             parts: list[str] = []
+            if paid_gate is not None:
+                from jarvis.missions.capacity import max_call_cost_usd
+
+                reservation = paid_gate.reserve(
+                    max_call_cost_usd(
+                        model or "",
+                        input_bytes=len(prompt.encode("utf-8"))
+                        + len((req.system or "").encode("utf-8")),
+                        max_output_tokens=req.max_tokens or 2048,
+                    )
+                )
             async with asyncio.timeout(self._timeout):
                 with override_provider_secrets({provider: worker_key}):
                     with usage_context("mission-critic"):
                         _stream = brain.complete(req)
                     async for delta in _stream:
+                        usage = getattr(delta, "usage", None)
+                        if usage and paid_gate is not None:
+                            from jarvis.missions.capacity import usage_cost_usd
+
+                            call_usd = (call_usd or 0.0) + usage_cost_usd(model or "", usage)
                         chunk = getattr(delta, "content", None)
                         if chunk:
                             parts.append(chunk)
             return _parse_verdict_from_text(
                 "".join(parts), iteration=iteration, adversarial_reframe=adversarial_reframe,
             )
+        except PaidCallRefused:
+            raise
         except TimeoutError:
             logger.warning(
                 "CriticRunner: API critic (%s) timed out after %.0fs.",
@@ -1952,6 +2174,9 @@ class CriticRunner:
                 provider, exc,
             )
             return None
+        finally:
+            if paid_gate is not None and reservation is not None:
+                paid_gate.commit(reservation, call_usd)
 
     async def _invoke_via_codex_direct(
         self,
@@ -1962,6 +2187,7 @@ class CriticRunner:
         model: str,
         iteration: int,
         adversarial_reframe: bool,
+        capacity_signals: list[tuple[CapacityWaitReason, str]] | None = None,
     ) -> CriticVerdict | None:
         """Spawn ``codex exec --json`` directly with the prompt on stdin.
 
@@ -2128,6 +2354,9 @@ class CriticRunner:
                 "returncode=%d wall_ms=%d stderr=%r",
                 proc.returncode, wall_ms, stderr_text,
             )
+            _note_capacity_signal(
+                "codex", stderr_text + " " + stdout_text[:1000], capacity_signals
+            )
             return None
 
         if proc.returncode != 0 and not terminal_ok:
@@ -2137,6 +2366,9 @@ class CriticRunner:
                 "CriticRunner: codex-direct turn did NOT complete "
                 "returncode=%d wall_ms=%d stderr=%r",
                 proc.returncode, wall_ms, stderr_text,
+            )
+            _note_capacity_signal(
+                "codex", stderr_text + " " + stdout_text[:1000], capacity_signals
             )
             return None
 
@@ -2165,6 +2397,142 @@ class CriticRunner:
 # --- Helpers ---
 
 
+#: Critic CLI output that means the subscription window or credit is SPENT.
+#: Anchored phrases from the vendors' own notices — never a bare "429",
+#: "quota" or "rate limit", which a transient throttle or an ordinary review
+#: also prints. A transient overload / 5xx / rate limit is NOT a capacity
+#: signal: it must not arm a quota cooldown or park a mission.
+_CRITIC_QUOTA_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p)
+    for p in (
+        r"\byou'?ve (?:hit|reached) your (?:session|usage|weekly|daily|monthly) limit\b",
+        r"\b(?:session|usage|weekly) limit (?:reached|exceeded)\b",
+        r"\bclaude ai usage limit reached\b",
+        r"\binsufficient_quota\b",
+        r"\bcredit balance is too low\b",
+        r"\bout of credits\b",
+        r"\bpurchase more credits\b",
+    )
+)
+#: Critic CLI output that means the subscription LOGIN is dead.
+_CRITIC_AUTH_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p)
+    for p in (
+        r"\bnot logged in\b",
+        r"\bplease (?:run )?/login\b",
+        r"\bplease log ?in again\b",
+        r"\boauth token has expired\b",
+        r"\binvalid authentication credentials\b",
+        r"\bauthentication_error\b",
+        r"\b(?:api error|http|status(?: code)?):? 401\b",
+    )
+)
+#: A limit notice is one short line; longer output is a review.
+_CAPACITY_NOTICE_MAX_CHARS = 400
+
+#: Subscriptions a pinned critic may move to for free, after the configured
+#: family — the same set the worker factory uses (missions/init.py).
+_CRITIC_SUBSCRIPTION_FALLBACK: tuple[str, ...] = ("claude", "codex")
+
+
+def _capacity_signal(text: str) -> tuple[CapacityWaitReason, str] | None:
+    """``(reason, detail)`` when critic CLI output says the subscription has
+    no capacity (spent window / dead login), else None."""
+    low = (text or "").lower()
+    if any(p.search(low) for p in _CRITIC_AUTH_PATTERNS):
+        return "provider_auth", (text or "").strip()[:200]
+    if any(p.search(low) for p in _CRITIC_QUOTA_PATTERNS):
+        return "provider_quota", (text or "").strip()[:200]
+    return None
+
+
+def _note_capacity_signal(
+    family: str,
+    text: str,
+    sink: list[tuple[CapacityWaitReason, str]] | None,
+) -> None:
+    """Record a "no capacity" notice for THIS call (``sink``) and arm the
+    family's flag so the worker factory and the resume loop wait for it."""
+    signal = _capacity_signal(text)
+    if signal is None:
+        return
+    reason, detail = signal
+    if sink is not None:
+        sink.append((reason, detail))
+    if reason == "provider_quota":
+        if family == "claude":
+            from jarvis.claude_quota_state import mark_claude_quota_cooldown
+
+            mark_claude_quota_cooldown()
+        elif family == "codex":
+            from jarvis.codex_quota_state import mark_codex_quota_cooldown
+
+            mark_codex_quota_cooldown()
+    elif family == "codex":
+        # Fingerprinted to the codex login file: a fresh `codex login` lifts it.
+        from jarvis.codex_auth_state import mark_codex_needs_reauth
+
+        mark_codex_needs_reauth()
+
+
+def _critic_family(primary_provider: str | None) -> str:
+    """The subscription family behind a critic provider slug."""
+    if primary_provider == "claude-api":
+        return "claude"
+    if primary_provider in ("chatgpt", "openai-codex", "codex"):
+        return "codex"
+    return primary_provider or "claude"
+
+
+def _critic_family_unavailable(family: str) -> CapacityWaitReason | None:
+    """Why ``family`` cannot grade on a subscription install right now, or
+    None when it can. Offline only."""
+    try:
+        if family == "codex":
+            from jarvis.codex_auth_state import codex_needs_reauth
+            from jarvis.codex_quota_state import codex_in_quota_cooldown
+            from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
+
+            if not _codex_oauth_available() or codex_needs_reauth():
+                return "provider_auth"
+            if codex_in_quota_cooldown():
+                return "provider_quota"
+            return None
+        if family == "claude":
+            from jarvis.claude_quota_state import claude_in_quota_cooldown
+            from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+            if _resolve_claude_binary() is None:
+                return "provider_unavailable"
+            if claude_in_quota_cooldown():
+                return "provider_quota"
+            if not _claude_cli_critic_viable():
+                return "provider_auth"
+            return None
+        from jarvis.api_family_quota_state import api_family_in_cooldown
+        from jarvis.missions.init import _api_key_family_viable
+
+        if _api_key_family_viable(family):
+            return None
+        return "provider_quota" if api_family_in_cooldown(family) else "provider_unavailable"
+    except Exception:  # noqa: BLE001 - an unreadable probe means "not now", logged
+        logger.warning("CriticRunner: capacity probe for %s failed", family, exc_info=True)
+        return "provider_unavailable"
+
+
+def _critic_subscription_only(primary_provider: str | None) -> bool:
+    """Whether the critic is bound by the capacity policy (a subscription
+    install). Same question as the worker factory and the env builder:
+    :func:`jarvis.missions.init.install_is_pinned`. Fails closed."""
+    try:
+        from jarvis.missions.init import install_is_pinned
+
+        return install_is_pinned()
+    except Exception:  # noqa: BLE001 - logged; waiting is the safe answer
+        logger.warning("CriticRunner: pinning signal unreadable — pinned critic", exc_info=True)
+        return True
+
+
 def _claude_cli_critic_viable() -> bool:
     """True when the ``claude`` CLI can actually AUTHENTICATE for a critic spawn.
 
@@ -2173,14 +2541,25 @@ def _claude_cli_critic_viable() -> bool:
     ``claude --print`` critic exits 1 — two attempts per mission →
     ``critic_unavailable`` kills a mission whose worker already delivered.
     Reuses the worker factory's shared auth probe so worker and critic agree.
+    On a subscription install the mission env carries no classic Anthropic key
+    (missions/init.py strips it), so only the subscription login counts there —
+    a stored key the CLI never sees is not viability.
     """
     try:
-        from jarvis.missions.init import _claude_cli_auth_viable
+        from jarvis.missions.init import (
+            _claude_cli_auth_viable,
+            _claude_subscription_login_state,
+            install_is_pinned,
+        )
         from jarvis.missions.workers.claude_direct_worker import (
             _resolve_claude_binary,
         )
 
-        return _resolve_claude_binary() is not None and _claude_cli_auth_viable()
+        if _resolve_claude_binary() is None:
+            return False
+        if install_is_pinned():
+            return _claude_subscription_login_state() is True
+        return _claude_cli_auth_viable()
     except Exception:  # noqa: BLE001 — unreadable probe => not viable
         return False
 

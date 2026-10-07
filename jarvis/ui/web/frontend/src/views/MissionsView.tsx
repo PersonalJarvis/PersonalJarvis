@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { fetchMissions, fetchMissionDetail } from "@/components/missions/api";
 import { EventTimeline } from "@/components/missions/EventTimeline";
+import { CapacityDecisionPanel } from "@/components/missions/CapacityDecisionPanel";
 import { GlobalKillButton } from "@/components/missions/GlobalKillButton";
 import { MissionTree } from "@/components/missions/MissionTree";
 import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
@@ -51,7 +52,7 @@ import {
   useMissionsStore,
 } from "@/components/missions/store";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
-import { useT } from "@/i18n";
+import { fill, useT } from "@/i18n";
 import { agentBrand } from "@/lib/agentBrand";
 import { useEventStore } from "@/store/events";
 import type { MissionPlanReady } from "@/types/missions";
@@ -75,10 +76,17 @@ export function MissionsView() {
   const totalCount = useMissionsStore(useShallow((s) => Object.keys(s.missions).length));
   const activeCount = useMissionsStore(useShallow(selectActiveCount));
   const toolApprovalsQuery = useMissionToolApprovals(selectedMissionId);
-  const pendingApprovalCount =
+  const selectedState = useMissionsStore((s) =>
+    s.selectedMissionId ? (s.missions[s.selectedMissionId]?.state ?? null) : null,
+  );
+  // A mission waiting for capacity has one decision pending: wait, approve
+  // paid use for it, or cancel (CapacityDecisionPanel).
+  const capacityDecisionPending = selectedState === "WAITING_CAPACITY" ? 1 : 0;
+  const pendingToolApprovalCount =
     toolApprovalsQuery.data?.approvals.filter(
       (approval) => approval.expires_at_ns / 1_000_000 > Date.now(),
     ).length ?? 0;
+  const pendingApprovalCount = pendingToolApprovalCount + capacityDecisionPending;
 
   const listQuery = useQuery({
     queryKey: ["missions"],
@@ -222,11 +230,17 @@ export function MissionsView() {
             <TabsContent value="jarvis-agent" className="m-0 flex-1 overflow-hidden">
               <JarvisAgentPanel />
             </TabsContent>
-            <TabsContent value="approvals" className="m-0 flex-1 overflow-hidden">
-              <ToolApprovalPanel
-                missionId={selectedMissionId}
-                query={toolApprovalsQuery}
-              />
+            <TabsContent
+              value="approvals"
+              className="m-0 flex flex-1 flex-col overflow-hidden data-[state=inactive]:hidden"
+            >
+              <CapacityDecisionPanel missionId={selectedMissionId} state={selectedState} />
+              <div className="min-h-0 flex-1">
+                <ToolApprovalPanel
+                  missionId={selectedMissionId}
+                  query={toolApprovalsQuery}
+                />
+              </div>
             </TabsContent>
           </Tabs>
         </div>
@@ -294,7 +308,12 @@ function ReasoningPanel() {
       return (s.eventsByMission[s.selectedMissionId] ?? []).filter(
         (e) =>
           e.payload.event_type === "WorkerProgress" ||
-          e.payload.event_type === "WorkerCorrectionRequired",
+          e.payload.event_type === "WorkerCorrectionRequired" ||
+          // A resume that parked again with no new step done repeats the
+          // card already shown.
+          (e.payload.event_type === "MissionWaitingCapacity" && !e.payload.repeat) ||
+          e.payload.event_type === "MissionCapacityDecision" ||
+          e.payload.event_type === "MissionPaidUsage",
       );
     }),
   );
@@ -341,6 +360,81 @@ function ReasoningPanel() {
                   <span className="font-mono">w{p.worker_id.slice(0, 8)}</span>
                 </div>
                 <p className="mt-1 text-foreground/90">{p.correction_instruction}</p>
+              </li>
+            );
+          }
+          if (env.payload.event_type === "MissionWaitingCapacity") {
+            const p = env.payload;
+            const provider = p.provider || t("missions_view.capacity_wait.provider_fallback");
+            const open = Math.max(p.steps_total - p.steps_done, 0);
+            return (
+              <li
+                key={`${env.event_id}-${idx}`}
+                className="rounded border border-warning/40 bg-warning/10 p-2 text-xs"
+              >
+                <p className="font-medium text-warning">
+                  {fill(t(`missions_view.capacity_wait.${p.reason}`), { provider })}
+                </p>
+                <p className="mt-1 text-foreground/90">
+                  {p.checkpoint_path && `${t("missions_view.capacity_wait.saved")} `}
+                  {p.steps_total > 1
+                    ? fill(t("missions_view.capacity_wait.progress"), {
+                        done: p.steps_done,
+                        total: p.steps_total,
+                        open,
+                      })
+                    : t("missions_view.capacity_wait.progress_single")}
+                  {p.files_saved > 0 &&
+                    ` ${fill(t("missions_view.capacity_wait.files"), { files: p.files_saved })}`}
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  {t(
+                    p.reason === "provider_auth"
+                      ? "missions_view.capacity_wait.wait_auth"
+                      : "missions_view.capacity_wait.wait",
+                  )}{" "}
+                  {t("missions_view.capacity_wait.paid")}
+                </p>
+              </li>
+            );
+          }
+          if (env.payload.event_type === "MissionCapacityDecision") {
+            const p = env.payload;
+            return (
+              <li
+                key={`${env.event_id}-${idx}`}
+                className="rounded border border-border/60 bg-card/30 p-2 text-xs"
+              >
+                <p className="text-foreground/90">
+                  {t(`capacity_decision.logged.${p.decision}`)}
+                  {p.decision === "approve_paid" && p.provider && p.model
+                    ? ` ${fill(t("capacity_decision.logged_offer"), {
+                        provider: p.provider,
+                        model: p.model,
+                        cost: `$${(p.estimated_cost_usd ?? 0).toFixed(2)}`,
+                        cap: `$${(p.cost_cap_usd ?? 0).toFixed(2)}`,
+                      })}`
+                    : ""}
+                </p>
+              </li>
+            );
+          }
+          if (env.payload.event_type === "MissionPaidUsage") {
+            const p = env.payload;
+            return (
+              <li
+                key={`${env.event_id}-${idx}`}
+                className="rounded border border-border/60 bg-card/30 p-2 text-xs"
+              >
+                <p className="text-foreground/90">
+                  {fill(t(p.automatic ? "capacity_decision.paid_usage_automatic" : "capacity_decision.paid_usage"), {
+                    provider: p.provider,
+                    model: p.model,
+                    cost: `$${p.cost_usd.toFixed(4)}`,
+                    estimate: `$${p.estimated_cost_usd.toFixed(2)}`,
+                    cap: `$${p.cost_cap_usd.toFixed(2)}`,
+                  })}
+                </p>
               </li>
             );
           }
