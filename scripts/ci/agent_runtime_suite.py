@@ -88,6 +88,7 @@ SUITE: tuple[str, ...] = (
     "tests/unit/society/test_roster.py",
     "tests/unit/society/test_routines.py",
     "tests/unit/society/test_seat_brain_runtime.py",
+    "tests/unit/society/test_runtime_grant_revocation.py",
     "tests/unit/ui/web/test_society_routes.py",
     "tests/contract/test_routine_chats.py",
 )
