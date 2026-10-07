@@ -143,6 +143,8 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 [macOS（Intel）](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-macOS-x64.dmg) ·
 [Linux AppImage](https://github.com/PersonalJarvis/PersonalJarvis/releases/latest/download/PersonalJarvis-Linux-x86_64.AppImage)
 
+> **Windows：** SignPath Foundation 开源项目批准后，Windows 安装程序将按照[代码签名政策（Code signing policy）](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/code-signing-policy.md)签名。Free code signing provided by SignPath.io, certificate by SignPath Foundation.
+
 > **macOS：** 磁盘映像尚未经过 Apple 公证，因此首次启动时需要前往
 > **系统设置 > 隐私与安全性 > 仍要打开**（macOS 15；在 macOS 14 及更早版本上可以右键点按 > 打开）。
 > 上面的一行安装命令不需要这一步。
