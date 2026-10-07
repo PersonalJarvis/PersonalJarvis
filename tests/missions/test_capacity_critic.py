@@ -1,8 +1,13 @@
 """A critic without capacity parks the mission; it never fails delivered work,
-re-runs a worker, or grades on another family or a paid key (2026-10-06).
+re-runs a worker, or grades on a paid key without consent (2026-10-06,
+revised 2026-10-07).
 
-- The pinned critic stays on its subscription: no codex/claude cross-over,
-  no per-token API critic — a worker's paid approval never covers critic calls.
+- The critic of a subscription install grades on its subscription, else on
+  another connected subscription (claude <-> codex, free), else on a paid key
+  only through the mission's consent gate (setting or approval — an approval
+  covers critic calls).
+- Only a vendor's own "spent window" / "dead login" notice is a capacity
+  signal; a transient overload or rate limit is not, and arms no cooldown.
 - A critic that says "no capacity" parks the mission with the review pending.
 - A resume runs ONLY the missing review on the saved worker result.
 """
@@ -45,12 +50,20 @@ def _fresh_cooldowns():
     clear_claude_quota_cooldown()
 
 
-def _pin(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A Claude-subscription install: the claude CLI is present."""
+def _pin(monkeypatch: pytest.MonkeyPatch, *, codex_login: bool = False) -> None:
+    """A Claude-subscription install: the claude CLI is present and logged in;
+    codex is logged in only when asked."""
+    monkeypatch.setattr("jarvis.missions.init.install_is_pinned", lambda: True)
     monkeypatch.setattr(
         "jarvis.missions.workers.claude_direct_worker._resolve_claude_binary",
         lambda: "/usr/local/bin/claude",
     )
+    monkeypatch.setattr("jarvis.missions.init._claude_subscription_login_state", lambda: True)
+    monkeypatch.setattr(
+        "jarvis.missions.workers.codex_direct_worker._codex_oauth_available",
+        lambda: codex_login,
+    )
+    monkeypatch.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: False)
 
 
 def _no_paid_critic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,18 +120,19 @@ async def test_dead_claude_login_parks_instead_of_crossing_families(
     assert (exc.value.reason, exc.value.provider) == ("provider_auth", "claude")
 
 
-async def test_codex_critic_never_falls_back_to_claude(
+async def test_spent_codex_critic_without_another_subscription_parks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    _pin(monkeypatch, codex_login=True)
     monkeypatch.setattr(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: ("chatgpt", ""),
     )
-    monkeypatch.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: False)
     monkeypatch.setattr("jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: True)
+    monkeypatch.setattr("jarvis.missions.critic.runner._claude_cli_critic_viable", lambda: False)
 
     async def _no_claude(self: Any, **_k: Any) -> None:
-        raise AssertionError("a codex-pinned critic must not run on Claude")
+        raise AssertionError("a logged-out Claude critic must not run")
 
     monkeypatch.setattr(CriticRunner, "_invoke_via_claude_direct", _no_claude)
     _no_paid_critic(monkeypatch)
@@ -126,6 +140,167 @@ async def test_codex_critic_never_falls_back_to_claude(
     with pytest.raises(CriticCapacityUnavailable) as exc:
         await _review(tmp_path)
     assert (exc.value.reason, exc.value.provider) == ("provider_quota", "codex")
+
+
+def _approve_verdict() -> CriticVerdict:
+    return CriticVerdict(
+        verdict="approve",
+        axes={ax: CriticAxis(status="pass", evidence=["x:1"]) for ax in REQUIRED_AXES},
+        issues=[],
+        correction_instruction="",
+        summary="ok",
+        summary_de="ok",
+        confidence=0.9,
+        suggested_next_action="accept",
+    )
+
+
+async def test_spent_codex_critic_grades_on_the_claude_subscription(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Subscription to subscription is free: the restored codex -> Claude path."""
+    _pin(monkeypatch, codex_login=True)
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_critic_provider_model",
+        lambda: ("chatgpt", ""),
+    )
+    monkeypatch.setattr("jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: True)
+    monkeypatch.setattr("jarvis.missions.critic.runner._claude_cli_critic_viable", lambda: True)
+    graded: list[str] = []
+
+    async def _claude(self: Any, **_k: Any) -> CriticVerdict:
+        graded.append("claude")
+        return _approve_verdict()
+
+    monkeypatch.setattr(CriticRunner, "_invoke_via_claude_direct", _claude)
+    _no_paid_critic(monkeypatch)
+
+    verdict = await _review(tmp_path)
+    assert verdict.verdict == "approve" and graded == ["claude"]
+
+
+async def test_spent_claude_critic_grades_on_the_codex_subscription(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_direct(monkeypatch, stdout=SESSION_LIMIT, returncode=1)
+    _pin(monkeypatch, codex_login=True)
+    monkeypatch.setattr("jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: False)
+    _no_paid_critic(monkeypatch)
+    seen: dict[str, Any] = {}
+
+    async def _codex(self: Any, **kwargs: Any) -> CriticVerdict:
+        seen.update(kwargs)
+        return _approve_verdict()
+
+    monkeypatch.setattr(CriticRunner, "_invoke_via_codex_direct", _codex)
+
+    verdict = await _review(tmp_path)
+    assert verdict.verdict == "approve"
+    assert seen["model"] == ""  # a Claude model id is never handed to codex
+    assert claude_in_quota_cooldown()  # the spent window is remembered
+
+
+# --- What counts as a capacity signal ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("You've hit your session limit · resets 11:10pm", "provider_quota"),
+        ("Claude AI usage limit reached|1760000000", "provider_quota"),
+        ("You've hit your usage limit. Upgrade to Pro or try again at Jul 31st", "provider_quota"),
+        ("Error: insufficient_quota", "provider_quota"),
+        ("Your credit balance is too low to access the Anthropic API.", "provider_quota"),
+        ("Invalid API key · Please run /login", "provider_auth"),
+        ("Failed to authenticate. API Error: 401 Invalid authentication credentials",
+         "provider_auth"),
+        ("OAuth token has expired. Please obtain a new token.", "provider_auth"),
+        # Transient or unrelated — never a capacity signal:
+        ("API Error: 429 Too Many Requests (rate limit) — retry shortly", None),
+        ('API Error: 529 {"type":"overloaded_error","message":"Overloaded"}', None),
+        ("API Error: 503 Service Unavailable", None),
+        ("The patch adds a rate limit and a quota check; unknown users get 401.", None),
+        ("error: tests failed (2 of 429 passed)", None),
+    ],
+)
+def test_only_anchored_vendor_notices_are_capacity_signals(
+    text: str, expected: str | None
+) -> None:
+    from jarvis.missions.critic.runner import _capacity_signal
+
+    signal = _capacity_signal(text)
+    assert (signal[0] if signal else None) == expected
+
+
+async def test_a_transient_overload_arms_no_quota_cooldown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jarvis.missions.critic.verdict import CriticSchemaInvalid
+
+    _patch_direct(
+        monkeypatch,
+        stdout='API Error: 529 {"type":"overloaded_error"} rate limit, 429',
+        returncode=1,
+    )
+    _pin(monkeypatch)
+    _no_paid_critic(monkeypatch)
+
+    with pytest.raises(CriticSchemaInvalid):
+        await _review(tmp_path)
+    assert not claude_in_quota_cooldown()
+
+
+async def test_capacity_signals_belong_to_one_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Finding 3: two parallel reviews on one runner. A's spent-window notice
+    must reach A even though B (a non-capacity failure) starts in between —
+    the signal is returned per call, never kept on the shared runner."""
+    import asyncio
+
+    from jarvis.missions.critic.runner import _note_capacity_signal
+    from jarvis.missions.critic.verdict import CriticSchemaInvalid
+
+    _pin(monkeypatch)
+    _no_paid_critic(monkeypatch)
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._resolve_critic_provider_model",
+        lambda: ("claude-api", "claude-sonnet-4-6"),
+    )
+    monkeypatch.setattr("jarvis.missions.critic.runner._claude_cli_critic_viable", lambda: True)
+    a_noted, b_started = asyncio.Event(), asyncio.Event()
+
+    async def _claude(self: Any, *, prompt: str, capacity_signals: Any = None, **_k: Any):
+        if "MISSION-A" in prompt:
+            _note_capacity_signal("claude", SESSION_LIMIT, capacity_signals)
+            a_noted.set()
+            await b_started.wait()
+            return None
+        await a_noted.wait()
+        b_started.set()
+        return None  # B: garbage output, not a capacity problem
+
+    monkeypatch.setattr(CriticRunner, "_invoke_via_claude_direct", _claude)
+    monkeypatch.setattr("jarvis.claude_quota_state.claude_in_quota_cooldown", lambda **_k: False)
+    runner = CriticRunner()
+
+    async def review(tag: str) -> Any:
+        return await runner.run(
+            mission_prompt=f"Build {tag}",
+            worker_diff="diff --git a/x b/x\n+x\n",
+            worker_log="log",
+            prior_reflections="",
+            iteration=0,
+            worktree=tmp_path,
+            env={},
+        )
+
+    a, b = await asyncio.gather(
+        review("MISSION-A"), review("MISSION-B"), return_exceptions=True
+    )
+    assert isinstance(a, CriticCapacityUnavailable) and a.reason == "provider_quota"
+    assert isinstance(b, CriticSchemaInvalid)
+    assert not hasattr(runner, "_capacity_signal")
 
 
 async def test_a_long_review_that_mentions_quotas_is_not_a_capacity_signal(
@@ -259,12 +434,13 @@ async def test_capacity_waits_never_count_toward_failing_the_review(
     assert factory.spawned() == 1
 
 
-async def test_paid_run_with_spent_critic_parks_without_paying_again(
+async def test_paid_run_without_critic_consent_parks_without_paying_again(
     manager: MissionManager, tmp_path: Path, delivered: None
 ) -> None:
-    """The approved paid worker runs once; its critic is spent → park. The
-    approval dies with the run: the review later resumes on the subscription,
-    and neither the paid worker nor a paid critic runs again."""
+    """The approved paid worker runs once; its critic cannot grade (a critic
+    that ignores the gate) → park. The approval dies with the run: the review
+    later resumes on the subscription, and neither the paid worker nor a paid
+    critic runs again."""
     offer = PaidOffer(
         provider="claude-api",
         model="claude-sonnet-4-6",

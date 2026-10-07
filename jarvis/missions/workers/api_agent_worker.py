@@ -41,6 +41,13 @@ from typing import Any, Literal
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.costs.ledger import usage_context
+from jarvis.missions.capacity import (
+    PaidCallGate,
+    PaidCallRefused,
+    PaidReservation,
+    max_call_cost_usd,
+    usage_cost_usd,
+)
 
 from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool_async
 from .capabilities import WorkerCapabilityInventory
@@ -140,21 +147,33 @@ _DEFAULT_MODEL: dict[str, str] = {
 _DEFAULT_MODEL["vertex"] = _DEFAULT_MODEL["gemini"]
 
 
-class _CostCapReached(RuntimeError):
-    """An approved paid run spent its ceiling; the loop stops right here."""
+def _book_call(
+    gate: PaidCallGate | None, reservation: PaidReservation | None, call_usd: float | None
+) -> float:
+    """USD to add to a spawn's spend for one model call. A gated (paid) call
+    is booked on the mission ledger — its whole reservation when it reported
+    no usage; an ungated call counts what it reported."""
+    if gate is None or reservation is None:
+        return call_usd or 0.0
+    return gate.commit(reservation, call_usd)
 
 
-def _usage_cost_usd(model: str, usage: dict[str, int]) -> float:
-    """USD for one call's usage block (canonical keys: uncached input,
-    output, cache hits)."""
-    from jarvis.brain.cost import calculate_cost_usd
+def _request_bytes(req: BrainRequest) -> int:
+    """UTF-8 bytes a request sends (messages, system prompt, tool specs) —
+    the input side of a paid call's reservation."""
 
-    return calculate_cost_usd(
-        model,
-        int(usage.get("input_tokens") or 0),
-        int(usage.get("output_tokens") or 0),
-        int(usage.get("cache_hit_tokens") or 0),
-    )
+    def size(value: Any) -> int:
+        text = value if isinstance(value, str) else json.dumps(
+            value, ensure_ascii=False, default=str
+        )
+        return len(text.encode("utf-8"))
+
+    total = size(req.system or "")
+    for message in req.messages:
+        total += size(message.content)
+    if req.tools:
+        total += size(list(req.tools))
+    return total
 
 
 def _resolve_worker_model(provider: str, explicit: str) -> str:
@@ -261,15 +280,17 @@ class ApiAgentWorker:
         *,
         capability_inventory: WorkerCapabilityInventory | None = None,
         pinned_model: str = "",
-        cost_cap_usd: float | None = None,
+        paid_gate: PaidCallGate | None = None,
     ) -> None:
         self.provider = (provider or "").strip().lower()
-        # The exact model a user approved for paid use on this mission
-        # (jarvis/missions/capacity.py). Wins over every other model source.
+        # The exact model of a paid fallback run (jarvis/missions/capacity.py).
+        # Wins over every other model source.
         self.pinned_model = (pinned_model or "").strip()
-        # Hard spend ceiling of an approved paid run: the loop stops after the
-        # call that reaches it. None = no ceiling (the user's own key choice).
-        self.cost_cap_usd = cost_cap_usd
+        # Consent + caps in front of EVERY model call of a paid fallback run:
+        # each call reserves its maximum cost first and stops the loop when
+        # consent is gone or a cap is reached. None = the user's own chosen
+        # provider (no fallback), billed as configured.
+        self.paid_gate = paid_gate
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
         self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
@@ -352,8 +373,10 @@ class ApiAgentWorker:
             stream_path.write_text("", encoding="utf-8")
         written: list[str] = []
         # What this spawn cost, from the usage each call reports — carried on
-        # the terminal result so a paid mission can log its real spend.
+        # the terminal result so a paid mission can log its real spend. A paid
+        # call that reports no usage counts its whole reservation.
         spent_usd = 0.0
+        gate = self.paid_gate
         broker_specs = broker_binding.tool_specs if broker_binding is not None else ()
         local_names = {str(spec["name"]) for spec in WORKER_TOOL_SPECS}
         all_tool_specs = WORKER_TOOL_SPECS + tuple(
@@ -461,6 +484,19 @@ class ApiAgentWorker:
                 )
                 text_parts: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
+                reservation: PaidReservation | None = None
+                if gate is not None:
+                    # Raises PaidCallRefused — consent revoked or a cap hit —
+                    # BEFORE anything is billed; the orchestrator parks.
+                    reservation = gate.reserve(
+                        max_call_cost_usd(
+                            resolved_model,
+                            input_bytes=_request_bytes(req),
+                            max_output_tokens=_MAX_TOKENS,
+                        )
+                    )
+                call_usd: float | None = None
+                booked = False
                 try:
                     # Override credential lookup only for this awaited provider
                     # call. ContextVar isolation keeps concurrent Brain and
@@ -470,7 +506,9 @@ class ApiAgentWorker:
                             _stream = brain.complete(req)
                         async for delta in _stream:
                             if delta.usage:
-                                spent_usd += _usage_cost_usd(resolved_model, delta.usage)
+                                call_usd = (call_usd or 0.0) + usage_cost_usd(
+                                    resolved_model, delta.usage
+                                )
                             if delta.content:
                                 text_parts.append(delta.content)
                             if delta.tool_call:
@@ -494,6 +532,8 @@ class ApiAgentWorker:
                         or ("404" in low and "tool" in low)
                     )
                     if turn == 0 and no_tool_endpoints:
+                        spent_usd += _book_call(gate, reservation, call_usd)
+                        booked = True
                         res = ClaudeResult(
                             subtype="error_during_execution",
                             is_error=True,
@@ -508,12 +548,12 @@ class ApiAgentWorker:
                         yield res
                         return
                     raise
-
-                if self.cost_cap_usd is not None and spent_usd >= self.cost_cap_usd:
-                    raise _CostCapReached(
-                        f"approved cost cap of ${self.cost_cap_usd:.2f} reached "
-                        f"(${spent_usd:.2f} spent)"
-                    )
+                finally:
+                    # A call that died mid-stream may still have billed:
+                    # without a usage report its whole reservation counts.
+                    if not booked:
+                        spent_usd += _book_call(gate, reservation, call_usd)
+                        booked = True
 
                 assistant_text = "".join(text_parts).strip()
                 if assistant_text:
@@ -625,8 +665,8 @@ class ApiAgentWorker:
         except Exception as exc:  # noqa: BLE001
             wall_ms = int((time.perf_counter() - t0) * 1000)
             logger.warning("ApiAgentWorker[%s] failed: %s", worker_id, exc, exc_info=True)
-            # The cost cap is the approval's limit, not a broken key.
-            if not isinstance(exc, _CostCapReached) and _error_means_family_unusable(str(exc)):
+            # A refused paid call is the consent/cap rule, not a broken key.
+            if not isinstance(exc, PaidCallRefused) and _error_means_family_unusable(str(exc)):
                 # Remember that THIS key cannot run right now, fingerprinted so
                 # a freshly saved key lifts the block instantly. The factory's
                 # family walk skips the family on the retry and crosses to the

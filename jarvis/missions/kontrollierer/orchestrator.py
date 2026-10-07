@@ -39,14 +39,25 @@ from typing import Any, Final, Literal
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
 from ..capacity import (
+    CAPACITY_WAIT_REASON_VALUES,
     MAX_REVIEW_RETRIES,
+    PAID_MISSION_CAP_USD,
     CapacityDecision,
     CapacityDecisionRejected,
+    CapacityPolicy,
+    CapacityWaitReason,
     CriticCapacityUnavailable,
+    MissionPaidLedger,
+    PaidCallGate,
     PaidOffer,
     PaidOption,
+    RouteDecision,
     WorkerCapacityUnavailable,
+    decide_route,
+    delete_checkpoint,
+    is_subscription_family,
     read_checkpoint,
+    resume_backoff_s,
     worker_family,
     write_checkpoint,
 )
@@ -864,13 +875,18 @@ class Kontrollierer:
         # Phase-5 safety hooks (all optional — None = no-op):
         safety_enabled: bool = True,
         extra_blocked_globs: tuple[str, ...] = (),
-        # The paid-API alternative offered for a parked mission (None = no
-        # offer is ever made). Used only after the user approves it for one
-        # mission — see `decide_capacity`.
+        # The paid-API alternative for a mission no subscription can run
+        # (None = paid use never happens). Used on the user's consent only:
+        # the [missions] paid_api_fallback setting or a per-mission approval
+        # — see jarvis/missions/capacity.py and `decide_capacity`.
         paid_option: PaidOption | None = None,
+        # Live answers for capacity decisions (pinned install, paid-fallback
+        # setting, daily paid ledger). None = the install's real ones.
+        capacity_policy: CapacityPolicy | None = None,
     ) -> None:
         self._manager = manager
         self._paid_option = paid_option
+        self._policy = capacity_policy or CapacityPolicy()
         self._decomposer = decomposer
         self._runner = critic_runner
         self._worktrees = worktree_mgr
@@ -924,11 +940,25 @@ class Kontrollierer:
         # ``_review_failures`` counts non-capacity critic failures per step.
         self._pending_review: dict[str, set[str]] = {}
         self._review_failures: dict[str, dict[str, int]] = {}
-        # Approved paid runs: the exact offer the user accepted, and what the
-        # run has spent so far. In memory on purpose — an approval covers one
-        # run of one mission and dies with it (or with the process).
+        # Approved paid runs: the exact offer the user accepted. In memory on
+        # purpose — an approval covers one run of one mission and dies with it
+        # (or with the process).
         self._paid_approval: dict[str, PaidOffer] = {}
-        self._paid_spent: dict[str, float] = {}
+        # Per-mission paid-use ledger, shared by parallel steps, worker and
+        # critic calls (reservation before every paid call). Opened per run
+        # from the mission's recorded MissionPaidUsage, so the cap is
+        # cumulative over every run of the mission.
+        self._ledgers: dict[str, MissionPaidLedger] = {}
+        # What this run paid, per (provider, model, automatic) — one
+        # MissionPaidUsage event each when the run ends.
+        self._run_paid: dict[str, dict[tuple[str, str, bool], dict[str, float]]] = {}
+        # The subscription family a mission lacked capacity on (what a park
+        # waits for — never the paid key it may have moved to).
+        self._wait_family: dict[str, str] = {}
+        # Resume backoff bookkeeping: consecutive parks without progress and
+        # how many steps were pending review when the run started.
+        self._resume_idle_parks: dict[str, int] = {}
+        self._resume_pending_before: dict[str, int] = {}
         # Paid runs started by an approval; referenced so they are not
         # garbage-collected mid-flight.
         self._background_runs: set[asyncio.Task[Any]] = set()
@@ -970,6 +1000,9 @@ class Kontrollierer:
         the dying task cannot race the user's decision (``_safe_transition``
         and ``_fail_mission`` both tolerate the already-terminal state).
         """
+        # The caller made the mission terminal (CANCELLED): a parked mission's
+        # checkpoint has nothing left to resume.
+        self._drop_checkpoint(mission_id)
         task = self._running_missions.get(mission_id)
         if task is None or task.done():
             return False
@@ -1012,6 +1045,14 @@ class Kontrollierer:
         for mission_id in list(self._running_missions.keys()):
             task = self._running_missions.get(mission_id)
             if task is None or task.done():
+                continue
+            # A mission resumed from a capacity checkpoint is parked again,
+            # not cancelled: its checkpoint still holds the work, and the
+            # next start resumes it (jarvis/missions/capacity.py).
+            if await self._repark_on_shutdown(mission_id, reason):
+                task.cancel()
+                tasks.append(task)
+                finalized.append(mission_id)
                 continue
             transitioned = False
             try:
@@ -1119,6 +1160,43 @@ class Kontrollierer:
         return await self._execute_plan(mission_id, view.prompt, plan)
 
     async def _execute_plan(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        *,
+        done_task_ids: frozenset[str] = frozenset(),
+        restore_dirs: dict[str, Path] | None = None,
+        review_only_task_ids: frozenset[str] = frozenset(),
+    ) -> MissionState:
+        """One run of a mission's plan, with its paid-use ledger open.
+
+        The ledger starts from what the mission already paid in earlier runs
+        (cumulative cap); a manual approval of this run grants up to
+        ``PAID_MISSION_CAP_USD`` more. What this run paid is logged as
+        ``MissionPaidUsage`` when it ends.
+        """
+        ledger = MissionPaidLedger(await self._mission_paid_spent(mission_id))
+        if mission_id in self._paid_approval:
+            ledger.grant_manual()
+        self._ledgers[mission_id] = ledger
+        self._run_paid[mission_id] = {}
+        try:
+            return await self._execute_plan_steps(
+                mission_id,
+                prompt,
+                plan,
+                done_task_ids=done_task_ids,
+                restore_dirs=restore_dirs,
+                review_only_task_ids=review_only_task_ids,
+            )
+        finally:
+            await self._record_paid_usage(mission_id)
+            self._ledgers.pop(mission_id, None)
+            self._run_paid.pop(mission_id, None)
+            self._wait_family.pop(mission_id, None)
+
+    async def _execute_plan_steps(
         self,
         mission_id: str,
         prompt: str,
@@ -1388,6 +1466,27 @@ class Kontrollierer:
                     self._restore_task_workspace, worktree, restore_dir
                 )
 
+            if review_only and not restored:
+                # Only the review is owed and the delivered result could not
+                # be put back: re-running the worker would redo (and possibly
+                # re-bill) finished work. Park; after MAX_REVIEW_RETRIES such
+                # failures the step fails honestly as critic_unavailable.
+                logger.warning(
+                    "Task %s: the saved result for its pending review could not "
+                    "be restored — parking instead of re-running the worker",
+                    step.task_id,
+                )
+                try:
+                    return self._park_for_review(
+                        mission_id, step, "provider_unavailable", self._critic_family(),
+                        "the saved result could not be restored for review",
+                        counts_as_failure=True,
+                    )
+                finally:
+                    await asyncio.shield(
+                        asyncio.to_thread(self._remove_worktree_only, worktree)
+                    )
+
             try:
                 return await self._run_iterations(
                     mission_id=mission_id,
@@ -1417,6 +1516,15 @@ class Kontrollierer:
         """``WorktreeManager.create``, one at a time. Worker thread only."""
         with self._worktree_lock:
             return self._worktrees.create(**kwargs)
+
+    def _remove_worktree_only(self, worktree: Path) -> None:
+        """Remove a workspace WITHOUT archiving it — its archive must keep the
+        earlier, delivered result. Worker thread only."""
+        try:
+            with self._worktree_lock:
+                self._worktrees.remove(worktree, force=True)
+        except Exception:  # noqa: BLE001
+            logger.warning("worktree cleanup failed for %s", worktree, exc_info=True)
 
     def _finish_task_workspace(
         self, *, worktree: Path, mission_dir: Path, task_id: str
@@ -1550,6 +1658,7 @@ class Kontrollierer:
                 # is still archived. Only the review is missing — run it, never
                 # the worker again (and never on a paid approval).
                 worker = None
+                paid_gate: PaidCallGate | None = None
                 spawn_result = self._SpawnResult(
                     worker_id=f"review-{step.task_id[:13]}",
                     cost_usd=0.0,
@@ -1560,7 +1669,7 @@ class Kontrollierer:
                 # Worker spawn (real or fake depending on the factory). A factory
                 # that refuses to switch to a billing fallback parks the task.
                 try:
-                    worker = self._make_worker(mission_id, step)
+                    worker, paid_gate = self._make_worker(mission_id, step)
                 except WorkerCapacityUnavailable as exc:
                     logger.warning(
                         "Task %s iter %d: no worker capacity (%s) — parking the "
@@ -1603,23 +1712,29 @@ class Kontrollierer:
                         return TaskOutcome.ERROR
                     continue
 
-            approval = self._paid_approval.get(mission_id)
-            if approval is not None:
-                spent = self._paid_spent.get(mission_id, 0.0) + float(
-                    spawn_result.cost_usd or 0.0
-                )
-                self._paid_spent[mission_id] = spent
-                if spent >= approval.cost_cap_usd:
-                    # The approved ceiling is hard: stop before the critic and
-                    # park; the work so far is archived with the checkpoint.
+            if paid_gate is not None:
+                # Whatever the worker reported beyond its gated calls is
+                # charged too (fail closed), then: consent gone or a cap hit
+                # mid-run parks the mission; the work so far is archived
+                # with the checkpoint and restored on resume.
+                automatic = paid_gate.last_automatic
+                if automatic is None:  # the worker never went through the gate
+                    automatic = mission_id not in self._paid_approval
+                paid_gate.settle_reported(spawn_result.cost_usd, automatic=automatic)
+                refusal = paid_gate.refusal
+                if refusal is None and spawn_result.worker_error and self._paid_exhausted(
+                    mission_id
+                ):
+                    refusal = "paid_cap_reached"
+                if refusal is not None:
                     logger.warning(
-                        "Task %s iter %d: approved paid run reached its cap "
-                        "($%.4f of $%.2f) — parking the mission",
-                        step.task_id, iteration, spent, approval.cost_cap_usd,
+                        "Task %s iter %d: paid run on %s stopped (%s) — parking "
+                        "the mission",
+                        step.task_id, iteration, paid_gate.provider, refusal,
                     )
                     self._capacity_wait[mission_id] = {
-                        "reason": "paid_cap_reached",
-                        "provider": approval.provider,
+                        "reason": refusal,
+                        "provider": paid_gate.provider,
                         "error_detail": None,
                     }
                     # No iteration diff recorded: the task's final archive
@@ -1851,8 +1966,10 @@ class Kontrollierer:
                     if is_timeout:
                         return TaskOutcome.TIMED_OUT
                     # A spent quota window is not a fault of the work: park
-                    # the mission with its checkpoint instead of failing it.
-                    if error_class == "provider_quota":
+                    # the mission with its checkpoint instead of failing it —
+                    # on a subscription install. A key-only install keeps its
+                    # fail-or-cross behaviour (AP-22); it never parks.
+                    if error_class == "provider_quota" and self._policy.pinned():
                         self._capacity_wait[mission_id] = {
                             "reason": "provider_quota",
                             "provider": worker_family(worker),
@@ -1942,6 +2059,13 @@ class Kontrollierer:
                     f"{spawn_result.supervisor_tool_refusals}\n"
                 )
             env = self._env_builder(mission_dir)
+            # A paid critic call is possible only on consent (setting or an
+            # approval of this run); the gate re-checks it per call. Off the
+            # loop: it reads the config and the key store.
+            critic_gate = await asyncio.to_thread(self._critic_gate, mission_id)
+            critic_kwargs: dict[str, Any] = (
+                {"paid_gate": critic_gate} if critic_gate is not None else {}
+            )
             try:
                 verdict = await self._runner.run(
                     mission_prompt=mission_prompt,
@@ -1952,12 +2076,13 @@ class Kontrollierer:
                     worktree=worktree,
                     env=env,
                     security_tag=_detect_security_tag(step.prompt),
+                    **critic_kwargs,
                 )
             except CriticCapacityUnavailable as exc:
-                # The critic's own subscription has no capacity. The worker's
-                # result is kept (archived with the checkpoint) and only the
-                # review resumes later — no worker re-run, no other family,
-                # no paid critic.
+                # No critic can grade: no subscription has capacity and no
+                # consented paid call was possible. The worker's result is kept
+                # (archived with the checkpoint) and only the review resumes
+                # later — no worker re-run.
                 logger.warning(
                     "Task %s iter %d: critic has no capacity (%s) — parking the "
                     "mission with the review pending",
@@ -3138,24 +3263,63 @@ class Kontrollierer:
         return resumed
 
     async def _capacity_is_back(self, mission_id: str) -> bool:
-        """Whether the worker a parked mission is pinned to can run again.
+        """Whether a parked mission can make progress now, offline.
 
-        Asks the worker factory — the same offline rules (quota cooldowns,
-        login state, key viability) that parked the mission, so the check
-        never calls a provider. A factory answer on a DIFFERENT provider
-        family is not capacity: switching needs the user's approval.
+        - Its backoff (repeat parks without progress) must have expired.
+        - A step that still needs its worker: the worker factory answers on a
+          subscription (any — moving between subscriptions is free) or on the
+          metered provider the mission was configured for.
+        - A step whose review is pending: a critic has capacity.
+        - Otherwise: consented automatic paid use (setting ON, caps left).
+
+        Never calls a provider: the factory and critic probes read login
+        files, quota/auth flags and key viability only.
         """
         mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
         checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
         plan = _plan_from_checkpoint(checkpoint)
         if checkpoint is None or plan is None:
             return True  # resume_mission fails it honestly (checkpoint_missing)
+        next_ms = checkpoint.get("next_resume_ms")
+        if isinstance(next_ms, (int, float)) and not isinstance(next_ms, bool):
+            if now_ms() < next_ms:
+                return False
         done = _done_task_ids(checkpoint)
         open_steps = [step for step in plan.steps if step.task_id not in done]
         if not open_steps:
             return True
+        pending = {
+            str(entry.get("task_id"))
+            for entry in checkpoint.get("steps") or []
+            if isinstance(entry, dict) and entry.get("pending_review") is True
+        }
+        work_steps = [step for step in open_steps if step.task_id not in pending]
+        review_steps = [step for step in open_steps if step.task_id in pending]
+        pinned = checkpoint.get("provider")
+        pinned_family = pinned if isinstance(pinned, str) and pinned else None
+        if work_steps and await self._worker_capacity_back(
+            mission_id, work_steps[0], pinned_family
+        ):
+            return True
+        if review_steps and await asyncio.to_thread(self._critic_capacity_back):
+            return True
+        raw_reason = checkpoint.get("reason")
+        reason: CapacityWaitReason = (
+            raw_reason  # type: ignore[assignment]
+            if raw_reason in CAPACITY_WAIT_REASON_VALUES
+            else "provider_quota"
+        )
+        spent = await self._mission_paid_spent(mission_id)
+        decision = await asyncio.to_thread(
+            self._automatic_paid_decision, reason, pinned_family, spent
+        )
+        return decision.route == "paid"
+
+    async def _worker_capacity_back(
+        self, mission_id: str, step: Step, pinned_family: str | None
+    ) -> bool:
         try:
-            worker = await asyncio.to_thread(self._worker_factory, open_steps[0])
+            worker = await asyncio.to_thread(self._worker_factory, step)
         except WorkerCapacityUnavailable:  # still no capacity: stay parked, ask again next tick
             return False
         except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
@@ -3164,16 +3328,47 @@ class Kontrollierer:
                 exc_info=True,
             )
             return False
-        pinned = checkpoint.get("provider")
         family = worker_family(worker)
-        if isinstance(pinned, str) and pinned and family != pinned:
-            logger.warning(
-                "Mission %s stays parked: it is pinned to %s, the configured "
-                "worker is now %s — switching provider needs approval",
-                mission_id, pinned, family,
-            )
+        if is_subscription_family(family) or family == pinned_family:
+            return True
+        if not await asyncio.to_thread(self._policy.pinned):
+            return True  # a key-only install's keys are its primary (AP-22)
+        logger.info(
+            "Mission %s stays parked: the configured worker is now the metered "
+            "%s, which needs the user's consent", mission_id, family,
+        )
+        return False
+
+    def _critic_capacity_back(self) -> bool:
+        probe = getattr(self._runner, "capacity_available", None)
+        if not callable(probe):
+            return True
+        try:
+            return bool(probe())
+        except Exception:  # noqa: BLE001 - a broken probe means "not yet", logged
+            logger.warning("critic capacity probe failed — staying parked", exc_info=True)
             return False
-        return True
+
+    def _automatic_paid_decision(
+        self, reason: CapacityWaitReason, pinned_family: str | None, spent_usd: float
+    ) -> RouteDecision:
+        """Would the paid-fallback SETTING let a parked mission go on now?
+        (A manual approval resumes through ``decide_capacity`` instead.)"""
+        enabled = self._policy.paid_fallback_enabled()
+        offer = None
+        if enabled and self._paid_option is not None and self._policy.pinned():
+            offer = self._paid_option.offer(
+                pinned_family=pinned_family, open_steps=1, reason=reason
+            )
+        return decide_route(
+            subscription_ok=False,
+            unavailable_reason=reason,
+            manual_approval=False,
+            paid_fallback_enabled=enabled,
+            paid_option_available=offer is not None,
+            mission_remaining_usd=max(PAID_MISSION_CAP_USD - spent_usd, 0.0),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
+        )
 
     async def resume_mission(self, mission_id: str) -> MissionState:
         """Continue a WAITING_CAPACITY mission exactly from its checkpoint.
@@ -3239,6 +3434,30 @@ class Kontrollierer:
             current = await self._manager.mission(mission_id)
             return current.state if current is not None else MissionState.FAILED
         try:
+            return await self._finish_claim(
+                mission_id, view.prompt, plan, done, restore_dirs, checkpoint
+            )
+        except BaseException:
+            # The claim moved the mission to RUNNING; nobody will run it now.
+            # Put it back so the next tick (or the user) can resume it.
+            logger.exception("resume_mission: %s claim failed — parking it again", mission_id)
+            await self._safe_transition(
+                mission_id, MissionState.WAITING_CAPACITY, "capacity:resume_claim_failed"
+            )
+            raise
+
+    async def _finish_claim(
+        self,
+        mission_id: str,
+        prompt: str,
+        plan: MissionPlan,
+        done: set[str],
+        restore_dirs: dict[str, Path],
+        checkpoint: dict[str, Any],
+    ) -> _ResumeClaim:
+        """The part of a claim that runs after the RUNNING transition."""
+        plan_ids = {step.task_id for step in plan.steps}
+        try:
             await self._manager.store.touch_heartbeat(mission_id, now_ms())
         except Exception as hb_exc:  # noqa: BLE001 - ownership stamp is advisory
             logger.debug("Resume heartbeat failed (non-fatal): %s", hb_exc)
@@ -3254,7 +3473,7 @@ class Kontrollierer:
             if isinstance(failures, int) and failures > 0:
                 review_failures[task_id] = failures
         return _ResumeClaim(
-            prompt=view.prompt,
+            prompt=prompt,
             plan=plan,
             done=frozenset(done),
             restore_dirs=restore_dirs,
@@ -3281,12 +3500,16 @@ class Kontrollierer:
                 attempts if isinstance(attempts, int) else 0
             ) + 1
             self._resume_done_before[mission_id] = len(claim.done)
+            self._resume_pending_before[mission_id] = len(claim.review_only)
+            idle = checkpoint.get("idle_parks")
+            self._resume_idle_parks[mission_id] = (
+                idle if isinstance(idle, int) and not isinstance(idle, bool) else 0
+            )
             answers = checkpoint.get("task_answers")
             if isinstance(answers, list) and answers:
                 self._task_answers[mission_id] = [str(a) for a in answers]
             if paid is not None:
                 self._paid_approval[mission_id] = paid
-                self._paid_spent[mission_id] = 0.0
             if claim.review_failures:
                 self._review_failures[mission_id] = dict(claim.review_failures)
 
@@ -3298,25 +3521,23 @@ class Kontrollierer:
                 len(claim.done), len(claim.plan.steps), len(claim.restore_dirs),
                 self._resume_attempt[mission_id],
             )
-            try:
-                return await self._execute_plan(
-                    mission_id,
-                    claim.prompt,
-                    claim.plan,
-                    done_task_ids=claim.done,
-                    restore_dirs=claim.restore_dirs,
-                    review_only_task_ids=claim.review_only,
-                )
-            finally:
-                await self._record_paid_usage(mission_id)
+            return await self._execute_plan(
+                mission_id,
+                claim.prompt,
+                claim.plan,
+                done_task_ids=claim.done,
+                restore_dirs=claim.restore_dirs,
+                review_only_task_ids=claim.review_only,
+            )
         finally:
             if self._running_missions.get(mission_id) is task:
                 self._running_missions.pop(mission_id, None)
             self._resume_family.pop(mission_id, None)
             self._resume_attempt.pop(mission_id, None)
             self._resume_done_before.pop(mission_id, None)
+            self._resume_pending_before.pop(mission_id, None)
+            self._resume_idle_parks.pop(mission_id, None)
             self._paid_approval.pop(mission_id, None)
-            self._paid_spent.pop(mission_id, None)
             self._pending_review.pop(mission_id, None)
             self._review_failures.pop(mission_id, None)
 
@@ -3346,6 +3567,40 @@ class Kontrollierer:
             pinned_family=pinned if isinstance(pinned, str) else None,
             open_steps=max(open_steps, 1),
             reason=reason if isinstance(reason, str) else "provider_quota",
+        )
+
+    @property
+    def capacity_policy(self) -> CapacityPolicy:
+        """The live capacity answers this runner decides with (read-only)."""
+        return self._policy
+
+    @property
+    def paid_option(self) -> PaidOption | None:
+        """The paid alternative this runner offers, if any (read-only)."""
+        return self._paid_option
+
+    async def paid_spent_usd(self, mission_id: str) -> float:
+        """What this mission has paid for API use so far, across all runs."""
+        ledger = self._ledgers.get(mission_id)
+        if ledger is not None:
+            return round(ledger.spent_usd, 6)
+        return round(await self._mission_paid_spent(mission_id), 6)
+
+    async def _mission_paid_spent(self, mission_id: str) -> float:
+        """Sum of the mission's recorded ``MissionPaidUsage`` events. Fails
+        closed: an unreadable history counts as a spent automatic cap."""
+        try:
+            events = await self._manager.store.events_for_mission(mission_id)
+        except Exception:  # noqa: BLE001 - logged; the cap must not open on a read error
+            logger.warning(
+                "Mission %s: paid-usage history unreadable — treating the "
+                "automatic cap as spent", mission_id, exc_info=True,
+            )
+            return PAID_MISSION_CAP_USD
+        return sum(
+            float(e.payload.cost_usd)
+            for e in events
+            if isinstance(e.payload, MissionPaidUsage)
         )
 
     async def decide_capacity(
@@ -3422,6 +3677,7 @@ class Kontrollierer:
                     payload=MissionCancelled(cascade=False, reason="ui_cancel"),
                 )
             )
+            self._drop_checkpoint(mission_id)
             return MissionState.CANCELLED
 
         assert offer is not None  # approve_paid was validated above
@@ -3436,56 +3692,217 @@ class Kontrollierer:
         run.add_done_callback(self._background_runs.discard)
         return MissionState.RUNNING
 
-    def _make_worker(self, mission_id: str, step: Step) -> Any:
-        """The worker for one iteration. An approved paid run uses exactly the
-        approved provider and model, within what is left of its cost cap;
-        anything else goes through the factory and its capacity rules."""
-        approval = self._paid_approval.get(mission_id)
-        if approval is None:
+    def _make_worker(self, mission_id: str, step: Step) -> tuple[Any, PaidCallGate | None]:
+        """The worker for one iteration, and its paid-call gate if it bills.
+
+        Subscriptions first — the factory moves between connected
+        subscriptions itself. Only when none can run does the capacity rule
+        (:func:`decide_route`) allow a paid worker: on an active approval of
+        this run, or on the paid-fallback setting within the caps. Anything
+        else raises :class:`WorkerCapacityUnavailable` and the mission parks.
+        """
+        try:
             worker = self._worker_factory(step)
-            self._check_resume_family(mission_id, worker)
-            return worker
-        spent = self._paid_spent.get(mission_id, 0.0)
-        if spent >= approval.cost_cap_usd:
+            self._check_resume_billing(mission_id, worker)
+            return worker, None
+        except WorkerCapacityUnavailable as exc:  # decided below: paid by consent, or re-raised
+            unavailable = exc
+        self._wait_family.setdefault(mission_id, unavailable.provider)
+        pinned_family = self._resume_family.get(mission_id) or unavailable.provider
+        decision, offer = self._paid_route(
+            mission_id, reason=unavailable.reason, pinned_family=pinned_family
+        )
+        if decision.route != "paid" or offer is None or self._paid_option is None:
+            reason = decision.reason or unavailable.reason
+            if reason == unavailable.reason:
+                raise unavailable
             raise WorkerCapacityUnavailable(
-                "paid_cap_reached",
-                approval.provider,
-                f"spent ${spent:.2f} of the approved ${approval.cost_cap_usd:.2f}",
+                reason, offer.provider if offer is not None else unavailable.provider
             )
-        if self._paid_option is None:
-            raise WorkerCapacityUnavailable("provider_unavailable", approval.provider)
-        return self._paid_option.worker(
-            approval, remaining_usd=approval.cost_cap_usd - spent, task_text=step.prompt
+        logger.warning(
+            "Mission %s: no subscription has capacity (%s) — continuing on %s/%s "
+            "(%s paid use, capped)",
+            mission_id, unavailable.reason, offer.provider, offer.model,
+            "automatic" if decision.automatic else "approved",
+        )
+        gate = self._make_gate(mission_id, offer)
+        return self._paid_option.worker(offer, gate=gate, task_text=step.prompt), gate
+
+    def _ledger(self, mission_id: str) -> MissionPaidLedger:
+        ledger = self._ledgers.get(mission_id)
+        if ledger is None:
+            # Outside a run (never on the normal path): start empty but
+            # remember it, so parallel callers still share one ledger.
+            ledger = self._ledgers.setdefault(mission_id, MissionPaidLedger())
+        return ledger
+
+    def _authorize_paid(self, mission_id: str) -> RouteDecision:
+        """The consent check in front of every paid call (fresh each time)."""
+        approval = self._paid_approval.get(mission_id)
+        ledger = self._ledger(mission_id)
+        enabled = approval is None and self._policy.paid_fallback_enabled()
+        return decide_route(
+            subscription_ok=False,
+            unavailable_reason="paid_consent_revoked",
+            manual_approval=approval is not None,
+            paid_fallback_enabled=enabled,
+            paid_option_available=True,
+            mission_remaining_usd=ledger.remaining(automatic=approval is None),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
         )
 
-    async def _record_paid_usage(self, mission_id: str) -> None:
-        """Log what an approved paid run actually cost (event + log line)."""
+    def _paid_route(
+        self, mission_id: str, *, reason: CapacityWaitReason, pinned_family: str | None
+    ) -> tuple[RouteDecision, PaidOffer | None]:
+        """Decide paid-vs-park for a mission no subscription can serve."""
         approval = self._paid_approval.get(mission_id)
+        offer: PaidOffer | None = approval
+        enabled = False
         if approval is None:
-            return
-        spent = round(self._paid_spent.get(mission_id, 0.0), 6)
-        logger.info(
-            "Mission %s paid run on %s/%s cost $%.4f (estimate $%.2f, cap $%.2f)",
-            mission_id, approval.provider, approval.model, spent,
-            approval.estimated_cost_usd, approval.cost_cap_usd,
+            enabled = self._policy.paid_fallback_enabled()
+            if enabled and self._paid_option is not None and self._policy.pinned():
+                offer = self._paid_option.offer(
+                    pinned_family=pinned_family, open_steps=1, reason=reason
+                )
+        ledger = self._ledger(mission_id)
+        decision = decide_route(
+            subscription_ok=False,
+            unavailable_reason=reason,
+            manual_approval=approval is not None,
+            paid_fallback_enabled=enabled,
+            paid_option_available=offer is not None,
+            mission_remaining_usd=ledger.remaining(automatic=approval is None),
+            daily_remaining_usd=self._policy.daily.remaining() if enabled else 0.0,
         )
+        return decision, offer
+
+    def _make_gate(self, mission_id: str, offer: PaidOffer) -> PaidCallGate:
+        return PaidCallGate(
+            mission_id=mission_id,
+            offer=offer,
+            ledger=self._ledger(mission_id),
+            daily=self._policy.daily,
+            authorize=lambda: self._authorize_paid(mission_id),
+            on_charge=lambda o, automatic, cost: self._note_paid_charge(
+                mission_id, o, automatic, cost
+            ),
+        )
+
+    def _critic_gate(self, mission_id: str) -> PaidCallGate | None:
+        """A paid-critic gate when consent exists right now (an approval of
+        this run, or the setting on a subscription install), else None."""
+        approval = self._paid_approval.get(mission_id)
+        if approval is not None:
+            return self._make_gate(mission_id, approval)
+        if self._paid_option is None or not self._policy.paid_fallback_enabled():
+            return None
+        if not self._policy.pinned():
+            return None
+        offer = self._paid_option.offer(
+            pinned_family=self._critic_family(), open_steps=1, reason="provider_quota"
+        )
+        return self._make_gate(mission_id, offer) if offer is not None else None
+
+    def _paid_exhausted(self, mission_id: str) -> bool:
+        """True when this mission cannot spend another cent on its consent."""
+        approval = self._paid_approval.get(mission_id)
+        return self._ledger(mission_id).remaining(automatic=approval is None) <= 0
+
+    def _note_paid_charge(
+        self, mission_id: str, offer: PaidOffer, automatic: bool, cost: float
+    ) -> None:
+        run = self._run_paid.setdefault(mission_id, {})
+        entry = run.setdefault(
+            (offer.provider, offer.model, automatic),
+            {"cost": 0.0, "estimate": float(offer.estimated_cost_usd)},
+        )
+        entry["cost"] += cost
+
+    async def _record_paid_usage(self, mission_id: str) -> None:
+        """Log what this run paid (event + log line), one event per provider,
+        model and consent kind. An approved run is always logged, even when
+        its approval ended up unused."""
+        run = dict(self._run_paid.get(mission_id) or {})
+        approval = self._paid_approval.get(mission_id)
+        if approval is not None:
+            run.setdefault(
+                (approval.provider, approval.model, False),
+                {"cost": 0.0, "estimate": float(approval.estimated_cost_usd)},
+            )
+        for (provider, model, automatic), entry in run.items():
+            spent = round(entry["cost"], 6)
+            logger.info(
+                "Mission %s paid %s use on %s/%s cost $%.4f (cap $%.2f)",
+                mission_id, "automatic" if automatic else "approved",
+                provider, model, spent, PAID_MISSION_CAP_USD,
+            )
+            try:
+                await self._manager.store.append_and_publish(
+                    EventEnvelope(
+                        mission_id=mission_id,
+                        source_actor="kontrollierer",
+                        ts_ms=now_ms(),
+                        payload=MissionPaidUsage(
+                            provider=provider,
+                            model=model,
+                            cost_usd=spent,
+                            cost_cap_usd=PAID_MISSION_CAP_USD,
+                            estimated_cost_usd=round(entry["estimate"], 6),
+                            automatic=automatic,
+                        ),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the log line above still records it
+                logger.exception("Mission %s: paid-usage event could not be stored", mission_id)
+
+    def _drop_checkpoint(self, mission_id: str) -> None:
+        """Delete a terminal mission's checkpoint. ``getattr``: bare test
+        fixtures build the class without __init__."""
+        root = getattr(self, "_isolation_root", None)
+        if root is None:
+            return
+        delete_checkpoint(root / f"mission_{mission_id[:13]}")
+
+    async def _repark_on_shutdown(self, mission_id: str, reason: str) -> bool:
+        """Shutdown path for a running mission that HAS a capacity checkpoint:
+        park it again (its checkpoint resumes it after the restart) instead of
+        cancelling it. False when it has none or cannot be parked."""
+        mission_dir = self._isolation_root / f"mission_{mission_id[:13]}"
+        checkpoint = await asyncio.to_thread(read_checkpoint, mission_dir)
+        if checkpoint is None:
+            return False
+        if not await self._safe_transition(
+            mission_id, MissionState.WAITING_CAPACITY, f"capacity:{reason}"
+        ):
+            return False
+        raw_reason = checkpoint.get("reason")
+        wait_reason = (
+            raw_reason if raw_reason in CAPACITY_WAIT_REASON_VALUES else "provider_unavailable"
+        )
+        steps = [e for e in checkpoint.get("steps") or [] if isinstance(e, dict)]
+        provider = checkpoint.get("provider")
         try:
             await self._manager.store.append_and_publish(
                 EventEnvelope(
                     mission_id=mission_id,
                     source_actor="kontrollierer",
                     ts_ms=now_ms(),
-                    payload=MissionPaidUsage(
-                        provider=approval.provider,
-                        model=approval.model,
-                        cost_usd=spent,
-                        cost_cap_usd=approval.cost_cap_usd,
-                        estimated_cost_usd=approval.estimated_cost_usd,
+                    payload=MissionWaitingCapacity(
+                        reason=wait_reason,  # type: ignore[arg-type]
+                        provider=provider if isinstance(provider, str) else None,
+                        steps_done=sum(1 for e in steps if e.get("done") is True),
+                        steps_total=len(steps),
+                        checkpoint_path=str(mission_dir / "checkpoint.json"),
+                        resume_attempt=int(checkpoint.get("resume_attempts") or 0),
+                        # Nothing new for the voice layer: the app is stopping.
+                        repeat=True,
                     ),
                 )
             )
-        except Exception:  # noqa: BLE001 - the log line above still records it
-            logger.exception("Mission %s: paid-usage event could not be stored", mission_id)
+        except Exception:  # noqa: BLE001 - the state flip already parked it
+            logger.exception("Mission %s: re-park event could not be stored", mission_id)
+        logger.info("Mission %s parked again on %s (checkpoint kept)", mission_id, reason)
+        return True
 
     def _drop_review_state(self, mission_id: str) -> None:
         """Forget a mission's pending-review bookkeeping (terminal paths).
@@ -3538,19 +3955,21 @@ class Kontrollierer:
         }
         return TaskOutcome.WAITING_CAPACITY
 
-    def _check_resume_family(self, mission_id: str, worker: Any) -> None:
-        """A resumed mission runs only on the provider family it was parked
-        on; anything else parks it again instead of switching unasked."""
+    def _check_resume_billing(self, mission_id: str, worker: Any) -> None:
+        """A resumed mission may move to ANY subscription (free) or run on the
+        metered provider it was configured for; a different metered family is
+        a billing switch and goes through the capacity rule instead."""
         pinned = self._resume_family.get(mission_id)
         if pinned is None:
             return
         family = worker_family(worker)
-        if family != pinned:
-            raise WorkerCapacityUnavailable(
-                "provider_unavailable",
-                pinned,
-                f"the configured worker is now {family}; switching needs approval",
-            )
+        if is_subscription_family(family) or family == pinned:
+            return
+        raise WorkerCapacityUnavailable(
+            "provider_unavailable",
+            pinned,
+            f"the configured worker is now the metered {family}; that needs consent",
+        )
 
     def _restore_task_workspace(self, worktree: Path, artifacts: Path) -> bool:
         """Put a parked step's archived work back into its fresh workspace.
@@ -3627,6 +4046,8 @@ class Kontrollierer:
         self._mission_failure_context.pop(mission_id, None)
         attempt = self._resume_attempt.get(mission_id, 0)
         done_before = self._resume_done_before.get(mission_id, 0)
+        pending_before = self._resume_pending_before.get(mission_id, 0)
+        idle_before = self._resume_idle_parks.get(mission_id, 0)
         wait = self._capacity_wait.pop(mission_id, {})
         reason = wait.get("reason") or "provider_quota"
         provider = wait.get("provider")
@@ -3657,6 +4078,19 @@ class Kontrollierer:
                 "artifacts_dir": str(files_dir.parent),
             })
         steps_done = sum(1 for st in steps if st["done"])
+        # Backoff: a resume that parked again without finishing a step or
+        # delivering a new result for review waits longer before the next try
+        # (5 min doubling to 60 min, jittered) instead of churning.
+        # A paid run that hit its consent or cap limit is a new condition,
+        # not churn: it never adds backoff.
+        progressed = (
+            steps_done > done_before
+            or len(pending_review) > pending_before
+            or str(reason).startswith("paid_")
+        )
+        idle_parks = idle_before + 1 if attempt > 0 and not progressed else 0
+        backoff_s = resume_backoff_s(idle_parks)
+        ledger = self._ledgers.get(mission_id)
 
         checkpoint_path = ""
         try:
@@ -3670,10 +4104,17 @@ class Kontrollierer:
                     # The family the mission waits for. A paid run that parks
                     # again keeps waiting for its original subscription — never
                     # for the paid key, which needs a fresh approval.
-                    "provider": self._resume_family.get(mission_id) or provider,
+                    "provider": (
+                        self._resume_family.get(mission_id)
+                        or self._wait_family.get(mission_id)
+                        or provider
+                    ),
                     "error_detail": error_detail,
                     "created_ms": now_ms(),
                     "resume_attempts": attempt,
+                    "idle_parks": idle_parks,
+                    "next_resume_ms": now_ms() + int(backoff_s * 1000) if backoff_s else 0,
+                    "paid_spent_usd": round(ledger.spent_usd, 6) if ledger else None,
                     "plan": plan.model_dump(mode="json"),
                     "steps": steps,
                     "task_answers": task_answers,
@@ -3731,6 +4172,7 @@ class Kontrollierer:
         )
         if not transitioned:
             return
+        self._drop_checkpoint(mission_id)
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
         # files (diff.patch + untracked file copies persisted by
@@ -3866,6 +4308,7 @@ class Kontrollierer:
             return
         if not await self._safe_transition(mission_id, MissionState.FAILED, reason):
             return
+        self._drop_checkpoint(mission_id)
         env = EventEnvelope(
             mission_id=mission_id,
             source_actor="kontrollierer",

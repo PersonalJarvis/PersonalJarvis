@@ -1,8 +1,11 @@
-"""WAITING_CAPACITY: a mission without worker capacity is parked, never failed,
-never moved to another subscription or a paid API key (missions/capacity.py).
+"""WAITING_CAPACITY: a mission without worker capacity is parked, never failed
+(missions/capacity.py).
 
-Pins the user's rules (2026-10-04):
-- no automatic switch to another subscription or to a per-token key,
+Pins the user's rules (2026-10-04, revised 2026-10-07):
+- a subscription install moves between connected subscriptions for free,
+  never to a per-token key without consent,
+- a CLI that is merely installed does not make a subscription install
+  (a key-only user keeps the cross-family chain, AP-22),
 - an exhausted quota parks the mission with a checkpoint and a clear message,
 - a parked mission survives restarts and the age-based cleanup.
 """
@@ -37,6 +40,9 @@ from tests.fakes.fake_mission_runtime import (
     make_kontrollierer,
 )
 
+#: The real login probe — the missions conftest stubs it for every test.
+_REAL_LOGIN_PROBE = mi._positive_subscription_login
+
 # --- State machine ------------------------------------------------------------
 
 
@@ -61,20 +67,21 @@ def test_parked_mission_can_resume_or_end(dst: MissionState) -> None:
 # --- Pinning signal -----------------------------------------------------------
 
 
-def test_subscription_worker_is_always_pinned() -> None:
-    assert pinned_to_subscription(configured_is_subscription=True) is True
+def test_positive_login_pins() -> None:
+    assert pinned_to_subscription(login_probe=lambda: True) is True
 
 
 def test_key_only_install_is_not_pinned() -> None:
     """No subscription ever seen: the single-key fallback chain stays (AP-22)."""
-    assert pinned_to_subscription(configured_is_subscription=False) is False
+    assert pinned_to_subscription() is False
+    assert pinned_to_subscription(login_probe=lambda: False) is False
 
 
 def test_connected_subscription_pins_every_worker() -> None:
     from jarvis.brain import background_policy
 
     background_policy.note_connected("claude-cli")
-    assert pinned_to_subscription(configured_is_subscription=False) is True
+    assert pinned_to_subscription(login_probe=lambda: False) is True
 
 
 def test_unreadable_signal_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,7 +89,33 @@ def test_unreadable_signal_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None
         raise OSError("marker unreadable")
 
     monkeypatch.setattr("jarvis.brain.background_policy.subscription_mode", _boom)
-    assert pinned_to_subscription(configured_is_subscription=False) is True
+    assert pinned_to_subscription(login_probe=lambda: False) is True
+
+
+def test_a_failing_login_probe_is_not_a_login() -> None:
+    def _boom() -> bool:
+        raise OSError("probe crashed")
+
+    assert pinned_to_subscription(login_probe=_boom) is False
+
+
+def test_installed_but_logged_out_claude_cli_does_not_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finding 1: a key-only user with Claude Code installed but never logged
+    in is NOT a subscription install — never parked forever."""
+    monkeypatch.setattr(
+        "jarvis.missions.workers.claude_direct_worker._resolve_claude_binary",
+        lambda: "/usr/local/bin/claude",
+    )
+    monkeypatch.setattr(mi, "_claude_subscription_login_state", lambda: None)
+    monkeypatch.setattr(
+        "jarvis.missions.workers.codex_direct_worker._codex_oauth_available", lambda: False
+    )
+    monkeypatch.setattr(mi, "_positive_subscription_login", _REAL_LOGIN_PROBE)
+    assert mi.install_is_pinned() is False
+    monkeypatch.setattr(mi, "_claude_subscription_login_state", lambda: True)
+    assert mi.install_is_pinned() is True
 
 
 # --- Worker factory: pinned resolution ----------------------------------------
@@ -134,12 +167,19 @@ def test_pinned_claude_without_cli_does_not_use_the_key(
 
 
 @pytest.mark.parametrize(
-    "reauth,capped,reason",
-    [(True, False, "provider_auth"), (False, True, "provider_quota")],
+    "oauth,reauth,capped,reason",
+    [
+        (True, True, False, "provider_auth"),
+        (True, False, True, "provider_quota"),
+        (False, False, False, "provider_auth"),  # no ChatGPT login: never on the key
+    ],
 )
-def test_pinned_codex_parks_instead_of_switching_to_claude(
-    monkeypatch: pytest.MonkeyPatch, reauth: bool, capped: bool, reason: str
+def test_pinned_codex_without_capacity_raises(
+    monkeypatch: pytest.MonkeyPatch, oauth: bool, reauth: bool, capped: bool, reason: str
 ) -> None:
+    monkeypatch.setattr(
+        "jarvis.missions.workers.codex_direct_worker._codex_oauth_available", lambda: oauth
+    )
     monkeypatch.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: reauth)
     monkeypatch.setattr(
         "jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: capped
@@ -153,6 +193,9 @@ def test_pinned_codex_parks_instead_of_switching_to_claude(
 def test_pinned_codex_runs_codex_without_backend_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "jarvis.missions.workers.codex_direct_worker._codex_oauth_available", lambda: True
+    )
     monkeypatch.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: False)
     monkeypatch.setattr(
         "jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: False
@@ -162,11 +205,75 @@ def test_pinned_codex_runs_codex_without_backend_fallback(
     assert worker.backend_fallback is False
 
 
-def test_pinned_api_provider_without_key_does_not_cross_families(
+class _Subscriptions:
+    """Both subscription families' offline state, scripted."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.claude_login: bool | None = True
+        self.claude_cooldown = False
+        self.codex_oauth = True
+        self.codex_cooldown = False
+        mp = monkeypatch
+        mp.setattr(
+            "jarvis.missions.workers.claude_direct_worker._resolve_claude_binary",
+            lambda: "/usr/local/bin/claude",
+        )
+        mp.setattr(mi, "_claude_subscription_login_state", lambda: self.claude_login)
+        mp.setattr(
+            "jarvis.claude_quota_state.claude_in_quota_cooldown",
+            lambda **_k: self.claude_cooldown,
+        )
+        mp.setattr(
+            "jarvis.missions.workers.codex_direct_worker._codex_oauth_available",
+            lambda: self.codex_oauth,
+        )
+        mp.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: False)
+        mp.setattr(
+            "jarvis.codex_quota_state.codex_in_quota_cooldown",
+            lambda **_k: self.codex_cooldown,
+        )
+
+
+def test_spent_claude_moves_to_the_codex_subscription_for_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subs = _Subscriptions(monkeypatch)
+    subs.claude_cooldown = True
+    worker = mi._subscription_worker("claude", None)
+    assert isinstance(worker, CodexDirectWorker)
+    assert worker.backend_fallback is False
+
+
+def test_spent_codex_moves_to_the_claude_subscription_for_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The old codex -> Claude Max path, restored (subscription to subscription)."""
+    subs = _Subscriptions(monkeypatch)
+    subs.codex_cooldown = True
+    worker = mi._subscription_worker("codex", None)
+    assert isinstance(worker, ClaudeDirectWorker)
+    assert worker.backend_fallback is False
+
+
+def test_no_subscription_with_capacity_raises_the_configured_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subs = _Subscriptions(monkeypatch)
+    subs.claude_cooldown = True
+    subs.codex_oauth = False
+    with pytest.raises(WorkerCapacityUnavailable) as exc:
+        mi._subscription_worker("claude", None)
+    assert (exc.value.reason, exc.value.provider) == ("provider_quota", "claude")
+
+
+def test_pinned_api_provider_without_key_does_not_cross_to_a_metered_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(mi, "_api_key_family_viable", lambda _p: False)
     monkeypatch.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: ())
+    subs = _Subscriptions(monkeypatch)
+    subs.claude_login = None
+    subs.codex_oauth = False
 
     def _forbidden(*_a: object, **_k: object) -> None:
         raise AssertionError("a pinned mission must not cross provider families")
@@ -175,6 +282,16 @@ def test_pinned_api_provider_without_key_does_not_cross_families(
     with pytest.raises(WorkerCapacityUnavailable) as exc:
         mi._resolve_api_agent_worker("openrouter", "task", pinned=True)
     assert exc.value.provider == "openrouter"
+
+
+def test_pinned_api_provider_without_key_may_use_a_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mi, "_api_key_family_viable", lambda _p: False)
+    monkeypatch.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: ())
+    _Subscriptions(monkeypatch)
+    worker = mi._resolve_api_agent_worker("openrouter", "task", pinned=True)
+    assert isinstance(worker, ClaudeDirectWorker)
 
 
 def test_pinned_api_provider_with_key_runs_on_its_own_key(
@@ -330,6 +447,25 @@ async def test_finished_steps_are_kept_and_counted(
     assert [s["done"] for s in data["steps"]] == [True, False]
 
 
+async def test_key_only_install_never_parks_on_a_spent_quota(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Finding 4: the final-iteration provider_quota park is a subscription
+    install's rule; a key-only install fails (or crosses) as before."""
+    from tests.fakes.fake_mission_runtime import make_policy
+
+    worker = FakeMissionWorker(quota=True)
+    plan = MissionPlan(steps=[Step(slug="task", prompt="do it")], n_workers=1)
+    policy, _pinned, _paid = make_policy(tmp_path, pinned=False)
+    k = make_kontrollierer(
+        manager, tmp_path, plan, lambda _s: worker, ApprovingCritic(), capacity_policy=policy
+    )
+    mid = await manager.dispatch(prompt="write the report")
+
+    assert await k.run_mission(mid) == MissionState.FAILED
+    assert not any(isinstance(p, MissionWaitingCapacity) for p in await _events(manager, mid))
+
+
 async def test_parked_mission_can_be_cancelled(
     manager: MissionManager, tmp_path: Path
 ) -> None:
@@ -344,6 +480,11 @@ async def test_parked_mission_can_be_cancelled(
     await manager.transition_state(mid, MissionState.CANCELLED, reason="ui_cancel")
     view = await manager.mission(mid)
     assert view is not None and view.state == MissionState.CANCELLED
+    # The cancel route then tells the runner; the checkpoint goes with it.
+    mission_dir = tmp_path / "missions" / f"mission_{mid[:13]}"
+    assert (mission_dir / CHECKPOINT_NAME).is_file()
+    k.cancel_running_mission(mid)
+    assert not (mission_dir / CHECKPOINT_NAME).exists()
 
 
 # --- Restart and cleanup leave a parked mission alone -------------------------
@@ -412,3 +553,21 @@ def test_readback_keeps_the_options_under_the_length_cap() -> None:
     )
     assert len(text) <= MAX_VOICE_CHARS
     assert text.endswith("Artefakte.")  # i18n-allow: German TTS phrase under test
+
+
+@pytest.mark.parametrize("lang", ["de", "en"])
+@pytest.mark.parametrize("reason", ["paid_daily_cap_reached", "paid_consent_revoked"])
+def test_readback_names_the_new_paid_reasons(lang: str, reason: str) -> None:
+    from jarvis.missions.voice.readback import CAPACITY_WAIT_PHRASES
+
+    text = render_capacity_wait(
+        reason=reason,
+        provider="claude-api",
+        steps_done=0,
+        steps_total=1,
+        files_saved=0,
+        checkpoint_saved=True,
+        language=lang,  # type: ignore[arg-type]
+    )
+    head = CAPACITY_WAIT_PHRASES[lang][reason].format(provider="Claude")
+    assert text.startswith(head)

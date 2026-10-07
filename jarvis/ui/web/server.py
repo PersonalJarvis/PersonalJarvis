@@ -524,6 +524,7 @@ class WebServer:
         from .marketplace_publish_routes import router as marketplace_publish_router
         from .marketplace_routes import router as marketplace_router
         from .mcp_routes import router as mcp_router
+        from .mission_billing_routes import router as mission_billing_router
         from .missions_auth import router as missions_auth_router
         from .missions_pty_routes import router as missions_pty_router
         from .missions_routes import router as missions_router
@@ -794,6 +795,8 @@ class WebServer:
         # mission WS and PTY then perform their narrower hello-frame auth too.
         app.include_router(missions_auth_router)
         app.include_router(missions_router)
+        # Paid-API fallback switch for missions (Settings; never voice/agents).
+        app.include_router(mission_billing_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
         # Computer-Use run control (deep-dive 2026-07-15, H-09): start/list/

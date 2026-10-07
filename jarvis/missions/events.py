@@ -163,7 +163,9 @@ CAPACITY_WAIT_REASONS: Final[frozenset[str]] = frozenset({
     "provider_quota",        # usage/session window or credit spent
     "provider_auth",         # subscription login expired
     "provider_unavailable",  # the worker cannot run without a paid fallback
-    "paid_cap_reached",      # an approved paid run hit its spend ceiling
+    "paid_cap_reached",      # the mission's paid spend reached its ceiling
+    "paid_daily_cap_reached",  # automatic paid use hit the rolling 24 h ceiling
+    "paid_consent_revoked",  # paid fallback switched off mid-run, no approval
 })
 
 
@@ -176,7 +178,12 @@ class MissionWaitingCapacity(_PayloadBase):
 
     event_type: Literal["MissionWaitingCapacity"] = "MissionWaitingCapacity"
     reason: Literal[
-        "provider_quota", "provider_auth", "provider_unavailable", "paid_cap_reached"
+        "provider_quota",
+        "provider_auth",
+        "provider_unavailable",
+        "paid_cap_reached",
+        "paid_daily_cap_reached",
+        "paid_consent_revoked",
     ]
     provider: str | None = None
     steps_done: int = 0
@@ -206,7 +213,8 @@ class MissionCapacityDecision(_PayloadBase):
 
 
 class MissionPaidUsage(_PayloadBase):
-    """What an approved paid run actually cost, logged when the run ends."""
+    """What paid API use actually cost in one mission run, logged when the
+    run ends — one event per provider/model and consent kind."""
 
     event_type: Literal["MissionPaidUsage"] = "MissionPaidUsage"
     provider: str
@@ -214,6 +222,9 @@ class MissionPaidUsage(_PayloadBase):
     cost_usd: float
     cost_cap_usd: float
     estimated_cost_usd: float
+    # True: the [missions] paid_api_fallback setting allowed it; False: a
+    # manual per-mission approval.
+    automatic: bool = False
 
 
 class MissionCancelled(_PayloadBase):

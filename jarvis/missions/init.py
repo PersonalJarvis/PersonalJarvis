@@ -36,6 +36,7 @@ from jarvis.core.bus import EventBus as _SpeechEventBus
 from .budget import BudgetTracker
 from .capacity import (
     PAID_MISSION_CAP_USD,
+    PaidCallGate,
     PaidOffer,
     WorkerCapacityUnavailable,
     estimate_paid_cost_usd,
@@ -517,16 +518,19 @@ def _live_subagent_provider(boot_snapshot: str | None) -> str | None:
     return boot_snapshot
 
 
-def _anthropic_key_for_cli_env(key: str | None, *, cli_present: bool) -> str | None:
+def _anthropic_key_for_cli_env(
+    key: str | None, *, cli_present: bool, pinned: bool
+) -> str | None:
     """The Anthropic credential a mission's ``claude`` CLI may see, or None.
 
-    With the CLI installed, missions are pinned to its subscription login
-    (jarvis/missions/capacity.py), so only that login's OAuth bearer may
-    reach the process — worker and critic alike. A classic per-token key in
+    On a subscription install (``pinned``, jarvis/missions/capacity.py) with
+    the CLI installed, only the subscription login's OAuth bearer may reach
+    the process — worker and critic alike. A classic per-token key in
     ``ANTHROPIC_API_KEY`` would make the CLI bill it silently; paid use runs
-    only in an approved run, in-process, never through this environment.
+    only on consent, in-process, never through this environment. A key-only
+    install keeps its key: it is that install's primary credential (AP-22).
     """
-    if key and cli_present and not key.startswith("sk-ant-oat"):
+    if key and cli_present and pinned and not key.startswith("sk-ant-oat"):
         return None
     return key
 
@@ -568,6 +572,33 @@ def _claude_subscription_login_state() -> bool | None:
     except Exception:  # noqa: BLE001,S110 — optional native auth path
         pass
     return None
+
+
+def _positive_subscription_login() -> bool:
+    """True when a subscription login is usable RIGHT NOW: the ``claude`` CLI's
+    subscription login (never a classic key) or codex over the ChatGPT login.
+
+    Offline: file reads and the process-cached CLI login probes. A merely
+    installed CLI is not a login.
+    """
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    try:
+        if _resolve_claude_binary() is not None and _claude_subscription_login_state() is True:
+            return True
+    except Exception:  # noqa: BLE001 - an unreadable probe is "no positive login", logged
+        logger.debug("missions: claude subscription login probe failed", exc_info=True)
+    from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
+
+    return bool(_codex_oauth_available())
+
+
+def install_is_pinned() -> bool:
+    """Whether missions on this install are pinned to subscriptions
+    (jarvis/missions/capacity.py): a subscription seen connected recently
+    (sticky) or a positive login probe now. Worker factory, env builder and
+    critic all ask this one question."""
+    return pinned_to_subscription(login_probe=_positive_subscription_login)
 
 
 def _claude_cli_auth_viable() -> bool:
@@ -798,15 +829,86 @@ def _pinned_claude_worker(
 
 
 def _pinned_codex_worker(capability_inventory: WorkerCapabilityInventory | None) -> Any:
-    """The codex worker for a pinned mission, or a WorkerCapacityUnavailable."""
+    """The codex worker for a pinned mission, or a WorkerCapacityUnavailable.
+
+    Only over the ChatGPT login: without it codex would run on
+    ``OPENAI_API_KEY``, which bills per token.
+    """
     from jarvis.codex_auth_state import codex_needs_reauth
     from jarvis.codex_quota_state import codex_in_quota_cooldown
+    from jarvis.missions.workers.codex_direct_worker import _codex_oauth_available
 
+    if not _codex_oauth_available():
+        raise WorkerCapacityUnavailable("provider_auth", "codex", "no ChatGPT login")
     if codex_needs_reauth():
         raise WorkerCapacityUnavailable("provider_auth", "codex")
     if codex_in_quota_cooldown():
         raise WorkerCapacityUnavailable("provider_quota", "codex")
     return CodexDirectWorker(capability_inventory=capability_inventory, backend_fallback=False)
+
+
+def _pinned_claude_from_probes(capability_inventory: WorkerCapabilityInventory | None) -> Any:
+    """:func:`_pinned_claude_worker` on the live binary and login probes."""
+    from jarvis.missions.workers.claude_direct_worker import _resolve_claude_binary
+
+    binary_present = _resolve_claude_binary() is not None
+    login = _claude_subscription_login_state() if binary_present else None
+    return _pinned_claude_worker(
+        capability_inventory, binary_present=binary_present, login=login
+    )
+
+
+#: Subscription families a pinned mission may move between for free, in the
+#: order they are tried after the configured one. Only families whose login
+#: and spent-window state can be read offline (login file + the process-local
+#: quota/auth flags); antigravity and grok build run when configured but are
+#: never a silent fallback target, since nothing here can tell whether they
+#: have capacity.
+_SUBSCRIPTION_FALLBACK_ORDER: tuple[str, ...] = ("claude", "codex")
+#: Builder per family, by name so the module attribute is looked up per call.
+_SUBSCRIPTION_BUILDERS: dict[str, str] = {
+    "claude": "_pinned_claude_from_probes",
+    "codex": "_pinned_codex_worker",
+}
+
+
+def _subscription_worker(
+    preferred: str | None,
+    capability_inventory: WorkerCapabilityInventory | None,
+    *,
+    first_error: WorkerCapacityUnavailable | None = None,
+) -> Any:
+    """A worker on the configured subscription, else on another connected
+    subscription (costs the user nothing extra, no approval needed).
+
+    Raises the configured family's :class:`WorkerCapacityUnavailable` (or
+    ``first_error``) when no subscription can run — the orchestrator then
+    decides between paid use by consent and parking.
+    """
+    order = [
+        f for f in (preferred, *_SUBSCRIPTION_FALLBACK_ORDER) if f in _SUBSCRIPTION_BUILDERS
+    ]
+    first = first_error
+    for family in dict.fromkeys(order):
+        try:
+            builder: Callable[[WorkerCapabilityInventory | None], Any] = globals()[
+                _SUBSCRIPTION_BUILDERS[family]
+            ]
+            worker = builder(capability_inventory)
+        except WorkerCapacityUnavailable as exc:  # kept: raised below if no family can run
+            if first is None:
+                first = exc
+            continue
+        if first is not None:
+            logger.warning(
+                "Mission worker -> %s subscription: %s has no capacity (%s); "
+                "moving to another connected subscription (no extra cost).",
+                family, first.provider, first.reason,
+            )
+        return worker
+    if first is None:  # pragma: no cover - the order is never empty
+        first = WorkerCapacityUnavailable("provider_unavailable", preferred or "subscription")
+    raise first
 
 
 # The API-key family of the same vendor as a subscription worker: the paid
@@ -865,12 +967,14 @@ class ApiKeyPaidOption:
             )
         return None
 
-    def worker(self, offer: PaidOffer, *, remaining_usd: float, task_text: str) -> Any:
+    def worker(self, offer: PaidOffer, *, gate: PaidCallGate, task_text: str) -> Any:
+        """The in-process API worker on exactly the offered provider and
+        model; ``gate`` checks consent and caps before each of its calls."""
         return ApiAgentWorker(
             offer.provider,
             capability_inventory=_assemble_worker_capability_inventory(task_text),
             pinned_model=offer.model,
-            cost_cap_usd=max(remaining_usd, 0.0),
+            paid_gate=gate,
         )
 
 
@@ -906,13 +1010,19 @@ def _resolve_api_agent_worker(
         )
         return ApiAgentWorker(provider, capability_inventory=inventory)
     if pinned:
-        # A subscription install never crosses to another family on its own
-        # (jarvis/missions/capacity.py): park the mission instead.
+        # A subscription install never crosses to another METERED family on
+        # its own (jarvis/missions/capacity.py): another connected
+        # subscription is free and fine; otherwise the orchestrator decides
+        # between paid use by consent and parking.
         from jarvis.api_family_quota_state import api_family_in_cooldown
 
-        raise WorkerCapacityUnavailable(
-            "provider_quota" if api_family_in_cooldown(provider) else "provider_unavailable",
-            provider,
+        return _subscription_worker(
+            None,
+            inventory,
+            first_error=WorkerCapacityUnavailable(
+                "provider_quota" if api_family_in_cooldown(provider) else "provider_unavailable",
+                provider,
+            ),
         )
     logger.warning(
         "Mission worker: subagent provider %r has no API key configured, "
@@ -1197,7 +1307,13 @@ async def bootstrap_missions(
             # path, but needs it to cross to Gemini API billing when no OAuth
             # login exists. Suppressing it here made key-only Antigravity look
             # selectable and then fail at execution time.
-            if live_provider in {"gemini", "google", "antigravity"}:
+            # On a subscription install (jarvis/missions/capacity.py) that
+            # cross-over to Gemini API billing is an automatic paid switch, so
+            # the antigravity worker gets no key there: without its OAuth login
+            # it fails honestly instead of billing the key unapproved.
+            if live_provider in {"gemini", "google"} or (
+                live_provider == "antigravity" and not install_is_pinned()
+            ):
                 gemini_key = get_jarvis_agent_secret("gemini")
             # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
             # credential manager (ENV fallback ``GROK_API_KEY``); we set
@@ -1261,8 +1377,11 @@ async def bootstrap_missions(
                 _resolve_claude_binary,
             )
 
+            cli_present = _resolve_claude_binary() is not None
             anthropic_key = _anthropic_key_for_cli_env(
-                anthropic_key, cli_present=_resolve_claude_binary() is not None
+                anthropic_key,
+                cli_present=cli_present,
+                pinned=cli_present and install_is_pinned(),
             )
 
         return build_worker_env(
@@ -1337,19 +1456,13 @@ async def bootstrap_missions(
             )
 
             # Capacity policy (jarvis/missions/capacity.py): on a subscription
-            # install the mission stays on Claude's subscription login — a spent
-            # window or a dead login parks it in WAITING_CAPACITY instead of
-            # moving it to codex, another family, or the Anthropic API key.
-            # Pinned whenever the CLI exists — NOT only when the login probe
-            # answers: a logged-out or unreadable subscription login (probe ->
-            # None) must park the mission too, never reopen the legacy chain
-            # that runs the CLI on a stored per-token Anthropic key.
-            binary_present = _resolve_claude_binary() is not None
-            login = _claude_subscription_login_state() if binary_present else None
-            if pinned_to_subscription(configured_is_subscription=binary_present):
-                return _pinned_claude_worker(
-                    capability_inventory, binary_present=binary_present, login=login
-                )
+            # install (sticky subscription signal or a positive login probe —
+            # NOT merely an installed CLI) the mission runs on Claude's
+            # subscription login, else on another connected subscription; with
+            # none it never falls to the Anthropic API key here — the
+            # orchestrator decides between consented paid use and parking.
+            if install_is_pinned():
+                return _subscription_worker("claude", capability_inventory)
             # B3 (open-source AP-22): an Anthropic-API-key-only user has NO `claude`
             # CLI binary — run the heavy worker IN-PROCESS via ApiAgentWorker on the
             # API key instead of failing on the missing binary. The CLI stays
@@ -1400,9 +1513,10 @@ async def bootstrap_missions(
             # claude-cli MCP config so it can issue the plugin tool calls (AD-OE4).
             return ClaudeDirectWorker(capability_inventory=capability_inventory)
         if kind == "codex_direct":
-            # The ChatGPT login is a subscription: pinned like Claude above.
-            if pinned_to_subscription(configured_is_subscription=True):
-                return _pinned_codex_worker(capability_inventory)
+            # The ChatGPT login is a subscription: pinned like Claude above,
+            # with the free move to the Claude subscription restored.
+            if install_is_pinned():
+                return _subscription_worker("codex", capability_inventory)
             # If a codex subprocess already proved the ChatGPT login dead this
             # session, skip codex entirely and run on Claude Max directly (one
             # path, like grok) — re-spawning the dead provider + double-falling-
@@ -1448,7 +1562,7 @@ async def bootstrap_missions(
                 provider,
                 task_text,
                 capability_inventory,
-                pinned=pinned_to_subscription(configured_is_subscription=False),
+                pinned=install_is_pinned(),
             )
         if kind == "gemini":
             # B4 (open-source AP-22): no Gemini CLI but a Gemini API key → run the
@@ -1489,7 +1603,7 @@ async def bootstrap_missions(
         cross = _cross_family_last_resort_worker(
             task_text,
             capability_inventory,
-            allow_metered=not pinned_to_subscription(configured_is_subscription=False),
+            allow_metered=not install_is_pinned(),
         )
         if cross is not None:
             return cross

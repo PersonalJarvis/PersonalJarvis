@@ -1,10 +1,12 @@
 """Explicit, per-mission approval of paid API use for a parked mission.
 
-The user's rules (2026-10-06): never switch to a paid API on its own; show
-provider, model, estimated cost and reason first; options wait / approve for
-this mission / cancel; an approval covers this one mission only and is never
-stored or global; log the decision and the real cost; a declined mission
-stays safely parked.
+The user's rules (2026-10-06, revised 2026-10-07): with the paid-fallback
+setting OFF, never switch to a paid API on its own; show provider, model,
+estimated cost, what the mission already spent and the reason first; options
+wait / approve for this mission / cancel; an approval covers this one mission
+run only — worker AND critic calls, up to $2 more — and is never stored or
+global; log the decision and the real cost; a declined mission stays safely
+parked.
 """
 from __future__ import annotations
 
@@ -21,7 +23,11 @@ from jarvis.missions import init as mi
 from jarvis.missions.capacity import (
     PAID_MISSION_CAP_USD,
     CapacityDecisionRejected,
+    DailyPaidLedger,
+    MissionPaidLedger,
+    PaidCallGate,
     PaidOffer,
+    RouteDecision,
     WorkerCapacityUnavailable,
     estimate_paid_cost_usd,
     read_checkpoint,
@@ -221,14 +227,17 @@ async def test_approved_run_uses_exactly_the_approved_offer_and_logs_real_cost(
     assert len(usage) == 1
     assert usage[0].cost_usd == pytest.approx(0.42)
     assert usage[0].cost_cap_usd == OFFER.cost_cap_usd
-    # The approval died with the run.
-    assert k._paid_approval == {} and k._paid_spent == {}
+    assert usage[0].automatic is False  # a manual approval, not the setting
+    # The approval and the run's ledger died with the run.
+    assert k._paid_approval == {} and k._ledgers == {}
 
 
 async def test_cost_cap_parks_the_run_and_keeps_waiting_for_the_subscription(
     manager: MissionManager, tmp_path: Path
 ) -> None:
-    paid = FakePaidOption(OFFER, cost_per_spawn=2.5)
+    # Three $0.80 calls: the third would cross the $2 cap and is refused
+    # before it is made.
+    paid = FakePaidOption(OFFER, calls=[(0.8, 0.8)] * 3)
     k, mission_id, factory = await _parked(manager, tmp_path, paid=paid)
 
     await k.decide_capacity(mission_id, "approve_paid", provider=OFFER.provider, model=OFFER.model)
@@ -238,7 +247,10 @@ async def test_cost_cap_parks_the_run_and_keeps_waiting_for_the_subscription(
     payloads = await _payloads(manager, mission_id)
     wait = [p for p in payloads if isinstance(p, MissionWaitingCapacity)][-1]
     assert (wait.reason, wait.provider) == ("paid_cap_reached", "claude-api")
-    assert [p.cost_usd for p in payloads if isinstance(p, MissionPaidUsage)] == [2.5]
+    assert [p.cost_usd for p in payloads if isinstance(p, MissionPaidUsage)] == [
+        pytest.approx(1.6)
+    ]
+    assert paid.workers[0].refused == ["paid_cap_reached"]
     # The checkpoint still waits for the ORIGINAL subscription, not the key.
     checkpoint = read_checkpoint(tmp_path / "missions" / f"mission_{mission_id[:13]}")
     assert checkpoint is not None and checkpoint["provider"] == "claude"
@@ -247,7 +259,7 @@ async def test_cost_cap_parks_the_run_and_keeps_waiting_for_the_subscription(
 async def test_an_approval_is_never_reused(manager: MissionManager, tmp_path: Path) -> None:
     """After a paid run parks, the automatic resume path waits for the
     subscription again and never runs the paid worker without a new approval."""
-    paid = FakePaidOption(OFFER, cost_per_spawn=2.5)
+    paid = FakePaidOption(OFFER, calls=[(0.8, 0.8)] * 3)
     k, mission_id, factory = await _parked(manager, tmp_path, paid=paid)
     await k.decide_capacity(mission_id, "approve_paid", provider=OFFER.provider, model=OFFER.model)
     await _wait_paid_runs(k)
@@ -334,14 +346,28 @@ def test_a_spent_api_key_is_not_offered_again(monkeypatch: pytest.MonkeyPatch) -
     assert offer is not None and offer.provider == "claude-api"
 
 
-def test_paid_worker_is_pinned_to_the_approved_model_and_cap(
-    monkeypatch: pytest.MonkeyPatch,
+def _manual_gate(tmp_path: Path, *, spent: float = 0.0) -> PaidCallGate:
+    """A gate on an active manual approval (consent never changes)."""
+    ledger = MissionPaidLedger(spent)
+    ledger.grant_manual()
+    return PaidCallGate(
+        mission_id="m",
+        offer=OFFER,
+        ledger=ledger,
+        daily=DailyPaidLedger(tmp_path / "ledger.json"),
+        authorize=lambda: RouteDecision("paid", automatic=False),
+    )
+
+
+def test_paid_worker_is_pinned_to_the_approved_model_and_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: ())
-    worker = mi.ApiKeyPaidOption().worker(OFFER, remaining_usd=1.25, task_text="t")
+    gate = _manual_gate(tmp_path)
+    worker = mi.ApiKeyPaidOption().worker(OFFER, gate=gate, task_text="t")
     assert isinstance(worker, ApiAgentWorker)
-    assert (worker.provider, worker.pinned_model, worker.cost_cap_usd) == (
-        "claude-api", "claude-sonnet-4-6", 1.25,
+    assert (worker.provider, worker.pinned_model, worker.paid_gate) == (
+        "claude-api", "claude-sonnet-4-6", gate,
     )
 
 
@@ -349,12 +375,15 @@ def test_paid_worker_is_pinned_to_the_approved_model_and_cap(
 
 
 class _UsageBrain:
-    """Every turn asks for a tool and reports a fixed usage block."""
+    """Every turn asks for a tool and reports a realistic usage block: as many
+    input tokens as a quarter of the request's bytes, a full output budget."""
 
     def __init__(self) -> None:
         self.calls = 0
 
-    async def complete(self, _req: BrainRequest) -> AsyncIterator[BrainDelta]:
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        from jarvis.missions.workers.api_agent_worker import _MAX_TOKENS, _request_bytes
+
         self.calls += 1
         yield BrainDelta(
             tool_call={"id": f"c{self.calls}", "name": "Write",
@@ -362,7 +391,11 @@ class _UsageBrain:
         )
         yield BrainDelta(
             finish_reason="tool_use",
-            usage={"input_tokens": 200_000, "output_tokens": 10_000, "cache_hit_tokens": 0},
+            usage={
+                "input_tokens": _request_bytes(req) // 4,
+                "output_tokens": _MAX_TOKENS,
+                "cache_hit_tokens": 0,
+            },
         )
 
 
@@ -373,11 +406,9 @@ async def test_api_worker_stops_at_the_cost_cap(
     monkeypatch.setattr(
         "jarvis.missions.workers.api_agent_worker._build_brain", lambda _p, _m: brain
     )
-    per_call = estimate_paid_cost_usd("claude-sonnet-4-6", 1) or 0.0
-    assert per_call > 0
-    worker = ApiAgentWorker(
-        "claude-api", pinned_model="claude-sonnet-4-6", cost_cap_usd=1.0
-    )
+    # The approval grants $2 on top of what the mission already paid ($1).
+    gate = _manual_gate(tmp_path, spent=1.0)
+    worker = ApiAgentWorker("claude-api", pinned_model="claude-sonnet-4-6", paid_gate=gate)
     events = [
         ev
         async for ev in worker.spawn(
@@ -388,10 +419,46 @@ async def test_api_worker_stops_at_the_cost_cap(
 
     result = events[-1]
     assert result.is_error is True
-    assert "cost cap" in result.result
-    assert result.cost_usd is not None and result.cost_usd >= 1.0
-    # 200k in + 10k out on Sonnet is about $0.75 a call: it stops on call two.
-    assert brain.calls == 2
+    assert "paid_cap_reached" in result.result
+    assert gate.refusal == "paid_cap_reached"
+    # Each call reserves its maximum cost first, so a call that could cross
+    # the cap is never made: this run never spends more than the approval.
+    assert brain.calls > 1
+    assert gate.charged_usd == pytest.approx(result.cost_usd)
+    assert gate.charged_usd <= PAID_MISSION_CAP_USD + 1e-9
+
+
+async def test_api_worker_counts_a_usage_less_call_as_its_reservation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stream that reports no usage is charged its whole reservation
+    (fail closed) — it can never slip under the cap."""
+
+    class _SilentBrain:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, _req: BrainRequest) -> AsyncIterator[BrainDelta]:
+            self.calls += 1
+            yield BrainDelta(content="done", finish_reason="end_turn")
+
+    brain = _SilentBrain()
+    monkeypatch.setattr(
+        "jarvis.missions.workers.api_agent_worker._build_brain", lambda _p, _m: brain
+    )
+    gate = _manual_gate(tmp_path)
+    worker = ApiAgentWorker("claude-api", pinned_model="claude-sonnet-4-6", paid_gate=gate)
+    events = [
+        ev
+        async for ev in worker.spawn(
+            "go", worktree=tmp_path, env={}, job=None, worker_id="w",
+            log_dir=tmp_path / "logs",
+        )
+    ]
+    assert events[-1].is_error is False and brain.calls == 1
+    assert gate.calls == 1
+    assert gate.charged_usd > 0
+    assert events[-1].cost_usd == pytest.approx(gate.charged_usd)
 
 
 # --- REST -------------------------------------------------------------------------
@@ -430,6 +497,8 @@ async def test_rest_shows_the_offer_and_applies_decisions(
         "cost_cap_usd": PAID_MISSION_CAP_USD,
         "reason": "provider_quota",
         "open_steps": 1,
+        "spent_usd": 0.0,
+        "covers_critic": True,
     }
     assert mismatch.status_code == 409
     assert waited.status_code == 200 and waited.json()["state"] == "WAITING_CAPACITY"

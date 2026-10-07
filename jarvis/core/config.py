@@ -4403,6 +4403,24 @@ class Phase6Config(BaseModel):
     safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
 
 
+class MissionsConfig(BaseModel):
+    """``[missions]`` — how missions may spend money.
+
+    ``paid_api_fallback``: when no connected subscription has capacity, a
+    mission on a subscription install continues on the user's own API key
+    (within the per-mission and daily caps of ``jarvis/missions/capacity.py``)
+    instead of waiting. Default OFF. Read fresh on every paid decision, written
+    only through ``config_writer.set_missions_paid_api_fallback`` from the
+    Settings route — never by voice, chat or an agent tool (the path is in
+    ``jarvis/core/self_mod/forbidden.py``). No effect on an API-key-only
+    install, whose keys are its primary provider anyway.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    paid_api_fallback: bool = False
+
+
 class GlmCodingPlanConfig(BaseModel):
     """Where a GLM pane sends its traffic, and which model ids it asks for.
 
@@ -4679,6 +4697,8 @@ class JarvisConfig(BaseModel):
     review: ReviewConfig = Field(default_factory=ReviewConfig)
     # Phase 6 — mission subsystem ([phase6.safety] typed; rest raw, AP-16).
     phase6: Phase6Config = Field(default_factory=Phase6Config)
+    # [missions] — paid API fallback switch for missions (capacity policy).
+    missions: MissionsConfig = Field(default_factory=MissionsConfig)
     # Latency sprint 1 (2026-04-30) — master switches for performance levers.
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     # Wave 0 (omni-latency) — hot-path latency span instrumentation toggle.

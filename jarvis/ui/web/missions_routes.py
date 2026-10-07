@@ -546,7 +546,7 @@ async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
     }
 
 
-def _offer_json(offer: Any) -> dict[str, Any] | None:
+def _offer_json(offer: Any, *, spent_usd: float = 0.0) -> dict[str, Any] | None:
     if offer is None:
         return None
     return {
@@ -556,6 +556,11 @@ def _offer_json(offer: Any) -> dict[str, Any] | None:
         "cost_cap_usd": offer.cost_cap_usd,
         "reason": offer.reason,
         "open_steps": offer.open_steps,
+        # Already paid by this mission (every run, worker and critic); an
+        # approval grants up to ``cost_cap_usd`` MORE on top of it.
+        "spent_usd": round(float(spent_usd), 6),
+        # An approval covers the mission's critic calls too (same cap).
+        "covers_critic": True,
     }
 
 
@@ -574,7 +579,13 @@ async def get_paid_offer(mission_id: str, request: Request) -> dict[str, Any]:
     kontrollierer = _optional_kontrollierer(request)
     offer_fn = getattr(kontrollierer, "paid_offer", None)
     offer = await offer_fn(mission_id) if offer_fn is not None else None
-    return {"mission_id": mission_id, "state": view.state.value, "offer": _offer_json(offer)}
+    spent_fn = getattr(kontrollierer, "paid_spent_usd", None)
+    spent = await spent_fn(mission_id) if offer is not None and spent_fn is not None else 0.0
+    return {
+        "mission_id": mission_id,
+        "state": view.state.value,
+        "offer": _offer_json(offer, spent_usd=spent),
+    }
 
 
 @router.post(
@@ -586,9 +597,10 @@ async def decide_capacity(
     """Wait, approve paid API use for THIS mission only, or cancel.
 
     An approval must name the provider and model of the offer currently
-    shown; it covers one run of this one mission and is never stored or
-    reused. Returns ``409`` when the mission is no longer waiting or the
-    offer changed — nothing is decided or billed then.
+    shown; it covers one run of this one mission — worker and critic calls,
+    up to the offer's cost cap more than the mission already paid — and is
+    never stored or reused. Returns ``409`` when the mission is no longer
+    waiting or the offer changed — nothing is decided or billed then.
     """
     from jarvis.missions.capacity import CapacityDecisionRejected
 

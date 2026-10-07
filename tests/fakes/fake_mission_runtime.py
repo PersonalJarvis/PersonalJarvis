@@ -7,6 +7,7 @@ real fakes, never ``unittest.mock``.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -14,7 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.missions.budget import BudgetTracker
-from jarvis.missions.capacity import PaidOffer
+from jarvis.missions.capacity import (
+    CapacityPolicy,
+    DailyPaidLedger,
+    PaidCallGate,
+    PaidCallRefused,
+    PaidOffer,
+)
 from jarvis.missions.critic.verdict import REQUIRED_AXES, CriticAxis, CriticVerdict
 from jarvis.missions.kontrollierer.decomposer import MissionPlan, Step
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
@@ -46,7 +53,10 @@ class FakeMissionWorker:
 
     ``quota`` makes each spawn end on a spent subscription window;
     ``writes`` maps relative paths to content the spawn writes into its
-    workspace before finishing.
+    workspace before finishing. With a ``gate`` (a paid fallback worker) each
+    spawn makes ``calls`` model calls of ``(reserve_usd, actual_usd)`` — the
+    actual ``None`` meaning "the call reported no usage" — through the gate,
+    like the real in-process API worker, and stops on a refusal.
     """
 
     cli = "claude"
@@ -59,9 +69,16 @@ class FakeMissionWorker:
         writes: dict[str, str] | None = None,
         on_spawn: Callable[[str, Path], None] | None = None,
         cost_usd: float = 0.0,
+        gate: PaidCallGate | None = None,
+        calls: list[tuple[float, float | None]] | None = None,
+        call_delay_s: float = 0.0,
     ) -> None:
         self.family = family
         self.cost_usd = cost_usd
+        self.gate = gate
+        self.calls = list(calls or [])
+        self.call_delay_s = call_delay_s
+        self.refused: list[str] = []
         self.quota = quota
         self.writes = dict(writes or {})
         self.on_spawn = on_spawn
@@ -79,6 +96,25 @@ class FakeMissionWorker:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding="utf-8")
         _write_log(log_dir)
+        if self.gate is not None and self.calls:
+            spent = 0.0
+            for reserve_usd, actual_usd in self.calls:
+                try:
+                    reservation = self.gate.reserve(reserve_usd)
+                except PaidCallRefused as exc:
+                    self.refused.append(exc.reason)
+                    yield ResultEvent(
+                        is_error=True,
+                        subtype="error_during_execution",
+                        result=f"[worker error: {exc}]",
+                        cost_usd=spent,
+                    )
+                    return
+                if self.call_delay_s:
+                    await asyncio.sleep(self.call_delay_s)
+                spent += self.gate.commit(reservation, actual_usd)
+            yield ResultEvent(cost_usd=spent)
+            return
         if self.quota:
             yield ResultEvent(
                 is_error=True,
@@ -148,24 +184,68 @@ class DirWorktrees:
 
 
 class FakePaidOption:
-    """A fixed paid offer; its workers report ``cost_per_spawn`` USD each."""
+    """A fixed paid offer. Its workers report ``cost_per_spawn`` USD each at
+    the end of a spawn — or, with ``calls``, make gated model calls like the
+    real API worker (see :class:`FakeMissionWorker`)."""
 
-    def __init__(self, offer: PaidOffer | None, *, cost_per_spawn: float = 0.25) -> None:
+    def __init__(
+        self,
+        offer: PaidOffer | None,
+        *,
+        cost_per_spawn: float = 0.25,
+        calls: list[tuple[float, float | None]] | None = None,
+        call_delay_s: float = 0.0,
+    ) -> None:
         self._offer = offer
         self.cost_per_spawn = cost_per_spawn
+        self.calls = calls
+        self.call_delay_s = call_delay_s
         self.offer_calls: list[dict[str, Any]] = []
         self.workers: list[FakeMissionWorker] = []
+        self.gates: list[PaidCallGate] = []
         self.remaining: list[float] = []
 
     def offer(self, **kwargs: Any) -> PaidOffer | None:
         self.offer_calls.append(kwargs)
         return self._offer
 
-    def worker(self, offer: PaidOffer, *, remaining_usd: float, task_text: str) -> Any:
-        self.remaining.append(remaining_usd)
-        worker = FakeMissionWorker(family=offer.provider, cost_usd=self.cost_per_spawn)
+    def worker(self, offer: PaidOffer, *, gate: PaidCallGate, task_text: str) -> Any:
+        self.gates.append(gate)
+        self.remaining.append(gate.remaining_usd())
+        worker = FakeMissionWorker(
+            family=offer.provider,
+            cost_usd=0.0 if self.calls else self.cost_per_spawn,
+            gate=gate,
+            calls=self.calls,
+            call_delay_s=self.call_delay_s,
+        )
         self.workers.append(worker)
         return worker
+
+
+class Switch:
+    """A mutable on/off value a :class:`CapacityPolicy` reads per call."""
+
+    def __init__(self, value: bool) -> None:
+        self.value = value
+
+    def __call__(self) -> bool:
+        return self.value
+
+
+def make_policy(
+    tmp_path: Path, *, pinned: bool = True, paid_fallback: bool = False
+) -> tuple[CapacityPolicy, Switch, Switch]:
+    """A real :class:`CapacityPolicy` on injected answers and a temp daily
+    ledger. Returns the policy plus its ``pinned`` and ``paid_fallback``
+    switches, which the test can flip mid-run."""
+    pinned_switch, paid_switch = Switch(pinned), Switch(paid_fallback)
+    policy = CapacityPolicy(
+        pinned=pinned_switch,
+        paid_fallback=paid_switch,
+        daily=DailyPaidLedger(tmp_path / "paid-ledger.json"),
+    )
+    return policy, pinned_switch, paid_switch
 
 
 def make_kontrollierer(
@@ -175,7 +255,12 @@ def make_kontrollierer(
     factory: Callable[[Step], Any],
     critic: Any | None = None,
     paid_option: Any | None = None,
+    capacity_policy: CapacityPolicy | None = None,
 ) -> Kontrollierer:
+    """A Kontrollierer on fakes. By default a subscription install (pinned)
+    with the paid-API fallback OFF and a temp daily ledger."""
+    if capacity_policy is None:
+        capacity_policy, _pinned, _paid = make_policy(tmp_path)
     return Kontrollierer(
         manager=manager,
         decomposer=FixedPlanDecomposer(plan),  # type: ignore[arg-type]
@@ -187,4 +272,5 @@ def make_kontrollierer(
         job_factory=NoopJob,
         isolation_root=tmp_path / "missions",
         paid_option=paid_option,
+        capacity_policy=capacity_policy,
     )

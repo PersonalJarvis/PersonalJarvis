@@ -1,9 +1,12 @@
 """No automatic escape from the Claude subscription to a stored Anthropic key.
 
-User rule (2026-10-06): under NO condition may a mission whose Claude
-subscription is spent, logged out or unreadable run on a stored per-token
-Anthropic API key on its own — not on the first run, not on any resume. Only
-an explicit per-mission approval may bill a key.
+User rule (2026-10-06, revised 2026-10-07): under NO condition may a mission
+on a subscription install whose subscriptions are spent, logged out or
+unreadable run on a stored per-token Anthropic API key on its own — not on the
+first run, not on any resume. Another connected subscription is fine (free);
+a key bills only with the paid-fallback setting ON or a per-mission approval.
+An API-key-only install (never connected a subscription) is unaffected: its
+key is its primary credential (AP-22).
 
 These tests drive the REAL worker factory and env builder from
 ``bootstrap_missions``. Every credential is a fake string; no secret store is
@@ -35,6 +38,7 @@ class World:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.login: bool | None = None  # None = logged out / probe unreadable
         self.cooldown = False
+        self.codex_login = False
         self.live_oauth: str | None = None
         self.native_subscription: object | None = None
         mp = monkeypatch
@@ -53,7 +57,7 @@ class World:
         mp.setattr(mi, "_api_key_family_viable", lambda _p: True)
         mp.setattr(
             "jarvis.missions.workers.codex_direct_worker._codex_oauth_available",
-            lambda: True,
+            lambda: self.codex_login,
         )
         mp.setattr("jarvis.codex_auth_state.codex_needs_reauth", lambda: False)
         mp.setattr("jarvis.codex_quota_state.codex_in_quota_cooldown", lambda **_k: False)
@@ -65,10 +69,18 @@ class World:
         )
         mp.setattr(mi, "_assemble_worker_mcp_servers", lambda **_k: ())
 
+    def subscription_install(self) -> None:
+        """A subscription was seen connected recently (the sticky signal)."""
+        from jarvis.brain import background_policy
+
+        background_policy.note_connected("claude-cli")
+
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch) -> World:
-    return World(monkeypatch)
+    world = World(monkeypatch)
+    world.subscription_install()
+    return world
 
 
 @pytest.fixture
@@ -108,6 +120,17 @@ async def test_spent_or_unreadable_subscription_parks_instead_of_using_the_key(
     assert (exc.value.reason, exc.value.provider) == (reason, "claude")
 
 
+async def test_spent_claude_moves_to_a_connected_codex_login_not_the_key(
+    stack: dict[str, Any], world: World
+) -> None:
+    from jarvis.missions.workers.codex_direct_worker import CodexDirectWorker
+
+    world.login, world.cooldown, world.codex_login = True, True, True
+    worker = stack["kontrollierer"]._worker_factory(_step())
+    assert isinstance(worker, CodexDirectWorker)
+    assert worker.backend_fallback is False
+
+
 async def test_live_subscription_runs_claude_without_any_fallback(
     stack: dict[str, Any], world: World
 ) -> None:
@@ -131,6 +154,28 @@ async def test_cli_env_never_carries_a_classic_api_key(
     assert FAKE_API_KEY not in env.values()
 
 
+async def test_key_only_install_keeps_its_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 1: Claude Code installed but never logged in, no subscription
+    ever seen — the key is this install's primary credential: not pinned, not
+    stripped, no parking (AP-22)."""
+    from jarvis.missions.workers.claude_direct_worker import ClaudeDirectWorker
+
+    World(monkeypatch)  # login None, no codex login, no sticky marker
+    assert mi.install_is_pinned() is False
+    stack = await mi.bootstrap_missions(
+        db_path=tmp_path / "missions.db", isolation_root=tmp_path / "sub-agents"
+    )
+    try:
+        env = stack["kontrollierer"]._env_builder(tmp_path / "mission")
+        assert FAKE_API_KEY in env.values()
+        worker = stack["kontrollierer"]._worker_factory(_step())
+        assert isinstance(worker, ClaudeDirectWorker)  # the legacy chain, unparked
+    finally:
+        await mi.shutdown_missions(stack)
+
+
 async def test_cli_env_keeps_the_subscription_login(
     stack: dict[str, Any], world: World, tmp_path: Path
 ) -> None:
@@ -140,12 +185,40 @@ async def test_cli_env_keeps_the_subscription_login(
     assert FAKE_API_KEY not in env.values()
 
 
+async def test_antigravity_env_carries_no_gemini_key_on_a_subscription_install(
+    stack: dict[str, Any], world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The antigravity worker crosses to the Gemini CLI on GEMINI_API_KEY when
+    agy has no login — an automatic paid switch on a subscription install."""
+    monkeypatch.setattr(mi, "_live_subagent_provider", lambda _snapshot: "antigravity")
+    env = stack["kontrollierer"]._env_builder(tmp_path / "mission")
+    assert FAKE_API_KEY not in env.values()
+
+
+async def test_antigravity_env_keeps_the_gemini_key_on_a_key_only_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    World(monkeypatch)  # no sticky marker, no login: a key-only install
+    monkeypatch.setattr(mi, "_live_subagent_provider", lambda _snapshot: "antigravity")
+    stack = await mi.bootstrap_missions(
+        db_path=tmp_path / "missions.db", isolation_root=tmp_path / "sub-agents"
+    )
+    try:
+        env = stack["kontrollierer"]._env_builder(tmp_path / "mission")
+        assert FAKE_API_KEY in env.values()
+    finally:
+        await mi.shutdown_missions(stack)
+
+
 def test_key_filter_rule() -> None:
-    assert mi._anthropic_key_for_cli_env(FAKE_API_KEY, cli_present=True) is None
-    assert mi._anthropic_key_for_cli_env(FAKE_OAUTH, cli_present=True) == FAKE_OAUTH
-    assert mi._anthropic_key_for_cli_env(None, cli_present=True) is None
+    strip = mi._anthropic_key_for_cli_env
+    assert strip(FAKE_API_KEY, cli_present=True, pinned=True) is None
+    assert strip(FAKE_OAUTH, cli_present=True, pinned=True) == FAKE_OAUTH
+    assert strip(None, cli_present=True, pinned=True) is None
     # Without the CLI there is no subscription to protect; the key is untouched.
-    assert mi._anthropic_key_for_cli_env(FAKE_API_KEY, cli_present=False) == FAKE_API_KEY
+    assert strip(FAKE_API_KEY, cli_present=False, pinned=True) == FAKE_API_KEY
+    # A key-only install keeps its key even with the CLI installed (AP-22).
+    assert strip(FAKE_API_KEY, cli_present=True, pinned=False) == FAKE_API_KEY
 
 
 # --- First run and every resume stay parked until approval -------------------------

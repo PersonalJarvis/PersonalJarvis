@@ -20,7 +20,7 @@ from jarvis.missions.voice.readback import CAPACITY_WAIT_PHRASES
 
 _FRONTEND = Path(__file__).resolve().parents[2] / "jarvis" / "ui" / "web" / "frontend" / "src"
 _MISSIONS_TS = (_FRONTEND / "types" / "missions.ts").read_text(encoding="utf-8")
-_LOCALES = ("de", "en", "es")
+_LOCALES = ("de", "en", "es", "zh")
 
 
 def _ts_union(name: str) -> set[str]:
@@ -43,6 +43,26 @@ def test_reason_vocabulary_python_ts_parity() -> None:
     payload_reasons = set(get_args(MissionWaitingCapacity.model_fields["reason"].annotation))
     assert payload_reasons == set(CAPACITY_WAIT_REASONS)
     assert _ts_union("CapacityWaitReason") == set(CAPACITY_WAIT_REASONS)
+
+
+def test_paid_fallback_reasons_cross_every_layer() -> None:
+    """The 2026-10-07 reasons exist in Python, TypeScript and the voice
+    tables — a reason on one side only is the BUG-008 drift class."""
+    new_reasons = {"paid_daily_cap_reached", "paid_consent_revoked"}
+    assert new_reasons <= set(CAPACITY_WAIT_REASONS)
+    assert new_reasons <= _ts_union("CapacityWaitReason")
+    for lang in ("de", "en"):
+        assert new_reasons <= set(CAPACITY_WAIT_PHRASES[lang])
+
+
+def test_paid_usage_says_whether_it_was_automatic() -> None:
+    from jarvis.missions.events import MissionPaidUsage
+
+    assert "automatic" in MissionPaidUsage.model_fields
+    m = re.search(
+        r"export interface MissionPaidUsage extends BasePayload \{([^}]+)\}", _MISSIONS_TS
+    )
+    assert m and re.search(r"^\s*automatic:\s*boolean", m.group(1), re.MULTILINE)
 
 
 def test_event_type_listed_in_ts() -> None:

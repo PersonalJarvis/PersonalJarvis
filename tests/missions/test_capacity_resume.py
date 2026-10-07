@@ -1,8 +1,10 @@
 """Automatic resume of a WAITING_CAPACITY mission from its checkpoint.
 
-The user's rules (2026-10-04): resume once the SAME subscription has capacity
-again, continue exactly from the checkpoint, never redo an approved step,
-never switch to another provider or a paid key without approval.
+The user's rules (2026-10-04, revised 2026-10-07): resume once ANY connected
+subscription has capacity again (moving between subscriptions is free), or on
+the paid-fallback setting within its caps; continue exactly from the
+checkpoint, never redo an approved step, never switch to a metered key
+without consent. A mission that keeps parking without progress backs off.
 """
 from __future__ import annotations
 
@@ -255,16 +257,169 @@ async def test_resume_pass_never_switches_provider(
     assert not any(w.prompts for w in factory.workers[1:])
 
 
-async def test_resumed_run_parks_again_if_the_worker_family_changes(
+async def test_resumed_run_may_move_to_another_subscription(
     manager: MissionManager, tmp_path: Path
 ) -> None:
+    """Parked on Claude, resumed on the codex login: subscription to
+    subscription costs nothing extra and needs no approval."""
     factory = SwitchableFactory(family="codex")
+    k, mission_id, _first, _second = await _park_second_step(manager, tmp_path, factory)
+    factory.built_for.clear()
+
+    assert await k.resume_waiting_missions() == [mission_id]
+    assert await _state(manager, mission_id) == MissionState.APPROVED
+
+
+async def test_resumed_run_parks_again_if_the_worker_turns_metered(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    factory = SwitchableFactory(family="openrouter")
     k, mission_id, _first, _second = await _park_second_step(manager, tmp_path, factory)
 
     assert await k.resume_mission(mission_id) == MissionState.WAITING_CAPACITY
     wait = _waits(await _payloads(manager, mission_id))[-1]
     assert (wait.reason, wait.provider) == ("provider_unavailable", "claude")
     assert not any(w.prompts for w in factory.workers[1:])
+
+
+# --- Backoff, critic probe, claim safety ----------------------------------------
+
+
+async def test_repeat_parks_without_progress_back_off(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """Finding 4: a probe that says yes while the run keeps re-parking must
+    not churn every 5 minutes — the wait doubles from 5 to 60 minutes."""
+    from jarvis.missions.capacity import RESUME_BACKOFF_MAX_S, resume_backoff_s
+
+    factory = SwitchableFactory()
+    k, mission_id, _first, _second = await _park_second_step(manager, tmp_path, factory)
+    mission_dir = _mission_dir(tmp_path, mission_id)
+    assert read_checkpoint(mission_dir)["next_resume_ms"] == 0  # type: ignore[index]
+
+    factory.capacity = False
+    assert await k.resume_mission(mission_id) == MissionState.WAITING_CAPACITY
+    first = read_checkpoint(mission_dir)
+    assert first is not None and first["idle_parks"] == 1
+    assert first["next_resume_ms"] > first["created_ms"]
+
+    # The backoff holds even though the probe would now say yes.
+    factory.capacity = True
+    assert await k.resume_waiting_missions() == []
+    assert await _state(manager, mission_id) == MissionState.WAITING_CAPACITY
+
+    no_jitter = lambda a, b: 1.0  # noqa: E731 - fixed jitter for the arithmetic
+    assert [resume_backoff_s(n, jitter=no_jitter) for n in range(7)] == [
+        0.0, 300.0, 600.0, 1200.0, 2400.0, RESUME_BACKOFF_MAX_S, RESUME_BACKOFF_MAX_S,
+    ]
+    assert 240.0 <= resume_backoff_s(1) <= 360.0  # jittered
+
+
+async def test_progress_resets_the_backoff(manager: MissionManager, tmp_path: Path) -> None:
+    factory = SwitchableFactory()
+    k, mission_id, _first, _second = await _park_second_step(manager, tmp_path, factory)
+    factory.capacity = False
+    await k.resume_mission(mission_id)
+    mission_dir = _mission_dir(tmp_path, mission_id)
+    checkpoint = read_checkpoint(mission_dir)
+    assert checkpoint is not None and checkpoint["idle_parks"] == 1
+    # Expire the backoff by hand: the next resume finishes the step.
+    checkpoint["next_resume_ms"] = 0
+    from jarvis.missions.capacity import write_checkpoint
+
+    write_checkpoint(mission_dir, {k_: v for k_, v in checkpoint.items() if k_ != "version"})
+    factory.capacity = True
+    assert await k.resume_waiting_missions() == [mission_id]
+    assert await _state(manager, mission_id) == MissionState.APPROVED
+    # Terminal: the checkpoint is gone, the directory may be cleaned up again.
+    assert not (mission_dir / CHECKPOINT_NAME).exists()
+
+
+async def test_resume_without_a_critic_probe_answer_stays_parked(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    """A step parked with its review pending resumes only when a critic has
+    capacity — never claim, restore and re-park on every tick."""
+    from jarvis.missions.capacity import CriticCapacityUnavailable
+    from tests.missions.test_capacity_critic import DELIVERED_DIFF, ScriptedCritic
+
+    class ProbedCritic(ScriptedCritic):
+        def __init__(self, *errors: Exception) -> None:
+            super().__init__(*errors)
+            self.available = False
+
+        def capacity_available(self) -> bool:
+            return self.available
+
+    from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
+
+    critic = ProbedCritic(CriticCapacityUnavailable("provider_quota", "claude"))
+    factory = SwitchableFactory()
+    plan = MissionPlan(steps=[Step(slug="report", prompt="write it")], n_workers=1)
+    k = make_kontrollierer(manager, tmp_path, plan, factory, critic=critic)
+    k._capture_diff = lambda wt: DELIVERED_DIFF  # type: ignore[method-assign]
+    k._restore_task_workspace = lambda wt, art: True  # type: ignore[method-assign]
+    assert isinstance(k, Kontrollierer)
+    mission_id = await manager.dispatch(prompt="write the report")
+    assert await k.run_mission(mission_id) == MissionState.WAITING_CAPACITY
+
+    # The worker factory has capacity, but only the review is owed.
+    assert await k.resume_waiting_missions() == []
+    assert len(critic.calls) == 1
+    critic.available = True
+    assert await k.resume_waiting_missions() == [mission_id]
+    assert await _state(manager, mission_id) == MissionState.APPROVED
+    assert sum(len(w.prompts) for w in factory.workers) == 1
+
+
+async def test_a_failing_claim_parks_the_mission_again(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    factory = SwitchableFactory()
+    k, mission_id, _first, _second = await _park_second_step(manager, tmp_path, factory)
+
+    async def _broken_heartbeat(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("store hiccup")
+
+    async def _broken_finish(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("claim bookkeeping failed")
+
+    k._finish_claim = _broken_finish  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        await k.resume_mission(mission_id)
+    assert await _state(manager, mission_id) == MissionState.WAITING_CAPACITY
+
+
+async def test_shutdown_reparks_a_resumed_mission_instead_of_cancelling(
+    manager: MissionManager, tmp_path: Path
+) -> None:
+    gate = asyncio.Event()
+
+    class SlowWorker(FakeMissionWorker):
+        async def spawn(self, prompt: str, **kwargs: Any):  # type: ignore[override]
+            await gate.wait()
+            async for ev in super().spawn(prompt, **kwargs):
+                yield ev
+
+    factory = SwitchableFactory()
+    k, mission_id, _first, second = await _park_second_step(manager, tmp_path, factory)
+    k._worker_factory = lambda step: SlowWorker()
+
+    run = asyncio.create_task(k.resume_mission(mission_id))
+    for _ in range(200):
+        if await _state(manager, mission_id) == MissionState.RUNNING and mission_id in (
+            k.running_mission_ids()
+        ):
+            break
+        await asyncio.sleep(0.01)
+    finalized = await k.cancel_all_running(reason="app_shutdown")
+    assert finalized == [mission_id]
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert await _state(manager, mission_id) == MissionState.WAITING_CAPACITY
+    assert (_mission_dir(tmp_path, mission_id) / CHECKPOINT_NAME).is_file()
+    waits = _waits(await _payloads(manager, mission_id))
+    assert waits[-1].repeat is True  # nothing new to announce while stopping
 
 
 # --- Restoring work into a git workspace --------------------------------------

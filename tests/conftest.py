@@ -284,6 +284,20 @@ def _background_policy_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _mission_paid_ledger_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
+    """Keep the missions' rolling paid-use ledger off the developer's real data
+    directory: it records real spend and gates automatic paid API use."""
+    from jarvis.missions import capacity
+
+    root = tmp_path_factory.mktemp("mission-paid-ledger")
+    monkeypatch.setattr(
+        capacity, "_default_daily_ledger_path", lambda: root / "mission_paid_ledger.json"
+    )
+    monkeypatch.setattr(capacity, "_DEFAULT_DAILY", None)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _app_action_state_in_tmp(tmp_path_factory, monkeypatch):  # noqa: ANN001
     """Every registry-command or app-action call records its outcome for the
     Jarvis-actions page; keep that, and the per-action policy, off the
