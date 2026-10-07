@@ -111,7 +111,13 @@ def test_a_detached_grandchild_is_reaped_with_its_parent(tmp_path):
         parent.wait(timeout=10)
         assert grandchild in tracker.close()
         proc = psutil.Process(grandchild)
-        proc.wait(timeout=10)
+        # Not our child: wait() would block on a zombie nobody reaps (a
+        # container without an init process). Dead or zombie is the outcome.
+        deadline = time.monotonic() + 10
+        while proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+            if time.monotonic() > deadline:
+                break
+            time.sleep(0.05)
     except psutil.NoSuchProcess:
         pass
     finally:

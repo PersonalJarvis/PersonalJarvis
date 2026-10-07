@@ -435,7 +435,11 @@ def test_the_posix_installer_reports_a_missing_tool():
     )
     done = subprocess.run([_bash(), *argv[1:]], capture_output=True, text=True, timeout=60)
     assert done.returncode == base.SETUP_MISSING_TOOL_EXIT
-    assert "Setup needs jarvis-no-such-tool" in done.stderr
+    # The first missing tool is named: curl itself on a bare container.
+    import shutil
+
+    first = "curl" if shutil.which("curl") is None else "jarvis-no-such-tool"
+    assert f"Setup needs {first}" in done.stderr
 
 
 @pytest.mark.skipif(_bash() is None, reason="no bash on this machine")
