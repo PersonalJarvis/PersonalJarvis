@@ -1,0 +1,112 @@
+# Signed release wrapper smoke - runs the RELEASED install-verify.sh /
+# install-verify.ps1 (not the in-repo copy: that is the wire format a user
+# actually runs) against one published release in dry-run / no-wizard /
+# no-launch mode. Every signature axis is verified for real; only the install
+# itself is a dry run, and nothing is launched.
+#
+# One implementation, two callers:
+#   * installer-smoke.yml `verify-release` (Linux only, on installer changes),
+#   * release-smoke.yml (Linux, Windows and macOS, after every release).
+#
+# An empty `tag` means "the latest published release". When there is none
+# (a bootstrapping fork) the smoke is a clearly reported no-op.
+
+name: Release wrapper smoke
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Published release tag (vX.Y.Z); empty = latest"
+        type: string
+        default: ""
+      platforms:
+        description: "JSON list of runner labels"
+        type: string
+        default: '["ubuntu-latest"]'
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: resolve release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve target tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_TAG" ]; then
+              [[ "$INPUT_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Not a release tag: $INPUT_TAG"; exit 1; }
+              echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+              echo "Using the requested tag: $INPUT_TAG"
+              exit 0
+          fi
+          # Authenticated on purpose: the anonymous API limit is per runner IP
+          # and shared with every other job on that host (an earlier version of
+          # this step failed on "API rate limit exceeded for <ip>").
+          if ! tag="$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2> "$RUNNER_TEMP/latest.err")"; then
+              if grep -q "HTTP 404" "$RUNNER_TEMP/latest.err"; then
+                  echo "tag=" >> "$GITHUB_OUTPUT"
+                  echo "::notice::No published release yet; the wrapper smoke is a no-op."
+                  exit 0
+              fi
+              cat "$RUNNER_TEMP/latest.err"
+              exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Latest published release: $tag"
+
+  # No explicit `name:` - an unevaluated ${{ matrix.os }} renders raw in the
+  # check list whenever the job is skipped (see the dragdrop job in ci.yml).
+  verify:
+    needs: resolve
+    if: needs.resolve.outputs.tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      JARVIS_INSTALL_TAG: ${{ needs.resolve.outputs.tag }}
+      REL_BASE: https://github.com/${{ github.repository }}/releases/download/${{ needs.resolve.outputs.tag }}
+      # A smoke may verify a release days after publication. The whole
+      # signature chain still runs; only the 24-hour Rekor recency policy is
+      # waived for this historical artifact in CI.
+      JARVIS_INSTALL_ALLOW_STALE: "1"
+    steps:
+      - name: Run the released install-verify.sh (dry-run, no-wizard, no-launch)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export JARVIS_INSTALL_DIR="$RUNNER_TEMP/jarvis-smoke-install"
+          curl -fsSL --retry 3 "$REL_BASE/install-verify.sh" -o "$RUNNER_TEMP/install-verify.sh"
+          echo "----- install-verify.sh first 20 lines -----"
+          head -20 "$RUNNER_TEMP/install-verify.sh"
+          echo "--------------------------------------------"
+          # The verifier honours JARVIS_INSTALL_TAG, so it checks exactly this
+          # release and hands the authenticated install.sh the same flags.
+          bash "$RUNNER_TEMP/install-verify.sh" --dry-run --no-wizard --no-launch
+
+      - name: Run the released install-verify.ps1 (dry-run, no-wizard, no-launch)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:JARVIS_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'jarvis-smoke-install'
+          $verifier = Join-Path $env:RUNNER_TEMP 'install-verify.ps1'
+          Invoke-WebRequest -Uri "$env:REL_BASE/install-verify.ps1" -OutFile $verifier -UseBasicParsing
+          Get-Content $verifier -TotalCount 20
+          # Windows PowerShell 5.1 is what the documented one-liner runs.
+          & powershell -NoProfile -ExecutionPolicy Bypass -File $verifier --dry-run --no-wizard --no-launch
+          exit $LASTEXITCODE
