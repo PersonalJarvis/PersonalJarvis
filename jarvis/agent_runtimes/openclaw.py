@@ -430,6 +430,10 @@ class OpenClawRuntime:
                 f"& ([scriptblock]::Create((Invoke-RestMethod {_INSTALL_URL_PS1}))) "
                 f"-NodeOnly -NodePrefix {ps_quote(str(node_dir))} "
                 f"-NodeVersion {ps_quote(_PRIVATE_NODE_VERSION)}; "
+                # npm runs package scripts through ``cmd /c node ...``: without
+                # this, ``node`` is the system's (CI: 22, rejected by OpenClaw's
+                # preinstall) or missing. This install process only, never PATH.
+                f"$env:Path = {ps_quote(str(node_dir) + ';')} + $env:Path; "
                 f"& {ps_quote(str(node_dir / 'node.exe'))} {ps_quote(str(npm_cli))} "
                 f"install -g --prefix {ps_quote(str(prefix / 'pkg'))} "
                 f"{ps_quote('openclaw@' + version)} --no-fund --no-audit --loglevel=error; "

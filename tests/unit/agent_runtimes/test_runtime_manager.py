@@ -470,3 +470,15 @@ def test_installers_are_pinned_and_skip_the_browser_and_desktop_control(monkeypa
             assert "install-cli.sh" in claw and "--prefix" in claw
         # Updates go to the same pinned release, never to upstream latest.
         assert "update" not in (hermes.HermesRuntime().update_command() or [])
+
+
+def test_the_windows_openclaw_install_runs_npm_scripts_on_the_private_node(monkeypatch):
+    """npm runs OpenClaw's preinstall via ``cmd /c node``; CI's system Node 22
+    was picked and rejected (2026-10-07). The private Node must come first."""
+    from jarvis.agent_runtimes import openclaw
+
+    monkeypatch.setattr(openclaw, "is_windows", lambda: True)
+    text = " ".join(openclaw.OpenClawRuntime().install_command() or [])
+    node_dir = str(openclaw.cli_prefix() / "node")
+    path_set = text.index("$env:Path = '" + node_dir + ";'")
+    assert path_set < text.index("npm-cli.js")
