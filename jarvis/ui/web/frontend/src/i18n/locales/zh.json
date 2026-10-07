@@ -5827,6 +5827,7 @@
       "setup_failed": "安装未完成：{0}",
       "provider_unsupported": "Hermes 和 OpenClaw 需要使用 API 密钥、本地模型服务器或 ChatGPT 订阅运行。请为此智能体选择其中一种。",
       "setting_up_chat": "正在这台电脑上安装 {0}。第一次需要几分钟，准备好后会立即回复你的消息。",
+      "routine_fallback": "本次运行使用 Jarvis 自己的运行时，而不是 {0}：为此例行任务选择的模型无法由 {0} 驱动。",
       "retry": "重试"
     },
     "approval_mode": {

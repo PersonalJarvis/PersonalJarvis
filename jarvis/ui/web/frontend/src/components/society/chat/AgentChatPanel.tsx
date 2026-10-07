@@ -792,6 +792,12 @@ function NoticeLine({ item }: { item: NoticeItem }) {
       {runtime ? t("society.runtime.setting_up_chat").replace("{0}", t(`society.runtime.${runtime}`)) : item.text}
     </p>;
   }
+  if (item.kind === "routine_runtime_fallback") {
+    const runtime = String(item.data.runtime ?? "");
+    return <p className="py-1 text-center text-[11px] text-muted-foreground" data-testid="routine-runtime-fallback">
+      {runtime ? t("society.runtime.routine_fallback").replace(/\{0\}/g, t(`society.runtime.${runtime}`)) : item.text}
+    </p>;
+  }
   if (item.kind === "routine_run") {
     const sessionId = String(item.data.session_id ?? "");
     const agentId = item.agentId || String(item.data.agent_id ?? "");

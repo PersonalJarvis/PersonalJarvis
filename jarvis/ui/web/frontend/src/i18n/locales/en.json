@@ -5825,6 +5825,7 @@
       "setup_failed": "Setup did not finish: {0}",
       "provider_unsupported": "Hermes and OpenClaw run on an API key, a local model server or the ChatGPT subscription. Pick one of those for this agent.",
       "setting_up_chat": "Setting up {0} on this computer. The first time takes a few minutes; your message is answered as soon as it is ready.",
+      "routine_fallback": "This run uses Jarvis' own runtime, not {0}: the model chosen for the routine is one {0} cannot drive.",
       "retry": "Try again"
     },
     "approval_mode": {
