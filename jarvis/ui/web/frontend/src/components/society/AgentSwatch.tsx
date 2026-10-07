@@ -8,6 +8,25 @@ import type { SocietyAgent } from "./data";
 type SwatchAgent = Pick<SocietyAgent, "figure" | "palette" | "name"> &
   Partial<Pick<SocietyAgent, "agentId" | "tier" | "state">>;
 
+/** The gold of the lead's mark (GigiAvatar's lens rim). */
+export const LEAD_COLOR = "#ffcd61";
+
+/**
+ * The one colour a person knows an agent by: the lead's gold, or the
+ * companion colour its symbol wears everywhere else.
+ */
+export function agentColor(agent: SwatchAgent): string {
+  if (isLead(agent)) return LEAD_COLOR;
+  return resolveCompanion(agent.agentId || agent.name, agent.figure?.companion).color;
+}
+
+function isLead(agent: SwatchAgent): boolean {
+  // Older internal-message participants carry the figure but not the tier.
+  return agent.tier === "lead" || (
+    !agent.tier && agent.figure?.archetype === "spirit" && agent.figure.base === "gigi"
+  );
+}
+
 /** Lightweight vector identity shared by roster, profile and message surfaces. */
 export function AgentSwatch({
   agent,
@@ -18,10 +37,7 @@ export function AgentSwatch({
   size?: number;
   className?: string;
 }) {
-  // Older internal-message participants carry the figure but not the tier.
-  const isJarvis = agent.tier === "lead" || (
-    !agent.tier && agent.figure?.archetype === "spirit" && agent.figure.base === "gigi"
-  );
+  const isJarvis = isLead(agent);
   // Real roster identities survive renames. Name-only historical participants
   // still get a deterministic symbol without fetching a roster or a 3D model.
   const appearance = resolveCompanion(agent.agentId || agent.name, agent.figure?.companion);

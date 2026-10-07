@@ -71,7 +71,8 @@ import { createAgentChatStore, useAgentChatStore, type AgentChatStoreHook } from
 import type { AgentChatSurface, ApprovalDecision } from "@/lib/agentChatApi";
 import { offeredModels, useSavedHiddenModels } from "@/lib/agentProviderPrefs";
 
-import { AgentSwatch } from "../AgentSwatch";
+import { AgentSwatch, agentColor } from "../AgentSwatch";
+import { bubbleTint, type BubbleTint } from "@/lib/bubbleTint";
 import {
   useResolveProposal,
   useRestoreIdentity,
@@ -698,6 +699,8 @@ export function Transcript({
   // watches the content's own size too, so growth follows; scrolled up, the
   // reader keeps their place and gets a button back.
   const { rootRef, contentRef, atEnd, jumpToEnd, follow } = useStickToBottom();
+  // The person's bubbles wear the colour of the agent they talk to.
+  const tint = useMemo(() => bubbleTint(agentColor(agent)), [agent]);
   // `items` itself, not its length: a reasoning trace or tool row grows
   // the same turn in place, so the length does not change. Pin in this
   // layout pass — waiting for ResizeObserver is one frame too late, and
@@ -731,7 +734,7 @@ export function Transcript({
               ) : item.type === "user" && assignmentOf(item.text) ? (
                 <DelegationActivity {...assignmentOf(item.text)!} roster={roster} />
               ) : item.type === "user" ? (
-                <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} />
+                <UserBubble item={item} agentId={agent.agentId} sessionId={sessionId ?? agent.chatSessionId ?? undefined} tint={tint} />
               ) : item.type === "turn" ? (
                 <TurnBubble item={item} memory={memoryByTurn.get(item.id)} onDecide={onDecide} />
               ) : item.type === "notice" ? (
@@ -870,7 +873,7 @@ export function IdentityNotice({ item }: { item: NoticeItem }) {
       ? t("society.chat.identity_undone").replace("{0}", previous.name)
       : t("society.chat.identity_now").replace("{0}", item.agentName || outcome);
   return (
-    <div className="flex flex-wrap items-center gap-2 self-start py-1 text-xs text-muted-foreground" data-testid="identity-notice">
+    <div className="my-2 flex flex-wrap items-center justify-center gap-2 self-center py-1 text-center text-xs text-muted-foreground" data-testid="identity-notice">
       <span className="font-medium text-foreground">{label}</span>
       {state !== "undone" && outcome ? <span>{outcome}</span> : null}
       {previous && agentId && state !== "undone" ? (
@@ -1070,7 +1073,12 @@ function visibleUserText(text: string): string {
     .trimEnd();
 }
 
-export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agentId?: string; sessionId?: string }) {
+/**
+ * The person's message: a bubble on the right in the agent's colour, with ink
+ * chosen for that colour (`bubbleTint`). Without an agent colour (a meeting
+ * of several agents) it wears the app's accent.
+ */
+export function UserBubble({ item, agentId, sessionId, tint }: { item: UserItem; agentId?: string; sessionId?: string; tint?: BubbleTint | null }) {
   const t = useT();
   const choices = messageChoices(item);
   const text = visibleUserText(item.text);
@@ -1083,7 +1091,11 @@ export function UserBubble({ item, agentId, sessionId }: { item: UserItem; agent
     }) : undefined} />;
   return (
     <div className="flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end gap-1 self-end">
-      <div className="min-w-0 rounded-2xl rounded-br-md bg-secondary px-4 py-2.5 text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
+      <div
+        data-testid="user-bubble"
+        className={cn("jarvis-chat-tinted min-w-0 rounded-[20px] px-4 py-2.5 text-base leading-6 [overflow-wrap:anywhere]", !tint && "jarvis-chat-out")}
+        style={tint ? { background: tint.background, color: tint.color } : undefined}
+      >
         <MessageWithChips text={text} choices={choices} />
       </div>
       {item.attachments.length > 0 ? (
@@ -1121,7 +1133,7 @@ function TurnBubble({
   ].filter(Boolean).join(" · ");
   // An agent's turn reads exactly like a coding thread's turn in the Agentic
   // IDE; only its questions and approvals are answered in place.
-  return <ThreadTurn turn={item} prompts="inline" onDecide={onDecide} extras={extras} receipt={spent || undefined} />;
+  return <ThreadTurn turn={item} prompts="inline" onDecide={onDecide} extras={extras} receipt={spent || undefined} bubbles />;
 }
 
 /**

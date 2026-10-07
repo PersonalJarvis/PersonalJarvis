@@ -578,6 +578,10 @@ label,
        Memory = the wiki) carry their own gradient pair. */
     --chat-bubble-out: 212 92% 45%;
     --chat-bubble-out-foreground: 0 0% 100%;
+    /* An agent chat's incoming bubble: a neutral grey lift that sits
+       beside any agent colour the outgoing bubble wears. */
+    --chat-bubble-in: 0 0% 93%; /* #EDEDED */
+    --chat-bubble-in-foreground: 0 0% 9%;
     --soul-from: 347 83% 52%;
     --soul-to: 14 92% 56%;
     --memory-from: 224 86% 52%;
@@ -777,6 +781,8 @@ label,
     --user-bubble-foreground: 0 0% 98%;
     --chat-bubble-out: 212 100% 56%;
     --chat-bubble-out-foreground: 0 0% 100%;
+    --chat-bubble-in: 0 0% 15%; /* #262626 — see :root */
+    --chat-bubble-in-foreground: 0 0% 95%;
     --soul-from: 347 86% 56%;
     --soul-to: 14 94% 58%;
     --memory-from: 226 92% 60%;
@@ -1063,6 +1069,23 @@ body {
   }
   .jarvis-chat-out a {
     color: inherit;
+  }
+
+  /* An agent chat's bubbles: the agent's own reply in neutral grey; the
+     person's bubble is tinted inline with the agent's colour (bubbleTint). */
+  .jarvis-chat-in {
+    background: hsl(var(--chat-bubble-in));
+    color: hsl(var(--chat-bubble-in-foreground));
+  }
+  .jarvis-chat-tinted a {
+    color: inherit;
+  }
+  /* A capability chip in a tinted bubble takes the bubble's ink: a brand
+     hue on an arbitrary agent colour cannot promise contrast. */
+  .jarvis-chat-tinted .tool-identity,
+  .dark .jarvis-chat-tinted .tool-identity {
+    --tool-ink: currentColor;
+    --tool-wash: color-mix(in srgb, currentColor 16%, transparent);
   }
 
   /* The assistant card's vivid tiles: a gradient pair plus a soft light
