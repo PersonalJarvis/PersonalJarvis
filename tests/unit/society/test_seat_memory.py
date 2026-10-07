@@ -48,7 +48,9 @@ def agent_keys(monkeypatch):
 
 
 def _agent(provider: str, model: str = "", agent_id: str = "scout") -> SimpleNamespace:
-    return SimpleNamespace(provider=provider, model=model, effort="", agent_id=agent_id)
+    return SimpleNamespace(
+        provider=provider, model=model, effort="", agent_id=agent_id, account_id=""
+    )
 
 
 def _runtime(cfg=None) -> SimpleNamespace:
