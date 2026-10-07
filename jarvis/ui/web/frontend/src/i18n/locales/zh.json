@@ -4452,6 +4452,7 @@
     "close": "关闭",
     "cancel": "取消",
     "save": "保存",
+    "save_add": "添加 CLI",
     "saving": "正在保存…",
     "name": "名称",
     "name_placeholder": "Antigravity",
@@ -4461,11 +4462,14 @@
     "command_hint": "就是你在终端里启动它时输入的内容。",
     "command_shell_hint": "因为这条命令不止一个程序，所以会通过 shell 运行。整行执行完后窗格会关闭。",
     "description_label": "描述",
+    "optional": "可选",
     "description_placeholder": "用一句话说明这个 CLI 是什么。",
     "at_reference": "将拖入的文件写成 @path",
     "at_reference_hint": "大多数现代编程 CLI 会把 @path 当作要打开的文件。关闭此项则会把路径加引号粘贴。",
     "pick_logo": "选择图标",
     "remove_logo": "移除图标",
+    "remove_logo_short": "移除",
+    "logo_label": "图标",
     "edit_named": "编辑 {0}",
     "remove_named": "移除 {0}",
     "gone": "该 CLI 已不在列表中。",
@@ -6074,6 +6078,19 @@
       "submit": "创建智能体",
       "name_required": "请先给智能体取个名字。",
       "error": "无法创建智能体。"
+    },
+    "meeting": {
+      "title": "共享会议",
+      "individual": "单独聊天",
+      "you": "你",
+      "description": "每条消息会让每位成员按顺序发言一次。他们可以回应之前的回复，也可以保持沉默。这一轮之后不会自动继续讨论。",
+      "empty": "发送一个话题来开始讨论。要让 {name} 加入，请通过“编辑群组”添加。",
+      "answering": "{0} 正在发言…",
+      "failed": "这一轮未能完成。打开该智能体的单独聊天查看详情。之前的发言已保存。",
+      "limit": "会议支持两到六个智能体。请编辑此群组以减少成员。",
+      "message": "你给群组的消息",
+      "stop": "停止本轮",
+      "send": "询问群组"
     }
   },
   "chat_tools": {
