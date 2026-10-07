@@ -15,6 +15,7 @@ import { orderBy, useProviderOrder } from "@/lib/providerOrder";
 import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, visibleModels } from "./modelChoices";
 
 import { useModelMenuData } from "./useModelMenuData";
+import { RuntimeStatusRow, useAgentRuntimes } from "../card/RuntimePicker";
 
 type Submenu = { provider: string; model?: CuratedModel; anchor: DOMRect };
 const menuRow = "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-popover-foreground hover:bg-secondary focus-visible:bg-secondary focus-visible:outline-none disabled:opacity-45";
@@ -58,7 +59,28 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
   const chatConnections = useAgentChat((state) => state.connections);
   const { options, providers, live, loading, refreshing, failed, refresh: refreshData } = useModelMenuData(chatCatalog, chatConnections, { [agent.provider]: agent.accountId ?? "", ...accounts });
   const defaultModelLabel = t("agent_chat.model_default");
-  const seats = useMemo(() => modelSeats(options, providers ?? [], live, defaultModelLabel), [options, providers, live, defaultModelLabel]);
+  const runtimes = useAgentRuntimes();
+  const external = Boolean(agent.runtime && agent.runtime !== "jarvis");
+  const supportedKey = (Array.isArray(runtimes.data?.supported_providers) ? runtimes.data.supported_providers : []).join(",");
+  const gatewayKey = (Array.isArray(runtimes.data?.subscription_providers) ? runtimes.data.subscription_providers : []).join(",");
+  const seats = useMemo(() => {
+    const all = modelSeats(options, providers ?? [], live, defaultModelLabel);
+    // Hermes / OpenClaw run on an API key, a local model or a subscription
+    // Jarvis' model gateway serves; never a subscription CLI's own loop.
+    if (!external || !supportedKey) return all;
+    const supported = new Set(supportedKey.split(","));
+    const gateway = new Set(gatewayKey.split(",").filter(Boolean));
+    // A dual row (Claude: subscription CLI or API key) runs on its API key here,
+    // so the CLI's own aliases ("opusplan", "default") are not models to offer.
+    // A gateway subscription keeps its accounts: the login decides who pays.
+    return all.filter((seat) => supported.has(seat.provider.id))
+      .map((seat) => seat.kind === "subscription" && !gateway.has(seat.provider.id) ? {
+        ...seat,
+        kind: "api" as const,
+        accounts: [],
+        provider: { ...seat.provider, curated_models: seat.provider.curated_models.filter((model) => /\d/.test(model.id)) },
+      } : seat);
+  }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.
@@ -249,6 +271,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
       disabled={busy || saving} title={busy ? t("society.chat.model_busy") : t("society.chat.model")}
       onClick={() => { if (open) close(); else { setSearch(""); setAccounts({}); setExpanded({}); setError(null); setSection(agent.provider || ""); setOpen(true); } }}
       className="flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-xs text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50">
+      {external ? <ProviderLogo providerId={agent.runtime!} label={t(`society.runtime.${agent.runtime}`)} size="sm" /> : null}
       {agent.provider ? <ProviderLogo providerId={agent.provider} label={agent.providerLabel} size="sm" /> : null}
       <span className="truncate">{agent.model || agent.providerLabel || t("society.chat.model_default")}</span>
       {agent.effort ? <span className="shrink-0 opacity-70">{effortLabel(agent.effort, t)}</span> : null}
@@ -271,6 +294,11 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
           </RailButton>)}
         </div> : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {agent.tier !== "lead" ? (
+          <div className="shrink-0 border-b border-border px-3 py-2.5">
+            <RuntimeStatusRow runtime={agent.runtime ?? "jarvis"} />
+          </div>
+        ) : null}
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <Search className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
           <input ref={input} aria-label={t("society.chat.model_search")} placeholder={t("society.chat.model_search")}

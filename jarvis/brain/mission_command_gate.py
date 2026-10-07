@@ -47,6 +47,10 @@ _INTENT_T = Literal["status", "cancel"]
 # English with its own verb patterns, German with "laeufst/laeuft" + "Status"  # i18n-allow
 # + "wie weit". Both typically end with "?" but that is optional (STT does
 # not reliably produce punctuation).
+# "openclaw" / "claw" are the retired mission-worker codename and stay a
+# mission trigger ("stop openclaw"). Followed by "agent" they name an
+# OpenClaw society agent (docs/agent-runtimes.md) and must not stop missions:
+# every such token carries ``(?![-\s]*agent)``.
 _STATUS_PATTERN_DE = re.compile(
     r"""
     (
@@ -62,17 +66,17 @@ _STATUS_PATTERN_DE = re.compile(
         ^\s*+(?:jarvis[,\s]+)?wie\s++weit\s*+\??+\s*+$
         |
         # 'wie weit' + person/mission qualifier
-        \bwie\s+weit\s+(?:bist\s+du|sind\s+wir|sind\s+sie|sind\s+die\s+mission|ist\s+(?:die\s+mission|der\s+sub|claw|openclaw))\b  # i18n-allow
+        \bwie\s+weit\s+(?:bist\s+du|sind\s+wir|sind\s+sie|sind\s+die\s+mission|ist\s+(?:die\s+mission|der\s+sub|(?:open)?claw(?![-\s]*agent)))\b  # i18n-allow
         |
         # 'status' alone (at start or after 'jarvis,'); MUST have question/end
         # character, otherwise it matches 'Status der Wirtschaft' incorrectly.
         ^(?:jarvis[,\s]+)?status\s*+[?.!]*+\s*+$
         |
         # 'status der mission' / 'status vom sub' / 'status von openclaw'  # i18n-allow
-        \bstatus\s+(?:der\s+mission|vom\s+sub|von\s+(?:openclaw|claw)|bei\s+(?:openclaw|claw))\b  # i18n-allow
+        \bstatus\s+(?:der\s+mission|vom\s+sub|von\s+(?:(?:open)?claw(?![-\s]*agent))|bei\s+(?:(?:open)?claw(?![-\s]*agent)))\b  # i18n-allow
         |
         # 'wo stehen wir' / 'wo steht das' / 'wo steht die mission'  # i18n-allow
-        \bwo\s+steh(?:en|t)\s+(?:wir|das|die\s+mission|der\s+sub|claw|openclaw)\b  # i18n-allow
+        \bwo\s+steh(?:en|t)\s+(?:wir|das|die\s+mission|der\s+sub|(?:open)?claw(?![-\s]*agent))\b  # i18n-allow
         |
         # 'noch am laufen' / 'noch dran'
         \b(?:noch|immer)\s+(?:am\s+laufen|dran|aktiv|beschäftigt|beschaeftigt)\b  # i18n-allow
@@ -85,7 +89,7 @@ _STATUS_PATTERN_EN = re.compile(
     r"""
     \b(
         # 'is it still running' / 'is the mission still running'
-        is\s+(?:it|the\s+mission|that|this|claw|openclaw)\s+still\s+running
+        is\s+(?:it|the\s+mission|that|this|(?:open)?claw(?![-\s]*agent))\s+still\s+running
         |
         # 'are we still running' / 'are you still running'
         are\s+(?:we|you|they)\s+still\s+(?:running|working|going)
@@ -126,19 +130,19 @@ _CANCEL_PATTERN_DE = re.compile(
     r"""
     (
         # 'brich (das|die|den|alles) ab'  # i18n-allow
-        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|openclaw|claw|sub|den)\s*+(?:\w+\s*+)?ab\b  # i18n-allow
+        \bbrich\s+(?:das|die\s+mission|den\s+auftrag|alles|(?:open)?claw(?![-\s]*agent)|sub|den)\s*+(?:\w+\s*+)?ab\b  # i18n-allow
         |
         # 'brich ab' — short form
         ^(?:jarvis[,\s]+)?brich\s+ab\b
         |
         # 'stop(pe) (die mission|openclaw|claw|den auftrag)'  # i18n-allow
-        \bstopp?(?:e)?\s+(?:die\s+mission|openclaw|claw|den\s+auftrag|den\s+sub|alles)\b  # i18n-allow
+        \bstopp?(?:e)?\s+(?:die\s+mission|(?:open)?claw(?![-\s]*agent)|den\s+auftrag|den\s+sub|alles)\b  # i18n-allow
         |
         # 'mission abbrechen' / 'auftrag abbrechen'  # i18n-allow
-        \b(?:mission|auftrag|openclaw|claw)\s+(?:bitte\s+)?abbrechen\b  # i18n-allow
+        \b(?:mission|auftrag|(?:open)?claw(?![-\s]*agent))\s+(?:bitte\s+)?abbrechen\b  # i18n-allow
         |
         # 'abbruch der mission' / 'abbruch openclaw'
-        \babbruch\s+(?:der\s+mission|openclaw|claw|vom\s+sub)\b  # i18n-allow
+        \babbruch\s+(?:der\s+mission|(?:open)?claw(?![-\s]*agent)|vom\s+sub)\b  # i18n-allow
     )
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -148,16 +152,16 @@ _CANCEL_PATTERN_EN = re.compile(
     r"""
     (
         # 'cancel (the )?(mission|openclaw|claw|task|job|sub|all)'
-        \bcancel\s+(?:the\s+)?(?:mission|openclaw|claw|task|job|sub|all)\b
+        \bcancel\s+(?:the\s+)?(?:mission|(?:open)?claw(?![-\s]*agent)|task|job|sub|all)\b
         |
         # 'stop (the )?(mission|openclaw|claw|task|job|sub)'
-        \bstop\s+(?:the\s+)?(?:mission|openclaw|claw|task|job|sub)\b
+        \bstop\s+(?:the\s+)?(?:mission|(?:open)?claw(?![-\s]*agent)|task|job|sub)\b
         |
         # 'abort (the )?(mission|...)'
-        \babort\s+(?:the\s+)?(?:mission|openclaw|claw|task|job|sub)\b
+        \babort\s+(?:the\s+)?(?:mission|(?:open)?claw(?![-\s]*agent)|task|job|sub)\b
         |
         # 'kill (the )?(mission|...)'
-        \bkill\s+(?:the\s+)?(?:mission|openclaw|claw|task|job|sub)\b
+        \bkill\s+(?:the\s+)?(?:mission|(?:open)?claw(?![-\s]*agent)|task|job|sub)\b
     )
     """,
     re.IGNORECASE | re.VERBOSE,

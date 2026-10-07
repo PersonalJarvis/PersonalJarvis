@@ -19,6 +19,7 @@ import { useWebglSupported } from "@/lib/graphDimension";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { useQuickCreateAgent, useSocietyRoster, type SocietyAgent } from "../data";
+import { isCreateCancelled } from "../create/createAgentStore";
 import { OfficeScene } from "./OfficeScene";
 import { allDesks, buildOfficeLayout, countStates, MAX_SEATED } from "./officeLayout";
 import { buildNavGrid } from "./officeNav";
@@ -315,7 +316,9 @@ export function OfficeStage({ onOpenLedger, onSelectAgent, onCreateAgent, onOpen
     if (creatingRef.current) return;
     creatingRef.current = true;
     void quickCreate()
-      .catch((error) => console.warn("Agent creation failed", error))
+      .catch((error) => {
+        if (!isCreateCancelled(error)) console.warn("Agent creation failed", error);
+      })
       .finally(() => { creatingRef.current = false; });
   }, [onCreateAgent, layout, quickCreate]);
   const actions = useMemo<OfficeActions>(() => ({

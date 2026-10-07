@@ -87,6 +87,12 @@ def _workspace(cfg: Any, agent: AgentRecord) -> str:
     return str(folder)
 
 
+def _session_runtime(agent: AgentRecord) -> str:
+    """The chat session's ``runtime`` column: empty for Jarvis' own runtime."""
+    runtime = str(getattr(agent, "runtime", "") or "jarvis")
+    return "" if runtime == "jarvis" else runtime
+
+
 def ensure_session(
     svc: Any,
     cfg: Any,
@@ -107,7 +113,8 @@ def ensure_session(
     from jarvis.agent_chat.service import resolve_runner
 
     provider, model, effort = pair_for(cfg, agent)
-    runner = resolve_runner(provider, surface=SURFACE)
+    runtime = _session_runtime(agent)
+    runner = resolve_runner(provider, surface=SURFACE, runtime=runtime)
     legacy_mode = ""
     if agent.approval_mode is None:
         legacy_mode = normalize_permission(
@@ -144,6 +151,7 @@ def ensure_session(
             session_id=session_id,
             surface=SURFACE,
             account_id=agent.account_id,
+            runtime=runtime,
         )
     if getattr(svc, "is_running", lambda _sid: False)(session_id):
         # An active CLI turn still owns its provider-specific vendor session.
@@ -152,7 +160,12 @@ def ensure_session(
     if existing.provider != provider or existing.model != model:
         svc.store.reseat_session(session_id, provider=provider, model=model)
         existing = svc.store.get_session(session_id)
-    ladder = ladder_key(SURFACE, resolve_runner(provider, surface=SURFACE))
+    if getattr(existing, "runtime", "") != runtime:
+        # The vendor session belongs to the runtime the chat is leaving; the
+        # next turn opens a fresh one from the briefing and recent transcript.
+        svc.store.update_session(session_id, runtime=runtime, vendor_session="")
+        existing = svc.store.get_session(session_id)
+    ladder = ladder_key(SURFACE, runner)
     if agent.approval_mode is None:
         # Legacy roster rows encoded their chat stance in permission_ceiling.
         mode = legacy_mode

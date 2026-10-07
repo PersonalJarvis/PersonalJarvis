@@ -84,7 +84,17 @@ def _validated_chat_runner(
     from jarvis.agent_chat.permissions import normalize_permission, society_mode_supported
     from jarvis.agent_chat.service import resolve_runner
 
-    runner = resolve_runner(provider, surface="society")
+    chosen_runtime = str(agent.runtime)
+    if chosen_runtime not in ("", "jarvis"):
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent.",
+            )
+    runner = resolve_runner(provider, surface="society", runtime=chosen_runtime)
     mode = approval_mode if approval_mode is not None else (
         str(agent.approval_mode) if agent.approval_mode is not None else ""
     )
@@ -136,6 +146,9 @@ class CreateAgentBody(BaseModel):
     browser_allowed_domains: list[str] | None = None
     #: Where the agent runs: "" = this computer, else a connected computer id.
     computer_id: str | None = None
+    #: The agent loop, chosen once here and fixed for the agent's life:
+    #: "jarvis" (default), "hermes" or "openclaw".
+    runtime: str | None = None
     #: Structured brief (jarvis.society.brief); rendered into ``description``.
     mission: str | None = Field(default=None, max_length=2_000)
     responsibilities: list[str] | None = None
@@ -320,11 +333,23 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
         fields = inherit_creator_fields(fields, creator)
     requested_mode = str(fields.get("approval_mode") or "bypass")
     provider = str(fields.get("provider") or body.provider)
+    if str(fields.get("runtime") or "jarvis") != "jarvis":
+        from jarvis.agent_runtimes.model_map import supports
+
+        if not supports(provider):
+            raise HTTPException(
+                422,
+                "Hermes and OpenClaw run on an API key or a local model. "
+                "Pick one of those for this agent first.",
+            )
     if provider:
         from jarvis.agent_chat.permissions import society_mode_supported
         from jarvis.agent_chat.service import resolve_runner
 
-        if not society_mode_supported(resolve_runner(provider, surface="society"), requested_mode):
+        runner = resolve_runner(
+            provider, surface="society", runtime=str(fields.get("runtime") or "")
+        )
+        if not society_mode_supported(runner, requested_mode):
             raise HTTPException(
                 422, "This runner cannot provide an actionable approval for that mode."
             )
@@ -351,6 +376,15 @@ async def create_agent(body: CreateAgentBody, request: Request) -> dict[str, Any
     if created and progression is not None:
         # Growing the team levels the person up (jarvis/progression).
         await progression.note_agent_hired(agent.agent_id)
+    if created and str(agent.runtime) not in ("", "jarvis"):
+        # Hermes / OpenClaw install or update themselves in the background;
+        # the agent's first turn waits for that (runner_acp._ready).
+        from jarvis.agent_runtimes import manager
+
+        try:
+            await manager.ensure(str(agent.runtime))
+        except Exception:  # noqa: BLE001 — the agent exists; its first turn retries the setup
+            log.warning("society: %s setup could not start", agent.runtime, exc_info=True)
     return {
         "agent": agent.to_dict(),
         "created": created,

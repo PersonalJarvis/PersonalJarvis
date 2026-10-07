@@ -60,6 +60,7 @@ PORTABLE_FIELDS: Final[tuple[str, ...]] = (
     "browser_mode",
     "browser_allowed_domains",
     "avatar",
+    "runtime",
 )
 
 #: Fields that must NEVER appear in a bundle, each for a stated reason. Checked
