@@ -125,7 +125,15 @@ async def open_thread(rt: Society, folder: Path, prompt: str = "Add a login page
     return str(result.output["thread_id"])
 
 
-async def test_open_starts_a_thread_the_person_can_watch(society: Society, tmp_path: Path):
+async def test_open_starts_a_thread_the_person_can_watch(
+    society: Society, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The Claude row runs on the CLI when it is installed, else on the API,
+    # whose ladder tops out at "auto". Pin the CLI so the check does not depend
+    # on what the test machine has installed.
+    import jarvis.agent_chat.service as chat_service
+
+    monkeypatch.setattr(chat_service, "resolve_runner", lambda *_a, **_k: "claude-cli")
     rt = society
     rt_service = rt.service
     thread = await open_thread(rt, tmp_path)
