@@ -2092,7 +2092,13 @@ class ModelCatalog:
                 return replace(
                     info,
                     input_modalities=("text", "image") if "vision" in declared else ("text",),
-                    supported_parameters=("tools",) if "tools" in declared else (),
+                    # Ollama names thinking models "thinking"; the gateway
+                    # catalogs call the same fact "reasoning".
+                    supported_parameters=tuple(
+                        param
+                        for param, capability in (("tools", "tools"), ("reasoning", "thinking"))
+                        if capability in declared
+                    ),
                     context_length=native_context_length(shown.get("model_info")),
                     quantization_level=str(details.get("quantization_level") or "") or None,
                     parameter_size=str(details.get("parameter_size") or "") or None,
