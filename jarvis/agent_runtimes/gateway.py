@@ -309,9 +309,9 @@ def _retry_after(exc: Exception) -> float | None:
 
 def _limited(provider: str, seconds: float) -> GatewayError:
     return GatewayError(
-        f"{provider} returned HTTP 429 (rate limit). Try again in {math.ceil(seconds)} s. "
-        "Your message is saved; use /continue after the wait, or choose another "
-        "connected model in the agent's settings. No fallback provider was called.",
+        f"{provider} returned HTTP 429 (rate limit). Try again in {math.ceil(seconds)} s, "
+        "or choose another connected model in the agent's settings. "
+        "No fallback provider was called.",
         status=429,
         code="rate_limited",
         retry_after=seconds,
