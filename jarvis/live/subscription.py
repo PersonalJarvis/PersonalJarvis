@@ -42,7 +42,8 @@ def _is_computer_call(call: dict) -> bool:
     if name == "call_tool":
         try:
             name = str(json.loads(call.get("arguments") or "{}").get("name") or "")
-        except (ValueError, AttributeError):  # Malformed tool arguments cannot activate the extended computer budget.
+        except (ValueError, AttributeError):
+            # Malformed tool arguments cannot activate the extended computer budget.
             return False
     return name.rsplit(":", 1)[-1] == "computer"
 
@@ -584,6 +585,14 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
                                     }
                                     for image in images
                                 ]
+                                # Keep the reference beside its pixels: the tool
+                                # output carrying it is evicted with old history.
+                                output = result.get("output")
+                                handoff = isinstance(output, dict) and output.get("handoff")
+                                if isinstance(handoff, str) and handoff:
+                                    self._image_context.insert(
+                                        0, {"type": "input_text", "text": handoff}
+                                    )
                                 image_item = {"role": "user", "content": self._image_context}
                                 items.append(image_item)
                                 screenshot_items.append(image_item)
@@ -755,8 +764,17 @@ class SubscriptionLiveVoiceSession(LiveVoiceSession):
     async def attach_appshot(self, image: bytes, mime: str, note: str) -> bool:
         import base64
 
+        from jarvis.core.image_references import ImageReferenceError, appshot_context
+
         if self._closing:
             return False
+        # The backend sees these pixels for the rest of the call; without a
+        # scoped reference beside them it could not forward them to a coding
+        # session and would ask the user to attach an image it already has.
+        try:
+            note += "\n\n" + appshot_context(self.session_id, image, mime, self._config)
+        except ImageReferenceError as exc:
+            note += "\n\nVisual handoff unavailable: " + str(exc)
         self._pending_images = [
             {"type": "input_text", "text": note},
             {
