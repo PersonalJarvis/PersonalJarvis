@@ -76,6 +76,25 @@ _ORPHANED_TURN_ERROR: Final = (
 Subscriber = asyncio.Queue[dict[str, Any]]
 
 
+#: The app's loop, resolved by the route layer BEFORE it takes its build lock
+#: (``remember_app_loop``). Asking the loop from inside that lock deadlocked
+#: the whole app (2026-10-07): the worker waited for the loop while the loop
+#: waited for the lock in an ``async`` route.
+_KNOWN_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def remember_app_loop() -> None:
+    """Find and record the app's loop, so building the service never asks it.
+
+    Call it without holding any lock the loop could be waiting for: from a
+    worker thread, finding the loop waits until the loop answers.
+    """
+    global _KNOWN_LOOP  # one process-wide reference, set before the service is built
+    loop, _on_loop = _app_loop()
+    if loop is not None:
+        _KNOWN_LOOP = loop
+
+
 def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
     """The app's event loop, and whether this code runs on it.
 
@@ -89,6 +108,9 @@ def _app_loop() -> tuple[asyncio.AbstractEventLoop | None, bool]:
         return asyncio.get_running_loop(), True
     except RuntimeError:
         pass
+    known = _KNOWN_LOOP
+    if known is not None and known.is_running():
+        return known, False
     try:
         from anyio.from_thread import run_sync
 

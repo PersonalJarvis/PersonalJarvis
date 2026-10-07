@@ -298,6 +298,13 @@ def _service_from_state(state: Any) -> AgentChatService | None:
     svc = getattr(state, "agent_chat", None)
     if svc is not None:
         return svc
+    if getattr(state, "agent_chat_factory", None) is not None:
+        # Resolve the app's loop while NOT holding the lock: from a worker
+        # thread this waits for the loop, and the loop may itself be waiting
+        # for the lock in an async route — a deadlock that froze every route.
+        from jarvis.agent_chat.service import remember_app_loop
+
+        remember_app_loop()
     with _SERVICE_BUILD_LOCK:
         svc = getattr(state, "agent_chat", None)
         if svc is not None:
