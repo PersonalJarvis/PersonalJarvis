@@ -12,7 +12,8 @@ import { effortsFor, type BrainSeat } from "../create/brainPicker";
 import { useUpdateAgentModel, type SocietyAgent } from "../data";
 import { rankModels } from "@/lib/modelRanking";
 import { orderBy, useProviderOrder } from "@/lib/providerOrder";
-import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, visibleModels } from "./modelChoices";
+import { collapsibleModels, matchesModel, modelEffort, modelGroupOrder, modelSeats, providerTitle, runtimeSeats, seatBlocked, visibleModels } from "./modelChoices";
+import { blockedReasonKey } from "../create/seatChoice";
 
 import { useModelMenuData } from "./useModelMenuData";
 import { RuntimeStatusRow, useAgentRuntimes } from "../card/RuntimePicker";
@@ -73,6 +74,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     return runtimeSeats(all, list(supportedKey), list(gatewayKey), list(loginKey));
   }, [options, providers, live, defaultModelLabel, external, supportedKey, gatewayKey, loginKey]);
   const currentAccount = (seat: BrainSeat) => accounts[seat.provider.id] ?? (agent.provider === seat.provider.id ? agent.accountId ?? "" : "");
+  // A seat the provider refuses right now (Claude's login with Extra Usage off)
+  // stays visible with its reason; its models cannot be picked.
+  const blockedFor = (seat: BrainSeat) => external ? seatBlocked(seat, runtimes.data?.access_blocked, currentAccount(seat)) : "";
   const preferredEffort = (seat: BrainSeat, model: CuratedModel) => modelEffort(seat, model.id, seat.provider.id === agent.provider ? agent.effort : seat.provider.default_effort);
   // useT returns a new function each render; memoize by its actual labels.
   const titleKey = JSON.stringify(seats.map((seat) => providerTitle(seat, t)));
@@ -227,7 +231,7 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
     const isFavorite = favorites.includes(value);
     const starLabel = t(isFavorite ? "agent_chat.favorite_remove" : "agent_chat.favorite_add");
     return <div key={value} className={cn("group flex items-center", selected && "bg-secondary/70")}>
-      <button type="button" role="menuitemradio" aria-checked={selected} disabled={busy || saving} data-menu-choice
+      <button type="button" role="menuitemradio" aria-checked={selected} disabled={busy || saving || Boolean(blockedFor(seat))} data-menu-choice
         onKeyDown={(event) => {
           if (event.key === "ArrowRight" && effortsFor(seat, model.id).length) {
             event.preventDefault(); event.stopPropagation();
@@ -332,6 +336,9 @@ export function AgentModelPicker({ agent, busy, onSavingChange }: {
                 <Users className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{seat.accounts.find((account) => account.id === currentAccount(seat))?.label ?? t("society.chat.model_active_account")}</span><ChevronDown className="h-2.5 w-2.5 shrink-0" aria-hidden />
               </button> : null}
             </div>
+            {blockedFor(seat) ? <p role="note" className="px-3 pb-1 text-xs text-warning" data-testid={`agent-model-blocked-${seat.provider.id}`}>
+              {t(blockedReasonKey(blockedFor(seat)))}
+            </p> : null}
             <div id={choicesId}>
               {lineup.map(toRow)}
               {folded.length ? <button type="button" data-menu-choice disabled={busy || saving} aria-expanded={olderOpen} onClick={toggleOlder}

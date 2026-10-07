@@ -124,6 +124,66 @@ describe("CreateAgentDialog", () => {
     });
   });
 
+  test("a Claude login Anthropic refuses is shown with its reason and the API key is used", async () => {
+    runtimes.value = {
+      ...READY,
+      supported_providers: ["claude-api", "openai"],
+      login_providers: ["claude-api"],
+      access: { "claude-api": ["api", "subscription"] },
+      access_blocked: { "claude-api": { subscription: "extra_usage_off" } },
+    };
+    menu.options = [CLAUDE];
+    createAgent.mockResolvedValue({ agentId: "agent-6" });
+    mount();
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
+    fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.hermes" }));
+    const subscription = await screen.findByRole("radio", { name: "society.create.kind_subscription" });
+    await waitFor(() => expect((subscription as HTMLButtonElement).disabled).toBe(true));
+    expect(subscription.getAttribute("aria-checked")).toBe("false");
+    const reason = screen.getByTestId("create-agent-access-blocked-subscription");
+    expect(reason.textContent).toBe("society.create_agent.access_blocked_extra_usage_off");
+    expect(subscription.getAttribute("aria-describedby")).toBe(reason.id);
+    expect(screen.getByRole("radio", { name: "society.create.kind_api" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByTestId("create-agent-submit"));
+    await waitFor(() => expect(createAgent).toHaveBeenCalled());
+    expect(createAgent.mock.calls[0][0]).toMatchObject({ runtime: "hermes", provider: "claude-api", accountId: "api-key" });
+  });
+
+  test("with only a refused Claude login the agent cannot be created, and the reason is shown", async () => {
+    runtimes.value = {
+      ...READY,
+      supported_providers: ["claude-api"],
+      login_providers: ["claude-api"],
+      access: { "claude-api": ["subscription"] },
+      access_blocked: { "claude-api": { subscription: "extra_usage_spent" } },
+    };
+    menu.options = [CLAUDE];
+    mount();
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
+    fireEvent.click(await screen.findByRole("radio", { name: "society.runtime.hermes" }));
+    expect((await screen.findByTestId("create-agent-access-blocked-subscription")).textContent)
+      .toBe("society.create_agent.access_blocked_extra_usage_spent");
+    expect((screen.getByTestId("create-agent-submit") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByTestId("create-agent-model")).toBeNull();
+  });
+
+  test("arrow keys move the access choice and only one radio is a tab stop", async () => {
+    runtimes.value = { ...READY, access: { "claude-api": ["api", "subscription"] } };
+    menu.options = [CLAUDE, OPENAI];
+    mount();
+    act(() => { useCreateAgentDialog.getState().request().catch(() => undefined); });
+    const subscription = await screen.findByRole("radio", { name: "society.create.kind_subscription" });
+    await waitFor(() => expect(subscription.getAttribute("aria-checked")).toBe("true"));
+    const api = await screen.findByRole("radio", { name: "society.create.kind_api" });
+    await waitFor(() => expect(subscription.getAttribute("aria-checked")).toBe("true"));
+    expect([subscription.tabIndex, api.tabIndex]).toEqual([0, -1]);
+    fireEvent.keyDown(subscription, { key: "ArrowRight" });
+    await waitFor(() => expect(api.getAttribute("aria-checked")).toBe("true"));
+    expect(document.activeElement).toBe(api);
+    expect([subscription.tabIndex, api.tabIndex]).toEqual([-1, 0]);
+    expect(screen.getByTestId("create-agent-access").getAttribute("aria-describedby")).toBeTruthy();
+  });
+
   test("a Jarvis agent with nothing connected still starts on the chat's seat", async () => {
     menu.options = [];
     createAgent.mockResolvedValue({ agentId: "agent-5" });

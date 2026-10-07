@@ -50,6 +50,11 @@ export interface AgentRuntimesResponse {
   /** Per provider that can pay two ways (Claude: API key or Claude Code
    *  login), the ways that work right now: "api" and/or "subscription". */
   access?: Record<string, string[]>;
+  /** Per provider and way of paying, the refusal code of an access that is
+   *  connected but refused right now (Claude's login while its Extra Usage
+   *  is off: `{"claude-api": {"subscription": "extra_usage_off"}}`). Absent
+   *  on an older backend. */
+  access_blocked?: Record<string, Record<string, string>>;
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
