@@ -155,5 +155,25 @@
     "thinking_pick": "Responde y usa herramientas durante una llamada",
     "voice_ready": "Listo",
     "voice_not_ready": "Sin configurar"
+  },
+  "mission_billing": {
+    "section": "Misiones",
+    "title": "Seguir con claves API cuando se agoten las suscripciones",
+    "state_off": "Desactivado · las misiones esperan hasta que una suscripción vuelva a tener capacidad",
+    "state_on": "Activado · {provider} · como máximo {mission_cap} por misión, {daily_cap} al día",
+    "state_on_no_key": "Activado · aún no hay una clave API con precio conocido",
+    "state_key_only": "Las misiones ya funcionan con tus claves API",
+    "state_no_key": "Necesita una clave API con precio conocido",
+    "spent": "{amount} gastado en las últimas 24 horas",
+    "less_than_cent": "menos de $0.01",
+    "load_error": "No se pudo cargar este ajuste: {detail}",
+    "save_error": "No se guardó: {detail}",
+    "confirm_title": "¿Seguir con tu clave API?",
+    "confirm_intro": "Cuando todas las suscripciones conectadas se agotan, las misiones siguen funcionando con tu propia clave API en lugar de esperar.",
+    "confirm_billing": "{provider} cobra cada solicitud a esa clave:",
+    "confirm_no_key": "Todavía no hay ninguna clave API con precio conocido, así que no se puede cobrar nada.",
+    "confirm_caps": "Cada misión se detiene en {mission_cap}, y todo el uso automático se detiene en {daily_cap} al día.",
+    "confirm_off": "Puedes desactivarlo en cualquier momento. Se aplica desde la siguiente solicitud.",
+    "confirm_action": "Activar"
   }
 }

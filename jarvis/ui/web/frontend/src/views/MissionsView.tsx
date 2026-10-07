@@ -427,7 +427,7 @@ function ReasoningPanel() {
                 className="rounded border border-border/60 bg-card/30 p-2 text-xs"
               >
                 <p className="text-foreground/90">
-                  {fill(t("capacity_decision.paid_usage"), {
+                  {fill(t(p.automatic ? "capacity_decision.paid_usage_automatic" : "capacity_decision.paid_usage"), {
                     provider: p.provider,
                     model: p.model,
                     cost: `$${p.cost_usd.toFixed(4)}`,

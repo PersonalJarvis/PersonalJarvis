@@ -203,7 +203,11 @@ export type CapacityWaitReason =
   | "provider_quota"
   | "provider_auth"
   | "provider_unavailable"
-  | "paid_cap_reached";
+  | "paid_cap_reached"
+  // Automatic paid use (the setting in Settings → API Keys) hit its rolling
+  // 24 h limit, or was switched off while the mission ran on it.
+  | "paid_daily_cap_reached"
+  | "paid_consent_revoked";
 
 /** Mirror of jarvis.missions.capacity.CapacityDecision. */
 export type CapacityDecision = "wait" | "approve_paid" | "cancel";
@@ -225,6 +229,8 @@ export interface MissionPaidUsage extends BasePayload {
   cost_usd: number;
   cost_cap_usd: number;
   estimated_cost_usd: number;
+  /** true = paid through the setting, false = a one-off manual approval. */
+  automatic: boolean;
 }
 
 /** GET /api/missions/{id}/paid-offer — what an approval would cover. */
@@ -235,6 +241,25 @@ export interface PaidOffer {
   cost_cap_usd: number;
   reason: string;
   open_steps: number;
+  /** Already spent on paid calls by this mission. */
+  spent_usd: number;
+  /** The approval also pays for the review (critic) calls. */
+  covers_critic: boolean;
+}
+
+/**
+ * GET/PUT /api/mission-billing — whether missions may continue on a paid API
+ * key when every subscription is used up, and the hard limits that apply.
+ */
+export interface MissionBilling {
+  paid_api_fallback: boolean;
+  /** false on an install that never connected a subscription. */
+  subscription_mode: boolean;
+  per_mission_cap_usd: number;
+  daily_cap_usd: number;
+  spent_last_24h_usd: number;
+  /** The key that would be used first; null when no key has a known price. */
+  paid_provider: { provider: string; model: string; price_known: boolean } | null;
 }
 
 export interface PaidOfferResponse {

@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { CapacityDecisionPanel } from "@/components/missions/CapacityDecisionPanel";
 import { useI18nStore } from "@/i18n";
+import { MISSION_BILLING_ANCHOR, requestedApiKeysTab, takeApiKeysAnchor, clearApiKeysTabRequest } from "@/lib/apiKeysTab";
+import { useEventStore } from "@/store/events";
 import type { MissionState, PaidOffer } from "@/types/missions";
 
 const MISSION_ID = "mission-1";
@@ -15,6 +17,8 @@ const OFFER: PaidOffer = {
   cost_cap_usd: 2,
   reason: "provider_quota",
   open_steps: 1,
+  spent_usd: 0,
+  covers_critic: true,
 };
 
 beforeEach(() => {
@@ -114,6 +118,50 @@ describe("CapacityDecisionPanel", () => {
     expect(await screen.findByText(/No paid API access with a known price/)).toBeTruthy();
     const approve = screen.getByRole("button", { name: "Approve paid API for this mission" });
     expect((approve as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("shows what the mission already spent and that the review is covered", async () => {
+    stubServer({ ...OFFER, reason: "paid_cap_reached", spent_usd: 0.85 });
+    renderPanel();
+
+    expect(await screen.findByText("Already spent")).toBeTruthy();
+    expect(screen.getByText("$0.85")).toBeTruthy();
+    expect(screen.getByText("Approved cost cap reached")).toBeTruthy();
+    expect(screen.getByText(/also pays for the checks that review the result/)).toBeTruthy();
+  });
+
+  it("leaves the spent line out while nothing was spent", async () => {
+    stubServer(OFFER);
+    renderPanel();
+
+    await screen.findByText("claude-api");
+    expect(screen.queryByText("Already spent")).toBeNull();
+  });
+
+  it("names the reasons that come from automatic paid use", async () => {
+    stubServer({ ...OFFER, reason: "paid_daily_cap_reached" });
+    renderPanel();
+    expect(await screen.findByText("Daily limit for automatic paid use reached")).toBeTruthy();
+    // The setting is already on; pointing at it would not help.
+    expect(screen.queryByTestId("capacity-settings-hint")).toBeNull();
+
+    cleanup();
+    stubServer({ ...OFFER, reason: "paid_consent_revoked" });
+    renderPanel();
+    expect(await screen.findByText("Automatic paid use was switched off")).toBeTruthy();
+    expect(screen.getByTestId("capacity-settings-hint")).toBeTruthy();
+  });
+
+  it("links to the paid-fallback setting on the API Keys page", async () => {
+    stubServer(OFFER);
+    useEventStore.getState().setActiveSection("visualization");
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Always allow this in Settings → API Keys" }));
+    expect(useEventStore.getState().activeSection).toBe("apikeys");
+    expect(requestedApiKeysTab()).toBe("agents");
+    expect(takeApiKeysAnchor(MISSION_BILLING_ANCHOR)).toBe(true);
+    clearApiKeysTabRequest();
   });
 
   it("renders nothing for a mission that is not waiting", () => {

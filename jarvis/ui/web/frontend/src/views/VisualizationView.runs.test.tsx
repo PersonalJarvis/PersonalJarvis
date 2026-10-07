@@ -600,6 +600,8 @@ describe("VisualizationView — a run waiting for capacity", () => {
     cost_cap_usd: 2,
     reason: "provider_quota",
     open_steps: 1,
+    spent_usd: 0,
+    covers_critic: true,
   };
 
   /** Outputs as usual, plus the paid-offer and decision endpoints. */

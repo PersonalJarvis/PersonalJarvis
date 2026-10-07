@@ -9,6 +9,7 @@ import type {
   CriticVerdictReady,
   EventEnvelope,
   MissionChanges,
+  MissionBilling,
   MissionDetail,
   MissionResult,
   MissionSummary,
@@ -129,6 +130,44 @@ export async function decideCapacity(
       }),
     },
   );
+}
+
+export const MISSION_BILLING_KEY = ["mission-billing"] as const;
+
+function isMissionBilling(body: unknown): body is MissionBilling {
+  return (
+    !!body &&
+    typeof body === "object" &&
+    typeof (body as MissionBilling).paid_api_fallback === "boolean" &&
+    typeof (body as MissionBilling).subscription_mode === "boolean"
+  );
+}
+
+/**
+ * Whether missions may continue on a paid API key once every subscription is
+ * used up. `null` when the backend does not offer the setting (an older
+ * server answers 404), so the page leaves the row out instead of guessing.
+ */
+export async function fetchMissionBilling(): Promise<MissionBilling | null> {
+  const res = await fetch("/api/mission-billing", { cache: "no-store" });
+  if (res.status === 404) return null;
+  const body: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = body && typeof body === "object" && "detail" in body ? (body as { detail: unknown }).detail : null;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+  }
+  return isMissionBilling(body) ? body : null;
+}
+
+/** Switch the paid fallback; the answer is the state the server now holds. */
+export async function saveMissionBilling(paidApiFallback: boolean): Promise<MissionBilling> {
+  const body = await requestJson<unknown>("/api/mission-billing", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paid_api_fallback: paidApiFallback }),
+  });
+  if (!isMissionBilling(body)) throw new Error("Unexpected answer from the server");
+  return body;
 }
 
 export async function cancelMission(id: string): Promise<void> {

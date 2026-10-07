@@ -4194,8 +4194,10 @@
       "files": "Files saved: {files}.",
       "wait": "The mission is waiting until capacity is available again.",
       "wait_auth": "The mission is waiting until you sign in again.",
-      "paid": "Paid API use only with your explicit approval in Artifacts.",
-      "paid_cap_reached": "The approved cost limit for {provider} is reached."
+      "paid": "Paid API use only with your approval in Artifacts, or when you allow it in Settings → API Keys.",
+      "paid_cap_reached": "The approved cost limit for {provider} is reached.",
+      "paid_daily_cap_reached": "Automatic paid use on {provider} reached its daily limit.",
+      "paid_consent_revoked": "Automatic paid use on {provider} was switched off."
     }
   },
   "mission_tool_approvals": {
@@ -7046,16 +7048,21 @@
     "estimate": "Estimated cost",
     "estimate_value": "about {cost} for {steps} open steps",
     "cap": "Hard cost cap",
+    "spent": "Already spent",
     "reason": "Reason",
     "reasons": {
       "provider_quota": "Subscription capacity used up",
       "provider_auth": "Subscription sign-in expired",
       "provider_unavailable": "Subscription cannot be used right now",
-      "paid_cap_reached": "Approved cost cap reached"
+      "paid_cap_reached": "Approved cost cap reached",
+      "paid_daily_cap_reached": "Daily limit for automatic paid use reached",
+      "paid_consent_revoked": "Automatic paid use was switched off"
     },
     "no_offer": "No paid API access with a known price is available. The mission waits for its subscription.",
     "over_cap": "The estimate is above the cost cap. The mission pauses once the cap is reached; its progress stays saved.",
-    "scope": "An approval covers only this mission and this one run – no permanent or global approval. Nothing is billed without it.",
+    "scope": "An approval covers only this mission and this one run, never later missions.",
+    "covers_review": "The approval also pays for the checks that review the result.",
+    "settings_hint": "Always allow this in Settings → API Keys",
     "wait": "Wait",
     "approve": "Approve paid API for this mission",
     "cancel": "Cancel mission",
@@ -7071,6 +7078,7 @@
       "cancel": "Decision: cancelled."
     },
     "logged_offer": "{provider} / {model}, estimated {cost}, cap {cap}.",
-    "paid_usage": "Paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap})."
+    "paid_usage": "Paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap}).",
+    "paid_usage_automatic": "Automatic paid run on {provider} / {model}: actual {cost} (estimated {estimate}, cap {cap})."
   }
 }

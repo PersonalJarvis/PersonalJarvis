@@ -155,5 +155,25 @@
     "thinking_pick": "Antwortet und nutzt Werkzeuge während eines Gesprächs",
     "voice_ready": "Bereit",
     "voice_not_ready": "Nicht eingerichtet"
+  },
+  "mission_billing": {
+    "section": "Missionen",
+    "title": "Mit API-Keys weitermachen, wenn die Abos aufgebraucht sind",
+    "state_off": "Aus · Missionen warten, bis ein Abo wieder frei ist",
+    "state_on": "An · {provider} · höchstens {mission_cap} pro Mission, {daily_cap} pro Tag",
+    "state_on_no_key": "An · noch kein API-Key mit bekanntem Preis",
+    "state_key_only": "Missionen laufen schon über deine API-Keys",
+    "state_no_key": "Braucht einen API-Key mit bekanntem Preis",
+    "spent": "{amount} in den letzten 24 Stunden ausgegeben",
+    "less_than_cent": "weniger als $0.01",
+    "load_error": "Diese Einstellung konnte nicht geladen werden: {detail}",
+    "save_error": "Nicht gespeichert: {detail}",
+    "confirm_title": "Mit deinem API-Key weitermachen?",
+    "confirm_intro": "Wenn alle verbundenen Abos aufgebraucht sind, laufen Missionen mit deinem eigenen API-Key weiter, statt zu warten.",
+    "confirm_billing": "{provider} rechnet jede Anfrage über diesen Key ab:",
+    "confirm_no_key": "Es ist noch kein API-Key mit bekanntem Preis eingerichtet, also kann nichts abgerechnet werden.",
+    "confirm_caps": "Jede Mission stoppt bei {mission_cap}, die gesamte automatische Nutzung bei {daily_cap} pro Tag.",
+    "confirm_off": "Du kannst das jederzeit ausschalten. Es gilt ab der nächsten Anfrage.",
+    "confirm_action": "Einschalten"
   }
 }
