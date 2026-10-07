@@ -147,6 +147,31 @@ class RunAppActionTool:
             runtime = _Runtime()
         self._runtime = runtime
 
+    @staticmethod
+    def _reads(args: dict[str, Any]) -> bool:
+        """Does this action only read? The catalog's own rule (``default_tier``).
+
+        A GET that is not marked dangerous reads. The person's per-action mode
+        still decides whether it runs (``risk_tier_for_args``); this only says
+        what it is, so a voice read is never treated as a change, nor answered
+        from an earlier call's result. Deliberately no ``read_only_for_args``:
+        a read-only chat keeps refusing app actions as before.
+        """
+        from jarvis.app_actions.catalog import default_tier
+
+        entry = _catalog().get(str((args or {}).get("action_id") or ""))
+        return entry is not None and default_tier(entry) == "safe"
+
+    def describe_args(self, args: dict[str, Any]) -> dict[str, str]:
+        entry = _catalog().get(str((args or {}).get("action_id") or ""))
+        return {
+            "level": "read" if self._reads(args) else "modify",
+            # Named in a confirmation question when the action asks first.
+            "commands": entry.title
+            if entry is not None
+            else str((args or {}).get("action_id") or ""),
+        }
+
     def risk_tier_for_args(self, args: dict[str, Any]) -> str:
         from jarvis.app_actions import history
         from jarvis.app_actions.policy import effective_tier
