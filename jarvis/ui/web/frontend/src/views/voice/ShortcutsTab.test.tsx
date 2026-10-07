@@ -46,10 +46,7 @@ const STATUS = {
  * `status` overrides the dictation-status slice, which drives the two notices
  * (push-to-talk silently on toggle, insertion impossible on this host).
  */
-function stubFetch(
-  status: Record<string, unknown> | null = STATUS,
-  config: Record<string, unknown> = CONFIG,
-) {
+function stubFetch(status: Record<string, unknown> | null = STATUS) {
   const calls: { url: string; method: string; body: unknown }[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
@@ -77,7 +74,7 @@ function stubFetch(
     if (url === "/api/dictation/settings") {
       return { ok: true, json: async () => ({ ok: true }) };
     }
-    return { ok: true, json: async () => config };
+    return { ok: true, json: async () => CONFIG };
   });
   vi.stubGlobal("fetch", fetchMock);
   return calls;
@@ -182,10 +179,7 @@ describe("ShortcutsTab", () => {
     render(<ShortcutsTab />);
     await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
 
-    // Suggestions belong to the recorder, so they appear once the row is
-    // being changed — and one click on one IS the change, with no Save step.
-    expect(screen.queryByTestId("suggestion-dictate-ctrl+shift+space")).toBeNull();
-    fireEvent.click(screen.getByTestId("record-keybind-dictate"));
+    // One click on a suggested combo IS the change — there is no Save step.
     fireEvent.click(screen.getByTestId("suggestion-dictate-ctrl+shift+space"));
     await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+Shift+Space"));
 
@@ -218,7 +212,6 @@ describe("ShortcutsTab", () => {
     render(<ShortcutsTab />);
     await waitFor(() => expect(comboText("dictate_toggle")).toBe("Ctrl+AltGr+Space"));
 
-    fireEvent.click(screen.getByTestId("record-keybind-dictate_toggle"));
     fireEvent.click(
       screen.getByTestId("suggestion-dictate_toggle-ctrl+shift+d"),
     );
@@ -280,145 +273,5 @@ describe("ShortcutsTab", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("draws the three keys as rows of one group with a single Change control each", async () => {
-    stubFetch();
-    render(<ShortcutsTab hideHeader />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
-
-    const group = screen.getByTestId("shortcuts-group");
-    for (const action of ["dictate", "dictate_toggle", "paste_last"]) {
-      expect(group.contains(screen.getByTestId(`shortcut-row-${action}`))).toBe(true);
-      const change = screen.getByTestId(`record-keybind-${action}`);
-      expect(change.textContent).toBe("Change");
-      expect(change.getAttribute("aria-expanded")).toBe("false");
-    }
-    // The recorder's pieces stay away until a row is being changed.
-    expect(screen.queryByTestId("shortcut-editor-dictate")).toBeNull();
-    expect(screen.queryByTestId("key-F3")).toBeNull();
-    expect(screen.queryByTestId("clear-keybind-dictate")).toBeNull();
-  });
-
-  it("makes recording obvious and cancels back to the saved keys", async () => {
-    stubFetch();
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
-
-    const change = screen.getByTestId("record-keybind-dictate");
-    fireEvent.click(change);
-
-    const field = screen.getByTestId("combo-field-dictate");
-    // App-level chords stand down while this is set.
-    expect(field.getAttribute("data-keybind-recording")).toBe("true");
-    expect(field.textContent).toContain("Press your keys");
-    expect(change.textContent).toBe("Cancel");
-    expect(change.getAttribute("aria-expanded")).toBe("true");
-    // The live instruction is announced politely.
-    const editor = screen.getByTestId("shortcut-editor-dictate");
-    const live = editor.querySelector('[aria-live="polite"]');
-    expect(live?.textContent).toMatch(/Esc cancels/);
-
-    // Clicking a key adds it to the preview; Cancel restores what is saved.
-    fireEvent.click(screen.getByTestId("key-F9"));
-    expect(comboText("dictate")).toBe("Ctrl+AltGr+F9+J");
-    fireEvent.click(change);
-    expect(comboText("dictate")).toBe("Ctrl+AltGr+J");
-    expect(field.getAttribute("data-keybind-recording")).toBeNull();
-    expect(screen.queryByTestId("shortcut-editor-dictate")).toBeNull();
-  });
-
-  it("Escape ends the recording without saving", async () => {
-    const calls = stubFetch();
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
-
-    fireEvent.click(screen.getByTestId("record-keybind-dictate"));
-    fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
-
-    await waitFor(() =>
-      expect(screen.queryByTestId("shortcut-editor-dictate")).toBeNull(),
-    );
-    expect(comboText("dictate")).toBe("Ctrl+AltGr+J");
-    expect(calls.some((c) => c.method === "PUT")).toBe(false);
-  });
-
-  it("records one row at a time", async () => {
-    stubFetch();
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+AltGr+J"));
-
-    fireEvent.click(screen.getByTestId("record-keybind-dictate"));
-    fireEvent.click(screen.getByTestId("record-keybind-paste_last"));
-
-    // Two recorders on one window would both take the next chord.
-    await waitFor(() =>
-      expect(screen.queryByTestId("shortcut-editor-dictate")).toBeNull(),
-    );
-    expect(screen.getByTestId("shortcut-editor-paste_last")).toBeTruthy();
-  });
-
-  it("removes a key from the open recorder", async () => {
-    const calls = stubFetch();
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("paste_last")).toBe("Ctrl+Alt+V"));
-
-    fireEvent.click(screen.getByTestId("record-keybind-paste_last"));
-    fireEvent.click(screen.getByTestId("clear-keybind-paste_last"));
-
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.url === "/api/settings/keybinds" &&
-            c.method === "PUT" &&
-            (c.body as { action: string; hotkey: string }).action === "paste_last" &&
-            (c.body as { action: string; hotkey: string }).hotkey === "",
-        ),
-      ).toBe(true),
-    );
-  });
-
-  it("offers the default back when the key differs from it", async () => {
-    const calls = stubFetch(STATUS, {
-      ...CONFIG,
-      keybinds: { ...KEYBINDS, dictate: "ctrl+shift+k" },
-    });
-    render(<ShortcutsTab />);
-    await waitFor(() => expect(comboText("dictate")).toBe("Ctrl+Shift+K"));
-
-    // The hands-free row matches its default, so it offers nothing to reset.
-    fireEvent.click(screen.getByTestId("record-keybind-dictate_toggle"));
-    expect(screen.queryByTestId("reset-keybind-dictate_toggle")).toBeNull();
-
-    fireEvent.click(screen.getByTestId("record-keybind-dictate"));
-    const reset = await waitFor(() => screen.getByTestId("reset-keybind-dictate"));
-    expect(reset.textContent).toContain("Ctrl + AltGr + J");
-    fireEvent.click(reset);
-
-    await waitFor(() =>
-      expect(
-        calls.some(
-          (c) =>
-            c.method === "PUT" &&
-            (c.body as { action: string; hotkey: string }).hotkey === "ctrl+right_alt+j",
-        ),
-      ).toBe(true),
-    );
-  });
-
-  it("keeps a saved caution short and under its own row", async () => {
-    stubFetch(STATUS, {
-      ...CONFIG,
-      keybinds: { ...KEYBINDS, paste_last: "ctrl+alt" },
-    });
-    render(<ShortcutsTab />);
-
-    const note = await waitFor(() => screen.getByTestId("keybind-validation-paste_last"));
-    expect(screen.getByTestId("shortcut-row-paste_last").contains(note)).toBe(true);
-    expect(note.textContent).toMatch(/modifier keys only/i);
-    // Short sentences, not the Settings recorder's full explanation.
-    expect(note.textContent).not.toMatch(/Ctrl\+Win/);
-    expect((note.textContent ?? "").length).toBeLessThan(160);
   });
 });

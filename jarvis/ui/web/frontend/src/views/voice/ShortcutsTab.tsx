@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ClipboardCopy, Keyboard } from "lucide-react";
+import { AlertTriangle, Keyboard } from "lucide-react";
 
 import { ViewHeader } from "@/views/ChatsView";
 import { Button } from "@/components/ui/button";
-import { ACTION_LABEL_KEY } from "@/views/settings/KeybindRow";
+import { Card } from "@/components/ui/card";
+import { KeybindRow } from "@/views/settings/KeybindRow";
 import { useKeybinds, type KeybindAction } from "@/hooks/useHotkey";
 import { useEventStore } from "@/store/events";
-import { ShortcutsKeyRow } from "@/views/voice/ShortcutsKeyRow";
-import { VoiceGroup, VoiceNote, VoicePage, VoiceSection } from "@/views/voice/voiceUi";
 import { useT } from "@/i18n";
 
 export interface ShortcutsTabProps {
@@ -46,21 +45,21 @@ const ROWS: {
   {
     action: "paste_last",
     labelKey: "voice.shortcuts.paste_last_label",
-    hintKey: "voice.shortcuts.paste_last_hint_short",
+    hintKey: "voice.shortcuts.paste_last_hint",
   },
 ];
 
 /**
  * "Shortcuts" tab of the merged voice section — every key that has to do with
- * dictation, as three rows of one group:
+ * dictation, on ONE surface.
+ *
+ * Three rows over the SAME row component Settings uses, so the recorder, the
+ * live validation, the collision check and the on-screen keyboard behave
+ * identically in both places:
  *
  *   * Push to talk  → the `dictate` action (hold the keys, speak, let go)
  *   * Hands-free    → the `dictate_toggle` action (press once, press again)
  *   * Paste again   → the `paste_last` action (re-insert the last transcript)
- *
- * The recorder behind each row is `useKeybindEditor`, the same state Settings'
- * keybind rows use, so recording, live validation, the collision check and the
- * on-screen keyboard behave identically in both places.
  *
  * Two honesty rules this tab carries, because nothing else can:
  *
@@ -82,8 +81,6 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
   const pushToast = useEventStore((s) => s.pushToast);
   const { config, loading, error, saveKeybind } = useKeybinds();
   const [status, setStatus] = useState<ShortcutsStatus | null>(null);
-  // One recorder at a time: starting a second row ends the first.
-  const [recordingAction, setRecordingAction] = useState<KeybindAction | null>(null);
 
   const refetchStatus = useCallback(async () => {
     // Informational only: a backend that cannot answer leaves both notices
@@ -118,29 +115,13 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
     }
   }, [pushToast, refetchStatus]);
 
-  const onRecordingChange = useCallback((action: KeybindAction, recording: boolean) => {
-    setRecordingAction((prev) => (recording ? action : prev === action ? null : prev));
-  }, []);
-
-  // A dictation row is named the way this tab labels it; every other action
-  // (call, hang up, …) the way Settings does.
-  const actionLabel = useCallback(
-    (action: string) => {
-      const row = ROWS.find((r) => r.action === action);
-      if (row) return t(row.labelKey);
-      const key = ACTION_LABEL_KEY[action as KeybindAction];
-      return key ? t(key) : action;
-    },
-    [t],
-  );
-
   // Only a KNOWN "toggle" raises the notice. An older backend that reports no
   // mode at all must not accuse the user of a setting they may not have.
   const pttIsToggle = status?.mode === "toggle";
   const insertionBlocked = status?.insertion?.can_insert === false;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full flex-col">
       {!hideHeader && (
         <ViewHeader
           icon={<Keyboard className="h-4 w-4 text-foreground" />}
@@ -148,22 +129,57 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
           subtitle={t("voice.shortcuts.description")}
         />
       )}
-      <div className="min-h-0 flex-1">
-        <VoicePage testId="voice-shortcuts-tab">
-          <VoiceSection
-            title={t("voice.shortcuts.section_title")}
-            description={t("voice.shortcuts.section_description")}
-          >
-            {error && (
-              <VoiceNote tone="error" icon={<AlertTriangle />}>
-                {error}
-              </VoiceNote>
-            )}
-            <VoiceGroup testId="shortcuts-group">
-              {ROWS.map((row) => (
-                <ShortcutsKeyRow
-                  key={row.action}
+      <div
+        className="flex-1 overflow-y-auto scrollbar-jarvis p-6"
+        data-testid="voice-shortcuts-tab"
+      >
+        {/* Three key rows are a form, so they take the form measure rather
+            than stretching a 60-character hint across a desktop window. */}
+        <div className="mx-auto flex max-w-form flex-col gap-group">
+          {/* Embedded, the band above carries the section brand rather than
+              this tab's purpose — so the purpose is stated here instead. */}
+          {hideHeader && (
+            <p className="text-meta text-muted-foreground">
+              {t("voice.shortcuts.description")}
+            </p>
+          )}
+          {error && <p className="text-meta text-destructive">{error}</p>}
+
+          {/* A setting that contradicts its own label is degraded, not
+              broken — so a --warning glyph on an ordinary card, never the
+              near-white wash this used to be. */}
+          {pttIsToggle && (
+            <Card
+              className="flex items-start gap-3 p-5"
+              data-testid="shortcuts-mode-notice"
+            >
+              <AlertTriangle
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-warning"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-meta text-muted-foreground">
+                  {t("voice.shortcuts.mode_notice")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-stack"
+                  data-testid="shortcuts-mode-fix"
+                  onClick={() => void pinHoldMode()}
+                >
+                  {t("voice.shortcuts.mode_notice_fix")}
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          <div className="flex flex-col gap-stack">
+            {ROWS.map((row) => (
+              <div key={row.action} className="flex flex-col gap-1">
+                <KeybindRow
                   action={row.action}
+                  variant="voice"
                   label={t(row.labelKey)}
                   hint={t(row.hintKey)}
                   config={config}
@@ -171,47 +187,22 @@ export function ShortcutsTab({ hideHeader = false }: ShortcutsTabProps = {}) {
                   onSave={saveKeybind}
                   suggestions={config?.suggestions}
                   onSaved={row.action === "dictate" ? pinHoldMode : undefined}
-                  actionLabel={actionLabel}
-                  recordingAction={recordingAction}
-                  onRecordingChange={onRecordingChange}
-                  notes={
-                    row.action === "dictate" && pttIsToggle ? (
-                      // A setting that contradicts its own label is degraded,
-                      // not broken — a warning note with the one-click fix.
-                      <VoiceNote
-                        tone="warning"
-                        icon={<AlertTriangle />}
-                        testId="shortcuts-mode-notice"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-                          <span>{t("voice.shortcuts.mode_notice_short")}</span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            data-testid="shortcuts-mode-fix"
-                            onClick={() => void pinHoldMode()}
-                          >
-                            {t("voice.shortcuts.mode_notice_fix")}
-                          </Button>
-                        </div>
-                      </VoiceNote>
-                    ) : row.action === "paste_last" && insertionBlocked ? (
-                      // "The key works, the paste does not" is the degraded
-                      // case this note exists to name.
-                      <VoiceNote
-                        tone="warning"
-                        icon={<ClipboardCopy />}
-                        testId="shortcuts-paste-last-blocked"
-                      >
-                        {t("voice.shortcuts.paste_last_blocked_short")}
-                      </VoiceNote>
-                    ) : undefined
-                  }
                 />
-              ))}
-            </VoiceGroup>
-          </VoiceSection>
-        </VoicePage>
+                {/* "The key works, the paste does not" is the degraded case
+                    this whole line exists to name, so it wears the degraded
+                    hue instead of the same ink as the label above it. */}
+                {row.action === "paste_last" && insertionBlocked && (
+                  <p
+                    className="text-meta text-warning"
+                    data-testid="shortcuts-paste-last-blocked"
+                  >
+                    {t("voice.shortcuts.paste_last_blocked")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

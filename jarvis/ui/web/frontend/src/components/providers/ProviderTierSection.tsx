@@ -405,7 +405,6 @@ export function TierSection({
   onActivateOptimistic,
   health,
   wideGrid = false,
-  variant = "default",
 }: {
   providers: ProviderDescriptor[];
   onChanged: () => void;
@@ -414,9 +413,6 @@ export function TierSection({
    *  exactly the one provider powering this tier. */
   health?: SectionHealth;
   wideGrid?: boolean;
-  /** Presentation only: "voice" draws the list in the voice section's row
-   *  grammar (see `ProviderCard`). Data, order and actions are identical. */
-  variant?: ProviderCardVariant;
 }) {
   const tierHasActive = providers.some((p) => p.active);
   // The provider this tier actually RUNS on leads the list. Somebody who just
@@ -456,9 +452,7 @@ export function TierSection({
       className={cn(
         wideGrid
           ? "grid items-start gap-3"
-          : variant === "voice"
-            ? "divide-y divide-border overflow-hidden rounded-xl border border-border bg-card"
-            : "divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card",
+          : "divide-y divide-border/70 overflow-hidden rounded-surface border border-border bg-card",
       )}
       style={wideGrid ? { gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 34rem), 1fr))" } : undefined}
     >
@@ -477,21 +471,12 @@ export function TierSection({
             onToggleExpanded={() =>
               setExpandedId((current) => (current === p.id ? null : p.id))
             }
-            variant={variant}
           />
         </li>
       ))}
     </ul>
   );
 }
-
-/**
- * How a provider row is drawn. "default" is the API Keys page's list; "voice"
- * is the voice section's row grammar — wider gutters, the name in body ink,
- * and the active provider said with an accent "Active" pill instead of an
- * edge rule. Presentation only: every action and state is the same.
- */
-export type ProviderCardVariant = "default" | "voice";
 
 export function ProviderCard({
   descriptor,
@@ -505,7 +490,6 @@ export function ProviderCard({
   hideCredentialControls = false,
   billingOverride,
   billingPending = false,
-  variant = "default",
 }: {
   descriptor: ProviderDescriptor;
   onChanged: () => void;
@@ -528,10 +512,8 @@ export function ProviderCard({
   /** Display-only draft billing choice; never changes activation or auth. */
   billingOverride?: ProviderDescriptor["billing"];
   billingPending?: boolean;
-  variant?: ProviderCardVariant;
 }) {
   const t = useT();
-  const voice = variant === "voice";
   const [activating, setActivating] = useState(false);
   // The experimental-route acknowledgement. It used to be a window.confirm,
   // which the desktop WebView renders as a raw "127.0.0.1 says" box that also
@@ -867,7 +849,7 @@ export function ProviderCard({
         // (chip + frame + tint). A broken active provider turns that rule red.
         cardError
           ? "bg-destructive/[0.04] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-destructive"
-          : descriptor.active && !voice
+          : descriptor.active
             ? "bg-primary/[0.035] before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r before:bg-foreground/70"
             : "",
       )}
@@ -890,8 +872,7 @@ export function ProviderCard({
         }}
         title={rowTitle}
         className={cn(
-          "flex items-center gap-3 outline-none",
-          voice ? "min-h-14 px-4 py-2.5 sm:px-5" : "px-3.5 py-3",
+          "flex items-center gap-3 px-3.5 py-3 outline-none",
           collapsible && "cursor-pointer hover:bg-secondary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           !isBrainSwitchable && "opacity-80",
         )}
@@ -900,14 +881,7 @@ export function ProviderCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <span
-              className={cn(
-                "truncate text-sm",
-                voice
-                  ? "font-medium text-foreground"
-                  : "font-display font-semibold tracking-tight",
-              )}
-            >
+            <span className="truncate font-display text-sm font-semibold tracking-tight">
               {descriptor.label}
             </span>
             {!descriptor.active && <StatusBadge descriptor={descriptor} />}
@@ -967,7 +941,6 @@ export function ProviderCard({
           }
           activating={activating}
           onActivate={activate}
-          variant={variant}
           disabled={
             !isBrainSwitchable || (isCodexBrain && !descriptor.codex_brain_ready)
           }
@@ -1001,12 +974,7 @@ export function ProviderCard({
         <div
           id={`provider-body-${descriptor.id}`}
           data-testid={`provider-body-${descriptor.id}`}
-          className={cn(
-            "space-y-3 border-t border-border",
-            voice
-              ? "bg-card px-4 pb-4 pt-3 sm:px-5 sm:pl-[4.25rem]"
-              : "bg-background px-3.5 pb-3.5 pl-[3.75rem] pt-3",
-          )}
+          className="space-y-3 border-t border-border bg-background px-3.5 pb-3.5 pl-[3.75rem] pt-3"
         >
           {/* The precise "this card is the problem" banner: only on the active card,
               only when the live check actually failed. Names the cause in plain
@@ -1276,7 +1244,6 @@ export function ActiveControl({
   onActivate,
   disabled = false,
   disabledReason,
-  variant = "default",
 }: {
   descriptor: ProviderDescriptor;
   activating: boolean;
@@ -1289,10 +1256,8 @@ export function ActiveControl({
    */
   disabled?: boolean;
   disabledReason?: string;
-  variant?: ProviderCardVariant;
 }) {
   const t = useT();
-  const voice = variant === "voice";
   const labelTitle = descriptor.active
     ? t("apikeys_view.activate_tooltip_active")
     : disabled
@@ -1319,13 +1284,10 @@ export function ActiveControl({
       // the row handler for the same gesture and toggle the body.
       onClick={(e) => e.stopPropagation()}
       className={cn(
-        "inline-flex shrink-0 select-none items-center gap-2 whitespace-nowrap px-2.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-ring",
-        voice ? "h-8 rounded-md" : "h-7 rounded-control",
+        "inline-flex h-7 shrink-0 select-none items-center gap-2 whitespace-nowrap rounded-control px-2.5 text-xs transition-colors focus-within:ring-2 focus-within:ring-ring",
         disabled ? "cursor-not-allowed" : "cursor-pointer",
         descriptor.active
-          ? voice
-            ? "bg-accent-soft font-medium text-accent"
-            : "font-medium text-foreground"
+          ? "font-medium text-foreground"
           : descriptor.configured
             ? "border border-border bg-background text-muted-foreground hover:border-border-strong hover:text-foreground"
             : "border border-dashed border-border text-muted-foreground hover:text-foreground",
@@ -1340,18 +1302,15 @@ export function ActiveControl({
         disabled={activating || disabled}
         className="sr-only"
       />
-      {descriptor.active &&
-        (voice ? (
-          <Check aria-hidden="true" className="h-3.5 w-3.5" />
-        ) : (
-          <span
-            aria-hidden="true"
-            className={cn(
-              "h-[7px] w-[7px] rounded-full bg-secondary",
-              activating && "animate-pulse motion-reduce:animate-none",
-            )}
-          />
-        ))}
+      {descriptor.active && (
+        <span
+          aria-hidden="true"
+          className={cn(
+            "h-[7px] w-[7px] rounded-full bg-secondary",
+            activating && "animate-pulse motion-reduce:animate-none",
+          )}
+        />
+      )}
       {activating
         ? t("apikeys_view.provider_activating")
         : descriptor.active

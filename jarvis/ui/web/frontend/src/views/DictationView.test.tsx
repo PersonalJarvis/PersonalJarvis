@@ -7,8 +7,7 @@
  * outcome badge must be a translated phrase rather than the raw server token,
  * the search box must filter on both the delivered and the raw transcript, and
  * the trash icon must discard (recoverable) with the hard delete behind a
- * separate, deliberate step. "Delete all" — the one action with no restore —
- * must sit behind a confirmation.
+ * separate, deliberate step.
  *
  * Driven through a mocked fetch, mirroring ContactsView.test.tsx. No jest-dom
  * in this repo — assertions use toBeTruthy()/toBeNull().
@@ -18,7 +17,11 @@ import { cleanup, fireEvent, render as rtlRender, screen, waitFor } from "@testi
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 
-import { useEventStore } from "@/store/events";
+// ViewHeader lives in ChatsView, which drags in the whole chat surface; the
+// view only needs its shape.
+vi.mock("@/views/ChatsView", () => ({
+  ViewHeader: ({ title }: { title: string }) => <header>{title}</header>,
+}));
 
 const { copyMock } = vi.hoisted(() => ({ copyMock: vi.fn(async () => true) }));
 vi.mock("@/lib/clipboard", () => ({ robustCopy: copyMock }));
@@ -201,14 +204,6 @@ function defaultRoutes(
     "GET /api/dictation/stats": () => ({ body: STATS }),
     "PUT /api/settings/ui-language": () => ({ body: { ok: true } }),
     "GET /api/profile": () => ({ body: { user: { name: "Ada" } } }),
-    "GET /api/dictionary": () => ({
-      body: {
-        entries: [
-          { id: "w-1", word: "GitHub", misheard: ["git hub"], created_at: "", updated_at: "" },
-          { id: "w-2", word: "Claude", misheard: [], created_at: "", updated_at: "" },
-        ],
-      },
-    }),
     ...extra,
   };
 }
@@ -484,58 +479,15 @@ describe("DictationView home layout", () => {
     );
   });
 
-  it("puts the dictation key in the instruction as keycaps, pretty-printed", async () => {
+  it("puts the dictation key in the hero title, pretty-printed", async () => {
     installFetchMock(defaultRoutes());
     render(<DictationView />);
 
     await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    const instruction = screen.getByTestId("dictation-instruction");
-    expect(instruction.textContent).toContain("to dictate");
-    expect(instruction.textContent).not.toContain("ctrl+right_alt+j");
-    const caps = [...instruction.querySelectorAll("kbd")].map((el) => el.textContent);
-    expect(caps).toHaveLength(3);
-    expect(caps[2]).toBe("J");
+    const hero = screen.getByTestId("dictation-hero");
+    expect(hero.querySelector("h2")?.textContent).toContain("to dictate");
+    expect(hero.querySelector("h2")?.textContent).not.toContain("ctrl+right_alt+j");
     expect(screen.getByTestId("dictation-state").textContent).toBe("Ready");
-    // The state word is what a screen reader hears change.
-    expect(screen.getByTestId("dictation-state").getAttribute("aria-live")).toBe("polite");
-  });
-
-  it("names the hands-free combo as a second line", async () => {
-    installFetchMock(defaultRoutes());
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-hands-free")).toBeTruthy());
-    const line = screen.getByTestId("dictation-hands-free");
-    expect(line.textContent).toContain("hands-free");
-    expect(line.querySelectorAll("kbd")).toHaveLength(3);
-  });
-
-  it("draws no stock photograph", async () => {
-    installFetchMock(defaultRoutes());
-    const { container } = render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    expect(container.querySelector("img")).toBeNull();
-  });
-
-  it("shows the dictionary's size and opens the Dictionary tab", async () => {
-    installFetchMock(defaultRoutes());
-    render(<DictationView />);
-
-    await waitFor(() =>
-      expect(screen.queryByTestId("dictation-vocab-count")?.textContent).toBe("2 entries"),
-    );
-    fireEvent.click(screen.getByTestId("dictation-open-dictionary"));
-    expect(useEventStore.getState().activeSection).toBe("dictionary");
-  });
-
-  it("sends Change shortcut to the Shortcuts tab", async () => {
-    installFetchMock(defaultRoutes());
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-open-shortcuts")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("dictation-open-shortcuts"));
-    expect(useEventStore.getState().activeSection).toBe("voice-shortcuts");
   });
 
   it("draws fourteen days of activity", async () => {
@@ -564,201 +516,5 @@ describe("DictationView home layout", () => {
 
     await waitFor(() => expect(screen.queryByTestId("dictation-empty")).toBeTruthy());
     expect(screen.queryByTestId("dictation-history")).toBeNull();
-    // Nothing to search or delete yet.
-    expect(screen.queryByTestId("dictation-search")).toBeNull();
-    expect(screen.queryByTestId("dictation-clear-history")).toBeNull();
-  });
-});
-
-describe("DictationView control panel", () => {
-  it("starts with target auto, then stops, and says it is recording in between", async () => {
-    let active = false;
-    const calls = installFetchMock(
-      defaultRoutes(undefined, {
-        "GET /api/dictation/status": () => ({ body: { ...STATUS, active } }),
-        "POST /api/dictation/start": () => {
-          active = true;
-          return { body: { ok: true } };
-        },
-        "POST /api/dictation/stop": () => {
-          active = false;
-          return { body: { ok: true } };
-        },
-      }),
-    );
-    render(<DictationView />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("dictation-toggle").hasAttribute("disabled")).toBe(false),
-    );
-    expect(screen.getByTestId("dictation-toggle").textContent).toBe("Start dictating");
-    fireEvent.click(screen.getByTestId("dictation-toggle"));
-
-    await waitFor(() =>
-      expect(screen.getByTestId("dictation-state").textContent).toBe("Recording"),
-    );
-    const startCall = calls.find((c) => c.method === "POST" && c.url === "/api/dictation/start");
-    expect(startCall?.body).toEqual({ target: "auto" });
-    expect(screen.getByTestId("dictation-elapsed").textContent).toBe("0:00");
-    await waitFor(() => expect(screen.getByTestId("dictation-toggle").textContent).toBe("Stop"));
-
-    fireEvent.click(screen.getByTestId("dictation-toggle"));
-    await waitFor(() => expect(screen.getByTestId("dictation-state").textContent).toBe("Ready"));
-    expect(calls.some((c) => c.method === "POST" && c.url === "/api/dictation/stop")).toBe(true);
-    expect(screen.queryByTestId("dictation-elapsed")).toBeNull();
-  });
-
-  it("disables the button and names the reason when dictation is unavailable", async () => {
-    installFetchMock(
-      defaultRoutes(undefined, {
-        "GET /api/dictation/status": () => ({
-          body: { ...STATUS, available: false, reason: "No microphone found." },
-        }),
-      }),
-    );
-    render(<DictationView />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("dictation-state").textContent).toBe(
-        "Not available on this computer",
-      ),
-    );
-    expect(screen.getByTestId("dictation-toggle").hasAttribute("disabled")).toBe(true);
-    expect(screen.queryByText("No microphone found.")).toBeTruthy();
-    expect(screen.queryByTestId("dictation-open-shortcuts")).toBeNull();
-  });
-
-  it("puts a blocked insertion above the panel and in the state line", async () => {
-    installFetchMock(
-      defaultRoutes(undefined, {
-        "GET /api/dictation/status": () => ({
-          body: {
-            ...STATUS,
-            insertion: { can_insert: false, reason: "wayland", detail: "Wayland blocks typing." },
-          },
-        }),
-      }),
-    );
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-insert-warning")).toBeTruthy());
-    const warning = screen.getByTestId("dictation-insert-warning");
-    expect(warning.textContent).toContain("Wayland blocks typing.");
-    // Above the fold: the warning precedes the panel in document order.
-    expect(
-      warning.compareDocumentPosition(screen.getByTestId("dictation-panel")) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByTestId("dictation-state").textContent).toBe(
-      "Ready — text goes to your clipboard",
-    );
-  });
-});
-
-describe("DictationView stats while loading", () => {
-  it("paints skeletons, never zeros, until the numbers arrive", async () => {
-    let releaseStats: () => void = () => {};
-    const statsGate = new Promise<void>((resolve) => {
-      releaseStats = resolve;
-    });
-    installFetchMock(defaultRoutes());
-    const routed = globalThis.fetch;
-    (globalThis as unknown as { fetch: typeof fetch }).fetch = (async (
-      input: RequestInfo | URL,
-      init?: RequestInit,
-    ) => {
-      if (String(input).startsWith("/api/dictation/stats")) await statsGate;
-      return routed(input, init);
-    }) as typeof fetch;
-    render(<DictationView />);
-
-    expect(screen.queryByTestId("dictation-stats-loading")).toBeTruthy();
-    expect(screen.queryByTestId("dictation-stat-words")).toBeNull();
-
-    releaseStats();
-    await waitFor(() => expect(screen.queryByTestId("dictation-stats")).toBeTruthy());
-    expect(screen.queryByTestId("dictation-stats-loading")).toBeNull();
-    expect(screen.getByTestId("dictation-stat-today").textContent).toBe("120");
-  });
-});
-
-describe("DictationView delete all", () => {
-  it("asks before deleting everything, and Cancel keeps the history", async () => {
-    const calls = installFetchMock(defaultRoutes());
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("dictation-clear-history"));
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain("Delete your whole dictation history?");
-    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-    // Cancel holds the initial focus so a stray Enter keeps the history.
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByTestId("dictation-clear-cancel")),
-    );
-
-    fireEvent.click(screen.getByTestId("dictation-clear-cancel"));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-    expect(screen.getAllByTestId("dictation-history-row")).toHaveLength(3);
-  });
-
-  it("clears the history once confirmed", async () => {
-    const calls = installFetchMock(
-      defaultRoutes([TODAY_ENTRY, YESTERDAY_ENTRY], {
-        "DELETE /api/dictation/history": () => ({ body: { ok: true } }),
-      }),
-    );
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("dictation-clear-history"));
-    fireEvent.click(await screen.findByTestId("dictation-clear-confirm"));
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-empty")).toBeTruthy());
-    expect(
-      calls.some((c) => c.method === "DELETE" && c.url === "/api/dictation/history"),
-    ).toBe(true);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  });
-});
-
-describe("DictationView history row", () => {
-  it("lets an armed permanent delete be called off", async () => {
-    const calls = installFetchMock(defaultRoutes([DISCARDED_ENTRY]));
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    fireEvent.click(screen.getByTestId("dictation-delete-permanently"));
-    fireEvent.click(screen.getByTestId("dictation-delete-cancel"));
-
-    expect(screen.getByTestId("dictation-delete-permanently").textContent).toBe(
-      "Delete permanently",
-    );
-    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-  });
-
-  it("labels every row action for assistive technology", async () => {
-    installFetchMock(defaultRoutes([TODAY_ENTRY]));
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    for (const testId of ["dictation-copy-entry", "dictation-discard-entry"]) {
-      const button = screen.getByTestId(testId);
-      expect(button.getAttribute("aria-label")).toBeTruthy();
-      expect(button.getAttribute("title")).toBeTruthy();
-    }
-  });
-
-  it("folds a long transcript and unfolds it on request", async () => {
-    const long = "word ".repeat(80).trim();
-    installFetchMock(defaultRoutes([entry({ text: long, raw_text: long })]));
-    render(<DictationView />);
-
-    await waitFor(() => expect(screen.queryByTestId("dictation-history")).toBeTruthy());
-    expect(screen.getByTestId("dictation-entry-text").className).toContain("line-clamp-4");
-    fireEvent.click(screen.getByTestId("dictation-toggle-more"));
-    expect(screen.getByTestId("dictation-entry-text").className).not.toContain("line-clamp-4");
   });
 });

@@ -179,12 +179,22 @@ export function validationText(
   return sentences.join(" ");
 }
 
-/** What the keybind editor needs, whichever layout draws it. */
-export interface KeybindEditorOptions {
+export interface KeybindRowProps {
   action: KeybindAction;
+  label: string;
   config: KeybindsConfig | null;
+  loading: boolean;
   onSave: (a: KeybindAction, h: string) => Promise<KeybindSaveResult>;
-  /** Curated combos offered as one-click chips. */
+  /** One explanatory line under the label (voice variant only). */
+  hint?: string;
+  /**
+   * "settings" — the compact row inside Settings → Voice Keybinds (unchanged).
+   * "voice" — the wider row of the Shortcuts tab: label + hint on the left, the
+   * combo chips plus a pencil (record) and a plus (pick on the keyboard) on the
+   * right.
+   */
+  variant?: "settings" | "voice";
+  /** Curated combos offered as one-click chips (voice variant only). */
   suggestions?: string[];
   /**
    * Called after a combo was accepted by the backend. Lets the owner apply a
@@ -200,35 +210,24 @@ export interface KeybindEditorOptions {
   actionLabel?: (action: string) => string | undefined;
 }
 
-export interface KeybindRowProps extends KeybindEditorOptions {
-  label: string;
-  loading: boolean;
-  /** One explanatory line under the label (voice variant only). */
-  hint?: string;
-  /**
-   * "settings" — the compact row inside Settings → Voice Keybinds (unchanged).
-   * "voice" — the wider row: label + hint on the left, the combo chips plus a
-   * pencil (record) and a plus (pick on the keyboard) on the right.
-   */
-  variant?: "settings" | "voice";
-}
-
 /**
- * The state and behaviour of one editable keybind, without any markup: the
- * current combo, the recorder (physical chord or click-to-assign on the
- * on-screen keyboard), live validation, auto-save, clear and reset.
- * `KeybindRow` draws it for Settings; a screen with its own layout (the voice
- * section's Shortcuts tab) draws the same state its own way, so the recorder
- * behaves identically everywhere.
+ * One editable keybind: shows the current combo, records a new one (physical
+ * chord or click-to-assign on the on-screen keyboard), validates it live and
+ * saves it. The backend validator stays the authority — a rejected combo
+ * surfaces its reason as a toast.
  */
-export function useKeybindEditor({
+export function KeybindRow({
   action,
+  label,
   config,
+  loading,
   onSave,
+  hint,
+  variant = "settings",
   suggestions,
   onSaved,
   actionLabel,
-}: KeybindEditorOptions) {
+}: KeybindRowProps) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   // Every read defaults, at BOTH levels. A backend that does not know this
@@ -409,13 +408,6 @@ export function useKeybindEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [capturing]);
 
-  // Undo the live preview: back to the saved value (server truth). Escape and
-  // an explicit Cancel control both end a recording this way.
-  function cancelCapture() {
-    setCombo(currentRef.current || comboBeforeCapture.current);
-    setCapturing(false);
-  }
-
   useChordCapture(capturing, {
     onPreview: (next) => {
       setCombo(next);
@@ -430,7 +422,11 @@ export function useKeybindEditor({
       editVia.current = "chord";
       setEdits((n) => n + 1);
     },
-    onCancel: () => cancelCapture(),
+    onCancel: () => {
+      // Undo the live preview: back to the saved value (server truth).
+      setCombo(currentRef.current || comboBeforeCapture.current);
+      setCapturing(false);
+    },
     onPressed: setPressedCodes,
   });
 
@@ -483,102 +479,6 @@ export function useKeybindEditor({
       .slice(0, 4);
   }, [suggestions, otherCombos, combo]);
 
-  // ONE stable status line: the blocking message when there is one, otherwise
-  // the cautions, otherwise the recording hint. Two separately appearing lines
-  // made the keyboard below jump vertically on every combo click.
-  //
-  // While keys are physically DOWN the chord is still being built, so the line
-  // says so and nothing else. A caution about the half-built state ("a
-  // modifier-only shortcut fires on any superset") judges something the user
-  // has not decided yet — it belongs to the combo they let go of, not to the
-  // one they are still assembling. A blocking collision keeps speaking, since
-  // that is the one thing that will stop the save.
-  const holding = capturing && pressedCodes.size > 0;
-  const isError = !!validationMsg && validation.status === "error";
-  const showValidation = !!validationMsg && (isError || !holding);
-  const statusText = showValidation
-    ? validationMsg
-    : holding
-      ? t("settings_view.keybinds.record_prompt_holding")
-      : capturing
-        ? t("settings_view.keybinds.record_prompt_hint")
-        : null;
-
-  return {
-    current,
-    def,
-    combo,
-    capturing,
-    setCapturing,
-    cancelCapture,
-    saving,
-    /** The last save needs a restart to take effect. */
-    saved,
-    pressedCodes,
-    boundTokens,
-    validation,
-    validationMsg,
-    holding,
-    isError,
-    showValidation,
-    statusText,
-    freeSuggestions,
-    showReset,
-    assign,
-    resetToDefault: () => {
-      if (def) assign(def);
-    },
-    clear: onClearClick,
-    onToggleToken,
-    // Absent until the route serves the probe — see KeybindsConfig.
-    mouseSupported: config?.mouse_buttons?.supported ?? true,
-    mouseReason: config?.mouse_buttons?.reason,
-  };
-}
-
-export type KeybindEditor = ReturnType<typeof useKeybindEditor>;
-
-/**
- * One editable keybind: shows the current combo, records a new one (physical
- * chord or click-to-assign on the on-screen keyboard), validates it live and
- * saves it. The backend validator stays the authority — a rejected combo
- * surfaces its reason as a toast.
- */
-export function KeybindRow({
-  action,
-  label,
-  config,
-  loading,
-  onSave,
-  hint,
-  variant = "settings",
-  suggestions,
-  onSaved,
-  actionLabel,
-}: KeybindRowProps) {
-  const t = useT();
-  const {
-    current,
-    combo,
-    capturing,
-    setCapturing,
-    saving,
-    saved,
-    pressedCodes,
-    boundTokens,
-    isError,
-    showValidation,
-    statusText,
-    freeSuggestions,
-    showReset,
-    assign,
-    resetToDefault,
-    clear: onClearClick,
-    onToggleToken,
-    mouseSupported,
-    mouseReason,
-  } = useKeybindEditor({ action, config, onSave, suggestions, onSaved, actionLabel });
-
   const comboField = (
     <button
       type="button"
@@ -614,6 +514,26 @@ export function KeybindRow({
     </button>
   );
 
+  // ONE stable status line: the blocking message when there is one, otherwise
+  // the cautions, otherwise the recording hint. Two separately appearing lines
+  // made the keyboard below jump vertically on every combo click.
+  //
+  // While keys are physically DOWN the chord is still being built, so the line
+  // says so and nothing else. A caution about the half-built state ("a
+  // modifier-only shortcut fires on any superset") judges something the user
+  // has not decided yet — it belongs to the combo they let go of, not to the
+  // one they are still assembling. A blocking collision keeps speaking, since
+  // that is the one thing that will stop the save.
+  const holding = capturing && pressedCodes.size > 0;
+  const isError = !!validationMsg && validation.status === "error";
+  const showValidation = !!validationMsg && (isError || !holding);
+  const statusText = showValidation
+    ? validationMsg
+    : holding
+      ? t("settings_view.keybinds.record_prompt_holding")
+      : capturing
+        ? t("settings_view.keybinds.record_prompt_hint")
+        : null;
   const statusLine = statusText && (
     <p
       data-testid={showValidation ? `keybind-validation-${action}` : undefined}
@@ -636,8 +556,9 @@ export function KeybindRow({
       boundTokens={boundTokens}
       platform={_KB_PLATFORM}
       onToggleToken={onToggleToken}
-      mouseSupported={mouseSupported}
-      mouseReason={mouseReason}
+      // Absent until the route serves the probe — see KeybindsConfig.
+      mouseSupported={config?.mouse_buttons?.supported ?? true}
+      mouseReason={config?.mouse_buttons?.reason}
     />
   );
 
@@ -734,7 +655,9 @@ export function KeybindRow({
             <button
               type="button"
               className="text-micro text-muted-foreground underline hover:text-foreground"
-              onClick={resetToDefault}
+              onClick={() => {
+                if (def) assign(def);
+              }}
             >
               {t("settings_view.keybinds.reset")}
             </button>
@@ -755,7 +678,9 @@ export function KeybindRow({
           <button
             type="button"
             className="text-micro text-muted-foreground underline hover:text-foreground"
-            onClick={resetToDefault}
+            onClick={() => {
+              if (def) assign(def);
+            }}
           >
             {t("settings_view.keybinds.reset")}
           </button>
