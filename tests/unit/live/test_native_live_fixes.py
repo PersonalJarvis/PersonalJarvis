@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from jarvis.core.protocols import SupervisorToolDescriptor, ToolResult
+from jarvis.cu.direct import tool_schema
 from jarvis.live import native, runtime
 from jarvis.live.native import NativeLiveVoiceSession
 from jarvis.live.state import LiveLedger
@@ -334,6 +336,202 @@ async def test_fast_tool_answers_with_its_real_result(tmp_path, monkeypatch, mak
         await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
         _, _, result = connection.tool_results[0]
         assert result["success"] is True and "pending" not in result
+    finally:
+        session._ledger.close()
+
+
+def _screen_gateway(*, success=True):
+    gateway = FakeToolGateway((
+        SupervisorToolDescriptor("computer", "Operate the screen", tool_schema(), "monitor"),
+    ))
+    gateway.results["computer"] = ToolResult(
+        success,
+        {"executed": ["click at (20,30)"] if success else [],
+         "frame": {"frame_id": "fresh-frame"},
+         "_image": {"mime": "image/jpeg", "data": "ZnJlc2gtc2NyZWVu"}},
+        None if success else "The foreground window changed; nothing was pressed.",
+    )
+    return gateway
+
+
+def _screen_call():
+    return RealtimeEvent(type="tool_call", call_id="screen-call", tool_name="computer",
+                         tool_args={"steps": [{"action": "screenshot"}]})
+
+
+@both_providers
+@pytest.mark.parametrize("entry", ["speech", "text"])
+@pytest.mark.asyncio
+async def test_new_user_input_does_not_open_a_report_pause_during_reasoning(
+    tmp_path, make_provider, entry,
+):
+    session, _, _ = _in_call(make_provider(), tmp_path)
+    try:
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        if entry == "speech":
+            await session._native_event(RealtimeEvent(
+                type="input_transcript", text="Check the current screen", is_final=True,
+            ))
+        else:
+            await session.handle_control({"type": "text_input", "text": "Check the screen"})
+        await session._note_thinking()
+        session._notify_pause()
+        assert not session.ready_for_report
+        await _settle(session)
+    finally:
+        session._ledger.close()
+
+
+@both_providers
+@pytest.mark.parametrize("success", [True, False])
+@pytest.mark.asyncio
+async def test_late_computer_receipt_and_image_reach_the_model_at_a_pause(
+    tmp_path, monkeypatch, make_provider, success,
+):
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", 0.01)
+    gateway = _screen_gateway(success=success)
+    release = gateway.hold("computer")
+    session, connection, _ = _in_call(make_provider(), tmp_path, gateway=gateway)
+    try:
+        await session._native_event(_screen_call())
+        await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
+        assert connection.tool_results[0][2]["pending"] is True
+        # The pending spoken answer must finish before its final result interrupts it.
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*session._jobs), _HANG_GUARD_S)
+        assert "send_image" not in connection.names()
+        assert "send_text" not in connection.names()
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        await _settle(session)
+        assert connection.names()[-2:] == ["send_image", "send_text"]
+        report = connection.calls[-1][1]
+        assert '"success": ' + str(success).lower() in report
+        assert "fresh-frame" in report
+        assert ("click at (20,30)" if success else "nothing was pressed") in report
+        assert gateway.calls == [("computer", {"steps": [{"action": "screenshot"}]})]
+        assert len(connection.tool_results) == 1  # No duplicate function response.
+        session._notify_pause()
+        await _settle(session)
+        assert connection.names().count("send_text") == 1
+    finally:
+        session._cancel_report_timeout()
+        session._ledger.close()
+
+
+@both_providers
+@pytest.mark.asyncio
+async def test_computer_finishing_after_pending_speech_wakes_its_report(
+    tmp_path, monkeypatch, make_provider,
+):
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", 0.01)
+    gateway = _screen_gateway()
+    release = gateway.hold("computer")
+    session, connection, _ = _in_call(make_provider(), tmp_path, gateway=gateway)
+    try:
+        await session._native_event(_screen_call())
+        await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        session._input_active = True
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*session._jobs), _HANG_GUARD_S)
+        await _settle(session)
+        assert "send_text" not in connection.names()  # The person is speaking.
+        session._input_active = False
+        session._notify_pause()
+        await _settle(session)
+        assert connection.names().count("send_text") == 1
+    finally:
+        session._cancel_report_timeout()
+        session._ledger.close()
+
+
+@both_providers
+@pytest.mark.asyncio
+async def test_late_computer_report_waits_for_other_pending_work(
+    tmp_path, monkeypatch, make_provider,
+):
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", 0.01)
+    gateway = _screen_gateway()
+    release = gateway.hold("computer")
+    session, connection, _ = _in_call(make_provider(), tmp_path, gateway=gateway)
+    other_done = asyncio.Event()
+    other = asyncio.create_task(other_done.wait())
+    session._track_job(other)
+    try:
+        await session._call(_screen_call(), 0)
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        work = tuple(job for job in session._jobs if job is not other)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*work), _HANG_GUARD_S)
+        assert "send_text" not in connection.names()
+        other_done.set()
+        await other
+        await _settle(session)
+        assert connection.names().count("send_text") == 1
+    finally:
+        other.cancel()
+        await asyncio.gather(other, return_exceptions=True)
+        session._cancel_report_timeout()
+        session._ledger.close()
+
+
+@both_providers
+@pytest.mark.parametrize("change", ["request", "connection", "stop", "close"])
+@pytest.mark.asyncio
+async def test_late_computer_never_revives_an_obsolete_request(
+    tmp_path, monkeypatch, make_provider, change,
+):
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", 0.01)
+    gateway = _screen_gateway()
+    release = gateway.hold("computer")
+    session, connection, _ = _in_call(make_provider(), tmp_path, gateway=gateway)
+    try:
+        await session._native_event(_screen_call())
+        await asyncio.wait_for(connection.tool_result_sent.wait(), _HANG_GUARD_S)
+        # Receipt I/O can outlive the short deadline on a loaded host. This
+        # case stops an action already running, not one still being claimed.
+        await asyncio.wait_for(gateway.execution_started.wait(), _HANG_GUARD_S)
+        await session._native_event(RealtimeEvent(type="turn_complete"))
+        if change == "request":
+            session._tools.revision += 1
+        elif change == "connection":
+            session._wire_epoch += 1
+        elif change == "stop":
+            session._tools.cancel_token.cancel("escape")
+        else:
+            session._closing = True
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*session._jobs), _HANG_GUARD_S)
+        await _settle(session)
+        assert "send_image" not in connection.names()
+        assert "send_text" not in connection.names()
+        assert gateway.finished == ["computer"]
+        assert session._ledger.operation("native-live", "0:screen-call")["success"] is True
+    finally:
+        session._cancel_report_timeout()
+        session._ledger.close()
+
+
+@both_providers
+@pytest.mark.parametrize("image_support", ["missing", "fails"])
+@pytest.mark.asyncio
+async def test_image_delivery_failure_still_answers_with_the_execution_receipt(
+    tmp_path, monkeypatch, make_provider, image_support,
+):
+    monkeypatch.setattr(native, "_TOOL_DEADLINE_S", _HANG_GUARD_S)
+    session, connection, _ = _in_call(make_provider(), tmp_path, gateway=_screen_gateway())
+
+    async def failed_image(*_args):
+        raise OSError("Image transport failed")
+
+    connection.send_image = None if image_support == "missing" else failed_image
+    try:
+        await session._call(_screen_call(), 0)
+        assert len(connection.tool_results) == 1
+        result = connection.tool_results[0][2]
+        assert result["success"] is False and result["verified"] is False
+        assert result["output"]["executed"] == ["click at (20,30)"]
+        assert "Do not claim visual success" in result["error"]
     finally:
         session._ledger.close()
 

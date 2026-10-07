@@ -20,6 +20,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import {
   PROVIDER_STATE_CHIPS,
   ProviderCard,
+  providerStateChip,
   managedRuntimeBadge,
   type ProviderStateChip,
 } from "@/components/providers/ProviderTierSection";
@@ -176,6 +177,34 @@ function polishPin(calls: Call[]): Record<string, unknown> {
   expect(put).toBeTruthy();
   return JSON.parse(put!.body ?? "{}") as Record<string, unknown>;
 }
+
+describe("ProviderCard selected without credentials", () => {
+  afterEach(cleanup);
+
+  it.each(["gemini", "openai", "claude-api"])("shows missing credentials for selected %s", (id) => {
+    const calls = installFetchMock();
+    useI18nStore.getState().setUi("en", { push: false });
+    const descriptor = dictationCard({
+      id, label: id, tier: "brain", active: true, configured: false,
+      secret_keys: [], secrets_set: {},
+    });
+    renderCard(descriptor);
+    expect((screen.getByRole("radio") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(chipLabel("no_key"))).toBeTruthy();
+    expect(screen.queryByText(enLocale.apikeys_view.provider_active)).toBeNull();
+    expect(providerStateChip(descriptor, "ok")).toBe("no_key");
+    expect(calls.some(call => call.method === "POST")).toBe(false);
+  });
+
+  it("shows a disconnected subscription despite its saved selection", () => {
+    installFetchMock();
+    useI18nStore.getState().setUi("en", { push: false });
+    const descriptor = codexRealtimeCard({ active: true, configured: false });
+    renderCard(descriptor);
+    expect(screen.getByText(chipLabel("not_connected"))).toBeTruthy();
+    expect(screen.queryByText(enLocale.apikeys_view.provider_active)).toBeNull();
+  });
+});
 
 describe("ProviderCard — dictation polish activation", () => {
   beforeEach(() => {
