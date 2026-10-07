@@ -943,7 +943,9 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install the base app
-        run: python scripts/pip_install.py -e "."
+        run: |
+          python scripts/pip_install.py -e "."
+          python -m pip install pytest pytest-asyncio
       # Downloads only: the private OpenClaw copy and uv's cache. Never Hermes'
       # own home, so its install and prepare run for real on every pin.
       - name: Reuse the pinned runtime downloads

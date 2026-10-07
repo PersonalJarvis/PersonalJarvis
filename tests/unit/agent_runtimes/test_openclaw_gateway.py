@@ -215,3 +215,13 @@ def test_an_install_outside_path_is_found(tmp_path, monkeypatch):
     monkeypatch.setattr(openclaw, "_installer_bin_dirs", lambda: (bin_dir,))
     launcher = openclaw._launcher()
     assert launcher is not None and Path(launcher[0]).parent == bin_dir
+
+
+def test_moving_the_agent_folders_keeps_the_installed_openclaw(monkeypatch, tmp_path):
+    """The e2e spikes keep agent state in a temp dir; they must still find the
+    private OpenClaw the app installed (CI 2026-10-07: "not installed")."""
+    from jarvis.agent_runtimes import base, openclaw
+
+    installed = openclaw.cli_prefix()
+    monkeypatch.setattr(base, "runtimes_root", lambda: tmp_path / "agent_runtimes")
+    assert openclaw.cli_prefix() == installed

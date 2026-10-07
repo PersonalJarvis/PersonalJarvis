@@ -9,7 +9,7 @@ client is written here: that wire protocol requires an exact version match,
 the bridge that ships with the install always has it.
 
 Jarvis installs its own copy, at the tested release, into
-``<runtimes_root>/openclaw-cli`` with a private Node.js: no administrator
+``<tools_root>/openclaw-cli`` with a private Node.js: no administrator
 rights, no system Node, no PATH change, and the person's own OpenClaw is
 never updated by Jarvis. A ready OpenClaw the person installed themselves is
 used until Jarvis' copy exists.
@@ -143,7 +143,7 @@ _INSTALL_CLI_URL_SH: Final[str] = "https://openclaw.ai/install-cli.sh"
 
 def cli_prefix() -> Path:
     """Where Jarvis keeps its own OpenClaw and the Node.js it runs on."""
-    return base.runtimes_root() / "openclaw-cli"
+    return base.tools_root() / "openclaw-cli"
 
 
 def _private_launcher() -> list[str] | None:

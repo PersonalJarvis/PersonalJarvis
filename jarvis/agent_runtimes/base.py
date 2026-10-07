@@ -411,18 +411,32 @@ class TurnSlots:
         return release
 
 
-def runtimes_root() -> Path:
-    """Every runtime folder of THIS app instance.
-
-    The dev instance keeps its own (``agent_runtimes-dev``): its agents live in
-    their own database, and two apps must never run one agent folder at once.
-    """
+def _instance_root() -> Path:
     from jarvis.core.instance import current_instance
     from jarvis.core.paths import user_data_dir
 
     identity = current_instance()
     name = "agent_runtimes" if identity.is_default else f"agent_runtimes-{identity.name}"
     return user_data_dir() / name
+
+
+def runtimes_root() -> Path:
+    """Every runtime folder of THIS app instance.
+
+    The dev instance keeps its own (``agent_runtimes-dev``): its agents live in
+    their own database, and two apps must never run one agent folder at once.
+    """
+    return _instance_root()
+
+
+def tools_root() -> Path:
+    """Where this instance keeps the runtime programs Jarvis installed itself.
+
+    The same folder as :func:`runtimes_root` today, but resolved on its own: a
+    caller that moves the agent folders elsewhere (the e2e spikes keep agent
+    state in a temporary folder) must still find the installed program.
+    """
+    return _instance_root()
 
 
 def legacy_runtimes_root() -> Path:
