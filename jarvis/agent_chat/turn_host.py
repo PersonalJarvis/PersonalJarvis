@@ -482,7 +482,7 @@ class TurnHost:
         while True:
             try:
                 raw = await stream.readline()
-            except (ValueError, asyncio.LimitOverrunError):
+            except (ValueError, asyncio.LimitOverrunError):  # readline dropped a long line
                 continue
             if not raw:
                 return
@@ -523,7 +523,7 @@ def _line_type(text: str) -> str:
         return ""
     try:
         obj = json.loads(text)
-    except ValueError:
+    except ValueError:  # plain text output has no JSON type
         return ""
     return str(obj.get("type") or "") if isinstance(obj, dict) else ""
 

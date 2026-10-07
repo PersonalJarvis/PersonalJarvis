@@ -675,7 +675,7 @@ def read_spool() -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     try:
         paths = sorted(spool_dir().glob("*.json"))
-    except OSError:
+    except OSError:  # no readable spool folder means nothing was spooled
         return records
     for path in paths:
         try:

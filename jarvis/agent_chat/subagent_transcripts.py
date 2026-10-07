@@ -99,7 +99,7 @@ def _ms(value: Any) -> int:
     text = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError:
+    except ValueError:  # an unparseable timestamp reads as unknown (0)
         return 0
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -137,7 +137,7 @@ def _first_line(path: Path) -> dict[str, Any] | None:
         return None
     try:
         obj = json.loads(line)
-    except ValueError:
+    except ValueError:  # a first line that is not JSON is not a Codex rollout
         return None
     return obj if isinstance(obj, dict) and obj.get("type") == "session_meta" else None
 
@@ -161,7 +161,7 @@ def _arguments(raw: Any) -> dict[str, Any]:
     if isinstance(raw, str):
         try:
             parsed = json.loads(raw)
-        except ValueError:
+        except ValueError:  # free-text arguments are kept as the raw input
             return {"input": raw}
         return parsed if isinstance(parsed, dict) else {"input": parsed}
     return {}
@@ -262,7 +262,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
     )
     try:
         start = int(payload.get("subagent_history_start_ordinal") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError):  # no usable ordinal: read from the start
         start = 0
     seen: set[str] = set()
     last_text = ""
@@ -278,7 +278,7 @@ def read_codex_subagent(path: Path, meta: dict[str, Any]) -> CodexSubagent:
                 continue
             try:
                 obj = json.loads(line)
-            except ValueError:
+            except ValueError:  # a torn or partial rollout line is skipped, the rest is read
                 continue
             if not isinstance(obj, dict):
                 continue
