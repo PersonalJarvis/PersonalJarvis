@@ -4674,7 +4674,14 @@ async def _analyze_drops(
         return []
 
 
-@router.post("/fanout", summary="Run one task across several coding agents")
+# Not an app action (``x-jarvis-exclude``): a model reaches coding panes through
+# workspace-orchestrate, which addresses them by ID and keeps a delivery receipt.
+# These routes pick a pane by call-sign in whichever workspace is in front.
+@router.post(
+    "/fanout",
+    summary="Run one task across several coding agents",
+    openapi_extra={"x-jarvis-exclude": True},
+)
 async def fanout(request: Request, req: FanOutRequest) -> dict:
     """Brief a fleet: open the panes if asked, divide the work, deliver it.
 
@@ -4908,7 +4915,11 @@ def _unknown_terminal_detail(registry: object, wanted: str) -> str:
     )
 
 
-@router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
+@router.post(
+    "/terminals/{name}/prompt",
+    summary="Send a prompt to one terminal",
+    openapi_extra={"x-jarvis-exclude": True},  # see /fanout
+)
 async def terminal_prompt(
     request: Request, name: str, req: PromptRequest, workspace: str | None = None
 ) -> dict:
