@@ -440,18 +440,36 @@ def platform_installers(platform: str, manifest: dict[str, str]) -> list[str]:
     return names
 
 
+#: Pauses before retrying an attestation lookup the service could not answer.
+ATTESTATION_RETRY_DELAYS = (5.0, 15.0)
+_SERVER_ERROR = re.compile(r"\(HTTP 5\d\d\)")
+
+
 def attestation_state(repo: str, tag: str, path: Path, digest: str) -> str:
-    """``verified``, ``absent`` or ``failed`` for one downloaded installer.
+    """``verified``, ``absent``, ``unavailable`` or ``failed`` for one installer.
 
     Only the tag build of desktop-installers.yml may vouch for a native
     installer, so the verification pins both the signing workflow and the ref.
+    ``unavailable`` means GitHub's attestation service kept answering with a
+    server error, so nothing is known about the installer's provenance.
     """
     endpoint = f"repos/{repo}/attestations/sha256:{digest}"
-    lookup = run_command(["gh", "api", endpoint, "--jq", ".attestations | length"], check=False)
+    command = ["gh", "api", endpoint, "--jq", ".attestations | length"]
+    lookup = run_command(command, check=False)
+    for delay in ATTESTATION_RETRY_DELAYS:
+        if lookup.returncode == 0 or not _SERVER_ERROR.search(lookup.stderr):
+            break
+        print(f"[release] attestation service error for {path.name}; retrying in {delay:g}s")
+        time.sleep(delay)
+        lookup = run_command(command, check=False)
     if lookup.returncode != 0:
         if "HTTP 404" in lookup.stderr:
             return "absent"
-        print(f"::error::attestation lookup failed for {path.name}: {lookup.stderr.strip()}")
+        detail = lookup.stderr.strip()
+        if _SERVER_ERROR.search(lookup.stderr):
+            print(f"::warning::attestation service unavailable for {path.name}: {detail}")
+            return "unavailable"
+        print(f"::error::attestation lookup failed for {path.name}: {detail}")
         return "failed"
     if lookup.stdout.strip() in {"", "0"}:
         return "absent"
@@ -496,7 +514,9 @@ def platform_errors(
             errors.append(f"downloaded {name} does not match installers-SHA256SUMS.txt")
             continue
         state = attestation_state(repo, tag, path, digest)
-        if state == "failed" or (state == "absent" and require_attestation):
+        # Without required provenance (releases built before attestations), an
+        # unknown answer is no worse than a missing attestation: report, pass.
+        if state == "failed" or (state in {"absent", "unavailable"} and require_attestation):
             errors.append(f"build provenance attestation {state}: {name}")
         elif state == "absent":
             print(f"::notice::{name} has no build provenance attestation (older build)")
