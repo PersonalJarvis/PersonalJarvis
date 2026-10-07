@@ -61,6 +61,15 @@ class GatewayError(Exception):
         self.code = code
 
 
+def _subscription_message(exc: Exception) -> str:
+    """Fixed wording for a failed subscription call; no exception text leaves."""
+    from jarvis.live.subscription_auth import SubscriptionAuthError
+
+    if isinstance(exc, SubscriptionAuthError) or getattr(exc, "code", "") == "login":
+        return "The ChatGPT subscription needs a new sign-in in Jarvis."
+    return "The ChatGPT subscription could not answer this turn."
+
+
 @dataclass(frozen=True, slots=True)
 class Grant:
     """Who a gateway token speaks for, and on which Jarvis provider."""
@@ -216,7 +225,8 @@ async def stream_response(grant: Grant, args: dict[str, Any]) -> AsyncIterator[b
             yield _sse(event)
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
         log.info("runtime gateway: %s turn failed (%s)", grant.agent_id, type(exc).__name__)
-        yield _sse(_failed_event(str(exc), getattr(exc, "code", "subscription_unavailable")))
+        code = getattr(exc, "code", "subscription_unavailable")
+        yield _sse(_failed_event(_subscription_message(exc), code))
 
 
 async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any]:
@@ -237,7 +247,10 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
                 # completed response with an empty ``output``.
                 return {**finished, "output": finished.get("output") or items}
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
-        raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
+        log.info("runtime gateway: %s call failed (%s)", grant.agent_id, type(exc).__name__)
+        raise GatewayError(
+            _subscription_message(exc), status=502, code="subscription_unavailable"
+        ) from exc
     raise GatewayError("ChatGPT ended without an answer.", status=502, code="incomplete")
 
 
@@ -259,7 +272,10 @@ async def list_models(grant: Grant) -> list[dict[str, Any]]:
     try:
         rows = await _client(grant.account_id).list_models()
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
-        raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
+        log.info("runtime gateway: %s call failed (%s)", grant.agent_id, type(exc).__name__)
+        raise GatewayError(
+            _subscription_message(exc), status=502, code="subscription_unavailable"
+        ) from exc
     return [
         {"id": row["id"], "object": "model", "owned_by": "openai"}
         for row in rows
