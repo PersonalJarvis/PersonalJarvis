@@ -621,12 +621,12 @@ class AgentChatStore:
         ]
 
     def turn_terminal(self, session_id: str, turn_id: str) -> dict[str, Any] | None:
-        """Read one durable terminal event for an exact owned turn without loading history."""
+        """Read the first durable completion; stale readers cannot revise its outcome."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT seq, ts_ms, kind, payload FROM agent_chat_events "
                 "WHERE session_id = ? AND kind = 'turn_finished' "
-                "AND json_extract(payload, '$.turn_id') = ? ORDER BY seq DESC LIMIT 1",
+                "AND json_extract(payload, '$.turn_id') = ? ORDER BY seq ASC LIMIT 1",
                 (session_id, turn_id),
             ).fetchone()
         if row is None:

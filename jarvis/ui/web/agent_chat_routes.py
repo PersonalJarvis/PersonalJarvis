@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -286,21 +287,31 @@ class PickFolderBody(BaseModel):
 # ------------------------------------------------------------------ helpers
 
 
+# Sync HTTP routes run in worker threads while boot and WebSockets use the
+# event loop. Construction opens SQLite and schedules turn recovery, so the
+# first requests must not create competing owners of the same hosted turns.
+_SERVICE_BUILD_LOCK = threading.Lock()
+
+
 def _service_from_state(state: Any) -> AgentChatService | None:
     """The service, built on first use from ``app.state.agent_chat_factory``."""
     svc = getattr(state, "agent_chat", None)
     if svc is not None:
         return svc
-    factory = getattr(state, "agent_chat_factory", None)
-    if factory is None:
-        return None
-    try:
-        svc = factory()
-    except Exception as exc:  # noqa: BLE001 — surfaces as 503 with the reason in the log
-        log.warning("agent chat: service could not be built: %s", exc)
-        return None
-    state.agent_chat = svc
-    return svc
+    with _SERVICE_BUILD_LOCK:
+        svc = getattr(state, "agent_chat", None)
+        if svc is not None:
+            return svc
+        factory = getattr(state, "agent_chat_factory", None)
+        if factory is None:
+            return None
+        try:
+            svc = factory()
+        except Exception as exc:  # noqa: BLE001 — surfaces as 503 with the reason in the log
+            log.warning("agent chat: service could not be built: %s", exc)
+            return None
+        state.agent_chat = svc
+        return svc
 
 
 #: How long after the server is up the boot reattach waits, so it never sits
