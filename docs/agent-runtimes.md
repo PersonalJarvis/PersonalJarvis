@@ -71,7 +71,12 @@ call with its own provider plugins (`gateway.py`,
 - **Failures.** A provider error before the first token becomes an HTTP
   status the runtime backs off on (429 rate limit, 401 refused key, 502
   otherwise); after streaming began it is an `error` chunk. Either way the
-  message is Jarvis' own, never the provider's body.
+  message is Jarvis' own, never the provider's body. Refusals no retry can
+  fix are told apart first (`provider_errors.py`): an empty balance or zero
+  quota is 402 `billing` even when the provider sent 429 (OpenAI does), a
+  provider that cannot be reached (a stopped local server) is 503
+  `provider_unreachable`. Hermes treats 402 as billing and stops instead of
+  retrying.
 - **Costs.** Every call goes through the plugin, so it lands in the cost
   ledger (caller `agent-runtime`).
 - **ChatGPT subscription.** Handing the login to the runtime would make a
@@ -88,6 +93,13 @@ call with its own provider plugins (`gateway.py`,
   limits, so the model picker labels that seat "billed as extra usage"
   (`login_providers` on `/api/agent-runtimes`). A Claude login (`sk-ant-oat…`)
   saved in the Anthropic API-key slot is never sent as an API key.
+  Measured 2026-10-07: with Extra Usage turned off on the account, Haiku
+  still answers from the plan, while Sonnet, Opus and Fable get a bare 429
+  `rate_limit_error` although the plan has room. The gateway then reads the
+  account's usage report (`/api/oauth/usage`, no inference) and says why:
+  Extra Usage off or its monthly limit spent (402), or a plan window really
+  used up (429 until its reset). The gateway sends Anthropic the agent's own
+  request; it never presents itself as Claude Code.
 
 `scripts/spikes/agent_runtimes_gateway_e2e.py <runtime> <provider> [model]`
 runs two real turns through the gateway (route built by `route_for`, the real

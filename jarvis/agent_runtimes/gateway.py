@@ -225,10 +225,17 @@ async def complete_response(grant: Grant, args: dict[str, Any]) -> dict[str, Any
     from jarvis.live.subscription_reasoning import SubscriptionReasoningError
 
     try:
+        items: list[dict[str, Any]] = []
         async for event in _client(grant.account_id).stream(**args):
             finished = event.get("response")
+            if event.get("type") == "response.output_item.done" and isinstance(
+                event.get("item"), dict
+            ):
+                items.append(event["item"])
             if event.get("type") == "response.completed" and isinstance(finished, dict):
-                return dict(finished)
+                # ChatGPT's backend streams the output items and sends the
+                # completed response with an empty ``output``.
+                return {**finished, "output": finished.get("output") or items}
     except (SubscriptionReasoningError, SubscriptionAuthError) as exc:
         raise GatewayError(str(exc), status=502, code="subscription_unavailable") from exc
     raise GatewayError("ChatGPT ended without an answer.", status=502, code="incomplete")
@@ -400,6 +407,14 @@ def chat_request(body: Any) -> tuple[str, Any]:
 def _failure(provider: str, exc: Exception) -> GatewayError:
     """A provider error as a status the runtime can back off on, and a plain
     message — never the provider's own response body."""
+    from jarvis.agent_runtimes.provider_errors import classify
+
+    if (refusal := classify(provider, exc)) is not None:
+        # No credits, provider unreachable, Claude Extra Usage off: a retry
+        # cannot help, so the runtime must not read it as a rate limit.
+        failure = GatewayError(refusal.message, status=refusal.status, code=refusal.code)
+        failure.retry_after = refusal.retry_after
+        return failure
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if not isinstance(status, int):
         response = getattr(exc, "response", None)
@@ -442,6 +457,7 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
     queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=256)
 
     async def pump() -> None:
+        login: str | None = None
         try:
             secret = get_jarvis_agent_secret(grant.provider)
             overrides = {grant.provider: secret} if secret else {}
@@ -459,6 +475,12 @@ async def _deltas(grant: Grant, model: str, request: Any) -> AsyncIterator[Any]:
                     await queue.put(delta)
             await queue.put(_DONE)
         except Exception as exc:  # noqa: BLE001 — handed to the reader, which reports it
+            if login:
+                # Anthropic answers a Claude login it will not serve with a
+                # bare 429; the account's usage report says why.
+                from jarvis.agent_runtimes.provider_errors import explain_login_refusal
+
+                exc = await explain_login_refusal(exc, login, model)
             await queue.put(exc)
 
     task = asyncio.get_running_loop().create_task(pump())
