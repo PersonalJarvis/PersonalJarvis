@@ -4,7 +4,7 @@ import { EMPTY_TIMELINE, reduceEvents, type InternalMessageItem, type UserItem }
 import { AgentMessageActivity, CodingThreadActivity } from "@/components/society/chat/ChatActivity";
 import { useEventStore } from "@/store/events";
 import { useIdeThreadsStore } from "@/store/ideThreads";
-import { codingThreadOf } from "./openCodingThread";
+import { codingThreadOf, foldRepeatedThreadStatus } from "./openCodingThread";
 import { ThreadTimeline } from "./ThreadTimeline";
 
 afterEach(cleanup);
@@ -48,5 +48,28 @@ describe("threads a Jarvis agent started", () => {
     render(<AgentMessageActivity item={item} roster={[]} />);
     expect(screen.getByTestId("coding-thread-activity").textContent).toContain("finished");
     expect(codingThreadOf(item.message.sender_id)).toBe("thread-2");
+  });
+
+  it("shows an unchanged thread status once and keeps every new state", () => {
+    const status = (id: string, thread: string, text: string): InternalMessageItem => ({
+      type: "internal", id, tsMs: 1,
+      message: {
+        message_id: id, sender_id: `coding-thread:${thread}`, sender_name: "Claude Code · Traces",
+        sender_kind: "agent", text, prompt: "", trace_id: "t", status: "delivered", turn_id: "", error: "",
+      },
+    });
+    const waits = "Claude Code waits for an approval in “Traces”.";
+    const person: UserItem = { type: "user", id: "u1", text: "Is it done?", attachments: [], tsMs: 2 };
+    const items = [
+      status("m1", "a", waits),
+      person,
+      status("m2", "a", waits),
+      status("m3", "b", waits),
+      status("m4", "a", "Claude Code finished in “Traces”."),
+      status("m5", "a", waits),
+    ];
+    expect(foldRepeatedThreadStatus(items).map((item) => item.id)).toEqual(["m1", "u1", "m3", "m4", "m5"]);
+    const plain = [status("m1", "a", waits), person];
+    expect(foldRepeatedThreadStatus(plain)).toBe(plain);
   });
 });

@@ -3,7 +3,7 @@ import { ChatMarkdown, MediaPreview, mediaKind } from "@/components/agentchat/Ch
 import { CircleAlert, FileText, ImageIcon } from "lucide-react";
 import { InternalMessageBubble, type InternalParticipant } from "./InternalMessageBubble";
 import { CodingThreadActivity } from "@/components/agentic/threads/CodingThreadLink";
-import { codingThreadOf } from "@/components/agentic/threads/openCodingThread";
+import { codingThreadOf, foldRepeatedThreadStatus } from "@/components/agentic/threads/openCodingThread";
 import { MessageWithChips } from "./ToolChoiceChips";
 import { ProviderLogo } from "@/components/providers/ProviderLogo";
 import { effortLabel } from "./AgentComposer";
@@ -50,10 +50,11 @@ export function AgentTimeline({
   const t = useT();
   // On the rail look an agent's answer to a working turn is a quiet line in
   // that turn's trace, so the reply stays the last thing in the chat.
-  const { items: shown, messagesByTurn } = useMemo(
-    () => traceLook === "rail" ? attachTurnMessages(items) : { items, messagesByTurn: NO_MESSAGES },
-    [items, traceLook],
-  );
+  const { items: shown, messagesByTurn } = useMemo(() => {
+    // A coding thread's unchanged status is one row, however often it arrived.
+    const folded = foldRepeatedThreadStatus(items);
+    return traceLook === "rail" ? attachTurnMessages(folded) : { items: folded, messagesByTurn: NO_MESSAGES };
+  }, [items, traceLook]);
   const stamps = bubbles ? timeStamps(shown) : null;
   return (
     <>

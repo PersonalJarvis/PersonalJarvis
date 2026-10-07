@@ -380,3 +380,155 @@ async def test_a_late_chat_service_is_still_picked_up(
             break
     assert rt.coding_threads._service is service
     await rt.coding_threads.close()
+
+
+# ------------------------------------------------- one report per unchanged state
+
+
+def owner_prompts(rt: Society) -> list[str]:
+    return [p for sid, p in rt.service.prompts if sid == rt.owner]
+
+
+async def wait_for_approval(
+    rt: Society,
+    thread: str,
+    approval_id: str,
+    *,
+    turn_id: str = "t2",
+    call_id: str = "call-1",
+    summary: str = "List the trace files",
+) -> None:
+    """The thread's CLI asks the person to approve one of its tool calls."""
+    rt.service._approval_session[approval_id] = thread
+    await rt.service._emit(
+        thread,
+        make_event(
+            "approval_required",
+            {
+                "turn_id": turn_id,
+                "approval_id": approval_id,
+                "call_id": call_id,
+                "name": "Bash",
+                "input": {"command": "ls traces"},
+                "summary": summary,
+            },
+        ),
+    )
+    await settle(rt, thread)
+
+
+async def approve(rt: Society, thread: str, approval_id: str, turn_id: str = "t2") -> None:
+    rt.service._approval_session.pop(approval_id, None)
+    await rt.service._emit(
+        thread,
+        make_event(
+            "approval_resolved",
+            {"turn_id": turn_id, "approval_id": approval_id, "decision": "allow"},
+        ),
+    )
+
+
+async def finish(rt: Society, thread: str, text: str, turn_id: str = "t2") -> None:
+    await rt.service._emit(thread, make_event("assistant_text", {"turn_id": turn_id, "text": text}))
+    await rt.service._emit(
+        thread, make_event("turn_finished", {"turn_id": turn_id, "status": "done"})
+    )
+    await settle(rt, thread)
+
+
+async def test_a_waiting_approval_is_reported_once(society: Society, tmp_path: Path):
+    rt = society
+    thread = await open_thread(rt, tmp_path)
+    await settle(rt, thread)
+    assert len(owner_prompts(rt)) == 1  # the first turn finished
+
+    await wait_for_approval(rt, thread, "a1")
+    prompts = owner_prompts(rt)
+    assert len(prompts) == 2
+    assert "waits for the person to approve" in prompts[-1]
+    assert "List the trace files" in prompts[-1]
+    assert "not woken again" in prompts[-1]
+
+    # A restart replays the same card, then the CLI asks again under a new
+    # card for the same call: the state did not change, so nobody is woken.
+    await wait_for_approval(rt, thread, "a1")
+    await wait_for_approval(rt, thread, "a1-again", call_id="call-1b")
+    assert len(owner_prompts(rt)) == 2
+    status = [
+        e["payload"]["text"]
+        for e in rt.service.store.list_events(rt.owner)
+        if e["kind"] == "agent_message"
+    ]
+    assert sum("waits for an approval" in text for text in status) == 1
+
+
+async def test_routine_progress_wakes_nobody(society: Society, tmp_path: Path):
+    rt = society
+    thread = await open_thread(rt, tmp_path)
+    await settle(rt, thread)
+    before = len(owner_prompts(rt))
+    for step in ("Reading the traces", "Found two bugs", "Fixing the first one"):
+        await rt.service._emit(
+            thread, make_event("assistant_text", {"turn_id": "t2", "text": step})
+        )
+        await rt.service._emit(
+            thread,
+            make_event("tool_call", {"turn_id": "t2", "name": "Read", "summary": "trace.py"}),
+        )
+    await settle(rt, thread)
+    assert len(owner_prompts(rt)) == before
+
+
+async def test_a_changed_blocker_is_news(society: Society, tmp_path: Path):
+    rt = society
+    thread = await open_thread(rt, tmp_path)
+    await settle(rt, thread)
+    await wait_for_approval(rt, thread, "a1")
+    assert len(owner_prompts(rt)) == 2
+    await approve(rt, thread, "a1")
+    await wait_for_approval(rt, thread, "a2", call_id="call-2", summary="Run the test suite")
+    prompts = owner_prompts(rt)
+    assert len(prompts) == 3
+    assert "Run the test suite" in prompts[-1]
+
+
+async def test_a_finished_task_after_an_approval_is_reported(society: Society, tmp_path: Path):
+    rt = society
+    thread = await open_thread(rt, tmp_path)
+    await settle(rt, thread)
+    await wait_for_approval(rt, thread, "a1")
+    await approve(rt, thread, "a1")
+    await finish(rt, thread, "Fixed both trace bugs; tests pass.")
+    prompts = owner_prompts(rt)
+    assert len(prompts) == 3
+    assert "finished" in prompts[-1] and "Fixed both trace bugs" in prompts[-1]
+    # The same finished turn seen again (a replay) is not a second report.
+    await rt.service._emit(
+        thread, make_event("turn_finished", {"turn_id": "t2", "status": "done"})
+    )
+    await settle(rt, thread)
+    assert len(owner_prompts(rt)) == 3
+
+
+async def test_each_person_message_keeps_its_own_answer(society: Society, tmp_path: Path):
+    rt = society
+    thread = await open_thread(rt, tmp_path)
+    await settle(rt, thread)
+    await wait_for_approval(rt, thread, "a1")
+    assert len(owner_prompts(rt)) == 2
+    for text in ("Is it done yet?", "What does it wait for?"):
+        await rt.service.send(rt.owner, text)
+        await settle(rt, rt.owner)
+    prompts = owner_prompts(rt)
+    # Two turns for the two questions, each the person's own.
+    assert len(prompts) == 4
+    assert "Is it done yet?" in prompts[2] and "What does it wait for?" in prompts[3]
+    # The person speaking resets the wake budget, not what was already said.
+    state = rt.service.store.thread_owner(thread)["state"]
+    assert state["wakes"] == 0
+    await wait_for_approval(rt, thread, "a1")
+    assert len(owner_prompts(rt)) == 4
+    # A thread turn the agent starts afterwards reports its own result.
+    await approve(rt, thread, "a1")
+    await finish(rt, thread, "Done with the traces.")
+    assert len(owner_prompts(rt)) == 5

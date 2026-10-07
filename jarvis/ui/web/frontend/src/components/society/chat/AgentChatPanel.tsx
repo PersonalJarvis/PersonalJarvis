@@ -10,6 +10,7 @@ import {
 } from "./ChatActivity";
 import { MemoryUpdateNotice } from "./MemoryUpdateNotice";
 import { foldMemoryNotices } from "./memoryNotices";
+import { foldRepeatedThreadStatus } from "@/components/agentic/threads/openCodingThread";
 import { mergeOutgoingMessages, useOutgoingMessages } from "@/components/agentchat/useOutgoingMessages";
 /**
  * The model card's chat column, kept deliberately plain (maintainer,
@@ -683,7 +684,11 @@ export function Transcript({
   const t = useT();
   const sessionId = useAgentChat((state) => state.activeSessionId);
   // Memory receipts are drawn inside the turn they follow, above its reply.
-  const { items, memoryByTurn } = useMemo(() => foldMemoryNotices(rawItems), [rawItems]);
+  // A coding thread's unchanged status is one row, however often it arrived.
+  const { items, memoryByTurn } = useMemo(
+    () => foldMemoryNotices(foldRepeatedThreadStatus(rawItems)),
+    [rawItems],
+  );
   // Follow the newest while the view sits at the end — the rule every
   // conversation surface shares (hooks/useStickToBottom). This used to scroll
   // a bottom sentinel into view on `[items.length, busy]` only, so a
