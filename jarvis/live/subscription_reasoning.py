@@ -318,7 +318,7 @@ class SubscriptionReasoning:
         if model not in self._model_efforts:
             try:
                 await self.list_models()
-            except SubscriptionReasoningError:
+            except SubscriptionReasoningError:  # no catalog: the backend validates the level
                 return requested if requested in _KNOWN_EFFORTS else ""
         supported = self._model_efforts.get(model, ())
         if not supported:
