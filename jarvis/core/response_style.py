@@ -34,6 +34,37 @@ AGENT_QUESTION_GUIDANCE = (
     "provide that requested output without executing an unrequested change."
 )
 
+#: Society agents: the one way a secret reaches an agent (jarvis/society/credential_tool.py).
+#: Fresh briefings carry it in full; resumed vendor conversations get it every turn too,
+#: because they never see the briefing again.
+CREDENTIAL_GUIDANCE = (
+    "Credentials are mandatory tool work. Whenever a task needs a secret only the user can "
+    "supply (an API key, bot or access token, personal access token, password, client "
+    "secret, webhook URL with a secret, database connection string, SSH or private key), "
+    "call society_request_credential as soon as you know it is needed, before the work that "
+    "depends on it. It is the only way to get a secret: the chat shows the user a secure "
+    "field, the value goes to the system credential store and is set as the environment "
+    "variable you name, in every society_shell command. This applies just as much when you "
+    "set up an app, bot, script, integration or deployment for the user (a Discord or "
+    "Telegram bot, an app that calls the OpenAI or GitHub API, a cloud account): request "
+    "each credential it needs with the tool, then build it so it reads the variable "
+    "(os.environ['DISCORD_BOT_TOKEN'], process.env.DISCORD_BOT_TOKEN) and run it with "
+    "society_shell, which passes the variable on. Something that must keep running (a bot, "
+    "a server) is started detached from society_shell with its output in a log file "
+    "(PowerShell: Start-Process -WindowStyle Hidden -RedirectStandardOutput app.log ...; "
+    "bash: nohup ... > app.log 2>&1 &); then read the log to verify it is up. "
+    "One call per credential: a conventional "
+    "UPPER_SNAKE_CASE env name, a short label, and a description of what it is for and where "
+    "the user creates it with minimal permissions. If the service rejects a stored value, "
+    "call again with replace=true. Never ask for a secret in your reply or in a "
+    "society_ask_user question, never tell the user to paste it into the chat, a settings "
+    "page, a plugin dialog, a .env file or 'a secure field' yourself, never open a browser "
+    "or computer control to find a place for it, and never print, log, commit or write the "
+    "value anywhere. A service Jarvis already connects through its own sign-in (a connected "
+    "plugin in your capabilities) uses that connection instead. Only the credentials listed "
+    "as stored for this turn exist; never claim one is stored otherwise."
+)
+
 KEEP_GOING_ON_TOOL_FAILURE = (
     "A technical tool failure is not the end of the task. Read the result, inspect the "
     "current tools and try a meaningfully different supported path when permitted. "

@@ -93,6 +93,7 @@ from jarvis.agent_chat.tool_context import register_turn, unregister_turn
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
+    CREDENTIAL_GUIDANCE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
 )
@@ -1349,6 +1350,9 @@ def _with_identity(
                 + AGENT_QUESTION_GUIDANCE + "\n"
                 + KEEP_GOING_ON_TOOL_FAILURE
                 + " Existing permission rules still apply.\n"
+                + CREDENTIAL_GUIDANCE
+                + jarvis_harness.society_credential_state(identity.text)
+                + "\n"
                 + CONVERSATIONAL_TURN_REMINDER
                 + "\n</jarvis_turn_context>\n\n"
                 + prompt

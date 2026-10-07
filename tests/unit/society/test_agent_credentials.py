@@ -387,3 +387,17 @@ async def test_the_briefing_names_stored_credentials_and_says_when_there_are_non
     vault.store("ada", "DISCORD_BOT_TOKEN", SECRET, label="Discord bot token")
     line = await _credential_line(rt, "ada")
     assert "DISCORD_BOT_TOKEN (Discord bot token)" in line and SECRET not in line
+
+
+async def test_a_question_card_never_asks_for_the_secret_itself() -> None:
+    from jarvis.society.ask_tool import AskUserTool
+
+    rt = SimpleNamespace(chat_service=lambda: None)
+    tool = AskUserTool(rt, "ada", session_id=SID)
+    asking = {"question": "Please paste your Discord bot token.", "options": ["Done", "Later"]}
+    result = await tool.execute({"questions": [asking]}, None)
+    assert not result.success and "society_request_credential" in (result.error or "")
+    # Choosing HOW to connect is a real decision, not a secret.
+    choice = {"question": "Connect the bot with a token or a browser login?", "options": ["Token", "Browser"]}  # noqa: E501
+    result = await tool.execute({"questions": [choice]}, None)
+    assert "society_request_credential" not in (result.error or "")

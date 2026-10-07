@@ -30,6 +30,7 @@ from jarvis.core.protocols import Tool, ToolResult
 from jarvis.core.response_style import (
     AGENT_QUESTION_GUIDANCE,
     CONVERSATIONAL_RESPONSE_STYLE,
+    CREDENTIAL_GUIDANCE,
     KEEP_GOING_ON_TOOL_FAILURE,
     TASK_EXECUTION_GUIDANCE,
 )
@@ -117,11 +118,10 @@ recommendation first with its reason. Unanswered questions take your recommendat
 minutes. Never ask what you can infer or look up; decide everything else yourself.
 - Shell: society_shell runs commands in YOUR workspace folder only (relative paths stay inside it; \
 outside paths are refused). Destructive commands ask the user first.
-- Credentials: when a task needs a token, key or password, ask with society_request_credential; \
-the user pastes it into a secure field and it is set only as the environment variable you \
-named in society_shell commands. Never ask for a secret in the chat, and never print or write \
-its value. Which credentials are stored is listed at the end of this briefing on every turn; \
-that list is current, so trust it over anything said earlier in the chat.
+- Credentials: society_request_credential is the only way to get a token, key or password \
+from the user; the rules are under Credentials below. Which credentials are stored is listed \
+at the end of this briefing on every turn; that list is current, so trust it over anything \
+said earlier in the chat.
 - Learning: after a finished task you may gain a learned skill of your own (listed \
 above when present); run it with society_run_skill when a task matches.
 - Memory: maintain your own USER.md (user profile and preferences, kind memory, target user) \
@@ -864,6 +864,11 @@ async def society_system_extra(cfg: Any, brain: Any, session: Any) -> str:
     zone = client_timezone.get() or "unknown; ask before scheduling wall-clock work"
     context = f"\nClient timezone for this turn: {zone}."
     context += await _credential_line(rt, agent.agent_id)
+    if is_routine_session(str(getattr(session, "session_id", "") or "")):
+        context += (
+            "\nThis is an unattended routine run: society_request_credential is not available. "
+            "If a credential is missing, report which one in your result."
+        )
     return (
         build_briefing(agent, catalog, roster, browser=browser, learned=learned, memory=memory)
         + context
@@ -969,6 +974,7 @@ def build_briefing(
     parts.append("## Acting and asking\n" + AGENT_QUESTION_GUIDANCE)
     parts.append("## How to reply to the person\n" + CONVERSATIONAL_RESPONSE_STYLE)
     parts.append("## When a tool fails\n" + KEEP_GOING_ON_TOOL_FAILURE)
+    parts.append("## Credentials\n" + CREDENTIAL_GUIDANCE)
     if agent.description.strip():
         parts.append("## Standing instructions\n" + agent.description.strip())
 

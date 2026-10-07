@@ -560,6 +560,22 @@ def society_memory_refresh(text: str, *, compact: bool = False) -> str:
     )
 
 
+#: Lines of a society briefing that state this turn's credentials (surface.py).
+_CREDENTIAL_STATE = re.compile(
+    r"^(?:Stored credentials\b|This is an unattended routine run\b).*$", re.M
+)
+
+
+def society_credential_state(text: str) -> str:
+    """The briefing's current credential lines, for a resumed CLI turn.
+
+    A resumed vendor conversation never sees the briefing again, so without
+    this it keeps believing whatever the chat once said about a token.
+    """
+    lines = [m.group(0).strip() for m in _CREDENTIAL_STATE.finditer(text or "")]
+    return (" " + " ".join(lines)) if lines else ""
+
+
 def identity_dir() -> Path:
     """Where identity files live: the app's own data dir, never a shared temp."""
     from jarvis.core.paths import user_data_dir

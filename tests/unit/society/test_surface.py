@@ -14,7 +14,11 @@ from jarvis.agent_chat.store import AgentChatStore
 from jarvis.core.bus import EventBus
 from jarvis.core.config import SafetyConfig
 from jarvis.core.protocols import ToolResult
-from jarvis.core.response_style import KEEP_GOING_ON_TOOL_FAILURE, TASK_EXECUTION_GUIDANCE
+from jarvis.core.response_style import (
+    CREDENTIAL_GUIDANCE,
+    KEEP_GOING_ON_TOOL_FAILURE,
+    TASK_EXECUTION_GUIDANCE,
+)
 from jarvis.safety.approval import ApprovalWorkflow
 from jarvis.safety.risk_tier import RiskTierEvaluator
 from jarvis.safety.tool_executor import ToolExecutor
@@ -95,6 +99,7 @@ async def test_task_execution_contract_survives_long_memory_and_compact_transpor
     compact = compact_identity(briefing + "\n\n" + SYSTEM_PREAMBLE)
     assert TASK_EXECUTION_GUIDANCE in compact
     assert KEEP_GOING_ON_TOOL_FAILURE in compact
+    assert CREDENTIAL_GUIDANCE in compact
     assert len(compact) <= 16000
 
 
