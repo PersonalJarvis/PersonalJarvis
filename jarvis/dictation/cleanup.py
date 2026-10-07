@@ -328,29 +328,12 @@ def clean_transcript(
 # Punctuation repair at the segment joins
 # ---------------------------------------------------------------------------
 
-#: What a recognizer emits at a pause: a run of two or more dots, or the single
-#: "…" glyph. Both spellings occur, sometimes in the same transcript.
-_ELLIPSIS = r"(?:\.{2,}|…)"
-
-#: A sentence terminator with a recognizer ellipsis glued to it, either directly
-#: ("gesprochen...") or across the space a segment join left ("gesprochen. ...").
-#: The ``(?<=\w)`` lookbehind is load-bearing: it demands a WORD before the
-#: terminator, so the first dot of a free-standing " ... " can never be mistaken
-#: for the terminator and the speaker's own ellipsis survives the rule.
-_JOINED_ELLIPSIS_RE = re.compile(r"(?<=\w)([.!?])[ \t]*" + _ELLIPSIS)
-
-#: The same artifact spelled with the "…" glyph, which carries no terminator to
-#: keep: "gesprochen… ist". Only repaired when text follows — a trailing "…"
-#: ends nothing and may well be what the speaker meant.
-_ATTACHED_GLYPH_RE = re.compile(r"(?<=\w)…(?=[ \t]+\S)")
-
-#: A free-standing ellipsis between two segments. Whether it is an artifact or
-#: the speaker's own pause is undecidable from the text alone, so the decision
-#: is made in :func:`_repair_standalone_ellipsis` on the ONE signal that exists:
-#: the recognizer capitalises the start of every segment.
-_STANDALONE_ELLIPSIS_RE = re.compile(
-    r"(?<=\w)[ \t]+" + _ELLIPSIS + r"[ \t]+(?=(?P<next>\w))"
-)
+#: Only collapse an ellipsis after a SEPARATE sentence terminator. Without the
+#: mandatory space, the first dot of an ordinary hesitation was mistaken for
+#: a full stop and the continuation was capitalized into a different sentence.
+#: Attached ellipses, Unicode ellipses and pauses before capitalized words are
+#: ambiguous: capitalization can mark a noun or a technical name, not a seam.
+_JOINED_ELLIPSIS_RE = re.compile(r"(?<=\w)([.!?])[ \t]+(?:\.{3,}|…)")
 
 #: EXACTLY two dots, not part of a longer run. ".." is always a join artifact;
 #: "..." is an ellipsis and must not be reduced to it one dot at a time.
@@ -377,68 +360,28 @@ _DOUBLE_SPACE_RE = re.compile(r"[ \t]{2,}")
 _SENTENCE_START_RE = re.compile(r"(?<=\w\w)([.!?])([ \t]+)([^\W\d_])")
 
 
-def _repair_standalone_ellipsis(match: re.Match[str]) -> str:
-    """A free-standing ellipsis is only a join artifact when a segment follows.
-
-    The recognizer capitalises the first word of every segment it produces, so
-    an upper-case continuation after " ... " means a new segment began there and
-    the ellipsis is ours to remove. A lower-case continuation is the speaker
-    trailing off mid-sentence, and that stays exactly as dictated.
-    """
-    if not match.group("next").isupper():
-        return match.group(0)
-    return ". "
-
-
 def _upper_sentence_start(match: re.Match[str]) -> str:
     return match.group(1) + match.group(2) + match.group(3).upper()
 
 
 def tidy_transcript(text: str) -> str:
-    """Repair the punctuation a SEGMENTED transcription leaves behind. Never raises.
+    """Repair duplicate punctuation without treating a hesitation as a sentence.
 
-    This runs on every dictation, not only on one a filler was removed from.
-    The damage is not made here: the lane transcribes in ~8 s segments, the
-    recognizer punctuates and capitalises each one as if it were the whole
-    utterance, emits its own trailing "..." wherever a segment cut a sentence in
-    half, and the pieces are then joined with a bare space. So a transcript no
-    rule in this module ever touched still arrives with a stray "..." parked
-    between two sentences and the next one starting lower-case — which is why
-    gating the repair on "a filler was removed" left the common case broken.
+    A pause may be written as attached dots, spaced dots or a Unicode ellipsis.
+    Preserve each spelling, even before a capitalized word: text alone cannot
+    establish that the speaker finished a sentence there. Only a separately
+    written terminator licenses removing a following redundant ellipsis.
 
-    Four repairs, in this order:
-
-    1. an ellipsis glued to a sentence terminator collapses into that terminator;
-    2. a free-standing ellipsis before a capitalised word becomes a full stop;
-    3. adjacent terminal marks ("..", ".,", "., ") de-duplicate, stronger wins;
-    4. a lower-case word after a sentence terminator gets its capital back.
-
-    THE TRADE-OFF, stated plainly
-    -----------------------------
-    Nothing in the text says whether an ellipsis came from the recognizer or
-    from the speaker, so the split is drawn where it is cheapest to be wrong:
-
-    * an **attached** ellipsis ("gesprochen... ist") is treated as an artifact
-      and collapsed — a speaker who dictated a trailing pause there loses it;
-    * a **free-standing** ellipsis ("das war ... schwierig") is kept, unless the
-      next word is capitalised, which only a segment boundary produces.
-
-    Rule 4 has a matching cost: it capitalises after an abbreviation that ends
-    in a period and is at least two letters long ("etc. and" -> "etc. And").
-    Both errors are cosmetic and visible; the errors they prevent — a doubled
-    "...." in the middle of a sentence, a paragraph of lower-case sentence
-    starts — are the ones users actually report.
-
-    Returns the text unchanged on anything unexpected: a repair that eats a
-    dictation is worse than a transcript that reads slightly wrong.
+    Existing duplicate-mark, whitespace and sentence-capitalization repairs
+    still run. Capitalization after multi-letter abbreviations remains a
+    limitation of the sentence rule; this pass does not infer their meaning.
+    Returns the original text on an unexpected failure.
     """
     original = text or ""
     if not original.strip():
         return original
     try:
         out = _JOINED_ELLIPSIS_RE.sub(r"\1", original)
-        out = _ATTACHED_GLYPH_RE.sub(".", out)
-        out = _STANDALONE_ELLIPSIS_RE.sub(_repair_standalone_ellipsis, out)
         out = _DOUBLE_DOT_RE.sub(".", out)
         out = _TERMINATOR_THEN_WEAK_RE.sub(r"\1", out)
         out = _WEAK_THEN_MARK_RE.sub(r"\1", out)

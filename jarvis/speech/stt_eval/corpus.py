@@ -43,11 +43,13 @@ def load_corpus(path: Path | str) -> tuple[STTEvalItem, ...]:
             ) from exc
         item_id = str(row.get("id", "")).strip()
         audio = str(row.get("audio", "")).strip()
-        reference = str(row.get("reference", "")).strip()
-        if not item_id or not audio or not reference:
+        reference = row.get("reference")
+        if not item_id or not audio or not isinstance(reference, str):
             raise ValueError(
-                f"Corpus line {line_number} requires id, audio, and reference."
+                f"Corpus line {line_number} requires id, audio, and a string reference "
+                "(use an explicit empty string for silence)."
             )
+        reference = reference.strip()
         if item_id in seen:
             raise ValueError(f"Duplicate corpus id {item_id!r}.")
         seen.add(item_id)
