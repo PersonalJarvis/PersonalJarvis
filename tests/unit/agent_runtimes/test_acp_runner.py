@@ -345,7 +345,8 @@ def test_gateway_failure_ends_the_real_acp_runner_and_recovery_keeps_the_questio
     vendor, events = asyncio.run(run())
     assert _finished(events)["status"] == "error"
     assert "HTTP 429" in _finished(events)["error"]
-    assert "/continue" in _finished(events)["error"]
+    assert "Try again in" in _finished(events)["error"]
+    assert "/continue" not in _finished(events)["error"]
     assert _texts(events) == []
     assert len(state["calls"]) == 1 and released == [1]
     assert not gateway._FAILURES

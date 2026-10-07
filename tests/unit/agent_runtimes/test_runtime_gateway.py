@@ -337,7 +337,8 @@ def test_retry_after_blocks_repeated_calls_and_expires(brain, guarded, monkeypat
     signal = gateway.watch_failure(token)
     answer = _chat(guarded, token, {**_CHAT, "stream": stream})
     assert answer.status_code == 429 and answer.headers["Retry-After"] == "90"
-    assert "/continue" in signal.result(timeout=1)
+    assert "Try again in 90 s" in signal.result(timeout=1)
+    assert "/continue" not in signal.result()  # only the person's own turns resume
     assert "fallback provider was called" in answer.text
     assert "never reach" not in signal.result()
     gateway.unwatch_failure(token, signal)
