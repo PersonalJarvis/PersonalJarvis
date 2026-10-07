@@ -224,23 +224,23 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 description = text
                 break
 
-        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", block)]
+        # The current catalog puts an SVG before title-cased badge labels.
+        # Ignore icon markup while retaining the actual visible label, and
+        # keep accepting the older text-only lowercase badges.
+        labels = re.sub(r"<svg\b[^>]*>.*?</svg>", "", block, flags=re.DOTALL | re.IGNORECASE)
+        spans = [_text(m.group(1)) for m in re.finditer(r"<span\b[^>]*>([^<]*)</span>", labels)]
         spans = [s for s in spans if s]
-        # Badges are matched as whole text runs, case-insensitively: the
-        # 2026-10 redesign writes "Embedding" after an icon, no longer as the
-        # sole lower-case content of a <span>.
-        labels = {_text(m.group(1)).lower() for m in re.finditer(r">([^<]+)<", block)}
-        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in labels]
+        badge_labels = {s.lower() for s in spans}
+        capabilities = [badge for badge in _CAPABILITY_BADGES if badge in badge_labels]
         sizes = [s for s in spans if re.fullmatch(r"\d+(?:\.\d+)?[bm]", s)]
 
         pulls_match = re.search(
             r">\s*([\d.,]+[KMB]?)\s*</span>\s*<span[^>]*>(?:&nbsp;|\s)*Pulls", block
-        ) or re.search(
-            r'title="[\d.,]+ downloads"[^>]*>.*?<span[^>]*>\s*([\d.,]+[KMB]?)\s*</span>',
-            block,
-            re.DOTALL,
         )
-        # The redesigned listing no longer shows an update age; "" then.
+        if pulls_match is None:
+            pulls_match = re.search(
+                r'''\btitle=["']([\d.,]+[KMB]?)\s+downloads["']''', block, re.IGNORECASE
+            )
         updated = next((s for s in spans if s.endswith(" ago") or s == "yesterday"), "")
 
         entries.append(
@@ -248,7 +248,7 @@ def parse_search_html(page: str) -> list[dict[str, Any]]:
                 "name": name,
                 "description": description,
                 "capabilities": capabilities,
-                "cloud": "cloud" in labels,
+                "cloud": "cloud" in badge_labels,
                 "sizes": sizes,
                 "pulls": pulls_match.group(1) if pulls_match else "",
                 "updated": updated,
